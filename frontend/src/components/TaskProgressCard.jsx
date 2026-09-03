@@ -20,6 +20,7 @@ import { Loader2, ExternalLink, Undo2 } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
 import { SupportButton } from "./SupportPopup";
+import { shipStatusLabel, SHIP_STATUS } from "../lib/shipStatus";
 
 const STAGES = [
   { key: "pulling", label: "Cloning…",          icon: "📡" },
@@ -394,7 +395,7 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
         color: reverted ? "var(--text-dim)" : "var(--ok)",
         fontWeight: 600,
       }}>
-        {reverted ? "↩︎ Reverted" : "✅ Pushed"}
+        {reverted ? `↩︎ ${shipStatusLabel(SHIP_STATUS.ROLLED_BACK)}` : "✅ Pushed"}
         {sha && (commitUrl ? (
           <a href={commitUrl} target="_blank" rel="noreferrer"
              data-testid={`ship-commit-link-${taskId}`}
@@ -455,7 +456,7 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
         {rbRunning && (
           <span style={{ fontSize: 11, color: "var(--accent-2)",
                          display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> reverting…
+            <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> {shipStatusLabel(SHIP_STATUS.ROLLING_BACK)}
           </span>
         )}
       </div>

@@ -335,3 +335,136 @@ only, flagged rather than claiming an unrun full-suite-green.
    (full error-sanitization sweep) — logged, none started.
 4. Once #1 resolved: the real-model round to prove an actual R9-LIVE
    ship (PR opened → merged → Live chip, real PR number + merge SHA).
+
+---
+
+# OVERNIGHT REPORT — R5e/R2/R8/R9 (founder-gated) + R3-1/R6 (this round)
+
+## CLARITY — which environment is the 401 in?
+
+**401 is in PREVIEW (this pod), on app_id `4541725` / `aurem-devops` —
+NOT production.** Production is healthy (you confirmed 45 installs
+yourself). Each preview fork gets its own separate local MongoDB, so
+it has its own separate copy of the GitHub App config
+(`admin_settings._id="github_app_config"`) — pasting the key into
+production's admin does nothing for this pod.
+
+**Paste the key into: THIS preview pod's admin** — the one at
+`https://bin-context-pat.preview.emergentagent.com` (this session's
+`REACT_APP_BACKEND_URL`) → **Admin → Settings → GitHub App Config**.
+Confirm App ID `4541725` / slug `aurem-devops` match what's already
+shown there, paste the current/regenerated private key, Save.
+
+## R5e / R2 / R8 / R9 — PREP done, execution BLOCKED (founder-gated)
+
+No code work needed to "prep" these — the diagnostic endpoints
+(`/admin/github-app-diagnostics`, `/admin/github-webhook-fence`)
+already exist and are immediately re-runnable. Re-checked this round:
+**still 401, unchanged** (`GET /admin/github-webhook-fence` →
+`subscribed_events: [], error: 401 on https://api.github.com/app`).
+Nothing executed for the real GitHub PR drill (R2) or real-model
+K-bug re-test (R8) — both are explicitly founder-gated on J1 (key) and
+J3 (prod-flip GO); attempting either now would mean fabricating
+results. The moment J1 lands, I can run R5e→R2→R9-webhook-confirm in
+one shot; R8 additionally needs your GO per the standing PROD FENCE.
+
+## R3-1 — repo quick-switch: ALREADY DONE (discovered, not built)
+
+Mid-round discovery: `dashboard/v2/ProjectSwitcher.jsx` already fully
+implements this from an earlier round (file header: "R3 (Repo
+Quick-Switch)") — dropdown next to the TopBar breadcrumb, real
+`owner/repo` label, project name shown above it when distinct (R7
+comment in the same file), a live "repo unreachable" warning driven
+by `GET /cto/projects/connection-status` polling, and disabled-click
+on unreachable projects so a user can never land on a broken one by
+accident. This is a better implementation than what I initially built
+this round.
+
+**Correction made:** my first attempt this round wrongly targeted the
+legacy `TabBar.jsx`, which the `testing_agent` caught is **not mounted
+anywhere in the live app** (dead code — only its non-JSX exports are
+still used). Reverted that edit (`git checkout -- TabBar.jsx`, removed
+the now-invalid test) rather than leave clutter in a dead file.
+`ProjectSwitcher.r3.test.jsx` re-run: **6/6 pass**, confirming the real
+one is healthy.
+
+## R6 — ship-UI unification + PR Mini-Guide: done, tested, live-verified
+
+- Confirmed (not rebuilt) `RollbackConfirmModal` is **already** the
+  one shared confirm-dialog across all 3+1 ship surfaces
+  (MessageBubble/TaskProgressCard, LoopLiveFeed, ShipConfirmModal) —
+  from an earlier P2-B round. Genuinely satisfies "ONE approve/
+  rollback pattern".
+- Completed the canonical-label rollout (`lib/shipStatus.js`) to the
+  4th surface, `TaskProgressCard.jsx` — was still saying "Reverted"/
+  "reverting…", now says "Rolled back"/"Rolling back…" like the other 3.
+- New `PrMiniGuide.jsx` — self-contained, localStorage-backed
+  (`aurem_pr_mini_guide_seen_v1`), dismissible 3-step "what happens
+  next" guide (open PR → review/Merge → live). Wired into
+  `ShipDialog.jsx` (pre-approve) and `ShipConfirmModal.jsx` (confirm
+  phase).
+- 5 new frontend tests, all pass. `testing_agent`
+  (`iteration_r3_1_r6_ship_ui_verify_2026_01.json`) confirmed all live
+  and working; one minor gap it flagged (PrMiniGuide doesn't show if
+  a user arrives at ship purely via the loop-engine "shipped" event,
+  skipping "confirm") is accepted as-is — ShipDialog's canShip path
+  still covers the real first-time-user experience.
+
+## R6-small — re-confirmed unaffected
+
+Ship-failure toast Retry + `ShipConfirmModal` error-phase Retry button
+(built last round) both re-confirmed live-working by this round's
+`testing_agent`. Second-teammate self-serve `/ora` PIN — tested+passed
+last round, untouched this round.
+
+## R4 — webhook re-confirm
+
+Unchanged, still 401 — see R5e/R2/R8/R9 above.
+
+## R1 — ledger
+
+F1 through F18 confirmed present and readable in `ROADMAP.md`.
+F19/F22/F23 remain the pre-existing, intentionally-undocumented gap
+(no wording was ever supplied for those 3 IDs in any round) —
+unchanged, not a new omission.
+
+## FOUNDER'S 2 JOBS STATUS
+
+- **J1 (key re-paste)**: not yet done — webhook-fence still 401 as of
+  this report.
+- **J2 (A7 baseline)**: your job, not visible to me from this pod.
+- **J3 (prod-flip GO)**: not given this round — nothing prod-touching
+  was attempted, per the standing PROD FENCE.
+
+## PROD-FLIP STATUS
+
+| Item | Status |
+|---|---|
+| R2 (live PR drill) | pending — needs J1 |
+| R8 (real-model re-test) | pending — needs J1 + J3 |
+| R9 (webhook green) | pending — needs J1 |
+
+## FLAG/STATE
+
+| Flag | Preview | Production |
+|---|---|---|
+| `ship_via_pr` | `enabled:true, rollout_pct:100` (unchanged) | Unknown to me — still awaiting your check |
+| GitHub App JWT (`4541725`) | 401, unchanged | Healthy (your own confirmation) |
+| `ORA_ALLOWED_IPS` | unset (fail-open) | founder-owned |
+
+## NO-SILENT-FAIL AUDIT
+
+Nothing swallowed: the TabBar dead-end was surfaced and corrected
+rather than left as unverified "done" work; R2/R8/R9 are reported as
+genuinely blocked, not attempted-and-hoped; R3-1's pre-existing
+implementation was disclosed rather than claimed as new work.
+
+## REGRESSION (no-new-vs-baseline)
+
+Frontend: 19 new/re-run tests across Toast, PrMiniGuide,
+TaskProgressCard, ChatPanel, ShipConfirmModal, ProjectSwitcher — all
+pass, 0 regressions. Backend: untouched this round (no backend files
+edited), prior round's baseline stands.
+
+> STOP. Awaiting founder review (J1 key + J2 A7) before R5e/R2/R8/R9.
+

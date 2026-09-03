@@ -19,6 +19,7 @@ import { Loader2, Rocket } from "lucide-react";
 import ShipLintBadge from "./ShipLintBadge";
 import TaskProgressCard from "./TaskProgressCard";
 import TaskLiveTape from "./TaskLiveTape";
+import PrMiniGuide from "./PrMiniGuide";
 
 export default function ShipDialog({
   idx,
@@ -53,6 +54,7 @@ export default function ShipDialog({
       display: "flex", alignItems: "stretch", gap: 10, flexWrap: "wrap",
       flexDirection: "column",
     }}>
+      {canShip && shipState.status !== "shipped" && <PrMiniGuide />}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
       {!canShip ? (
         <div style={{ fontSize: 11, color: "var(--text-faint)", fontStyle: "italic" }}>

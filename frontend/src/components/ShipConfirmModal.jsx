@@ -32,6 +32,7 @@ import useModalA11y from "../hooks/useModalA11y";
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import { sanitizeErrorMessage } from "../lib/sanitizeError";
 import { shipStatusLabel, SHIP_STATUS } from "../lib/shipStatus";
+import PrMiniGuide from "./PrMiniGuide";
 
 const POLL_MS = 1500;
 const TERMINAL = new Set(["done", "failed"]);
@@ -483,6 +484,8 @@ export default function ShipConfirmModal() {
 
         {/* ── confirm-phase Vanguard preflight badge ── */}
         {phase === "confirm" && (
+          <>
+          <PrMiniGuide />
           <div data-testid="ship-vanguard-badge" style={{
             display: "inline-flex", alignItems: "center", gap: 8,
             padding: "8px 12px", borderRadius: 999,
@@ -498,6 +501,7 @@ export default function ShipConfirmModal() {
             Vanguard {vanguard?.critical ? `flagged ${vanguard.critical} critical` : "clean"} ·{" "}
             {vanguard?.critical ?? 0} critical
           </div>
+          </>
         )}
 
         {/* ── error ── */}
