@@ -245,6 +245,7 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
     <div
       data-testid={`loop-shipped-row-${ship.shortSha}`}
       data-rollback-phase={phase}
+      data-canonical-ship-status={toCanonicalShipStatus(phase)}
       style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "6px 0 3px 0",
@@ -445,6 +446,7 @@ import OperationHistory from "./OperationHistory";
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import { PreferredSourceButton } from "./PreferredSourceButton";
 import { sanitizeErrorMessage } from "../lib/sanitizeError";
+import { toCanonicalShipStatus } from "../lib/useShipState";
 
 // ── Tone → icon + colour ────────────────────────────────────────────
 const TONE_STYLES = {

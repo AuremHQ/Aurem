@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "body": {
+    "sha": "198572db05c3f24cdb84f58748a5f384c9a177f0",
+    "merged": true,
+    "message": "Pull Request successfully merged"
+  }
+}

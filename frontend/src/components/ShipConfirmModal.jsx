@@ -25,14 +25,14 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
-  CheckCircle2, FileText, X, Loader2, ExternalLink, Undo2, ShieldAlert,
+  CheckCircle2, FileText, X, Loader2, ExternalLink, ShieldAlert,
 } from "lucide-react";
 import { api } from "../lib/api";
 import useModalA11y from "../hooks/useModalA11y";
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import { sanitizeErrorMessage } from "../lib/sanitizeError";
 import { shipStatusLabel, SHIP_STATUS } from "../lib/shipStatus";
-import PrMiniGuide from "./PrMiniGuide";
+import ShipApproveCard from "./ShipApproveCard";
 
 const POLL_MS = 1500;
 const TERMINAL = new Set(["done", "failed"]);
@@ -482,26 +482,29 @@ export default function ShipConfirmModal() {
           </div>
         )}
 
-        {/* ── confirm-phase Vanguard preflight badge ── */}
-        {phase === "confirm" && (
-          <>
-          <PrMiniGuide />
-          <div data-testid="ship-vanguard-badge" style={{
-            display: "inline-flex", alignItems: "center", gap: 8,
-            padding: "8px 12px", borderRadius: 999,
-            background: vanguard?.critical
-              ? "rgba(239,68,68,0.12)"
-              : "rgba(34,197,94,0.12)",
-            color: vanguard?.critical ? "#EF4444" : "#22C55E",
-            fontSize: 11, fontWeight: 600,
-            fontFamily: "'JetBrains Mono', monospace",
-            letterSpacing: "0.05em", marginBottom: 22,
-          }}>
-            <CheckCircle2 size={12} />
-            Vanguard {vanguard?.critical ? `flagged ${vanguard.critical} critical` : "clean"} ·{" "}
-            {vanguard?.critical ?? 0} critical
+        {/* ── R3 — physical ship-UI unification: the ONE shared
+            approve/cancel/rollback/retry card + useShipState machine,
+            the same component ShipDialog now uses. Only rendered for
+            the phases it's actually needed (confirm/shipped/error/
+            reverted) — the richer "shipping" progress block above is
+            left untouched (live steps/PR link, not a generic case). */}
+        {phase !== "shipping" && (
+          <div style={{ marginBottom: 16 }}>
+            <ShipApproveCard
+              testidPrefix="ship-modal"
+              status={phase}
+              diffSummary={phase === "confirm" && files.length > 0
+                ? `${files.length} file${files.length === 1 ? "" : "s"} changed`
+                : null}
+              vanguard={phase === "confirm" ? vanguard : null}
+              busy={rbBusy}
+              onApprove={handleShip}
+              onCancel={phase === "confirm" ? closeAll : null}
+              onRollback={phase === "shipped" ? handleRollback : null}
+              onRetry={phase === "error" ? handleShip : null}
+              approveLabel="Ship it"
+            />
           </div>
-          </>
         )}
 
         {/* ── error ── */}
@@ -516,23 +519,6 @@ export default function ShipConfirmModal() {
 
         {/* ── actions ── */}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          {phase === "confirm" && (
-            <>
-              <button data-testid="ship-modal-cancel" onClick={closeAll}
-                style={{
-                  padding: "9px 16px", fontSize: 13, fontWeight: 600,
-                  background: "transparent", color: "#F5F5F5",
-                  border: "1px solid #333", borderRadius: 6,
-                  cursor: "pointer",
-                }}>Cancel</button>
-              <button data-testid="ship-modal-confirm" onClick={handleShip}
-                style={{
-                  padding: "9px 18px", fontSize: 13, fontWeight: 700,
-                  background: "#FF6608", color: "#0A0A0A",
-                  border: 0, borderRadius: 6, cursor: "pointer",
-                }}>Ship it</button>
-            </>
-          )}
           {phase === "shipping" && (
             <button data-testid="ship-modal-minimize" onClick={closeAll}
               title="Closing stops this dialog's own status polling — the task itself keeps running on the server and will finish either way."
@@ -543,44 +529,20 @@ export default function ShipConfirmModal() {
               }}>Close (task keeps running)</button>
           )}
           {phase === "shipped" && (
-            <>
-              <button data-testid="ship-modal-rollback" onClick={handleRollback}
-                disabled={rbBusy}
-                style={{
-                  padding: "9px 14px", fontSize: 13, fontWeight: 600,
-                  background: "transparent", color: "#EF4444",
-                  border: "1px solid rgba(239,68,68,0.4)", borderRadius: 6,
-                  cursor: rbBusy ? "wait" : "pointer",
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  opacity: rbBusy ? 0.6 : 1,
-                }}>
-                <Undo2 size={12} /> {rbBusy ? "Rolling back…" : "Rollback"}
-              </button>
-              <button data-testid="ship-modal-done" onClick={closeAll}
-                style={{
-                  padding: "9px 18px", fontSize: 13, fontWeight: 700,
-                  background: "#FF6608", color: "#0A0A0A",
-                  border: 0, borderRadius: 6, cursor: "pointer",
-                }}>Done</button>
-            </>
+            <button data-testid="ship-modal-done" onClick={closeAll}
+              style={{
+                padding: "9px 18px", fontSize: 13, fontWeight: 700,
+                background: "#FF6608", color: "#0A0A0A",
+                border: 0, borderRadius: 6, cursor: "pointer",
+              }}>Done</button>
           )}
           {(phase === "reverted" || phase === "error") && (
-            <>
-              {phase === "error" && (
-                <button data-testid="ship-modal-retry" onClick={handleShip}
-                  style={{
-                    padding: "9px 16px", fontSize: 13, fontWeight: 600,
-                    background: "transparent", color: "#F5F5F5",
-                    border: "1px solid #333", borderRadius: 6, cursor: "pointer",
-                  }}>Retry</button>
-              )}
-              <button data-testid="ship-modal-close-final" onClick={closeAll}
-                style={{
-                  padding: "9px 18px", fontSize: 13, fontWeight: 700,
-                  background: "#FF6608", color: "#0A0A0A",
-                  border: 0, borderRadius: 6, cursor: "pointer",
-                }}>Close</button>
-            </>
+            <button data-testid="ship-modal-close-final" onClick={closeAll}
+              style={{
+                padding: "9px 18px", fontSize: 13, fontWeight: 700,
+                background: "#FF6608", color: "#0A0A0A",
+                border: 0, borderRadius: 6, cursor: "pointer",
+              }}>Close</button>
           )}
         </div>
       </div>

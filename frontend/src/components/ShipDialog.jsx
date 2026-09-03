@@ -15,11 +15,11 @@
  * Iter 62: extracted from ChatPanel.jsx as part of the P1 split.
  */
 import React from "react";
-import { Loader2, Rocket } from "lucide-react";
+import { Rocket } from "lucide-react";
 import ShipLintBadge from "./ShipLintBadge";
 import TaskProgressCard from "./TaskProgressCard";
 import TaskLiveTape from "./TaskLiveTape";
-import PrMiniGuide from "./PrMiniGuide";
+import ShipApproveCard from "./ShipApproveCard";
 
 export default function ShipDialog({
   idx,
@@ -54,7 +54,6 @@ export default function ShipDialog({
       display: "flex", alignItems: "stretch", gap: 10, flexWrap: "wrap",
       flexDirection: "column",
     }}>
-      {canShip && shipState.status !== "shipped" && <PrMiniGuide />}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
       {!canShip ? (
         <div style={{ fontSize: 11, color: "var(--text-faint)", fontStyle: "italic" }}>
@@ -75,32 +74,18 @@ export default function ShipDialog({
         </div>
       ) : (
         <>
-          <button
-            data-testid={`ship-cto-btn-${idx}`}
-            onClick={onShip}
-            disabled={shipState.status === "shipping"}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "8px 14px",
-              background: shipState.status === "shipping"
-                ? "var(--panel-2)"
-                : "var(--accent-2)",
-              color: shipState.status === "shipping"
-                ? "var(--text-dim)"
-                : "var(--bg)",
-              border: "1px solid var(--accent-2)",
-              borderRadius: 4,
-              fontSize: 12, fontWeight: 600,
-              fontFamily: "'JetBrains Mono', monospace",
-              letterSpacing: "0.05em",
-              cursor: shipState.status === "shipping" ? "wait" : "pointer",
-            }}
-            title={`Ship to ${activeProject.github_owner}/${activeProject.github_repo}@${activeProject.branch}`}
-          >
-            {shipState.status === "shipping"
-              ? (<><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> shipping…</>)
-              : (<>🚀 Approve the fix</>)}
-          </button>
+          {/* R3 — physical ship-UI unification: the ONE shared
+              approve/retry card + useShipState machine, same
+              component ShipConfirmModal now uses. */}
+          <ShipApproveCard
+            testidPrefix={`ship-cto-${idx}`}
+            status={shipState.status}
+            error={shipState.error}
+            onApprove={onShip}
+            onRetry={onShip}
+            approveLabel="🚀 Approve the fix"
+            approveTitle={`Ship to ${activeProject.github_owner}/${activeProject.github_repo}@${activeProject.branch}`}
+          />
           {/* Iter 47 — Maxx mode chip + brief lint preview */}
           {msg.maxxMode && (
             <span
@@ -119,11 +104,6 @@ export default function ShipDialog({
           )}
           <ShipLintBadge brief={handoffBrief} testidSuffix={idx} />
         </>
-      )}
-      {shipState.status === "error" && (
-        <span style={{ fontSize: 11, color: "var(--danger)" }}>
-          {shipState.error}
-        </span>
       )}
       </div>
 

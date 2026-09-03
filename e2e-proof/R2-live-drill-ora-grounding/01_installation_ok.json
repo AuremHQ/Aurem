@@ -1,0 +1,54 @@
+{
+  "found": true,
+  "installation": {
+    "id": 152797252,
+    "client_id": "Iv23liXzdWJ5oDFP25mc",
+    "account": {
+      "login": "polarisbuiltinc-wq",
+      "id": 274300004,
+      "node_id": "U_kgDOEFl8ZA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/274300004?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/polarisbuiltinc-wq",
+      "html_url": "https://github.com/polarisbuiltinc-wq",
+      "followers_url": "https://api.github.com/users/polarisbuiltinc-wq/followers",
+      "following_url": "https://api.github.com/users/polarisbuiltinc-wq/following{/other_user}",
+      "gists_url": "https://api.github.com/users/polarisbuiltinc-wq/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/polarisbuiltinc-wq/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/polarisbuiltinc-wq/subscriptions",
+      "organizations_url": "https://api.github.com/users/polarisbuiltinc-wq/orgs",
+      "repos_url": "https://api.github.com/users/polarisbuiltinc-wq/repos",
+      "events_url": "https://api.github.com/users/polarisbuiltinc-wq/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/polarisbuiltinc-wq/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "repository_selection": "selected",
+    "access_tokens_url": "https://api.github.com/app/installations/152797252/access_tokens",
+    "repositories_url": "https://api.github.com/installation/repositories",
+    "html_url": "https://github.com/settings/installations/152797252",
+    "app_id": 4541725,
+    "app_slug": "aurem-devops",
+    "target_id": 274300004,
+    "target_type": "User",
+    "permissions": {
+      "actions": "write",
+      "contents": "write",
+      "metadata": "read",
+      "workflows": "write",
+      "pull_requests": "write"
+    },
+    "events": [
+      "pull_request",
+      "workflow_job"
+    ],
+    "created_at": "2026-08-11T02:11:44.000Z",
+    "updated_at": "2026-08-29T20:54:50.000Z",
+    "single_file_name": null,
+    "has_multiple_single_files": false,
+    "single_file_paths": [],
+    "suspended_by": null,
+    "suspended_at": null
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "body": {
+    "ref": "refs/heads/main",
+    "node_id": "REF_kwDOTduUZK9yZWZzL2hlYWRzL21haW4",
+    "url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/refs/heads/main",
+    "object": {
+      "sha": "a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca",
+      "type": "commit",
+      "url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/commits/a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca"
+    }
+  }
+}

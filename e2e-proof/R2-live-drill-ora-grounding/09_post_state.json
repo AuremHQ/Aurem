@@ -1,0 +1,7 @@
+{
+  "pre_drill_sha": "a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca",
+  "post_merge_sha": "198572db05c3f24cdb84f58748a5f384c9a177f0",
+  "pre_rollback_sha": "198572db05c3f24cdb84f58748a5f384c9a177f0",
+  "post_rollback_sha": "198572db05c3f24cdb84f58748a5f384c9a177f0",
+  "rollback_left_no_residue": true
+}
