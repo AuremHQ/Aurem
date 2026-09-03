@@ -37,7 +37,8 @@ describe("ShipConfirmModal — error phase has a Retry button (R6)", () => {
     const cardSrc = readFileSync(
       path.resolve(__dirname, "../ShipApproveCard.jsx"), "utf-8"
     );
-    expect(cardSrc).toContain('data-testid={`${testidPrefix}-retry-btn`}');
+    expect(cardSrc).toContain("const retryTestid = testidOverrides.retry ||");
+    expect(cardSrc).toContain('`${testidPrefix}-retry-btn`');
     expect(cardSrc).toContain("onClick={onRetry}");
   });
 

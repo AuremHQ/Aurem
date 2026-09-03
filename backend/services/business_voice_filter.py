@@ -47,13 +47,33 @@ _DEFAULT_PAGE_TERM = "your page"
 
 
 @lru_cache(maxsize=1)
-def _load_map() -> list[tuple[re.Pattern, str]]:
+def _load_map() -> dict[str, str]:
     raw = json.loads(_MAP_PATH.read_text())
-    pairs = [(k, v) for k, v in raw.items() if not k.startswith("_")]
-    # Longest phrase first so "pull request" wins over a lone "pull".
-    pairs.sort(key=lambda kv: len(kv[0]), reverse=True)
-    return [(re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE), repl)
-            for term, repl in pairs]
+    return {k.lower(): v for k, v in raw.items() if not k.startswith("_")}
+
+
+@lru_cache(maxsize=1)
+def _combined_pattern() -> re.Pattern:
+    # 2026-09-03 (P2 user-first wave) — a SINGLE combined-alternation
+    # pass, longest term first, so e.g. "github repo" consumes both
+    # words in one match and the standalone "github"/"repo" entries
+    # never get a second, cascading crack at the same text. Applying
+    # each entry as its OWN separate .sub() (the original design) let
+    # one substitution's OUTPUT text collide with a LATER entry's
+    # pattern (e.g. "github repo" -> "...code" -> "code" itself is
+    # also a map key -> mangled into "...content"). A single pass over
+    # the ORIGINAL text makes that class of bug structurally
+    # impossible, for this map and any future entries added to it.
+    terms = sorted(_load_map().keys(), key=len, reverse=True)
+    alternation = "|".join(re.escape(t) for t in terms)
+    return re.compile(rf"\b(?:{alternation})\b", re.IGNORECASE)
+
+
+def _replace_term(match: re.Match) -> str:
+    replacement = _load_map().get(match.group(0).lower())
+    if replacement is None:
+        return match.group(0)
+    return _preserve_case(match.group(0), replacement)
 
 
 def _humanize_filename(match: re.Match) -> str:
@@ -100,8 +120,7 @@ def filter_for_business_owner(text: str) -> str:
         return text
     out = _FILENAME_RE.sub(_humanize_filename, text)
     out = _ACCESS_TO_RE.sub(lambda m: _preserve_case(m.group(0), "I can't see"), out)
-    for pattern, replacement in _load_map():
-        out = pattern.sub(lambda m: _preserve_case(m.group(0), replacement), out)
+    out = _combined_pattern().sub(_replace_term, out)
     return _fix_a_an(out)
 
 

@@ -1,3 +1,61 @@
+---
+# USER-FIRST "FIRST-EXPERIENCE WAVE" (2026-09-03, same fork, later same day)
+
+Founder directive: fix the first-time-user journey (landing→signup→connect
+repo→first scan→first chat→first "Approve the fix") BEFORE Phase 3/R8/
+migration. Confirmed via ask_human: jargon sweep scoped to first-10-min
+flow only; verify-already-done items live rather than rebuild; fresh
+throwaway account OK for screenshots; batch fixes then one testing_agent
+pass.
+
+**Already done (verified live, not rebuilt):** P2-A/B banner declutter
+(exactly 1 hero banner on a 0-project account, FinishSetupBanner already
+dead-removed), P2-E user notification bell (already wired in TopBar,
+persistent-until-read).
+
+**Built this round:**
+- P2-F: `ChatPanel.jsx` empty-chat greeting rewritten plain-English
+  ("I'm ORA, by Aurem. I can scan your site for issues and fix them for
+  you...").
+- P2-C (scoped to first-10-min surfaces): `ConnectRepoBanner.jsx`
+  "indexing"→"scanning your site"; `NewUserWizard.jsx` added a
+  `wizard-repo-explainer` one-liner, removed "PAT"/"plaintext"/"write
+  commits" jargon from the disconnected-panel copy and robot message.
+- P2-D/G: `LoopLiveFeed.jsx`'s `ShippedRow` merged into the shared
+  `ShipApproveCard`/`useShipState` (see F17 above) — all 3 ship surfaces
+  now physically unified.
+- **Real bug found+fixed (live, not pre-planned):** `business_voice_filter.py`
+  had a double-substitution bug — adjacent jargon words ("GitHub repo")
+  each got independently substituted, producing garbled duplicate text a
+  real user saw in a real reply. Root-caused to sequential per-entry
+  `.sub()` calls letting one substitution's output collide with a later
+  entry's pattern. Fixed structurally: rewrote to a SINGLE combined-
+  alternation regex pass (longest-term-first), plus remapped
+  "repo"/"repository"/"github repo"/"github repository" from the
+  plural-sounding "website's pages" to singular-safe "website" (fixed a
+  subject-verb-agreement bug the first fix attempt missed).
+  testing_agent confirmed CLEAN on 2 rounds (`iteration_first_experience_
+  wave_p2wave_verify_2026_09_03.json` caught the residual bug,
+  `iteration_business_voice_fix_v2_retest_2026_09_03.json` confirmed the
+  v2 fix). 5/5 new tests
+  (`test_business_voice_github_repo_doublesub_2026_09_03.py`).
+
+**Found, NOT fixed, flagged for founder review (out of scope this round):**
+On the `R2-live-drill-ora-grounding` project, a fresh unrelated chat
+request ("add a comment to README and ship it") returned a STALE,
+WRONG recalled answer about an unrelated old GitHub-App-404 bug
+(preceded by "ORA recalled 2 similar past answers"), not a real answer
+to the actual request. Looks like a memory/RAG-recall subsystem
+short-circuiting fresh generation with irrelevant history on a heavily
+-reused test project. Needs its own dedicated investigation — flagged as
+the top next-action item.
+
+Full frontend suite: 516/528 (12 pre-existing failures, all confirmed
+unrelated — 8 known getToken-mock gap in 2 untouched files, 4 in
+untouched `PreviewPanel.live_url_fallback.test.jsx`). Backend: 35/35 on
+the touched files. No production changes.
+
+
 # OVERNIGHT LOG — T1→T8 unattended run (started 2026-08-28)
 
 Format: `time | item | status(done/blocked/skipped) | proof-ref`

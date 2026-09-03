@@ -312,12 +312,13 @@ export default function ConnectRepoBanner({ onConnect, onProjectCreated }) {
         >
           {hasZeroRepos
             ? <>You connected the GitHub App but haven't selected any
-                repos yet. Click <strong>Select your repos →</strong> above
+                repos yet (a "repo" is where your website's code
+                lives). Click <strong>Select your repos →</strong> above
                 to pick which ones to grant access to.</>
             : <>Click <strong>Connect repo →</strong> above to install the{" "}
                 <strong>Aurem GitHub App</strong> — one click, no tokens to
                 manage. Choose which repositories to grant access to, and
-                Aurem will start indexing immediately.</>}
+                Aurem will start scanning your site immediately.</>}
         </div>
       )}
     </div>

@@ -28,12 +28,21 @@ export default function ShipApproveCard({
   onApprove,
   onCancel,
   onRollback,
+  onRollbackPointerDown,
   onRetry,
   approveLabel = "Approve the fix",
   approveTitle,
+  // P2-D (this round) — LoopLiveFeed's ShippedRow keeps its OWN legacy
+  // testids (deeply locked by pre-existing tests) even though it now
+  // renders through this shared card. Any key left unset falls back
+  // to the normal `${testidPrefix}-x` pattern below.
+  testidOverrides = {},
 }) {
   const ship = useShipState(status);
   const isBusy = busy || ship.isBusy;
+  const rollbackTestid = testidOverrides.rollback || `${testidPrefix}-rollback-btn`;
+  const retryTestid = testidOverrides.retry || `${testidPrefix}-retry-btn`;
+  const statusTestid = testidOverrides.status || `${testidPrefix}-status`;
 
   return (
     <div data-testid={testidPrefix} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -87,7 +96,7 @@ export default function ShipApproveCard({
         )}
 
         {ship.isShipping && (
-          <span data-testid={`${testidPrefix}-status`} style={{ fontSize: 13, display: "inline-flex", gap: 6, alignItems: "center" }}>
+          <span data-testid={statusTestid} style={{ fontSize: 13, display: "inline-flex", gap: 6, alignItems: "center" }}>
             <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
             {shipStatusLabel(ship.canonical)}
           </span>
@@ -95,11 +104,14 @@ export default function ShipApproveCard({
 
         {ship.isLive && (
           <>
-            <span data-testid={`${testidPrefix}-status`} style={{ fontSize: 13, color: "#22C55E", fontWeight: 600 }}>
+            <span data-testid={statusTestid} style={{ fontSize: 13, color: "#22C55E", fontWeight: 600 }}>
               {shipStatusLabel(ship.canonical)}
             </span>
             {onRollback && (
-              <button data-testid={`${testidPrefix}-rollback-btn`} onClick={onRollback}
+              <button
+                data-testid={rollbackTestid}
+                onClick={onRollback}
+                onPointerDown={onRollbackPointerDown}
                 style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)",
                           background: "transparent", color: "var(--text-dim)", fontSize: 12,
                           cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -110,25 +122,32 @@ export default function ShipApproveCard({
         )}
 
         {ship.isRollingBack && (
-          <span data-testid={`${testidPrefix}-status`} style={{ fontSize: 13, display: "inline-flex", gap: 6, alignItems: "center" }}>
+          <button
+            type="button"
+            disabled
+            data-testid={testidOverrides.rollback || statusTestid}
+            style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)",
+                      background: "transparent", color: "var(--text-dim)", fontSize: 13,
+                      cursor: "wait", opacity: 0.6,
+                      display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
             {shipStatusLabel(ship.canonical)}
-          </span>
+          </button>
         )}
 
         {ship.isRolledBack && (
-          <span data-testid={`${testidPrefix}-status`} style={{ fontSize: 13, color: "var(--text-faint)" }}>
+          <span data-testid={testidOverrides.rollback || statusTestid} style={{ fontSize: 13, color: "var(--text-faint)" }}>
             {shipStatusLabel(ship.canonical)}
           </span>
         )}
 
         {ship.isFailed && (
           <>
-            <span data-testid={`${testidPrefix}-status`} style={{ fontSize: 13, color: "#EF4444" }}>
+            <span data-testid={statusTestid} style={{ fontSize: 13, color: "#EF4444" }}>
               {error || shipStatusLabel(ship.canonical)}
             </span>
             {onRetry && (
-              <button data-testid={`${testidPrefix}-retry-btn`} onClick={onRetry}
+              <button data-testid={retryTestid} onClick={onRetry}
                 style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)",
                           background: "transparent", color: "#F5F5F5", fontSize: 12,
                           cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>

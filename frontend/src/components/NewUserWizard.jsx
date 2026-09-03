@@ -540,6 +540,11 @@ export default function NewUserWizard({ onComplete }) {
               <h2 id="wizard-title" style={hStyle}>
                 {mode === "connect" ? "Connect your GitHub repo" : "Start from an idea"}
               </h2>
+              {mode === "connect" && (
+                <p data-testid="wizard-repo-explainer" style={{ ...pStyle, margin: "4px 0 14px" }}>
+                  A "repo" is just where your website's code lives on GitHub.
+                </p>
+              )}
 
               {/* 2026-08-24 · Guard 22 · Phase 3.1 — path chooser. Default
                   stays "connect" (existing behaviour untouched); this just
@@ -577,9 +582,10 @@ export default function NewUserWizard({ onComplete }) {
               {ghStatus === "disconnected" && (
                 <div data-testid="wizard-gh-disconnected">
                   <p style={pStyle}>
-                    Connect GitHub once — AUREM will use it to read your
-                    repos, write commits, and open PRs. We never store the
-                    token in plaintext.
+                    Connect GitHub once — this lets AUREM see your
+                    website's code (your "repo"), make changes, and open
+                    a request for you to approve before anything goes
+                    live. We never store your access key in plain text.
                   </p>
                   <div style={{ position: "relative" }}>
                     <div data-testid="wizard-pulse-ring" style={oraPulseRingStyle} />
@@ -1120,7 +1126,7 @@ function buildRobotMessage({ ghStatus, busy, err, repoUrl }) {
   {
     if (ghStatus === "checking") return `Checking your GitHub connection…`;
     if (ghStatus === "disconnected")
-      return `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — connects in seconds, no PAT needed.`;
+      return `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — connects in seconds, no password or access key to manage.`;
     if (ghStatus === "manual")
       return `Paste any <strong>public repo URL</strong> below. For private repos, connect GitHub from Settings later. <span class="ora-arrow">👇</span>`;
     if (ghStatus === "choosing" && !repoUrl)

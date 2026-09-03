@@ -1,14 +1,14 @@
 /**
- * ShipUIUnification.r3_physical.test.jsx — R3 (this round).
+ * ShipUIUnification.r3_physical.test.jsx — R3 (2026-09-03) + P2-D
+ * (2026-09-03, same day, founder's user-first wave — explicitly asked
+ * to finish the merge R3 had deferred).
  *
- * Proves the PHYSICAL merge (not just shared labels): ShipDialog
- * (chat-inline) and ShipConfirmModal (modal) both actually import and
- * render <ShipApproveCard/>, which itself is built on useShipState().
- * LoopLiveFeed's ShippedRow is a documented, deliberate exception
- * (see comment below) — it tags its canonical status via
- * toCanonicalShipStatus() instead of swapping its button, because its
- * click-handling has fixed 3 real production incidents (Iter 329,
- * 342, 362) that a generic card would risk reintroducing.
+ * Proves the PHYSICAL merge (not just shared labels): ALL 3 ship
+ * entry points — ShipDialog (chat-inline), ShipConfirmModal (modal),
+ * and LoopLiveFeed's ShippedRow (loop-mode) — import and render
+ * <ShipApproveCard/>, itself built on useShipState(). ShippedRow's
+ * click-safety (Iter 342 pointerdown guard) is preserved via a
+ * dedicated prop, not silently dropped.
  */
 import { readFileSync } from "fs";
 import path from "path";
@@ -54,10 +54,21 @@ describe("R3 — ShipApproveCard itself is built on useShipState (one hook, one 
   });
 });
 
-describe("R3 — LoopLiveFeed's ShippedRow: documented scope line, not a silent skip", () => {
-  const src = read("../LoopLiveFeed.jsx");
-  it("still tags its canonical status via the shared toCanonicalShipStatus mapper", () => {
-    expect(src).toContain('import { toCanonicalShipStatus } from "../lib/useShipState"');
-    expect(src).toContain("data-canonical-ship-status={toCanonicalShipStatus(phase)}");
+describe("P2-D (this round) — LoopLiveFeed's ShippedRow is NOW physically merged too", () => {
+  it("imports ShipApproveCard and renders it for the rollback row (reversing R3's deferral)", () => {
+    const src = read("../LoopLiveFeed.jsx");
+    expect(src).toContain('import ShipApproveCard from "./ShipApproveCard"');
+    expect(src).toContain("<ShipApproveCard");
+    expect(src).toContain('status={phase === "idle" ? "shipped" : phase}');
+  });
+  it("preserves the Iter-342 pointerdown race-safety via a dedicated prop", () => {
+    const src = read("../LoopLiveFeed.jsx");
+    expect(src).toContain("onRollbackPointerDown={(e) => {");
+    expect(src).toContain('triggerRollback("pointerdown")');
+  });
+  it("preserves the legacy testid so no existing selector breaks", () => {
+    const src = read("../LoopLiveFeed.jsx");
+    expect(src).toContain("testidOverrides={{");
+    expect(src).toContain("rollback: `loop-shipped-rollback-btn-${ship.shortSha}`");
   });
 });
