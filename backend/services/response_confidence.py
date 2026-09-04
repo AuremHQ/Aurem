@@ -98,6 +98,13 @@ _FIX_INTENT_TOKENS = {
     "audit", "audits", "scan", "scans", "review", "reviews",
     "vulnerability", "vulnerabilities", "vulnerable", "insecure",
     "security", "secure", "harden", "hardening", "exploit", "exploits",
+    # 2026-09-04 · R10 — same gap as core/intent_gateway.py's
+    # _AGENTIC_VERBS: "check" (and its close synonyms) were missing
+    # here too, so a real "check my page" turn could ALSO be
+    # (wrongly) judged a "definitional mismatch" against its own
+    # legitimate answer.
+    "check", "checks", "checked", "inspect", "inspects", "verify",
+    "verifies",
     # R3 (2026-08-31) — CONFIRMED gap: a non-technical business owner's
     # plain, clear, task-shaped request ("put our opening hours at the
     # top of our main page") has NONE of the tokens above, so

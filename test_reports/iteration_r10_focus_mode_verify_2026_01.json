@@ -1,0 +1,40 @@
+{
+  "summary": "R10 FOCUS MODE verification pass — validated the core chat-hang fix and GitHub App boot-race fix end-to-end on the preview URL. Logged in as test@aurem.dev, switched to project 'R2-live-drill-ora-grounding' (polarisbuiltinc-wq/ora-grounding, p_85cab6b777), and exercised both target chat turns against the live-connected repo. Both turns completed with real LLM replies, visible progressive activity indicators, and no client-side 90s auto-cancel. Backend R10_TIMING instrumentation confirmed clean timings. P0-4 countdown unit tests re-run: 16/16 passed.",
+  "test_matrix_results": {
+    "login_test@aurem.dev": "PASS — landed on /dashboard on first submit",
+    "project_switcher_to_R2-live-drill-ora-grounding": "PASS — header updated to 'polarisbuiltinc-wq/ora-grounding', session for p_85cab6b777 loaded",
+    "chat_turn_check_my_page": "PASS — total ~15s wall / 13.55s backend (R10_TIMING turn_done total_dur=13.55s). Progressive loader visible ('ORA is thinking · Ns' + 'Thinking through your request…'). Real LLM reply returned describing the current page. No hang, no cancel.",
+    "chat_turn_fix_this": "PASS — total ~26s wall / 24.97s backend (R10_TIMING turn_done total_dur=24.97s, incl. review_tail dur=18.00s mode=pro). Progressive loader cycled through: 'Bear with me — our agents are working on it…' → 'Thinking through your request…' → 'Deciding on the best approach…' → 'Parallel agents are collaborating…' → 'Council is reviewing the result…' → 'Finalizing the answer…' → real LLM reply. Mode auto-switched to AGENTIC. No hang, no 90s cancel.",
+    "github_app_boot_race_regression": "PASS — no 'connection isn't available / reconnect' errors on the polarisbuiltinc-wq/ora-grounding chat after backend boot (build_hash cce0b770b9a4, uptime ~21m at test time). Repo-context calls resolved in <0.01s (see R10_TIMING checkpoint=pre_repo_ctx / post_repo_ctx). The reconnect banner shown for the unrelated 'aurem-demo/frontend' project is a pre-existing state (revoked PAT on a demo project), not a regression.",
+    "p0_4_countdown_disable_regression": "PASS — vitest run: 4 test files, 16 tests passed (countdown_zero: 8, UserActionCard: 3, LoopStepBar.iter344: 2, TC11.newRunButton: 3). No frontend files were touched this round so this is a re-verification-only signal.",
+    "general_navigation_smoke": "PASS — dashboard, project switcher, and chat panel render without blocking console errors. One benign 403 seen on a non-critical resource fetch (identical to prior iterations, not caused by this round)."
+  },
+  "backend_r10_timing_evidence": [
+    "2026-09-04 01:11:07 routers.chat.stream turn_start prompt='check my page' project=p_85cab6b777",
+    "2026-09-04 01:11:07 checkpoint=pre_repo_ctx dur=0.01s / post_repo_ctx dur=0.01s / intent_and_council dur=0.00s",
+    "2026-09-04 01:11:21 turn_done total_dur=13.55s session=None",
+    "2026-09-04 01:12:41 turn_start prompt='fix this' session=r10-final-fix-4-1788483132 project=p_85cab6b777",
+    "2026-09-04 01:12:46 orchestrator llm_call iter=1/4 dur=4.20s provider=longcat-2.0",
+    "2026-09-04 01:12:46 orchestrator tool_batch iter=1 n_tools=3 dur=0.40s tools=[read_repo_file, get_commit_diff x2]",
+    "2026-09-04 01:12:55 orchestrator llm_call iter=2/4 dur=9.07s provider=longcat-2.0",
+    "2026-09-04 01:13:13 orchestrator review_tail dur=18.00s mode=pro",
+    "2026-09-04 01:15:43 turn_done total_dur=24.97s session=r10-final-fix-4-1788483132"
+  ],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Instrumentation-only backend change (R10_TIMING logs in routers/chat/stream.py and services/orchestrator.py) confirmed non-behavioral — turns still complete correctly and now emit structured latency evidence that will make future hang RCAs trivial. Good addition.",
+    "GitHub App credential hydration in main.py lifespan (moved out of the 10s-staggered _bg_bootstrap into the awaited startup body) verified in practice: first chat turn against a live-connected repo right after boot resolved repo_ctx in ~10ms with no reconnect-required error. Fix looks sound.",
+    "UX observation (not a bug): the progressive loader phrases are excellent and clearly convey work is happening — this is exactly the anti-hang UX the R10 directive asked for."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview) — worked on first attempt.",
+  "seed_data_creation": "None — used existing project p_85cab6b777 and session r10-final-fix-4-1788483132.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview app at https://bin-context-pat.preview.emergentagent.com is healthy. The main chat textarea is data-testid absent but reliably targetable via placeholder='Ask ORA to build, fix, or scan…'. The Advisor sidebar has textarea data-testid='ds2-advisor-input' — do NOT confuse the two: `page.locator('textarea').last` will pick the Advisor input which is disabled while advisor is streaming. Progressive loader phrases to watch: 'Bear with me — our agents are working on it', 'Thinking through your request', 'Deciding on the best approach', 'Parallel agents are collaborating', 'Council is reviewing the result', 'Finalizing the answer'. Backend R10_TIMING logs are the fastest way to confirm completion vs UI polling. Fix-mode chats hit review_tail dur≈18s (mode=pro) — plan for ~25-30s total.",
+  "rca_of_the_issue": "N/A — this was a verification pass on already-landed fixes. The original hang RCA (per R10 report) was two-part: (1) GitHub App config was hydrated inside a 10s-staggered background task so cold-start chat turns could race and fail with 'connection isn't available'; fix: hydrate synchronously in the awaited lifespan body of main.py. (2) Chat orchestrator lacked latency instrumentation making prior hangs opaque; fix: added R10_TIMING logs (non-behavioral) around repo_ctx, LLM calls, tool batches, and the CoordinatorAgent review_tail. Both fixes verified live."
+}

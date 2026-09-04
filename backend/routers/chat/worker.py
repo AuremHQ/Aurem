@@ -110,7 +110,7 @@ async def _mode_broadcast(state: StreamState) -> str:
     recompute only if that block was skipped (ora_panel=true) or
     didn't run."""
     body, q = state.body, state.q
-    _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload)
+    _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload, body.project_id)
     # Confidence scoring — surfaces a `mode_confirm` event when the
     # message is ambiguous so the UI can ask the user before burning
     # an LLM call on the wrong mode. Honoured only when the user has

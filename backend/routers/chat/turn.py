@@ -257,7 +257,7 @@ async def chat_send(
             # that index — so this call was returning 0 candidates on
             # every real request, unconditionally. classify_intent()
             # is a cheap heuristic (no LLM call), safe here.
-            _recall_mode_send = classify_intent(body.prompt or "", body.f12_payload)
+            _recall_mode_send = classify_intent(body.prompt or "", body.f12_payload, body.project_id)
             _council_block, _council_recalled = await get_council_few_shot(
                 _db_ref, body.prompt or "",
                 mode=_recall_mode_send,

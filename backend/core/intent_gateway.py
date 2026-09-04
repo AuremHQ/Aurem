@@ -61,6 +61,15 @@ _AGENTIC_VERBS = {
     "implement", "add", "remove", "update", "patch",
     "configure", "wire", "install", "uninstall", "import",
     "export", "publish",
+    # 2026-09-04 · R10 (core-flow hang round) — REAL BUG, live-
+    # reproduced: "check my page" (a plain action request, 3 words)
+    # had no agentic-verb match ("check" was missing here even
+    # though "scan"/"audit"/"review" — its exact synonyms — were
+    # already present), so it fell through the length-based casual
+    # bucket below and got a fabricated, ungrounded "Got it! Just
+    # scanned your page — looks good" non-answer instead of a real
+    # tool-using check.
+    "check", "review", "audit", "inspect", "verify", "test",
     # 2026-09-03 · Root 3 (core-flow round) — non-technical business-
     # owner content-edit verbs ("change our hours", "correct the
     # phone number", "swap the photo"). These are real edits, not

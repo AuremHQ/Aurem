@@ -1,3 +1,96 @@
+## 2026-09-04 — R10 FOCUS MODE: core chat-hang diagnosis + real fix (founder directive: stop all other work, prove root cause, fix it)
+
+**Founder's exact ask:** the core chat/code-fix flow was hanging ~90s
+with no result (UI stuck on "thinking"/"council reviewing" stages,
+then client-side auto-cancel). Diagnose with PER-STAGE TIMING PROOF,
+not guessing; fix the real bottleneck; get "check my page" and "fix
+this" both completing in <20s across 5 consecutive runs; re-verify
+P0-4 and rollback-verification; no new features.
+
+**Root cause #1 — FOUND + FIXED (proven via live before/after boot
+logs):** `main.py`'s lifespan fires `_bg_bootstrap()` via
+`asyncio.create_task()` (never awaited). That function opens with a
+deliberate `await asyncio.sleep(10)` ("Iter 336 boot stagger — let
+/health serve cleanly first"), and the GitHub App config hydration
+(`admin_settings._id="github_app_config"` → runtime cache used by
+every repo-connected chat turn) sat at the END of that same function,
+AFTER several more awaited steps. Net effect: uvicorn logged
+"Application startup complete" and began serving real traffic 9-11+
+seconds before GitHub App credentials were warm. Any chat turn
+against a connected repo landing in that window got a fast, WRONG
+"connection isn't available — reconnect" error even though valid
+credentials sat in Mongo the whole time. Reproduced 4/4 times across
+consecutive restarts with exact timestamps (`build_bin_context`
+warning fired within 8ms of each cold-start turn's `turn_start`).
+**Fix:** moved the hydration block out of `_bg_bootstrap()` into the
+main AWAITED lifespan body, right before the background task is
+scheduled. Re-verified 4/4 clean restarts: hydration now logs BEFORE
+"Application startup complete" every time. File: `backend/main.py`.
+
+**Root cause #2 — DIAGNOSED with real per-stage timing (not fully
+"fixable" without a product tradeoff):** added `R10_TIMING` log
+instrumentation (non-behavioral) across `routers/chat/stream.py` +
+`services/orchestrator.py` — turn start, repo/PAT context build,
+intent+council recall, each LLM round-trip, each parallel tool batch,
+the CoordinatorAgent review-tail pass, turn done. 10 live runs
+(project `p_85cab6b777`, real GLM-5.2/LongCat calls, MOCK_LLM=false):
+- Pre-LLM context phase: consistently <1s — never the bottleneck.
+- "check my page": minimum 2 sequential LLM round-trips (1.8-8.5s
+  each on GLM-5.2) — 6-17s of unavoidable third-party latency alone.
+  5-run sample: 26.2/7.1/18.6/23.1/8.7s (3/5 under 20s).
+- "fix this": same 1-2 LLM round-trips PLUS a CoordinatorAgent
+  Reviewer+Security review pass capped at 20s, which used
+  17.4-18.0s (near its full budget) on 3/5 runs. 5-run sample:
+  17.4/19.1/30.4/23.3/28.5s.
+- **Zero hangs in 10 live attempts; max observed was 30.4s** — nothing
+  near the 90s frontend timeout once root cause #1 was fixed.
+- The <20s bar is not reliably met for either prompt; the remaining
+  latency is real third-party LLM round-trip time + the review-tail's
+  budget, not an app bug. Shortening the review-tail cap or cutting
+  to 1 LLM round-trip would trade away review completeness / answer
+  quality — left as a founder decision, not changed unilaterally.
+  Founder's response when asked: **"no new build, just older fixes
+  and UI needs to run properly without issue"** — read as: keep the
+  review-tail/latency architecture as-is (option a), verify existing
+  flows work end-to-end instead of trading off quality for speed.
+
+**Verification (testing_agent, live preview, real backend):**
+`/app/test_reports/iteration_r10_focus_mode_verify_2026_01.json` —
+100%/100%, 0 action items. Logged in, switched to the real connected
+project, ran both "check my page" (13.55s, real reply, progressive
+loader, no hang) and "fix this" (24.97s incl. 18.00s review_tail,
+real reply, no hang/no 90s cancel) live in the actual UI. Confirmed
+NO cold-start "connection unavailable" regression post-boot. P0-4
+re-verified: 16/16 passed, zero regression.
+
+**Also re-verified this round (no code change needed):**
+- P0-4 (0:00 countdown button-disable): `countdown_zero.test.jsx` +
+  `UserActionCard.test.jsx` + `LoopActionCards.iter332_ship_gate.test.jsx`
+  — 18/18 passed (standalone) / 16/16 (testing_agent's broader run).
+- R10b rollback-verifies-before-"done": existing
+  `rollback_two_phase.py` already gates `rollback_status="done"` on a
+  real verified-revert check (locked by pre-existing
+  `test_t2_rollback_pr_gap_hardening_2026_08_30.py`, 7 passed). Added
+  the founder-named traceability test
+  `backend/tests/test_r10b_rollback_verifies_landed_2026_09_04.py`
+  (2 passed) so the exact contract can't silently regress.
+- R10 intent-routing fix (from earlier this round):
+  `classify_intent` now threaded with `project_id` through
+  `worker.py`/`stream.py`/`turn.py`. Test:
+  `backend/tests/test_r10_core_hang_2026_09_04.py` — 6 passed.
+- F19/F20 ledger: ROADMAP.md already carries an accurate founder-
+  facing note (Wave-4/5 content the founder asked to add as "F19/F20"
+  already exists as F20/F21; F19 itself remains a genuine documented
+  gap pending founder wording). No fabrication added.
+
+**Explicitly NOT done this round (blocked / out of scope per founder
+reply):** the 2 additional future-ledger items the founder said
+they'd list (never supplied — flagged, not invented); the Render
+migration CNAME/webhook details (no Render hostname was ever
+supplied — flagged, not guessed); no review-tail timeout change (founder
+chose "no new build" over the speed/quality tradeoff).
+
+
 ## 2026-09-09 (part 6) — CRITICAL FIX: cross-tenant identity leak / ungrounded live-content fabrication guard
 
 **Founder repro (fresh account):** Asked "what does my website say right now?" inside the ReRootsBeauty/ReRoots- project chat. ORA replied `*checks the live homepage* The current homepage shows: - A hero banner with "Welcome to Aurem" - CTA "Get Started" - Footer...` — **this is AUREM's OWN marketing site**, not the customer's connected project. Asked to clarify, ORA doubled down: "I'm checking the live homepage for Aurem's official site (aurem.dev), not a client's site." Zero real tool calls behind either claim — a severe fabrication that leaked ORA's own vendor identity into a customer's project.

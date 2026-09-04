@@ -77,6 +77,9 @@ async def chat_stream(
 ):
     """SSE token-streaming chat. Iter 45: rate-limited to 30 req/min per IP.
     Iter 50.1: founders / unlimited accounts bypass the rate-limit."""
+    _r10_turn_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
+    logger.info("R10_TIMING turn_start prompt=%r session=%s project=%s",
+                (body.prompt or "")[:40], body.session_id, body.project_id)
     user = await current_dev(authorization)
     # Overnight loop W2 Step 2 (2026-08-29) — MOCK_LLM short-circuit,
     # BEFORE any provider routing/tool/repo-context construction. The
@@ -226,6 +229,7 @@ async def chat_stream(
     bin_ctx = None
     if _pid_stream and _pid_stream != "home":
         from services.ora_context import build_ora_context
+        _r10_bin_t0 = time.monotonic()
         try:
             # Iter 212m-177 P1-6 — hard cap (Mongo + GitHub /repos call).
             bin_ctx = await asyncio.wait_for(build_ora_context(
@@ -238,7 +242,11 @@ async def chat_stream(
                     or is_founder_email(user.get("email"))
                 ),
             ), timeout=10.0)
+            logger.info("R10_TIMING checkpoint=post_bin_ctx dur=%.2fs bin_dur=%.2fs",
+                        time.monotonic() - _r10_turn_t0, time.monotonic() - _r10_bin_t0)
         except asyncio.TimeoutError:
+            logger.warning("R10_TIMING checkpoint=bin_ctx_TIMEOUT dur=%.2fs bin_dur=%.2fs",
+                            time.monotonic() - _r10_turn_t0, time.monotonic() - _r10_bin_t0)
             raise HTTPException(
                 503,
                 "Repo context timed out (GitHub slow?) — try again in a "
@@ -323,7 +331,9 @@ async def chat_stream(
     # standard tool-invocation pipeline so users see a 📖 Reading URL…
     # step card and a 🌐 web_sources chip — no more silent context
     # stuffing that bypassed the tool UI.
+    logger.info("R10_TIMING checkpoint=pre_repo_ctx dur=%.2fs", time.monotonic() - _r10_turn_t0)
     repo_ctx = await _safe(get_repo_context(user_id, body.project_id or ""), "repo_context")
+    logger.info("R10_TIMING checkpoint=post_repo_ctx dur=%.2fs", time.monotonic() - _r10_turn_t0)
     url_ctx = ""
 
     # ── Iter 212m-26 — Auto-ship-shortcut REMOVED ─────────────────────
@@ -441,6 +451,7 @@ async def chat_stream(
     _council_recalled = 0
     _council_block = ""
     _recall_mode = None
+    _r10_council_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
     if not body.ora_panel:
         try:
             from cto_services.db import get_db as _get_db
@@ -455,7 +466,7 @@ async def chat_stream(
                 # intent's taxonomy), not "code"/"chat" (_detect_mode's).
                 # Computed once here and reused below at the existing
                 # A/B/C/D/E broadcast so we don't classify twice.
-                _recall_mode = classify_intent(body.prompt or "", body.f12_payload)
+                _recall_mode = classify_intent(body.prompt or "", body.f12_payload, body.project_id)
                 _council_block, _council_recalled = await asyncio.wait_for(
                     get_council_few_shot(
                         _db_ref, body.prompt or "",
@@ -469,6 +480,10 @@ async def chat_stream(
                                  + ("\n\n" + extra_sys if extra_sys else ""))
         except Exception as _cre:
             logger.debug("council retrieval skipped (chat/stream): %r", _cre)
+    logger.info(
+        "R10_TIMING intent_and_council dur=%.2fs recall_mode=%s recalled=%d",
+        time.monotonic() - _r10_council_t0, _recall_mode, _council_recalled,
+    )
 
     # 2026-08-27 · Plain-English Output Contract (Phase 1, flag-gated).
     # Reuses `_recall_mode` computed above (None when ora_panel=True,
@@ -1127,6 +1142,11 @@ async def chat_stream(
             # after swatches rendered by PaletteNudgeBubble.jsx, no jargon).
             "palette_nudges": result.get("palette_nudges") or [],
         }
+        logger.info(
+            "R10_TIMING turn_done total_dur=%.2fs session=%s tool_calls=%s",
+            time.monotonic() - _r10_turn_t0, body.session_id,
+            done_payload.get("tool_calls_run"),
+        )
         yield f"data: {json.dumps(done_payload)}\n\n"
 
     _pg_elapsed = _pg_time.monotonic() - _pg_t0

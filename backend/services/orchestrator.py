@@ -2294,6 +2294,7 @@ async def chat_with_tools(
                 activity_hook(f"working on it (iter {iters}/{max_iters})…")
             except Exception:
                 pass
+        _r10_llm_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
         meta = await call_llm_with_meta(
             first_iter_system if iters == 1 else (
                 # Iter 388k — Bug 12 fix.  Last-iter guard.  If we're
@@ -2334,6 +2335,12 @@ async def chat_with_tools(
             # DeepSeek/Claude routing untouched.
             review_mode=(mode if mode in {"swift", "pro", "maxx"} else None),
             step_hook=step_hook,
+        )
+        logger.info(
+            "R10_TIMING llm_call iter=%d/%d dur=%.2fs use_code_model=%s "
+            "llm_mode=%s provider=%s",
+            iters, max_iters, time.monotonic() - _r10_llm_t0,
+            use_code_model, llm_mode, meta.get("provider"),
         )
         content = meta.get("content") or ""
         final_provider = meta.get("provider") or final_provider
@@ -2509,6 +2516,7 @@ async def chat_with_tools(
             # flaky reviewer can never break the chat path.
             agent_meta: dict = {}
             if use_code_model and content and mode in ("swift", "pro", "maxx"):
+                _r10_review_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
                 try:
                     from .agents import CoordinatorAgent
                     coord = CoordinatorAgent(mode=mode)
@@ -2532,6 +2540,11 @@ async def chat_with_tools(
                         )
                 except Exception as _re:
                     logger.warning("agents: review tail failed: %r", _re)
+                finally:
+                    logger.info(
+                        "R10_TIMING review_tail dur=%.2fs mode=%s",
+                        time.monotonic() - _r10_review_t0, mode,
+                    )
             # Iter 212m-14 — runtime hallucination guard. Post-processes
             # the final content: when the LLM makes a credential/auth
             # status claim ("PAT appears unauthorized", "401 forbidden",
@@ -2746,7 +2759,13 @@ async def chat_with_tools(
                 })
             return {"tool": tool_name, "result": res}
 
+        _r10_tool_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
         results_for_llm = await asyncio.gather(*[_run_one(c) for c in calls])
+        logger.info(
+            "R10_TIMING tool_batch iter=%d n_tools=%d dur=%.2fs tools=%s",
+            iters, len(calls), time.monotonic() - _r10_tool_t0,
+            [c.get("tool") for c in calls],
+        )
 
         # iter 323ad — per-tool truncation (was: total 4000 chars cut
         # across ALL results → ORA half-results dekh ke wrong conclusions).

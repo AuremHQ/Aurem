@@ -221,7 +221,30 @@ def detect_prompt_injection(message: str) -> str | None:
     return None
 
 
-def _f12_has_real_signal(payload: dict) -> bool:
+import re as _re_f12_project
+
+_URL_PROJECT_ID_RE = _re_f12_project.compile(r"/projects/([A-Za-z0-9_\-]+)")
+
+
+def _f12_signal_belongs_to_project(url: str, project_id: Optional[str]) -> bool:
+    """2026-09-04 · R10 (core-flow hang round) — REAL BUG, live-
+    reproduced: a captured browser network error from a DIFFERENT,
+    previously-visited project (e.g. a stale `/cto/projects/p_demo_a/
+    warm-start` 403 sitting in the F12 capture buffer) was hijacking
+    an UNRELATED chat turn on the CURRENT project into Mode D
+    ("check my page" on project X got answered as if debugging a
+    GitHub-auth error on project Y). If the URL names a specific
+    project and it isn't the one we're actually chatting about, this
+    error is stale noise, not a real signal for THIS turn."""
+    if not project_id:
+        return True  # no current project to compare against — can't filter
+    m = _URL_PROJECT_ID_RE.search(url or "")
+    if not m:
+        return True  # URL doesn't name a project — treat as still relevant
+    return m.group(1) == project_id
+
+
+def _f12_has_real_signal(payload: dict, project_id: Optional[str] = None) -> bool:
     """Iter 50 — guards against fishing-expedition Mode D triggers when the
     F12 buffer holds only noise (aborted/200 network entries, no stack
     traces, no real console.error messages).
@@ -232,11 +255,16 @@ def _f12_has_real_signal(payload: dict) -> bool:
     Mode D on the user's very first chat message, producing the spammy
     "Files to check: (unknown — error context too thin)" bailout.
 
+    2026-09-04 · R10 — `project_id`, when given, additionally drops any
+    network error whose URL names a DIFFERENT project (see
+    `_f12_signal_belongs_to_project`).
+
     Returns True only when the payload contains something a debugger
     can actually use:
       * A console error with a non-trivial message (>5 chars)
       * A network error with HTTP status in 400-599 AND a real URL AND
-        NOT a transient proxy/gateway code with an HTML body
+        NOT a transient proxy/gateway code with an HTML body AND
+        (no project_id filter, or the URL belongs to THIS project)
       * Any stack trace
     """
     if not isinstance(payload, dict):
@@ -250,6 +278,8 @@ def _f12_has_real_signal(payload: dict) -> bool:
         if not (isinstance(st, int) and 400 <= st < 600 and ne.get("url")):
             continue
         if _is_transient_proxy_error(st, ne.get("response_body", "")):
+            continue
+        if not _f12_signal_belongs_to_project(ne.get("url"), project_id):
             continue
         return True
     if payload.get("stack_traces"):
@@ -299,7 +329,7 @@ def _is_transient_proxy_error(status: int, body) -> bool:
     return ("<!doctype html" in bl) or ("<html" in bl) or ("cloudflare" in bl)
 
 
-def classify_intent(message: str, f12_payload: Optional[dict]) -> str:
+def classify_intent(message: str, f12_payload: Optional[dict], project_id: Optional[str] = None) -> str:
     """Returns one of: 'A','B','C','D','E','F'. Order matters."""
     from services.mode_d_debugger import is_debug_request
     from services.mode_e_auditor  import is_audit_request
@@ -312,7 +342,7 @@ def classify_intent(message: str, f12_payload: Optional[dict]) -> str:
     if _GREETING.match(msg):
         return "A"
 
-    if f12_payload and _f12_has_real_signal(f12_payload):
+    if f12_payload and _f12_has_real_signal(f12_payload, project_id):
         return "D"
     if is_debug_request(message):
         return "D"

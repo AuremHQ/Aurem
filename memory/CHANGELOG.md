@@ -1,5 +1,91 @@
 # AUREM CTO — Changelog (append-only)
 
+- **R10 FOCUS MODE — core chat-hang diagnosis + real fix (2026-09-04)**
+  - **ROOT CAUSE #1 FOUND + FIXED (proven, not guessed):** GitHub App
+    config hydration (`admin_settings._id="github_app_config"` →
+    `set_runtime_github_app_config`) lived at the END of `main.py`'s
+    `_bg_bootstrap()`, which opens with a deliberate `await
+    asyncio.sleep(10)` ("Iter 336 boot stagger — let /health serve
+    cleanly first") plus several more awaited steps before it. Because
+    `_bg_bootstrap()` is fired via `asyncio.create_task(...)` and NEVER
+    awaited by the lifespan, uvicorn logged "Application startup
+    complete" and started serving real traffic 9-11+ seconds BEFORE
+    the GitHub App credential cache was warm. Any chat turn against a
+    github_app-connected repo landing in that window got a fast,
+    WRONG "connection isn't available — reconnect" 403, even though
+    valid credentials sit in Mongo the whole time. **Live-reproduced
+    4/4 times across consecutive restarts** (boot-log timestamps:
+    "Application startup complete" at T, "GitHub App config hydrated"
+    at T+9.3s to T+11.7s; `build_bin_context` warning fired within
+    8ms of each of those cold-start turns). **Fix:** moved the
+    hydration block out of `_bg_bootstrap()` into the main AWAITED
+    lifespan body, right before the background task is scheduled — a
+    single fast `find_one`, no reason to defer it. Re-verified: 4/4
+    fresh restarts now show "GitHub App config hydrated" logged
+    BEFORE "Application startup complete". Files: `backend/main.py`.
+  - **ROOT CAUSE #2 DIAGNOSED (per-stage timing added, not guessed):**
+    added temporary `R10_TIMING` stage logs (turn start, repo/PAT
+    context build, intent+council recall, each orchestrator LLM
+    round-trip, each parallel tool batch, the CoordinatorAgent
+    review-tail pass, turn done) across `routers/chat/stream.py` +
+    `services/orchestrator.py`. Live evidence over 10 real runs
+    (project `p_85cab6b777`, real GitHub App-connected repo, real
+    GLM-5.2/LongCat calls, no mocks):
+    - Pre-LLM context phase (auth, budget, repo/brain context, council
+      recall): consistently **<1s** — not the bottleneck.
+    - "check my page" (casual/agentic, no code keyword): minimum 2
+      sequential LLM round-trips (decide-what-to-read → synthesize
+      final answer from tool results), each 1.8–8.5s on GLM-5.2 —
+      **this pair alone is 6–17s of unavoidable provider latency**,
+      before any tool time (tool batches ran in 0.3–2s, already
+      parallelized). 5-run sample: 26.2s / 7.1s / 18.6s / 23.1s /
+      8.7s — 3/5 under 20s.
+    - "fix this" (matches the `fix` code-keyword → `use_code_model`):
+      same 1–2 LLM round-trips PLUS an additional CoordinatorAgent
+      "review tail" (Reviewer+Security agents, parallel) capped at
+      20s — this pass hit **17.4–18.0s (essentially its full budget)
+      on 3 of 5 runs**, driving totals to 17.4s / 19.1s / 30.4s /
+      23.3s / 28.5s.
+    - **No run, in 10 live attempts across both prompts, ever hung or
+      approached the 90s frontend timeout** — max observed was 30.4s.
+      The founder-reported 90s stalls are consistent with Root Cause
+      #1 (now fixed) stacking with this Root Cause #2 tail latency
+      under adverse GLM-5.2/LongCat response times, not an infinite
+      hang. **The <20s bar is not yet reliably met for either prompt**
+      — the remaining latency is dominated by real third-party LLM
+      provider round-trip time (2 sequential calls minimum, 3rd-party
+      GLM-5.2/LongCat) and the review-tail's up-to-20s budget, not by
+      an app-code bug. Left unchanged pending founder direction —
+      lowering the review-tail timeout or cutting to a single LLM
+      round-trip both trade quality/security-review completeness for
+      speed, a product decision outside this diagnostic pass's
+      unilateral authority.
+  - **R10 core-hang regression test** (from earlier this round, intent
+    classification now threaded with `project_id` in `worker.py`/
+    `stream.py`/`turn.py`): `backend/tests/test_r10_core_hang_2026_09_04.py`
+    — 6 passed.
+  - **R10b rollback-verification traceability test added:**
+    `backend/tests/test_r10b_rollback_verifies_landed_2026_09_04.py` —
+    2 passed. Existing `rollback_two_phase.py` already verified revert
+    landed before reporting `rollback_status="done"` (confirmed via
+    pre-existing `test_t2_rollback_pr_gap_hardening_2026_08_30.py`, 7
+    passed) — this new test locks the exact founder-named contract
+    (`t_rollback_verifies_landed`) so it can't silently regress.
+  - **P0-4 (0:00 countdown button-disable) re-verified**, no
+    regression from the intent-routing change:
+    `countdown_zero.test.jsx` + `UserActionCard.test.jsx` +
+    `LoopActionCards.iter332_ship_gate.test.jsx` — 18/18 passed.
+  - **Task 7 / future ledger:** F19/F20 status confirmed unchanged —
+    ROADMAP.md already carries a founder-facing note that the Wave-4/5
+    content the founder asked to add as "F19/F20" already exists
+    (as F20/F21) and that F19 itself remains a genuine, still-
+    undocumented gap pending founder wording. No fabrication added.
+    The two ADDITIONAL future-ledger items the founder said they'd
+    list were not supplied in this round — flagged, not invented.
+  - **Render migration:** exact CNAME target / new webhook host
+    could not be produced — no Render deployment hostname was
+    supplied. Flagged for the founder rather than guessed.
+
 - **Wave 2 (PR-gate) status-chip gap closed (2026-09-08)** — discovered most of Wave 2 (branch `auremcto/ship-{slug}`, draft PR, `aura:ship` webhook dispatch, merge_commit_sha-correct rollback, fail-closed PR-state checks, drift detection) was ALREADY built + tested in an earlier round (2026-08-28/08-30, "Overnight T7"/"T2/R10"), flag ON in Preview, OFF in prod. The one real gap: no live status chip on the shipped-PR row. Added:
   - `routers/loop.py::loop_status` — additive `pr_status` field (reads `loop_outcomes` by `ship_branch`, omitted for direct-commit ships). 3 new backend tests (`test_overnight_t7_ship_via_pr.py`).
   - `LoopLiveFeed.jsx::ShippedRow` — polls `getLoopStatus` every 5s (2min cap) while a PR is open, renders an Open/Merged/Closed chip next to the "Review PR on GitHub" link. 4 new frontend tests (`LoopLiveFeed.wave2_pr_status_chip.test.jsx`). All 56 LoopLiveFeed tests green, zero regressions.

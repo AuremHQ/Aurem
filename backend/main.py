@@ -1465,38 +1465,6 @@ async def lifespan(app: FastAPI):
                 "stripe boot hydration failed (falls back to env): %r", _e,
             )
 
-        # ── 2026-02-10 — GitHub App config boot loader ───────────────
-        # Hydrate the runtime GitHub App credentials (app_id, app_slug,
-        # private_key PEM, webhook_secret) from
-        # `admin_settings._id="github_app_config"` in EVERY worker.
-        # Same multi-worker-safe pattern as the Stripe hydrator above.
-        # Fail-open: if the doc is missing or Mongo is down, the
-        # integration reports `not configured` and the (future)
-        # install / webhook / install-token code paths short-circuit.
-        try:
-            from services.github_app_config import (
-                set_runtime_github_app_config, REQUIRED_FIELDS,
-            )
-            gh_row = await app.state.db.admin_settings.find_one(
-                {"_id": "github_app_config"},
-            )
-            if gh_row and all(gh_row.get(f) for f in REQUIRED_FIELDS):
-                set_runtime_github_app_config({
-                    f: gh_row.get(f) for f in REQUIRED_FIELDS
-                })
-                logger.info(
-                    "🐙 GitHub App config hydrated from admin_settings "
-                    "(app_id=%s slug=%s, updated_by=%s)",
-                    gh_row.get("app_id"),
-                    gh_row.get("app_slug"),
-                    gh_row.get("updated_by", "?"),
-                )
-        except Exception as _e:                                # noqa: BLE001
-            logger.warning(
-                "github_app boot hydration failed (integration will report "
-                "not configured until admin re-pastes): %r", _e,
-            )
-
         # Iter 328 — SYSTEM_INVENTORY auto-append (Ripple miss #3 close-out).
         # On every boot (which happens after every Emergent auto-commit), scan
         # the last commit range for inventory-worthy additions (new routers,
@@ -1515,6 +1483,44 @@ async def lifespan(app: FastAPI):
             logger.info("📚 SYSTEM_INVENTORY auto-append scheduled (HEAD~1..HEAD)")
         except Exception as _e:                               # noqa: BLE001
             logger.debug(f"inventory auto-append schedule failed: {_e!r}")
+
+    # 2026-09-04 · R10 FOCUS MODE fix — GitHub App config hydration was
+    # previously the LAST step inside `_bg_bootstrap()`, which starts
+    # with a deliberate `await asyncio.sleep(10)` (Iter 336 boot stagger,
+    # kept so /health serves cleanly first) followed by several more
+    # awaited steps. Net effect: `is_configured()` stayed False for
+    # 9-11+ seconds after "Application startup complete" on EVERY
+    # restart/deploy. Any chat turn against a github_app-connected repo
+    # landing in that window got a fast, WRONG "connection unavailable"
+    # 403 even though valid credentials sit in Mongo (confirmed via
+    # live repro: boot log showed "Application startup complete" at
+    # T, "GitHub App config hydrated" at T+9.3s to T+11.7s across 4
+    # consecutive restarts). This is a single fast Mongo find_one — no
+    # reason to defer it. Runs awaited, BEFORE the staggered background
+    # task, so the cache is warm the instant the app accepts traffic.
+    try:
+        from services.github_app_config import (
+            set_runtime_github_app_config, REQUIRED_FIELDS,
+        )
+        gh_row = await app.state.db.admin_settings.find_one(
+            {"_id": "github_app_config"},
+        )
+        if gh_row and all(gh_row.get(f) for f in REQUIRED_FIELDS):
+            set_runtime_github_app_config({
+                f: gh_row.get(f) for f in REQUIRED_FIELDS
+            })
+            logger.info(
+                "🐙 GitHub App config hydrated from admin_settings "
+                "(app_id=%s slug=%s, updated_by=%s)",
+                gh_row.get("app_id"),
+                gh_row.get("app_slug"),
+                gh_row.get("updated_by", "?"),
+            )
+    except Exception as _e:                                # noqa: BLE001
+        logger.warning(
+            "github_app boot hydration failed (integration will report "
+            "not configured until admin re-pastes): %r", _e,
+        )
 
     app.state.bootstrap_task = _asyncio.create_task(_bg_bootstrap())
 
