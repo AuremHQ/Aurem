@@ -77,9 +77,34 @@ function injectLd(html, ld) {
 }
 
 function injectRoot(html, inner) {
+  // 2026-09-04 — flash-of-unstyled-content fix. `inner` is raw semantic
+  // HTML (h1/p/ul, no classes) meant for non-JS crawlers. Real visitors
+  // briefly see it verbatim before React's `createRoot().render()`
+  // replaces #root's children — on a slow connection/bundle load that
+  // showed up as an unstyled plain-text dump flashing before the
+  // actual (styled) homepage, on every load/refresh. Scoping it with
+  // the site's own dark theme (bg/text/accent match index.css) makes
+  // that unavoidable pre-hydration window look intentional/branded
+  // instead of broken. Crawlers that don't execute CSS still get the
+  // exact same semantic markup/text — nothing removed, nothing hidden.
+  const styled = `<div class="ora-seo-snapshot">${inner}</div>` +
+    `<style>
+      .ora-seo-snapshot{background:#0a0e1a;color:#f8fafc;min-height:100vh;
+        font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
+        max-width:760px;margin:0 auto;padding:64px 24px;line-height:1.6}
+      .ora-seo-snapshot h1{font-size:28px;font-weight:700;margin:0 0 18px;letter-spacing:-0.5px}
+      .ora-seo-snapshot h2{font-size:20px;font-weight:700;margin:32px 0 12px}
+      .ora-seo-snapshot p{color:#94a3b8;margin:0 0 14px;font-size:15px}
+      .ora-seo-snapshot ul,.ora-seo-snapshot ol{margin:0 0 14px;padding-left:22px;color:#94a3b8;font-size:15px}
+      .ora-seo-snapshot li{margin-bottom:8px}
+      .ora-seo-snapshot a{color:#f59e0b;text-decoration:none}
+      .ora-seo-snapshot strong{color:#f8fafc}
+      .ora-seo-snapshot table{width:100%;border-collapse:collapse;margin:0 0 14px;font-size:14px}
+      .ora-seo-snapshot th,.ora-seo-snapshot td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}
+    </style>`;
   const re = /(<div id="root">)([\s\S]*?)(<\/div>)/;
-  if (re.test(html)) return html.replace(re, `$1${inner}$3`);
-  return html.replace('<div id="root"></div>', `<div id="root">${inner}</div>`);
+  if (re.test(html)) return html.replace(re, `$1${styled}$3`);
+  return html.replace('<div id="root"></div>', `<div id="root">${styled}</div>`);
 }
 
 function vsBody(c) {
