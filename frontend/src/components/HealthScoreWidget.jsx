@@ -7,7 +7,7 @@
  * an explicit gray "UNSCORED — insufficient data" state, never a
  * softened placeholder number.
  */
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/api";
 import { useAsyncState } from "../hooks/useAsyncState";
 

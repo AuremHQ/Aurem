@@ -1,0 +1,530 @@
+{
+  "routes": {
+    "/admin/cockpit": {
+      "route": "/admin/cockpit",
+      "ok": true,
+      "notes": [],
+      "text_len": 1854,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/dashboard": {
+      "route": "/admin/dashboard",
+      "ok": true,
+      "notes": [],
+      "text_len": 2386,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 2,
+      "rows": 10
+    },
+    "/admin/users": {
+      "route": "/admin/users",
+      "ok": true,
+      "notes": [],
+      "text_len": 8733,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 100,
+      "filter_test": {
+        "pre": 100,
+        "post_search_teji": 1
+      }
+    },
+    "/admin/suggestions": {
+      "route": "/admin/suggestions",
+      "ok": true,
+      "notes": [],
+      "text_len": 571,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/self-bugs": {
+      "route": "/admin/self-bugs",
+      "ok": true,
+      "notes": [],
+      "text_len": 1715,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 2
+    },
+    "/admin/overview": {
+      "route": "/admin/overview",
+      "ok": true,
+      "notes": [],
+      "text_len": 511,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/support": {
+      "route": "/admin/support",
+      "ok": true,
+      "notes": [],
+      "text_len": 1606,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/audit": {
+      "route": "/admin/audit",
+      "ok": true,
+      "notes": [],
+      "text_len": 7698,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 100
+    },
+    "/admin/house-rules": {
+      "route": "/admin/house-rules",
+      "ok": true,
+      "notes": [],
+      "text_len": 2370,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/robot-guide": {
+      "route": "/admin/robot-guide",
+      "ok": true,
+      "notes": [],
+      "text_len": 1128,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/payments": {
+      "route": "/admin/payments",
+      "ok": true,
+      "notes": [],
+      "text_len": 5733,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/token-pnl": {
+      "route": "/admin/token-pnl",
+      "ok": true,
+      "notes": [],
+      "text_len": 911,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/projects": {
+      "route": "/admin/projects",
+      "ok": true,
+      "notes": [],
+      "text_len": 4170,
+      "signals": [
+        "page-text: 404"
+      ],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 40
+    },
+    "/admin/tasks": {
+      "route": "/admin/tasks",
+      "ok": true,
+      "notes": [],
+      "text_len": 54880,
+      "signals": [
+        "page-text: 404"
+      ],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 100
+    },
+    "/admin/agent-performance": {
+      "route": "/admin/agent-performance",
+      "ok": true,
+      "notes": [],
+      "text_len": 659,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 2
+    },
+    "/admin/mcp-usage": {
+      "route": "/admin/mcp-usage",
+      "ok": true,
+      "notes": [],
+      "text_len": 1018,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 11
+    },
+    "/admin/reliability": {
+      "route": "/admin/reliability",
+      "ok": true,
+      "notes": [],
+      "text_len": 852,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/settings": {
+      "route": "/admin/settings",
+      "ok": true,
+      "notes": [],
+      "text_len": 5546,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/integrations": {
+      "route": "/admin/integrations",
+      "ok": true,
+      "notes": [],
+      "text_len": 2481,
+      "signals": [
+        "page-text: Not authorized",
+        "page-text: Forbidden"
+      ],
+      "snippet": "Skip to content | \u2190 Back to admin | Integration Health Center |  | Real-time probes of every external dependency. Auto-refreshes daily at DIGEST_HOUR_UTC; manual refresh below. |  | TOTAL | 13 | LIVE | 7 | DEGRADED | 2 | BROKEN | 2 | MISSING | 0 | Last refresh: 24s ago \u00b7 Trigger: periodic_cron | Refresh now | Strip",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/financials": {
+      "route": "/admin/financials",
+      "ok": true,
+      "notes": [],
+      "text_len": 5262,
+      "signals": [],
+      "snippet": "Skip to content | \u2190 Back to admin | Financial Command Center |  | Live MongoDB data \u00b7 USD\u2192CAD rate 1.38 (frankfurter.app (ECB)) \u00b7 MRR source: catalog_projection |  | \u21bb Reload | Live BI (MRR, ARR, inference cost, budget mode, reconcile orphans) now lives in the Cockpit \u2014 one dashboard, one sour",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/vanguard": {
+      "route": "/admin/vanguard",
+      "ok": true,
+      "notes": [],
+      "text_len": 997,
+      "signals": [],
+      "snippet": "Skip to content | \ud83d\udee1\ufe0f VANGUARD AUDIT | Blocked Commits | 1d | 7d | 30d | 90d | Refresh | \u2699 Vanguard verify config | Per-mode severity threshold for the LLM verify-agent. Changes propagate within ~10 s. | \u25cb Disabled | SWIFT | OFF | Disabled \u2014 only regex floor blocks. | CRITICAL | Recommended. Blocks only on cri",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/system-stats": {
+      "route": "/admin/system-stats",
+      "ok": true,
+      "notes": [],
+      "text_len": 1801,
+      "signals": [],
+      "snippet": "Skip to content | SYSTEM OBSERVABILITY | Parliament \u00b7 Intent Gateway \u00b7 Quality | Updated 10:56:14 PM \u00b7 auto-refresh 60s | 1h | 24h | 7d | 30d | Refresh | PARLIAMENT RUNS | 0 | COUNCIL SUCCESS RATE | 0.0% | CIRCUIT BREAKER OPENS \u00b7 24H | 0 | AVG WINNER SCORE | 0 | INTENT CONFIDENCE | 0.81 | QUALITY AVG \u00b7 24H | 0.99 | DRIFT",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/system-map": {
+      "route": "/admin/system-map",
+      "ok": true,
+      "notes": [],
+      "text_len": 2728,
+      "signals": [],
+      "snippet": "Skip to content | \u2190 Back to dashboard | ORA System Internals | ADMIN \u00b7 PLATFORM | Refresh | Live scan \u00b7 9/5/2026, 10:56:19 PM | 522 | ROUTES | 135 | COMPONENTS | 69 | PAGES | 165 | COLLECTIONS | 24 | TOOLS | GitHub PAT + OAuth | MCP server (4 tools) | VS Code extension v0.2.0 | Tavily web search | Firecrawl scrape | Stri",
+      "tables": 1,
+      "rows": 14
+    },
+    "/admin/api-keys": {
+      "route": "/admin/api-keys",
+      "ok": true,
+      "notes": [],
+      "text_len": 963,
+      "signals": [],
+      "snippet": "Skip to content | ADMIN \u00b7 MCP | API Keys |  | Long-lived sk-aurem-\u2026 keys for MCP clients (Claude Desktop, Cursor, Cline). Each key inherits your account's permissions and can be revoked anytime. Treat them like passwords \u2014 never commit them to git. |  | + Generate new key | Refresh | ACTIVE KEYS",
+      "tables": 1,
+      "rows": 4
+    },
+    "/admin/system-health": {
+      "route": "/admin/system-health",
+      "ok": true,
+      "notes": [],
+      "text_len": 2146,
+      "signals": [],
+      "snippet": "Skip to content | \u2190 Admin | System Health | Live signals \u00b7 refreshes every 30 s \u00b7 last: 10:56:29 PM | \u21bb REFRESH NOW | DEPLOY SYNC | OK | PREVIEW | 3f27cc4b4eb7 | production \u00b7 Deployed 9/5/2026, 8:16:11 PM | PRODUCTION | 3f27cc4b4eb7 | production \u00b7 Deployed 9/5/2026, 10:36:47 PM | FRONTEND BUNDLE | build sha",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/inspect-speed-diagnostic": {
+      "route": "/admin/inspect-speed-diagnostic",
+      "ok": true,
+      "notes": [],
+      "text_len": 213,
+      "signals": [],
+      "snippet": "Skip to content | ITER 309 \u00b7 SPEED DIAGNOSTIC \u00b7 READ-ONLY | Per-phase wall-clock report | \u2190 Close | QUERY | Run report | WINDOW_DAYS (1-180, default 30) | SAMPLE (1-100, default 20) | Enter window & sample, then click Run report.",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/inspect-scope-drift": {
+      "route": "/admin/inspect-scope-drift",
+      "ok": true,
+      "notes": [],
+      "text_len": 213,
+      "signals": [],
+      "snippet": "Skip to content | ITER 311 \u00b7 SCOPE-DRIFT AUDIT \u00b7 READ-ONLY | Cross-loop file-selector drift evidence | \u2190 Close | QUERY | Run audit | DAYS (1-180, default 30) | LIMIT (1-500, default 50) | Enter days & limit, then click Run audit.",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/qa": {
+      "route": "/admin/qa",
+      "ok": true,
+      "notes": [],
+      "text_len": 29850,
+      "signals": [
+        "page-text: Not authorized",
+        "page-text: 404",
+        "page-text: Forbidden"
+      ],
+      "snippet": "Skip to content | QA Health | Live from `/api/admin/qa/status` \u2014 generated 10:56:40 PM \u00b7 1240ms | Refresh | TEST COUNTS | grand total: 4203 | 3938 | backend (460 files) | 645 | vitest (124 files) | 15 | playwright (7 files) | 18 | reasoning evals | TEST-STYLE RATIO (ITER289 GUARD) | analyser unavailable | tests",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/maintenance": {
+      "route": "/admin/maintenance",
+      "ok": true,
+      "notes": [],
+      "text_len": 756,
+      "signals": [],
+      "snippet": "Skip to content | Cockpit | System Maintenance |  | Manual planned-maintenance toggle + automatic outage tracker (deploy restarts & crashes). |  | Planned maintenance mode | When ON, every visitor (except admins) sees the maintenance screen immediately. | OFF \u2014 click to turn on | MESSAGE SHOWN TO ",
+      "tables": 1,
+      "rows": 1
+    },
+    "/admin/personal-track": {
+      "route": "/admin/personal-track",
+      "ok": true,
+      "notes": [],
+      "text_len": 837,
+      "signals": [],
+      "snippet": "Skip to content | ADMIN | Personal Track Ops | Refresh | MRR | $76 | 4 paid \u2022 0 stripe-linked | DRAFTS | 8 | active | MATERIALIZED | 0 | 0 drafts shipped | BLOCKED BY SCAN | 0 | needs override | PENDING DOWNGRADES | 0 | healthy | dev_users.created_at health | healthy | 136 users \u2022 0 legacy \u2022 0 missing | Types: double=136 | P",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/ora-chat": {
+      "route": "/admin/ora-chat",
+      "ok": true,
+      "notes": [],
+      "text_len": 329,
+      "signals": [],
+      "snippet": "Skip to content | back to admin | ORA Chat |  | AUREM's admin-only advisor \u2014 grounded in live build, funnel, and GitHub data, with a bounded read/propose action catalog. Every action needs your explicit approve before it runs. |  | Click the chat bubble at the bottom-right to open the drawer",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/bin-tracker": {
+      "route": "/admin/bin-tracker",
+      "ok": true,
+      "notes": [],
+      "text_len": 5372,
+      "signals": [
+        "page-text: 404"
+      ],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/github-bulk-revoke": {
+      "route": "/admin/github-bulk-revoke",
+      "ok": true,
+      "notes": [],
+      "text_len": 1111,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/visibility-kit": {
+      "route": "/admin/visibility-kit",
+      "ok": true,
+      "notes": [],
+      "text_len": 655,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 1,
+      "rows": 1
+    },
+    "/admin/feature-flags": {
+      "route": "/admin/feature-flags",
+      "ok": true,
+      "notes": [],
+      "text_len": 1689,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/llm-credits": {
+      "route": "/admin/llm-credits",
+      "ok": true,
+      "notes": [],
+      "text_len": 894,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/parliament-live": {
+      "route": "/admin/parliament-live",
+      "ok": true,
+      "notes": [],
+      "text_len": 754,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/architecture": {
+      "route": "/admin/architecture",
+      "ok": true,
+      "notes": [],
+      "text_len": 14724,
+      "signals": [],
+      "snippet": "Skip to content | AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Gui",
+      "tables": 0,
+      "rows": 0
+    },
+    "/admin/ops": {
+      "route": "/admin/ops",
+      "ok": true,
+      "notes": [],
+      "text_len": 3368,
+      "signals": [],
+      "snippet": "Skip to content | back to admin | Ops recipes |  | Server-side operations AUREM can't run on your infra (we don't have SSH to your boxes). Copy-paste runbooks below for the most common issues. ORA links here when you ask things like \"restart supervisor\" or \"free disk space\". |  | Restart sup",
+      "tables": 0,
+      "rows": 0
+    }
+  },
+  "console_errors": {
+    "https://auremcto.com/admin/suggestions": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/self-bugs": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/support": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/audit": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/house-rules": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/robot-guide": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/payments": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/token-pnl": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/tasks": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/agent-performance": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/mcp-usage": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/reliability": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/integrations": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/financials": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/vanguard": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/system-stats": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/system-map": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/api-keys": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/inspect-speed-diagnostic": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/inspect-scope-drift": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/maintenance": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/personal-track": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/ora-chat": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/bin-tracker": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/visibility-kit": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/feature-flags": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/llm-credits": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/parliament-live": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ],
+    "https://auremcto.com/admin/ops": [
+      "[warning] The resource https://fonts.gstatic.com/s/jost/v20/92zatBhPNqw73oTd4jQmfxI.woff2 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+      "[warning] The resource https://auremcto.com/aurem-bg.webp was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+    ]
+  },
+  "network_errors": {}
+}

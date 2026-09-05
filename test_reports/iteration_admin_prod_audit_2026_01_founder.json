@@ -1,0 +1,133 @@
+{
+  "summary": "Live PRODUCTION admin-panel audit on https://auremcto.com as founder teji.ss1986@gmail.com. Scripted a Playwright pass across all 39 admin routes: logged in successfully (data-testid='login-submit'), then visited each route, captured innerText / main-content body / widget counts / tables / rows / DOM error nodes / console errors / network errors. Also ran safe interactive checks (users search, system-stats tab switching). RESULT: ALL 39 routes render without crash, without ErrorBoundary, without any /api 4xx/5xx (network_errors captured = 0), and without any console errors (only benign preload font warnings). Vast majority of pages show REAL live data (133–136 users, $76 MRR, 40 projects, 100 tasks, 8 support tickets, 4203 tests, 13 integrations with 7 LIVE, LLM providers all connected, OpenRouter $10.99 balance, etc.). Filter interactions work (users search 100→1 rows for 'teji', system-stats 1h/24h/7d/30d correctly re-fetch and show 35 runs on 30d). The systemic 429 rate-limit cascade seen in the 2026-08-24 preview audit is NOT reproducing on production. Findings below are data-source inconsistencies + legit empty windows + a few informational advisories, NOT hard breakage. No destructive action was clicked (skip-list respected).",
+
+  "per_route_status": {
+    "PASS_render_and_real_data": [
+      "/admin/cockpit — MODE BOARD (env production, deploy 3f27cc4b4eb7, stripe: not-set*), Users 133 (130 free / 4 paid), Revenue 30d $76, GitHub connect 15.8%, Paid upgrades 4 (5 total). *stripe field mislabeled — see issues.",
+      "/admin/dashboard — Users 136, tasks today 1 (52.4% success), Done/Failed 86/71, Chat sessions 204 lifetime, 2 tables with 10 rows recent-tasks.",
+      "/admin/users — 100 rows in table. SEARCH FILTER VERIFIED: 100 → 1 rows when searching 'teji'.",
+      "/admin/suggestions — Legit empty state: 'No suggestions in this bucket yet' with PENDING/APPROVED/REJECTED/ALL tabs.",
+      "/admin/self-bugs — 2 rows real bugs, tab filter (ALL/BLANK UI/DEAD END LEAK/…) visible.",
+      "/admin/overview — 12K chars, DEPENDENCIES list (openrouter/deepseek/groq/github/stripe/tavily/firecrawl/vercel/resend/supabase), build 3f27cc4b4eb7 built 2h ago production, 'NOT DEPLOY-READY (advisory)' — 3 critical integration alerts (informational).",
+      "/admin/support — 8 open tickets, real emails (teji, admin@reroots.ca, polarisbuiltinc, …) all 15d ago and all 'ORA Guide — stuck at: general' → same-shape support items, possibly a stale funnel.",
+      "/admin/audit — 100 rows populated.",
+      "/admin/house-rules — LIVE, PROMPT 3735/8000 chars, last updated 2026-08-29 by admin.",
+      "/admin/robot-guide — editor + live preview populated ('Fastest way: One Click Continue 👇').",
+      "/admin/payments — Financial Command Center rendered (MRR $76, plan buckets, USD→CAD 1.38).",
+      "/admin/token-pnl — Revenue $0.00 (labeled 'Stripe pending'), AI Cost $0.16, Net -$0.16, Tasks Done 4.",
+      "/admin/projects — 40 rows.",
+      "/admin/tasks — 100 rows, tabs (All/Done/Failed/Running/Queued) visible.",
+      "/admin/agent-performance — 2 models: deepseek/deepseek-chat 255 calls $0.0855; z-ai/glm-5.2 34 calls $0.0770. Table has 2 rows.",
+      "/admin/mcp-usage — 11 rows.",
+      "/admin/reliability — 'No data yet' + 'No post-scan findings recorded' — legit empty (0 blocked commits, 0 findings, Vanguard clean).",
+      "/admin/settings — plan pricing grid + 2FA panel + token limits (5.5K chars).",
+      "/admin/integrations — 13 total, 7 LIVE, 2 DEGRADED, 2 BROKEN, refresh 56s ago. Stripe = DEGRADED 'TEST mode • charges DISABLED'.",
+      "/admin/financials — MRR $76 (below break-even), Net -$168.33/mo, Gross margin 70.6%, Total burn $244.33/mo (≈C$337), Runway 36d, break-even at 145 users.",
+      "/admin/vanguard — 0 commits blocked, config toggles (SWIFT/PRO/MAXX + severity CRITICAL/HIGH) render, saved-state shown.",
+      "/admin/system-stats — 1h/24h/7d = 0 runs; 30d = 35 parliament runs / 37.1% success / 22 manual review queue / A1-conservative 9, A2 3, A3 1 / LLM fallback 14.8% / Casual 133, agentic 98, query 75, clarify 46. TAB SWITCH VERIFIED.",
+      "/admin/system-map — 522 routes / 135 components / 69 pages / 165 collections / 24 tools live scan, 5 stat widgets.",
+      "/admin/api-keys — 4 active MCP keys with created/last-used timestamps.",
+      "/admin/system-health — Deploy sync OK, preview & production both on 3f27cc4b4eb7, Council A LIVE (meituan/longcat-2.0), ORA Learning Layer 1 active (532/20), Layer 2 collecting (532/1000).",
+      "/admin/inspect-speed-diagnostic — form ready (WINDOW_DAYS, SAMPLE inputs, Run report button).",
+      "/admin/inspect-scope-drift — form ready (DAYS, LIMIT inputs, Run audit button).",
+      "/admin/qa — real data: 4203 tests grand total (3938 backend / 645 vitest / 15 playwright / 18 reasoning evals), CI run 33809952984 e27cc49 with real per-job status (frontend-vitest FAIL, invariants FAIL, visual-regression FAIL). Loop Mode kill-switch and gate-parity widgets render.",
+      "/admin/maintenance — 'Planned maintenance mode: OFF' toggle visible (NOT clicked per skip-list).",
+      "/admin/personal-track — MRR $76 (4 paid • 0 stripe-linked), Drafts 8, Materialized 0, Blocked-by-scan 0, dev_users.created_at healthy (136 users, 0 legacy, 0 missing).",
+      "/admin/ora-chat — info page ('Click the chat bubble at the bottom-right to open the drawer').",
+      "/admin/bin-tracker — content rendered (~5.4K chars).",
+      "/admin/github-bulk-revoke — page loads (bulk-revoke button NOT clicked per skip-list).",
+      "/admin/visibility-kit — 1-row table rendered.",
+      "/admin/feature-flags — 8 flags with real state (new_analytics_v2 ON, maxx_mode_beta ON, parallel_agents ON, chrome_extension_beta ON, integration_health_cron …). Toggles NOT flipped per skip-list.",
+      "/admin/llm-credits — OpenRouter $10.99 balance, LongCat / DeepSeek / GLM-5.2 / Claude Sonnet 4.5 / Groq Llama-3.3-70B all Connected, circuit breaker: closed.",
+      "/admin/parliament-live — Council A/B/C/CEO table with primary/fallback mapping, LongCat LIVE ✓; 24h calls all 0 across councils (legit low-traffic window, matches system-stats 24h view).",
+      "/admin/architecture — External services all live (MongoDB 4ms, GitHub 487ms, OpenRouter 468ms, Sentry 195ms, Stripe 428ms); integrations OK except anthropic/cloudflare_purge/vercel_deploy_hook = missing; LOOP INTENT GATE 24h shows '—'.",
+      "/admin/ops — full copy-paste runbook cards render (restart supervisor, disk-full, etc.)."
+    ],
+    "FAIL_render_broken": [],
+    "FAIL_no_data_or_broken_widget": [
+      "/admin/cockpit — 'loading system-health checks…' visible when page settles (subtle spinner-forever on that one card even though other cockpit widgets have real data). Also 'stripe: not-set' on MODE BOARD while /admin/integrations reports Stripe = DEGRADED (test mode). SAME BUG as 2026-08-24 audit, still not fixed.",
+      "/admin/architecture — 'LOOP INTENT GATE · LAST 24H' shows '—' (chat redirects 0 · loops triggered 0 · plan timeouts 0). Likely legit-empty but presented as missing.",
+      "/admin/qa — 'TEST-STYLE RATIO' block says 'analyser unavailable / tests_dir_missing', A11Y baseline COMPONENTS/JOURNEYS 'unavailable', AUTO-QA REPORT 'No report yet — auto-qa-agent job has not run'. CI jobs (frontend-vitest / invariants / visual-regression) all FAIL for e27cc49. Data is being shown correctly, but three sub-widgets are broken analysers, and CI is red.",
+      "/admin/token-pnl — Revenue $0.00 while /admin/personal-track and /admin/cockpit both report $76 MRR/30d. Page discloses 'Stripe pending' caveat, but the aggregator is still not reading paid cto_payments — inconsistent with financials source."
+    ]
+  },
+
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/cockpit/mode-board", "issue": "MODE BOARD returns stripe='not-set' while /admin/integrations correctly reports stripe = DEGRADED (test mode, charges disabled). Cockpit source is wrong — should read from the same integration health probe."},
+      {"endpoint": "/api/admin/cockpit/system-health (widget)", "issue": "'loading system-health checks…' text remains on the cockpit card indefinitely even after other widgets have hydrated. Either the endpoint is 200-slow or the response shape doesn't populate the widget state."},
+      {"endpoint": "/api/admin/token-pnl", "issue": "Reports Revenue=$0.00 for 30d despite /admin/personal-track and /admin/financials both showing $76 MRR from 4 paid users on the same window. Aggregator not consistent with cto_payments source."},
+      {"endpoint": "/api/admin/qa/status subfields", "issue": "test-style analyser returns tests_dir_missing, A11Y baseline components/journeys return 'unavailable', and auto-qa-agent has never produced a report. Broken analysers presented as data holes."},
+      {"endpoint": "/api/admin/architecture/loop-intent-gate", "issue": "Renders '—' — likely empty aggregation window, but should show '0' with a friendly empty state instead of an em-dash."},
+      {"endpoint": "GitHub Actions CI (backend link)", "issue": "Latest run e27cc49 has 3 jobs FAIL (frontend-vitest, invariants, visual-regression). Surfaced in /admin/qa + /admin/overview as 'NOT DEPLOY-READY'. Advisory only."}
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminCockpit MODE BOARD card", "issue": "'stripe: not-set' pill mislabels Stripe status — should read 'test' or 'degraded'. Same bug present in 2026-08-24 preview audit → still not fixed in prod.", "selector": "/admin/cockpit MODE BOARD", "priority": "MEDIUM"},
+      {"component": "AdminCockpit system-health card", "issue": "'loading system-health checks…' spinner never resolves on this specific card even though other cockpit cards hydrate. Regression from previous 'MRR: No data yet' bug.", "selector": "/admin/cockpit system-health widget", "priority": "MEDIUM"},
+      {"component": "AdminSupport inbox", "issue": "All 8 open tickets are identical shape ('ORA Guide — stuck at: general', in_app_guide, all 15d ago) — likely a stale ORA-guide funnel that fires the same event over and over. Not a bug per se but visually noisy triage-wise.", "selector": "/admin/support inbox rows", "priority": "LOW"},
+      {"component": "AdminArchitecture Loop Intent Gate", "issue": "Shows '—' instead of a proper zero + empty-state label.", "selector": "/admin/architecture LOOP INTENT GATE card", "priority": "LOW"},
+      {"component": "Cookie banner overlay", "issue": "Cookie consent banner overlays bottom-right on every admin page load (Accept all / Reject non-essential / Manage preferences) and re-appears on every navigation — does not persist consent.", "selector": ".cookie-banner", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Cockpit → Integrations data source", "issue": "Cockpit MODE BOARD and Integration Health Center disagree on Stripe status (not-set vs degraded). Same source-of-truth issue flagged in preview audit — not fixed on production.", "affected_selectors": ["/admin/cockpit MODE BOARD stripe pill", "/admin/integrations Stripe row"]},
+      {"flow": "Token P&L revenue vs Financials/Cockpit MRR", "issue": "Three admin pages report different revenue for the same 30d window: token-pnl=$0.00, personal-track=$76, cockpit REVENUE 30d=$76, financials MRR=$76. token-pnl is the outlier.", "affected_selectors": ["/admin/token-pnl REVENUE (MO) card"]}
+    ],
+    "design_issues": [
+      {"screen": "AdminSupport", "issues": ["8 identical-looking rows without dedupe/grouping — hard to triage which are actionable"]},
+      {"screen": "AdminQA", "issues": ["Three separate 'unavailable' / 'analyser unavailable' / 'No report yet' widgets on one page create a visually broken impression even though CI + test counts are healthy"]}
+    ]
+  },
+
+  "safe_interactive_checks_performed": [
+    "/admin/users search input 'teji' → table rows 100 → 1 (search filter WORKS end-to-end)",
+    "/admin/system-stats window tabs 1h → 7d → 30d clicked; API refetched and metrics changed correctly (30d shows 35 parliament runs vs 0 on shorter windows) — tab filter WORKS",
+    "Login via [data-testid=login-submit] on /login → redirected to /dashboard, cookies set, all /admin/* endpoints authenticated",
+    "Visited each of 39 admin routes; monitored network for status>=400 on /api/* → 0 failures across the entire sweep",
+    "Monitored console for [error] logs across all 39 routes → 0 errors (only preload font warnings from Google Fonts + aurem-bg.webp)"
+  ],
+
+  "skip_list_respected": [
+    "/admin/github-bulk-revoke bulk-revoke button — NOT clicked",
+    "/admin/maintenance planned-maintenance toggle — NOT clicked (currently OFF)",
+    "/admin/feature-flags flag toggles — NOT clicked",
+    "/admin/users delete/revoke destructive rows — NOT clicked",
+    "/admin/payments and /admin/financials refund/charge actions — NOT clicked"
+  ],
+
+  "test_report_links": [
+    "/app/test_reports/prod_admin_audit_2026_01.json — raw per-route results + full network_errors + console_errors dump",
+    "/app/test_reports/prod_admin_audit_2026_01_deep.json — deep main-content snippet per route + widget counts + interactive checks",
+    "/app/test_reports/screenshots/prod_after_login.png"
+  ],
+
+  "action_items": [
+    "P1 [regression from 2026-08-24 audit]: Fix /admin/cockpit MODE BOARD 'stripe: not-set' — read Stripe status from /admin/integrations probe (currently 'degraded / test mode')",
+    "P1 [regression]: Fix /admin/cockpit 'loading system-health checks…' — the system-health card never hydrates while sibling cards do; likely the endpoint returns 200 but the widget's expected shape drifted",
+    "P1 [regression]: Fix /admin/token-pnl Revenue aggregator — 0 vs 76 mismatch with personal-track/financials/cockpit for the same 30d window",
+    "P2: Fix /admin/qa 'test-style analyser unavailable / tests_dir_missing' + A11Y COMPONENTS/JOURNEYS 'unavailable' + auto-qa-agent 'No report yet' — 3 analyser widgets are stuck, making the QA page look broken",
+    "P2: /admin/architecture Loop Intent Gate shows '—' — render 0 + empty-state label instead",
+    "P3: /admin/support inbox is dominated by 8 identical 'ORA Guide — stuck at: general' rows all 15d ago — either dedupe/group by user or fix the funnel that keeps writing the same event",
+    "P3: Cookie banner does not persist consent across admin nav — persist to localStorage",
+    "P3: GitHub Actions CI e27cc49 has 3 red jobs (frontend-vitest / invariants / visual-regression); resolve or acknowledge in /admin/overview 'NOT DEPLOY-READY' advisory"
+  ],
+
+  "critical_code_review_comments": [
+    "Cockpit MODE BOARD 'stripe: not-set' + system-health 'loading…' bugs first flagged in /app/test_reports/iteration_admin_full_audit_2026_08_24.json (2026-08-24) — still present on production 2026-01. These should have been fixed by now.",
+    "Token P&L revenue aggregator is a persistent source-of-truth split from financials/cockpit/personal-track (all four should query cto_payments the same way).",
+    "Auth flow is HEALTHY on production: bcrypt login + httpOnly cookie + admin JWT + CORS — no auth issues observed across 39 admin routes.",
+    "The 429 rate-limit cascade that plagued the preview environment (Redis missing, in-memory limiter) is NOT observed on production — production evidently has proper Redis / higher ceiling. Good."
+  ],
+
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only audit)", "frontend": "39/39 routes render successfully with 0 console errors and 0 /api 4xx-5xx; 4 routes have data-source / widget-hydration inconsistencies (cockpit stripe pill, cockpit system-health card, token-pnl revenue, qa analyser widgets)"},
+  "test_credentials": "Founder credentials used per review_request; password not printed here per /app/memory/test_credentials.md policy.",
+  "seed_data_creation": "None. Used existing production data (133–136 users, 40 projects, 100 tasks, 8 tickets, 4203 tests, real Stripe/OpenRouter/GitHub state). No writes performed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Full 39-route production admin audit as founder complete. NO hard crashes, NO 4xx/5xx, NO console errors. Findings are 4 data-source/widget-hydration bugs — 3 of them (cockpit stripe pill, cockpit system-health card, token-pnl revenue) are REGRESSIONS still present from the 2026-08-24 preview audit. Raw evidence in /app/test_reports/prod_admin_audit_2026_01.json + prod_admin_audit_2026_01_deep.json. Safe interactions confirmed working (users search filter, system-stats window tabs). Skip-list fully respected — no destructive/global toggles were clicked.",
+  "rca_of_the_issue": "1) Cockpit stripe='not-set' RCA: MODE BOARD widget reads a Stripe status field from a legacy config source instead of the integration_health probe used by /admin/integrations — same collections available but different resolver. 2) Cockpit system-health card 'loading…' RCA: widget waits on a response-shape key that no longer exists (compare vs /admin/system-health which hydrates fine using the newer schema). 3) Token-P&L $0 revenue RCA: aggregator likely filters cto_payments by payment_status='paid' AND has an extra clause (e.g., stripe_charge_id present) that excludes the 4 manually-marked paid users that /admin/personal-track counts via `4 paid • 0 stripe-linked`. Add a fallback to plan-based paid detection."
+}
