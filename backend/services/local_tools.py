@@ -1370,6 +1370,11 @@ _SNAPSHOT_ROOT = "/app/.aurem_cache/repo_snapshots"
 _SNAPSHOT_DL_TIMEOUT_S = 120.0
 _SNAPSHOT_MAX_BYTES = 400 * 1024 * 1024
 _PER_FILE_HIT_CAP = 50
+# Iter R16 (2026-09-05) — see search_repo()'s docstring. Module-level
+# so tests can monkeypatch them to near-zero for fast, deterministic
+# timeout-path coverage instead of sleeping real seconds.
+_SEARCH_REPO_SNAPSHOT_BUDGET_S = 8.0
+_SEARCH_REPO_TOTAL_BUDGET_S = 20.0
 _snapshot_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -1592,7 +1597,40 @@ async def search_repo(ctx: dict, args: dict) -> dict:
       max?      int   — fallback-path cap on matching files (default 20)
 
     Returns {ok, matches: [{file, line_no, line}], total_matches, ...}
+
+    Iter R16 (2026-09-05) — the orchestrator hard-caps EVERY tool call
+    at 45s (see orchestrator.py::_run_one). Found live: a repo whose
+    snapshot tarball was unusually large (264MB — a stray 201MB
+    directory checked into git) took >45s to download+extract, so the
+    orchestrator's outer cap killed the WHOLE call before it could
+    ever fall back to the budgeted API path — and since the cache
+    marker is only written on a SUCCESSFUL extract, this repeated on
+    every future call for that repo too (never caches, never
+    recovers). httpx's `read` timeout alone doesn't help here — it
+    only bounds time-BETWEEN-chunks, not total transfer duration, so a
+    slow-but-steady stream sails past it. Fix: bound the WHOLE
+    function (snapshot attempt + fallback, whichever combination) at
+    20s — well under the orchestrator's 45s per-tool cap AND under the
+    external proxy's observed ~60s total-turn ceiling (a turn already
+    spends 10-25s on LLM calls before/after tool execution) — so a
+    slow/huge repo fails fast and cleanly into the fallback (or a
+    typed timeout) instead of being externally cancelled with nothing
+    to show, or eating so much of the turn's budget that the whole
+    response gets killed with zero bytes delivered.
     """
+    try:
+        return await asyncio.wait_for(_search_repo_impl(ctx, args),
+                                       timeout=_SEARCH_REPO_TOTAL_BUDGET_S)
+    except asyncio.TimeoutError:
+        return {"ok": False,
+                "error": f"search_repo timed out after "
+                         f"{_SEARCH_REPO_TOTAL_BUDGET_S:.0f}s (repo snapshot "
+                         f"+ fallback scan both too slow) — try a narrower "
+                         f"query (add a `path` or `ext`).",
+                "timed_out": True}
+
+
+async def _search_repo_impl(ctx: dict, args: dict) -> dict:
     pattern    = (args or {}).get("pattern") or ""
     sub_path   = (args or {}).get("path") or ""
     ext        = (args or {}).get("ext") or ""
@@ -1615,7 +1653,17 @@ async def search_repo(ctx: dict, args: dict) -> dict:
     except re.error:
         compiled = re.compile(re.escape(pattern), re.IGNORECASE)
 
-    snap_dir, snap_err = await _ensure_repo_snapshot(owner, repo, branch, token)
+    # Snapshot attempt gets its own short budget so a cold/huge build
+    # doesn't eat the whole total budget and starve the fallback
+    # below of any chance to run. A cache-hit (the common case after
+    # the first call for a given HEAD sha) resolves in ~1-2s regardless.
+    try:
+        snap_dir, snap_err = await asyncio.wait_for(
+            _ensure_repo_snapshot(owner, repo, branch, token),
+            timeout=_SEARCH_REPO_SNAPSHOT_BUDGET_S,
+        )
+    except asyncio.TimeoutError:
+        snap_dir, snap_err = None, "snapshot_build_timeout"
     if snap_dir:
         try:
             matches = await asyncio.to_thread(

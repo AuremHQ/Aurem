@@ -135,3 +135,91 @@ async def test_api_fallback_used_when_snapshot_unavailable(monkeypatch):
     assert r["ok"]
     assert r["source"] == "github_api_fallback"
     assert r["matches"][0]["file"] == "src/app.py"
+
+
+class TestR16SnapshotTimeoutHardening:
+    """2026-09-05 — founder screen recording repro: a repo whose
+    tarball snapshot was unusually large (264MB, a stray 201MB
+    directory checked into git) took the orchestrator's per-tool call
+    hostage — search_repo hung the FULL 45s outer cap on every single
+    call, with the cache marker never getting a chance to be written
+    (only written on successful extract), so it never recovered.
+    httpx's `read` timeout alone doesn't help: it only bounds time-
+    BETWEEN-chunks, not total transfer duration, so a slow-but-steady
+    264MB stream sails right past it. Fix: bound the snapshot attempt
+    AND the whole function at short, module-level-configurable
+    budgets so a slow/huge repo fails fast into the graceful API
+    fallback instead of being externally killed with nothing to show."""
+
+    async def test_slow_snapshot_falls_back_to_api_within_budget(
+        self, monkeypatch, tmp_path,
+    ):
+        import asyncio
+        import services.local_tools as lt
+
+        # Shrink the budgets to near-zero so this test runs in
+        # milliseconds instead of real seconds, while still exercising
+        # the exact timeout-then-fallback code path.
+        monkeypatch.setattr(lt, "_SEARCH_REPO_SNAPSHOT_BUDGET_S", 0.05)
+        monkeypatch.setattr(lt, "_SEARCH_REPO_TOTAL_BUDGET_S", 5.0)
+
+        async def _hanging_snapshot(*a, **k):
+            await asyncio.sleep(10)          # would never finish in time
+            return "/never/reached", None    # pragma: no cover
+
+        async def _fake_fetch(owner, repo, fpath, branch, token):
+            return "def foo():\n    return 1\n"
+
+        class _Resp:
+            status_code = 200
+            def json(self): return {"tree": [{"path": "src/app.py", "type": "blob"}]}
+            def raise_for_status(self): pass
+        class _Client:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url, headers=None): return _Resp()
+
+        import httpx
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+        monkeypatch.setattr(lt, "_ensure_repo_snapshot", _hanging_snapshot)
+        monkeypatch.setattr(lt, "_gh_fetch_file", _fake_fetch)
+
+        ctx = {"user_id": "u_t", "project_id": "p_t", "bin_ctx": _bin_ctx()}
+        t0 = asyncio.get_event_loop().time()
+        r = await lt.search_repo(ctx, {"pattern": "foo"})
+        dt = asyncio.get_event_loop().time() - t0
+
+        assert dt < 2.0, f"should bail out of the hung snapshot in ~0.05s, took {dt:.2f}s"
+        assert r["ok"] is True
+        assert r["source"] == "github_api_fallback"
+
+    async def test_everything_hanging_still_returns_typed_timeout_not_a_hang(
+        self, monkeypatch,
+    ):
+        import asyncio
+        import services.local_tools as lt
+
+        monkeypatch.setattr(lt, "_SEARCH_REPO_SNAPSHOT_BUDGET_S", 0.05)
+        monkeypatch.setattr(lt, "_SEARCH_REPO_TOTAL_BUDGET_S", 0.2)
+
+        async def _hanging_snapshot(*a, **k):
+            await asyncio.sleep(10)
+            return "/never/reached", None    # pragma: no cover
+
+        async def _hanging_api_fallback(*a, **k):
+            await asyncio.sleep(10)
+            return {"ok": True, "matches": []}    # pragma: no cover
+
+        monkeypatch.setattr(lt, "_ensure_repo_snapshot", _hanging_snapshot)
+        monkeypatch.setattr(lt, "_search_repo_via_api", _hanging_api_fallback)
+
+        ctx = {"user_id": "u_t", "project_id": "p_t", "bin_ctx": _bin_ctx()}
+        t0 = asyncio.get_event_loop().time()
+        r = await lt.search_repo(ctx, {"pattern": "foo"})
+        dt = asyncio.get_event_loop().time() - t0
+
+        assert dt < 2.0, f"outer wrapper should cut this off at ~0.2s, took {dt:.2f}s"
+        assert r["ok"] is False
+        assert r["timed_out"] is True
+

@@ -401,7 +401,21 @@ export async function streamChat({ prompt, sessionId, session_id,
         if (!line) continue;
         try {
           const payload = JSON.parse(line.slice(5).trim());
-          if (payload.meta) onMeta?.(payload);
+          // 2026-09-05 — critical fix: `meta` is used for TWO unrelated
+          // things in this protocol — (a) a mid-stream "this frame is a
+          // meta event" discriminator, ALWAYS the literal boolean
+          // `true` (see routers/chat/stream.py `{"meta": True, ...}`),
+          // and (b) an unrelated nested object on the terminal `done`
+          // frame (checkout_url/quota hints, e.g. `{"done": true,
+          // "meta": {}, ...}`). `{}` is truthy in JS, so the old loose
+          // `if (payload.meta)` matched the done frame FIRST in this
+          // if/else-if chain and swallowed it — onDone never fired,
+          // `busy` never reset, and the send/stop button stayed stuck
+          // on "Stop" on literally every turn (only recovered via the
+          // 90s idle watchdog). Match the boolean discriminator
+          // exactly so the two same-named-but-unrelated fields can't
+          // collide.
+          if (payload.meta === true) onMeta?.(payload);
           else if (payload.type === "mode") onMode?.(payload);
           else if (payload.type === "step") onStep?.(payload);   // Iter 212m-19
           else if (payload.type === "intent") onIntent?.(payload.intent || {});  // Iter 212m-149

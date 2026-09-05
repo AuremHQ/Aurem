@@ -2674,6 +2674,15 @@ async def chat_with_tools(
             # was killed at ~125s. Hard-cap every tool call at 45s and
             # surface a typed timeout the LLM can react to on the next
             # iteration instead of hanging.
+            # R16 (2026-09-05) — per-tool duration logging. Traced a
+            # reproducible "approve button didn't load" + 60-90s stall
+            # report to search_repo hitting this exact 45s cap on a
+            # repo whose snapshot tarball was unusually large (264MB) —
+            # see local_tools.py::search_repo's own 25s inner budget
+            # for the actual fix. Kept as permanent visibility (same
+            # pattern as R10_TIMING) so a repeat of this class of
+            # per-tool stall shows up immediately in logs.
+            _t0_tool = time.monotonic()
             try:
                 res = await asyncio.wait_for(
                     invoke_local_tool(tool_name, tool_args, local_ctx),
@@ -2684,8 +2693,11 @@ async def chat_with_tools(
                         invoke_tool(tool_name, tool_args, jwt_token),
                         timeout=45.0,
                     )
+                logger.info("R10_TIMING tool=%s dur=%.2fs ok=%s", tool_name,
+                            time.monotonic() - _t0_tool, (res or {}).get("ok"))
             except asyncio.TimeoutError:
-                logger.warning("orchestrator: tool %s timed out (>45s)", tool_name)
+                logger.warning("orchestrator: tool %s timed out (>45s) — dur=%.2fs",
+                                tool_name, time.monotonic() - _t0_tool)
                 res = {"ok": False,
                        "error": f"{tool_name} timed out after 45s — try a "
                                 f"narrower query (add a `path` or `ext`).",
