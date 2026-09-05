@@ -1,0 +1,26 @@
+{
+  "summary": "R15 backend-only verification: /callback now uses ensure_configured_from_db() one-shot hydration guard (mirroring /install's 2026-08-24 hardening) to self-heal the cold-start race that produced misleading err=github_probe_failed on fresh installs. Independently re-ran the full github_app pytest suite: 82/82 passed including the 2 new R15 tests. Fix is code-correct, guard sits at the right spot (right after installation_id null-check, before any App-JWT-signing calls i.e. _fetch_installation_meta / repo listing).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_r15_callback_config_hydration_race_2026_09.py",
+    "/app/test_reports/pytest/r15_callback_hydration.xml"
+  ],
+  "action_items": [
+    "None for the R15 fix itself — verified clean.",
+    "FOUNDER-FACING CONFIRMATION: Preview (frontend/.env REACT_APP_BACKEND_URL=https://bin-context-pat.preview.emergentagent.com, backend/.env MONGO_URL=mongodb://localhost:27017 DB_NAME=aurem_dev) is a wholly separate deployment from production auremcto.com — different hostname, different backend pod, different Mongo. R10/R13/R14/R15 fixes live ONLY in this preview env and cannot possibly have taken effect on auremcto.com. Main agent should state this to the founder explicitly and coordinate a production deploy before asking for re-test."
+  ],
+  "critical_code_review_comments": [
+    "Fix placement in routers/github_app.py::install_callback is correct: guard runs before state validation's DB find_one_and_update is fine (state validation doesn't need App-JWT) AND before _fetch_installation_meta (which does). No race widening.",
+    "The `except Exception` broad-catch that produced the misleading github_probe_failed is still there by design — the new guard reduces the false-positive rate but doesn't paper over genuine probe failures. Reasonable trade-off.",
+    "Verification via mocked/forced-empty runtime cache (test_r15_callback_config_hydration_race_2026_09.py's autouse _reset_runtime_config fixture calling set_runtime_github_app_config(None)) is a sound and standard way to prove a boot-order race deterministically. Live-repro would require restarting the shared preview backend, which is not safe. RECOMMENDATION for future: expose a tiny admin-only diagnostic endpoint (e.g. GET /api/admin/github/app/runtime-config-status returning {cached: bool, db_configured: bool}) so ops can observe hydration state without restarts. Not blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (82/82)", "frontend": "N/A - skipped per request"},
+  "test_credentials": "N/A — pure unit/integration pytest with fake_db + mocked httpx; no real auth used.",
+  "seed_data_creation": "None persisted — fake_db fixture is per-test in-memory.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "R15 verified 82/82 pytest passing. If founder reports the SAME failure on auremcto.com after R15 preview verification, the cause is almost certainly that production deployment doesn't include R10-R15 fixes — verify deploy pipeline before hunting new bugs. A live diagnostic endpoint for github_app runtime-config state would help future cold-start race triage without restarting shared preview.",
+  "rca of the issue": "In routers/github_app.py::install_callback, the whole OAuth round-trip (user reviewing GitHub's consent UI) can outlast a fresh worker's boot window, so the callback request may arrive on a worker whose services.github_app_config in-process cache hasn't hydrated from Mongo yet. _fetch_installation_meta (called early in the callback) invokes _ga.app_jwt() which raises GitHubAppNotConfigured on empty cache; a broad `except Exception` then surfaces the generic err=github_probe_failed message, confusing everyone into thinking GitHub couldn't verify the install. Fix: mirror /install's 2026-08-24 hardening by calling `await ensure_configured_from_db(db)` inside /callback immediately after the installation_id null-check and before any App-JWT-signed call. Verified by 2 new tests: (a) empty cache + valid Mongo doc → 302 status=success (self-heal proven), (b) empty cache + no Mongo doc → 302 err=github_probe_failed (correct soft-fail retained). All prior github_app tests unchanged and passing."
+}

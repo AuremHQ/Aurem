@@ -1772,3 +1772,54 @@ bisection) that a large cross-file pytest test-isolation issue
 failures only in specific multi-file run orders) pre-dates this
 session entirely and is unrelated to R14 — out of scope here.
 
+
+## 2026-09-05 — R15: `/callback` cold-start config-hydration race (2nd distinct GitHub-connect bug)
+
+**Trigger**: founder's 3rd screen recording — this time explicitly on
+`auremcto.com` (production, confirmed by URL in the recording) — a
+FRESH install (state present, normal GitHub consent screen, "Install
+& Authorize" clicked normally) still failed immediately after the
+redirect back, with `err=github_probe_failed` ("GitHub couldn't
+verify the install"). This is a DIFFERENT failure mode than R14
+(state-dropped-on-reconnect) — this one hits fresh installs too.
+
+**Root cause**: `/install` (kickoff) was hardened on 2026-08-24 with a
+one-shot `ensure_configured_from_db` fallback for the case where a
+fresh backend worker accepts traffic before
+`services.github_app_config`'s in-process runtime cache has hydrated
+from Mongo. `/callback` (GitHub's redirect-back target) never got the
+same guard. The full OAuth round-trip (user reviewing/clicking
+through GitHub's UI) easily outlasts a fresh worker's boot window, so
+`/callback` can land on a worker whose cache is still empty —
+`_ga.app_jwt()` (used inside `_fetch_installation_meta`) raises
+`GitHubAppNotConfigured`, caught by a broad `except Exception` and
+surfaced as the generic, misleading `err=github_probe_failed` — which
+has nothing to do with GitHub's actual authorization, which succeeded
+fine.
+
+**Fix**: `/callback` now calls the exact same `ensure_configured_from_db(db)`
+one-shot fallback `/install` already had, right after the
+`installation_id` null-check and before anything that needs App-JWT
+signing.
+
+**Testing**: new `backend/tests/test_r15_callback_config_hydration_race_2026_09.py`
+(2 tests: empty-cache-but-DB-has-config self-heals to success;
+empty-cache-and-no-DB-config-anywhere still soft-fails cleanly, not a
+500). Full github_app regression: 82/82 pass (includes R14's tests,
+unchanged). `testing_agent`:
+`/app/test_reports/iteration_r15_callback_config_hydration_race_2026_09.json`
+— 0 bugs. Live restart-race repro against the shared preview backend
+was intentionally skipped (would disrupt other active traffic) —
+validated instead via a forced-empty runtime cache in pytest, which
+the testing agent confirmed is a sound way to prove a boot-order race
+deterministically.
+
+**⚠️ CRITICAL, confirmed by testing_agent**: preview
+(`bin-context-pat.preview.emergentagent.com`, its own Mongo) and
+production (`auremcto.com`) are **separate deployments — different
+host, different backend pod, different database.** None of R10, R13,
+R14, or R15 have been deployed to production. The founder has been
+testing all 3 recordings directly against `auremcto.com`, so none of
+this session's fixes could possibly have taken effect there yet —
+**a production deploy is required** before any of these fixes reach
+the founder's real account.

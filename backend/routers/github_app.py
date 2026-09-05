@@ -307,6 +307,21 @@ async def install_callback(
 
     db = require_db()
 
+    # 2026-09-05 — same cold-start race `/install` was hardened against
+    # on 2026-08-24, now confirmed hitting `/callback` too (founder
+    # screen recording on auremcto.com: state validated fine, GitHub
+    # authorized fine, but the metadata fetch below failed with
+    # `err=github_probe_failed` — traced to `_ga.app_jwt()` raising
+    # `GitHubAppNotConfigured` because the in-process runtime cache
+    # hadn't hydrated from Mongo yet). The whole OAuth round-trip
+    # (user reviewing GitHub's consent screen) easily outlasts a
+    # fresh-worker's boot window, so this can't be "fixed" by boot
+    # ordering alone — every request on this path needs the same
+    # one-shot DB fallback `/install` already has.
+    if not _app_configured():
+        from services.github_app_config import ensure_configured_from_db
+        await ensure_configured_from_db(db)
+
     # ── State validation (atomic single-use) ──────────────────────────
     state_row = None
     if state:
