@@ -187,18 +187,59 @@ export default function useGitHubConnectStatus() {
     ? `${API_BASE}/github/app/install?auth=${encodeURIComponent(getToken())}`
     : null;
 
+  // 2026-09-04 — claim fallback, part of the GitHub-drops-`state`-on-
+  // reconnect fix. `/callback` now self-heals by reusing an already-
+  // linked installation, but a row that has NEVER been linked (webhook
+  // landed first, before any authenticated browser callback) has
+  // nothing to reuse. This tab IS authenticated and DOES know the
+  // installation_id GitHub just handed back — claim it directly
+  // instead of depending on the state round-trip at all. Best-effort:
+  // swallow failures (already-linked / too-old / not-found yet are
+  // all fine — the poll below is still authoritative either way).
+  const claimInstallation = useCallback(async (installId) => {
+    if (!installId) return;
+    try { await api.post("/github/app/claim", { installation_id: Number(installId) }); }
+    catch { /* best-effort — polling below remains authoritative */ }
+  }, []);
+
   // Fast-path — if the bridge page's postMessage arrives, poll right
   // away instead of waiting for the next interval tick. Not required
   // for correctness (the interval poll is authoritative either way).
   useEffect(() => {
-    function onMessage(e) {
+    async function onMessage(e) {
       const d = e.data;
       if (!d || d.type !== "aurem-app-installed") return;
+      if (d.status === "success" && d.install_id) {
+        await claimInstallation(d.install_id);
+      }
       fetchStatus();
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [fetchStatus]);
+  }, [fetchStatus, claimInstallation]);
+
+  // 2026-09-04 — non-popup fallback landing: when the guaranteed-
+  // working `<a target="_blank" rel="noopener">` link is used instead
+  // of `window.open()`, the bridge page has no `opener` to postMessage
+  // (that's the whole point of `noopener`) — it meta-refreshes the new
+  // tab to `/dashboard?flow=connect-repo&install=success&install_id=`
+  // instead. Catch that landing here too, claim, then strip the params
+  // so a refresh doesn't re-fire it.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("flow") !== "connect-repo") return;
+    const installId = qs.get("install_id");
+    const isSuccess = qs.get("install") === "success";
+    (async () => {
+      if (isSuccess && installId) await claimInstallation(installId);
+      await fetchStatus();
+    })();
+    qs.delete("flow"); qs.delete("install"); qs.delete("install_id"); qs.delete("app_pending"); qs.delete("err");
+    const rest = qs.toString();
+    window.history.replaceState({}, "", window.location.pathname + (rest ? `?${rest}` : ""));
+    // Intentionally mount-only — this reads the URL exactly once on
+    // load; claimInstallation/fetchStatus are stable useCallback refs.
+  }, []);
 
   return { status, connecting, timedOut, denied, startConnect, retry, refresh: fetchStatus, installUrl };
 }

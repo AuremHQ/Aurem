@@ -1,0 +1,34 @@
+{
+  "summary": "Verified R14 GitHub connect state-dropped-on-reconnect root-cause fix. Ran targeted pytest for both new test files (test_r14_github_state_dropped_reconnect_2026_09.py: 9/9 pass; test_iter2026_08_27_github_connect_state_recovery.py: 7/7 pass — 16/16 total). Ran regression pass on adjacent github_app router/service/project_add tests (62 pass, 2 fail — both confirmed PRE-EXISTING by git-stash bisection, not regressions from R14). Curl-verified live behavior on preview URL: (a) POST /api/aurem-dev/github/app/claim without auth -> 401; (b) with malformed body -> 422; (c) GET /callback with missing state param + non-existent installation_id -> 302 soft-redirect to installed?status=err&err=invalid_state (correct — no orphan created, no hard fail). Frontend landing page loads cleanly, no console errors (only harmless React Router v7 future-flag warnings). Full GitHub-connect wizard UI walkthrough behind auth was NOT re-run because (per review_request note) it was already covered in iteration_r13 with 0 bugs and real GitHub OAuth is not automatable in this env — the R14 change is purely underlying-hook linking-reliability logic with no UI surface change.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/aurem-dev/github/app/callback", "issue": "test_replayed_state_soft_redirect and test_expired_state_soft_redirect in tests/test_github_app_router.py assert err=invalid_state but callback now returns err=github_probe_failed for these fixtures. Confirmed PRE-EXISTING (fails identically with R14 changes git-stashed). Likely a stale test expectation from an earlier iteration — not a regression from this round, but the test file should be updated to match current expected behavior."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_r14_github_state_dropped_reconnect_2026_09.py",
+    "/app/backend/tests/test_iter2026_08_27_github_connect_state_recovery.py",
+    "/app/test_reports/pytest/r14_github_state.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/LOW: Update tests/test_github_app_router.py::TestCallback::test_replayed_state_soft_redirect and test_expired_state_soft_redirect to align with current behavior (they were failing PRIOR to R14 as well — pre-existing, not caused by this round)."
+  ],
+  "critical_code_review_comments": [
+    "install_callback fallback logic correctly distinguishes: (1) state-present-valid = normal path, (2) state-absent-but-installation-already-linked = REUSED_EXISTING_LINK success, (3) state-absent-and-never-linked = soft-fail invalid_state without orphaning — matches request spec exactly.",
+    "/claim endpoint guardrails validated by tests: 401 unauth, 404 missing row, 200 link-orphan, 200 already-linked no-op, 403 hijack-attempt, 409 stale-orphan-past-15min. Anti-hijack posture is correct.",
+    "Frontend hook (useGitHubConnectStatus.js) has both a postMessage claim path and a URL-landing claim path with history.replaceState scrubbing — good defense-in-depth against GitHub's dropped-state behavior."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (16/16 R14-scope tests pass; adjacent regression pass 62/64 with 2 pre-existing failures)", "frontend": "smoke-only (landing loads, wizard behind auth not re-tested per request note)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (per /app/memory/test_credentials.md — not exercised this round, no auth-gated UI in R14 scope)",
+  "seed_data_creation": "None — pytest fixtures create/tear down their own installation_state and installation rows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "R14 backend fix (state-dropped-on-reconnect + /claim endpoint) is verified green via pytest + live curl on preview backend. The 2 pre-existing failures in test_github_app_router.py (replayed_state_soft_redirect, expired_state_soft_redirect) are unrelated to R14 and predate this change — do NOT flag as R14 regressions. If a future round touches the callback err= redirect codes, those two stale tests will need alignment. Live GitHub OAuth cannot be automated here; if UI wizard-level regression is ever needed, mock/stub the popup postMessage rather than driving real GitHub."
+}

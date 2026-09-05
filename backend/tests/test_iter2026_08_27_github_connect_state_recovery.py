@@ -228,23 +228,62 @@ def test_valid_unexpired_state_row_still_takes_priority_over_recovery():
     assert row["user_id"] == "u_correct_from_row"
 
 
-def test_missing_state_param_entirely_still_fails_closed_unchanged():
+def test_missing_state_param_entirely_now_soft_fails_no_orphan_row(caplog):
     """No `state` query param at all (e.g. a forged direct hit on the
-    callback URL) — pre-existing behavior, must stay untouched: no
-    recovery is even attempted (nothing to parse)."""
+    callback URL, OR — confirmed live 2026-09-04 via founder screen
+    recording — GitHub's documented behavior of dropping `state`
+    entirely when a user who ALREADY has this App installed revisits
+    the connect flow).
+
+    2026-09-04 update: this used to silently fall through to
+    `user_id_to_link=None` and write an ORPHANED `github_installations`
+    row (user_id=null) that could never surface for any user — a
+    permanent ghost record and a confusing "it looked like it worked
+    but the repo never shows up" bug. Now: when there's no EXISTING
+    link on this installation_id to reuse either, the callback fails
+    closed with `err=invalid_state` and writes NOTHING, so the next
+    attempt (or the client-side `/claim` safety net) has a clean slate
+    instead of a poisoned row to fight."""
     fake_db = _FakeDB()
     client, ga_mod = _make_client(fake_db)
-    with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)):
+    with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)), \
+         patch.object(ga_mod._ga, "list_installation_repos", AsyncMock(return_value=[])):
         r = client.get(
             "/api/aurem-dev/github/app/callback",
             params={"installation_id": 559},
             follow_redirects=False,
         )
-    # No state at all -> state_row stays None but the `if state and
-    # state_row is None` branch never triggers (state is falsy) —
-    # falls through with user_id_to_link=None, same as before this fix.
     assert r.status_code in (302, 307)
-    assert fake_db.github_installations.rows[0].get("user_id") is None
+    assert "err=invalid_state" in r.headers["location"]
+    assert fake_db.github_installations.rows == []
+
+
+def test_missing_state_but_installation_already_linked_self_heals():
+    """The other half of the 2026-09-04 fix: when `state` is dropped
+    (existing-installation reconnect) but this installation_id was
+    ALREADY linked to a user from a prior successful connect, that's
+    not a new link attempt at all — it's GitHub re-confirming an
+    existing install. Must self-heal to success, not fail or orphan."""
+    fake_db = _FakeDB()
+    fake_db.github_installations.rows.append({
+        "installation_id": 559,
+        "user_id":         "founder-1",
+        "active":          True,
+        "installed_at":    time.time() - 3600,
+    })
+    client, ga_mod = _make_client(fake_db)
+    with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)), \
+         patch.object(ga_mod._ga, "list_installation_repos", AsyncMock(return_value=[])):
+        r = client.get(
+            "/api/aurem-dev/github/app/callback",
+            params={"installation_id": 559, "setup_action": "update"},
+            follow_redirects=False,
+        )
+    assert r.status_code in (302, 307)
+    assert "status=success" in r.headers["location"]
+    row = next(x for x in fake_db.github_installations.rows
+               if x["installation_id"] == 559)
+    assert row["user_id"] == "founder-1"
 
 
 def test_orphaned_install_logs_account_and_repos_for_grep(caplog):

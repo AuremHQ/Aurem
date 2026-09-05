@@ -1698,3 +1698,77 @@ decision, unchanged this round.
 PARTIAL. New F30 (`kit_live` has no emitter) and F31 (full
 error-sanitization sweep remaining) added to ROADMAP.md.
 
+
+## 2026-09-04 — R14: GitHub connect "state dropped on reconnect" root-cause fix
+
+**Trigger**: founder screen recording (2nd, after R13's fallback-link
+fix) showing the connect flow STILL broken for an account that
+already had "AUREM DevOps" installed — GitHub authorized cleanly, but
+Aurem looped "Connection didn't finish" / "Install did not complete".
+
+**Root cause (confirmed via web research + live code trace)**: GitHub
+has documented, reproducible behavior — when a user who ALREADY has a
+GitHub App installed revisits the install/connect URL, GitHub routes
+them through its own "manage installation" screen instead of a fresh
+consent screen, and **drops the `state` query param entirely** on the
+eventual redirect back to the app (only `installation_id` +
+`setup_action` survive). `routers/github_app.py::install_callback`'s
+existing state-recovery block was gated on `if state and state_row is
+None:` — a completely ABSENT `state` skipped it entirely, silently
+landing an orphaned/unlinked installation row (or hard-failing on
+older code paths) that never surfaced for the user.
+
+**Fix — two parts**:
+1. `/callback`: when there's no usable state (row missing OR `state`
+   itself absent), fall back to reusing the ALREADY-LINKED `user_id`
+   on that exact `installation_id` (from a prior successful connect)
+   before declaring the install orphaned. Only a genuinely
+   never-linked-before installation with no state at all still soft-
+   fails to `err=invalid_state` — and now writes NOTHING (no more
+   ghost `user_id: null` rows).
+2. New `POST /api/aurem-dev/github/app/claim` (JWT-auth): closes the
+   remaining gap (installation created via webhook before any
+   authenticated callback ever completed). The authenticated browser
+   tab driving the connect flow claims the `installation_id` directly
+   — from the bridge popup's `postMessage`, or from the non-popup
+   fallback link's landing query params (`?flow=connect-repo&install=
+   success&install_id=`) — instead of depending on GitHub's state
+   round-trip at all. Guardrails: no-op if already linked to caller;
+   403 if linked to a different user (anti-hijack); 409 if the
+   orphaned row is >15 min old; 404 if the row doesn't exist yet.
+
+**Files**: `backend/routers/github_app.py` (`install_callback` +
+new `/claim`), `frontend/src/hooks/useGitHubConnectStatus.js`
+(`claimInstallation`, postMessage handler, new URL-landing effect).
+
+**Testing**:
+- New `backend/tests/test_r14_github_state_dropped_reconnect_2026_09.py`
+  (9 tests) + 2 tests rewritten in
+  `test_iter2026_08_27_github_connect_state_recovery.py` to match the
+  corrected (no-more-silent-orphan) behavior — 16/16 pass.
+- New `frontend/src/hooks/__tests__/useGitHubConnectStatus.claimFallback.test.js`
+  (5 tests) — pass.
+- Also fixed 2 genuinely pre-existing stale tests in
+  `test_github_app_router.py` (replayed/expired state) whose mock
+  scope + assumptions predated the 2026-08-27 string-recovery
+  self-heal — now green (25/25 in that file).
+- Live E2E on preview backend (real Mongo, no mocks): seeded an
+  existing linked installation, hit `/callback` with `state` fully
+  absent → log confirmed `GH_CONNECT_STATE_MISSING_REUSED_EXISTING_LINK`
+  fired and bypassed the old fail path. `/claim` verified live: 200
+  link, 200 no-op re-claim, 403 hijack rejection. All test rows
+  cleaned up afterward.
+- `testing_agent`: `/app/test_reports/iteration_r14_github_state_dropped_reconnect_2026_09.json`
+  — 0 critical/minor new bugs, 16/16 R14-scope + 62/64 adjacent
+  regression (2 confirmed pre-existing via git-stash, unrelated).
+
+**Known residual**: real GitHub OAuth can't be automated in this
+preview environment, so the exact founder repro (real "AUREM DevOps"
+reconnect on a real GitHub account) wasn't re-run end-to-end through
+a browser — the fix was validated at the protocol/DB level (which is
+where the bug actually lived) instead. Also confirmed (via git-stash
+bisection) that a large cross-file pytest test-isolation issue
+(`_dbmod.set_db()` not restored across some older test files, causing
+failures only in specific multi-file run orders) pre-dates this
+session entirely and is unrelated to R14 — out of scope here.
+

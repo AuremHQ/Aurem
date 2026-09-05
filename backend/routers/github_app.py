@@ -47,6 +47,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db, require_db
@@ -320,37 +321,77 @@ async def install_callback(
         )
 
     _recovered_user_id = None
-    if state and state_row is None:
-        # State row missing/expired/already-used — this used to be a
-        # dead end: the webhook still records `installation.created`
-        # with user_id:null, and the user's wizard silently reverts to
-        # the connect CTA with zero feedback (2026-08-27 founder report
-        # — real-world GitHub App install that never linked). FIX: our
-        # own state string is `gha:<user_id>:<random 24-byte token>` —
-        # the random suffix makes it unforgeable, so on TTL-expiry or a
-        # benign double-fire (GitHub occasionally redirects the
-        # callback twice) it is safe to recover `user_id` from the
-        # string itself rather than dropping the link entirely. Still
-        # a hard 401/redirect-to-error below if the string doesn't even
-        # match our own format (can't recover a user_id from nothing —
-        # that's a genuinely malformed/forged state).
-        if state.startswith("gha:"):
+    if state_row is None:
+        # No usable state row. Two distinct causes land here:
+        #   (a) `state` was present but the row is missing/expired/
+        #       already-used (double-fire, TTL, etc).
+        #   (b) `state` is COMPLETELY ABSENT from the query string.
+        #       This is documented, reproducible GitHub behavior
+        #       (confirmed live 2026-09-04 via founder screen
+        #       recording): when a user who ALREADY has this App
+        #       installed revisits the connect flow, GitHub routes
+        #       them through its own "manage installation"
+        #       (/settings/installations/<id>) screen instead of a
+        #       fresh consent screen, and DROPS the `state` query
+        #       param on the eventual redirect back to us — only
+        #       `installation_id` + `setup_action` survive. Previously
+        #       this whole recovery block was gated on `state` being
+        #       truthy, so case (b) fell straight through to an
+        #       orphaned/unlinked install (2026-09-04 fix).
+        if state and state.startswith("gha:"):
+            # Case (a) with a still-recognisable string. Our own state
+            # string is `gha:<user_id>:<random 24-byte token>` — the
+            # random suffix makes it unforgeable, so on TTL-expiry or a
+            # benign double-fire (GitHub occasionally redirects the
+            # callback twice) it is safe to recover `user_id` from the
+            # string itself rather than dropping the link entirely.
             _parts = state.split(":", 2)
             if len(_parts) == 3 and _parts[1]:
                 _recovered_user_id = _parts[1]
-        logger.warning(
-            "GH_CONNECT_STATE_INVALID installation_id=%s state_prefix=%s "
-            "recovered_user_id=%s (row missing/expired/used — see comment)",
-            installation_id, state[:8], _recovered_user_id,
-        )
+        if _recovered_user_id is None:
+            # Case (b), or a case (a) string that doesn't match our
+            # format. Last resort before declaring this orphaned: if
+            # this exact installation_id is ALREADY linked to a user
+            # from a prior successful connect, this redirect isn't a
+            # new link attempt at all — it's GitHub re-confirming an
+            # existing install (repo added/removed, or the user
+            # re-opened the connect wizard while already installed).
+            # Reuse the existing link instead of failing a perfectly
+            # valid reconnect/update.
+            _existing_row = await db.github_installations.find_one(
+                {"installation_id": int(installation_id)}
+            )
+            if _existing_row and _existing_row.get("user_id"):
+                _recovered_user_id = _existing_row["user_id"]
+                logger.info(
+                    "GH_CONNECT_STATE_MISSING_REUSED_EXISTING_LINK "
+                    "installation_id=%s user_id=%s state_present=%s — "
+                    "no usable state token but installation was already "
+                    "linked; treating as a valid reconnect/update instead "
+                    "of failing",
+                    installation_id, _recovered_user_id, bool(state),
+                )
+        if state:
+            logger.warning(
+                "GH_CONNECT_STATE_INVALID installation_id=%s state_prefix=%s "
+                "recovered_user_id=%s (row missing/expired/used — see comment)",
+                installation_id, state[:8], _recovered_user_id,
+            )
+        else:
+            logger.warning(
+                "GH_CONNECT_STATE_ABSENT installation_id=%s recovered_user_id=%s "
+                "(GitHub dropped `state` — likely existing-installation "
+                "update flow, see comment)",
+                installation_id, _recovered_user_id,
+            )
         if _recovered_user_id is None:
             # Truly orphaned — no user_id, no DB row, no recoverable
-            # state string. Enrich the log with account/repo context
-            # (best-effort; installation_id alone isn't enough to grep
-            # an incident against a specific founder report) before
-            # giving up. This is the ONLY case that stays unlinked —
-            # every other state failure self-heals via the recovery
-            # above.
+            # state string, no existing link. Enrich the log with
+            # account/repo context (best-effort; installation_id alone
+            # isn't enough to grep an incident against a specific
+            # founder report) before giving up. This is the ONLY case
+            # that stays unlinked — every other state failure
+            # self-heals via the recovery above.
             try:
                 _orphan_meta = await _fetch_installation_meta(installation_id)
                 _orphan_login = (_orphan_meta.get("account") or {}).get("login")
@@ -854,6 +895,78 @@ async def list_my_installations(
             for row in rows
         ],
     }
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 4z. POST /claim — authenticated client-side link fallback
+#     (2026-09-04 — GitHub-state-dropped reconnect fix, part 2).
+#
+# `/callback` (above) now reuses an EXISTING link when GitHub drops
+# `state` on an already-installed reconnect. But that only self-heals
+# an installation that was linked to a user at least once before. If
+# the very first-ever install for a given installation_id lands via
+# the webhook (which never carries user_id) BEFORE any authenticated
+# browser callback completes, the row is orphaned from birth and
+# `/callback`'s reuse-existing-link has nothing to reuse.
+#
+# This endpoint closes that gap from the other end: the browser tab
+# that is actually driving the connect flow IS authenticated (it holds
+# the user's JWT) and DOES know which `installation_id` GitHub just
+# handed back (via the bridge's postMessage, or the non-popup
+# meta-refresh landing params) — so let it claim the row directly
+# instead of depending on a fragile query-string round-trip through
+# GitHub at all.
+#
+# Guardrails against hijacking an orphaned installation_id that
+# belongs to a DIFFERENT, unrelated account:
+#   * No-op (200) if already linked to the calling user.
+#   * 403 if linked to a DIFFERENT user already.
+#   * 409 if the row is unlinked but was installed more than
+#     `_CLAIM_WINDOW_SECONDS` ago — an old orphan is a signal for
+#     manual review, not a same-session self-heal.
+#   * 404 if the row doesn't exist yet (webhook hasn't landed) —
+#     caller can retry briefly.
+_CLAIM_WINDOW_SECONDS = _STATE_TTL_SECONDS  # same 15-minute window as oauth_states
+
+
+class _ClaimBody(BaseModel):
+    installation_id: int
+
+
+@router.post("/claim")
+async def claim_installation(
+    body: _ClaimBody,
+    authorization: Optional[str] = Header(None),
+):
+    user = await current_dev(authorization)
+    db = require_db()
+
+    row = await db.github_installations.find_one(
+        {"installation_id": int(body.installation_id)}
+    )
+    if not row:
+        raise HTTPException(404, "installation_not_found")
+
+    existing_user_id = row.get("user_id")
+    if existing_user_id == user["user_id"]:
+        return {"ok": True, "already_linked": True}
+    if existing_user_id:
+        raise HTTPException(403, "installation_belongs_to_another_user")
+
+    installed_at = row.get("installed_at") or 0
+    if (_now_utc_epoch() - installed_at) > _CLAIM_WINDOW_SECONDS:
+        raise HTTPException(409, "installation_too_old_to_claim")
+
+    await db.github_installations.update_one(
+        {"installation_id": int(body.installation_id)},
+        {"$set": {"user_id": user["user_id"], "linked_at": _now_utc_epoch()}},
+    )
+    logger.info(
+        "GH_CONNECT_CLIENT_CLAIMED installation_id=%s user_id=%s — "
+        "client-side claim linked a previously-orphaned installation",
+        body.installation_id, user["user_id"],
+    )
+    return {"ok": True, "already_linked": False}
 
 
 # ═════════════════════════════════════════════════════════════════════

@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can help fix bugs, improve performance, or add features—just point me to your website and share what you'd like addressed!",
+      "reply": "I can help improve your website by fixing bugs, optimizing performance, or adding features—just point me to your website.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -22,7 +22,7 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "Got it—I'll add your opening hours prominently to the top of your main page. Let me know if you'd like any specific styling or details included!",
+      "reply": "I need two things: your actual opening hours (you haven't given them to me yet), and a quick look at your main page so I know exactly where to place them.\n\nWhat are your opening hours? For example: \"Mon–Fri 9am–6pm, Sat 10am–4pm, Sun closed.\"",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -32,15 +32,15 @@
         "no_dangling": true,
         "has_handoff_fence": false
       },
-      "provider": "intent-gateway-casual",
-      "tier": "clarify",
+      "provider": "glm-5.2",
+      "tier": "agentic",
       "bail_reason": null,
       "ship_suppressed": false
     },
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Perfect—I'll add \"Open 9am to 5pm daily\" right at the top of your main page.",
+      "reply": "Got it! I'll place those hours (9am-5pm daily) prominently on your main page. Want me to show you exactly where before updating?",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -58,7 +58,7 @@
     {
       "turn": 4,
       "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I can't see your website right now—looks like we need to connect it first. \n\n**But I can** walk you through adding the phone number yourself, or if you share a link to your site (Website's connection, hosting platform, or even just the page URL), I can guide you on exactly where to place `1-800-555-0199` at the bottom.\n\nWhat works best for you?",
+      "reply": "I can't update your website right now because no project is connected. \n\n**But I can** help you the moment you connect your website — just click the project selector in the sidebar and choose your site. Once connected, I'll add both your opening hours (9am–5pm daily) and your phone number (1-800-555-0199) exactly where you want them.\n\nWant me to walk you through connecting your project?",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -137,7 +137,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey there! How can I help?",
+      "reply": "Hey! I'm ORA, your dev co-pilot. Let me know what you're working on and I'll help out.",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }
