@@ -149,13 +149,24 @@ export default function NewUserWizard({ onComplete }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-select the repo the moment status resolves to exactly one —
-  // whether that's on initial load or right after a connect completes.
+  // 2026-09-04 — one-click connect (founder-reported: our flow needed
+  // GitHub popup -> pick repo AGAIN in our own list -> click a SEPARATE
+  // "Continue" button; Emergent's own Save-to-GitHub is popup -> pick
+  // repo -> done). The moment status resolves to exactly one granted
+  // repo — whether on initial load or right after the App-install
+  // popup closes — auto-fill AND auto-submit immediately. No second
+  // click. Multi-repo installs still show the picker below (there's a
+  // real choice to make there), but picking one now submits instantly
+  // instead of just filling the URL field.
   useEffect(() => {
     if (ghConnectStatus.connected_repo && !repoUrl) {
+      const branchGuess = (ghConnectStatus.repos || [])[0]?.default_branch || "main";
       setRepoUrl(`https://github.com/${ghConnectStatus.connected_repo}`);
-      const repo = (ghConnectStatus.repos || [])[0];
-      setBranch(repo?.default_branch || "main");
+      setBranch(branchGuess);
+      submitRepo(null, {
+        url: `https://github.com/${ghConnectStatus.connected_repo}`,
+        branchOverride: branchGuess,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ghConnectStatus.connected_repo]);
@@ -281,16 +292,22 @@ export default function NewUserWizard({ onComplete }) {
     onComplete?.();
   }
 
-  async function submitRepo(e) {
+  async function submitRepo(e, override) {
     e?.preventDefault();
     setErr("");
-    if (!REPO_RX.test(repoUrl.trim())) {
+    // 2026-09-04 — one-click connect: callers that already know the
+    // exact repo (auto-detect effect above, repo-picker button below)
+    // pass it explicitly instead of relying on state that may not
+    // have re-rendered yet (setRepoUrl/setBranch are async).
+    const urlToUse = override?.url ?? repoUrl;
+    const branchToUse = override?.branchOverride ?? branch;
+    if (!REPO_RX.test(urlToUse.trim())) {
       setErr("Use a real GitHub repo URL — github.com/owner/repo");
       return;
     }
     setBusy(true);
     try {
-      const parts = repoUrl.trim().replace(/\/$/, "").split("/");
+      const parts = urlToUse.trim().replace(/\/$/, "").split("/");
       const name = parts[parts.length - 1].replace(/\.git$/, "");
 
       // 2026-02-10 · Phase 4 — if the App picker is active AND the
@@ -299,7 +316,7 @@ export default function NewUserWizard({ onComplete }) {
       // install branch. Otherwise no token is sent (public-repo path).
       let installation_id = null;
       if (appPickerActive && appInstalls.length > 0) {
-        const chosenFullName = repoUrl.trim()
+        const chosenFullName = urlToUse.trim()
           .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
           .replace(/\/$/, "")
           .replace(/\.git$/i, "");
@@ -315,8 +332,8 @@ export default function NewUserWizard({ onComplete }) {
 
       const payload = {
         name,
-        github_url: repoUrl.trim(),
-        branch:     branch.trim() || "main",
+        github_url: urlToUse.trim(),
+        branch:     branchToUse.trim() || "main",
         // 2026-08-24 — funnel stitching: lets the backend's server-side
         // `repo_selected` event join this browser's funnel journey.
         funnel_session: getFunnelSessionId(),
@@ -823,11 +840,21 @@ export default function NewUserWizard({ onComplete }) {
                                     key={r.id || r.full_name}
                                     data-testid={`wizard-app-repo-${r.full_name}`}
                                     type="button"
+                                    disabled={busy}
                                     onClick={() => {
-                                      setRepoUrl(`https://github.com/${r.full_name}`);
-                                      setBranch(r.default_branch || "main");
+                                      // 2026-09-04 — one-click connect: picking a
+                                      // repo here now finishes the job immediately
+                                      // (was: fill the URL field, then require a
+                                      // SEPARATE "Continue" click below — the exact
+                                      // extra step Emergent's own Save-to-GitHub
+                                      // doesn't have).
+                                      const url = `https://github.com/${r.full_name}`;
+                                      const branchGuess = r.default_branch || "main";
+                                      setRepoUrl(url);
+                                      setBranch(branchGuess);
                                       trackFunnel("app_repo_selected", "wizard",
                                         { repo: r.full_name });
+                                      submitRepo(null, { url, branchOverride: branchGuess });
                                     }}
                                     style={{
                                       padding: "5px 10px", fontSize: 11,
@@ -839,9 +866,13 @@ export default function NewUserWizard({ onComplete }) {
                                         : "1px solid rgba(255,255,255,0.12)",
                                       borderRadius: 4,
                                       color: "var(--text)",
-                                      cursor: "pointer",
+                                      cursor: busy ? "wait" : "pointer",
+                                      opacity: busy ? 0.6 : 1,
                                       fontFamily: "'JetBrains Mono', monospace",
                                     }}>
+                                    {busy && (repoUrl || "").endsWith(r.full_name)
+                                      ? <Loader2 size={11} className="spin" style={{ marginRight: 4 }} />
+                                      : null}
                                     {r.full_name}
                                     {r.private && (
                                       <span style={{
@@ -854,16 +885,17 @@ export default function NewUserWizard({ onComplete }) {
                               </div>
                             </div>
                           ))}
-                          {repoUrl && (
+                          {repoUrl && busy && (
                             <div data-testid="wizard-app-repo-selected-cta" style={{
                               marginTop: 8, padding: "8px 12px", borderRadius: 6,
                               background: "rgba(34,197,94,0.08)",
                               border: "1px solid rgba(34,197,94,0.36)",
                               color: "#22C55E", fontSize: 11, fontWeight: 600,
                               fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                              display: "flex", alignItems: "center", gap: 6,
                             }}>
-                              ✓ {repoUrl.replace(/^https?:\/\/github\.com\//i, "")} selected —
-                              click <strong>Continue</strong> below to connect it.
+                              <Loader2 size={11} className="spin" />
+                              Connecting {repoUrl.replace(/^https?:\/\/github\.com\//i, "")}…
                             </div>
                           )}
                           <button

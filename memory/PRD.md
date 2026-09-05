@@ -1,3 +1,49 @@
+## 2026-09-04 (later) — One-click GitHub connect (founder: "our GitHub App should work as easy as yours") + production SEO-flash fix
+
+**GitHub connect UX simplified (founder watched a recording of Emergent's
+own "Save to GitHub" flow and asked for the same "click → pick repo →
+done" experience in our own app):**
+- `AddProjectWizard.jsx` restructured from a 3-step wizard (Step 1 forced
+  typing the exact `owner/repo` text BEFORE connecting anything) to 2
+  steps: Step 1 is "Connect via GitHub App" — shows a real repo picker
+  fed by `useGitHubConnectStatus()`'s granted installations, or a
+  "Continue with GitHub App" CTA if nothing granted yet. Manual
+  owner/repo typing is now a secondary fallback link, not the mandatory
+  first step. Picking a repo advances straight to Step 2 (confirm name
+  + Save & Open Chat) — no intermediate click.
+- `NewUserWizard.jsx`: the single-granted-repo auto-detect effect and
+  the multi-repo picker's button clicks now call `submitRepo()`
+  immediately (refactored to accept explicit `{url, branchOverride}`
+  to avoid React state-staleness) instead of just filling a text field
+  and waiting for a separate manual "Continue" click.
+- Verified: `/app/test_reports/iteration_r11_add_wizard_2step_verify_2026_01.json`
+  — 100% frontend, 0 action items. One cosmetic testid nit
+  (`wizard-step-3` left over on the now-Step-2 container) fixed →
+  `wizard-step-2`. `NewUserWizard.connectRefinement.test.jsx` rewritten
+  (3/3 passing) to match the new auto-submit-on-mount behavior. Full
+  frontend suite re-run: 644 passed, 12 failed (unchanged pre-existing
+  baseline — 8 MessageBubble + 4 PreviewPanel).
+
+**Production SEO-prerender flash fixed:** `scripts/seo-prerender.mjs`
+injects raw unstyled `<h1>/<p>/<ul>` crawler content directly into
+`<div id="root">` at build time (intentional, for non-JS SEO crawlers);
+React replaces it via `createRoot().render()` once it mounts. On
+production this was visible as a plain unstyled text flash before the
+real (styled) homepage on every load/refresh. Fixed by wrapping the
+injected content in a scoped `.ora-seo-snapshot` class with inline CSS
+matching the site's dark theme — same real semantic content for
+crawlers, no longer looks broken during the brief pre-hydration window.
+Verified via `yarn build` — CSS correctly present in generated
+`dist/index.html`. **Ships on next deploy** (build-time step; this
+preview pod runs Vite dev server, doesn't exhibit the bug).
+
+**Also this round:** diagnosed Emergent platform's own "Save to
+GitHub" feature erroring with "Please contact support to restart
+environment [ID]" — routed to `support_agent`, confirmed this needs a
+platform-side environment restart (no self-service fix), user directed
+to email support@emergent.sh with the environment ID.
+
+
 ## 2026-09-04 — R10 FOCUS MODE: core chat-hang diagnosis + real fix (founder directive: stop all other work, prove root cause, fix it)
 
 **Founder's exact ask:** the core chat/code-fix flow was hanging ~90s
