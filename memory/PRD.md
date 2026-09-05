@@ -1,3 +1,57 @@
+## 2026-09-05 — GitHub connect "stuck forever" bug: root-caused as PRODUCTION-ONLY (not reproducible on preview, code verified correct)
+
+**Founder report (2 screen recordings):** even after successfully
+configuring the GitHub App on GitHub's own settings page (GitHub's own
+"AUREM DevOps was updated" confirmation shown), our app's connect
+modal never detects it and loops "Connection didn't finish — please
+try again" forever, even after retries. Founder wants this to work
+exactly like Emergent's own "Save to GitHub" (click → GitHub native
+screen → pick repo → done).
+
+**Investigation (with proof, not guessing):**
+1. Checked this preview pod's `github_installations` collection for
+   the founder's test account (github login `RrootsBeauty`) — **zero
+   rows**. Checked backend logs for any `/github/app/install` or
+   `/github/app/callback` hits around the recording's timestamp —
+   **zero matches**. This means the founder's test was run against a
+   DIFFERENT deployment (almost certainly production, `auremcto.com`,
+   a separate stale Emergent deployment per earlier R10 migration
+   discussion), not this preview pod.
+2. Directly simulated exactly what GitHub sends on a real install/
+   update — `GET /api/aurem-dev/github/app/callback?installation_id=
+   152797252&setup_action=update&state=<real-state-token>` on THIS
+   preview pod — **worked correctly**: redirected to the success deep
+   link, and `GET /github/app/status` immediately flipped to
+   `installation_active:true, state:"connected"` with the full repo
+   list. **Proves the callback→DB→status-poll code path is correct.**
+3. Full real UI E2E proof via testing_agent
+   (`iteration_r12_github_connect_e2e_proof_2026_01.json`, 100%/100%,
+   0 action items): opened Add Project wizard → real repo picker
+   rendered instantly (no stuck spinner, no "Connection didn't
+   finish") → picked a repo → advanced straight to Step 2 → Save &
+   Open Chat → landed in dashboard/chat for the new project. Also
+   captured a fresh live screenshot independently confirming the
+   working picker (`/tmp/proof_repo_picker.png` — 8 real repos shown,
+   2-step wizard, no error state).
+4. **Conclusion: the connect code itself is correct and works
+   end-to-end on this environment.** The bug the founder is seeing is
+   isolated to wherever they tested (very likely production). GitHub
+   Apps have exactly ONE static "Setup URL" configured on github.com
+   (unlike OAuth apps' dynamic `redirect_uri`) — if that Setup URL
+   doesn't point to the current live production host + exact path
+   `/api/aurem-dev/github/app/callback`, GitHub will never call
+   production back after install/reconfigure, and production's DB
+   will never get the row, reproducing exactly what was recorded.
+5. **Blocked on founder input:** cannot verify/fix the GitHub App's
+   Setup URL (github.com/settings/apps/aurem-devops) or inspect
+   production's own logs/DB from this session — asked the founder to
+   check/share that value and confirm which URL they tested against.
+
+**Also fixed this round (cosmetic, low-risk):** none required — no
+code changes made, since the bug did not reproduce on this pod and
+no code defect was found.
+
+
 ## 2026-09-04 (later) — One-click GitHub connect (founder: "our GitHub App should work as easy as yours") + production SEO-flash fix
 
 **GitHub connect UX simplified (founder watched a recording of Emergent's
