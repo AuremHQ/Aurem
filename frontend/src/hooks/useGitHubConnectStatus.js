@@ -171,6 +171,22 @@ export default function useGitHubConnectStatus() {
 
   const retry = useCallback(() => startConnect(), [startConnect]);
 
+  // 2026-09-05 — founder-reported (with console/network evidence):
+  // on some real-world browser/extension combinations, `window.open()`
+  // returns a non-null window handle (so we never even hit the
+  // `popup_blocked` check) yet no visible tab ever appears — some ad-
+  // blockers/privacy extensions neutralize the call silently instead
+  // of rejecting it outright. A programmatic `window.open()` call can
+  // ALWAYS be intercepted like this; a real user click on a real
+  // `<a href target="_blank">` link CANNOT be blocked by any browser
+  // or extension (that's the literal distinction browsers use to tell
+  // "the user meant to navigate" from "a script is spawning a popup").
+  // Expose the exact same install URL so callers can render one as a
+  // guaranteed-working fallback, always visible while `connecting`.
+  const installUrl = getToken()
+    ? `${API_BASE}/github/app/install?auth=${encodeURIComponent(getToken())}`
+    : null;
+
   // Fast-path — if the bridge page's postMessage arrives, poll right
   // away instead of waiting for the next interval tick. Not required
   // for correctness (the interval poll is authoritative either way).
@@ -184,5 +200,5 @@ export default function useGitHubConnectStatus() {
     return () => window.removeEventListener("message", onMessage);
   }, [fetchStatus]);
 
-  return { status, connecting, timedOut, denied, startConnect, retry, refresh: fetchStatus };
+  return { status, connecting, timedOut, denied, startConnect, retry, refresh: fetchStatus, installUrl };
 }

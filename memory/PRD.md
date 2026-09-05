@@ -1,3 +1,58 @@
+## 2026-09-05 (later) — GitHub connect: real popup-neutralization bug found + fixed (guaranteed-working fallback link)
+
+**Founder's second, deeper debugging pass (with console + network
+evidence) found a genuinely different, real bug on top of the earlier
+production-Setup-URL suspicion:** clicking "Continue with GitHub App"
+showed the "Waiting for you to finish in the GitHub popup…" state
+(meaning `window.open()` returned a non-null handle — our code never
+even hit its own `popup_blocked` check), but **no visible tab ever
+opened**, network tab showed **zero** GitHub OAuth/install requests
+going out, and after a few seconds the wizard **silently reverted** to
+"No repo connected" with no error at all. Console showed `AbortError:
+BodyStreamBuffer was aborted` at that moment.
+
+**Root cause:** some browsers/privacy extensions silently neutralize
+a JS-triggered `window.open()` call — it returns a window HANDLE (so
+our null-check passes and we enter "connecting"), but the popup never
+actually renders, and `.closed` often reports `true` almost
+immediately, firing `denied` within one poll tick (~2.5s) — a
+different failure mode than the browser's native "popup blocked"
+signal, which our code had zero fallback for. A programmatic
+`window.open()` can always be intercepted like this; a REAL user
+click on a real `<a target="_blank">` anchor cannot — that's the
+literal distinction browsers use to tell "the user meant to navigate"
+from "a script is spawning a popup."
+
+**Fix:** `useGitHubConnectStatus.js` now exposes `installUrl` (the
+exact same URL `startConnect()`'s `window.open()` uses, built from the
+real auth token). Both `AddProjectWizard.jsx` and `NewUserWizard.jsx`
+now always render a guaranteed-working `<a href={installUrl}
+target="_blank" rel="noopener noreferrer">` fallback link inside BOTH
+the "connecting" banner AND the "denied/timedOut" banner (needed in
+both because `denied` can fire within ~2.5s, before the user even
+registers the "connecting" state) — clicking it can never be blocked
+by any popup blocker or extension, guaranteeing the user always has a
+working manual path to GitHub even when the automatic popup silently
+fails.
+
+**Verified:**
+`/app/test_reports/iteration_r13_github_connect_fallback_link_2026_01.json`
+— 100% frontend, 0 action items. Live E2E confirmed the fallback link
+renders with the correct href/`target=_blank`/`rel=noopener
+noreferrer` matching the exact `window.open()` URL; repo-picker happy
+path regression-checked clean. Full frontend suite re-run: 644
+passed, 12 failed (unchanged pre-existing baseline).
+
+**Still open / needs founder input (unchanged from the prior entry):**
+the earlier finding that the founder's FIRST recorded test (github
+login `RrootsBeauty`) has zero matching DB/log entries on this
+preview pod — strongly suggesting that test ran against production
+(auremcto.com), where the GitHub App's "Setup URL" config on
+github.com may not match production's live host. Still needs the
+founder to check/share that value; cannot be verified or fixed from
+this session without it.
+
+
 ## 2026-09-05 — GitHub connect "stuck forever" bug: root-caused as PRODUCTION-ONLY (not reproducible on preview, code verified correct)
 
 **Founder report (2 screen recordings):** even after successfully

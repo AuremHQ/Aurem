@@ -80,7 +80,7 @@ export default function NewUserWizard({ onComplete }) {
   const {
     status: ghConnectStatus, connecting: appConnecting,
     timedOut: appTimedOut, denied: appDenied, startConnect: startAppConnect,
-    retry: retryAppConnect, refresh: refreshGhConnectStatus,
+    retry: retryAppConnect, refresh: refreshGhConnectStatus, installUrl: appInstallUrl,
   } = useGitHubConnectStatus();
   const appInstalls = ghConnectStatus.installations;
   const appPickerActive = ghConnectStatus.installation_active;
@@ -666,11 +666,33 @@ export default function NewUserWizard({ onComplete }) {
                           </div>
                           {appConnecting ? (
                             <div data-testid="wizard-app-connecting" style={{
-                              display: "flex", alignItems: "center", gap: 8,
+                              display: "flex", flexDirection: "column", gap: 6,
                               fontSize: 12, color: "var(--text-faint)",
                             }}>
-                              <Loader2 size={14} className="spin" color="#ff9d5c" />
-                              Waiting for you to finish in the GitHub popup…
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <Loader2 size={14} className="spin" color="#ff9d5c" />
+                                Waiting for you to finish in the GitHub popup…
+                              </div>
+                              {/* 2026-09-05 — founder-reported (with console/
+                                  network evidence): some browser/extension
+                                  combos let window.open() return a handle
+                                  that never shows a real popup — silently
+                                  neutralized, not rejected outright. A real
+                                  <a target="_blank"> click can't be blocked
+                                  like that, so it's always offered here. */}
+                              {appInstallUrl && (
+                                <a
+                                  data-testid="wizard-app-fallback-link"
+                                  href={appInstallUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    fontSize: 11, color: "#ff9d5c",
+                                    textDecoration: "underline",
+                                  }}>
+                                  Not seeing the popup? Click here to open it
+                                </a>
+                              )}
                             </div>
                           ) : appTimedOut || appDenied ? (
                             <div data-testid="wizard-app-timeout" style={{
@@ -704,6 +726,20 @@ export default function NewUserWizard({ onComplete }) {
                                   <RefreshCw size={11} /> Try again
                                 </button>
                               </div>
+                              {appInstallUrl && (
+                                <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
+                                  Or{" "}
+                                  <a
+                                    data-testid="wizard-app-fallback-link-2"
+                                    href={appInstallUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: "#ff9d5c", textDecoration: "underline" }}>
+                                    open the GitHub connect page directly
+                                  </a>{" "}
+                                  — this always works even if popups are blocked.
+                                </div>
+                              )}
                               {connectAttempts >= 2 && (
                                 <div style={{ fontSize: 11, color: "var(--text-faint)", lineHeight: 1.4 }}>
                                   Still stuck?{" "}

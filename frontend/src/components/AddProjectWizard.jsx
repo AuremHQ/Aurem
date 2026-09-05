@@ -83,7 +83,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   // ONE shared hook (also used by NewUserWizard.jsx) — the wizard is a
   // pure function of the authoritative /github/app/status endpoint,
   // not a local postMessage/count-poll guess.
-  const { status, connecting, timedOut, denied, startConnect } = useGitHubConnectStatus();
+  const { status, connecting, timedOut, denied, startConnect, installUrl } = useGitHubConnectStatus();
   // 2026-08-27 — founder-confirmed workaround: some accounts get stuck
   // with an orphaned/already-installed App that never links (retrying
   // the same install popup replays the same stuck state). After the
@@ -309,6 +309,25 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                   <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 3 }}>
                     This picks up automatically — no need to click anything else.
                   </div>
+                  {/* 2026-09-05 — founder-reported: some browser/extension
+                      combos let window.open() return a handle that never
+                      shows a real popup (silently neutralized, not
+                      rejected) — a real <a target="_blank"> click can
+                      never be blocked like that, so it's always offered
+                      as a guaranteed-working escape hatch. */}
+                  {installUrl && (
+                    <a
+                      data-testid="add-wizard-app-fallback-link"
+                      href={installUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-block", marginTop: 6,
+                        fontSize: 11, color: "#FF8A2A", textDecoration: "underline",
+                      }}>
+                      Not seeing the popup? Click here to open it
+                    </a>
+                  )}
                 </div>
               </div>
             ) : timedOut || denied ? (
@@ -340,6 +359,24 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                     <RefreshCw size={12} /> Try again
                   </button>
                 </div>
+                {/* Same guaranteed-working fallback — `denied` can fire
+                    within one poll tick (~2.5s) if the popup handle was
+                    a fake/neutralized one, before the user even notices
+                    "connecting", so it must be reachable from here too. */}
+                {installUrl && (
+                  <div style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
+                    Or{" "}
+                    <a
+                      data-testid="add-wizard-app-fallback-link-2"
+                      href={installUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#FF8A2A", textDecoration: "underline" }}>
+                      open the GitHub connect page directly
+                    </a>{" "}
+                    — this always works even if popups are blocked.
+                  </div>
+                )}
                 {connectAttempts >= 2 && (
                   <div style={{ fontSize: 11.5, color: "var(--text-faint)", lineHeight: 1.4 }}>
                     Still stuck?{" "}
