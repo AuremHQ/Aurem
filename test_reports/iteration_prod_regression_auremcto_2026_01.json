@@ -1,0 +1,46 @@
+{
+  "summary": "Live PRODUCTION regression on https://auremcto.com using founder account. Login works, dashboard loads with the connected repo TJSNDHU/Aurem@main already active. Simple chat 'hi' returned a reply (ORA recalled 2 past answers → 'Hey! Ready to approve and implement those footer updates...') and the composer send/stop button visibly reverted to the ready-to-send state after the reply finished (no stuck Thinking/Finalizing observed on the 'hi' round trip). Test 2 (request a small safe change with 'plan first, do not commit yet') was submitted but the actual response for THIS turn was still streaming ('Bear with me — our agents are working on it…' / 'Thinking through your request…') when the observation window ended; my auto-detector for an Approve CTA fired a false positive against historical 'Approve' text already on the page from previous sessions, so approve/ship CTA behavior for the fresh turn is INCONCLUSIVE. However, historical chat cards ALREADY on the page from prior sessions clearly show the known-buggy pattern still present on prod: 'The approve button didn't load for that fix — Retry this fix' and 'Model API was slow to respond — waited 48s and only got 1 tool call through' and 'Task failed — nothing was committed. Error: AI produced no file edits after a retry'. This is consistent with the review-request expectation that the two session fixes (streamChat done/meta dispatch in frontend/src/lib/api.js, and search_repo timeout hardening in backend/services/local_tools.py) are on PREVIEW only and NOT yet deployed to production. Zero console errors on core screens. Cookie banner appears and is dismissable. Settings opens as a right-side drawer (Profile / Plans & usage / Integrations / Vault / IDE setup (MCP)), not a dedicated route (URL stays /dashboard).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Ship / Approve CTA on a small code change",
+        "issue": "History on the founder's live account still shows repeated 'The approve button didn't load for that fix — Retry this fix' and 'Model API was slow to respond — waited 48s and only got 1 tool call through' and '❌ Task failed — nothing was committed. Error: AI produced no file edits after a retry' cards from PRIOR sessions — matches the known bug that was root-caused this session (backend search_repo tool timeout + external SSE proxy ~60s buffer). The preview-only fixes (frontend done/meta dispatch, search_repo budget) appear NOT deployed to prod yet. NEW turn submitted this run ('add <!-- smoke-test 2026-01 --> to README.md, plan first, do not commit') was still streaming at end of observation window — approve CTA render for THIS fresh turn could NOT be confirmed within the run. Recommend deploying the preview fixes to prod, then re-running just Test 2 with a longer (3–4 min) wait.",
+        "affected_selectors": ["button:has-text(\"Approve\")", "button:has-text(\"Retry this fix\")", "[data-testid=\"chat-send\"]"]
+      }
+    ],
+    "design_issues": [
+      {"screen": "Dashboard / chat composer", "issues": ["Cookie consent banner overlays the composer bottom-right area (Advisor pill / send button) on 1440x900 until dismissed — minor, not blocking after one-time dismiss."]}
+    ]
+  },
+  "verification_of_session_fixes_on_prod": {
+    "streamChat_done_meta_dispatch_frontend_api_js": "LIKELY LIVE / PASSING — for the simple 'hi' round trip the send button reverted back to the ready-to-send arrow icon after the reply arrived (no stuck Thinking/Finalizing observed). No console errors. Consider fully verified for the light path.",
+    "search_repo_timeout_backend_local_tools_py": "NOT CONFIRMED ON PROD — page still displays prior-session artifacts of the exact failure mode (48s model-slow warnings, 'AI produced no file edits after a retry', 'approve button didn't load'). The new small-change turn in this run was still streaming when observation ended, so we could not positively confirm a healthy approve/ship CTA on prod within this window. Treat as: fix pending prod deploy, matches agent-to-agent context note."
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/prod_01_landing.png",
+    "/app/test_reports/screenshots/prod_02_login_page.png",
+    "/app/test_reports/screenshots/prod_03_after_login.png",
+    "/app/test_reports/screenshots/prod_t1_hi_result.png",
+    "/app/test_reports/screenshots/prod_t2_approve_cta.png",
+    "/app/test_reports/screenshots/prod_t2_final.png",
+    "/app/test_reports/screenshots/prod_settings.png"
+  ],
+  "action_items": [
+    "Deploy the preview-verified fixes to production: (1) frontend/src/lib/api.js streamChat done/meta SSE dispatch, (2) backend/services/local_tools.py search_repo _SEARCH_REPO_SNAPSHOT_BUDGET_S / _SEARCH_REPO_TOTAL_BUDGET_S timeout budgets. Historical cards on this founder account already show the exact bug pattern (approve button didn't load, model slow 48s, no file edits after retry) that these two fixes address.",
+    "After deploy, re-run ONLY Test 2 (ask for a small safe README/comment change with 'plan first, do not commit yet') on prod and wait a full 3–4 minutes; a healthy approve/ship CTA should render for the fresh turn and the composer should not sit stuck on Thinking past ~60s.",
+    "Consider not surfacing/keeping historical 'Approve button didn't load — Retry this fix' error cards permanently in chat history for a founder account — they read as active failures on every login and skew both human trust and automated regression detection. Either GC old failure cards after N days or badge them clearly as 'past session'."
+  ],
+  "critical_code_review_comments": [
+    "The composer send button (data-testid=\"chat-send\") has an EMPTY aria-label and empty innerText in both the send and processing states — only title toggles ('Send' vs 'Stop'). This is (a) fragile for a11y/screen readers, and (b) fragile for automated regression scripts that key off aria-label. Recommend setting aria-label to 'Send message' / 'Stop generation' explicitly so future tests can trivially detect the stuck-Thinking regression class."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only run per request)", "frontend": "Login 100%, chat send/reply revert 100% for light path, small-code-change ship flow INCONCLUSIVE within run window"},
+  "test_credentials": "Founder credentials provided in review_request; used only for login action, not echoed in this report per security note.",
+  "seed_data_creation": "None. No commits made, no repo files touched. The small-change turn was left in a 'plan first, do NOT commit yet' phrasing and was still generating at end of run — no ship/approve was clicked.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "This was a live-prod run on auremcto.com with founder account. On prod, chat SEND button reverts correctly for light 'hi' round trips → the api.js done/meta fix is either already live or the light path never hit that bug. What is NOT confirmed on prod is the small-code-change → approve/ship CTA flow: historical cards on this account still show the 'approve button didn't load / 48s model-slow / no file edits after retry' pattern, and this run's fresh turn was still streaming at cutoff. Next run: after prod deploy of the two session fixes, retry ONLY 'add short comment to README.md, plan first' and wait ≥3 min for approve CTA. Do NOT click Ship unless CTA renders cleanly. Composer send button has empty aria-label; use data-testid=\"chat-send\" and inspect its 'title' attribute (Send vs Stop) to detect stuck-Thinking. Settings is a right-drawer, not a route — url stays /dashboard.",
+  "rca of the issue": "For the 'approve button didn't load' family visible in founder's chat history: root-caused this session to (a) frontend SSE dispatcher in frontend/src/lib/api.js streamChat swallowing the meta/done payload so the UI never received the 'ship-plan-ready' signal — fix landed in preview by adding an explicit payload.meta === true check before dispatching completion; and (b) backend/services/local_tools.py search_repo running unbounded on large repos and eating the entire ~60s external SSE-proxy buffer, so the tool call never returned in time to attach the ship plan — fix landed in preview by introducing _SEARCH_REPO_SNAPSHOT_BUDGET_S and _SEARCH_REPO_TOTAL_BUDGET_S bounded budgets. Neither is confirmed live on prod as of this run. Mitigation: deploy preview → prod, then re-run Test 2."
+}

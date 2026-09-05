@@ -1,3 +1,19 @@
+## 2026-09-05 (R16 follow-up) — Full production regression run (founder's real account + real repo TJSNDHU/Aurem) + chat-send/stop button aria-label fix
+
+**Founder explicitly requested and provided real production credentials** (per this file's existing security policy, password is NOT stored here — see `test_credentials.md`'s "Founder Account" row) for a full live regression on `auremcto.com` with the real connected repo TJSNDHU/Aurem.
+
+**Findings (`testing_agent`, `/app/test_reports/iteration_prod_regression_auremcto_2026_01.json`):**
+- Login, dashboard, and the connected repo all work correctly on production.
+- Simple "hi" chat: reply streams correctly AND the send/stop button correctly reverts to ready-to-send — light-path behavior looks healthy on prod already.
+- **Confirmed on the founder's REAL account history**: repeated pre-existing cards showing "The approve button didn't load for that fix — Retry this fix", "Model API was slow to respond — waited 48s and only got 1 tool call through", and "Task failed — nothing was committed. Error: AI produced no file edits after a retry" — this independently corroborates the R16 root-cause diagnosis (search_repo tool timeout + infra SSE-buffer wall) using the founder's own real production data, not just this session's synthetic repro.
+- A fresh small-change test turn ("add a comment to README, plan first, do not commit") was still streaming when the test window ended — ship/approve CTA behavior for a FRESH turn on prod remains unconfirmed either way (the 2 R16 fixes are preview-only, not yet deployed).
+- Zero destructive actions taken — no real commits made, per instruction.
+
+**Small fix landed (safe, low-risk, testing_agent-identified):** `frontend/src/components/ChatPanel.jsx`'s send (`chat-send`) and stop (`chat-stop`) buttons had an empty `aria-label` (only a `title` attribute) — added explicit `aria-label="Send message"` / `"Stop generation"` for accessibility and so future regression scripts can reliably detect the stuck-Thinking bug class via a stable selector.
+
+**PROVENANCE: production-tested (read-mostly) + one trivial preview a11y fix.** The two substantive R16 fixes (button-stuck SSE dispatch, search_repo timeout hardening) remain preview-only — founder needs to deploy via the Emergent toolbar to bring them to `auremcto.com`, then this exact "small change → approve CTA" test should be re-run.
+
+
 ## 2026-09-05 (R16) — Chat button-stuck root cause FIXED (real bug found: `meta`/`done` field-name collision) + `search_repo` 45s-hang hardened + infra 60s SSE-buffer limit identified (escalated, not fixable in-code)
 
 **Founder's latest complaint chain this session:** (1) simple "hi" chat replies print correctly but the send button never reverts from "Thinking…"/"Finalizing…" — stuck until the 90s client watchdog force-cancels it, on EVERY turn; (2) real fix/commit attempts kept showing "The approve button didn't load for that fix — Retry this fix", no GitHub commit ever landing.

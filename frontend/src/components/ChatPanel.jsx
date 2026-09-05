@@ -5892,6 +5892,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                 type="button" data-testid="chat-stop"
                 onClick={stop}
                 title="Stop streaming"
+                aria-label="Stop generation"
                 style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                   width: 38, height: 38, borderRadius: "50%",
@@ -5933,6 +5934,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               //   5. Use `aria-disabled` for SR users instead of
               //      the native `disabled` attribute.
               aria-disabled={!input.trim() || !sessionId || exhausted}
+              aria-label="Send message"
               onPointerDown={(e) => {
                 // Native pointer event fires BEFORE click — if any
                 // overlay is at z-index above this button, this is
