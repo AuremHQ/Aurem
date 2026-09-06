@@ -78,6 +78,8 @@ import {
   confirmShip, getLoopStatus,
 } from "../lib/loopApi";
 import { getChatBgTint } from "../utils/chatBgTint";        // Iter 212m-30 PR-2
+import { computeDateDividers } from "../utils/dateDividers"; // 2026-09 — chat date dividers
+import { DateDivider } from "./chat/DateDivider";             // 2026-09 — chat date dividers
 // Iter 140 — extracted chat hooks. ChatPanel.jsx grew past 1500 lines;
 // the hooks below ring-fence message-list mutations, session network
 // calls, and SSE stream control so each concern can be unit-tested
@@ -1299,6 +1301,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     }, 0);
   }, [busy, sessionId]);
 
+  // 2026-09 — WhatsApp/Telegram-style chat date dividers. Recomputed
+  // whenever `messages` changes (new send, history load, session
+  // switch). Cheap (O(n) single pass) so no debouncing needed.
+  const dateDividers = useMemo(() => computeDateDividers(messages), [messages]);
+
   // Auto-extract code blocks from the latest *completed* assistant reply
   const latestAssistant = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1504,6 +1511,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             role: t.role,
             content: t.content,
             provider: t.provider,
+            // 2026-09 — chat date dividers need each message's real
+            // timestamp (Unix epoch seconds, matches backend's
+            // chat_helpers.py `"ts": time.time()`). Previously dropped
+            // here entirely.
+            ts: typeof t.ts === "number" ? t.ts : undefined,
             // Iter 161 — preserve review_mode across reload so the
             // agent chip stays accurate after a page refresh.
             reviewMode: t.review_mode || null,
@@ -1877,7 +1889,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       const userBubble = text;
       setMessages((m) => [
         ...m,
-        { role: "user", content: userBubble },
+        { role: "user", content: userBubble, ts: Date.now() / 1000 },
         { role: "assistant", content: "", streaming: true,
           diagramPending: true },
       ]);
@@ -1958,7 +1970,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       const userBubble = text;
       setMessages((m) => [
         ...m,
-        { role: "user", content: userBubble },
+        { role: "user", content: userBubble, ts: Date.now() / 1000 },
         { role: "assistant", content: "", streaming: true,
           podShellPending: true },
       ]);
@@ -2138,7 +2150,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       ...m,
       ...(opts.skipUserBubble
         ? []
-        : [{ role: "user", content: displayContent }]),
+        : [{ role: "user", content: displayContent, ts: Date.now() / 1000 }]),
       { role: "assistant", content: "", streaming: true, maxxMode, councilRecalled: 0 },
     ]);
     setBusy(true);
@@ -3068,7 +3080,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       // bubble BEFORE inserting the new one so at most ONE
       // "Generating plan…" placeholder exists at any moment.
       ...m.filter((row) => !(row.role === "assistant" && row.loopPending)),
-      ...(opts?.skipUserBubble ? [] : [{ role: "user", content: displayContent }]),
+      ...(opts?.skipUserBubble ? [] : [{ role: "user", content: displayContent, ts: Date.now() / 1000 }]),
       { role: "assistant", content: "", streaming: true, loopPending: true },
     ]);
     setBusy(true);
@@ -4811,6 +4823,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             : [];
           return (
             <React.Fragment key={i}>
+              {/* 2026-09 — WhatsApp/Telegram-style chat history date
+                  divider. Pure render concern: computeDateDividers()
+                  (utils/dateDividers.js) maps message index -> label,
+                  derived from each message's LOCAL-timezone calendar
+                  day. Scrolls with the list (a normal Fragment child,
+                  not pinned/sticky). Renders nothing when no divider
+                  belongs at this index. */}
+              <DateDivider text={dateDividers.get(i)} />
               {/* 2026-08-27 — P3a "ORA remembers this" (D5, "Show the
                   Outcome, Never the Engine"). On the explain-branch
                   surface (plainEnglishContractActive), the recall
