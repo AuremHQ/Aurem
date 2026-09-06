@@ -1,0 +1,37 @@
+{
+  "summary": "Verified the two founder-caught live-production bugs in Visibility Kit are fixed in preview. Bug 1 (silent apply failure — frontend showed toast.success even when backend returned ok:false with conflicts): frontend/src/components/VisibilityKitPanel.jsx now checks `if (!data?.ok)` and calls toast.error with joined conflicts/error reason. Verified by new Vitest file VisibilityKitPanel.applyOkFalse.test.jsx (2/2 pass). Bug 2 (sitemap data-loss — merge_lastmod ignored existing_xml and rebuilt from possibly-empty/placeholder scan_urls, exactly what wiped 234 entries in prod PR #386): backend/services/visibility/sitemap.py now parses existing <loc>s via _existing_locs regex, filters _PLACEHOLDER_HOSTS ('yourdomain.com','example.com','example.org') from fresh urls, and unions fresh+existing deduped. Verified by new test file test_2026_09_12_visibility_sitemap_wipe_bug.py (4/4 pass). Full regression on tests/test_visibility_kit.py + tests/test_visibility_kit_v2_2026_08_30.py + new test = 39 passed, 1 skipped (billing gate free plan — expected), 1 failed (test_catalog_seeded: len==10 vs expected 8) which E1 explicitly flagged as pre-existing/unrelated seed-count drift confirmed via prior git-stash bisection. `import React` added at line 15 of VisibilityKitPanel.jsx — purely additive, no behavior change. Both fixes are architecturally sound: sitemap fix mentally-reverts to zero entries if _existing_locs union removed, which would fail test_stale_empty_scan_does_not_wipe_real_sitemap immediately — regression guard is real.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (test suite)", "issue": "Pre-existing test_catalog_seeded failure (10 items vs expected 8) — unrelated to this fix batch, previously confirmed pre-existing by main agent via git-stash bisection. Catalog seed drifted, assertion needs updating in a separate task."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_2026_09_12_visibility_sitemap_wipe_bug.py",
+    "/app/frontend/src/components/__tests__/VisibilityKitPanel.applyOkFalse.test.jsx",
+    "/app/test_reports/pytest/visibility_kit_bugfix.xml"
+  ],
+  "action_items": [
+    "None for this batch — both bug fixes verified and ready for production deploy.",
+    "Separately (not blocking): update test_catalog_seeded assertion from 8 to current catalog size (10) or make it a >= check — pre-existing drift, unrelated to apply/sitemap logic."
+  ],
+  "critical_code_review_comments": [
+    "sitemap.py merge_lastmod fix is minimal and correct: regex parse of <loc> is fine for well-formed sitemaps; edge case — malformed/namespaced sitemaps could theoretically miss entries, but that would only fall back to fresh-urls behavior (same as old bug), and existing tests cover the standard sitemap format used by the app's own generator, so this is acceptable.",
+    "_PLACEHOLDER_HOSTS is a hardcoded tuple — reasonable for now, but consider externalizing if more placeholder hosts appear (e.g. 'localhost', 'test.com'). Not blocking.",
+    "VisibilityKitPanel.jsx confirm() now correctly narrates conflict reasons via toast.error — good UX recovery. Consider also surfacing conflicts inline in the item row so users don't miss the toast if it auto-dismisses. Enhancement only, not blocking.",
+    "Backend /apply endpoint returning HTTP 200 with ok:false for conflicts is intentional (conflicts are a normal outcome), but a stricter contract could use HTTP 409 for all-conflicts case; the current pattern is fine since frontend now handles it explicitly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "97.5% (39/40 excluding known-drift catalog_seeded; 100% on new fix tests 4/4)", "frontend": "100% (2/2 new Vitest cases pass)"},
+  "test_credentials": "Not used — no live browser check needed per E1 guidance; unit/integration tests were sufficient.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview verification only — production still runs the old buggy code until next deploy. Fixes in preview: (1) backend/services/visibility/sitemap.py merge_lastmod now unions existing+fresh locs and filters placeholder hosts; (2) frontend/src/components/VisibilityKitPanel.jsx ApplyConfirmModal.confirm() now honors data.ok=false and shows real conflict message. Post-deploy, re-test the exact live scenario: (a) POST /visibility/projects/{id}/apply on TJSNDHU/Aurem with the ai_crawler_policy conflict → confirm toast.error appears with 'robots.txt already exists without an AUREM block' or similar; (b) sitemap-only apply on the same repo with 234 existing entries → confirm PR keeps all 234 + adds any genuinely-new ones, never wipes. Also fix the unrelated test_catalog_seeded seed-count drift (10 vs 8) as a small follow-up.",
+  "rca_of_the_issue": "Bug 1 RCA: axios doesn't throw on HTTP 200, but backend legitimately returns {ok: false, error, conflicts} at HTTP 200 for expected conflict outcomes (e.g. existing robots.txt without AUREM marker). Previous frontend blindly called toast.success without checking data.ok, so users saw a 'PR opened' toast even though no PR was created and the item stayed in 'Ready' state — silent failure. Fix: explicit data?.ok check + toast.error with joined data.conflicts or data.error. Repro before fix: click Apply on ai_crawler_policy item where target repo has robots.txt without AUREM block → dialog closes, false success shown, no PR. Mitigation: new Vitest regression covers both ok:false (error toast, conflict reason shown) and ok:true (success toast + onApplied called) paths. Bug 2 RCA: old merge_lastmod(existing_xml, urls, scan_date) was a one-liner render_sitemap(urls, scan_date) that fully ignored existing_xml. When project's scan_urls was empty or polluted with placeholder 'yourdomain.com' entries (very common after initial scan), the generated sitemap contained 0 or 2 entries, deleting the real 234 <loc>s. Repro before fix: run merge_lastmod(existing_234_locs_xml, [], '2026-09-12') → yields sitemap with 0 <url> tags. Fix: parse existing <loc>s via regex in _existing_locs, filter placeholder-host entries from fresh urls, dedupe union fresh+existing. Test test_stale_empty_scan_does_not_wipe_real_sitemap directly reproduces the prod PR #386 scenario and would fail immediately on old code. Mitigation: 4 regression tests cover empty-scan, placeholder-scan, fresh-real-scan, and no-existing-sitemap paths."
+}

@@ -2070,3 +2070,67 @@ non-blocking, not fixed this round.
 **Status**: preview only — production deploy still required for
 auremcto.com to actually serve any of this (same recurring pattern as
 every other fix this session).
+
+---
+
+## 2026-09-12 — Visibility Kit: 2 real bugs found & fixed via founder's live production test (PR #386)
+
+**Trigger**: after `kit_apply_enabled` was turned ON via production admin
+UI and the missing `003_visibility_kit` catalog-seed migration was run
+(also via production admin API — catalog was never seeded on prod,
+hence score:0/items:[] before this), founder tested the real Apply
+flow on their real repo (TJSNDHU/Aurem) and found 2 genuine bugs.
+
+**Bug 1 — silent apply failure (individual items)**: clicking Apply →
+Confirm on "robots.txt AI policy" closed the dialog with zero
+feedback and no PR — twice. Root cause: `POST /visibility/projects/
+{id}/apply` legitimately returns HTTP 200 with `{ok: false, error,
+conflicts}` when an item conflicts (robots.txt exists on the target
+repo without our AUREM managed-block marker — a normal, expected
+outcome, not a server error). Axios never throws on a 200, and the
+frontend (`VisibilityKitPanel.jsx`'s `ApplyConfirmModal.confirm()`)
+blindly called `toast.success()` regardless of `data.ok`. Fixed:
+explicit `if (!data?.ok)` check → `toast.error()` with the real
+conflict reason.
+
+**Bug 2 — sitemap data-loss (genuinely destructive)**: the batch
+Apply PR (**#386**, real GitHub PR, correctly stayed in **Draft** —
+never auto-merged) for "sitemap_auto" deleted **all 234 real `<url>`
+entries** and added only 2 placeholder (`yourdomain.com`) ones. Root
+cause: `services/visibility/sitemap.py`'s `merge_lastmod(existing_xml,
+urls, scan_date)` completely **ignored `existing_xml`** and rebuilt
+purely from `urls` (the project's stored `scan_urls`, which was
+empty/placeholder-polluted, stale relative to the real, 234-page
+live site). Fixed: now parses the existing sitemap's real `<loc>`
+entries via regex, filters known placeholder hosts (`yourdomain.com`,
+`example.com`, `example.org`) out of the fresh scan, and takes the
+union (fresh real + existing real, deduped) — a bad/empty/placeholder
+scan can never again delete real entries, only add genuinely new ones.
+
+**Important**: the PR-based architecture (this Apply mechanism opens
+a real Draft PR + uses deterministic template generation, NOT an LLM
+— architecturally different and safer than the CTO chat ship-via-PR
+pipeline) is exactly what caught bug 2 before any real damage — the
+draft never got merged. This validates the earlier decision to require
+real PRs rather than direct commits for this feature.
+
+**Tests**: `backend/tests/test_2026_09_12_visibility_sitemap_wipe_bug.py`
+(4 new, reproduces PR #386 exactly), `frontend/src/components/
+__tests__/VisibilityKitPanel.applyOkFalse.test.jsx` (2 new). Also
+added a missing `import React` to `VisibilityKitPanel.jsx` (legacy
+JSX-transform test-runtime requirement, same class as an earlier
+`HealthScoreWidget.jsx` fix this session — purely additive, no
+behavior change). Verified by `testing_agent_v3_fork`: 39/40 backend
+(1 pre-existing unrelated `test_catalog_seeded` drift), 2/2 frontend,
+0 blocking issues. Report:
+`/app/test_reports/iteration_visibility_kit_apply_and_sitemap_bugfix_2026_09_12.json`
+
+**Status**: fixed in **preview only**. Production is currently running
+the OLD buggy code with `kit_apply_enabled` already ON (founder turned
+it on live via `/admin/feature-flags`) — **PR #386 must NOT be merged**
+until this fix is deployed and a corrected PR is generated; recommend
+closing/discarding #386 once fresh, correct behavior is confirmed
+live. Also on production: the founder ran a real admin migration
+(`POST /admin/migrations/up`) that applied `003_visibility_kit`,
+seeding the previously-empty catalog — this part does NOT need
+re-doing after the next deploy (migrations are idempotent/one-time).

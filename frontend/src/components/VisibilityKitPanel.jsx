@@ -12,7 +12,7 @@
  * Apply button with that exact reason as a tooltip. No client-side-only
  * gate — even if someone bypassed the UI, the server still blocks it.
  */
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { X, Sparkles, ShieldCheck, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
@@ -87,6 +87,16 @@ function ApplyConfirmModal({ item, projectId, onClose, onApplied }) {
     try {
       const items = item ? [item.key] : Object.keys(filesByItem);
       const { data } = await api.post(`/visibility/projects/${projectId}/apply`, { items });
+      // 2026-09-12 — live-production bug (TJSNDHU/Aurem): backend
+      // returns HTTP 200 even when nothing was applied (e.g. a
+      // conflict — robots.txt exists without our managed-block
+      // marker). Axios never throws for a 200, so this was silently
+      // treated as success before. Must check `ok` explicitly.
+      if (!data?.ok) {
+        const reason = (data?.conflicts && data.conflicts.join("; ")) || data?.error || "Nothing was applied.";
+        toast.error(reason);
+        return;
+      }
       toast.success(`PR opened: ${data.pr_url || "check GitHub"}`);
       onApplied?.();
     } catch (e) {
