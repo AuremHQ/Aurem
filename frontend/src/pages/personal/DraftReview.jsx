@@ -9,7 +9,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { RotateCcw, Rocket, Eye, Code2 } from "lucide-react";
-import { toast } from "sonner";
+// 2026-09-06 — CRITICAL FIX: sonner's <Toaster/> is never mounted in
+// this app; route through the real toast renderer (components/Toast.jsx).
+import { toast as rawToast } from "../../components/Toast";
+const toast = {
+  error:   (msg, opts) => rawToast({ message: msg, kind: "error", ...opts }),
+  success: (msg, opts) => rawToast({ message: msg, kind: "success", ...opts }),
+};
 import { PersonalShell, PrimaryButton, SecondaryButton } from "./_shell";
 import PreviewPanel from "./PreviewPanel";
 import { api } from "../../lib/api";

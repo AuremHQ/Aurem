@@ -21,6 +21,7 @@
  *                     "Cancel" / "Retry now" buttons).
  */
 import React, { useEffect, useState } from "react";
+import { Z_TOAST } from "../lib/zIndex";
 
 let _id = 0;
 
@@ -103,7 +104,7 @@ export default function Toaster() {
           display: "flex",
           flexDirection: "column",
           gap: 8,
-          zIndex: 9999,
+          zIndex: Z_TOAST,
           pointerEvents: "none",
         }}
       >
@@ -138,7 +139,7 @@ export default function Toaster() {
           display: "flex",
           flexDirection: "column-reverse",
           gap: 8,
-          zIndex: 9999,
+          zIndex: Z_TOAST,
           pointerEvents: "none",
         }}
       >

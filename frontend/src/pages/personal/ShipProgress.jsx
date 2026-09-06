@@ -9,7 +9,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Check, GitBranch, Cloud, Database, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+// 2026-09-06 — CRITICAL FIX: sonner's <Toaster/> is never mounted in
+// this app; route through the real toast renderer (components/Toast.jsx).
+import { toast as rawToast } from "../../components/Toast";
+function toast(msg, opts) { return rawToast({ message: msg, kind: "info", ...opts }); }
+toast.error   = (msg, opts) => rawToast({ message: msg, kind: "error", ...opts });
+toast.success = (msg, opts) => rawToast({ message: msg, kind: "success", ...opts });
 import { PersonalShell } from "./_shell";
 import { api } from "../../lib/api";
 

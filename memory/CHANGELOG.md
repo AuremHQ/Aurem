@@ -1,4 +1,65 @@
 # AUREM CTO — Changelog (append-only)
+- **Visibility Kit — individual Apply toast root cause found + fixed (2026-09-06)**
+  - Founder repeatedly tested Apply on "robots.txt AI policy" against
+    a real repo with a pre-existing (unmarked) robots.txt — a genuine
+    conflict. Report: item stays "Ready", no PR, and **zero toast
+    ever appears** (verified across 3 attempts w/ screenshots incl. a
+    mid-click loading state). This was AFTER the previous round's
+    `data.ok` frontend fix + sitemap merge fix were already deployed.
+  - **Root cause #1 (structural no-op):** 6 files
+    (`VisibilityKitPanel.jsx`, `SecurityScanDrawer.jsx`,
+    `TrustLevelCard.jsx`, `pages/personal/{BuildHome,DraftReview,
+    ShipProgress}.jsx`) imported `toast` from the `sonner` npm
+    package. `App.jsx` only ever mounted a **custom** `<Toaster/>`
+    from `components/Toast.jsx` (window-CustomEvent based) — sonner's
+    own `<Toaster/>` was never in the tree. Calling `sonner`'s
+    `toast.error()/.success()` updated sonner's internal state but
+    rendered literally nothing — a pre-existing, wider bug that also
+    silently broke Security Scan fix toasts, Trust Level save toasts,
+    and the Personal-track app builder's error/success toasts.
+  - **Root cause #2 (z-index, found after fixing #1):** once routed
+    through the real Toaster, the toast DOM node was confirmed
+    present (`data-testid="toast-error"`, verified via
+    `page.evaluate` DOM polling) but **invisible** — `Toast.jsx` was
+    hardcoded to `zIndex: 9999`, below `VisibilityKitPanel`'s modal
+    overlay (`zIndex: 10000`). The toast rendered *behind* the
+    still-open modal backdrop.
+  - **Fix:** (1) all 6 files now import `toast` from the real
+    `./Toast` module via a tiny shim (`toast.error(msg)` /
+    `toast.success(msg)` → `rawToast({message, kind})`); (2) added
+    `Z_TOAST = 10003` to the pre-existing shared registry
+    `lib/zIndex.js` (already had `Z_COOKIE_BANNER=10000`,
+    `Z_FLOATING_GUIDE=10001`, `Z_ADVISOR_TOGGLE=10002` — exactly the
+    pattern this file exists to prevent) and applied it to both
+    toaster stacks in `Toast.jsx`, so toasts always render above any
+    modal.
+  - **Evidence chain (not guessed):** curl-verified backend already
+    correctly returns `HTTP 200 {ok:false, error:"all_conflicted",
+    conflicts:["robots.txt already exists without an AUREM
+    block"]}` for a real conflicting repo (`p_7c64e52386`,
+    polarisbuiltinc-wq/ora-grounding) → Playwright network capture
+    proved the frontend received this correctly → DOM polling proved
+    the toast element WAS created → final screenshot after the
+    z-index fix shows the red toast rendered visibly ON TOP of the
+    still-open Kit panel with the exact conflict text.
+  - Updated the existing regression test
+    `VisibilityKitPanel.applyOkFalse.test.jsx` — it had mocked
+    `sonner` directly, which is exactly what hid this bug from tests;
+    now mocks `../Toast` instead. 2/2 pass.
+  - `testing_agent_v3_fork` confirmed live end-to-end on
+    `p_7c64e52386`: 0 blocking issues, 0 action items, full vitest
+    suite unaffected (12 pre-existing unrelated failures in
+    `MessageBubble.*`/`PreviewPanel.live_url_fallback.test.jsx`,
+    confirmed via `git stash` to predate this change).
+  - **Still open / founder to re-verify on production:** this was
+    root-caused and fixed in **preview only**. Founder must re-deploy
+    to production and re-test the exact `robots.txt AI policy` Apply
+    flow on his real repo to confirm the visible toast now appears
+    there too. PR #386 (destructive old sitemap output) remains open
+    on GitHub and still needs the founder to close it manually before
+    any fresh sitemap-Apply retest (the assistant could not find a
+    "Close pull request" button via browser automation on that PR).
+
 
 - **R10 FOCUS MODE — core chat-hang diagnosis + real fix (2026-09-04)**
   - **ROOT CAUSE #1 FOUND + FIXED (proven, not guessed):** GitHub App

@@ -24,9 +24,8 @@ const get = vi.fn();
 const post = vi.fn();
 vi.mock("../../lib/api", () => ({ api: { get: (...a) => get(...a), post: (...a) => post(...a) } }));
 
-const toastError = vi.fn();
-const toastSuccess = vi.fn();
-vi.mock("sonner", () => ({ toast: { error: (...a) => toastError(...a), success: (...a) => toastSuccess(...a) } }));
+const rawToast = vi.fn();
+vi.mock("../Toast", () => ({ toast: (...a) => rawToast(...a) }));
 
 import VisibilityKitPanel from "../VisibilityKitPanel.jsx";
 
@@ -43,7 +42,7 @@ const STATE_WITH_READY_ROBOTS = {
 };
 
 beforeEach(() => {
-  get.mockReset(); post.mockReset(); toastError.mockReset(); toastSuccess.mockReset();
+  get.mockReset(); post.mockReset(); rawToast.mockReset();
   get.mockResolvedValue({ data: STATE_WITH_READY_ROBOTS });
 });
 
@@ -61,18 +60,20 @@ describe("VisibilityKitPanel — apply ok:false handling (2026-09-12 fix)", () =
     });
     await openConfirmModalForRobots();
     fireEvent.click(screen.getByTestId("kit-apply-confirm-submit"));
-    await waitFor(() => expect(toastError).toHaveBeenCalled());
-    expect(toastError.mock.calls[0][0]).toMatch(/robots\.txt already exists/);
-    expect(toastSuccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(rawToast).toHaveBeenCalled());
+    const call = rawToast.mock.calls[0][0];
+    expect(call.kind).toBe("error");
+    expect(call.message).toMatch(/robots\.txt already exists/);
   });
 
   it("t_apply_ok_true_shows_success_and_reloads: a genuine success still shows success + reloads state", async () => {
     post.mockResolvedValue({ data: { ok: true, pr_url: "https://github.com/TJSNDHU/Aurem/pull/999" } });
     await openConfirmModalForRobots();
     fireEvent.click(screen.getByTestId("kit-apply-confirm-submit"));
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
-    expect(toastSuccess.mock.calls[0][0]).toMatch(/pull\/999/);
-    expect(toastError).not.toHaveBeenCalled();
+    await waitFor(() => expect(rawToast).toHaveBeenCalled());
+    const call = rawToast.mock.calls[0][0];
+    expect(call.kind).toBe("success");
+    expect(call.message).toMatch(/pull\/999/);
     // reload state after a real success (load() is called again -> 2nd GET)
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThanOrEqual(2));
   });

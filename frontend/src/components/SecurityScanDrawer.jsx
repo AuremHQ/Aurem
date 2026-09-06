@@ -21,7 +21,15 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { getCachedScan, setCachedScan } from "../lib/securityScanCache";
-import { toast } from "sonner";
+// 2026-09-06 — CRITICAL FIX: sonner's <Toaster/> is never mounted in
+// this app (see App.jsx / components/Toast.jsx). Route through the
+// app's real toast renderer instead — sonner calls here were
+// structural no-ops (fix success/failure toasts never appeared).
+import { toast as rawToast } from "./Toast";
+const toast = {
+  error:   (msg, opts) => rawToast({ message: msg, kind: "error", ...opts }),
+  success: (msg, opts) => rawToast({ message: msg, kind: "success", ...opts }),
+};
 import SecretScanCard from "./SecretScanCard";
 import BulkFixConfirmModal from "./BulkFixConfirmModal";
 import useFixQuota from "../lib/useFixQuota";
