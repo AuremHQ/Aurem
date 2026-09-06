@@ -628,6 +628,24 @@ async def token_pnl(authorization: Optional[str] = Header(None)):
                   or os.environ.get("STRIPE_SECRET_KEY") or "").strip()
     stripe_configured = bool(stripe_key)
 
+    # Iter 2026-09-11 — founder-directed fix (Token P&L vs MRR
+    # mismatch): keep `revenue_month` STRICTLY real Stripe transaction
+    # revenue (sum of cto_payments where payment_status='paid') — do
+    # NOT blend it with the nominal/plan-assigned MRR shown elsewhere
+    # (Cockpit, Financials, Personal Track). Those pages read live
+    # Stripe *subscription* data (test-mode subs with a real recurring
+    # price attached, no actual money moving while Stripe is in test
+    # mode) via admin_bi._fetch_stripe_metrics(). Surface that SAME
+    # number here too, but under its own clearly-distinct label so a
+    # reader never mistakes "assigned plan value" for "money that
+    # actually landed" — the two must never be added together.
+    from routers.admin_bi import _fetch_stripe_metrics
+    try:
+        _stripe_metrics = await _fetch_stripe_metrics()
+    except Exception as e:
+        logger.warning("token-pnl: stripe subscription MRR fetch failed: %r", e)
+        _stripe_metrics = {"mrr_usd": 0.0, "status": "error"}
+
     return {
         "revenue_month":       revenue_month,
         "stripe_fees":         stripe_fees_month,
@@ -645,13 +663,21 @@ async def token_pnl(authorization: Optional[str] = Header(None)):
         "month_calls_by_agent": month_calls_by_agent,
         "day_calls_by_agent":   day_calls_by_agent,
         "stripe_configured":   stripe_configured,
+        "assigned_plan_value_month": round(float(_stripe_metrics.get("mrr_usd") or 0), 2),
+        "assigned_plan_value_status": _stripe_metrics.get("status", "unknown"),
         "_note": (
             "Revenue = sum(amount) from cto_payments where "
-            "payment_status='paid' in the last 30d.  Stripe fees are "
-            "an ESTIMATE at 2.9% + $0.30/txn (US standard) — not a "
-            "settlement-accurate figure.  AI cost = sum(cost_usd) from "
-            "customer_chat_cost (real per-call LLM ledger, same source "
-            "/admin/agent-performance uses) in the last 30d/24h."
+            "payment_status='paid' in the last 30d — REAL money that "
+            "actually landed, never blended with assigned_plan_value_month. "
+            "Stripe fees are an ESTIMATE at 2.9% + $0.30/txn (US standard) "
+            "— not a settlement-accurate figure. AI cost = sum(cost_usd) "
+            "from customer_chat_cost (real per-call LLM ledger, same "
+            "source /admin/agent-performance uses) in the last 30d/24h. "
+            "assigned_plan_value_month = live Stripe subscription MRR "
+            "(same figure Cockpit/Financials/Personal Track show) — this "
+            "is the NOMINAL plan value, not necessarily real settled cash "
+            "(e.g. while Stripe is in test mode, this can be >$0 while "
+            "revenue_month is legitimately $0). Keep these two separate."
         ),
     }
 

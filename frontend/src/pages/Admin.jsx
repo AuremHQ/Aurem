@@ -1283,12 +1283,35 @@ function TokenPnL() {
   if (!d) return <div style={{ padding: 24, color: "var(--text-faint)" }}>Loading…</div>;
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 18 }}>
-        <MCard label="Revenue (mo)" value={fmtMoney(d.revenue_month)} sub="Stripe pending" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 12 }}>
+        <MCard label="Revenue (mo)" value={fmtMoney(d.revenue_month)} sub="real Stripe transactions" />
         <MCard label="AI cost (mo)" value={fmtMoney(d.ai_cost_month)} accent="var(--danger)" />
         <MCard label="Net profit" value={fmtMoney(d.net_profit)}
                 accent={d.net_profit >= 0 ? "var(--ok)" : "var(--danger)"} />
         <MCard label="Tasks done (mo)" value={d.tasks_done_month} sub={`${d.tasks_done_today} today`} />
+      </div>
+      {/* 2026-09-11 — founder-directed fix: never blend this with
+          Revenue above. This is the NOMINAL plan value from live
+          Stripe subscription objects (same figure Cockpit/Financials/
+          Personal Track show) — it can be >$0 while Revenue is
+          legitimately $0 (e.g. Stripe test mode, no real charges).
+          Deliberately styled apart (dashed border, own row) so it
+          never reads as a 5th peer metric to Revenue/AI cost/Profit. */}
+      <div data-testid="token-pnl-assigned-plan-value"
+           style={{ padding: "10px 16px", marginBottom: 18, borderRadius: 8,
+                    border: "1px dashed var(--border)", display: "flex",
+                    alignItems: "baseline", gap: 10 }}>
+        <span style={{ fontSize: 10, letterSpacing: "0.1em",
+                       color: "var(--text-faint)", textTransform: "uppercase" }}>
+          Assigned plan value (mo) — NOT real revenue
+        </span>
+        <span style={{ fontSize: 15, fontWeight: 600,
+                       fontFamily: "'JetBrains Mono', monospace" }}>
+          {fmtMoney(d.assigned_plan_value_month)}
+        </span>
+        <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
+          nominal Stripe subscription MRR — only "Revenue (mo)" above is real settled cash
+        </span>
       </div>
       {d._note && (
         <Card style={{ padding: 12, fontSize: 12, color: "var(--text-dim)" }}>

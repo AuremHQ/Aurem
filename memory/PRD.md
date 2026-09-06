@@ -1,3 +1,16 @@
+## 2026-09-11 — Token P&L vs MRR: founder decision implemented (keep separate, never blend)
+
+**Founder's decision** on the Token P&L $0 vs $76 MRR question flagged in the admin audit: keep Token P&L's "Revenue" strictly real-Stripe-only, and add a separate, clearly-labeled "assigned plan value" figure alongside it — never merge the two into one number.
+
+**Implemented:**
+- `routers/admin_analytics.py::token_pnl()` — `revenue_month` untouched (still strictly `sum(cto_payments.amount)` where `payment_status='paid'`, real settled cash). Added a new, independent field `assigned_plan_value_month` sourced from `admin_bi._fetch_stripe_metrics()` (the same live Stripe subscription-MRR figure Cockpit/Financials/Personal Track already show), plus `assigned_plan_value_status`. Root cause of the original mismatch: that MRR is real Stripe *subscription* data (a live test-mode sub with a real recurring price attached) — genuinely non-zero even while `revenue_month` is genuinely zero, since test-mode subscriptions don't move real money. Both numbers are individually correct; they were just being read as if they should agree.
+- `frontend/src/pages/Admin.jsx`'s `TokenPnL()` — added a visually distinct dashed-border row labeled "ASSIGNED PLAN VALUE (MO) — NOT REAL REVENUE" directly under the 4 main metric cards, with explicit copy ("only 'Revenue (mo)' above is real settled cash") so the two numbers can never be mistaken for each other. Screenshot-verified on preview.
+- New tests: `backend/tests/test_2026_09_11_token_pnl_assigned_plan_value.py` (2/2 pass) — asserts the two fields stay independent (one can be $76 while the other is $0) and that a Stripe-fetch error degrades safely (`0.0` / `status=error`) rather than crashing or silently mixing numbers.
+- Regression: `test_iter388y_admin_payments_accuracy.py`/`test_fix_pass_2026_01.py`/`test_phase2c_admin_analytics_router.py` — same pre-existing failures with or without this change (confirmed via git-stash A/B; unrelated `customer_chat_cost` fake-DB-stub gap from an earlier iteration, not touched).
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-05 (senior QA full regression) — Real production ship+rollback cycle executed; found + FIXED a real rollback-status polling gap (2 components); guardrail/baseline audited; orphan branches + duplicate installs identified
 
 **Founder requested a strict, evidence-required senior-QA regression (Parts A-E) on PRODUCTION** using their real account + real repo TJSNDHU/Aurem. Full findings below; two `testing_agent` runs (`iteration_prod_regression_auremcto_2026_01_v2.json`, `iteration_prod_regression_auremcto_2026_01_v3_A3_E2.json`) plus direct pytest/GitHub-API verification by the main agent.
