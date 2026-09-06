@@ -1942,3 +1942,52 @@ the no-false-positive test stays green either way).
 preview. **Visibility Kit (`kit_apply_enabled`) remains OFF** — still
 pending the founder's decision. Production deploy still required to
 reach `auremcto.com`.
+
+---
+
+## 2026-09-12 — Visibility Kit ACTIVATED (`kit_apply_enabled` flipped ON, preview)
+
+**Decision**: founder ran a 4th live-production ship-via-PR round
+("verify-4", after fixing round-1 full-file-replace and round-2
+blank-line/false-verify bugs) and personally verified on GitHub that
+the exact requested content landed correctly with the original file
+fully preserved — no wipe, no blank line, no false claim. Founder's
+explicit call: "Haan, ab activate karna reasonable hai" (yes, activate
+now), conditioned on continuing to spot-check commits on GitHub
+personally for a while, given the 2 remaining known-but-non-blocking
+issues (direct-to-main instead of an actual PR; "Verified" wording
+implies more than push-integrity).
+
+**4-round summary** (all on the same real connected repo, real GitHub
+commits, no mocks):
+| Round | Result |
+|---|---|
+| verify-1/2 | Whole README replaced with generic boilerplate |
+| verify-3 | Appended line was blank — text missing, false "Verified" |
+| verify-4 | ✅ Exact text appended correctly, nothing else touched |
+
+**Action taken**: `feature_flags` collection doc for
+`kit_apply_enabled` flipped `enabled: false -> true` directly in the
+preview DB (same effect as the existing admin
+`POST /admin-ops/feature-flags/{flag}/toggle` endpoint — no tier/user
+allowlist restriction, no partial rollout_pct, applies to all users on
+this preview). Backend restarted to clear the 60s in-process
+feature-flag cache. Verified end-to-end via the REAL API a real test
+user hits: `GET /api/aurem-dev/visibility/projects/{id}/state` now
+returns `"apply_enabled": true` (was `false` before the flip).
+Existing gate-off regression test (`test_t_kit_apply_gated_off_while_
+apply_flag_off` in `test_visibility_kit_v2_2026_08_30.py`) still passes
+unaffected — it mocks `is_enabled` directly rather than reading the
+real DB doc, so it correctly still proves the OFF-path logic
+independent of this live flip.
+
+**Status**: Visibility Kit's "Apply" action (real ship-via-PR path,
+`POST /visibility/projects/{id}/apply`) is now LIVE in preview for all
+users. **Still open, explicitly deferred (not blocking) per founder**:
+(1) ship lands as a direct commit to main, not an actual GitHub PR —
+naming/UX mismatch; (2) the pipeline's post-push "Verified" log
+message should be reworded to make clear it proves push-integrity,
+not intent-match. Both tracked as follow-ups, not reasons to hold the
+flag off. **Production still has this flag OFF** (separate DB) — founder
+must deploy + flip the same flag on prod when ready; this flip only
+took effect on the preview pod's DB.
