@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can help improve your website by fixing bugs, optimizing performance, or adding features—just point me to your website.",
+      "reply": "I can help improve your website by reviewing your website, suggesting fixes, and even submitting Review requests for real issues—just point me to your website!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -22,7 +22,7 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I need two things: your actual opening hours (you haven't given them to me yet), and a quick look at your main page so I know exactly where to place them.\n\nWhat are your opening hours? For example: \"Mon–Fri 9am–6pm, Sat 10am–4pm, Sun closed.\"",
+      "reply": "I can do that — but I need one thing from you first: what are your opening hours? Give me the exact days and times you want shown (for example, \"Mon–Fri 9am–5pm, Sat 10am–2pm, closed Sunday\"), and I'll put them right at the top of your main page.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -40,7 +40,7 @@
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Got it! I'll place those hours (9am-5pm daily) prominently on your main page. Want me to show you exactly where before updating?",
+      "reply": "Got it—I'll add \"Open daily 9am–5pm\" to the top of your page now. One moment.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -58,7 +58,7 @@
     {
       "turn": 4,
       "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I can't update your website right now because no project is connected. \n\n**But I can** help you the moment you connect your website — just click the project selector in the sidebar and choose your site. Once connected, I'll add both your opening hours (9am–5pm daily) and your phone number (1-800-555-0199) exactly where you want them.\n\nWant me to walk you through connecting your project?",
+      "reply": "I can't add the phone number right now because no website is connected to this chat. \n\nBut I can help you as soon as you connect your website — just click the project selector in the sidebar and choose your site. Once it's connected, I'll add \"1-800-555-0199\" to the bottom of your main page right away.\n\nWant me to walk you through connecting it?",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -137,7 +137,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey! I'm ORA, your dev co-pilot. Let me know what you're working on and I'll help out.",
+      "reply": "Hey there! 👋 Ready to help you go live with some content—what’s on your mind?",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }

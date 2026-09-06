@@ -420,6 +420,15 @@ export default function MessageBubble({
   });
   // Live task progress (polled while shipped task is in-flight)
   const [taskInfo, setTaskInfo] = useState(null);
+  // 2026-09 audit — Rollback fire-and-forget bug. confirmRollbackShipped()
+  // POSTed /rollback and showed a static "Rollback queued" toast with NO
+  // follow-up: the ship-status poller above already stopped (task.status
+  // reached a terminal state when the SHIP completed), so once rollback
+  // was queued nothing ever re-checked rollback_status. Users saw
+  // "queued" forever even though the backend (confirmed via a real prod
+  // drill) can legitimately take minutes to land the revert commit.
+  // rollbackPollTick increments to (re)trigger the poll effect below.
+  const [rollbackPollTick, setRollbackPollTick] = useState(0);
   // 2026-08-28 · First-Experience Wave P2-B — themed confirm replaces
   // the last native window.confirm() pair in the primary "Approve the
   // fix" → rollback path (ShippedRow/OperationHistory were already
@@ -539,6 +548,47 @@ export default function MessageBubble({
     return () => { cancelled = true; };
   }, [shipState.taskId, onTaskCompleted]);
 
+  // 2026-09 audit fix — poll rollback_status until it reaches a
+  // terminal state, then surface a real toast (success or failure)
+  // instead of leaving the user with a static "Rollback queued" that
+  // never updates. Bounded at 10 minutes (200 * 3s) — the real prod
+  // drill that surfaced this bug observed a ~5-6 minute revert lag,
+  // so this leaves margin above the worst case actually measured.
+  useEffect(() => {
+    if (!rollbackPollTick) return;
+    const tid = shipState.taskId;
+    if (!tid) return;
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 200; // 200 * 3s = 10 minutes
+    async function tick() {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const r = await api.get(`/cto/tasks/${tid}`);
+        const t = r.data?.task || null;
+        if (cancelled || !t) return;
+        setTaskInfo(t);
+        if (t.rollback_status === "done") {
+          toast({ message: "Rollback complete — commit reverted on GitHub", kind: "success" });
+          return;
+        }
+        if (t.rollback_status === "failed") {
+          toast({
+            message: sanitizeErrorMessage(t.rollback_error, "Rollback failed — manual check needed"),
+            kind: "error",
+          });
+          return;
+        }
+        if (attempts < MAX_ATTEMPTS) setTimeout(tick, 3000);
+      } catch {
+        if (attempts < MAX_ATTEMPTS) setTimeout(tick, 5000);
+      }
+    }
+    tick();
+    return () => { cancelled = true; };
+  }, [rollbackPollTick, shipState.taskId]);
+
   async function rollbackShipped() {
     const tid = shipState.taskId;
     if (!tid) return;
@@ -551,7 +601,8 @@ export default function MessageBubble({
     if (!tid) return;
     try {
       await api.post(`/cto/tasks/${tid}/rollback`, { confirm: "ROLLBACK" });
-      toast({ message: "Rollback queued", kind: "info" });
+      toast({ message: "Rollback queued — this can take a few minutes, we'll update you here", kind: "info" });
+      setRollbackPollTick((n) => n + 1);
     } catch (e) {
       toast({
         message: sanitizeErrorMessage(e, "Rollback failed to start"),

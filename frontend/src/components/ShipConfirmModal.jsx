@@ -197,13 +197,29 @@ export default function ShipConfirmModal() {
     setRbBusy(true);
     try {
       await api.post(`/cto/tasks/${taskId}/rollback`, {});
-      // poll for rollback_sha
-      const stop = Date.now() + 30_000;
+      // 2026-09 audit fix — this poll window was hard-capped at 30s,
+      // but a real production drill showed the actual revert commit
+      // can legitimately take 5-6 minutes to land (backend queues the
+      // revert as a BackgroundTask; see routers/cto_projects/rollback.py
+      // rollback_worker_started_at for the server-side timing fields
+      // added alongside this fix). At 30s this loop just silently gave
+      // up with the modal stuck on "shipped", looking like rollback
+      // never happened. Extended to 10 minutes with margin above the
+      // worst case actually measured, and a visible "still working"
+      // state instead of a silent dead-end if it does time out.
+      const stop = Date.now() + 10 * 60_000;
+      let landed = false;
       while (Date.now() < stop) {
         const r = await api.get(`/cto/tasks/${taskId}`);
         const t = r.data?.task;
-        if (t?.rollback_sha) { setTask(t); setPhase("reverted"); break; }
+        if (t?.rollback_sha) { setTask(t); setPhase("reverted"); landed = true; break; }
+        if (t?.rollback_status === "failed") {
+          setErr(sanitizeErrorMessage(t.rollback_error, "Rollback failed")); landed = true; break;
+        }
         await new Promise((res) => setTimeout(res, 1500));
+      }
+      if (!landed) {
+        setErr("Rollback is taking longer than usual — it's still running in the background. Refresh in a few minutes to check.");
       }
     } catch (e) {
       setErr(sanitizeErrorMessage(e, "Rollback failed"));
