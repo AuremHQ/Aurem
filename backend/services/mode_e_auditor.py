@@ -20,7 +20,6 @@ lines to keep the prompt small; final report is capped at ~1200 tokens.
 from __future__ import annotations
 import re
 import asyncio
-from datetime import datetime, timezone
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.llm import call_llm_with_meta

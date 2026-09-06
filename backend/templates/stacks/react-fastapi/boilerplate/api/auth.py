@@ -28,12 +28,10 @@ Env vars (all required):
     APP_ENV                  — "production" forces Secure cookie flag
 """
 import os
-import re
 import secrets
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Optional
 
 import bcrypt
 import jwt as pyjwt

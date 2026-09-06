@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from services.cto_projects_helpers import (
     _parse_repo, _run_project_indexing,
-    _BROWSE_SKIP_DIRS, _BROWSE_SKIP_EXTS, _BROWSE_MAX_FILE_BYTES,
+    _BROWSE_MAX_FILE_BYTES,
     _browse_keep_path,
 )
 
@@ -197,7 +197,6 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
     installation_active: Optional[bool] = None
     pat_verified_flag = True   # both branches verify against real GitHub
 
-    import httpx as _httpx
 
     # ── Branch A: GitHub App install ────────────────────────────────
     if installation_id:

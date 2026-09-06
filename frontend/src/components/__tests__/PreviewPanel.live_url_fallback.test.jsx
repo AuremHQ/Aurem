@@ -18,7 +18,8 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 vi.mock("../../lib/api", () => ({
-  api: { get: vi.fn(async () => ({ data: {} })) },
+  api: { get: vi.fn(async () => ({ data: {} })), post: vi.fn(async () => ({ data: {} })) },
+  getToken: () => null,
 }));
 
 import PreviewPanel from "../PreviewPanel.jsx";

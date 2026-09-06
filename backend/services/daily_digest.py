@@ -16,9 +16,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Optional
 
-import httpx
 
 from services.http import ext_request
 from services.http.client import ExternalCallError

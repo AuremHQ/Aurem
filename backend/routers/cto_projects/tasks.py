@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from services.usage import is_founder_email
 from services.ambiguity_gate import is_ambiguous_task as _is_ambiguous_task
-from services.cto_projects_helpers import _task_queues, _emit
+from services.cto_projects_helpers import _task_queues
 
 import routers.cto_projects as _pkg
 from . import router, PENDING_EDITS_TTL_S

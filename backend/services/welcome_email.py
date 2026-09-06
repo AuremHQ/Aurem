@@ -33,7 +33,6 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 
-import httpx
 
 logger = logging.getLogger(__name__)
 

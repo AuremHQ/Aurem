@@ -2045,20 +2045,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     ) {
       if (isLoopUnlockedSync()) {
         handleExecModeChange(EXEC_MODES.LOOP);
-        import("sonner").then(({ toast }) => {
-          toast.info("Detected \u201crun as a loop\u201d \u2014 switching to Loop mode", {
-            id: "loop-opt-in-auto-switch",
-          });
-        }).catch(() => {});
+        toast({
+          message: "Detected \u201crun as a loop\u201d \u2014 switching to Loop mode",
+          kind: "info", id: "loop-opt-in-auto-switch",
+        });
         await runLoopPlan(text, readyAttachments, opts);
         return;
       }
-      import("sonner").then(({ toast }) => {
-        toast.warning(
-          "Loop mode needs Pro or Maxx \u2014 switch above to run this as a guided pipeline. Continuing as a normal chat message for now.",
-          { id: "loop-opt-in-not-entitled", duration: 6000 },
-        );
-      }).catch(() => {});
+      toast({
+        message: "Loop mode needs Pro or Maxx \u2014 switch above to run this as a guided pipeline. Continuing as a normal chat message for now.",
+        kind: "warn", id: "loop-opt-in-not-entitled", duration: 6000,
+      });
       // not entitled — fall through to the normal chat path below
     }
 
@@ -4372,15 +4369,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     function onRouteToLoop() {
       if (isLoopUnlockedSync()) {
         handleExecModeChange(EXEC_MODES.LOOP);
-        import("sonner").then(({ toast }) => {
-          toast.info("Switched to Loop mode — send your request again to ship it.", {
-            id: "route-to-loop-from-blocked",
-          });
-        }).catch(() => {});
+        toast({
+          message: "Switched to Loop mode — send your request again to ship it.",
+          kind: "info", id: "route-to-loop-from-blocked",
+        });
       } else {
-        import("sonner").then(({ toast }) => {
-          toast.error("Loop mode isn't available on your plan yet.");
-        }).catch(() => {});
+        toast({ message: "Loop mode isn't available on your plan yet.", kind: "error" });
       }
     }
     window.addEventListener("aurem:route-to-loop", onRouteToLoop);

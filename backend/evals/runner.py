@@ -43,7 +43,7 @@ from evals.harness import (   # noqa: E402
     ScoreResult, aggregate,
     completeness_scorer, passivity_scorer, leak_scorer,
     chain_scorer, hallucination_scorer, refusal_scorer, scope_scorer,
-    PASS, FAIL, PARTIAL, HARD, SOFT,
+    FAIL, PARTIAL, HARD, SOFT,
 )
 from evals.prompts_quality import QUALITY_PROMPTS, SYNTHETIC_REPO_CONTEXT  # noqa: E402
 from evals.prompts_security import SECURITY_PROMPTS  # noqa: E402

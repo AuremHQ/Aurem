@@ -35,7 +35,6 @@ on the current codebase.
 """
 from __future__ import annotations
 
-import ast
 import os
 import re
 import time

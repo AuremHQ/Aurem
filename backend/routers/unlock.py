@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev

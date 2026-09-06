@@ -1,0 +1,30 @@
+{
+  "summary": "Verified E1's code-quality pass: (a) frontend toast facade lib/toastApi.js correctly routes through the app's real Toaster (components/Toast.jsx). All 4 kinds (error/success/info/warn) render with the documented data-testids (toaster, toast-error, toast-success, toast-info, toast-warn) on /dashboard. No 'sonner' or 'toast.* is not a function' errors in the browser console. (b) Backend targeted test suite passes 185/1skip/0fail. (c) Frontend vitest passes 130 files / 693 tests. (d) Backend smoke endpoints (health, login, projects list, visibility state) return 200. Backend logs contain no ImportError/AttributeError/NameError after the 341-import cleanup.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter212m126_repo_heal.py",
+    "/app/backend/tests/test_visibility_kit.py",
+    "/app/backend/tests/test_visibility_kit_v2_2026_08_30.py",
+    "/app/backend/tests/test_phase2c_chat_router.py",
+    "/app/backend/tests/test_response_confidence_mismatch_gate.py",
+    "/app/backend/tests/test_iter212m60_loop_engine.py",
+    "/app/backend/tests/test_github_app_router.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "toastApi.js facade is minimal and correct: dispatches via components/Toast.jsx event bus; sonner removed from package.json — no residual references detected in bundle (no 'sonner' console errors).",
+    "components/Toast.jsx already tolerates a bare-string call site (documented pre-existing bug fix); good.",
+    "Verified globally-mounted <Toaster/> is present on /dashboard (data-testid=toaster) and z-index above modals per Z_TOAST.",
+    "Backend repo_heal.py `return await _finalise(...)` fix is covered by test_iter212m126_repo_heal.py (all tests green).",
+    "Preview visibility state endpoint 200 for owned project (p_demo_a). p_7c64e52386 belongs to a different account (404 project_not_found_or_not_yours) — used as intended per instructions to only exercise conflicting/logical paths."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (185/185 targeted, 1 skip)", "frontend": "100% (693/693 vitest + UI toast probe pass)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview only) — login via POST /api/aurem-dev/auth/login returns 200 with token",
+  "seed_data_creation": "None — used existing project p_demo_a on the test admin account.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview API prefix is /api/aurem-dev (not /api). The canonical frontend token storage key is localStorage['aurem_token'] (per hooks/useORAPanel.js). Test account owns p_demo_a but NOT p_7c64e52386 (that project belongs to founder prod). For UI toast verification you can dispatch CustomEvent 'aurem:toast' directly with detail {message,kind} to prove the pipeline; all four kinds render inside [data-testid=toaster] as [data-testid=toast-<kind>]. Frontend vitest = `cd /app/frontend && npx vitest run --reporter=dot` (~65s, 130 files).",
+  "rca of the issue": "N/A — verification-only run. No new bugs discovered."
+}

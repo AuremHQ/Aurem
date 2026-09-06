@@ -11,13 +11,7 @@
 import React, { useEffect, useState } from "react";
 import { ShieldCheck, ShieldAlert, Bot } from "lucide-react";
 import { api } from "../lib/api";
-// 2026-09-06 — CRITICAL FIX: sonner's <Toaster/> is never mounted in
-// this app; route through the real toast renderer (components/Toast.jsx).
-import { toast as rawToast } from "./Toast";
-const toast = {
-  error:   (msg, opts) => rawToast({ message: msg, kind: "error", ...opts }),
-  success: (msg, opts) => rawToast({ message: msg, kind: "success", ...opts }),
-};
+import { toast } from "../lib/toastApi";
 
 const LEVELS = [
   {

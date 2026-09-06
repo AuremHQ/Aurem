@@ -40,7 +40,6 @@ The generated code MUST:
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 import re
@@ -248,7 +247,7 @@ async def generate_mermaid(graph: dict, explanation: str,
                           "summary below)")
         + "\n\nGRAPH SUMMARY:\n"
         + summary
-        + f"\n\nRECENTLY MODIFIED FILES (mark these with `:::hot`):\n"
+        + "\n\nRECENTLY MODIFIED FILES (mark these with `:::hot`):\n"
         + (hot_lines or "  (none — pick the 3 most central nodes)")
         + "\n\nRemember: OUTPUT ONLY the Mermaid code, first line "
           "starts with `flowchart`."

@@ -45,7 +45,7 @@ from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
 from services.http import ext_client
 from routers.security_scan import (
-    _list_repo_tree, _list_repo_tree_with_sha, _fetch_file,
+    _list_repo_tree_with_sha, _fetch_file,
     _MAX_FILES, _MAX_BYTES_PER_FILE, _SCAN_EXTS, _SKIP_DIRS,
     _CONCURRENT_FETCHES,
 )
@@ -75,14 +75,8 @@ logger = logging.getLogger(__name__)
 # behaviour is unchanged, only the ownership moved.
 # ──────────────────────────────────────────────────────────────────────
 from services.codebase_health_core import (                # noqa: E402
-    _is_dockerfile, _scan_security, _scan_performance,
-    _scan_code_quality, _scan_dependencies, _scan_database,
-    _scan_docker_cis, SCANNERS, _norm_sev, _score_for_findings,
+    _is_dockerfile, SCANNERS, _score_for_findings,
     _category_label,
-)
-from services.scanner_utils import (                       # noqa: E402
-    is_scanner_rule_file as _is_scanner_rule_file,
-    _SCANNER_RULE_FILES,
 )
 
 

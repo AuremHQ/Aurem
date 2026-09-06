@@ -21,7 +21,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import useAutoClearConsole from "./lib/useAutoClearConsole";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import { useEffect, useRef, lazy, Suspense } from "react";
-import Toaster from "./components/Toast";
+import Toaster, { toast } from "./components/Toast";
 import FixProgressDrawer from "./components/FixProgressDrawer";
 import { FixJobProvider } from "./components/FixJobContext";
 import PersistentFixBar from "./components/PersistentFixBar";
@@ -195,11 +195,7 @@ function SessionExpiredListener() {
         try { setUser(null);  } catch { /* noop */ }
         // Best-effort toast, then hard nav to /login preserving current
         // path so the user lands back after re-auth.
-        try {
-          import("sonner").then(({ toast }) => {
-            try { toast.error(msg, { duration: 4000 }); } catch { /* noop */ }
-          }).catch(() => {});
-        } catch { /* noop */ }
+        try { toast({ message: msg, kind: "error", duration: 4000 }); } catch { /* noop */ }
         const path = window.location.pathname + window.location.search;
         const isAuthPage = /^\/(login|signup|verify|oauth-finish|magic-login)/.test(
           window.location.pathname,

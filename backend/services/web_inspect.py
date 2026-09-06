@@ -37,9 +37,7 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 import uuid
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

@@ -260,7 +260,7 @@ if _SENTRY_DSN:
 # Iter 45 — slowapi rate limiting (per-IP). Hand-rolled to avoid
 # decorator/dep-injection collision.
 from services.rate_limiter import (
-    check_rate_limit, check_rate_limit_async, client_ip_from_request,
+    check_rate_limit_async, client_ip_from_request,
     in_memory_bucket_count,
 )
 
@@ -1844,7 +1844,7 @@ app.openapi = _custom_openapi
 # SSE clients (axios wrappers, @microsoft/fetch-event-source) send
 # Accept: */* or application/json and would silently bypass the skip.
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import Message, Receive, Scope, Send
 
 
 class SSEAwareGZipMiddleware(GZipMiddleware):

@@ -82,11 +82,10 @@ def test_payment_endpoints_registered():
 
 def test_payments_loads_subscription_tiers():
     import routers.payments as m
-    from services.subscription_tiers import Tier, TIER_LIMITS
-    # The module imports both — guarantees there's no parallel tier list
-    # secretly drifting inside payments.py
+    from services.subscription_tiers import TIER_LIMITS
+    # The module imports the shared table — guarantees there's no parallel
+    # tier list secretly drifting inside payments.py
     assert m.TIER_LIMITS is TIER_LIMITS
-    assert m.Tier is Tier
 
 
 # ── cto_projects.py feature gates ─────────────────────────────────────

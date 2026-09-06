@@ -24,7 +24,6 @@ from services.cto_pipeline_steps import (
 )
 
 import routers.cto_projects as _pkg
-from . import router
 from .worker_api import _frontend_subset, _AI_SYS
 
 logger = logging.getLogger(__name__)

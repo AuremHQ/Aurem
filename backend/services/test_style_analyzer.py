@@ -39,7 +39,6 @@ from __future__ import annotations
 import ast
 import os
 import re
-from typing import Any
 
 _TESTS_DIR = "/app/backend/tests"
 

@@ -33,7 +33,6 @@ from services.cto_projects_helpers import (
 )
 
 import routers.cto_projects as _pkg
-from . import router
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,6 @@ async def _persist_push_failed(task_id: str, e: "PushFailedError") -> str:
 # so this file doesn't carry their ~230 lines directly.
 # ─────────────────────────────────────────────────────────────────────
 from services.cto_pipeline_steps import (
-    _check_js_syntax, _syntax_errors,
     _run_hallucination_gate, _run_syntax_gate, _run_lint_gate,
 )
 
@@ -184,7 +182,6 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
     """API-only worker — no `git` binary needed. Reads target files from
     GitHub, asks AUREM to generate edits, then commits everything as ONE
     atomic commit via the Git Data API."""
-    import httpx
     owner = proj["github_owner"]
     repo = proj["github_repo"]
     branch = proj.get("branch", "main")

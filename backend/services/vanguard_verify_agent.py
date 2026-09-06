@@ -45,7 +45,7 @@ import difflib
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Optional
 
 from .vanguard_scanner import scan_file_blocks, has_critical
 

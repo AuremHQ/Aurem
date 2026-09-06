@@ -56,7 +56,7 @@ router = APIRouter(prefix="/security-scan", tags=["Security Scan"])
 # FROM this router — an inverted (service→router) dependency flagged
 # by services/architecture_health.py's boundary scan. Re-imported here
 # so every existing call site in this file keeps working unchanged.
-from services.security_text_scanner import _RULES, _scan_text        # noqa: E402
+from services.security_text_scanner import _scan_text        # noqa: E402
 
 
 # File extensions worth scanning. Skipping binary, vendored, build.

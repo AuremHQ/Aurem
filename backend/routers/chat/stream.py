@@ -8,38 +8,31 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, validator
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.orchestrator import chat_with_tools
-from services.llm import call_llm_with_meta, call_emergent_watchdog, cap_for
+from services.orchestrator import chat_with_tools  # noqa: F401 — test patch target (monkeypatch stream.chat_with_tools)
+from services.llm import call_emergent_watchdog, call_llm_with_meta  # noqa: F401 — call_llm_with_meta is a test patch target
 from services.repo_context import get_repo_context
 from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
-from core.task_type import infer_task_type as _infer_task_type  # Iter 212m-177/178 P0-3
 from services.chat_helpers import (
     _detect_mode, _deduct_tokens,
-    is_fix_confirmation, _safe_provenance, detect_prompt_injection,
-    _f12_has_real_signal, _is_transient_proxy_error, _TRANSIENT_PROXY_CODES,
+    _safe_provenance, detect_prompt_injection,
     classify_intent,
-    _TITLE_SYSTEM, _generate_title, _maybe_set_title,
-    _regenerate_without_recall, _strip_council_block,
+    _maybe_set_title,
     _persist_turn,
-    _build_failed_followup, _build_blocked_followup, _build_done_fallback,
-    _FOLLOWUP_SYS, _generate_done_followup,
     retrieved_context_for_grounding, apply_output_guards,
 )
 
 from . import router
 from .misc import (
     PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT,
-    ORA_PANEL_TONE, _HANDOFF_FENCE_RE, _SHELL_COMMAND_TOKENS,
+    ORA_PANEL_TONE,
 )
 from .turn import ChatBody
 # Cohesion follow-up (2026-09-08) — moved into their own module; still
@@ -47,7 +40,7 @@ from .turn import ChatBody
 # handoff_followup` / `._handoff_brief_is_shell_command` patch targets
 # (used throughout the test suite) keep resolving unchanged.
 from .handoff_guard import (
-    _handoff_brief_is_shell_command, _maybe_guard_shell_handoff_followup,
+    _maybe_guard_shell_handoff_followup,
 )
 # StreamState refactor (2026-09-08) — gen()'s former ~20-variable
 # closure (shared with _worker()/_ticker()) is now one explicit

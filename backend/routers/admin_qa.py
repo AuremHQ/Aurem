@@ -26,13 +26,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, Header, Depends
 from pydantic import BaseModel
 from cto_services.auth import require_admin_dep
 from services.http import ext_client
@@ -44,8 +43,7 @@ from routers.admin import _require_admin
 # services/health_checks.py can import them without an inverted
 # service→router dependency. Re-imported here, unchanged behaviour.
 from services.qa_matrix import (                                   # noqa: E402
-    _harvest_counts, _harvest_ci_status, _count_matches, _glob_files,
-    _TEST_FN_RE_PY, _TEST_FN_RE_JS, _JOB_NAMES_WE_CARE_ABOUT,
+    _harvest_counts, _harvest_ci_status,
 )
 
 

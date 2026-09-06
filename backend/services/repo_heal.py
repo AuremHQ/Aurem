@@ -6,30 +6,26 @@ a project as `disconnected`.  Runs entirely in the backend — the
 sidebar dots will simply turn green on the next 30 s poll if the
 heal succeeded.
 
-Heal strategies by error class (cheapest first, expensive last):
+Heal strategies by error class (cheapest first, expensive last).
+GitHub App is the only auth method — there is no PAT/OAuth fallback.
 
   network: TimeoutException / NetworkError
       → Retry 3× with exponential backoff (0.5 s, 1 s, 2 s).
         Most transient failures resolve in <2 s.
 
-  no_token
-      → Patch the project row to attach the user's OAuth
-        access_token if available.  PAT slot stays empty so the user
-        can still set one explicitly later.
+  no_token / app_installation_missing / app_installation_revoked
+      → Cannot be healed server-side; the user must (re)install the
+        GitHub App on the repo (`app_reinstall_required`).
 
   github_rejected (401 / 403)
-      → If the project was using a PAT, retry with the user's OAuth
-        token instead.  If that also fails, mark the project's PAT
-        as `revoked_at: now` so the user gets a banner to re-auth.
+      → Retry once with a freshly minted installation token (a stale
+        mint can expire). Still rejected → `app_token_rejected`.
 
   repo_not_found (404)
-      → Hit `GET /repositories?since=` style?  Easier: fetch the
-        user's repo list and look for `owner/repo` with a *case-
-        insensitive* match — covers the "user renamed the repo" case
-        because GitHub serves the new name in the list but the old
-        URL 404s without a Location redirect for unauthenticated
-        clients.  When we find it, update `github_owner` /
-        `github_repo` on the project row to the canonical names.
+      → Fetch the installation's repo list and look for `owner/repo`
+        with a *case-insensitive* match — covers the "user renamed /
+        transferred the repo" case.  When found, update `github_owner`
+        / `github_repo` on the project row to the canonical names.
 
   repo_not_set
       → Skip — needs user input.
@@ -55,7 +51,6 @@ import httpx
 
 from services.http import ext_client
 
-from cto_services.crypto import decrypt
 
 logger = logging.getLogger("aurem-dev.repo_heal")
 
@@ -199,8 +194,8 @@ async def heal_project(*, db, user_id: str, project_id: str,
             if err.startswith("network:"):
                 token = pat or oauth
                 if not token:
-                    return _finalise(db, project_id, success=False,
-                                     reason="no_token_for_retry")
+                    return await _finalise(db, project_id, success=False,
+                                           reason="no_token_for_retry")
                 ok, r, e = await _try_with_retries(
                     lambda: _gh_get(
                         client, f"https://api.github.com/repos/{owner}/{repo}/contents/", token,

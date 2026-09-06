@@ -43,7 +43,6 @@ import os
 import re
 from typing import Optional
 
-import httpx
 from services.http import ext_client
 
 logger = logging.getLogger(__name__)

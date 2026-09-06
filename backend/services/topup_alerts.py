@@ -27,7 +27,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 
 from services.http import ext_request
 from services.http.client import ExternalCallError

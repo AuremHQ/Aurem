@@ -4,36 +4,20 @@ Split from the former routers/chat.py god-file (4184 lines) on
 2026-09-08. See routers/chat/__init__.py for the split rationale.
 """
 from __future__ import annotations
-import asyncio
-import json
 import logging
-import os
 import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, validator
+from fastapi import Header, HTTPException
+from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.orchestrator import chat_with_tools
-from services.llm import call_llm_with_meta, call_emergent_watchdog, cap_for
-from services.repo_context import get_repo_context
 from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
-from core.task_type import infer_task_type as _infer_task_type  # Iter 212m-177/178 P0-3
 from services.chat_helpers import (
-    _detect_mode, _deduct_tokens,
-    is_fix_confirmation, _safe_provenance, detect_prompt_injection,
-    _f12_has_real_signal, _is_transient_proxy_error, _TRANSIENT_PROXY_CODES,
-    classify_intent,
-    _TITLE_SYSTEM, _generate_title, _maybe_set_title,
-    _regenerate_without_recall, _strip_council_block,
-    _persist_turn,
     _build_failed_followup, _build_blocked_followup, _build_done_fallback,
-    _FOLLOWUP_SYS, _generate_done_followup,
-    retrieved_context_for_grounding, apply_output_guards,
+    _generate_done_followup,
 )
 
 from . import router
@@ -730,7 +714,7 @@ async def draft_support_email(
         "=== SYSTEM ===",
         f"Browser: {(body or {}).get('user_agent', 'unknown')[:80]}",
         f"Page: {(body or {}).get('page_url', 'unknown')}",
-        f"Build: iter187",
+        "Build: iter187",
         f"Timestamp: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}",
     ])
 

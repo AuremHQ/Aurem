@@ -15,21 +15,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { X, Sparkles, ShieldCheck, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
-// 2026-09-06 — CRITICAL FIX: this used to import `toast` from the
-// "sonner" package, but sonner's own <Toaster/> is NEVER mounted
-// anywhere in this app (App.jsx mounts the app's own custom
-// components/Toast.jsx <Toaster/> instead). Calling sonner's toast()
-// with no renderer mounted is a structural no-op — it updates
-// sonner's internal state but nothing ever paints to the DOM. This
-// is the real root cause behind "Apply conflicts silently, no toast
-// ever appears" — the conflict WAS detected correctly server-side
-// (confirmed via live network capture), the error toast call simply
-// never had anywhere to render.
-import { toast as rawToast } from "./Toast";
-const toast = {
-  error:   (msg, opts) => rawToast({ message: msg, kind: "error", ...opts }),
-  success: (msg, opts) => rawToast({ message: msg, kind: "success", ...opts }),
-};
+import { toast } from "../lib/toastApi";
 
 const CARD_BG = "#161616";
 const CARD_BORDER = "1px solid #222";

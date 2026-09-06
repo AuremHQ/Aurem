@@ -19,21 +19,18 @@ threading its own ~10 locals across yet another module boundary).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from typing import Optional
 
 from services.orchestrator import chat_with_tools
-from services.llm import call_llm_with_meta, call_emergent_watchdog
 from services.chat_helpers import (
-    _detect_mode, is_fix_confirmation, _f12_has_real_signal,
-    _is_transient_proxy_error, _TRANSIENT_PROXY_CODES, classify_intent,
+    is_fix_confirmation, classify_intent,
 )
 from core.task_type import infer_task_type as _infer_task_type
 from cto_services.db import get_db
 
-from .misc import BUSINESS_OWNER_VOICE_CONTRACT, ORA_PANEL_TONE
+from .misc import ORA_PANEL_TONE
 from .stream_state import StreamState
 
 logger = logging.getLogger(__name__)
@@ -459,8 +456,7 @@ async def _ora_agent_cascade(state: StreamState) -> Optional[dict]:
         return None
     from services.llm import (
         _call_glm, _call_claude, _call_deepseek,
-        _call_deepseek_direct, _call_groq, _GLM_MODEL,
-        cap_for, temperature_for,
+        _call_deepseek_direct, _call_groq, cap_for, temperature_for,
     )
     # Iter 212m-53 — Ask Advisor dedicated config (admin-set). Read
     # the dedicated prompt + LLM choice; fall back to the legacy

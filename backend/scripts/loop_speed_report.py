@@ -80,11 +80,11 @@ async def main() -> int:
     print(f"Execute share of total: "
           f"{(report.get('execute_share_of_total') or {}).get('avg_pct')}% avg")
     print()
-    print(f"Per-file generation duration (execute phase):")
+    print("Per-file generation duration (execute phase):")
     print(f"  {report.get('per_file_generation')}")
     print(f"  outcomes: {report.get('per_file_outcomes')}")
     print()
-    print(f"Queue-wait signal (MAX_PARALLEL_GENS=3):")
+    print("Queue-wait signal (MAX_PARALLEL_GENS=3):")
     qw = report.get("queue_wait_signal") or {}
     print(f"  loops with queue-wait: {qw.get('loops_with_queue_wait')}")
     for sample in qw.get("samples", []):

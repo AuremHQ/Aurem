@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Optional
+from typing import Optional
 
 _MATRIX_PATH        = "/app/docs/traceability_matrix.json"
 _TESTS_DIR          = "/app/backend/tests"

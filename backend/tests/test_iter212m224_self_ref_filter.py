@@ -16,7 +16,7 @@ from __future__ import annotations
 
 
 def test_is_scanner_rule_file_matches_definition_files():
-    from routers.codebase_health import _is_scanner_rule_file
+    from services.scanner_utils import is_scanner_rule_file as _is_scanner_rule_file
     # Every listed scanner-rule source MUST match.
     for p in [
         "backend/services/bug_hunt_rules.py",
@@ -32,7 +32,7 @@ def test_is_scanner_rule_file_matches_definition_files():
 
 
 def test_is_scanner_rule_file_does_not_match_regular_source():
-    from routers.codebase_health import _is_scanner_rule_file
+    from services.scanner_utils import is_scanner_rule_file as _is_scanner_rule_file
     # Real code files MUST NOT match (else we'd hide real bugs).
     for p in [
         "backend/services/loop_engine.py",
@@ -50,7 +50,7 @@ def test_security_scanner_skips_own_rule_files():
     """Feed the security scanner a text_cache containing a scanner-
     definition file with obvious eval() / exec() strings inside; it
     MUST return zero findings for that path."""
-    from routers.codebase_health import _scan_security
+    from services.codebase_health_core import _scan_security
     poisoned = {
         "backend/services/bug_hunt_rules.py":
             'RULES = [("eval_usage", r"\\beval\\s*\\("),\n'

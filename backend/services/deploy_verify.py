@@ -22,7 +22,6 @@ Standard invariants this module follows:
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import time
 import uuid

@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional
 
 from .smart_router import get_model, get_budget, get_provider_name, MODELS
 

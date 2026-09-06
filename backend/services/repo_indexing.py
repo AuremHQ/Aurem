@@ -30,9 +30,7 @@ Output schema (also persisted to MongoDB `repo_index`):
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import re
 from collections import Counter
 from datetime import datetime, timezone

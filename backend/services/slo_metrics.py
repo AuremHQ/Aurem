@@ -36,7 +36,6 @@ existing "5 min wall-clock" SSE-stream-close constant
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 # Chat response — reuses CHAT_SOFT_TIMEOUT_S (routers/chat.py, default
 # 48s) as the "bad" boundary; "good" is a deliberately tighter target

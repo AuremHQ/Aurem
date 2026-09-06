@@ -7,19 +7,26 @@
 // "ESLint couldn't find an eslint.config.js file" (an engine-level
 // crash, not a real lint result). Kept intentionally permissive —
 // it is not meant to replace oxlint or CI's lint gate.
+const NOOP_RULE = { meta: { schema: [] }, create: () => ({}) };
+
 module.exports = [
   {
     ignores: [
-      "node_modules/**",
-      "dist/**",
-      "build/**",
-      "coverage/**",
-      "playwright-report/**",
-      "test-results/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/coverage/**",
+      "**/playwright-report/**",
+      "**/test-results/**",
+      "backend/**",
+      "_extract/**",
+      "e2e-proof/**",
     ],
   },
   {
-    files: ["src/**/*.{js,jsx}"],
+    // Both globs so the config also works when eslint is invoked from the
+    // repo root (/app) via the root eslint.config.js re-export.
+    files: ["src/**/*.{js,jsx}", "frontend/src/**/*.{js,jsx}"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
@@ -32,11 +39,16 @@ module.exports = [
     // this repo conflicts with the existing `resolutions.brace-
     // expansion` pin in package.json (breaks @eslint/config-array's
     // bundled minimatch — "expand is not a function"). Rather than
-    // touch that pin, this config stays plugin-free; a handful of
-    // pre-existing `eslint-disable-next-line react-hooks/...`
-    // comments will report "rule not found" if bare `eslint` is ever
-    // run here — cosmetic, not a real defect. oxlint remains this
+    // touch that pin, the plugin namespaces below are STUBS (no-op
+    // rules) so the `eslint-disable-next-line react-hooks/...` /
+    // `react/...` comments already in src don't trip "Definition for
+    // rule not found" when bare `eslint` runs. oxlint remains this
     // repo's actual zero-config linter (see CHANGELOG 2026-08-28).
+    plugins: {
+      "react-hooks": { rules: { "exhaustive-deps": NOOP_RULE, "set-state-in-effect": NOOP_RULE, "rules-of-hooks": NOOP_RULE } },
+      react: { rules: { "no-danger": NOOP_RULE } },
+    },
+    linterOptions: { reportUnusedDisableDirectives: "off" },
     rules: {},
   },
 ];

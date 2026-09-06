@@ -25,7 +25,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 
 from services import github_deploy_service as gh

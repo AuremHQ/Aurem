@@ -6,7 +6,6 @@ core/parliament/self_heal.py — 2026-09-08 Phase 3 god-class split.
 """
 from __future__ import annotations
 
-from typing import Optional
 
 from . import llm_call as _llm_call_mod
 from .breaker import _GLOBAL_BREAKER

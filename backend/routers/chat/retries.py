@@ -38,8 +38,7 @@ async def run_confidence_gate(state: StreamState, content: str, provider: str):
 
     try:
         from services.response_confidence import (
-            response_seems_mismatched, has_ship_suggestion, FALLBACK_MESSAGE,
-            prior_turn_had_fix_signal,
+            response_seems_mismatched, has_ship_suggestion, prior_turn_had_fix_signal,
         )
         from services.bail_reason import classify_bail
         _prior_fix_signal = await prior_turn_had_fix_signal(

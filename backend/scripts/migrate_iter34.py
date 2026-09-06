@@ -114,7 +114,7 @@ async def main() -> None:
         print(f"\n✅ APPLIED — cleaned {total_sparse_turns} sparse entries "
               f"from {affected_sessions} sessions.")
     elif affected_sessions:
-        print(f"\nℹ️  dry-run — run with --apply to commit the cleanup.")
+        print("\nℹ️  dry-run — run with --apply to commit the cleanup.")
     else:
         print("\n✅ no sparse entries found, nothing to do.")
 

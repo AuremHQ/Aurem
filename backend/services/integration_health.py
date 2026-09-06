@@ -32,7 +32,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import httpx
 
@@ -478,7 +478,7 @@ async def _probe_resend() -> dict:
         from_email = os.environ.get("RESEND_FROM_EMAIL", "")
         if not verified:
             return _result("resend", "Resend Email", "warn",
-                           summary=f"Key valid but 0 verified domains",
+                           summary="Key valid but 0 verified domains",
                            detail=f"Found {len(domains)} domains, none verified",
                            fix_hint="Verify aurem.live via DNS records in Resend dashboard")
         vlist = ", ".join(d.get("name") for d in verified)
@@ -639,9 +639,9 @@ async def _probe_supabase_platform() -> dict:
             "supabase_platform", "Supabase Provisioner",
             "disabled",
             summary=f"Disabled — missing {', '.join(missing)}",
-            detail=(f"services/supabase_provisioner.py imports 24 call "
-                    f"sites but every function silently returns without "
-                    f"provisioning when these are unset."),
+            detail=("services/supabase_provisioner.py imports 24 call "
+                    "sites but every function silently returns without "
+                    "provisioning when these are unset."),
             fix_hint=("Set both in backend/.env then restart backend, "
                       "OR delete supabase_provisioner + sweeper if the "
                       "feature is intentionally shelved."),
@@ -688,9 +688,9 @@ async def _probe_vercel_platform() -> dict:
             "vercel_platform", "Vercel (Platform-scoped)",
             "disabled",
             summary=f"Disabled — missing {', '.join(missing)}",
-            detail=(f"services/vercel_platform_deploy.py has 6 call "
-                    f"sites but silently returns error dicts when these "
-                    f"are unset. Personal Track hosting depends on it."),
+            detail=("services/vercel_platform_deploy.py has 6 call "
+                    "sites but silently returns error dicts when these "
+                    "are unset. Personal Track hosting depends on it."),
             fix_hint=("Set both in backend/.env then restart, OR delete "
                       "vercel_platform_deploy.py if not planned."),
         )

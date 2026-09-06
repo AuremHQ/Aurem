@@ -52,7 +52,7 @@ def test_perf_scanner_n_plus_one_rejects_sibling_calls():
     """A `for` loop followed by a sibling (same-indent) db call at
     module/function scope must NOT trigger n_plus_one — the db call
     isn't inside the loop."""
-    from routers.codebase_health import _scan_performance
+    from services.codebase_health_core import _scan_performance
 
     # 4-space indent — sibling of the for, NOT inside it.
     src = (
@@ -73,7 +73,7 @@ def test_perf_scanner_n_plus_one_rejects_sibling_calls():
 
 def test_perf_scanner_n_plus_one_flags_real_case():
     """Actual N+1 (db call inside loop body, 8-space indent) MUST fire."""
-    from routers.codebase_health import _scan_performance
+    from services.codebase_health_core import _scan_performance
     src = (
         "async def foo(db, uids):\n"
         "    for uid in uids:\n"
@@ -88,7 +88,7 @@ def test_perf_scanner_n_plus_one_flags_real_case():
 def test_perf_scanner_ignores_aggregate_cursor_iteration():
     """`async for x in db.X.aggregate(...)` is NOT N+1 — it's a batch
     cursor. Same for `.to_list()` and single `.find()`."""
-    from routers.codebase_health import _scan_performance
+    from services.codebase_health_core import _scan_performance
     src = (
         "async def stats(db):\n"
         "    async for d in db.cto_tasks.aggregate(pipe):\n"

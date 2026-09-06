@@ -26,7 +26,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from services.subscription_tiers import TIER_LIMITS, Tier, _coerce
+from services.subscription_tiers import TIER_LIMITS, _coerce
 
 logger = logging.getLogger(__name__)
 

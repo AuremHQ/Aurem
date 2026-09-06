@@ -22,6 +22,7 @@ import MessageBubble from "../MessageBubble.jsx";
 
 vi.mock("../../lib/api", () => ({
   api: { get: vi.fn(() => Promise.resolve({ data: {} })), post: vi.fn(() => Promise.resolve({ data: {} })) },
+  getToken: () => null,
 }));
 vi.mock("../Toast", () => ({ toast: vi.fn() }));
 

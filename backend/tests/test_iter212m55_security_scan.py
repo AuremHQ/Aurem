@@ -21,7 +21,7 @@ import re
 # Allow `import routers...` without running the full app.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from routers.security_scan import _scan_text, _RULES   # noqa: E402
+from services.security_text_scanner import _scan_text, _RULES   # noqa: E402
 
 import pytest
 

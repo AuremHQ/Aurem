@@ -21,11 +21,9 @@ from services.vanguard_scanner import scan_text
 from services.bug_hunt_rules import scan_bug_hunt
 from services.full_scan_scanners import (
     scan_docker_cis as _scan_docker_cis_service,
-    scan_http_headers as _scan_http_headers_service,
 )
 from services.scanner_utils import (
     is_scanner_rule_file as _is_scanner_rule_file,
-    _SCANNER_RULE_FILES,
 )
 
 

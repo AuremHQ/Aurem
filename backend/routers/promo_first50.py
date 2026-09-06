@@ -44,9 +44,9 @@ from pymongo.write_concern import WriteConcern
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
-from services.signup_guards import _disposable_hit, _extract_domain
+from services.signup_guards import _disposable_hit
 from services.verification_email import (
-    send_verification_email, create_verification_token,
+    send_verification_email,
 )
 
 logger = logging.getLogger(__name__)

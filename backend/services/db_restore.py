@@ -18,7 +18,6 @@ Format is documented in db_backup.py. Restore contract:
 """
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import gzip
 import json

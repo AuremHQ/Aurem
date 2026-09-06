@@ -15,8 +15,6 @@ errors fall through to a strict 500-token DeepSeek diagnosis.
 
 from __future__ import annotations
 import re
-import json
-from datetime import datetime, timezone
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.llm import call_llm_with_meta

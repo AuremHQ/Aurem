@@ -41,10 +41,8 @@ import logging
 import os
 import re
 import time
-import uuid
-from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, AsyncIterator, Optional
+from typing import AsyncIterator, Optional
 
 # 2026-08-26 — safe mechanical extraction (zero logic change): standalone
 # helpers that don't touch LoopEngine's internal state or the module-level
@@ -56,9 +54,9 @@ from typing import Any, AsyncIterator, Optional
 from services.loop_engine_helpers import (
     _now, _iso, _new_event,
     _persist_session, _log_error, _save_plan, _td,
-    record_backup, rollback,
-    new_loop_id, load_session, _commit_message,
+    record_backup, load_session, _commit_message,
     _run_security_scan, _run_diff_security_scan,
+    rollback, new_loop_id,  # noqa: F401 — public facade (tests/callers use loop_engine.rollback / new_loop_id)
 )
 from core.boundaries import coerce
 from core.errors import ContractError
@@ -1222,7 +1220,6 @@ class LoopEngine:
                              f"{_auth_detail or 'Connect this repo via the GitHub App.'}")
             return
 
-        from services.loop_execute import generate_files
 
         # Iter 212m-116 — Apply Sweep-pattern file selector: trim the
         # planner's `files_to_change` to the TOP-N most relevant by
@@ -2133,7 +2130,7 @@ class LoopEngine:
             }
             return
 
-        from services.loop_verify import verify_files, self_heal
+        from services.loop_verify import verify_files
 
         # Iter 309 · Narration — test-run-start pending.
         # correlation_id = "verify:pass_1" pairs with the first

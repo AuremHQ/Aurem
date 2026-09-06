@@ -33,7 +33,6 @@ Public API
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 
 # ── Runtime override (populated at boot or via /admin/stripe-config) ─

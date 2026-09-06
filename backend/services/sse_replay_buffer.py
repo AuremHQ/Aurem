@@ -37,7 +37,6 @@ Design constraints (founder-locked)
 • No WebSockets, no polling fallback (out-of-scope per Item 6 spec).
 """
 from __future__ import annotations
-import asyncio
 import time
 from collections import deque
 from typing import Optional
