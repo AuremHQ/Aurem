@@ -1,4 +1,49 @@
 # AUREM CTO — Changelog (append-only)
+- **Visibility Kit — robots.txt "conflict" was blocking a provably-safe
+  merge; now actually applies (2026-09-06, same-day follow-up)**
+  - After the toast/z-index fix above shipped and was confirmed working
+    on production (founder screen recording showed the correct red
+    conflict toast for `robots.txt AI policy`), founder pushed back:
+    the conflict itself is the wrong behavior. Robots.txt exists on
+    virtually every real site (framework/SEO-plugin default) — so
+    this "conflict" fired on every real repo, every time, permanently
+    blocking the one item it should never have blocked.
+  - **Root cause:** `services/visibility/apply.py`'s `ai_crawler_policy`
+    branch treated "robots.txt exists without our marker" as a hard
+    conflict and refused to write. But `services/visibility/robots.py`
+    `apply_managed_block()` is a **provably safe** read-modify-write
+    (per its own R5/R6 docstring): it preserves every existing line
+    byte-for-byte and only ever APPENDS the AUREM block when no
+    marker is present (or replaces it in place on re-apply). There
+    was no destructive-overwrite risk to guard against — the
+    conflict gate was pure over-caution blocking a function
+    specifically designed to handle this exact case.
+  - Contrast: `llms_txt`'s conflict gate STAYS — `apply_llms_files()`
+    fully regenerates the file from scratch (no merge with existing
+    content), so blocking on an unmarked existing llms.txt is a real,
+    necessary safety check there. Only `ai_crawler_policy`'s gate was
+    removed; `structured_data`/`preferred_sources` (need `</head>`/
+    `</body>` anchors) are unaffected.
+  - **Fix:** removed the `item_conflicts["ai_crawler_policy"]` branch;
+    `apply_managed_block()` is now called unconditionally.
+  - **Verified live (not guessed):** curl POST
+    `/visibility/projects/p_7c64e52386/apply {"items":
+    ["ai_crawler_policy"]}` → `{"ok":true, "pr_url":
+    ".../pull/5", ...}`. Fetched the real PR's file diff via GitHub
+    API: `robots.txt modified, +18/-0` — original content (Disallow
+    rules, Sitemap line) fully preserved, AUREM block cleanly
+    appended. UI screenshot confirms the item correctly flips
+    "Ready" → "In review" (score 0→10/100) instead of repeatedly
+    erroring.
+  - Backend suite: 35/36 pass in `test_visibility_kit*.py` (the 1
+    failure, `test_catalog_seeded` expecting 8 vs actual 10 items, is
+    pre-existing drift already documented in a prior round — untouched
+    by this change).
+  - **Not yet deployed to production** — this round's backend change
+    (unlike the toast fix, which the founder already confirmed live)
+    still needs a production deploy + a real re-test on the founder's
+    actual repo before declaring this fully closed end-to-end.
+
 - **Visibility Kit — individual Apply toast root cause found + fixed (2026-09-06)**
   - Founder repeatedly tested Apply on "robots.txt AI policy" against
     a real repo with a pre-existing (unmarked) robots.txt — a genuine

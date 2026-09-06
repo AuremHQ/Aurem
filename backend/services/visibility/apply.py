@@ -80,10 +80,18 @@ async def apply_visibility_kit(
 
     if "ai_crawler_policy" in to_apply:
         existing = await fetch_file(owner, repo, "robots.txt", base_branch, token)
-        if existing and robots_gen._START not in existing and not force:
-            item_conflicts["ai_crawler_policy"] = "robots.txt already exists without an AUREM block"
-        else:
-            files["robots.txt"] = robots_gen.apply_managed_block(existing, bot_policy)
+        # 2026-09-06 — founder-reported: robots.txt exists on virtually
+        # EVERY real site (framework/SEO-plugin default), so the old
+        # "conflict if marker missing" gate fired on every real repo,
+        # every time, blocking the one item it should never have
+        # blocked. `apply_managed_block()` is a proven-safe
+        # read-modify-write (robots.py R5/R6 docstring): it preserves
+        # every existing line byte-for-byte and only APPENDS our block
+        # when no marker is present, or replaces it in place on
+        # re-apply. There is no destructive-overwrite risk here (unlike
+        # llms_txt below, which fully regenerates the file and DOES
+        # need its conflict gate) — so this item never needs to block.
+        files["robots.txt"] = robots_gen.apply_managed_block(existing, bot_policy)
 
     if "structured_data" in to_apply:
         html_path = site_meta.get("html_entry_path") or "index.html"
