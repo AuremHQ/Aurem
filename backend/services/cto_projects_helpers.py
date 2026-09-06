@@ -25,6 +25,7 @@ definitions.
 from __future__ import annotations
 import asyncio
 import logging
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -384,4 +385,52 @@ def _hallucination_reasons(blocks: dict, originals: dict) -> list[str]:
                 f"{_p} — proposed rewrite keeps only "
                 f"{int(_ratio * 100)}% of the real file's lines "
                 f"(likely hallucinated content)")
+    return out
+
+
+# 2026-09-12 — content-fidelity fix, round 2. Confirmed live (commit
+# 2e74ea1, founder repro "verify-3"): the round-1 keep-ratio gate above
+# only catches WHOLESALE rewrites. It does nothing for the opposite,
+# equally serious failure — the original content is fully preserved
+# (ratio ~1.0, gate never fires) but the ONE specific literal string
+# the task explicitly required (e.g. "append exactly `<!-- marker -->`
+# as a new line") comes out BLANK or altered in the actual edit. The
+# commit message and the pipeline's own post-push verify both looked
+# "correct" because they only ever compared what-we-pushed against
+# what-GitHub-now-serves — never against what the task actually asked
+# for. This check closes that specific gap: when a task names an
+# EXACT literal (a deliberate, unambiguous instruction pattern —
+# "exactly `X`" / "exactly \"X\""), the generated edit(s) must contain
+# that literal verbatim, or it's treated the same as a hallucination.
+_VERBATIM_LITERAL_RE = re.compile(
+    r"exactly[\s:]*[\-—]?\s*(?P<q>[`\"'])(?P<lit>.+?)(?P=q)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_verbatim_literals(task: str) -> list[str]:
+    """Every quoted literal the task explicitly said to use "exactly"."""
+    if not task:
+        return []
+    return [
+        m.group("lit") for m in _VERBATIM_LITERAL_RE.finditer(task)
+        if m.group("lit").strip()
+    ]
+
+
+def _verbatim_reasons(task: str, blocks: dict) -> list[str]:
+    """Flag any "exactly `X`"-style literal from the task that is
+    missing from every edited file's new content — the actual write
+    didn't do what was explicitly, unambiguously asked."""
+    literals = _extract_verbatim_literals(task)
+    if not literals or not blocks:
+        return []
+    haystack = "\n".join(blocks.values())
+    out: list[str] = []
+    for lit in literals:
+        if lit not in haystack:
+            out.append(
+                f'task required the EXACT literal "{lit[:80]}" but it is '
+                f"missing from the generated edit(s) — likely written "
+                f"blank or altered")
     return out

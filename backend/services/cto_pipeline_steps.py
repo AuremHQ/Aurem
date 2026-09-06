@@ -24,7 +24,10 @@ from __future__ import annotations
 from typing import Optional
 
 from services.llm import call_llm
-from services.cto_projects_helpers import _log, _emit, _retry, _hallucination_reasons
+from services.cto_projects_helpers import (
+    _log, _emit, _retry, _hallucination_reasons,
+    _verbatim_reasons, _extract_verbatim_literals,
+)
 
 
 def _check_js_syntax(filepath: str, content: str) -> Optional[str]:
@@ -112,8 +115,19 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     but kept almost none of its real lines, the content is invented.
     One targeted retry re-injects the REAL file; still bad -> returns
     an error string (caller must fail the task, never commit).
+
+    2026-09-12 — content-fidelity fix, round 2. Also runs
+    `_verbatim_reasons()`: the keep-ratio check above only catches
+    WHOLESALE rewrites — it does nothing when the original is fully
+    preserved but a specific "exactly `X`" literal the task explicitly
+    required comes out blank/altered (confirmed live, commit 2e74ea1).
+    Both checks share the same retry-then-abort path; the retry nudge
+    explicitly restates any missing literal(s) verbatim so the model
+    isn't just told "you were wrong" without being re-told what the
+    exact required text was.
     Returns (possibly-updated edits, error_or_None)."""
-    _hallu = _hallucination_reasons(edits, contents)
+    _verb = _verbatim_reasons(user_msg, edits)
+    _hallu = _hallucination_reasons(edits, contents) + _verb
     if not _hallu:
         return edits, None
     await _log(task_id,
@@ -124,13 +138,23 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
         f"FILE: {p}\n```\n{contents.get(p) or contents.get(p.lstrip('./'))}\n```"
         for p in edits
         if (contents.get(p) or contents.get(p.lstrip("./"))))
+    _literal_reminder = ""
+    if _verb:
+        _literals = _extract_verbatim_literals(user_msg)
+        _literal_reminder = (
+            "\n\nCRITICAL: your last attempt did NOT include the exact "
+            "literal text the task required. You MUST include this "
+            "EXACT text, verbatim, character-for-character (do not "
+            "paraphrase, summarize, or leave it blank):\n"
+            + "\n".join(f"  {lit!r}" for lit in _literals)
+        )
     _h_nudge = (
         "Your previous edit did NOT match the real file — it "
         "invented code that does not exist. Below is the REAL, "
         "current content of each file. Re-apply the requested "
         "change as a MINIMAL modification of this exact content. "
         "Preserve every existing line unless the task requires "
-        "changing it.\n\n" + _real_blob
+        "changing it." + _literal_reminder + "\n\n" + _real_blob
     )
     reply3 = await _retry(
         lambda: call_llm(
@@ -144,7 +168,7 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     _edits2 = _pfb(reply3)
     if _edits2:
         edits = _edits2
-    _hallu = _hallucination_reasons(edits, contents)
+    _hallu = _hallucination_reasons(edits, contents) + _verbatim_reasons(user_msg, edits)
     if _hallu:
         err = ("AI kept producing content that does not match the "
                "real file (refusing to push):\n  - "

@@ -1890,3 +1890,55 @@ vs actual PR" naming/behavior question (not addressed in this round).
 Production deploy still required to take effect for the founder's
 real account (same as R10/R13/R14/R15 below — nothing in this
 session has been deployed to `auremcto.com` yet).
+
+---
+
+## 2026-09-12 (round 2) — Content-fidelity fix, part 2: verbatim-literal check (blank-line bug)
+
+**Trigger**: after round 1 (wholesale-file-rewrite protection) was
+verified and reported, founder immediately re-tested live on
+production ("verify-3") and found a NEW, more subtle variant on
+commit `2e74ea1`: the original file was fully preserved this time —
+no wholesale rewrite — but the ONE specific line that was supposed to
+be appended (`<!-- fidelity-fix-verify-3 -->`) came out **blank**.
+The pipeline's own commit message said "append exactly ... " and its
+own post-push verify step logged "✅ Verified 1 file(s) live on
+main@2e74ea1" — both false. Founder correctly flagged this as a
+trust-breaking false-positive-verification issue, not just a content
+bug.
+
+**Root cause**: round 1's `_hallucination_reasons()` only measures
+keep-ratio of ORIGINAL lines in the NEW content — it does nothing
+when the original is 100% preserved but the specific NEW content is
+wrong/blank. Separately, `worker_api.py`'s post-push verify compares
+"what we pushed" against "what GitHub now serves" (push-integrity),
+never against "what the task actually asked for" — so it correctly
+said "verified" for content that was faithfully pushed, even though
+that content was already wrong before it was ever pushed.
+
+**Fix**: new sibling check `_verbatim_reasons()` (+ helper
+`_extract_verbatim_literals()`) in `cto_projects_helpers.py` —
+regex-extracts any literal the task explicitly required "exactly"
+(pattern: `exactly` + backtick/quote-wrapped literal, e.g. "append
+exactly `<!-- marker -->`"), and flags it if that exact string is
+missing from the generated edit(s). Wired into the SAME shared
+`_run_hallucination_gate()` (`cto_pipeline_steps.py`) alongside the
+round-1 check — both are OR'd together, checked before AND after the
+one corrective retry; the retry nudge now explicitly restates any
+missing literal(s) verbatim (not just "you were wrong") to raise the
+odds the retry actually succeeds.
+
+**Tests**: `test_2026_09_12_content_fidelity_short_file_hallucination.py`
+extended from 3 → 6 tests (3 new: blank-line-caught-and-retried,
+blank-line-still-missing-blocks-commit, no-false-positive-without-
+"exactly"-phrasing). Full regression: 199 passed / 1 pre-existing
+unrelated failure. Verified by `testing_agent_v3_fork` — report:
+`/app/test_reports/iteration_content_fidelity_short_file_2026_09_12_round2.json`
+— explicitly confirmed NOT gamed (mentally reverted the new check,
+confirmed the 2 positive new tests would fail without it; confirmed
+the no-false-positive test stays green either way).
+
+**Status**: both rounds of the content-fidelity fix are now solid in
+preview. **Visibility Kit (`kit_apply_enabled`) remains OFF** — still
+pending the founder's decision. Production deploy still required to
+reach `auremcto.com`.
