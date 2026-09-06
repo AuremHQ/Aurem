@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 
-from services.github_api_writer import commit_files, fetch_file
+from services.github_api_writer import commit_files, fetch_file, find_html_entry_path
 from services.git_identity import resolve_git_identity
 from services.loop_safety import create_or_reuse_branch, open_draft_pr, ship_branch_name
 from services.visibility import robots as robots_gen
@@ -93,9 +93,29 @@ async def apply_visibility_kit(
         # need its conflict gate) — so this item never needs to block.
         files["robots.txt"] = robots_gen.apply_managed_block(existing, bot_policy)
 
-    if "structured_data" in to_apply:
+    # 2026-09-06 — resolve the real HTML entry path ONCE, shared by
+    # structured_data + preferred_sources. The old code hardcoded
+    # "index.html" at repo ROOT only — this repo's actual entry is
+    # `audit-repro/index.html`; other real repos commonly use
+    # `public/index.html`, `client/index.html`, etc. A missing root
+    # index.html always produced a false "not found in this repo"
+    # conflict even when a perfectly good entry file existed nested
+    # elsewhere. Falls back to a git-tree search (find_html_entry_path)
+    # ONLY when root index.html 404s, so the common case (root
+    # index.html present) costs no extra API call.
+    html_path = "index.html"
+    html_probe: str | None = None
+    if "structured_data" in to_apply or "preferred_sources" in to_apply:
         html_path = site_meta.get("html_entry_path") or "index.html"
-        existing_html = await fetch_file(owner, repo, html_path, base_branch, token)
+        html_probe = await fetch_file(owner, repo, html_path, base_branch, token)
+        if html_probe is None:
+            found = await find_html_entry_path(owner, repo, base_branch, token)
+            if found:
+                html_path = found
+                html_probe = await fetch_file(owner, repo, html_path, base_branch, token)
+
+    if "structured_data" in to_apply:
+        existing_html = html_probe
         if existing_html is None:
             item_conflicts["structured_data"] = f"{html_path} not found in this repo"
         elif schema_gen._START not in existing_html and "</head>" not in existing_html and not force:
@@ -113,8 +133,7 @@ async def apply_visibility_kit(
         files["sitemap.xml"] = sitemap_gen.merge_lastmod(existing_sitemap, scan_urls, scan_date)
 
     if "preferred_sources" in to_apply:
-        html_path = site_meta.get("html_entry_path") or "index.html"
-        existing_html_ps = files.get(html_path) or await fetch_file(owner, repo, html_path, base_branch, token)
+        existing_html_ps = files.get(html_path) or html_probe
         domain = site_meta.get("domain") or _domain_from_url((site_meta.get("schema") or {}).get("url"))
         site_name = (site_meta.get("schema") or {}).get("name")
         if existing_html_ps is None:

@@ -98,7 +98,73 @@ def test_t_kit_robots_read_modify_write():
     assert "User-agent: OAI-SearchBot\nAllow: /" in out    # D1 — allow retrieval bots
 
 
-# ── t_kit_apply_preserves_existing_files ─────────────────────────────
+# ── t_kit_html_entry_path_fallback (2026-09-06) ──────────────────────
+# Root cause: structured_data/preferred_sources hardcoded "index.html"
+# at repo ROOT and reported a false "not found in this repo" conflict
+# for any real repo whose entry HTML lives elsewhere (e.g. a nested
+# path). find_html_entry_path() is the git-tree-search fallback that
+# only runs when root index.html 404s.
+@pytest.mark.asyncio
+async def test_t_kit_html_entry_path_falls_back_to_nested_index_html():
+    from services.visibility.apply import apply_visibility_kit
+    db = MagicMock()
+    db.visibility_state.update_one = AsyncMock()
+    db.visibility_applications.insert_one = AsyncMock()
+    project = {"project_id": "p1", "user_id": "u1", "github_owner": "o",
+               "github_repo": "r", "branch": "main"}
+
+    async def fake_fetch(owner, repo, path, branch, token):
+        # No index.html at repo root — only nested at audit-repro/.
+        if path == "audit-repro/index.html":
+            return "<html><body>no head tag here</body></html>"
+        return None
+
+    with patch("services.visibility.apply.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
+         patch("services.visibility.apply.find_html_entry_path",
+               new=AsyncMock(return_value="audit-repro/index.html")), \
+         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+        result = await apply_visibility_kit(
+            db, project=project, requested_items=["structured_data"],
+            token="t", scan_urls=[],
+            site_meta={"schema": {"name": "X", "url": "https://x.com"}}, bot_policy={},
+        )
+    # Found the nested file (no longer "not found") — real, legitimate
+    # conflict instead: the fixture has no </head> to inject into.
+    assert result["ok"] is False
+    assert "not found in this repo" not in " ".join(result["conflicts"])
+    assert "audit-repro/index.html has no </head>" in result["conflicts"][0]
+
+
+@pytest.mark.asyncio
+async def test_t_kit_html_entry_path_genuinely_missing_still_conflicts():
+    """When NO index.html exists anywhere (true SSR framework), still
+    a real 'not found' conflict — the fallback must not invent a path."""
+    from services.visibility.apply import apply_visibility_kit
+    db = MagicMock()
+    db.visibility_state.update_one = AsyncMock()
+    db.visibility_applications.insert_one = AsyncMock()
+    project = {"project_id": "p1", "user_id": "u1", "github_owner": "o",
+               "github_repo": "r", "branch": "main"}
+
+    with patch("services.visibility.apply.fetch_file", new=AsyncMock(return_value=None)), \
+         patch("services.visibility.apply.find_html_entry_path", new=AsyncMock(return_value=None)), \
+         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+        result = await apply_visibility_kit(
+            db, project=project, requested_items=["structured_data"],
+            token="t", scan_urls=[],
+            site_meta={"schema": {"name": "X", "url": "https://x.com"}}, bot_policy={},
+        )
+    assert result["ok"] is False
+    assert "index.html not found in this repo" in result["conflicts"]
+
+
+
 @pytest.mark.asyncio
 async def test_t_kit_apply_preserves_existing_files_llms_txt():
     from services.visibility.apply import apply_visibility_kit

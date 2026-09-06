@@ -101,6 +101,59 @@ async def fetch_file(owner: str, repo: str,
         return None
 
 
+async def find_html_entry_path(owner: str, repo: str, ref: str, token: str) -> Optional[str]:
+    """2026-09-06 — Visibility Kit's structured_data/preferred_sources
+    items used to hardcode `index.html` at repo ROOT as the only place
+    they'd ever look, so ANY repo whose HTML lives elsewhere (this
+    repo's real structure is `audit-repro/index.html`; other real
+    repos use `public/index.html`, `client/index.html`, etc.) always
+    hit `{path} not found in this repo` — a false "conflict" on every
+    such repo, not a real block.
+
+    Lists the full recursive tree ONCE via the Git Trees API and picks
+    the shallowest `*/index.html` (or `index.html`) found, since a
+    closer-to-root entry file is the most likely real one. Excludes
+    build-output dirs (`dist/`, `build/`, `node_modules/`) — injecting
+    into a generated file is pointless (next build overwrites it).
+    Returns None if genuinely no HTML file exists anywhere (true SSR
+    frameworks like Next.js app router) — callers still conflict in
+    that case, correctly, since there's nothing safe to inject into.
+    """
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/git/trees/{ref}?recursive=1"
+    _SKIP_DIRS = ("node_modules/", "dist/", "build/", ".next/", "out/")
+
+    def _is_hidden(path: str) -> bool:
+        # Any dot-prefixed path segment (.agent/, .github/, .git/, ...)
+        # is tooling/config scaffolding, never real site content.
+        return any(seg.startswith(".") for seg in path.split("/"))
+
+    try:
+        async with ext_client(
+            "github",
+            timeout=httpx.Timeout(60.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
+        ) as client:
+            r = await client.get(url, headers=_headers(token))
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            candidates = [
+                t["path"] for t in data.get("tree", [])
+                if t.get("type") == "blob"
+                and t["path"].endswith(("/index.html", "index.html"))
+                and not any(t["path"].startswith(d) for d in _SKIP_DIRS)
+                and not _is_hidden(t["path"])
+            ]
+            if not candidates:
+                return None
+            # Shallowest path wins (fewest path segments = closest to root).
+            candidates.sort(key=lambda p: p.count("/"))
+            return candidates[0]
+    except Exception as e:
+        logger.debug(f"find_html_entry_path failed: {e!r}")
+        return None
+
+
 async def _get_branch_head(owner: str, repo: str,
                             branch: str, token: str) -> dict:
     """Return {sha, tree_sha} for branch head commit.

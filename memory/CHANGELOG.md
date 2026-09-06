@@ -1,4 +1,42 @@
 # AUREM CTO — Changelog (append-only)
+- **Visibility Kit — "index.html not found" was hardcoded to repo
+  root only; now searches the real tree (2026-09-06, same-day
+  follow-up #2)**
+  - Founder hit `structured_data`/`preferred_sources` failing with
+    "index.html not found in this repo" on a real repo. Root cause:
+    `html_path = site_meta.get("html_entry_path") or "index.html"` —
+    `html_entry_path` was never set anywhere in the codebase (dead
+    field), so this ALWAYS hardcoded repo-root `index.html`. Most
+    real repos don't have their entry HTML at literal root (this
+    test repo's is `audit-repro/index.html`; common real-world cases:
+    `public/index.html`, `client/index.html`, etc.) — a false "not
+    found" on every such repo.
+  - **Fix:** added `find_html_entry_path()` to
+    `services/github_api_writer.py` — lists the repo's full recursive
+    git tree ONCE (only as a fallback, when root `index.html` 404s)
+    and picks the shallowest real `*/index.html` found, excluding
+    build-output dirs (`dist/`, `build/`, `.next/`, `node_modules/`)
+    and any hidden/dot-prefixed path segment (`.agent/`, `.github/`,
+    etc. — confirmed via a real public repo scan that these would
+    otherwise get picked as false positives). `apply.py` now resolves
+    `html_path` once, shared by both items.
+  - **Verified live:** curl on `p_7c64e52386` (which has NO root
+    index.html, only `audit-repro/index.html`) — `structured_data`
+    now correctly reports `"audit-repro/index.html has no </head> to
+    inject into"` (a real, legitimate limitation of that test
+    fixture) instead of the false "not found". Direct Python check
+    against 2 real public repos: correctly resolves
+    `aurem-cto/ui/index.html` for one (skipping `.agent/skills/...`
+    tooling HTML files it would otherwise have falsely picked) and
+    `audit-repro/index.html` for the other.
+  - Added 2 new regression tests to `test_visibility_kit_v2_2026_08_30.py`:
+    fallback-to-nested-path succeeds, and genuinely-missing-everywhere
+    still correctly conflicts (fallback must never invent a path).
+    37/38 pass in the visibility suite (1 pre-existing unrelated
+    `test_catalog_seeded` count-drift failure, unchanged by this).
+  - Still not deployed to production — needs a deploy + a real
+    re-test on the founder's actual repo.
+
 - **Visibility Kit — robots.txt "conflict" was blocking a provably-safe
   merge; now actually applies (2026-09-06, same-day follow-up)**
   - After the toast/z-index fix above shipped and was confirmed working
