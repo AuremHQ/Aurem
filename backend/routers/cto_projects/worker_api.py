@@ -1099,11 +1099,24 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             _db_plan, proj.get("user_id") or "",
         )
         try:
+            # 2026-09-12 — content-fidelity fix, part 2. The commit
+            # message used to be `f"AUREM: {task[:60]}"` — a blind
+            # quote of the raw task text, which can describe an
+            # action ("append exactly <tag>") that the actual diff
+            # doesn't match (confirmed live: message claimed an exact
+            # append, the real diff was a full-file replace with no
+            # such tag). Lead with the FACTUAL, diff-derived file list
+            # so the message is always at least honest about WHAT was
+            # touched, with the task text as secondary context.
+            _changed = ", ".join(sorted(edits.keys())[:4])
+            if len(edits) > 4:
+                _changed += f" (+{len(edits) - 4} more)"
+            _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
             result = await _retry(
                 lambda: _pkg.gh_api_commit(
                     owner=owner, repo=repo, branch=branch, token=user_token,
                     files=edits,
-                    commit_message=f"AUREM: {task[:60]}",
+                    commit_message=_commit_msg,
                     author_name=_author_name, author_email=_author_email,
                     progress=_prog,
                 ),

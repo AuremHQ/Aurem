@@ -351,15 +351,31 @@ async def _retry(coro_factory, *, what: str, task_id: str,
 
 def _hallucination_reasons(blocks: dict, originals: dict) -> list[str]:
     """Iter 212m-177 — P0-4a. Flag proposed full-file rewrites that keep
-    almost none of the REAL file's lines (hallucinated content)."""
+    almost none of the REAL file's lines (hallucinated content).
+
+    2026-09-12 — content-fidelity fix. This previously SKIPPED the
+    check entirely for any original file with fewer than 10 non-blank
+    lines (`if len(_olines) < 10: continue`) — almost certainly meant
+    only to dodge a division-by-zero on empty files, but it silently
+    exempted every SMALL file (a short README.md, a small config,
+    etc.) from the fidelity check. Confirmed live: a task that asked
+    to append exactly one line to a small README.md instead got the
+    entire file replaced with generic "Project Name / Installation"
+    boilerplate — 0% of the real content preserved — and this gate
+    never fired because the original had under 10 lines. The
+    kept-line-ratio math is correct down to a single original line
+    (e.g. 1 line kept out of 1 = ratio 1.0; 0 kept out of 1 = ratio
+    0.0 — no divide-by-zero unless the file is TRULY empty), so the
+    only case that actually needs to skip is a genuinely empty
+    original (nothing to preserve, nothing to divide by)."""
     out: list[str] = []
     for _p, _new in blocks.items():
         _orig = originals.get(_p) or originals.get(_p.lstrip("./"))
         if not _orig:
             continue          # brand-new file — allowed
         _olines = [l.strip() for l in _orig.splitlines() if l.strip()]
-        if len(_olines) < 10:
-            continue
+        if len(_olines) == 0:
+            continue          # original is genuinely empty — nothing to preserve
         _nset = {l.strip() for l in (_new or "").splitlines() if l.strip()}
         _kept = sum(1 for l in _olines if l in _nset)
         _ratio = _kept / len(_olines)

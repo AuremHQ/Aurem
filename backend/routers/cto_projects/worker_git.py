@@ -427,7 +427,16 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         await asyncio.to_thread(_pkg._sh, ["git", "config", "user.email", "cto@auremcto.com"], repo_path)
         await asyncio.to_thread(_pkg._sh, ["git", "config", "user.name", "AUREM"], repo_path)
         await asyncio.to_thread(_pkg._sh, ["git", "add", "-A"], repo_path)
-        cm = await asyncio.to_thread(_pkg._sh, ["git", "commit", "-m", f"AUREM: {task[:60]}"], repo_path)
+        # 2026-09-12 — content-fidelity fix, part 2 (same as
+        # worker_api.py) — lead the commit message with the FACTUAL,
+        # diff-derived file list rather than blindly quoting the raw
+        # task text, which can describe an action the actual diff
+        # doesn't match.
+        _changed = ", ".join(sorted(edits.keys())[:4])
+        if len(edits) > 4:
+            _changed += f" (+{len(edits) - 4} more)"
+        _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
+        cm = await asyncio.to_thread(_pkg._sh, ["git", "commit", "-m", _commit_msg], repo_path)
         if "nothing to commit" in cm.stdout:
             await _pkg._log(task_id, "ℹ️ no diff to commit", "info")
             await _pkg._set_status(task_id, status="done", result=summary,

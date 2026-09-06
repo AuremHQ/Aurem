@@ -1823,3 +1823,70 @@ testing all 3 recordings directly against `auremcto.com`, so none of
 this session's fixes could possibly have taken effect there yet —
 **a production deploy is required** before any of these fixes reach
 the founder's real account.
+
+---
+
+## 2026-09-12 — Content-fidelity fix (short-file hallucination gate) + honest commit messages
+
+**Trigger**: founder independently verified production commit
+`c771f0bddc8cb016eafdba05536367db2e6bc2c3` on GitHub after the fresh
+ship-via-PR proof run (`iteration_fresh_ship_verify_2026_01_urgent.json`).
+Confirmed 3 real findings:
+1. Ship lands as a **direct commit to main**, not an actual PR (UI/claim said PR).
+2. **Content-fidelity bug**: task asked to append one line to README.md;
+   the AI fully replaced the whole file with generic "Project Name /
+   Installation" boilerplate — a real data-loss risk for live customer repos.
+3. **Misleading commit message**: message claimed "append exactly
+   `<!-- ora-fresh-ship-check-20 -->`" but that string was not in the actual diff.
+
+User explicitly chose **Option 1: fix content-fidelity FIRST**, before
+activating Visibility Kit — framed as structural (data-loss), not cosmetic.
+
+**Root cause (traced end-to-end)**: the shared hallucination-detection
+safety gate already existed (`_hallucination_reasons()` in
+`backend/services/cto_projects_helpers.py`, called by both
+`worker_api.py` and `worker_git.py` via `_run_hallucination_gate` in
+`backend/services/cto_pipeline_steps.py`) — but it **skipped the
+keep-ratio check entirely for any original file under 10 non-blank
+lines** (`if len(_olines) < 10: continue`), almost certainly a
+defensive guard against divide-by-zero on empty files that was set
+too high. README.md was short enough to fall under this threshold, so
+the full rewrite went completely unchecked.
+
+**Fix**:
+- `_hallucination_reasons()`: narrowed the skip to genuinely empty
+  originals only (`if len(_olines) == 0: continue`). Any file with
+  ≥1 non-blank line is now subject to the keep-ratio check → one
+  corrective retry (re-injects the real file) → hard abort if still
+  bad. No behavior change for empty-file creates or legitimate
+  high-keep-ratio edits (still exempt).
+- Commit message construction in `worker_api.py` and `worker_git.py`:
+  changed from `f"AUREM: {task[:60]}"` (blindly quoting the model's
+  own task/intent string — how it could lie about "append exactly
+  X") to a diff-derived message that leads with the **actual changed
+  file paths** (`edits.keys()`, factual by construction) with the
+  task text only as trailing context.
+
+**Tests**: new file
+`backend/tests/test_2026_09_12_content_fidelity_short_file_hallucination.py`
+(3 tests, end-to-end against the real `_run_hallucination_gate`:
+retry-succeeds, retry-still-bad-aborts, faithful-edit-no-retry — all
+pass). Updated `test_phase2c_cto_projects_router.py`'s
+`test_hallucination_reasons_short_original_skipped` → renamed
+`..._still_flagged`, now asserts the corrected behavior (was
+literally encoding the bug before). Full regression:
+196 passed / 1 pre-existing unrelated failure
+(`TestSubmitTask::test_rate_limited`, confirmed via git-stash
+bisection). Verified by `testing_agent_v3_fork` — report:
+`/app/test_reports/iteration_content_fidelity_short_file_2026_09_12.json`
+— code review found the fix minimal/correct/not over-broad, and the
+updated test not gamed.
+
+**Status**: fix is solid and live in preview. **Visibility Kit
+(`kit_apply_enabled`) remains OFF** — flipping it is a separate,
+still-pending decision on the founder's side, explicitly gated on
+this fix being confirmed (done) plus the still-open "direct commit
+vs actual PR" naming/behavior question (not addressed in this round).
+Production deploy still required to take effect for the founder's
+real account (same as R10/R13/R14/R15 below — nothing in this
+session has been deployed to `auremcto.com` yet).

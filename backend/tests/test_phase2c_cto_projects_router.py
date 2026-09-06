@@ -281,9 +281,34 @@ class TestPureHelpers:
         out = m._hallucination_reasons({"new.py": "print(1)"}, {})
         assert out == []
 
-    def test_hallucination_reasons_short_original_skipped(self):
+    def test_hallucination_reasons_short_original_still_flagged(self):
+        """2026-09-12 content-fidelity fix: a SHORT original (under
+        the old, buggy 10-line skip threshold) must still be flagged
+        if the rewrite keeps none of its real lines — this is exactly
+        the live-reproduced bug (a small README.md fully replaced by
+        generic boilerplate slipped through because it was 'too
+        short' to check)."""
         from routers import cto_projects as m
         out = m._hallucination_reasons({"x.py": "a"}, {"x.py": "one\ntwo"})
+        assert len(out) == 1
+        assert "x.py" in out[0]
+
+    def test_hallucination_reasons_empty_original_skipped(self):
+        """A genuinely empty original file has nothing to preserve —
+        still correctly exempt (also avoids a division-by-zero)."""
+        from routers import cto_projects as m
+        out = m._hallucination_reasons({"x.py": "brand new content"}, {"x.py": "   \n  \n"})
+        assert out == []
+
+    def test_hallucination_reasons_short_original_high_keep_ratio_no_flag(self):
+        """A short original where the real lines ARE preserved (plus
+        a small addition) must NOT be flagged — this is the correct,
+        intended append/edit case."""
+        from routers import cto_projects as m
+        out = m._hallucination_reasons(
+            {"x.py": "one\ntwo\n<!-- new line added -->"},
+            {"x.py": "one\ntwo"},
+        )
         assert out == []
 
     def test_hallucination_reasons_high_keep_ratio_no_flag(self):
