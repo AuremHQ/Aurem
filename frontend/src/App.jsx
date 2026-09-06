@@ -95,6 +95,7 @@ const OraDirect          = lazy(() => import("./pages/OraDirect"));             
 const PolicyPage        = lazy(() => import("./pages/PolicyPage"));
 const AboutPage         = lazy(() => import("./pages/AboutPage"));   // 2026-08-30 · public-site fixes
 const ContactPage       = lazy(() => import("./pages/ContactPage")); // 2026-08-30 · public-site fixes
+const DevelopersPage    = lazy(() => import("./pages/DevelopersPage")); // 2026-09-12 · agent-readiness fixes
 const Wrapped           = lazy(() => import("./pages/Wrapped"));
 const ShipWall          = lazy(() => import("./pages/ShipWall"));
 const BrainDump         = lazy(() => import("./pages/BrainDump"));
@@ -482,6 +483,7 @@ export default function App() {
           <Route path="/policies/api-versioning" element={<PolicyPage slug="api-versioning" />} />
           <Route path="/about"              element={<AboutPage />} />
           <Route path="/contact"            element={<ContactPage />} />
+          <Route path="/developers"         element={<DevelopersPage />} />
           <Route path="/admin/architecture" element={<AdminRoute><Admin initialTab="arch" /></AdminRoute>} />
           <Route path="/admin/ops" element={<AdminRoute><OpsRecipes /></AdminRoute>} />
           <Route path="/admin/brain/:projectId" element={<AdminRoute><BrainDump /></AdminRoute>} />

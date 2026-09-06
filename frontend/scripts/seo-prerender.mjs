@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } from "../src/data/competitors.mjs";
 import { ABOUT, CONTACT } from "../src/data/companyInfo.mjs";
+import { DEVELOPERS } from "../src/data/developerInfo.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
@@ -216,7 +217,7 @@ function homeBody() {
 </ul>
 <h2>Pricing</h2>
 <p>Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing.</p>
-<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/signup">Start free</a></p>
+<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }
 
@@ -249,6 +250,24 @@ function privacyBody() {
     join(ROOT, "public", "policies", "privacy-policy.md"), "utf8",
   );
   return `<main>${marked.parse(md)}</main>`;
+}
+
+// 2026-09-12 · is-agentic.com agent-readiness fixes — /developers
+// needs the same real-HTML-without-JS treatment as /about, /contact.
+function developersBody() {
+  const sections = DEVELOPERS.sections.map((s) => {
+    const links = s.links
+      .map((l) => `<li><a href="${esc(l.href)}">${esc(l.label)}</a></li>`)
+      .join("");
+    return `<h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p><ul>${links}</ul>`;
+  }).join("");
+  const intro = DEVELOPERS.intro.map((p) => `<p>${esc(p)}</p>`).join("");
+  return `<main>
+<h1>${esc(DEVELOPERS.heading)}</h1>
+${intro}
+${sections}
+<p><a href="/about">About</a> \u00b7 <a href="/contact">Contact</a> \u00b7 <a href="/privacy">Privacy</a></p>
+</main>`;
 }
 
 {
@@ -295,6 +314,15 @@ function privacyBody() {
   writeFileSync(join(DIST, "privacy", "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote /privacy/index.html");
+}
+
+{
+  let html = swapHead(base, DEVELOPERS);
+  html = injectRoot(html, developersBody());
+  mkdirSync(join(DIST, "developers"), { recursive: true });
+  writeFileSync(join(DIST, "developers", "index.html"), html);
+  written += 1;
+  console.log("[seo-prerender] wrote /developers/index.html");
 }
 
 console.log(`[seo-prerender] done — ${written} snapshots.`);

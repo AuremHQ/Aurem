@@ -1,0 +1,13 @@
+{
+  "resource": "https://auremcto.com",
+  "authorization_servers": [],
+  "bearer_methods_supported": ["header"],
+  "scopes_supported": [
+    "read:repo",
+    "write:repo",
+    "ship:commit",
+    "admin"
+  ],
+  "resource_documentation": "https://auremcto.com/api/docs",
+  "resource_name": "AUREM API"
+}

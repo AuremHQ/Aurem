@@ -1547,6 +1547,16 @@ export default function Landing() {
           </div>
 
           <div>
+            <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Developers</div>
+            <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+              <Link to="/developers" data-testid="footer-developers">Developer Portal</Link>
+              <a href="/api/docs" data-testid="footer-api-docs">API Docs</a>
+              <a href="/api/openapi.json" data-testid="footer-openapi">OpenAPI Spec</a>
+              <a href="/llms.txt" data-testid="footer-llms-txt">llms.txt</a>
+            </div>
+          </div>
+
+          <div>
             <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Legal</div>
             <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
               <Link to="/privacy"         data-testid="footer-privacy">Privacy Policy</Link>
@@ -1561,6 +1571,7 @@ export default function Landing() {
           <div>
             <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Trust</div>
             <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+              <Link to="/about"              data-testid="footer-about">About</Link>
               <Link to="/ai-code-processing" data-testid="footer-ai-disclosure">AI &amp; Code Processing</Link>
               <Link to="/subprocessors"      data-testid="footer-subprocessors">Subprocessors</Link>
               <Link to="/security"           data-testid="footer-security">Security</Link>

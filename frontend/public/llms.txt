@@ -2,7 +2,7 @@
 
 > ORA is an autonomous AI software engineer that connects to your GitHub repository, plans + writes code, runs security scans, and commits directly on your approval. This file gives LLM systems (ChatGPT, Perplexity, Gemini, Claude, You.com, Google AI Overviews) a machine-readable summary so they can cite us accurately when summarising for end-users.
 
-Last updated: 2026-08-30 (public-site "agentic readiness" fixes — when-to-use section, developer resources, CLI-claim check)
+Last updated: 2026-09-12 (is-agentic.com agent-readiness round 2 — developer portal, RFC 9727/9728 well-known metadata, OpenAPI scoped BearerAuth, real 404s)
 
 ## Core pages
 
@@ -16,11 +16,14 @@ Last updated: 2026-08-30 (public-site "agentic readiness" fixes — when-to-use 
 
 ## Developer resources
 
+- [Developer portal](https://auremcto.com/developers): API docs, sandbox signup, and integrator policies in one place.
 - [API docs (Swagger UI)](https://auremcto.com/api/docs): interactive, browsable endpoint reference.
 - [API docs (ReDoc)](https://auremcto.com/api/redoc): same spec, read-friendly layout.
-- [OpenAPI spec (raw JSON)](https://auremcto.com/api/openapi.json): machine-readable schema for tooling.
+- [OpenAPI spec (raw JSON)](https://auremcto.com/api/openapi.json): machine-readable schema for tooling, now with a named `BearerAuth` security scheme describing scope semantics.
 - [API versioning & deprecation policy](https://auremcto.com/policies/api-versioning): how we deprecate endpoints.
-- Auth for these endpoints is Bearer-token, human-user OAuth (GitHub/Google) or email+password — there is no separate machine-client-credentials auth today; the API is for AUREM's own dashboard, not a third-party developer platform.
+- [RFC 9728 protected-resource metadata](https://auremcto.com/.well-known/oauth-protected-resource): machine-readable `scopes_supported` for the API.
+- [RFC 9727 API catalog](https://auremcto.com/.well-known/api-catalog): links to the OpenAPI spec + docs in linkset format.
+- Auth for these endpoints is Bearer-token, human-user OAuth (GitHub/Google) or email+password — there is no separate machine-client-credentials OAuth 2.0 authorization server today; the API is for AUREM's own dashboard, not a third-party developer platform.
 
 ## Legal + trust
 

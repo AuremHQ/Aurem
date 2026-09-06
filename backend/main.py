@@ -1735,7 +1735,10 @@ app = FastAPI(
     description=(
         "AUREM — Autonomous AI engineer that reads your GitHub repo, "
         "writes code, ships commits. Authenticate with Bearer token from "
-        "/api/aurem-dev/auth/login."
+        "/api/aurem-dev/auth/login. Versioning & deprecation policy: "
+        "https://auremcto.com/policies/api-versioning — deprecated "
+        "endpoints carry RFC 8594 Deprecation/Sunset headers at least "
+        "30 days before removal."
     ),
 )
 
@@ -1778,6 +1781,52 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
+
+
+# 2026-09-12 · is-agentic.com agent-readiness fix — "Scoped
+# permissions" check. We deliberately did NOT stand up a full OAuth
+# 2.0 authorization server (founder's explicit call — JWT bearer
+# auth stays as-is). This declares the SAME logical access scopes our
+# API already enforces informally as a named, machine-readable
+# securityScheme in the OpenAPI spec (satisfies the check's own
+# stated alternative: "named OAuth scopes in your OpenAPI security
+# schemes, or scopes_supported in RFC 9728 protected-resource
+# metadata" — we do BOTH; see frontend/public/.well-known/
+# oauth-protected-resource for the RFC 9728 side). This is honest
+# documentation of real access levels, not a claim of a full OAuth
+# authorization-code flow.
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+    schema = get_openapi(
+        title=app.title, version=app.version,
+        description=app.description, routes=app.routes,
+    )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": (
+            "Bearer JWT from POST /api/aurem-dev/auth/login. AUREM "
+            "does not run a separate OAuth 2.0 authorization server "
+            "— this is a direct credential exchange, not an "
+            "authorization-code flow. The token's effective access "
+            "level maps to these named scopes: `read:repo` (read a "
+            "connected repo's files/scan results), `write:repo` "
+            "(propose file edits), `ship:commit` (commit an approved "
+            "edit to GitHub), `admin` (admin-only endpoints under "
+            "/admin-ops, /admin-analytics, etc). See "
+            "/.well-known/oauth-protected-resource for the "
+            "machine-readable scopes_supported list (RFC 9728)."
+        ),
+    }
+    schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
 
 
 # Iter 123g — GZip compression for every non-trivial response.
@@ -2438,13 +2487,20 @@ async def _global_rate_limit_guard(request, call_next):
             },
             headers={
                 "Retry-After": "60",
-                # 2026-08-30 · public-site fixes (P2 #10). Standard
-                # RFC-shaped rate-limit headers — see
+                # 2026-08-30 · public-site fixes (P2 #10). Legacy
+                # X-RateLimit-* headers — see
                 # services/rate_limiter.in_memory_bucket_count for the
                 # single-pod-exact / multi-pod-approximate tradeoff.
                 "X-RateLimit-Limit": str(_GLOBAL_RL_PER_MIN),
                 "X-RateLimit-Remaining": "0",
                 "X-RateLimit-Reset": str(int(time.time()) + 60),
+                # 2026-09-12 · is-agentic.com agent-readiness fix.
+                # IETF draft-ietf-httpapi-ratelimit-headers standard
+                # names, alongside (not replacing) the legacy ones
+                # above so existing integrations keep working.
+                "RateLimit-Limit": str(_GLOBAL_RL_PER_MIN),
+                "RateLimit-Remaining": "0",
+                "RateLimit-Reset": "60",
             },
         )
     # THE FIX for "RuntimeError: No response returned" at deploy time.
@@ -2461,10 +2517,16 @@ async def _global_rate_limit_guard(request, call_next):
     try:
         resp = await call_next(request)
         resp.headers["X-RateLimit-Limit"] = str(_GLOBAL_RL_PER_MIN)
-        resp.headers["X-RateLimit-Remaining"] = str(max(
+        _remaining = max(
             0, _GLOBAL_RL_PER_MIN - in_memory_bucket_count(f"global-ip:{ip}"),
-        ))
+        )
+        resp.headers["X-RateLimit-Remaining"] = str(_remaining)
         resp.headers["X-RateLimit-Reset"] = str(int(time.time()) + 60)
+        # 2026-09-12 · is-agentic.com agent-readiness fix — IETF
+        # standard header names alongside the legacy ones above.
+        resp.headers["RateLimit-Limit"] = str(_GLOBAL_RL_PER_MIN)
+        resp.headers["RateLimit-Remaining"] = str(_remaining)
+        resp.headers["RateLimit-Reset"] = "60"
         return resp
     # 2026-08-19 deploy-log fix: widened to also catch BaseExceptionGroup
     # (see matching comment on the skip-path branch above for the exact

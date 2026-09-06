@@ -23,9 +23,10 @@
  * the identical content sources (src/data/companyInfo.mjs, the real
  * privacy-policy.md) so the two can never show different text.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ABOUT, CONTACT } from "../src/data/companyInfo.mjs";
+import { DEVELOPERS } from "../src/data/developerInfo.mjs";
 
 // Mirrors frontend/Dockerfile's nginx allowlist regex EXACTLY — keep
 // both lists in sync when routes are added/removed in src/App.jsx.
@@ -39,6 +40,9 @@ const KNOWN_PREFIXES = new Set([
   "ai-code-processing", "subprocessors", "dpa", "security", "status",
   "policies", "wall", "wrapped", "automations", "oauth-finish",
   "magic-login", "vs", "pricing", "compare", "dev", "about", "contact",
+  // 2026-09-12 · is-agentic.com agent-readiness fix — new /developers
+  // portal (see ROUTE_META below for its no-JS server-rendered body).
+  "developers",
 ]);
 
 const HAS_EXTENSION = /\.[a-zA-Z0-9]+$/;
@@ -76,6 +80,20 @@ function contactBody() {
   return `<main><h1>${esc(CONTACT.heading)}</h1>${paras}<p><a href="/support">Open a support ticket</a></p></main>`;
 }
 
+// 2026-09-12 · is-agentic.com agent-readiness fix — same no-JS
+// server-rendered treatment for the new /developers portal.
+function developersBody() {
+  const intro = DEVELOPERS.intro.map((p) => `<p>${esc(p)}</p>`).join("");
+  const sections = DEVELOPERS.sections.map((s) => {
+    const links = s.links
+      .map((l) => `<li><a href="${esc(l.href)}">${esc(l.label)}</a></li>`)
+      .join("");
+    return `<h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p><ul>${links}</ul>`;
+  }).join("");
+  return `<main><h1>${esc(DEVELOPERS.heading)}</h1>${intro}${sections}` +
+    `<p><a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a></p></main>`;
+}
+
 async function privacyBody(root) {
   // 2026-08-31 — dynamic import, NOT a static `import { marked }` at
   // module scope: this file is pulled into vite.config.js's own
@@ -106,6 +124,9 @@ const ROUTE_META = {
     description: "AUREM's privacy policy: GDPR/PIPEDA/DPDP disclosures, cookie policy, data-retention windows, subprocessor list.",
     body: (root) => privacyBody(root),
   },
+  "/developers": {
+    title: DEVELOPERS.title, description: DEVELOPERS.description, body: () => developersBody(),
+  },
 };
 
 export default function auremProdFixes() {
@@ -125,6 +146,15 @@ export default function auremProdFixes() {
           urlPath.startsWith("/src/") ||
           urlPath.startsWith("/node_modules/") ||
           urlPath.startsWith("/api/") ||
+          // 2026-09-12 · is-agentic.com fix — real, extension-less
+          // static files under public/ (RFC 8615 `.well-known/*`
+          // directory: api-catalog, oauth-protected-resource,
+          // http-message-signatures-directory) were getting shadowed
+          // by this middleware and 404'd BEFORE Vite's own static
+          // file server ever got a chance to serve them. Any path
+          // that resolves to a real file on disk must always win.
+          urlPath.startsWith("/.well-known/") ||
+          existsSync(join(root, "public", urlPath)) ||
           HAS_EXTENSION.test(urlPath)
         ) {
           return next();
@@ -137,7 +167,15 @@ export default function auremProdFixes() {
           "<!doctype html><meta name=\"robots\" content=\"noindex, follow\">" +
           "<title>404 · Page not found — AUREM</title>" +
           "<h1>Page not found</h1>" +
-          "<p>This URL doesn't match any page on AUREM. <a href=\"/\">Back to auremcto.com</a></p>",
+          "<p>This URL doesn't match any page on AUREM (the company " +
+          "behind ORA, an autonomous AI software engineer). Either " +
+          "the link is stale or the page moved. " +
+          "<a href=\"/\">Back to auremcto.com</a></p>" +
+          "<p>Looking for something specific? " +
+          "<a href=\"/sitemap.xml\">sitemap.xml</a> · " +
+          "<a href=\"/llms.txt\">llms.txt</a> · " +
+          "<a href=\"/developers\">/developers</a> · " +
+          "<a href=\"/api/docs\">/api/docs</a></p>",
         );
       });
     },

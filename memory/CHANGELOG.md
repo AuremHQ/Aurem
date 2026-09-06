@@ -1991,3 +1991,82 @@ not intent-match. Both tracked as follow-ups, not reasons to hold the
 flag off. **Production still has this flag OFF** (separate DB) — founder
 must deploy + flip the same flag on prod when ready; this flip only
 took effect on the preview pod's DB.
+
+---
+
+## 2026-09-12 — Agent-readiness fixes (is-agentic.com scan, 65/100 → most items fixed)
+
+**Trigger**: user shared https://is-agentic.com/scan/auremcto.com
+(score 65/100, 7 failures + 6 warnings) and asked to fix items
+toward ranking on top. Approved scope: do ALL quick code-level
+fixes; SKIP full OAuth 2.0 authorization server; SKIP publishing a
+real CLI tool; for brand/dev-resource discoverability, strengthen
+on-page signals only (no external SEO/press chase).
+
+**CRITICAL infra discovery mid-implementation**: Emergent's actual
+production deploy for this app runs `yarn start` (Vite DEV server),
+NOT `yarn build` + static hosting — confirmed via a prior (2026-08-30)
+finding already documented inside `vite-plugins/aurem-prod-fixes.mjs`'s
+own header comment. This means `scripts/seo-prerender.mjs` (build-time
+prerendering, used by a separate unused Hybrid-Standalone Docker/nginx
+stack) is **dead code on the real deploy path**. The actually-live
+mechanism for real-404s and no-JS server-rendered content is the
+custom Vite plugin `vite-plugins/aurem-prod-fixes.mjs` (its
+`configureServer`/`transformIndexHtml` hooks run under the dev
+server). All fixes below target BOTH mechanisms, but the vite-plugin
+one is what actually matters for auremcto.com.
+
+**Fixed (code-level)**:
+- New `/developers` portal page (`DevelopersPage.jsx` + `developerInfo.mjs`
+  data) — API docs/ReDoc/OpenAPI spec links, sandbox signup, integrator
+  policies, agent/LLM access (llms.txt). Registered in both the live
+  vite-plugin (`ROUTE_META` + `KNOWN_PREFIXES`) and the dead-but-kept-
+  in-sync build-time prerender script.
+- Real 404s: `aurem-prod-fixes.mjs`'s 404 middleware body now links
+  to sitemap.xml, llms.txt, /developers, /api/docs per the scan's own
+  recommendation. **Bug found and fixed mid-implementation**: the
+  middleware was shadowing real static files with NO extension
+  (`.well-known/*`) with a false 404 before Vite's static server ever
+  ran — fixed with an `existsSync()` disk check + explicit
+  `/.well-known/` exemption.
+- New RFC 9727 `.well-known/api-catalog`, RFC 9728
+  `.well-known/oauth-protected-resource` (scopes_supported:
+  read:repo/write:repo/ship:commit/admin), and an honest empty-keys
+  `.well-known/http-message-signatures-directory` (Web Bot Auth —
+  no real signing infra exists, so no fake keys either).
+- Backend OpenAPI: new `BearerAuth` securityScheme (`_custom_openapi()`
+  in `main.py`) documenting the same named scopes without claiming a
+  full OAuth 2.0 authorization-code flow; `description` links the
+  versioning/deprecation policy.
+- Backend: IETF standard `RateLimit-Limit/Remaining/Reset` headers
+  added alongside the existing legacy `X-RateLimit-*` ones (both the
+  429 and normal-response code paths in `main.py`).
+- Homepage footer (`Landing.jsx`): new "Developers" column (Developer
+  Portal, API Docs, OpenAPI Spec, llms.txt) + new "About" link in the
+  Trust column (was previously unlinked from the homepage entirely).
+- `llms.txt` "Developer resources" section extended with the new
+  portal + well-known links, keeping the honest disclaimer that
+  there's no separate machine-client-credentials OAuth 2.0 AS.
+
+**Explicitly skipped per founder's choice**: full OAuth 2.0
+authorization server; real CLI tool build/publish (npm/PyPI).
+
+**Explicitly NOT code-fixable — documented for founder's Cloudflare
+dashboard action** (see `memory/CLOUDFLARE_AGENT_READINESS_FOLLOWUPS_2026_09_12.md`):
+markdown content-negotiation `Vary: Accept` header; ChatGPT-User/
+ClaudeBot crawler reachability (likely Cloudflare Bot Fight Mode).
+
+**Tests**: full `yarn build` verified clean (11 prerender snapshots
+written, including new /developers). Verified by `testing_agent_v3_fork`
+against the live preview pod (same `yarn start` mechanism as prod) —
+report: `/app/test_reports/iteration_agent_readiness_2026_01_ora.json`
+— 100% pass, 0 action items, independently re-confirmed the
+`.well-known` shadowing bug is fixed and all pre-existing routes
+still return 200 (no regression from the `KNOWN_PREFIXES` change).
+2 minor cosmetic code-review notes (cookie-banner overlap on
+/developers; pre-existing React Router future-flag console noise) —
+non-blocking, not fixed this round.
+
+**Status**: preview only — production deploy still required for
+auremcto.com to actually serve any of this (same recurring pattern as
+every other fix this session).
