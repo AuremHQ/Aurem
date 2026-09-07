@@ -27,7 +27,7 @@ TOOL_GROUPS: dict[str, list[str]] = {
         "patch_repo_file", "get_repo_structure", "list_repo_files",
         "search_repo", "semantic_search_repo", "execute_bash",
         "validate_syntax", "find_usages", "get_dependencies",
-        "detect_framework", "get_commit_diff",
+        "detect_framework", "get_commit_diff", "get_library_docs",
     ],
     "query": [
         "read_repo_file", "get_repo_structure", "list_repo_files",

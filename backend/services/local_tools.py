@@ -256,6 +256,10 @@ from .vercel_skills import (
     VERCEL_TOOLS as _VERCEL_TOOLS,
     VERCEL_TOOL_SPECS as _VERCEL_TOOL_SPECS,
 )
+from .context7_skills import (
+    CONTEXT7_TOOLS as _CONTEXT7_TOOLS,
+    CONTEXT7_TOOL_SPECS as _CONTEXT7_TOOL_SPECS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2637,7 +2641,7 @@ TOOL_SPECS: list[dict] = [
             ),
         },
     },
-] + _WEB_TOOL_SPECS + _DEV_TOOL_SPECS + _VERCEL_TOOL_SPECS
+] + _WEB_TOOL_SPECS + _DEV_TOOL_SPECS + _VERCEL_TOOL_SPECS + _CONTEXT7_TOOL_SPECS
 
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
@@ -2657,6 +2661,7 @@ LOCAL_TOOLS: dict[str, callable] = {
     **_WEB_TOOLS,
     **_DEV_TOOLS,
     **_VERCEL_TOOLS,
+    **_CONTEXT7_TOOLS,
 }
 
 

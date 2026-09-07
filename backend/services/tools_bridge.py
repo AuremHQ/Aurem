@@ -290,6 +290,10 @@ def extract_tool_calls(text: str) -> list[dict]:
         # in LOCAL_TOOLS but must ALSO be listed here, same lesson as
         # the Vercel batch above.
         "save_finding",
+        # 2026-09-07 · Master Plan S1 — get_library_docs (Context7)
+        # registered in LOCAL_TOOLS, same lesson again: must be here
+        # too or DeepSeek/GLM's Python-style emissions silently drop.
+        "get_library_docs",
     }
     # Hoisted so both Shape-4 and Shape-6 (XML block below) share it
     # without redefining per-iteration.
