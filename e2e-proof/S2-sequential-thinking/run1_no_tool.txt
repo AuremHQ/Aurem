@@ -4,39 +4,34 @@ Our /admin/github/bulk-revoke endpoint intermittently lets a real revoke through
 
 ## Root Cause: `services/feature_flags.py` — Cache Race Condition
 
-The bug is **not** in the boolean logic in `admin_bin.py`. The intermittent, production-only, never-in-tests pattern is the tell.
+The bug is **not** in the boolean logic of `admin_bin.py`. The intermittent, production-only, never-reproducible-in-tests pattern rules that out immediately. A logic bug would be deterministic.
 
-### What's Happening
+### What's Actually Happening
 
-The feature flag service uses a **5-second in-memory cache with a background refresh task**. The race condition works like this:
+The feature flag service uses a **5-second in-memory cache with a background refresh task**. The race condition is:
 
-1. **Background refresh task** fetches the new flag value and begins writing it to the cache dict/object.
-2. **Request thread** reads the cache at the exact moment the write is partially complete.
-3. In Python, if the cache update is not **atomic**, the guard check reads a **stale or corrupt intermediate value**.
-
-More specifically, the most common variant:
+1. Background refresh task fetches the flag value and begins writing the new value to the cache dict/object
+2. The request handler reads the cache **mid-write**, during a window where the cache entry is either:
+   - **Transiently `None`/falsy** (key deleted before new value inserted), OR
+   - **Stale in a torn-read** if the cache update is non-atomic across multiple fields
+3. Your hard-guard in `admin_bin.py` almost certainly does something like:
 
 ```python
-# services/feature_flags.py — typical buggy pattern
-cache = {}
-
-def refresh():
-    new_flags = fetch_from_source()
-    cache.clear()          # <-- cache is EMPTY here
-    cache.update(new_flags) # <-- request reads between these two lines
+# admin_bin.py
+flag = feature_flags.get("require_revoke_confirmation")
+if flag and confirmation != "REVOKE":
+    abort(403)
 ```
 
-Between `cache.clear()` and `cache.update()`, a concurrent request sees an **empty cache**. The flag lookup returns `None`, `False`, or falls through to a **permissive default** — which the guard in `admin_bin.py` interprets as "flag is off, skip the extra check," bypassing the confirmation phrase requirement.
+When `flag` reads as `None` or `False` during the refresh window, the guard is skipped entirely.
 
-### Why It's Invisible in Tests
+### Why Tests Never Catch It
 
-Tests run synchronously with no background thread, so the cache is always in a consistent state. The race window is microseconds wide — it only manifests under real concurrent production traffic.
+Tests call `get()` synchronously with no background thread running. The race window (microseconds wide) only opens under real concurrent production traffic hitting the cache exactly during its refresh cycle.
 
----
+### The Fix — `services/feature_flags.py`
 
-## The Fix
-
-**In `services/feature_flags.py`** — make the cache swap atomic:
+**Use a lock around cache reads/writes, and default to the SAFE value on cache miss, not the permissive one:**
 
 ```python
 import threading
@@ -44,52 +39,36 @@ import threading
 _cache_lock = threading.RLock()
 _cache = {}
 
-def refresh():
-    new_flags = fetch_from_source()
-    new_cache = dict(new_flags)  # build fully outside the lock
+def _refresh():
+    new_values = _fetch_from_source()  # your existing fetch
     with _cache_lock:
-        _cache.clear()
-        _cache.update(new_cache)  # or better: replace reference atomically
+        _cache.update(new_values)  # atomic swap, not delete-then-insert
 
-def get_flag(name, default=False):  # <-- CRITICAL: default must be SAFE (restrictive)
+def get(flag_name: str, default=None):
     with _cache_lock:
-        return _cache.get(name, default)
+        return _cache.get(flag_name, default)
 ```
 
-Or better — **atomic reference swap** (exploits Python GIL for dict replacement):
+**Critical secondary fix — the call site in `admin_bin.py`:**
 
 ```python
-_cache = {}
+# Change this:
+flag = feature_flags.get("require_revoke_confirmation")
+if flag and confirmation != "REVOKE":
+    abort(403)
 
-def refresh():
-    new_flags = fetch_from_source()
-    global _cache
-    _cache = dict(new_flags)  # single reference assignment — atomic under GIL
-
-def get_flag(name, default=False):
-    return _cache.get(name, default)
+# To this (fail-CLOSED, not fail-open):
+flag_enabled = feature_flags.get("require_revoke_confirmation", default=True)
+if flag_enabled and confirmation != "REVOKE":
+    abort(403)
 ```
 
----
+### Summary of Fixes
 
-## Secondary Fix: Fail-Closed Default
+| File | Fix |
+|---|---|
+| `services/feature_flags.py` | Wrap cache reads AND writes in an `RLock`; use `dict.update()` not delete+insert |
+| `services/feature_flags.py` | Never let the cache return `None` for a safety-critical flag during refresh |
+| `admin_bin.py` | Default to `True` (safe/restrictive) if flag lookup returns `None` |
 
-**Also fix `admin_bin.py`** as defense-in-depth — ensure the flag default is **restrictive**, not permissive:
-
-```python
-# If flag lookup fails/returns None, default must BLOCK, not ALLOW
-if not feature_flags.get_flag("bulk_revoke_hard_guard_enabled", default=True):
-    raise PermissionError("Guard flag not confirmed")
-```
-
----
-
-## Summary
-
-| Aspect | Detail |
-|--------|--------|
-| **Root cause file** | `services/feature_flags.py` |
-| **Mechanism** | Non-atomic cache clear+update creates empty-cache window |
-| **Trigger** | Background refresh thread races with request thread |
-| **Effect** | Guard flag returns falsy → `admin_bin.py` skips phrase check |
-| **Fix** | Atomic dict reference swap + fail-closed default |
+The lock fixes the race. The `default=True` is defense-in-depth so that **any** future cache failure mode fails closed, not open.
