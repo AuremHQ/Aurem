@@ -46,7 +46,7 @@ async def run_onboarding_scan(
         # primitives (_list_repo_tree_with_sha/_fetch_file) that are
         # themselves owned by routers/security_scan.py pending a larger,
         # separately-scoped extraction (tracked, not silently patched).
-        from routers.codebase_health import _build_text_cache
+        from services.repo_text_cache import build_text_cache as _build_text_cache
         from services.codebase_health_core import SCANNERS
         text_cache = await _build_text_cache(github_owner, github_repo, github_token)
         if not text_cache:

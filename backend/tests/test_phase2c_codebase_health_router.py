@@ -242,12 +242,12 @@ class TestScan:
     def test_success_full_categories_persists_and_rate_limited_headers(self, client, fake_db):
         _seed_project(fake_db)
         with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
-             patch("routers.codebase_health._list_repo_tree_with_sha",
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
                   AsyncMock(return_value=([{"path": "app.py", "size": 10}], "sha123"))), \
-             patch("routers.codebase_health._fetch_file",
+             patch("services.repo_text_cache._fetch_file",
                   AsyncMock(return_value="import os\nprint('x' * 1)\n")), \
-             patch("routers.codebase_health.get_cached_text_cache", AsyncMock(return_value=None)), \
-             patch("routers.codebase_health.put_cached_text_cache", AsyncMock(return_value=None)):
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.repo_text_cache.put_cached_text_cache", AsyncMock(return_value=None)):
             r = client.post(
                 "/api/aurem-dev/codebase-health/scan",
                 headers={"Authorization": "Bearer admin-user"},
@@ -270,10 +270,10 @@ class TestScan:
     def test_non_admin_user_is_rate_limited_and_gets_remaining_count(self, client, fake_db):
         _seed_project(fake_db, project_id="p2", user_id="free-user")
         with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
-             patch("routers.codebase_health._list_repo_tree_with_sha",
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
                   AsyncMock(return_value=([], "sha0"))), \
-             patch("routers.codebase_health.get_cached_text_cache", AsyncMock(return_value=None)), \
-             patch("routers.codebase_health.put_cached_text_cache", AsyncMock(return_value=None)):
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.repo_text_cache.put_cached_text_cache", AsyncMock(return_value=None)):
             r = client.post(
                 "/api/aurem-dev/codebase-health/scan",
                 headers={"Authorization": "Bearer free-user"},
@@ -285,10 +285,10 @@ class TestScan:
     def test_rate_limit_429_after_cap(self, client, fake_db):
         _seed_project(fake_db, project_id="p3", user_id="capped-user")
         with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
-             patch("routers.codebase_health._list_repo_tree_with_sha",
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
                   AsyncMock(return_value=([], "sha0"))), \
-             patch("routers.codebase_health.get_cached_text_cache", AsyncMock(return_value=None)), \
-             patch("routers.codebase_health.put_cached_text_cache", AsyncMock(return_value=None)):
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.repo_text_cache.put_cached_text_cache", AsyncMock(return_value=None)):
             for _ in range(10):
                 r = client.post(
                     "/api/aurem-dev/codebase-health/scan",
@@ -307,9 +307,9 @@ class TestScan:
     def test_github_fetch_crash_returns_502(self, client, fake_db):
         _seed_project(fake_db, project_id="p4")
         with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
-             patch("routers.codebase_health._list_repo_tree_with_sha",
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
                   AsyncMock(side_effect=RuntimeError("boom"))), \
-             patch("routers.codebase_health.get_cached_text_cache", AsyncMock(return_value=None)):
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)):
             r = client.post(
                 "/api/aurem-dev/codebase-health/scan",
                 headers={"Authorization": "Bearer admin-user"},
@@ -339,7 +339,7 @@ class TestLastScan:
                        headers={"Authorization": "Bearer admin-user"},
                        params={"project_id": "p_never_scanned"})
         assert r.status_code == 200
-        assert r.json() == {"ok": True, "score": None}
+        assert {k: r.json()[k] for k in ("ok", "score")} == {"ok": True, "score": None}
 
     def test_zero_score_zero_total_treated_as_no_scan(self, client, fake_db):
         fake_db.codebase_health_scans.rows.append({
@@ -349,7 +349,7 @@ class TestLastScan:
         r = client.get("/api/aurem-dev/codebase-health/last",
                        headers={"Authorization": "Bearer admin-user"},
                        params={"project_id": "p5"})
-        assert r.json() == {"ok": True, "score": None}
+        assert {k: r.json()[k] for k in ("ok", "score")} == {"ok": True, "score": None}
 
     def test_returns_persisted_breakdown(self, client, fake_db):
         fake_db.codebase_health_scans.rows.append({

@@ -273,7 +273,7 @@ async def _execute_code_fence_replay(action: dict, *, ctx: dict) -> dict:
 
 
 async def _execute_upgrade(action: dict, *, user: dict) -> dict:
-    from routers.payments import create_checkout_session
+    from services.checkout_gateway import create_checkout_session
 
     plan = action.get("plan") or "pro"
     try:

@@ -2404,3 +2404,64 @@ live GitHub Actions logs (GITHUB_ACTIONS_TOKEN).
   gets the results).
 - Save to GitHub (CI re-run → drift + G15 green), rebaseline visuals,
   then deploy to production.
+
+## 2026-09-07 — Codebase Health Score: honest lift (62 → see report)
+
+Founder brief: raise the score by filling real gaps, never by gaming.
+
+**Architecture (automated half 31 → 100; real fixes, no rule relaxation
+except one precision fix):**
+- 5 service→router imports removed by extraction / inversion:
+  · `services/vision_describe.py` ← routers/upload `_describe_image_via_vision`
+  · `services/github_repo_fetch.py` ← routers/security_scan tree/blob helpers
+  · `services/repo_text_cache.py` ← routers/codebase_health `_build_text_cache`
+  · `services/repo_status_cache.py` ← routers/repo_status `_CACHE`/`invalidate`
+  · `services/checkout_gateway.py` — dependency inversion; routers/payments
+    registers its Stripe checkout at import, confirm_execution /
+    pending_action call the seam. Routers re-export old names → tests and
+    monkeypatch targets unchanged.
+- 4 raw `httpx.AsyncClient(` calls in routers (deploy, cto_projects/
+  what_changed|brain|management) → `services.http.client.ext_client`
+  (same timeouts; gains request-id/UA/pool policy).
+- Circular import loop_engine ⇄ loop_engine_helpers broken: `PLAN_TTL_S`
+  now lives in helpers, re-exported from loop_engine.
+- Rule precision: `import routers.<own_pkg> as _pkg` inside that same
+  package (cto_projects sub-modules' late-binding trampoline) is now
+  exempt like the `from routers.x import` form already was — it is
+  intra-package, not cross-router coupling. Still a smell; noted.
+- `services/ora_chat_v2/prompt.py` split from engine.py (342 → 293 lines)
+  so `architecture_health.py --fail-on-new` is clean again.
+- Removed 54 pytest-seeded `TEST_bot` rubric rows from
+  architecture_review_log in preview — they were counting as the "fresh
+  human review" half (metric pollution). The test now cleans up after
+  itself. Preview Architecture is therefore automated-only until a real
+  review is submitted.
+
+**Test Coverage runner (root-caused why widget runs never persisted):**
+- `services/health_coverage_scan.py` timeout 240 s → 900 s (measured run
+  is ~430 s; every widget-triggered run was timing out silently).
+- Summary parser read `(\d+) error` from the WHOLE log and matched the
+  Redis port in a rate-limiter warning → phantom `errors: 6379`. Now
+  parses only pytest's final summary line.
+- Critical module `routers/chat.py` → `routers/chat/stream.py` (package split).
+
+**CI (ci.yml — DevOps/Infra reads its push pass-rate; 0/183 in 30 d):**
+- Source-of-truth trip-wire: `test_iter138_acceptance_seven.py` asserted
+  the upstream circuit is open at import time; CI sets
+  DISABLE_UPSTREAM_TOOLS=1 → collection error. Now honours the kill-switch.
+- G21 + G15 steps fixed earlier today. Remaining red steps: "Run tests"
+  (full 7k suite against a hardcoded preview URL — env-dependent) and the
+  touched-file coverage floor (fires on any modified file <60 % covered).
+  Documented in the report; not fixable honestly in this session.
+**Result (preview, 2026-09-07 02:14 UTC):** overall 62 → 63 — the two
+honest lifts landed (Test Coverage 55 → 66: 31.5 % scoped coverage, 5/5
+critical modules exercised, 854 pass / 33 fail / 0 errors in 330 s;
+Architecture 56 → 81: automated half 31 → 100, qualitative half is the
+2026-08-23 agent review at 62.5). The preview total is held down by
+preview-only noise (Reliability 21 / Bug Density 50 / Performance 36 come
+from this pod's 1 605 restarts/7 d, 13 OpenRouter breaker trips and my
+own test traffic) and by two real items outside this session's scope:
+Code Quality 48 (191 files > 300 lines, 240 files with CC > 10 — a
+multi-week refactor) and DevOps/Infra 0 (ci.yml push pass-rate, see
+above). Production projection with clean guard history: Bug Density
+80-100, Reliability ~90-95 → overall ≈ 80-85 before code-quality work.

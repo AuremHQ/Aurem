@@ -293,7 +293,7 @@ async def browser(ctx: dict, args: dict) -> dict:
         if not b64:
             return res
         try:
-            from routers.upload import _describe_image_via_vision
+            from services.vision_describe import describe_image_via_vision as _describe_image_via_vision
             raw = base64.b64decode(b64)
             desc = await _describe_image_via_vision(raw, "image/jpeg", "browser_screenshot.jpg")
             res["screenshot_description"] = desc

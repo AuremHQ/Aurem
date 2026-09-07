@@ -386,6 +386,13 @@ async def create_checkout_session(
     return {"url": checkout_url, "checkout_url": checkout_url, "session_id": session.id}
 
 
+# Services reach checkout through services/checkout_gateway (no service→
+# router import). Late-bound lambda so test monkeypatches of
+# `routers.payments.create_checkout_session` keep taking effect.
+from services.checkout_gateway import register_checkout_provider  # noqa: E402
+register_checkout_provider(lambda user, plan: create_checkout_session(user, plan))
+
+
 @router.post("/payments/checkout")
 async def create_checkout(
     body: CheckoutBody,

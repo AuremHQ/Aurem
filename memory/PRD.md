@@ -8730,3 +8730,6 @@ Traced this through `hooks/useGitHubConnectStatus.js` + `routers/github_app.py` 
 
 ---
 **2026-09-06 — Cockpit gates pass.** G21 fixed (3 admin routers gated at router level), G15 fixed (browserslist CVE pin), CI drift fixed (workflow seeds CI founder + rate-limit env; 20 drifted tests repointed; CI selection 704/704 locally; real loop_engine `_emit` gap fixed). Remaining reds need founder inputs: rotate invalid RESEND_API_KEY (G10 + incident), top up Firecrawl/OpenRouter (G20), re-enable E2B at /admin/vanguard, optional VERCEL/AUREM_ORG env; then Save-to-GitHub → rebaseline visuals → deploy. Details: CHANGELOG.md.
+
+---
+**2026-09-07 — Health Score honest lift.** Architecture automated half 31→100 (5 service→router extractions + checkout gateway inversion, 4 raw httpx→ext_client, circular import broken, own-package import rule precision); Test Coverage runner fixed (timeout 240→900 s, summary parser bug, chat package module) → real score 66; TEST_bot review pollution removed; ci.yml source-of-truth trip-wire fixed. Preview 62→63 (noise-bound); prod projection ≈80-85 once guard history is clean and CI is green. Remaining real work: Code Quality (191 bloated / 240 complex files), ci.yml "Run tests" lane + touched-file floor.

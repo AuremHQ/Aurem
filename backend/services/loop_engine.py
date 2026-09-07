@@ -52,6 +52,7 @@ from typing import AsyncIterator, Optional
 # below, which stay in this file) keep resolving them unchanged. See PRD.md
 # 2026-08-26 entry — the LoopEngine class itself is a separate future item.
 from services.loop_engine_helpers import (
+    PLAN_TTL_S,  # noqa: F401 — re-export (public constant)
     _now, _iso, _new_event,
     _persist_session, _log_error, _save_plan, _td,
     record_backup, load_session, _commit_message,
@@ -178,8 +179,8 @@ SELF_HEAL_LLM_TIMEOUT_S = 60
 # emitted in this long mid-phase, we emit a synthetic `engine_silent`
 # event so the frontend's heartbeat dot doesn't lie about progress.
 ENGINE_SILENT_WARN_S = 45
-# 24 h TTL on the loop_plans collection (founder's spec).
-PLAN_TTL_S = 24 * 60 * 60
+# PLAN_TTL_S (24 h loop_plans TTL) is defined in loop_engine_helpers and
+# re-exported via the import block above.
 # Iter 278 — heartbeat cadence during slow single-file LLM generation.
 # Named constant (not a magic literal) so future tuning is greppable
 # and CI-invariants can lock the value against silent regressions.
@@ -3791,7 +3792,7 @@ class LoopEngine:
             # cache row so the banner/sidebar dot reflect that on the
             # very next poll instead of replaying a pre-ship reading.
             try:
-                from routers.repo_status import invalidate as _invalidate_repo_status
+                from services.repo_status_cache import invalidate as _invalidate_repo_status
                 _invalidate_repo_status(self.project_id or "")
             except Exception as _inv_err:                              # noqa: BLE001
                 logger.debug("[loop %s] repo_status invalidate skipped: %r",

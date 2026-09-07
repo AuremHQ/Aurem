@@ -603,7 +603,7 @@ async def _execute_insert(action: dict, *, user: dict, project_id: Optional[str]
 
 
 async def _execute_upgrade(db, action: dict, *, user: dict) -> _Outcome:
-    from routers.payments import create_checkout_session
+    from services.checkout_gateway import create_checkout_session
 
     plan = (action.get("payload") or {}).get("plan") or "pro"
     try:

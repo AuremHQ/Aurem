@@ -6,7 +6,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey! How can I help?",
+      "reply": "Hey there! 👋 Excited to help out with your project. What's on your mind?",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }

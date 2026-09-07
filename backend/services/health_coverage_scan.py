@@ -30,13 +30,16 @@ logger = logging.getLogger("health_coverage_scan")
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COVERAGE_JSON_PATH = os.path.join(BACKEND_ROOT, "coverage.json")
-SUBPROCESS_TIMEOUT_S = int(os.environ.get("HEALTH_COVERAGE_TIMEOUT_S", "240"))
+# 2026-09-07 — measured wall time of the scoped run is ~430 s on the
+# preview pod (855 tests + coverage instrumentation); the old 240 s cap
+# meant every widget-triggered run timed out and nothing was persisted.
+SUBPROCESS_TIMEOUT_S = int(os.environ.get("HEALTH_COVERAGE_TIMEOUT_S", "900"))
 
 # Curated, real critical modules (auth, chat, findings, fix pipeline,
 # payments) — same modules the founder named when scoping this category.
 CRITICAL_MODULES = [
     "cto_services/auth.py",
-    "routers/chat.py",
+    "routers/chat/stream.py",   # routers/chat.py was split into a package (2026-08)
     "routers/findings.py",
     "routers/fix_pipeline.py",
     "routers/admin_payments.py",
@@ -50,6 +53,13 @@ _SCOPE_KEYWORD_EXPR = "auth or chat or findings or fix_pipeline or payment"
 
 def _parse_pytest_summary(text: str) -> dict:
     counts = {"passed": 0, "failed": 0, "errors": 0}
+    # Only read pytest's FINAL summary line ("=== 855 passed, 32 failed ...
+    # in 428s ==="). Scanning the whole log used to match log noise such
+    # as "...:6379 ... error" (Redis port in a rate-limiter warning) and
+    # persisted a phantom errors=6379 into the evidence (2026-09-07).
+    summary_lines = re.findall(r"^(?:=+ )?\d+ (?:passed|failed).*? in [\d.]+s.*$", text, re.M)
+    if summary_lines:
+        text = summary_lines[-1]
     for key, pattern in (
         ("passed", r"(\d+) passed"),
         ("failed", r"(\d+) failed"),

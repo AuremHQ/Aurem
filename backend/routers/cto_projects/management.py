@@ -28,6 +28,7 @@ from services.cto_projects_helpers import (
 
 import routers.cto_projects as _pkg
 from . import router
+from services.http.client import ext_client
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ async def check_project_pat(
                 "message": f"GitHub App auth unavailable ({_auth_err})"}
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=8.0) as cx:
+        async with ext_client("github", timeout=httpx.Timeout(8.0)) as cx:
             r = await cx.get(
                 "https://api.github.com/user",
                 headers={
@@ -518,7 +519,7 @@ async def test_project_pat(
     }
     url = f"https://api.github.com/repos/{owner}/{repo}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with ext_client("github", timeout=httpx.Timeout(10.0)) as c:
             r = await c.get(url, headers=headers)
     except httpx.RequestError as e:
         logger.warning("test-pat: network error %s/%s: %r", owner, repo, e)
@@ -601,7 +602,7 @@ async def get_project_tree(
         f"/git/trees/{branch}?recursive=1"
     )
     try:
-        async with httpx.AsyncClient(timeout=15.0) as c:
+        async with ext_client("github", timeout=httpx.Timeout(15.0)) as c:
             r = await c.get(url, headers=headers)
         if r.status_code == 404:
             raise HTTPException(404, f"Branch {branch} not found on GitHub")

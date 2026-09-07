@@ -35,7 +35,7 @@ def test_codebase_health_preserves_45_6_15_timeout_tuple():
     tuple MUST survive the migration to ext_client. This is
     Iter 212m-221's Cloudflare-502 root-cause fix — if the
     tuple is lost, the 502s come back."""
-    src = _read("/app/backend/routers/codebase_health.py")
+    src = _read("/app/backend/services/repo_text_cache.py")
     # Exact tuple — order may be either kwarg or positional but
     # values must be present.
     assert "httpx.Timeout(45.0, connect=6.0, read=15.0)" in src, (
@@ -49,7 +49,7 @@ def test_codebase_health_preserves_45_6_15_timeout_tuple():
 def test_codebase_health_uses_ext_client_after_migration():
     """After migration: the raw AsyncClient is gone and ext_client
     with the preserved timeout is used."""
-    src = _read("/app/backend/routers/codebase_health.py")
+    src = _read("/app/backend/services/repo_text_cache.py")
     assert "from services.http import ext_client" in src, (
         "codebase_health.py must import ext_client after migration."
     )
@@ -70,7 +70,7 @@ def test_codebase_health_uses_ext_client_after_migration():
 def test_codebase_health_docstring_records_migration_rationale():
     """The Iter 212m-221 rationale block must survive so a future
     'clean up' doesn't remove the hand-tuned timeouts."""
-    src = _read("/app/backend/routers/codebase_health.py")
+    src = _read("/app/backend/services/repo_text_cache.py")
     # Comment/docstring keywords that must survive.
     assert "Iter 212m-221" in src, (
         "The Iter 212m-221 rationale reference must survive. It's "
