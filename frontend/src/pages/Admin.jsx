@@ -10,7 +10,7 @@ import {
   Cpu, CreditCard, Network as SitemapIcon, Settings as SettingsIcon,
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
-  Menu, X, Wrench, KeyRound, Sparkles, Bug,
+  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter,
 } from "lucide-react";
 import { api } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -30,6 +30,7 @@ import AdminRobotGuide from "../components/AdminRobotGuide";  // Iter 212m-187
 import AdminBINTracker from "./AdminBINTracker";               // Iter 212m-171
 import AdminGithubBulkRevoke from "./AdminGithubBulkRevoke";    // 2026-08-30
 import AdminVisibilityKit from "./AdminVisibilityKit";          // 2026-08-30
+import AdminOnboardingFunnel from "./AdminOnboardingFunnel";    // 2026-09-08
 import AdminFeatureFlags from "./AdminFeatureFlags";           // Iter 212m-171
 import { LLMCreditMonitor } from "./AdminLLMCredits";          // Iter 212m-171
 import { ParliamentLivePanel } from "./AdminParliamentLive";   // Iter 212m-171
@@ -1792,6 +1793,7 @@ const NAV = buildGroupedAdminNav({
   bin_tracker: Users,
   github_bulk_revoke: ShieldAlert,
   visibility_kit: Sparkles,
+  onboarding_funnel: Filter,
   users: Users,
   support: Mail,
   suggestions: MessageCircle,   // Iter 212m-193
@@ -1962,6 +1964,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "bin_tracker":    return <AdminBINTracker />;
       case "github_bulk_revoke": return <AdminGithubBulkRevoke />;
       case "visibility_kit": return <AdminVisibilityKit />;
+      case "onboarding_funnel": return <AdminOnboardingFunnel />;
       case "feature_flags":  return <AdminFeatureFlags />;
       case "dash":           return <Dashboard />;
       case "users":          return <UsersList onSelect={setSelectedUser} />;

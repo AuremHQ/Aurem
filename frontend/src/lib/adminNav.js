@@ -24,6 +24,7 @@ export const ADMIN_NAV = [
   { id: "qa_health",       label: "QA Health",            route: "/admin/qa",             group: "MONITOR" },
   { id: "maintenance",     label: "Maintenance",          route: "/admin/maintenance",    group: "MONITOR" },
   { id: "arch",            label: "Architecture",         route: "/admin/architecture",   group: "MONITOR" },
+  { id: "onboarding_funnel", label: "Onboarding Funnel",  route: "/admin/onboarding-funnel", group: "USERS" },
   { id: "bin_tracker",     label: "BIN Tracker",          route: "/admin/bin-tracker",    group: "USERS" },
   { id: "github_bulk_revoke", label: "GitHub Bulk Revoke", route: "/admin/github-bulk-revoke", group: "USERS" },
   { id: "visibility_kit",  label: "Visibility Kit",       route: "/admin/visibility-kit", group: "USERS" },

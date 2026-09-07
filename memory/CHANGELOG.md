@@ -2736,3 +2736,58 @@ this environment returns 401 Unauthorized (pre-existing, matches an
 issue already flagged in an earlier session for topup alerts). The
 feature is fully built/wired/tested; real emails won't land until
 that key is rotated.
+
+## 2026-09-08 — Onboarding Funnel dashboard ("why is this user stuck?")
+
+Founder's ask, after the "koi revoke nahi" root-cause investigation
+(40/42 zero-task projects): "onboarding funnel ko accurate karo aur
+trackable banao jisse pata chal sake kyun user stuck ho gaya hai."
+Corrections agreed with founder first: `vercel_deploy_hook` and
+`aurem_org_github` "missing integrations" are BOTH intentionally
+deferred/disabled (not bugs — leave as-is); Anthropic/Claude Maxx
+check skipped (not offered, so not a real blocker); the `@TJSNDHU`/
+`Disarm-log-app-V2` duplicate-record claim needs a read-only prod
+Mongo URI to investigate and is parked until founder provides one.
+
+Zero new tracking pipeline — this is a thin read-only admin surface
+on top of the ALREADY-CORRECT stage classification that
+`services/funnel_nudge_cron.classify_users()` uses internally to
+decide who gets a nudge email (stage4_fully_inactive →
+stage1_github_started → stage2_project_pending → stage3_no_chat,
+24h+ stuck). That logic existed but was never surfaced anywhere an
+admin could browse it — the founder had to curl production directly
+(as they did for the 40/42 investigation) to see it.
+
+New:
+- `routers/admin_onboarding_funnel.py` — `GET
+  /admin/onboarding-funnel/summary` (per-stage counts, oldest/median
+  stuck days, natural funnel order) and `GET
+  /admin/onboarding-funnel/users?stage=X` (per-user stuck-since,
+  stuck-days, nudge sent/clicked status, sorted most-stuck-first).
+  One additive line in `classify_users()` (`u["_stuck_since"] =
+  stuck_since`) exposes the stuck-since epoch it already computed
+  internally — no logic duplicated, single source of truth preserved.
+- `AdminOnboardingFunnel.jsx` — new "Onboarding Funnel" tab (Admin
+  sidebar, USERS group). 4 stage cards with plain-English "why"
+  descriptions; clicking a card loads that stage's stuck-user table.
+  Each row's "view →" reuses the EXISTING `/admin/users?drill_user=
+  <id>` pattern (built earlier for AdminOverview's Live Cost Alert
+  card) to jump straight into the existing rich UserDetail page
+  (activity timeline, projects, nudge-email history) — zero new
+  per-user diagnostic UI needed, just wired the two already-built
+  pieces together.
+
+6 new backend tests (fake-Mongo, same _FakeCursor pattern as
+test_phase2_admin_users_coverage.py) — stage counts, natural order,
+per-user stuck-days/nudge status, unknown-stage 400, empty-stage
+200-with-empty-list, admin-auth-gate 401. No regressions in
+funnel_nudge_cron's own test suite. Live-verified against this pod's
+real DB: 1267 stage4, 17 stage1, 0 stage2, 1 stage3 (the real
+`qa+bot@aurem.dev` "connected, zero tasks" user) — card→table→
+drill-down flow screenshotted end-to-end, lands correctly on that
+user's full UserDetail page.
+
+Still parked (needs founder input, not re-raised until they act):
+production abandoned-install audit script run, GitHub bulk-revoke
+disposable drill, Resend 401 fix for live alert delivery, read-only
+prod Mongo URI for the duplicate-record investigation.

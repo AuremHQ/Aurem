@@ -458,6 +458,7 @@ async def classify_users(db) -> dict[str, list[dict]]:
             continue  # not stuck long enough yet
 
         u["_stage"] = stage
+        u["_stuck_since"] = stuck_since
         buckets[stage].append(u)
     return buckets
 
