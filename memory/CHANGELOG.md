@@ -2697,3 +2697,15 @@ critical/minor issues, 100%/100% pass rate, live E2E round-trip confirmed.
 - Vercel stays disabled per the 2026-02-12 decision (confirmed correct
   by the founder this session) — CONTEXT7_API_KEY in .env is still the
   placeholder, keyless tier is fine for now per founder.
+
+## 2026-09-07 — Admin Audit feed: "Signals only" filter
+
+Investigated a report that the Audit feed's "Signals" column always
+showed "—". Root cause: NOT a bug — signals are genuinely rare (3 out
+of 3,370 total ORA turns, most recent 2026-08-21), so the default
+newest-first page naturally shows none. Fix: added a `signals_only`
+toggle (`GET /admin/audit?signals_only=true` → `system_signals_emitted:
+{$exists: true, $ne: []}`) so admins can jump straight to the rare rows
+instead of scrolling past thousands of empty ones. 5 new backend tests,
+verified live via screenshot (toggle correctly filtered 3370 rows down
+to the 3 real signal rows).

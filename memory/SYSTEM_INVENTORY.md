@@ -919,3 +919,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `PREVIEW_API` — auto-detected in backend/scripts/r10_e2e_testbed.py (verify) (default: unset) [Iter 0, 2026-09-07T04:37:10.103235Z] <!-- inv:envvar:PREVIEW_API -->
 - `services/context7_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T06:04:03.068752Z] <!-- inv:service:services/context7_skills.py -->
 - `CONTEXT7_API_KEY` — auto-detected in backend/services/context7_skills.py (verify) (default: unset) [Iter 0, 2026-09-07T06:04:03.068788Z] <!-- inv:envvar:CONTEXT7_API_KEY -->
+- `services/sequential_thinking_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T16:10:27.102139Z] <!-- inv:service:services/sequential_thinking_skills.py -->

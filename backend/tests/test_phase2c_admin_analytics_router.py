@@ -309,6 +309,23 @@ class TestDashboardAndAudit:
         assert r.status_code == 200
         assert r.json()["count"] == 1
 
+    def test_audit_feed_signals_only_passthrough(self, client):
+        """2026-09-07 — 'Signals only' toggle: the query param must
+        reach services.audit_log.list_turns(signals_only=...)."""
+        mock = AsyncMock(return_value=[{"turn": 1, "system_signals_emitted": ["github_auth_failed"]}])
+        with patch("services.audit_log.list_turns", mock):
+            r = client.get("/api/aurem-dev/admin/audit", headers=AUTH,
+                            params={"limit": 10, "signals_only": "true"})
+        assert r.status_code == 200
+        assert mock.call_args.kwargs["signals_only"] is True
+
+    def test_audit_feed_signals_only_defaults_false(self, client):
+        mock = AsyncMock(return_value=[])
+        with patch("services.audit_log.list_turns", mock):
+            r = client.get("/api/aurem-dev/admin/audit", headers=AUTH, params={"limit": 10})
+        assert r.status_code == 200
+        assert mock.call_args.kwargs["signals_only"] is False
+
     def test_dashboard(self, client, fake_db):
         fake_db.dev_users.rows.append({"user_id": "u1"})
         fake_db.cto_tasks.rows.append({"status": "done", "created_at": time.time()})

@@ -91,11 +91,20 @@ async def record_turn(
 
 async def list_turns(
     *,
-    user_id:    str | None = None,
-    project_id: str | None = None,
-    limit:      int = 100,
+    user_id:      str | None = None,
+    project_id:   str | None = None,
+    limit:        int = 100,
+    signals_only: bool = False,
 ) -> list[dict]:
-    """Read recent audit rows for the admin/diagnostic UI."""
+    """Read recent audit rows for the admin/diagnostic UI.
+
+    signals_only: system signals (github_auth_failed, repo_not_found,
+    etc.) are genuinely rare — 3 out of 3,370 turns as of 2026-09-07 —
+    so the default newest-first page almost never shows one even
+    though the field itself works correctly. This lets the admin UI
+    jump straight to the rows that ever had one instead of scrolling
+    past thousands of empty ones.
+    """
     try:
         from cto_services.db import get_db
         db = get_db()
@@ -108,6 +117,8 @@ async def list_turns(
         q["user_id"] = user_id
     if project_id:
         q["project_id"] = project_id
+    if signals_only:
+        q["system_signals_emitted"] = {"$exists": True, "$ne": []}
     try:
         return await db[COLLECTION].find(q).sort("timestamp", -1).to_list(limit)
     except Exception as e:                                   # noqa: BLE001

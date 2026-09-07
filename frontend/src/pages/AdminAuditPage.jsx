@@ -126,17 +126,27 @@ export default function AdminAuditPage() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
   const [err, setErr] = useState("");
+  const [signalsOnly, setSignalsOnly] = useState(false);
 
-  async function load() {
+  async function load(signalsOnlyOverride) {
+    const wantSignalsOnly = signalsOnlyOverride ?? signalsOnly;
     setLoading(true); setErr("");
     try {
-      const r = await api.get("/admin/audit?limit=100");
+      const r = await api.get(
+        `/admin/audit?limit=100&signals_only=${wantSignalsOnly ? "true" : "false"}`
+      );
       setRows(r.data?.rows || []);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message || "Failed to load audit feed");
     } finally { setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleSignalsOnly() {
+    const next = !signalsOnly;
+    setSignalsOnly(next);
+    load(next);
+  }
 
   return (
     <div data-testid="admin-audit-page" style={{ padding: 24 }}>
@@ -163,10 +173,29 @@ export default function AdminAuditPage() {
           </div>
         </div>
         {sub === "turns" && (
-          <button onClick={load} data-testid="admin-audit-refresh"
-                  className="btn-ghost" style={{ fontSize: 11 }}>
-            Refresh
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <label
+              data-testid="admin-audit-signals-only-toggle"
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                fontSize: 11, color: signalsOnly ? "#ef4444" : "var(--text-faint)",
+                cursor: "pointer", userSelect: "none",
+              }}
+              title="Show only turns that ever emitted a system signal (github_auth_failed, repo_not_found, etc.) — these are rare, so the default newest-first list almost never shows one."
+            >
+              <input
+                type="checkbox"
+                checked={signalsOnly}
+                onChange={toggleSignalsOnly}
+                data-testid="admin-audit-signals-only-checkbox"
+              />
+              ⚠ Signals only
+            </label>
+            <button onClick={() => load()} data-testid="admin-audit-refresh"
+                    className="btn-ghost" style={{ fontSize: 11 }}>
+              Refresh
+            </button>
+          </div>
         )}
       </div>
 
@@ -178,7 +207,9 @@ export default function AdminAuditPage() {
       {err && <div style={{ color: "#ef4444", fontSize: 12 }}>{err}</div>}
       {!loading && rows.length === 0 && !err && (
         <div style={{ color: "var(--text-faint)", fontSize: 12 }}>
-          No audit rows yet. Have a user chat with ORA and refresh.
+          {signalsOnly
+            ? "No turns have ever emitted a system signal in this range — that's expected, they're rare (github_auth_failed, repo_not_found, etc.)."
+            : "No audit rows yet. Have a user chat with ORA and refresh."}
         </div>
       )}
       {rows.length > 0 && (

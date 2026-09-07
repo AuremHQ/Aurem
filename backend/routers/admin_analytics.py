@@ -71,9 +71,10 @@ async def cleanup_e2e_sessions(authorization: Optional[str] = Header(None)):
 
 @router.get("/audit")
 async def audit_feed(
-    limit:      int = 100,
-    user_id:    Optional[str] = None,
-    project_id: Optional[str] = None,
+    limit:        int = 100,
+    user_id:      Optional[str] = None,
+    project_id:   Optional[str] = None,
+    signals_only: bool = False,
     authorization: Optional[str] = Header(None),
 ):
     """Read the `ora_audit` collection. Backed by `audit_log.list_turns`.
@@ -86,6 +87,7 @@ async def audit_feed(
         user_id=user_id,
         project_id=project_id,
         limit=max(1, min(int(limit or 100), 500)),
+        signals_only=signals_only,
     )
     return {"ok": True, "rows": rows, "count": len(rows)}
 
