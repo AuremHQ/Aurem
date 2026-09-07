@@ -2417,6 +2417,27 @@ _GLOBAL_RL_PER_MIN = int(os.getenv("GLOBAL_RATE_LIMIT_PER_MIN", "300"))
 _HEALTH_PROBE_EXACT_PATHS = frozenset({"/health", "/healthz", "/ping"})
 
 
+# 2026-09-08 deploy-log fix: every `call_next()`-wrapping middleware
+# below already catches `(Exception, BaseExceptionGroup)` so the app
+# never actually crashes on this — but they were all logging it at
+# `logger.error`, which makes a routine, expected client-disconnect
+# race (K8s probe / LB / uptime-monitor with a short timeout hanging
+# up mid-response) look identical to a real bug in prod logs. This
+# mirrors `_security_headers`'s existing CancelledError-vs-everything-
+# else split, but widened to also recognize `anyio.EndOfStream` and a
+# `BaseExceptionGroup` wrapping either — the exact shapes seen in the
+# reported "RuntimeError: No response returned." traceback — so the
+# SAME benign race logs at INFO everywhere instead of ERROR, while any
+# genuinely unexpected exception still logs at ERROR as before.
+def _is_benign_disconnect_race(exc: BaseException) -> bool:
+    import asyncio as _aio
+    import anyio as _anyio
+    _benign = (_aio.CancelledError, _anyio.EndOfStream, RuntimeError)
+    if isinstance(exc, BaseExceptionGroup):
+        return all(_is_benign_disconnect_race(e) for e in exc.exceptions)
+    return isinstance(exc, _benign)
+
+
 @app.middleware("http")
 async def _global_rate_limit_guard(request, call_next):
     # 2026-08-19 deploy-log fix, round 2: the round-1 fix (catching
@@ -2452,11 +2473,18 @@ async def _global_rate_limit_guard(request, call_next):
         # propagated up as an unhandled ASGI error. Catching
         # `BaseExceptionGroup` explicitly here closes that gap.
         except (Exception, BaseExceptionGroup) as _e:
-            logger.error(
-                "rate_limit_guard: downstream raised on skip path %s %s — %r",
-                request.method, request.url.path, _e,
-                exc_info=True,
-            )
+            if _is_benign_disconnect_race(_e):
+                logger.info(
+                    "rate_limit_guard: client disconnected mid-response on "
+                    "skip path %s %s — %r",
+                    request.method, request.url.path, _e,
+                )
+            else:
+                logger.error(
+                    "rate_limit_guard: downstream raised on skip path %s %s — %r",
+                    request.method, request.url.path, _e,
+                    exc_info=True,
+                )
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Internal server error"},
@@ -2548,25 +2576,35 @@ async def _global_rate_limit_guard(request, call_next):
     # (see matching comment on the skip-path branch above for the exact
     # anyio/CancelledError mechanics this closes).
     except (Exception, BaseExceptionGroup) as _e:                    # noqa: BLE001
-        logger.error(
-            "rate_limit_guard: downstream raised on %s %s — %r",
-            request.method, request.url.path, _e,
-            exc_info=True,
-        )
+        _benign = _is_benign_disconnect_race(_e)
+        if _benign:
+            logger.info(
+                "rate_limit_guard: client disconnected mid-response on "
+                "%s %s — %r",
+                request.method, request.url.path, _e,
+            )
+        else:
+            logger.error(
+                "rate_limit_guard: downstream raised on %s %s — %r",
+                request.method, request.url.path, _e,
+                exc_info=True,
+            )
         # Surface to Sentry (if wired) so we don't lose signal — the
         # global exception handler normally does this but it can't
         # see the exception once it's been mangled by the ExceptionGroup
-        # unwind.
-        try:
-            if SENTRY_ACTIVE:
-                import sentry_sdk
-                with sentry_sdk.push_scope() as scope:
-                    scope.set_tag("kind", "middleware_call_next_crash")
-                    scope.set_tag("path", request.url.path)
-                    scope.set_tag("method", request.method)
-                    sentry_sdk.capture_exception(_e)
-        except Exception:                                          # noqa: BLE001
-            pass
+        # unwind. Skip benign disconnect races — those aren't actionable
+        # bugs and would just be Sentry noise.
+        if not _benign:
+            try:
+                if SENTRY_ACTIVE:
+                    import sentry_sdk
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("kind", "middleware_call_next_crash")
+                        scope.set_tag("path", request.url.path)
+                        scope.set_tag("method", request.method)
+                        sentry_sdk.capture_exception(_e)
+            except Exception:                                          # noqa: BLE001
+                pass
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},
@@ -2613,10 +2651,16 @@ async def _health_latency_sampler_mw(request, call_next):
         try:
             return await call_next(request)
         except (Exception, BaseExceptionGroup) as _e:                # noqa: BLE001
-            logger.error(
-                "health_latency_sampler: downstream raised on skip path "
-                "%s %s — %r", request.method, path, _e, exc_info=True,
-            )
+            if _is_benign_disconnect_race(_e):
+                logger.info(
+                    "health_latency_sampler: client disconnected mid-response "
+                    "on skip path %s %s — %r", request.method, path, _e,
+                )
+            else:
+                logger.error(
+                    "health_latency_sampler: downstream raised on skip path "
+                    "%s %s — %r", request.method, path, _e, exc_info=True,
+                )
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Internal server error"},
@@ -2625,10 +2669,16 @@ async def _health_latency_sampler_mw(request, call_next):
     try:
         response = await call_next(request)
     except (Exception, BaseExceptionGroup) as _e:                     # noqa: BLE001
-        logger.error(
-            "health_latency_sampler: downstream raised on %s %s — %r",
-            request.method, path, _e, exc_info=True,
-        )
+        if _is_benign_disconnect_race(_e):
+            logger.info(
+                "health_latency_sampler: client disconnected mid-response "
+                "on %s %s — %r", request.method, path, _e,
+            )
+        else:
+            logger.error(
+                "health_latency_sampler: downstream raised on %s %s — %r",
+                request.method, path, _e, exc_info=True,
+            )
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},

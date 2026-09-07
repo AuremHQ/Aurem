@@ -3035,3 +3035,38 @@ compaction):
   suite, not verbatim these names). Sandbox-only — not yet deployed to
   production; founder must deploy + re-verify all 3 original bugs live
   before this can be called production-closed.
+
+## 2026-09-08 — Deploy-log fix: "RuntimeError: No response returned" noise on `/maintenance/status` + `/founder-offer/status`
+User shared real production deploy logs showing this error repeating
+on two lightweight public GET endpoints during the cold-boot window.
+Root-caused via `deployment_agent` + direct code inspection (not a
+symptom patch): `main.py` already had 3 prior rounds of hardening for
+this exact Starlette `BaseHTTPMiddleware` + anyio race (client
+disconnects mid-response before `call_next()` resolves) — every
+middleware layer already caught it and returned a clean 500, so the
+app was never actually crashing. Two real, fixable contributors found:
+1. `routers/founder_offer.py`'s `GET /founder-offer/status` (public,
+   polled repeatedly by the homepage widget) did 2 unconditional Mongo
+   round-trips on every single hit with zero caching — unlike
+   `/maintenance/status`'s existing in-memory-cache pattern. Under
+   Atlas (not local Mongo), that latency widens the disconnect-race
+   window. Added an 8s in-memory TTL cache, explicitly busted on
+   `/claim` and `/cancel` so the counter stays accurate immediately
+   after a real state change.
+2. All 3 `@app.middleware("http")` exception handlers
+   (`_global_rate_limit_guard` x2, `_health_latency_sampler_mw` x2)
+   were logging this already-caught, already-benign disconnect race
+   at `logger.error` with a full Sentry capture — indistinguishable
+   from a real bug in the logs, which is why it read as "deployment
+   failing" even though every subsequent request kept returning 200.
+   Added a shared `_is_benign_disconnect_race()` classifier
+   (recognizes `CancelledError`/`anyio.EndOfStream`/`RuntimeError`,
+   including inside a `BaseExceptionGroup`) and now log those at
+   `logger.info` (skipping Sentry) while genuinely unexpected
+   exceptions still log at `logger.error` with Sentry as before.
+`deployment_agent` re-run after the fix: **PASS** (was WARN before,
+citing this exact traceback as one of the notes). Verified locally:
+backend boots clean, both endpoints return 200, cache primitives
+tested directly (serves cached value, busts on demand), all 5
+pre-existing `founder_offer` reap tests still pass (they call the reap
+helper directly, unaffected by the new endpoint-level cache).
