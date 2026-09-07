@@ -146,6 +146,17 @@ async function main() {
     // NEW file must be clean; existing ones are a separate cleanup.
     const { execSync } = await import("node:child_process");
     const [baseSha, headSha] = [process.argv[diffIdx + 1], process.argv[diffIdx + 2]];
+    // `git diff --name-only` always reports paths relative to the repo
+    // TOP LEVEL, not relative to `cwd` — that's true even though `cwd`
+    // below is set to ROOT (frontend/) to scope the pathspec correctly.
+    // In this monorepo, repo root is one level up from `frontend/`, so
+    // the returned paths already come back as `frontend/src/...`.
+    // Re-joining those against ROOT (already `.../frontend`) doubled
+    // the prefix into `.../frontend/frontend/src/...` (ENOENT). Resolve
+    // the actual repo root dynamically instead of assuming ROOT is it.
+    const repoRoot = execSync("git rev-parse --show-toplevel", {
+      cwd: ROOT, encoding: "utf8",
+    }).trim();
     const added = execSync(
       `git diff --name-only --diff-filter=A ${baseSha} ${headSha} -- 'src/**/*.jsx' 'src/**/*.js'`,
       { cwd: ROOT, encoding: "utf8" },
@@ -156,7 +167,7 @@ async function main() {
     }
     console.log(`New files in this diff (${added.length}):`);
     added.forEach((p) => console.log(`  ${p}`));
-    const violations = scanFiles(added.map((p) => join(ROOT, p)));
+    const violations = scanFiles(added.map((p) => join(repoRoot, p)));
     return report(violations, added.length);
   }
   const files = walk(SRC);

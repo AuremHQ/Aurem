@@ -37,11 +37,14 @@ import { useId, useEffect, useState } from "react";
 const SINGLE_PARTICLE_BELOW = 28;
 
 function useIsLightTheme() {
-  const [light, setLight] = useState(
-    () => typeof document !== "undefined" && document.documentElement.getAttribute("data-theme") === "light",
-  );
+  // Deterministic default at first paint (dark theme is the primary/
+  // first-choice design) — the real value is read post-mount inside
+  // the effect below, never as a useState initializer, so prerendered
+  // markup and the client's first paint always agree (no flash/pop).
+  const [light, setLight] = useState(false);
   useEffect(() => {
     const root = document.documentElement;
+    setLight(root.getAttribute("data-theme") === "light");
     const obs = new MutationObserver(() => setLight(root.getAttribute("data-theme") === "light"));
     obs.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
     return () => obs.disconnect();

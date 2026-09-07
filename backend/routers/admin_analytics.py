@@ -1365,7 +1365,17 @@ async def skills_usage(
         })
         total += r["count"]
 
+    # Fold in context7 (get_library_docs) — it's free (cost_usd always
+    # 0.0) and dispatched outside the generic per-tool logger below, so
+    # Token P&L / LLM Credits are the wrong home and it had no other
+    # admin surface. sequential_thinking needs no folding-in — it's
+    # already covered by ora_skill_usage above (see docstring in
+    # _fold_in_local_tool_usage for why).
+    cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
+    await _fold_in_local_tool_usage(db, rows, cutoff_ts)
+
     # Annotate share so the founder can see at-a-glance which skills < 2%
+    total = sum(r["count"] for r in rows)
     for row in rows:
         row["share"] = round(row["count"] / total, 3) if total else 0
         row["dead_weight"] = row["share"] < 0.02   # the prune threshold
@@ -1376,6 +1386,49 @@ async def skills_usage(
         "skills":      rows,
         "hint":        "skills with share<0.02 are prune candidates (industry ceiling target: 18 skills)",
     }
+
+
+def _pct(arr, p):
+    if not arr:
+        return None
+    i = max(0, min(len(arr) - 1, int(len(arr) * p) - 1))
+    return arr[i]
+
+
+async def _fold_in_local_tool_usage(db, rows: list, cutoff_ts: float) -> None:
+    """Fold `context7_calls` into the same `{tool, count, ok_rate,
+    p50_ms, p95_ms}` shape as the ora_skill_usage rows above, so it
+    shows up as a regular row on this same page instead of a separate
+    untracked log. Uses a unix-float `ts` (time.time()), not the ISO
+    string `ts` used by ora_skill_usage, so it needs its own cutoff
+    comparison — folded in here rather than the main pipeline.
+
+    NOTE: `sequential_thinking` is deliberately NOT folded in here —
+    it's already tracked for free. Every local tool dispatch (see
+    orchestrator.py's `log_skill_use(tool=tool_name, ...)` right after
+    dispatch, ~line 2769) writes into `ora_skill_usage` regardless of
+    which tool it is, and `sequential_thinking` goes through that same
+    generic LOCAL_TOOLS dispatch path — confirmed live: a real 5-call
+    sequential_thinking turn already showed up as its own row in the
+    main aggregation above before this function ever ran. Folding it
+    in again here would double-count it. `context7_calls` is genuinely
+    different — get_library_docs is dispatched on a separate path that
+    does NOT go through that generic logger, so it has no other home.
+    """
+    latencies = []
+    c7_count = 0
+    async for r in db.context7_calls.find(
+        {"ts": {"$gte": cutoff_ts}}, {"_id": 0, "latency_ms": 1},
+    ):
+        c7_count += 1
+        if isinstance(r.get("latency_ms"), (int, float)):
+            latencies.append(r["latency_ms"])
+    if c7_count:
+        latencies.sort()
+        rows.append({
+            "tool": "context7_get_library_docs", "count": c7_count,
+            "ok_rate": 1.0, "p50_ms": _pct(latencies, 0.50), "p95_ms": _pct(latencies, 0.95),
+        })
 
 
 @router.get("/overview-metrics")
