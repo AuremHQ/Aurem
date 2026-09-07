@@ -56,6 +56,58 @@ from .retries import run_confidence_gate
 logger = logging.getLogger(__name__)
 
 
+# ─── 2026-09-08 — Turn-Completion Contract: six named failure modes ───
+# Each failure surfaced to the user must map to ONE of these named
+# modes so the frontend can render the right recovery action (see the
+# MASTER PROMPT table this round: retry / auto-backoff-then-retry /
+# edit-and-resend / retry-tool). A hard worker-level error (see
+# worker.py's outer `except Exception` → `{"type": "error", ...}`)
+# used to be silently absorbed into a generic apology sentence with no
+# distinguishable recovery UI at all — this classifier + the
+# `failure_mode`/`error` fields added to done_payload below close
+# that gap without changing the underlying detection (still string-
+# pattern matching on the actual raised exception text, same
+# convention build_timeout_message already uses for its slow_api vs
+# reasoning_loop split).
+_PROVIDER_FILTERED_HINTS = ("content_filter", "safety", "blocked", "policy violation")
+_PROVIDER_RATE_HINTS = ("rate limit", "429", "too many requests", "quota")
+_PROVIDER_5XX_HINTS = ("500", "502", "503", "504", "server error", "bad gateway", "unavailable")
+_NETWORK_HINTS = ("connection", "connect", "timed out", "timeout", "reset by peer", "dns")
+_TOOL_HINTS = ("tool_call", "tool call", "tool error", "invoke_local_tool")
+
+
+def _classify_failure_mode(raw_error: Optional[str], result: dict) -> str:
+    """Maps a hard worker-level error string into one of the six
+    named failure modes. Falls back to `stream_error_mid_response`
+    (the most generic "something broke while producing this turn"
+    bucket) rather than leaving the mode unclassified — every failure
+    gets SOME recovery action, per the contract."""
+    text = (raw_error or "").lower()
+    if any(h in text for h in _TOOL_HINTS) or result.get("tool_call_error"):
+        return "tool_call_error"
+    if any(h in text for h in _PROVIDER_FILTERED_HINTS):
+        return "provider_filtered"
+    if any(h in text for h in _PROVIDER_RATE_HINTS) or any(h in text for h in _PROVIDER_5XX_HINTS):
+        return "provider_rate_or_5xx"
+    if any(h in text for h in _NETWORK_HINTS):
+        # No tokens have been sent yet at this point in gen() (this
+        # classifier only runs on the pre-stream hard-error path) —
+        # a genuine mid-stream drop is handled separately, by the
+        # try/finally around the token-emission loop below.
+        return "network_drop_pre_stream"
+    return "stream_error_mid_response"
+
+
+_RECOVERY_ACTION_FOR_MODE = {
+    "network_drop_pre_stream":  "retry",
+    "network_drop_mid_stream":  "resume_or_restart",
+    "provider_rate_or_5xx":     "auto_backoff_then_retry",
+    "provider_filtered":        "edit_and_resend",
+    "tool_call_error":          "retry_tool_or_escalate",
+    "stream_error_mid_response": "continue_or_edit_restart",
+}
+
+
 # ─── Iter 212m-149 — Intent Gateway live-classify endpoint ────────────
 # Used by the chat composer to render the live tier-dot indicator
 # (casual / query / agentic) as the user types.  Heuristic-only
@@ -583,6 +635,17 @@ async def chat_stream(
         # timeout path, triggered earlier when there's been little/no
         # tool-call progress yet. See watchdog.py for the full rationale.
         SOFT_TIMEOUT_S = float(os.getenv("CHAT_SOFT_TIMEOUT_S", "48"))
+        # 2026-09-08 — Turn-Completion Contract, stream-idle clock.
+        # Production repro: "Model API was slow to respond — waited
+        # 48s and only got 1 tool call through" was reported as a
+        # confusing SILENT wait — the 48s SOFT_TIMEOUT_S message was
+        # correct, but nothing told the user anything was slow until
+        # it fired. This is a genuinely separate, earlier clock: once
+        # elapsed crosses this threshold with little/no progress, the
+        # tick frame below flips `slow_notice: true` so the UI can
+        # show "this is running slower than usual" immediately —
+        # never silence until the hard cutoff.
+        STREAM_SLOW_NOTICE_S = float(os.getenv("CHAT_SLOW_NOTICE_S", "12"))
         # StreamState refactor (2026-09-08) — replaces the ~20-var
         # closure formerly shared between gen()/_ticker()/_worker().
         # See stream_state.py for the field mapping.
@@ -624,6 +687,9 @@ async def chat_stream(
                         "elapsed_s": elapsed,
                         "activity": state.activity["label"],
                         "invocations": _inv,
+                        # 2026-09-08 — Turn-Completion Contract stream-idle
+                        # notice (see STREAM_SLOW_NOTICE_S comment above).
+                        "slow_notice": elapsed >= STREAM_SLOW_NOTICE_S and len(_inv) <= 1,
                     })
 
         ticker_t = asyncio.create_task(_ticker())
@@ -684,6 +750,16 @@ async def chat_stream(
         mode = _detect_mode(body.prompt)
         from services.llm import temperature_for
         temperature = temperature_for(mode)
+
+        # 2026-09-08 — Turn-Completion Contract: six named failure
+        # modes (see MASTER PROMPT table), each with its own visible
+        # recovery action — never a silent fallback swallowed into
+        # plain apology text. Captured BEFORE the empty-content
+        # fallback below rewrites `content`, so the real error is
+        # still on `done_payload` even once the user-facing text is
+        # a friendly message.
+        _hard_error = result.get("error") or None
+        _failure_mode = _classify_failure_mode(_hard_error, result) if _hard_error else None
 
         # Iter 212m-155 — SAFETY NET against silent SSE close.
         # On PROD, the agentic tier occasionally returned an empty
@@ -787,11 +863,45 @@ async def chat_stream(
 
         CHUNK = 6
         i = 0
-        while i < len(content):
-            chunk = content[i:i + CHUNK]
-            yield f"data: {json.dumps({'token': chunk})}\n\n"
-            i += CHUNK
-            await asyncio.sleep(0.012)
+        # 2026-09-08 — Turn-Completion Contract, Section 5 (stream
+        # state persistence). Before this fix, a genuine mid-stream
+        # drop (client closes the tab / network dies while tokens are
+        # still being emitted) meant NOTHING downstream ever ran —
+        # `_persist_turn` sits AFTER this loop, so the partial content
+        # the user had already read was silently discarded and a page
+        # reload showed nothing for that turn at all. The try/finally
+        # below persists whatever was actually emitted, marked
+        # `interrupted: True`, even when this loop is torn down mid-
+        # way by GeneratorExit/CancelledError on a real client drop.
+        _mid_stream_dropped = False
+        try:
+            while i < len(content):
+                chunk = content[i:i + CHUNK]
+                yield f"data: {json.dumps({'token': chunk})}\n\n"
+                i += CHUNK
+                await asyncio.sleep(0.012)
+        except (asyncio.CancelledError, GeneratorExit):
+            _mid_stream_dropped = i < len(content)
+            raise
+        finally:
+            if _mid_stream_dropped:
+                _emitted_so_far = content[:i]
+                logger.warning(
+                    "chat_stream: mid-stream drop after %d/%d chars — "
+                    "persisting partial as interrupted", i, len(content),
+                )
+                try:
+                    await _persist_turn(
+                        user_id, body.session_id or "", body.prompt,
+                        _emitted_so_far, provider, watchdog=None,
+                        project_id=body.project_id,
+                        steps=collected_steps,
+                        low_confidence=state.low_confidence,
+                        ship_suppressed=state.ship_suppressed,
+                        bin_ctx=bin_ctx, interrupted=True,
+                    )
+                except Exception:
+                    logger.exception("mid-stream-drop persist_turn failed")
 
         # Maxx mode: emit a stream marker, then run watchdog and emit result
         # Iter 161 — when `body.mode == "maxx"` Claude has ALREADY written
@@ -1134,6 +1244,19 @@ async def chat_stream(
             # Item 2 (2026-08-31) — palette nudges made this turn (before/
             # after swatches rendered by PaletteNudgeBubble.jsx, no jargon).
             "palette_nudges": result.get("palette_nudges") or [],
+            # 2026-09-08 — Turn-Completion Contract (root fix for 3
+            # separate silent-idle bugs — see orchestrator.py's module
+            # comment above _is_intent_only_announcement). A turn may
+            # only end in one of three states: "success" (real result
+            # delivered), "error" (see error/failure_mode below, with
+            # a recovery action), or "partial" (continue_available is
+            # True — the frontend must render a working Continue
+            # action, never let this go silent).
+            "turn_state": ("error" if _hard_error else (result.get("turn_state") or "success")),
+            "continue_available": bool(result.get("continue_available")) and not _hard_error,
+            "error": _hard_error,
+            "failure_mode": _failure_mode,
+            "recovery_action": _RECOVERY_ACTION_FOR_MODE.get(_failure_mode) if _failure_mode else None,
         }
         logger.info(
             "R10_TIMING turn_done total_dur=%.2fs session=%s tool_calls=%s",

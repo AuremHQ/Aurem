@@ -232,6 +232,90 @@ def build_timeout_message(
 
 
 
+# ─── 2026-09-08 — Turn-Completion Contract ─────────────────────────
+# ROOT FIX (not a symptom patch): three separately-reported bugs this
+# round — (1) "scan the whole repo" ending on "Let me grab the
+# remaining directories..." with no file list delivered, (2) the
+# Approve button silently not loading, (3) a 48s silent wait ending in
+# a confusing partial — all trace back to one root cause: a turn can
+# transition from "working" to "idle" without ever confirming the work
+# actually completed or explicitly failed.
+#
+# This block fixes bug (1)'s class directly: a turn may only end in
+# one of three states — SUCCESS (a real result was delivered),
+# EXPLICIT FAILURE (`error` set, with a retry path), or EXPLICIT
+# PARTIAL (`turn_state="partial"` + `continue_available=True`, so the
+# user sees "I did this much — continue?" instead of silence). An
+# intent statement ("Let me grab X...") is a STEP ANNOUNCEMENT, never
+# a valid final answer on its own.
+_INTENT_LEAD_RE = re.compile(
+    r"^(let me|i'll|i will|i'm going to|i am going to|"
+    r"next,?\s+i(?:'ll|\s+will)|now,?\s+i(?:'ll|\s+will)|going to)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_intent_only_announcement(content: str) -> bool:
+    """True when `content` is a bare STEP ANNOUNCEMENT — e.g. "Let me
+    grab the remaining top-level directories I haven't scanned yet." —
+    masquerading as a final answer, with no actual delivered result.
+
+    Deliberately narrow to avoid false positives on legitimate short
+    replies that happen to open with "I'll ...": only trips when (a)
+    the reply opens with an intent-lead phrase, AND (b) there's no
+    code fence or a real delivered list (3+ items — an actual file
+    list, for instance), AND (c) the whole reply is short — a genuine
+    answer that opens with "I'll walk you through X" before actually
+    delivering X runs far longer than a bare announcement.
+    """
+    text = (content or "").strip()
+    if not text or not _INTENT_LEAD_RE.match(text):
+        return False
+    if "```" in text:
+        return False
+    list_items = len(re.findall(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+\S", text))
+    if list_items >= 3:
+        return False
+    return len(text) < 220
+
+
+class TurnCompletionViolation(Exception):
+    """Raised when a turn would close in a state outside the three
+    allowed states (SUCCESS / EXPLICIT FAILURE / EXPLICIT PARTIAL).
+    Structural guard for the Turn-Completion Contract. In production
+    this should never actually raise — `_wrap_as_explicit_partial` +
+    the mid-loop nudge below prevent the violating state from ever
+    being constructed — it exists so the contract is ASSERTED, not
+    just documented, and is directly unit-testable in isolation."""
+
+
+def assert_turn_completion_contract(content: str, result: dict) -> None:
+    """Raises TurnCompletionViolation if `result` would close a turn
+    on intent-only text with no result, no error, and no
+    continue-prompt attached — the exact silent-idle failure class
+    this contract exists to make structurally impossible."""
+    has_error = bool(result.get("error"))
+    has_continue = bool(result.get("continue_available")) or result.get("turn_state") == "partial"
+    if _is_intent_only_announcement(content) and not has_error and not has_continue:
+        raise TurnCompletionViolation(
+            "turn closed on intent-only text with no result/error/"
+            f"continue-prompt attached: {content[:120]!r}"
+        )
+
+
+def _wrap_as_explicit_partial(content: str, invocations: list[dict], prompt: str) -> str:
+    """Wraps a bare intent announcement into an EXPLICIT-PARTIAL reply:
+    what's been done so far (from tool history, if any) + a direct
+    continue question — never a silent "idle" ending."""
+    summary = _synthesise_max_iters_summary(prompt, invocations) if invocations else ""
+    return (
+        content.rstrip()
+        + "\n\n_That was my next planned step, not a finished result."
+        + (f" So far: {summary}" if summary else "")
+        + " Want me to continue?_"
+    )
+
+
 def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
     """Fallback closing message when the orchestrator hits its iter
     or per-turn time budget.
@@ -2309,6 +2393,10 @@ async def chat_with_tools(
                 "web_sources": _dedupe_sources(
                     [s for inv in invocations for s in (inv.get("web_sources") or [])]
                 ),
+                # 2026-09-08 — Turn-Completion Contract: a budget-hit
+                # summary is always genuinely partial, never silent.
+                "turn_state": "partial",
+                "continue_available": True,
             }
         iters += 1
         # Iter 36: surface activity to the SSE stream so the UI can show
@@ -2407,6 +2495,10 @@ async def chat_with_tools(
                     "web_sources": _dedupe_sources(
                         [s for inv in invocations for s in (inv.get("web_sources") or [])]
                     ),
+                    # 2026-09-08 — Turn-Completion Contract: a stuck
+                    # tool-loop synthesis is genuinely partial, never silent.
+                    "turn_state": "partial",
+                    "continue_available": True,
                 }
 
         if not calls:
@@ -2433,6 +2525,36 @@ async def chat_with_tools(
                     "chat_with_tools: empty completion on iter %d/%d "
                     "(%d invocation(s) so far) — retrying instead of "
                     "returning blank content", iters, max_iters, len(invocations),
+                )
+                continue
+
+            # 2026-09-08 — Turn-Completion Contract. A bare intent
+            # announcement ("Let me grab the remaining top-level
+            # directories I haven't scanned yet.") is a STEP
+            # ANNOUNCEMENT, never a valid final answer — production
+            # repro: "scan the whole repo and list every file" ended
+            # the turn on exactly this kind of sentence with no file
+            # list ever delivered. Same pattern as the blank-content
+            # retry just above: give the model ONE forced extra
+            # iteration with a stronger nudge before ever letting the
+            # turn close on it silently.
+            if _is_intent_only_announcement(content) and iters < max_iters:
+                logger.info(
+                    "chat_with_tools: intent-only announcement at iter "
+                    "%d/%d (%r) — forcing continuation instead of "
+                    "ending the turn", iters, max_iters, content[:80],
+                )
+                transcript += (
+                    "\n\n=== TURN-COMPLETION CONTRACT ===\n"
+                    f"Your previous reply only announced an action "
+                    f"(\"{content[:100]}\") without doing it — that is "
+                    "not a valid final answer. Either actually finish "
+                    "the work now (call whatever tool(s) you need and "
+                    "complete it), or if it genuinely can't finish "
+                    "this turn, state exactly what you've completed "
+                    "so far and end with a direct question asking "
+                    "whether to continue. Do not repeat a bare intent "
+                    "statement."
                 )
                 continue
 
@@ -2598,6 +2720,20 @@ async def chat_with_tools(
                 except Exception:
                     pass
 
+            # 2026-09-08 — Turn-Completion Contract, defense-in-depth.
+            # If the model STILL produced a bare intent announcement
+            # after exhausting the mid-loop nudge above (or hit
+            # max_iters exactly on the nudged iteration), never let it
+            # close as a plain "success" — wrap it into an explicit
+            # partial with a real continue action instead of silence.
+            _turn_state = "success"
+            if _is_intent_only_announcement(content):
+                content = _wrap_as_explicit_partial(content, invocations, prompt)
+                _turn_state = "partial"
+            assert_turn_completion_contract(content, {
+                "turn_state": _turn_state, "continue_available": _turn_state == "partial",
+            })
+
             return {
                 "ok": meta.get("ok", True),
                 "content": content,
@@ -2635,6 +2771,10 @@ async def chat_with_tools(
                 # reliable teaser instead of depending on the fragile
                 # aurem-handoff fence to bundle+offer a fix.
                 "findings_saved_this_turn": local_ctx.get("findings_saved_this_turn") or [],
+                # 2026-09-08 — Turn-Completion Contract state (see
+                # module-level docstring above _is_intent_only_announcement).
+                "turn_state": _turn_state,
+                "continue_available": _turn_state == "partial",
                 **agent_meta,
             }
 
@@ -2868,6 +3008,20 @@ async def chat_with_tools(
     if not clean.strip():
         clean = _synthesise_max_iters_summary(prompt, invocations)
 
+    # 2026-09-08 — Turn-Completion Contract. This exit is reached when
+    # the model was STILL queuing tool calls right up to max_iters, so
+    # it never passed through the `if not calls:` nudge above — a
+    # dangling intent-only sentence left behind by strip_tool_calls()
+    # (e.g. "Let me grab the remaining directories..." next to a tool
+    # call that never got to run) must still never close the turn
+    # silently.
+    _turn_state_mx = "success"
+    if _is_intent_only_announcement(clean):
+        clean = _wrap_as_explicit_partial(clean, invocations, prompt)
+        _turn_state_mx = "partial"
+    assert_turn_completion_contract(clean, {
+        "turn_state": _turn_state_mx, "continue_available": _turn_state_mx == "partial",
+    })
 
     # Same verified_paths computation as the happy path — at max-iters
     # we still want the UI guard to know which files were actually read.
@@ -2899,6 +3053,9 @@ async def chat_with_tools(
         "web_sources": _dedupe_sources(
             [s for inv in invocations for s in (inv.get("web_sources") or [])]
         ),
+        # 2026-09-08 — Turn-Completion Contract state.
+        "turn_state": _turn_state_mx,
+        "continue_available": _turn_state_mx == "partial",
         # Iter 210 — propagate even on max-iter hit so users still get
         # the typed banner instead of a generic timeout.
         "system_signals": local_ctx.get("system_signals") or [],

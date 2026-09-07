@@ -2934,3 +2934,104 @@ success_rate: frontend 100%, 0 critical/minor issues, retest_needed:
 false. One JSDoc-comment nit flagged by testing (a `size={36}` example
 mislabeled "single-particle" when the 28px threshold makes it
 dual-particle) was fixed post-report.
+
+## 2026-09-08 — ROOT FIX: Turn-Completion Contract (partial delivery, tested — see ROADMAP for remaining scope)
+Founder rejected symptom-by-symptom patches for 3 live bugs (silent
+idle-return on an intent-only repo-scan reply; recurring Approve/Ship
+button failure; silent long waits on slow provider responses) and
+required a backend-enforced contract: every chat turn ends in exactly
+one of SUCCESS / EXPLICIT PARTIAL / EXPLICIT FAILURE, never a silent
+return to idle. Shipped this round (continued across a context
+compaction):
+- **`services/orchestrator.py`** — `chat_with_tools()` now detects
+  intent-only final text (e.g. "Let me grab the remaining top-level
+  directories I haven't scanned yet.") via a new `is_intent_only()`
+  helper and reclassifies it as `turn_state="partial"` with
+  `continue_available=True` at every exit path that could otherwise
+  return it as a bare success (mid-loop nudge-and-continue, ordinary
+  no-more-tool-calls exit, max-iters exit, budget-guard, tool-loop-guard).
+  Direct proof: `test_false_success_impossible`-class test calls the
+  REAL `chat_with_tools` (only the underlying `call_llm_with_meta` is
+  mocked, with the verbatim bug-report text) and asserts it never
+  returns bare success.
+- **`routers/chat/stream.py` / `watchdog.py`** — the SSE `done` payload
+  now always carries `turn_state`, `continue_available`,
+  `failure_mode`, `recovery_action`, `interrupted`; a new
+  `_classify_failure_mode()` helper distinguishes pre-stream drop /
+  mid-stream drop / provider transient / provider filtered / tool
+  error / mid-response stream error. The existing ~48s soft-timeout
+  (watchdog) path now carries this same contract instead of a bare
+  `timed_out` flag.
+- **`services/chat_helpers.py`** — `_persist_turn()` takes a new
+  `interrupted` kwarg (default False), only written to the Mongo turn
+  doc when true.
+- **Frontend wiring (this round, previously missing)** —
+  `frontend/src/lib/api.js`'s `onThinking` callback now passes a 4th
+  `slowNotice` arg parsed from `payload.slow_notice`. `ChatPanel.jsx`'s
+  `onDone`/`onThinking` handlers store `turnState`/`continueAvailable`/
+  `failureMode`/`recoveryAction`/`turnError`/`slowNotice` on the
+  message; new `continueTurn()`/`retryFailedTurn()` functions send a
+  follow-up turn. History-reload mapping now round-trips `interrupted`
+  (was silently dropped even though persisted — real gap, fixed).
+  `MessageBubble.jsx` renders a visible Continue button
+  (`turn-continue-btn`) for `turn_state="partial"`, a visible Retry
+  button (`turn-retry-btn`) for `turn_state="error"`, an
+  `turn-interrupted-badge`, and a `stream-slow-notice` message inside
+  the existing thinking row once `slow_notice` fires (~12-15s).
+- **`frontend/src/components/useActiveProject.js`** — the
+  `/cto/projects/list` fetch (previously zero-retry — one transient
+  blip could strand `activeProject=null` for the whole page session,
+  a real, code-confirmed contributor to the recurring "Approve button
+  didn't load" reports) now silently auto-retries once on mount,
+  independent of any parent component's render timing.
+- Investigated but did **not** touch: `MessageBubble.jsx`'s existing
+  `shipCtaFallback` banner (built in an earlier round) already gives a
+  working Retry for the *other* Approve-button failure mode (a
+  ship-worthy fence rejected by the citation guard) — confirmed this
+  already satisfies "every failure has a visible recovery action" for
+  that specific case; no change needed there.
+- **Live E2E proof (both required terminal outcomes reproduced for
+  real against the exact bug-report prompt):** curl against the real
+  sandbox `/api/aurem-dev/chat/stream` with a large repo hit the ~48s
+  soft timeout twice and both times returned
+  `turn_state=partial, continue_available=true, recovery_action` set
+  — never a silent/empty done frame. A real browser session (test@aurem.dev,
+  `p_r10_testbed_e2e` fixture) against a small repo returned genuine
+  `turn_state=success` with an actual 2-file list rendered and a
+  natural follow-up offer — confirmed the happy path is unaffected.
+  (Root cause of two initial "empty response" curl attempts during
+  this proof: reusing `session_id=None` across rapid concurrent
+  requests caused state collision — unrelated to the contract itself,
+  noted for anyone re-running this kind of live check.)
+- **Tests:** 19 new backend tests
+  (`tests/test_turn_completion_contract_2026_09_08.py`, includes the
+  real-`chat_with_tools` integration test above) + 2 new frontend
+  tests (`useActiveProject.test.jsx`) all passing. Golden SSE
+  regression (`test_stream_golden_regression.py`) re-recorded and
+  passing 6/6 after confirming diffs were limited to the intended new
+  fields. Targeted regression sweep (238 tests across
+  chat_stream/watchdog/persist_turn/stream/orchestrator) 234 passed,
+  4 pre-existing failures confirmed unrelated via `git stash` diff
+  (2 SEO, 1 mock-llm-stream, 1 citation_guard_persist_ordering — all
+  fail identically on the unmodified codebase).
+- **Independently verified by testing_agent**
+  (`test_reports/iteration_turn_completion_contract_2026_09_08.json`):
+  100%/100% pass, zero action items, zero regressions,
+  `retest_needed: false`. Live-reproduced the success path itself
+  in-browser as an independent check.
+- **NOT yet delivered from the founder's full original spec** (see
+  ROADMAP.md P0 for the tracked remainder): the 4 *distinct* timeout
+  clocks (connect / first-token / stream-idle / hard end-to-end
+  deadline — currently only the pre-existing ~48s soft-timeout +
+  slow-notice ticker exist, not 4 separately-enforced clocks); a
+  provider-retry idempotency-key/capped-backoff layer (today "Retry"
+  simply resends a fresh user turn, it does not retry the same
+  provider call idempotently); a full `started/streaming/complete/
+  cancelled/unknown` stream-state enum persisted to Mongo (today only
+  a boolean `interrupted` flag is persisted); the founder's exact
+  named tests `t_stream_idle_timeout_fires`,
+  `t_stream_distinguish_done_from_error`, `t_partial_preserved_on_drop`
+  (equivalent coverage exists under different test names in the new
+  suite, not verbatim these names). Sandbox-only — not yet deployed to
+  production; founder must deploy + re-verify all 3 original bugs live
+  before this can be called production-closed.

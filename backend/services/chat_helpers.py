@@ -515,7 +515,8 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         steps: Optional[list] = None,
                         low_confidence: bool = False,
                         ship_suppressed: bool = False,
-                        bin_ctx=None) -> None:
+                        bin_ctx=None,
+                        interrupted: bool = False) -> None:
     """Append user+assistant turns to db.chat_sessions, capped at 40 turns.
     Tags the session with the project it belongs to (None == Home/global).
     Iter 51 — when `shipped_task_id` is set (e.g. Mode D→C auto-handoff),
@@ -526,7 +527,13 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
     assistant turn too so GET /chat/history returns it verbatim and a
     page refresh keeps the "📖 Reading repo… ✍️ Writing files…" progress
     trail visible instead of it vanishing (it previously lived only in
-    the in-memory `messages` state)."""
+    the in-memory `messages` state).
+    2026-09-08 — Turn-Completion Contract, Section 5: `interrupted=True`
+    marks a turn that was cut short by a genuine mid-stream client drop
+    (see stream.py's token-emission try/finally). GET /chat/history
+    round-trips this flag verbatim so a page reload renders the partial
+    with an "interrupted" badge + retry, never as if it were a normal
+    complete answer."""
     db = get_db()
     if db is None or not session_id:
         return
@@ -555,6 +562,8 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
     # generic low_confidence flag, see services/response_confidence.py.
     if ship_suppressed:
         assistant_turn["ship_suppressed"] = True
+    if interrupted:
+        assistant_turn["interrupted"] = True
     set_on_insert = {
         "session_id": session_id,
         "user_id": user_id,

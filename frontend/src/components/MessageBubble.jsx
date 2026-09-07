@@ -410,6 +410,7 @@ export default function MessageBubble({
   idx, dbTurnIndex, m, onRegenerate, onRetryFix, sessionId,
   activeProject, exhausted, onTaskCompleted,
   onOpenDeployTab, collapseDefault = false, onOpenLivePopup,
+  onContinueTurn, onRetryFailedTurn,
 }) {
   const [copied, setCopied] = useState(false);
   const [vote, setVote] = useState(m.feedback?.vote || null);
@@ -933,6 +934,117 @@ export default function MessageBubble({
           {m.role === "assistant" && !m.streaming && (
             <SystemSignalBanner signals={m.system_signals} />
           )}
+          {/* 2026-09-08 — Turn-Completion Contract. A turn may only
+              end in SUCCESS / EXPLICIT FAILURE / EXPLICIT PARTIAL —
+              never silent idle. This renders the two non-success
+              states with their real, working recovery action
+              (never text-only). Root fix for: "scan the whole repo
+              and list every file" ending on "Let me grab the
+              remaining directories..." with no list ever delivered
+              and no error/continue shown. */}
+          {m.role === "assistant" && !m.streaming && m.turnState === "partial" && m.continueAvailable && (
+            <div
+              data-testid="turn-partial-banner"
+              style={{
+                marginTop: 10, display: "flex", alignItems: "center",
+                gap: 10, padding: "8px 12px", borderRadius: 6,
+                border: "1px solid rgba(232,160,32,0.28)",
+                background: "rgba(232,160,32,0.06)",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                I paused partway through — that was my next planned step, not a finished result.
+              </span>
+              <button
+                type="button"
+                data-testid="turn-continue-btn"
+                onClick={() => onContinueTurn?.()}
+                style={{
+                  marginLeft: "auto", flexShrink: 0,
+                  fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                  borderRadius: 999, cursor: "pointer",
+                  border: "1px solid rgba(232,160,32,0.55)",
+                  background: "rgba(232,160,32,0.12)",
+                  color: "#e8a020",
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          )}
+          {m.role === "assistant" && !m.streaming && m.turnState === "error" && (
+            <div
+              data-testid="turn-failure-banner"
+              style={{
+                marginTop: 10, display: "flex", alignItems: "center",
+                gap: 10, padding: "8px 12px", borderRadius: 6,
+                border: "1px solid rgba(239,68,68,0.3)",
+                background: "rgba(239,68,68,0.06)",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "rgba(239,68,68,0.9)" }}>
+                This failed{m.turnError ? ` — ${m.turnError}` : ""}.
+                {m.failureMode === "provider_filtered"
+                  ? " Try editing your message and resending."
+                  : m.failureMode === "provider_rate_or_5xx"
+                  ? " The provider was busy — safe to retry now."
+                  : " Safe to retry."}
+              </span>
+              {m.failureMode !== "provider_filtered" && (
+                <button
+                  type="button"
+                  data-testid="turn-retry-btn"
+                  onClick={() => onRetryFailedTurn?.()}
+                  style={{
+                    marginLeft: "auto", flexShrink: 0,
+                    fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                    borderRadius: 999, cursor: "pointer",
+                    border: "1px solid rgba(239,68,68,0.5)",
+                    background: "rgba(239,68,68,0.1)",
+                    color: "rgba(239,68,68,0.95)",
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+          {/* 2026-09-08 — Turn-Completion Contract, Section 5: a turn
+              cut short by a genuine mid-stream client drop is
+              persisted with `interrupted: true` instead of being
+              silently discarded (see stream.py's token-emission
+              try/finally). On reload, render it as what it is —
+              never as if it were a normal complete answer. */}
+          {m.role === "assistant" && !m.streaming && m.interrupted && (
+            <div
+              data-testid="turn-interrupted-badge"
+              style={{
+                marginTop: 10, display: "flex", alignItems: "center",
+                gap: 10, padding: "8px 12px", borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--bg-elev)",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                ⚠ Connection dropped partway through this reply — showing what was received.
+              </span>
+              <button
+                type="button"
+                data-testid="turn-interrupted-retry-btn"
+                onClick={() => onRetryFix?.()}
+                style={{
+                  marginLeft: "auto", flexShrink: 0,
+                  fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                  borderRadius: 999, cursor: "pointer",
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text-dim)",
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
           {/* Inline HTML preview directly inside the bubble (separate from side PreviewPanel) */}
           {m.role === "assistant" && !m.streaming && (() => {
             const html = extractInlineHTML(m.content);
@@ -1058,6 +1170,26 @@ export default function MessageBubble({
                     bar above still carries the real % signal. */}
                 <span>{friendlyPhrase}</span>
               </span>
+              {/* 2026-09-08 — Turn-Completion Contract stream-idle
+                  notice. Production repro: "waited 48s and only got 1
+                  tool call through" was reported as a silent wait —
+                  the tick-driven friendlyPhrase above already updates
+                  every ~0.6s, but never escalated its TONE. Once the
+                  backend's STREAM_SLOW_NOTICE_S threshold trips (see
+                  stream.py), this shows explicitly rather than
+                  leaving the user to guess whether anything is
+                  actually still happening. */}
+              {m.slowNotice && (
+                <span
+                  data-testid="stream-slow-notice"
+                  style={{
+                    fontSize: 11, color: "#e8a020",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  This is running slower than usual…
+                </span>
+              )}
               {/* Iter 149 — Live tool invocation chips. Surfaces the
                   raw tool-call activity from the orchestrator (e.g.
                   "read_repo_file ✓", "search_repo …") so the user knows

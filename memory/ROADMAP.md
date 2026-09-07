@@ -3,6 +3,13 @@
 See PRD.md for original requirements/architecture, CHANGELOG.md for what's shipped.
 
 ## P0 — in-flight / founder-blocking (updated 2026-08-27, post-checkpoint decisions)
+- **ROOT FIX \u2014 Turn-Completion Contract (2026-09-08) \u2014 CORE SLICE SHIPPED + TESTED, remainder tracked below.** See CHANGELOG.md 2026-09-08 entry for full detail + evidence. Core contract (turn_state/continue_available/failure_mode/recovery_action never-silent-idle, Continue/Retry UI, useActiveProject retry) is live in sandbox, 19+2 new tests passing, testing_agent-verified 100%/0 issues. **Remaining from founder's original spec, not yet built:**
+  - 4 *distinct* timeout clocks (connect / first-token / stream-idle / hard end-to-end deadline) \u2014 today only the pre-existing ~48s soft-timeout + slow-notice ticker exist, not 4 separately-enforced clocks.
+  - Provider-retry idempotency-key + capped-exponential-backoff layer for transient provider errors \u2014 today "Retry" resends a fresh user turn, not an idempotent retry of the same provider call.
+  - Full `started/streaming/complete/cancelled/unknown` stream-state enum persisted to Mongo \u2014 today only a boolean `interrupted` flag is persisted.
+  - Founder's exact named tests `t_stream_idle_timeout_fires`, `t_stream_distinguish_done_from_error`, `t_partial_preserved_on_drop` (equivalent coverage exists under different names in the new suite, not verbatim).
+  - **Production deploy + founder live re-verification of all 3 original bugs** \u2014 this work is sandbox-only; do not claim production-fixed until the founder deploys and re-checks.
+  - Trigger to resume: founder go-ahead (this is a large, already-partially-delivered item \u2014 do not silently keep expanding it further without a checkpoint).
 - **GUARDRAIL REMEDIATION (2026-08-28, master build plan approved by founder)** — Wave 0 (read-only re-verify) + Wave 1 (#2 path guard) DONE, see CHANGELOG.md for full detail. Current state:
   - `guard_config.path_guard.mode` = **warn** (default, Preview) — no writes are blocked yet, only logged + alerted. Founder reviews 48h of `GW_WARN_PATH` events (via `GET /admin/guardrails`), then flips to `block` via `POST /admin/guardrails/path_guard/mode`.
   - Next: Wave 2 (#8 ship-via-PR, effort M) is next up once founder reviews the Wave 1 WARN log — **waiting on founder go-ahead, do not start Wave 2 opportunistically.**

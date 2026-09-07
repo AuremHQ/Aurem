@@ -1534,6 +1534,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             // page refresh even though they were persisted server-side.
             low_confidence: t.low_confidence || false,
             ship_suppressed: t.ship_suppressed || false,
+            // 2026-09-08 — Turn-Completion Contract, Section 5: same
+            // convention as low_confidence/ship_suppressed just above
+            // (learned from that exact prior bug — "missing from the
+            // reload map, so the badge silently disappeared on a page
+            // refresh") — `interrupted` must round-trip through
+            // reload or a mid-stream-drop turn renders as if complete.
+            interrupted: t.interrupted || false,
           })));
           // Iter 212m-44 — the user has prior turns in this session
           // (reloaded mid-conversation), so the chrome (top tabs +
@@ -2507,7 +2514,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       onIntent: (intent) => {
         if (intent && intent.tier) setLastIntentTier(intent.tier);
       },
-      onThinking: (elapsed, activity, invocations) => {
+      onThinking: (elapsed, activity, invocations, slowNotice) => {
         bumpActivity();
         // Iter 167 — fan out file paths from tool invocations so the
         // KnowledgeGraph drawer can glow the nodes ORA is touching
@@ -2553,6 +2560,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               // thinking bar so the user sees what AUREM is doing right
               // now (read_repo_file, search_repo, execute_bash, etc.).
               ...(Array.isArray(invocations) ? { invocations } : {}),
+              // 2026-09-08 — Turn-Completion Contract stream-idle
+              // notice: flips true once elapsed crosses the
+              // STREAM_SLOW_NOTICE_S threshold with little/no tool
+              // progress — was previously silent until the full 48s
+              // soft-timeout message landed, which read as a
+              // confusing surprise rather than an expected escalation.
+              ...(typeof slowNotice === "boolean" ? { slowNotice } : {}),
             };
           }
           return copy;
@@ -2708,6 +2722,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               // made this turn, shown as before/after swatches on the
               // bubble (see components/PaletteNudgeBubble.jsx).
               paletteNudges: Array.isArray(d.palette_nudges) ? d.palette_nudges : [],
+              // 2026-09-08 — Turn-Completion Contract. A turn now always
+              // carries one of three explicit states so MessageBubble
+              // never has to guess from absence of data whether
+              // something silently died.
+              turnState: d.turn_state || "success",
+              continueAvailable: !!d.continue_available,
+              failureMode: d.failure_mode || null,
+              recoveryAction: d.recovery_action || null,
+              turnError: d.error || null,
             };
           }
           return copy;
@@ -2829,6 +2852,27 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   function retryLastFix() {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser || busy) return;
+    send(null, { promptOverride: lastUser.content });
+  }
+
+  // 2026-09-08 — Turn-Completion Contract, EXPLICIT PARTIAL recovery.
+  // "Continue" is a real, working action — not a text-only dead end —
+  // exactly like retryLastFix() above, just sending a continuation
+  // prompt instead of resending the same one. `busy` already guards
+  // against a double-click double-firing this (button disables while
+  // a turn is in flight).
+  function continueTurn() {
+    if (busy) return;
+    send(null, { promptOverride: "Please continue from where you left off." });
+  }
+
+  // 2026-09-08 — Turn-Completion Contract, EXPLICIT FAILURE recovery.
+  // Distinct from continueTurn/retryLastFix: resends the ORIGINAL
+  // prompt (not a continuation) for a turn that ended in a real error.
+  function retryFailedTurn() {
+    if (busy) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
     send(null, { promptOverride: lastUser.content });
   }
 
@@ -4966,6 +5010,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                 m={m}
                 onRegenerate={regenerate}
                 onRetryFix={retryLastFix}
+                onContinueTurn={continueTurn}
+                onRetryFailedTurn={retryFailedTurn}
                 sessionId={sessionId}
                 activeProject={activeProject}
                 exhausted={exhausted}

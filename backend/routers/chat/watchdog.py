@@ -130,6 +130,18 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
                     "session_id": body.session_id,
                     "tokens_remaining": None,
                     "timed_out": True,
+                    # 2026-09-08 — Turn-Completion Contract. A timeout
+                    # with real partial tool progress is an EXPLICIT
+                    # PARTIAL (Continue is a working action — the next
+                    # turn resumes with that history in context); a
+                    # timeout with zero progress is an EXPLICIT
+                    # FAILURE (nothing to continue, only retry makes
+                    # sense). Never a bare "done" with no state.
+                    "turn_state": "partial" if partial_invocations else "error",
+                    "continue_available": bool(partial_invocations),
+                    "error": None if partial_invocations else "no progress before timeout",
+                    "failure_mode": None if partial_invocations else "provider_rate_or_5xx",
+                    "recovery_action": "continue_or_edit_restart" if partial_invocations else "auto_backoff_then_retry",
                 }) + "\n\n"
             )
             state.timed_out = True
@@ -141,6 +153,9 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
                     "elapsed_s":   ev["elapsed_s"],
                     "activity":    ev["activity"],
                     "invocations": ev.get("invocations") or [],
+                    # 2026-09-08 — Turn-Completion Contract stream-idle
+                    # notice — see stream.py's STREAM_SLOW_NOTICE_S.
+                    "slow_notice": bool(ev.get("slow_notice", False)),
                 }) + "\n\n"
             )
         elif ev["type"] == "mode":

@@ -1,0 +1,24 @@
+{
+  "summary": "Verified Turn-Completion Contract work end-to-end. (1) Backend contract test suite tests/test_turn_completion_contract_2026_09_08.py: 19/19 PASS in 0.51s (real integration-level test using bug#1 repro text included). (2) Frontend unit tests frontend/src/components/__tests__/useActiveProject.test.jsx: 2/2 PASS (recovers-after-one-transient-failure + gracefully-gives-up-if-both-attempts-fail). (3) Live browser E2E: logged in as test@aurem.dev on preview, set localStorage.aurem_active_project=p_r10_testbed_e2e which routed to polarisbuiltinc-wq/aurem-rollback-testbed (no revoked banner), sent the exact bug#1 prompt 'scan the whole repo and list every file' — SUCCESS path confirmed live: real assistant reply delivered with actual page/file list ('Full scan of polarisbuiltinc-wq/aurem-undo-testbed — 2 pages total: 1. Project description page … 2. Health check page …'), AgentStatusBar reached Done, chat returned to a normal composed state — NO silent return-to-idle, NO empty bubble. (4) Verified new UI wiring is present in code with correct data-testids: turn-partial-banner, turn-continue-btn, turn-failure-banner, turn-retry-btn, turn-interrupted-badge, stream-slow-notice — gated on m.turnState==='partial'|'error' and m.continueAvailable. (5) Verified backend stream.py done_payload emits turn_state / continue_available / failure_mode / recovery_action / interrupted (lines 1255-1260). (6) Verified ChatPanel.jsx history-load mapper maps t.interrupted through on line 1543 (round-trip fix). Partial+continue path was NOT reproduced live in-browser this round (the small connected fixture returns success in ~10s, well under the ~48s soft timeout), but the backend contract for that path is fully covered by the 19 passing pytest cases (including TestStreamIdleTimeoutFires::test_watchdog_timeout_payload_carries_partial_state_with_progress and TestFalseSuccessImpossible::test_budget_exhausted_path_never_returns_bare_success_on_intent_only) plus the main agent's own curl E2E from the prior turn. No regressions observed: Approve/Ship regression not directly clicked this round since no new handoff brief was produced, but the chat-turn success flow rendered normally with copy/thumbs actions on the assistant bubble (screenshot saved).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_turn_completion_contract_2026_09_08.py",
+    "/app/test_reports/pytest/turn_completion_contract.xml",
+    "/app/frontend/src/components/__tests__/useActiveProject.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "stream.py done_payload logic is correct: turn_state falls back to result.get('turn_state') || 'success' when there is no hard error, and 'error' when _hard_error is set — matches contract.",
+    "MessageBubble.jsx renders partial/error banners only when !m.streaming, so streaming placeholders don't accidentally show Continue/Retry — correct.",
+    "The Vite dev preview intermittently rate-limits chunk fetches with 429 when a test does a full-page reload right after login. Not a product bug (dev server only), but the app already handles it gracefully with a route-error-boundary 'Something went wrong loading this page. Retry / Reload app' fallback."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "None. Reused existing p_r10_testbed_e2e / polarisbuiltinc-wq/aurem-rollback-testbed fixture.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Partial+continue path live in-browser: to force it, either (a) point active project at a substantially larger connected repo where the tool loop exceeds ~48s, or (b) inject a manual short soft-timeout at the SSE watchdog for a controlled test. All 19 backend contract tests + 2 frontend useActiveProject tests are the fastest regression signal — run these first.",
+  "rca of the issue": "N/A — this was a verification/testing pass, not a bug-fix pass. The three original bugs (silent intent-only return, Approve/Ship mount race, silent slow LLM) are now bounded by: (i) orchestrator.chat_with_tools re-classifying intent-only final text as turn_state='partial' with continue_available=true; (ii) stream.py done_payload always carrying turn_state/continue_available/failure_mode/recovery_action/interrupted; (iii) MessageBubble rendering visible partial/error banners with Continue/Retry buttons; (iv) useActiveProject silent auto-retry preventing a single transient /cto/projects/list failure from stranding the session with activeProject=null; (v) chat_helpers._persist_turn persisting interrupted:true so history-load round-trips the flag."
+}

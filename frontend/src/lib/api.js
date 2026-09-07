@@ -423,7 +423,7 @@ export async function streamChat({ prompt, sessionId, session_id,
           else if (payload.type === "ops_redirect") onOpsRedirect?.(payload);
           else if (payload.type === "task_handoff") onTaskHandoff?.(payload);
           else if (payload.token) onToken?.(payload.token);
-          else if (payload.thinking) onThinking?.(payload.elapsed_s || 0, payload.activity, payload.invocations || []);
+          else if (payload.thinking) onThinking?.(payload.elapsed_s || 0, payload.activity, payload.invocations || [], !!payload.slow_notice);
           else if (payload.watchdog_pending) onWatchdogPending?.();
           else if (payload.watchdog) onWatchdog?.(payload.watchdog);
           else if (payload.done) onDone?.(payload);

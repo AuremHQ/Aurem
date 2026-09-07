@@ -36,7 +36,7 @@ ORCHESTRATOR = BACKEND / "services" / "orchestrator.py"
 # all 7 sites verified still-hooks, only line numbers shifted). If a
 # real hygiene target ever slips into orchestrator.py, it will NOT be
 # in this set and the test below will fail.
-LEGIT_UI_HOOK_LINES = {2172, 2177, 2279, 2544, 2595, 2626, 2635}
+LEGIT_UI_HOOK_LINES = {2298, 2303, 2409, 2721, 2794, 2825, 2834}
 # 2026-08-23 audit fix — the last 3 of these 7 line numbers drifted
 # (+4) after this session's findings-to-fix-bridge edits added lines
 # earlier in orchestrator.py (capturing `findings_saved_this_turn`),
@@ -56,6 +56,12 @@ LEGIT_UI_HOOK_LINES = {2172, 2177, 2279, 2544, 2595, 2626, 2635}
 # MEMORY anchor instruction, ~+86 lines added earlier in the file).
 # Re-verified against the current file: same 7 sites, same
 # activity_hook/step_hook try-bodies, purely a line-drift re-snapshot.
+# 2026-09-08 · Turn-Completion Contract root fix (3 separate silent-
+# idle bugs traced to one root cause — see orchestrator.py's module
+# comment above _is_intent_only_announcement) added ~140 lines earlier
+# in the file. Re-verified against the actual current file: same 7
+# sites, same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
 
 
 def _is_truly_empty_return(s: ast.stmt) -> bool:

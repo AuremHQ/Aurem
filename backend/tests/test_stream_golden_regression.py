@@ -17,6 +17,17 @@ retries.py/context_build.py/sse_stream.py split. If this test is
 green, the refactor did not change observable behavior for any of
 the 6 covered code paths (orchestrator fallback, Mode-D fast-path,
 Mode-F engage, confidence-mismatch retry, soft timeout, hard timeout).
+
+2026-09-08 · Turn-Completion Contract re-record — this round's fix
+(root-caused 3 separate silent-idle bugs to one contract violation;
+see orchestrator.py's module comment above _is_intent_only_announcement)
+is an INTENTIONAL behavior change, not a mechanical refactor: the
+final `done` event on all 6 scenarios now also carries `turn_state`,
+`continue_available`, `error`, `failure_mode`, `recovery_action`.
+Verified before re-recording that this was the ONLY diff (no other
+field/event changed on any of the 6 scenarios) — golden re-captured
+via `python -m tests._capture_stream_golden` to reflect the new
+contract fields as the new baseline.
 """
 import json
 import os
