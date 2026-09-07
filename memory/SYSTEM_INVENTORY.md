@@ -921,3 +921,6 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `CONTEXT7_API_KEY` — auto-detected in backend/services/context7_skills.py (verify) (default: unset) [Iter 0, 2026-09-07T06:04:03.068788Z] <!-- inv:envvar:CONTEXT7_API_KEY -->
 - `services/sequential_thinking_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T16:10:27.102139Z] <!-- inv:service:services/sequential_thinking_skills.py -->
 | `routers/admin_onboarding_funnel.py` | `/admin/onboarding-funnel` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-07T17:04:05.514355Z) | <!-- inv:router:routers/admin_onboarding_funnel.py -->
+- `ENABLE_ONBOARDING_NUDGE` — auto-detected in backend/main.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578214Z] <!-- inv:envvar:ENABLE_ONBOARDING_NUDGE -->
+- `MIN_NUDGE_STAGE_AGE_HOURS` — auto-detected in backend/services/funnel_nudge_cron.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578275Z] <!-- inv:envvar:MIN_NUDGE_STAGE_AGE_HOURS -->
+- `MAX_NUDGES_PER_RUN` — auto-detected in backend/services/funnel_nudge_cron.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578292Z] <!-- inv:envvar:MAX_NUDGES_PER_RUN -->

@@ -35,6 +35,7 @@ import SystemSignalBanner from "./SystemSignalBanner";
 import UnlockProCTA, { shouldShowUnlockProCTA } from "./UnlockProCTA";
 import StepCards from "./StepCards";   // Iter 212m-19 — live step cards
 import RollbackConfirmModal from "./RollbackConfirmModal";
+import ThinkingLoader from "./ThinkingLoader";
 import { brandProvider } from "../lib/providerLabel";
 import { useFriendlyStatusPhrase } from "../hooks/useFriendlyStatusPhrase";
 import { trackShipRenderFailed } from "../lib/analytics";
@@ -1048,7 +1049,7 @@ export default function MessageBubble({
                 color: "var(--text-faint)", fontStyle: "italic", fontSize: 13,
                 fontFamily: "'JetBrains Mono', monospace",
               }}>
-                <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+                <ThinkingLoader size={16} />
                 {/* 2026-08-22 — dropped the raw "· 205.0s" ticking
                     counter and the literal "Retrying…"/"Reconnecting…"
                     labels (both make the system visibly look slow).

@@ -426,6 +426,7 @@ import { PreferredSourceButton } from "./PreferredSourceButton";
 import { sanitizeErrorMessage } from "../lib/sanitizeError";
 import { toCanonicalShipStatus } from "../lib/useShipState";
 import ShipApproveCard from "./ShipApproveCard";
+import ThinkingLoader from "./ThinkingLoader";
 
 // ── Tone → icon + colour ────────────────────────────────────────────
 const TONE_STYLES = {
@@ -679,15 +680,19 @@ function NarrationLine({ line, nowEpoch }) {
         animation: "narration-fade-in 220ms ease-out",
       }}
     >
-      <Icon
-        size={12}
-        strokeWidth={2.5}
-        style={{
-          color: iconColor,
-          flexShrink: 0,
-          animation: style.spin && !isStalled ? "narration-spin 1s linear infinite" : "none",
-        }}
-      />
+      {style.spin && !isStalled ? (
+        <ThinkingLoader size={16} aria-label="step in progress" />
+      ) : (
+        <Icon
+          size={12}
+          strokeWidth={2.5}
+          style={{
+            color: iconColor,
+            flexShrink: 0,
+            animation: "none",
+          }}
+        />
+      )}
       <span
         data-testid={`loop-narration-text-${line.key}`}
         style={{ flex: 1, color: line.tone === "pending" ? "#c9cbcf" : "#e6ebf3" }}

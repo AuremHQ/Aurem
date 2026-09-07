@@ -2894,3 +2894,43 @@ quote. Live-verified the Visibility Kit `site_meta.domain` fix (from
 an earlier session) with a fresh first-hand PATCH round-trip on a real
 project this round, since the only prior evidence was an unverifiable
 summary-file claim.
+
+## 2026-09-07 — "Infinity Loop — Thinking" inline indicator
+Replaced the generic Lucide `Loader2` spin icon with a new reusable
+`frontend/src/components/ThinkingLoader.jsx` (SVG infinity-path +
+`animateMotion`/`mpath`, ease-in-out `keySplines`, ~3s indefinite loop)
+in the two spots that actually render a spinner for the "ORA is
+thinking" state:
+- `MessageBubble.jsx` `data-testid=chat-thinking` row (16px, inline
+  next to the existing `friendlyPhrase` text) — was `<Loader2 size={12}
+  style={{animation:'spin ...'}}/>`.
+- `LoopLiveFeed.jsx` pending-tone narration icon, only when
+  `!isStalled` (16px) — stalled/success/warning/danger tones keep the
+  original static Lucide icon unchanged.
+Left the pre-existing 3-dot orange `typing-indicator` bounce (a
+different, non-spinner design, `aria-label="ORA is thinking"`)
+untouched — it isn't literally "a spinner" per the task scope, and the
+`ThinkingHint` sponsored-strip component has no spinner of its own to
+replace.
+Colors: leading particle `#00E5FF` w/ glow, trailing `#00BFA5` (dual
+particle only at size >= 28px; single particle below that per spec's
+own noise-avoidance guidance — both 16px live spots use single).
+Component is transparent/inherits the surrounding background per spec
+(no forced dark gradient); detects `html[data-theme]` via
+`document.documentElement` + a `MutationObserver` and darkens the
+track/adds a particle halo in light mode so it doesn't wash out on
+white — caught and fixed a real wash-out during self-testing before
+handoff.
+Live-verified end-to-end in the real chat UI (test@aurem.dev,
+localStorage `aurem_active_project=p_64987820ec` to route around an
+unrelated revoked-GitHub-access project) with a 5x CSS-scaled
+close-up confirming the ∞ track + moving glowing particle. Testing
+agent (`iteration_thinking_loader_2026_01.json`) independently
+confirmed: chat-thinking swap live, 3-dot regression preserved,
+animation actively running (particle moves between samples), unique
+`useId` filter/path ids across concurrent instances, light-theme
+MutationObserver wiring works live, no console errors.
+success_rate: frontend 100%, 0 critical/minor issues, retest_needed:
+false. One JSDoc-comment nit flagged by testing (a `size={36}` example
+mislabeled "single-particle" when the 28px threshold makes it
+dual-particle) was fixed post-report.
