@@ -2629,3 +2629,71 @@ session's changes fully stashed out.
 production (not `152797252`/`ora-grounding`), run the real U1-U6 drill
 per `GITHUB_BULK_REVOKE_DRILL_VERIFY.md`, then flip
 `github_bulk_revoke_live_verified` when confirmed.
+
+## 2026-09-07 — W2: S2 Sequential Thinking, S3 stable-first-paint, S4 viewport check, Visibility Kit domain fix
+
+Per founder's "W2" round (after S1 Context7 from earlier the same day).
+
+**S2 — Sequential Thinking tool** (`services/sequential_thinking_skills.py`,
+new): local-only scratchpad tool (no external API/credentials — confirmed
+via integration playbook query) for the ORA coding agent's tool-calling
+loop. Gated ON only when `core/tool_router.py::is_complex_request()`
+detects multi-file/multi-step/whole-system debugging signals in the
+user's message; OFF otherwise (token savings on trivial asks). 12 tests.
+
+Real live-model E2E run (claude-sonnet-4-6 via Emergent key) surfaced and
+this session fixed a genuine PRE-EXISTING bug: `tools_bridge.py`'s
+Shape-4 Python-call-syntax parser used a non-greedy regex that broke on
+ANY tool argument containing a literal `)` character (e.g. a parenthetical
+aside in a free-text `thought`) — silently dropping the whole call.
+Replaced with a balanced-paren/quote-aware scanner. 132 related tests
+pass (0 regressions).
+
+**S3 — stable-first-paint** (`frontend/scripts/check-stable-first-paint.mjs`,
+new): flags `useState(...)` initializers that directly read a
+browser-only (window/document/localStorage/sessionStorage/navigator/
+matchMedia) or non-deterministic (Math.random/Date.now/new Date) value —
+this app's `seo-prerender.mjs` writes real static HTML for public routes
+that `createRoot().render()` then wipes on mount, so a value that isn't
+knowable at prerender time causes the same visible-flash class already
+patched once (see seo-prerender.mjs's "2026-09-04 FOUC fix"). Same
+non-retroactive convention as `ci_check_new_bloat.py` — only NEW files
+are checked (26 pre-existing violations found on first run, intentionally
+not blocking). New CI job `stable-first-paint` in quality-gate.yml. 6 tests.
+
+**S4 — viewport check** (`frontend/breakpoints.config.js` +
+`frontend/tests/visual/viewport_check.spec.js`, new): structural
+"layoutlint"-style check (not pixel-diff — this repo already root-caused
+flaky pixel-diff tests earlier this session) — 4 key public screens x 5
+breakpoints (375/640/768/1024/1440px), asserting no forced horizontal
+page scroll. 20/20 passing. New CI job `viewport-check` in quality-gate.yml.
+
+**Bonus real bug fix (from the Vercel investigation):** Visibility Kit's
+"Apply" always failed with "no site URL/domain on file" — root cause:
+`site_meta.domain` (read by `services/visibility/apply.py`) was NEVER
+written anywhere in the codebase, Vercel or otherwise. Vercel itself
+stays intentionally disabled (2026-02-12 founder decision — Cloudflare →
+Emergent is the real hosting path, confirmed still correct). Fix: the
+existing "Your live site URL" flow (Dashboard.jsx's `AddLiveSiteModal` →
+`handleSaveLiveSite` → `PATCH /cto/projects/{id}` with `preview_url`)
+now also mirrors the hostname into `site_meta.domain` on the same write —
+no new UI, reuses what was already there. 4 new tests + live PATCH
+round-trip verified by testing_agent on the running preview backend.
+
+Testing: `iteration_w2_s2s3s4_visibility_domain_2026_01.json` — 0
+critical/minor issues, 100%/100% pass rate, live E2E round-trip confirmed.
+
+**Still open / founder to action:**
+- GitHub Bulk Revoke Step 1 live drill — App is now configured with
+  PRODUCTION credentials (52 real installations, confirmed via live API),
+  but creating a NEW disposable installation still needs a human to
+  click through GitHub's own consent screen — need either a throwaway
+  account's login, the founder doing that one step and handing back the
+  installation_id, or confirmation `AuremHQ` (already in the live list)
+  is a safe founder-controlled test org.
+- Duplicate "@TJSNDHU — 4 repos granted" row — GitHub's API shows only
+  ONE real installation for that account; almost certainly a frontend
+  list-rendering bug. Waiting on a screenshot / exact page location.
+- Vercel stays disabled per the 2026-02-12 decision (confirmed correct
+  by the founder this session) — CONTEXT7_API_KEY in .env is still the
+  placeholder, keyless tier is fine for now per founder.

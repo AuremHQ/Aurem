@@ -260,6 +260,10 @@ from .context7_skills import (
     CONTEXT7_TOOLS as _CONTEXT7_TOOLS,
     CONTEXT7_TOOL_SPECS as _CONTEXT7_TOOL_SPECS,
 )
+from .sequential_thinking_skills import (
+    SEQUENTIAL_THINKING_TOOLS as _SEQUENTIAL_THINKING_TOOLS,
+    SEQUENTIAL_THINKING_TOOL_SPECS as _SEQUENTIAL_THINKING_TOOL_SPECS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2641,7 +2645,7 @@ TOOL_SPECS: list[dict] = [
             ),
         },
     },
-] + _WEB_TOOL_SPECS + _DEV_TOOL_SPECS + _VERCEL_TOOL_SPECS + _CONTEXT7_TOOL_SPECS
+] + _WEB_TOOL_SPECS + _DEV_TOOL_SPECS + _VERCEL_TOOL_SPECS + _CONTEXT7_TOOL_SPECS + _SEQUENTIAL_THINKING_TOOL_SPECS
 
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
@@ -2662,6 +2666,7 @@ LOCAL_TOOLS: dict[str, callable] = {
     **_DEV_TOOLS,
     **_VERCEL_TOOLS,
     **_CONTEXT7_TOOLS,
+    **_SEQUENTIAL_THINKING_TOOLS,
 }
 
 

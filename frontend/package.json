@@ -15,6 +15,8 @@
     "lint:fix": "eslint src --fix",
     "test:watch": "vitest",
     "test:a11y": "vitest run src/components/__tests__/a11y_components.test.jsx",
+    "check:hydration": "node scripts/check-stable-first-paint.mjs",
+    "check:viewport": "playwright test tests/visual/viewport_check.spec.js",
     "verify:prod": "node scripts/postdeploy-verify.mjs https://auremcto.com/signup",
     "verify:preview": "node scripts/postdeploy-verify.mjs https://launch-pad-237.emergent.host/signup"
   },
