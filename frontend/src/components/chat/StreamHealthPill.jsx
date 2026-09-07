@@ -12,10 +12,15 @@
  * invisible to the user now. Shows a reassuring, slowly-progressing
  * narrative phrase instead (same pool used by MessageBubble's
  * thinking indicator, via useFriendlyStatusPhrase).
+ *
+ * 2026-09-07 — icon swapped from a static Zap glyph to the shared
+ * ThinkingLoader (infinity-loop) so every surface using this same
+ * phrase pool shows one consistent "ORA is thinking" animation
+ * instead of a spinner in one place and a static icon here.
  */
 import React from "react";
-import { Zap } from "lucide-react";
 import { useFriendlyStatusPhrase } from "../../hooks/useFriendlyStatusPhrase";
+import ThinkingLoader from "../ThinkingLoader";
 
 export default function StreamHealthPill({ state, compact }) {
   const active = !!state && state.phase !== "idle";
@@ -46,7 +51,7 @@ export default function StreamHealthPill({ state, compact }) {
         animation: "pillPulse 1.6s ease-in-out infinite",
       }}
     >
-      <Zap size={compact ? 11 : 14} strokeWidth={2.5} style={{ color: accent, flexShrink: 0 }} />
+      <ThinkingLoader size={compact ? 14 : 18} />
       <span
         data-testid="chat-stream-health-phrase"
         style={{ flex: 1, minWidth: 0, color: "#E5E5E5" }}
