@@ -920,3 +920,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `services/context7_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T06:04:03.068752Z] <!-- inv:service:services/context7_skills.py -->
 - `CONTEXT7_API_KEY` — auto-detected in backend/services/context7_skills.py (verify) (default: unset) [Iter 0, 2026-09-07T06:04:03.068788Z] <!-- inv:envvar:CONTEXT7_API_KEY -->
 - `services/sequential_thinking_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T16:10:27.102139Z] <!-- inv:service:services/sequential_thinking_skills.py -->
+| `routers/admin_onboarding_funnel.py` | `/admin/onboarding-funnel` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-07T17:04:05.514355Z) | <!-- inv:router:routers/admin_onboarding_funnel.py -->

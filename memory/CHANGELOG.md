@@ -2791,3 +2791,106 @@ Still parked (needs founder input, not re-raised until they act):
 production abandoned-install audit script run, GitHub bulk-revoke
 disposable drill, Resend 401 fix for live alert delivery, read-only
 prod Mongo URI for the duplicate-record investigation.
+
+## 2026-09-08 (round 2) — funnel classifier bug fix + nudge-cron safety throttle
+
+Founder challenged the funnel dashboard's numbers against two OTHER
+admin tools they'd independently seen live (Bulk Revoke Idle=33,
+Projects 40/42 with 0 tasks) — investigation found the SANDBOX pod's
+local data simply didn't match (github_installations=1 total here;
+confirmed via repeated founder pushback that "founder decision" citations
+in CHANGELOG/DRILL_VERIFY files were agent-notes, not verbatim sources —
+retracted the 2026-02-12 Vercel citation specifically). But the
+investigation surfaced a REAL, environment-independent bug:
+
+**Root cause**: `classify_users()` (powers both the nudge-email cron
+and the Onboarding Funnel dashboard) excluded any user with
+`first_chat_at` set from EVERY stage bucket — treating "sent one chat
+message" as "funnel complete". A user who chatted once but never
+shipped a real task became invisible to the entire funnel, never got
+a nudge email. Proven wrong by cross-referencing the codebase's OTHER,
+more correct 5-stage model (`routers/admin.py::_compute_stage_buckets()`),
+which already treats "sent_message" as its own distinct stuck stage
+and only excludes on `first_ship_at` (a real completed loop task).
+
+**Fix**: `services/funnel_nudge_cron.py` — both `classify_users()` and
+`current_stage_for_user()` (ORA Guide mascot, same bug) now key off
+`first_ship_at` instead of `first_chat_at`. Email copy adjusted
+("haven't completed a task yet" instead of "haven't sent ORA a task
+yet", since a stage3_no_chat user may now have chatted without
+shipping). Live sandbox before/after: stage1_github_started 5→152,
+total stuck 1286→1420 (135 users previously silently dropped, now
+correctly surfaced — mostly `sectest_*` pytest fixtures in this pod;
+production mix will differ). New regression-lock test explicitly
+covers "chatted but not shipped → still lands in stage3_no_chat".
+
+**Safety throttle added** (founder caught a real deploy risk before
+shipping — the fix retroactively surfaces an already-24h+-stuck
+backlog, and `run_nudge_batch()` had ZERO cap, so the very next daily
+cron tick would've emailed the whole backlog at once):
+- `MIN_NUDGE_STAGE_AGE_HOURS=72` (env-overridable) — first nudge wave
+  needs 72h+ stuck, not just the 24h `STUCK_HOURS` gate.
+- `MAX_NUDGES_PER_RUN=50` (env-overridable) — `run_nudge_batch()` caps
+  sends per tick, oldest-stuck-first, reports `deferred_to_next_run`.
+- Cron confirmed daily (`main.py:950` → `nudge_cron(86400)`, 2-min
+  startup delay) — 50/day is a genuinely gradual drain, not a fast
+  blast. 4 new dedicated tests (age-floor skip, sort order, cap+defer).
+
+**Read-only diagnostic script**: `backend/scripts/diagnose_funnel_first_ship_fix.py`
+— founder explicitly chose "build the script, don't send me a URI"
+(same pattern as the earlier GitHub Bulk Revoke audit script). Old vs
+new logic side-by-side stage counts + exact list of newly-visible
+users. Zero writes. Founder runs it themselves against production
+with their own MONGO_URL/DB_NAME exported.
+
+Also flagged a latent bug found while writing regression tests: the
+preview-email endpoint's "most-stuck user" picker was using `max()`
+on `_stuck_since` epoch (picks the MOST RECENT = LEAST stuck) instead
+of `min()` (oldest = most stuck) — fixed in the same pass.
+
+Deploy is NOT done by the agent — founder deploys via the platform's
+own flow and will run the production diagnostic script + monitor the
+first cron tick themselves (agreed as their operational checklist,
+outside agent tool access).
+
+## 2026-09-08 (round 1) — Onboarding Funnel dashboard + preview/export/trend
+
+Founder's ask: "onboarding funnel ko accurate karo aur trackable banao
+jisse pata chal sake kyun user stuck ho gaya hai" (after skipping
+Vercel/aurem_org "missing integration" and Anthropic checks, and
+parking the duplicate-record investigation).
+
+Zero new tracking pipeline — thin read-only admin surface reusing the
+already-correct `funnel_nudge_cron.classify_users()` stage
+classification (same logic the nudge-email cron uses internally, but
+never surfaced anywhere an admin could browse it before).
+
+- `routers/admin_onboarding_funnel.py` (new) — `/summary` (per-stage
+  counts, oldest/median stuck days, natural funnel order), `/users`
+  (per-user stuck-since/stuck-days/nudge status, sorted most-stuck-first),
+  `/preview-email` (read-only nudge-email preview per stage, zero real
+  token minted), `/trend` (daily snapshot history).
+- `AdminOnboardingFunnel.jsx` (new) — 4 stage cards → click for
+  stuck-user table → "view →" reuses the existing `/admin/users?
+  drill_user=<id>` drilldown pattern (built earlier for AdminOverview's
+  Live Cost Alert card) straight into the existing rich UserDetail
+  page. Plus: "Preview nudge email" per stage (inline panel, PREVIEW
+  ONLY badge), CSV export of a stage's stuck-user list (client-side,
+  no auto-send anywhere), funnel trend line (recharts, new
+  `onboarding_funnel_snapshots` collection + daily snapshot cron).
+- One additive line in `classify_users()` (`u["_stuck_since"] = ...`)
+  exposes the stuck-since epoch it already computed internally.
+
+13+ backend tests (fake-Mongo, same `_FakeCursor` pattern as
+`test_phase2_admin_users_coverage.py`), 26 frontend tests, no
+regressions. Live-verified against this pod's real DB end-to-end
+(card→table→preview→CSV→drilldown), screenshotted.
+
+During this round, also RETRACTED an unverifiable "2026-02-12 founder
+decision" Vercel citation (source was only a prior agent's own
+CHANGELOG note, not a verbatim quote/file) after founder pushback —
+correctly distinguished it from a genuinely verifiable same-thread
+quote. Live-verified the Visibility Kit `site_meta.domain` fix (from
+an earlier session) with a fresh first-hand PATCH round-trip on a real
+project this round, since the only prior evidence was an unverifiable
+summary-file claim.

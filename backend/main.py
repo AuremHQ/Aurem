@@ -958,6 +958,21 @@ async def lifespan(app: FastAPI):
             logger.warning("funnel_nudge_cron not started: %r", e)
     else:
         app.state.nudge_task = None
+    if os.environ.get("ENABLE_ONBOARDING_NUDGE", "1").lower() in ("1", "true", "yes"):
+        try:
+            from routers.admin_onboarding_funnel import funnel_snapshot_cron as _funnel_snapshot_cron
+            app.state.funnel_snapshot_task = _supervise(
+                _funnel_snapshot_cron(86400),
+                name="onboarding_funnel_snapshot",
+                db_getter=lambda: app.state.db,
+                long_lived=True,
+            )
+            logger.info("📈 onboarding-funnel daily snapshot cron enabled")
+        except Exception as e:
+            app.state.funnel_snapshot_task = None
+            logger.warning("funnel_snapshot_cron not started: %r", e)
+    else:
+        app.state.funnel_snapshot_task = None
     # Track 3 (item #31) — hourly cron to auto-downgrade First-50 promo
     # users whose 30-day Pro grant has expired. Idempotent, safe to
     # skip cycles. Same env-flag opt-out as the nudge cron.

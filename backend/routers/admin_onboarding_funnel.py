@@ -24,7 +24,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db
-from services.funnel_nudge_cron import STAGES, classify_users
+from services.funnel_nudge_cron import STAGES, SUBJECTS, classify_users, render_html, render_text
+
+SNAPSHOT_COLLECTION = "onboarding_funnel_snapshots"
 
 router = APIRouter(
     prefix="/admin/onboarding-funnel", tags=["Admin — Onboarding Funnel"],
@@ -57,7 +59,7 @@ STAGE_META = {
     },
     "stage3_no_chat": {
         "label":       "Project connected, never sent a task",
-        "why":         "Repo is connected and indexed but they've never sent ORA a single message.",
+        "why":         "Repo is connected and indexed but they've never completed a real task (may have chatted without shipping).",
     },
 }
 
@@ -112,6 +114,103 @@ async def onboarding_funnel_summary():
         "total_stuck":           total_stuck,
         "stages":                stages,
     }
+
+
+@router.get("/preview-email")
+async def onboarding_funnel_preview_email(
+    stage: str = Query(..., description="One of: " + ", ".join(STAGES)),
+):
+    """Render the exact nudge email a stuck user in this stage would
+    receive — READ-ONLY, mints no real magic-login token, sends
+    nothing. Uses the most-stuck real user in the stage as the
+    template (falls back to a placeholder if the stage is empty)."""
+    if stage not in STAGES:
+        raise HTTPException(400, f"unknown stage: {stage}")
+    db = require_db()
+    buckets = await classify_users(db)
+    users = buckets.get(stage, [])
+    if users:
+        sample = min(users, key=lambda u: u.get("_stuck_since") or float("inf"))
+    else:
+        sample = {"user_id": "preview", "email": "preview@example.com", "name": "Preview User"}
+
+    text = await render_text(db, sample, stage, preview=True)
+    html = await render_html(db, sample, stage, preview=True)
+    return {
+        "stage":         stage,
+        "label":         STAGE_META[stage]["label"],
+        "subject":       SUBJECTS[stage],
+        "text":          text,
+        "html":          html,
+        "sample_email":  sample.get("email"),
+        "is_placeholder": not bool(users),
+    }
+
+
+async def capture_funnel_snapshot(db) -> dict:
+    """Compute today's stage counts and upsert one snapshot doc for
+    today's UTC date — idempotent, safe to call more than once a day
+    (the trend line just gets the latest value for that date)."""
+    buckets = await classify_users(db)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stage_counts = {key: len(buckets.get(key, [])) for key in STAGE_ORDER}
+    doc = {
+        "date":         today,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stages":       stage_counts,
+        "total_stuck":  sum(stage_counts.values()),
+    }
+    await db[SNAPSHOT_COLLECTION].update_one(
+        {"date": today}, {"$set": doc}, upsert=True,
+    )
+    return doc
+
+
+async def funnel_snapshot_cron(interval_seconds: int = 86400, *, startup_delay_seconds: int = 60) -> None:
+    """Daily loop — one snapshot/day so the Onboarding Funnel trend
+    line has history. Mirrors funnel_nudge_cron.nudge_cron's
+    startup-delay pattern (avoids double-writing during a rolling
+    deploy cutover; upsert-by-date makes a duplicate tick harmless
+    either way)."""
+    import asyncio
+
+    from cto_services.db import get_db
+    await asyncio.sleep(startup_delay_seconds)
+    while True:
+        try:
+            db = get_db()
+            if db is not None:
+                await capture_funnel_snapshot(db)
+        except Exception:
+            pass
+        await asyncio.sleep(interval_seconds)
+
+
+@router.get("/trend")
+async def onboarding_funnel_trend(
+    days: int = Query(30, ge=1, le=365),
+):
+    """Daily snapshot history for the trend line. Returns whatever
+    history exists — if the snapshot cron has only run once, this
+    correctly returns 1 point (no fabricated history)."""
+    db = require_db()
+    cutoff = (datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+    docs = await db[SNAPSHOT_COLLECTION].find(
+        {}, {"_id": 0},
+    ).sort("date", 1).to_list(length=400)
+    docs = [d for d in docs if d.get("date")]
+    docs = docs[-days:] if len(docs) > days else docs
+    # Always guarantee today's point exists in the response even if the
+    # cron hasn't ticked yet today — compute it on the fly (read-only,
+    # doesn't write) so the chart never looks stale on first load.
+    if not docs or docs[-1].get("date") != cutoff:
+        buckets = await classify_users(db)
+        stage_counts = {key: len(buckets.get(key, [])) for key in STAGE_ORDER}
+        docs.append({
+            "date": cutoff, "generated_at": datetime.now(timezone.utc).isoformat(),
+            "stages": stage_counts, "total_stuck": sum(stage_counts.values()),
+        })
+    return {"days_requested": days, "points": docs}
 
 
 @router.get("/users")

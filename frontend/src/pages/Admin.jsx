@@ -95,14 +95,14 @@ export function Badge({ children, color }) {
   );
 }
 
-export function Card({ children, style }) {
+export function Card({ children, style, ...rest }) {
   return (
     <div style={{
       background: "var(--panel-2)",
       border: "1px solid var(--border)",
       borderRadius: 4,
       ...style,
-    }}>
+    }} {...rest}>
       {children}
     </div>
   );
