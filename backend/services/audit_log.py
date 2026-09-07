@@ -27,6 +27,7 @@ Iter 209 — Aurem core architecture.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -35,6 +36,39 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 
 COLLECTION = "ora_audit"
+
+
+async def _fire_signal_alerts(
+    db, *, signals: list[str], user_id: str, project_id: str | None,
+    turn_id: str, tools_called: list[str],
+) -> None:
+    """2026-09-07 — 'Signal Alerts': ping the founder the moment a
+    real system signal (github_auth_failed, repo_not_found, etc.)
+    fires, instead of them having to check the Audit feed's
+    'Signals only' toggle manually. Reuses the existing
+    founder_alerts Resend channel (dedup: max 1 email per signal type
+    per 6h, same as every other guard-critical alert). Scheduled via
+    create_task from record_turn — never awaited inline, so a slow
+    or failing Resend call can't add latency to the chat turn whose
+    audit write triggered it."""
+    try:
+        from services.founder_alerts import send_founder_alert
+        for sig in sorted(set(signals)):
+            await send_founder_alert(
+                db,
+                source_key=f"ora_signal:{sig}",
+                level="warning",
+                guard="ora_signal",
+                title=f"ORA signal fired: {sig}",
+                detail=(
+                    f"user_id={user_id}\n"
+                    f"project_id={project_id or '—'}\n"
+                    f"turn_id={turn_id}\n"
+                    f"tools_called={tools_called}"
+                ),
+            )
+    except Exception as e:                                   # noqa: BLE001
+        logger.debug("audit_log: signal alert failed (non-blocking): %r", e)
 
 
 async def record_turn(
@@ -86,6 +120,13 @@ async def record_turn(
     except Exception as e:                                   # noqa: BLE001
         logger.warning("audit_log.insert_one failed: %r", e)
         return None
+
+    signals = list(system_signals_emitted)
+    if signals:
+        asyncio.create_task(_fire_signal_alerts(
+            db, signals=signals, user_id=user_id, project_id=project_id,
+            turn_id=turn_id, tools_called=list(tools_called),
+        ))
     return turn_id
 
 

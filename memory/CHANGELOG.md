@@ -2709,3 +2709,30 @@ toggle (`GET /admin/audit?signals_only=true` → `system_signals_emitted:
 instead of scrolling past thousands of empty ones. 5 new backend tests,
 verified live via screenshot (toggle correctly filtered 3370 rows down
 to the 3 real signal rows).
+
+## 2026-09-07 — Signal Alerts
+
+Founder gets pinged the moment a real ORA system signal fires
+(github_auth_failed, repo_not_found, etc.) instead of checking the
+Audit feed's "Signals only" toggle manually. Reuses the existing
+Resend-based `services.founder_alerts.send_founder_alert` channel
+(same 6h dedup as every other guard-critical alert) — no new
+integration. Fired via `asyncio.create_task` from
+`audit_log.record_turn()` so a slow/failing send never adds latency
+to the chat turn that triggered it; deduped to one alert per unique
+signal type per turn.
+
+Also fixed while touching this: `send_founder_alert`'s internal
+Resend HTTP call was a blocking `urllib.request.urlopen` never
+wrapped in `asyncio.to_thread` (same bug class as the LLM health
+probe fixed earlier this session) — now wrapped, benefits every
+other caller of this widely-shared function (topup alerts, incident
+log, SLO/rollback/restore-drill crons, etc.), not just this feature.
+
+5 new tests + 163 regression tests across every founder_alerts
+caller pass. Live-verified the HTTP call path fires correctly against
+the real Resend API — but the currently configured RESEND_API_KEY in
+this environment returns 401 Unauthorized (pre-existing, matches an
+issue already flagged in an earlier session for topup alerts). The
+feature is fully built/wired/tested; real emails won't land until
+that key is rotated.
