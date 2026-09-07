@@ -113,7 +113,19 @@ async def revert_last_ship(
 
     loop_id    = latest.get("loop_id")
     project_id = latest.get("project_id")
-    commit_sha = latest.get("commit_sha")
+    # R10 — for PR ships revert the LANDED merge commit (`merged_sha`,
+    # captured from the pull_request webhook), never the pre-merge head.
+    # An unmerged PR has nothing on the base branch to revert.
+    pr_status = latest.get("pr_status")
+    if latest.get("ship_branch") and pr_status != "merged":
+        raise HTTPException(409, {
+            "error": "pr_not_merged",
+            "message": ("This ship is a pull request that hasn't merged"
+                        + (" — it was closed without merging, so nothing landed."
+                           if pr_status == "closed" else
+                           " yet — close or merge the PR on GitHub instead.")),
+        })
+    commit_sha = latest.get("merged_sha") or latest.get("commit_sha")
     if not (loop_id and project_id and commit_sha):
         raise HTTPException(500, {
             "error": "outcome_row_incomplete",

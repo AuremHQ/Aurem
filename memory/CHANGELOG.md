@@ -2465,3 +2465,78 @@ Code Quality 48 (191 files > 300 lines, 240 files with CC > 10 — a
 multi-week refactor) and DevOps/Infra 0 (ci.yml push pass-rate, see
 above). Production projection with clean guard history: Bug Density
 80-100, Reliability ~90-95 → overall ≈ 80-85 before code-quality work.
+
+## 2026-09-07 — R10 rollback: revert the LANDED commit (merged_sha)
+
+- `services/loop_safety.dispatch_pull_request_webhook`: on PR closed+merged
+  persist `PR.merge_commit_sha` → `loop_outcomes.merged_sha` (+`merged_at`);
+  on closed-unmerged → `delete_ship_branch()` (existing `auremcto/` namespace
+  guard, GW_BLOCK otherwise) + `nothing_landed=true`, `branch_deleted`,
+  `branch_delete_error`. Returns `merged_sha` in the dispatch result.
+- `routers/user_rollback.revert_last_ship`: reverts `merged_sha` (falls back
+  to `commit_sha` only for legacy direct-commit ships); PR ships with
+  `pr_status != merged` → **409 pr_not_merged** (closed-unmerged: "nothing
+  landed"; open: "merge or close the PR").
+- Verification (c) was already in `loop_rollback.run_rollback` via
+  `verify_branch_head` → `rollback_status=failed` + honest error, UI shows
+  "Rolled back" only on `done`, Retry on failure — unchanged, now covered
+  by the named test.
+- Tests: `tests/test_r10_rollback_merged_sha_2026_09_07.py` — the 5 named
+  R10 tests; rollback suite 36 passed / 9 env-skipped.
+- testing_agent `/app/test_reports/iteration_390_r10_rollback_merged_sha_2026_01.json`:
+  unit ✓, live-Mongo dispatcher ✓ (merged + unmerged paths), API 409 ✓,
+  vitest 693/693 ✓. **Real GitHub E2E SKIPPED** — no clearly-named test
+  repo with the App installed on the preview account (founder rule: never
+  touch product repos). R9 rollback = VERIFIED at unit + integration level;
+  GitHub-level proof pending a test repo.
+- P2 first-experience wave audit (not built this round — budget): A
+  (single ConnectRepoBanner hero, FinishSetupBanner dead code already
+  removed 2026-08-28), D (ShipApproveCard + useShipState already unify
+  LoopLiveFeed/ShipDialog/ShipConfirmModal), E (UserNotificationBell), F
+  ("I'm ORA, by Aurem" first reply, ChatPanel:117 + services/identity),
+  G (PR mini-guide, first approval only) already exist; B (first-scan
+  nudge) and C (jargon sweep) remain open.
+
+## 2026-09-07 — 3-point focus: CI red fix · MOCK_LLM short-circuit on /chat/send · report
+
+1. **CI red — the two named causes**
+   - `api.post is not a function` (vitest, 12 tests / 3 files): the
+     tests' `vi.mock("../../lib/api")` stubs lacked `post`; already fixed
+     in the local quality pass (commit 15e98ea2), never pushed. Local
+     vitest: 130 files / 693 tests green.
+   - Login 429 (`limit is 10 per minute`, 46 hits in the invariants
+     job): live-HTTP tests share one runner IP against the CI-booted
+     uvicorn — a separate process conftest's per-test bucket reset can't
+     reach. Fix: `RATE_LIMIT_DISABLED: "1"` (+ `LOGIN_RATE_PER_MIN: "1000"`)
+     on every CI-booted backend — quality-gate.yml invariants boot step,
+     visual-regression job env, ci.yml Simulated-user QA job env. The
+     pytest process itself is untouched (test_iter212m48 still asserts
+     the real 429 path; 26/26 green locally).
+   - NOT pushed by the agent (no git remote in the pod; push = founder's
+     "Save to GitHub"). Last GitHub run is still e27cc49f (2026-09-03).
+     Honest expectation: those two causes clear ~14 failures; the Sep-3
+     invariants job showed ~40 failures and ci.yml backend-pytest has
+     coverage-ratchet/G15/visual-baseline reds — many already fixed
+     locally since Sep 3, but green/green/green is only provable after
+     the push.
+2. **MOCK_LLM short-circuit — `/chat/send`** (`routers/chat/turn.py`):
+   guard added right after `current_dev`, before budget / pre-LLM /
+   orchestrator / watchdog, mirroring chat_stream's W2 guard. Canned
+   reply, `provider="mock"`, `meta.mock=true`, no aurem-handoff fence.
+   Tests: `tests/test_mock_short_circuit_chat_send_2026_09_08.py`
+   (`t_mock_short_circuit_chat_send` — every LLM entry point armed to
+   raise; structural order test; mock-off fall-through). Live proof
+   with preview `MOCK_LLM=true`: both /chat/send and /chat/stream
+   returned provider=mock, 0 chat-completion POSTs to openrouter/groq
+   in the window (`e2e-proof/MOCK-send/live_proof.log`). `.env`
+   reverted to `MOCK_LLM=false`.
+3. **Pre-completion "JavaScript linting failed due to a linter engine
+   error" — root cause found.** The platform check runs global
+   `eslint -f unix`; ESLint resolves formatters/plugins relative to
+   cwd's `node_modules`, and neither `/app/node_modules` (empty) nor
+   `frontend/node_modules` had `eslint-formatter-unix` → exit 2 (engine
+   error, not a lint result). Also legacy-mode lookup
+   (`ESLINT_USE_FLAT_CONFIG=false`) found no `.eslintrc`. Fix: symlinks
+   in both node_modules to the globally installed formatter + react
+   plugins (no package.json change) and minimal `.eslintrc.json`
+   fallbacks at `/app` and `/app/frontend`. All 5 invocation modes exit 0.

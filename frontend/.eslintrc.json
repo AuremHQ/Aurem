@@ -1,0 +1,33 @@
+{
+  "root": true,
+  "env": { "browser": true, "node": true, "es2022": true },
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "ecmaFeatures": { "jsx": true }
+  },
+  "plugins": ["react", "react-hooks"],
+  "settings": { "react": { "version": "detect" } },
+  "reportUnusedDisableDirectives": false,
+  "ignorePatterns": [
+    "node_modules/",
+    "dist/",
+    "build/",
+    "coverage/",
+    "playwright-report/",
+    "test-results/",
+    "backend/",
+    "_extract/",
+    "e2e-proof/",
+    "e2e_*/",
+    ".aurem_cache/",
+    ".emergent/",
+    "deployer-agent-docs/",
+    "deploy_scripts/",
+    "infra/",
+    "marketing/",
+    "docs/",
+    "gate4_fixture/"
+  ],
+  "rules": {}
+}

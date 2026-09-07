@@ -445,6 +445,9 @@ jobs:
       OPENROUTER_API_KEY:   ${{ secrets.OPENROUTER_API_KEY }}
       EMERGENT_LLM_KEY:     ${{ secrets.EMERGENT_LLM_KEY }}
       AUREM_MASTER_KEY: ci-test-master-key-32-chars-long!!
+      # CI-only login/rate-limit bypass for the booted server (shared runner IP).
+      LOGIN_RATE_PER_MIN: "1000"
+      RATE_LIMIT_DISABLED: "1"
 
     steps:
       - uses: actions/checkout@v4

@@ -8733,3 +8733,9 @@ Traced this through `hooks/useGitHubConnectStatus.js` + `routers/github_app.py` 
 
 ---
 **2026-09-07 — Health Score honest lift.** Architecture automated half 31→100 (5 service→router extractions + checkout gateway inversion, 4 raw httpx→ext_client, circular import broken, own-package import rule precision); Test Coverage runner fixed (timeout 240→900 s, summary parser bug, chat package module) → real score 66; TEST_bot review pollution removed; ci.yml source-of-truth trip-wire fixed. Preview 62→63 (noise-bound); prod projection ≈80-85 once guard history is clean and CI is green. Remaining real work: Code Quality (191 bloated / 240 complex files), ci.yml "Run tests" lane + touched-file floor.
+
+---
+**2026-09-07 — R10 rollback fix.** merged_sha captured on PR-merge webhook; user rollback reverts merged_sha (409 for unmerged PR ships); cancelled PR → guarded branch delete only. 5 named tests + testing_agent verified (unit/integration); GitHub E2E pending a test repo. P2 wave: A/D/E/F/G already exist from earlier waves; B/C open.
+
+---
+**2026-09-07 — 3-point focus.** (1) CI red: `api.post` vitest mock fix already local (693/693); CI login-429 fixed via `RATE_LIMIT_DISABLED=1` on every CI-booted backend (3 workflow spots) — awaiting founder "Save to GitHub" push, then verify green. (2) MOCK_LLM now short-circuits `/chat/send` too (was stream + v2 only); named test + live proof (0 LLM calls). (3) Platform lint-engine error root-caused (unresolvable `eslint-formatter-unix`) and fixed. Details: CHANGELOG.md.

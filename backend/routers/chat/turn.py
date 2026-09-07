@@ -110,6 +110,30 @@ class ChatBody(BaseModel):
         return v if v in ok else None
 
 
+MOCK_SEND_TEXT = (
+    "I'm ORA (mock mode). The live model isn't connected on "
+    "this instance — no real LLM calls are being made. This "
+    "is a placeholder for UX testing."
+)
+
+
+def _mock_send_response(body: ChatBody, user: dict) -> dict:
+    """Canned /chat/send reply for MOCK_LLM — same shape as the real
+    return, provider='mock', never carries an aurem-handoff fence."""
+    return {
+        "ok": True, "content": MOCK_SEND_TEXT, "provider": "mock",
+        "watchdog": None, "mode": "A", "temperature": 0.0, "iterations": 0,
+        "session_id": body.session_id, "user_id": user.get("user_id"),
+        "tokens_remaining": None, "low_confidence": False, "bail_reason": None,
+        "ship_suppressed": False, "council_recalled": 0,
+        "plain_english_contract_active": False, "leak_stripped": False,
+        "length_capped": False, "output_guard_ref_id": None,
+        "council": None, "task_type": None, "tier": None, "intent": None,
+        "repo_owner": None, "repo_name": None, "branch": None,
+        "findings_saved": [], "palette_nudges": [], "meta": {"mock": True},
+    }
+
+
 @router.post("/send")
 async def chat_send(
     body: ChatBody,
@@ -118,6 +142,12 @@ async def chat_send(
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
     user = await current_dev(authorization)
+    # MOCK_LLM short-circuit (2026-09-08) — mirrors chat_stream's W2 Step 2
+    # guard. Sits BEFORE budget/pre-LLM/orchestrator so no provider,
+    # intent-escalation, watchdog or council call can ever fire in mock.
+    from services.ora_chat_v2.llm_client import is_mock as _mock_llm_on
+    if _mock_llm_on():
+        return _mock_send_response(body, user)
     # Iter 364 · Phase 3 · Token hard-stop enforcement.
     # BEFORE any LLM provider call, refuse the request if the user has
     # exhausted their effective token budget OR blown their monthly

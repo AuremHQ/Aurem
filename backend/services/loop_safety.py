@@ -627,6 +627,37 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                         "context.commit.merge_commit_sha": real_merge_sha,
                     }},
                 )
+                # R10 (2026-09-07) — the outcome row is what the one-click
+                # user rollback reads (`loop_outcomes.commit_sha` was the
+                # PRE-merge head). Persist the landed sha as `merged_sha`.
+                await db.loop_outcomes.update_one(
+                    {"ship_branch": head_ref},
+                    {"$set": {"merged_sha": real_merge_sha,
+                              "merged_at": time.time()}},
+                )
+        elif new_status == "closed":
+            # R10 (d) — cancelled PR: nothing landed on the base branch, so
+            # there is nothing to revert; just remove the throwaway branch.
+            # delete_ship_branch() enforces the `auremcto/` namespace guard.
+            deleted, derr = False, "no_token"
+            try:
+                outcome = await db.loop_outcomes.find_one({"ship_branch": head_ref})
+                project = await db.cto_projects.find_one(
+                    {"project_id": (outcome or {}).get("project_id")}) if outcome else None
+                if project:
+                    from services.pat_vault import get_repo_token
+                    repo_full = (payload.get("repository") or {}).get("full_name") or ""
+                    owner, _, repo = repo_full.partition("/")
+                    token = await get_repo_token(project)
+                    deleted, derr = await delete_ship_branch(
+                        owner=owner, repo=repo, branch=head_ref, token=token)
+            except Exception as e:                            # noqa: BLE001
+                derr = repr(e)
+            await db.loop_outcomes.update_one(
+                {"ship_branch": head_ref},
+                {"$set": {"branch_deleted": deleted, "branch_delete_error": derr,
+                          "nothing_landed": True}},
+            )
         try:
             await db.ship_pr_events.insert_one({
                 "event": f"ship_pr_{new_status}", "pr_url": pr.get("html_url"),
@@ -634,7 +665,8 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
             })
         except Exception:
             pass
-        return {"routed": "ship", "status": new_status, "head_ref": head_ref}
+        return {"routed": "ship", "status": new_status, "head_ref": head_ref,
+                "merged_sha": pr.get("merge_commit_sha") if new_status == "merged" else None}
 
     if kit_labels:
         await db.visibility_kit_pr_events.update_one(

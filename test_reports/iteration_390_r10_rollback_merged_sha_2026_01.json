@@ -1,0 +1,28 @@
+{
+  "summary": "R10 rollback-merged-sha fix verified: (1) 6 unit test files run — 36 passed, 9 skipped (env-gated E2E), 2 deselected — all 5 named R10 tests pass; (2) live-Mongo dispatch_pull_request_webhook exercised on preview DB — merged path persists loop_outcomes.merged_sha + pr_status='merged' + merged_at; closed-unmerged path sets pr_status='closed', nothing_landed=true, branch_deleted=false, branch_delete_error='no_token' (as expected without repo token), and does NOT write merged_sha; (3) API POST /api/aurem-dev/rollback/revert-last-ship: 409 pr_not_merged confirmed via a seeded throwaway unmerged-PR outcome for test@aurem.dev, cleaned up after; (4) real preview account's latest unreverted outcome is a legacy direct-commit ship (ship_branch=null) so R10 guard correctly did NOT apply and endpoint stopped at project_not_found 404 (parent project missing) — no GitHub write triggered; (5) OPTIONAL E2E: SKIPPED — no clearly-named test/repro/sandbox repo with the App installed on the preview account, per founder rule; (6) Vitest regression 130 files / 693 tests all passing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_r10_rollback_merged_sha_2026_09_07.py",
+    "/app/backend/tests/test_iter367_rollback_fake_success_fix.py",
+    "/app/backend/tests/test_r10b_rollback_verifies_landed_2026_09_04.py",
+    "/app/backend/tests/test_iter212m115_loop_safety_five_fixes.py",
+    "/app/backend/tests/test_loop_rollback.py",
+    "/app/backend/tests/test_aurem_rollback.py",
+    "/app/backend/tests/test_r10_dispatcher_live_mongo.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "loop_safety.dispatch_pull_request_webhook cleanly gates merged_sha capture on new_status=='merged' AND real_merge_sha truthy — good; the closed-branch delete path swallows all exceptions into derr string (correct: still records nothing_landed=true without failing the webhook).",
+    "user_rollback.revert_last_ship: 409 pr_not_merged fires ONLY when ship_branch is set — legacy direct-commit outcomes (no ship_branch) bypass the guard as designed; commit_sha = merged_sha or commit_sha ordering is correct for R10.",
+    "Note (non-blocking): candidates endpoint response includes commit_sha as the pre-merge SHA even for merged PR ships; consider surfacing merged_sha too for parity so the UI can display the LANDED sha rather than the throwaway-branch head."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Throwaway loop_outcomes rows for ship_branch='auremcto/ship-r10test-merged' and 'auremcto/ship-r10test-unmerged' (dispatcher live test) and one for loop_id='r10test_last' (409 API test) — ALL cleaned up in the same run. Also cleaned ship_pr_events rows for the two head_refs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "R10 rollback merged_sha capture + pr_not_merged 409 + branch-namespace guard + verify_branch_head gating are all backed by the passing 6-file suite and the new live-mongo test (test_r10_dispatcher_live_mongo.py). E2E was skipped because no test-named GitHub repo is installed on the preview account; if one is added later, run the LoopLiveFeed rollback button test on it. Preview test admin's latest outcome is a legacy pre-R10 direct-commit ship (no ship_branch) — repeat testing of 409 pr_not_merged must seed a throwaway ship_branch+pr_status='closed' row like this iteration did.",
+  "rca of the issue": "N/A — this iteration verifies an already-fixed R10 change set. No new bugs found."
+}
