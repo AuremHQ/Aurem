@@ -205,6 +205,12 @@ jobs:
           JWT_SECRET: ci-test-secret-32-chars-minimum!!
           AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
           AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
+          # Seeded CI founder (see seed step below) + a login rate-limit
+          # high enough that ~100 test logins from one runner IP don't
+          # trip the 10/min production default (429 cascade).
+          FOUNDER_EMAILS: test@aurem.dev
+          ADMIN_EMAIL: test@aurem.dev
+          LOGIN_RATE_PER_MIN: "1000"
         run: |
           uvicorn main:app --host 0.0.0.0 --port 8001 &
           echo $! > /tmp/backend.pid
@@ -212,6 +218,16 @@ jobs:
             curl -sf http://127.0.0.1:8001/health && break
             sleep 1
           done
+          # CI seed — the live-HTTP tests log in as the preview founder
+          # account; a fresh CI Mongo has no users, so create it here
+          # (FOUNDER_EMAILS makes the signup founder/admin + verified).
+          # Idempotent: a 409 on re-run is fine.
+          curl -sS -o /dev/null -w "seed signup -> %{http_code}\n" \
+            -X POST http://127.0.0.1:8001/api/aurem-dev/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@aurem.dev","password":"AuremTest2026!","name":"CI Founder"}' || true
+          # Regression-pattern registry (test_regression_registry expects >= 8 rows).
+          python scripts/seed_regression_patterns.py
       - name: Run regression + invariant tests
         working-directory: backend
         env:
@@ -233,6 +249,8 @@ jobs:
           # CI dummy values, same pattern as JWT_SECRET above.
           AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
           AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
+          FOUNDER_EMAILS: test@aurem.dev
+          FOUNDER_ALERT_FROM: "AUREM Guardian <alerts@aurem.live>"
         run: |
           # Iter 309 · Phase 0.2 — DISCOVERY-BASED test collection.
           # Prior version was a hardcoded whitelist of specific test
@@ -462,6 +480,9 @@ jobs:
       MONGO_URL:  mongodb://localhost:27017
       DB_NAME:    aurem_visual_ci
       JWT_SECRET: ci-test-secret-32-chars-minimum!!
+      FOUNDER_EMAILS: test@aurem.dev
+      ADMIN_EMAIL: test@aurem.dev
+      LOGIN_RATE_PER_MIN: "1000"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -490,6 +511,14 @@ jobs:
             curl -sf http://127.0.0.1:8001/health && break
             sleep 1
           done
+          # CI seed — the live-HTTP tests log in as the preview founder
+          # account; a fresh CI Mongo has no users, so create it here
+          # (FOUNDER_EMAILS makes the signup founder/admin + verified).
+          # Idempotent: a 409 on re-run is fine.
+          curl -sS -o /dev/null -w "seed signup -> %{http_code}\n" \
+            -X POST http://127.0.0.1:8001/api/aurem-dev/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@aurem.dev","password":"AuremTest2026!","name":"CI Founder"}' || true
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

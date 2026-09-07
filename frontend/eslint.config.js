@@ -26,7 +26,10 @@ module.exports = [
   {
     // Both globs so the config also works when eslint is invoked from the
     // repo root (/app) via the root eslint.config.js re-export.
-    files: ["src/**/*.{js,jsx}", "frontend/src/**/*.{js,jsx}"],
+    files: [
+      "src/**/*.{js,jsx}", "tests/**/*.{js,mjs}", "scripts/**/*.{js,mjs}",
+      "frontend/src/**/*.{js,jsx}", "frontend/tests/**/*.{js,mjs}", "frontend/scripts/**/*.{js,mjs}",
+    ],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

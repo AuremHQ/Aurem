@@ -82,6 +82,13 @@ async def current_dev(authorization: Optional[str] = None) -> dict:
     return payload
 
 
+def is_admin_or_founder(user: dict) -> bool:
+    """Shared privilege predicate for tier-bypass decisions (uploads,
+    image-gen, quotas). Same rule as ``require_admin`` minus the raise."""
+    tier = (user.get("tier") or "").strip().lower()
+    return bool(user.get("is_admin") or user.get("is_founder") or tier == "founder")
+
+
 async def require_admin(authorization: Optional[str] = None) -> dict:
     """Iter 212m-158 — Shared admin gate.
 

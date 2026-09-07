@@ -2345,3 +2345,62 @@ CVE-2025-5889-patched), added `eslint@9` as a devDep, root
 ignores backend/_extract/e2e-proof and matches both `src/**` and
 `frontend/src/**`. `eslint` now exits 0 from /app, `yarn eslint src`,
 and `npx eslint src`. vitest still 693/693.
+
+## 2026-09-06 — Cockpit gates: "all gates need to properly working"
+
+Production cockpit showed 6 red / 3 gray. Root-caused each against the
+real check adapters (services/health_checks.py) + preview data + the
+live GitHub Actions logs (GITHUB_ACTIONS_TOKEN).
+
+**Fixed in code (verified in preview):**
+- **G21 · Security Scan** (red → GREEN): 3 admin routers lacked the
+  router-level `dependencies=[Depends(require_admin_dep)]` gate
+  (admin_connect_diagnostic, admin_llm_config, admin_llm_usd_cap) —
+  per-handler `require_admin` was present, defense-in-depth was not.
+  Added; `scripts/g21_security_scan.run_scan()` → pass=True. Verified
+  401 without auth / 200 with founder token.
+- **G15 · Dependency CVE** (red on prod): `browserslist@4.28.2`
+  (transitive) carries CVE-2026-73088/73089 HIGH. Pinned via yarn
+  `resolutions.browserslist ^4.28.7` → 4.28.9; `g15_dependency_scan.py`
+  exits 0 (0 unhandled HIGH/CRITICAL). Prod row is written by ci.yml's
+  ingest, so it goes green on the next CI run after push.
+- **CI ↔ local drift** (red): quality-gate.yml's 3 failing jobs:
+  · frontend-vitest — partial yarn.lock (`--frozen-lockfile` error) +
+    stale `getToken` mocks → both fixed earlier today; 693/693.
+  · invariants — fresh CI Mongo had NO `test@aurem.dev` (401) and the
+    10/min login rate-limit 429-cascaded ~100 test logins. Workflow now
+    seeds the founder via signup (FOUNDER_EMAILS/ADMIN_EMAIL env),
+    seeds regression patterns, sets LOGIN_RATE_PER_MIN=1000 +
+    FOUNDER_ALERT_FROM for the CI backend. Plus 20 drifted tests
+    repointed at current behaviour (App-only token seam
+    `services.pat_vault.get_repo_token`, ModeLoopPill/AgentStatusBar
+    founder decisions, LOOP_PHASE strip in chat/worker.py, sanitizer
+    tag list, golden stream regenerated for additive `meta:{}`,
+    guard19/20 fakes gained upsert + pipeline find_one_and_update,
+    ambiguity-gate-safe prompt, parity test quarantines real rows,
+    iter340 self-seeds its 8-turn session). Local run of CI's exact
+    `-k` selection: **704 passed, 0 failed** (CI had 45F/21E).
+  · visual-regression — `restart_loop_honesty` needs the seeded login
+    (same fix); `interaction_latency` now warms the Vite route before
+    timing. Remaining 3 snapshot diffs (landing/login/chip-row) are UI
+    drift → founder runs the "Rebaseline Visual Regression" workflow.
+- Real bugs surfaced by the drifted tests and fixed: loop_engine
+  idempotent-ship path set COMPLETED/SHIPPING without `_emit` (feed
+  drift); coverage ratchet's HIGH-RISK list missed the chat/cto_projects
+  packages; ora_chat tier-bypass now uses shared
+  `cto_services.auth.is_admin_or_founder`; narration string over budget.
+
+**Need founder action (not code):**
+- **G10 Founder Alerts + G20 "Resend Email: HTTP 400"** — Resend says
+  `API key is invalid` (verified live against api.resend.com). Rotate
+  RESEND_API_KEY in prod env.
+- **G20** — Firecrawl credits exhausted; OpenRouter $0.65 left. Top up;
+  incidents auto-resolve when the probes recover.
+- **Vanguard · E2B Sandbox** (prod only) — admin master switch is OFF
+  with active modes. Re-enable at /admin/vanguard or ack.
+- **Gray** — VERCEL_API_TOKEN, AUREM_ORG_NAME/AUREM_ORG_GITHUB_APP_TOKEN/
+  AUREM_ORG_DEFAULT_BRANCH unset (or ack); Day-14 recheck is a dated
+  reminder (goes red 2026-09-11 until marketing/kit-citations-day14.md
+  gets the results).
+- Save to GitHub (CI re-run → drift + G15 green), rebaseline visuals,
+  then deploy to production.

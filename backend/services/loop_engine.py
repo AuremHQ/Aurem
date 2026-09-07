@@ -1579,9 +1579,8 @@ class LoopEngine:
                             )
                             await self._narrate(
                                 step="execute", tone="danger",
-                                text=(f"{path} too large ({_cur_bytes // 1024}"
-                                      f" KB > {_HUGE_FILE_BYTES // 1024} KB) "
-                                      f"— split the file to proceed"),
+                                text=(f"{path} too large ({_cur_bytes // 1024}KB"
+                                      f">{_HUGE_FILE_BYTES // 1024}KB) — split it"),
                                 correlation_id=f"execute:{path}",
                             )
                             return None
@@ -3570,12 +3569,15 @@ class LoopEngine:
             if existing:
                 self.context["commit"] = existing
                 self.context.pop("ship_pending", None)
-                self.state = LoopState.COMPLETED
+                await self._emit(
+                    LoopState.COMPLETED, "ship", step=5, total_steps=5,
+                    message=f"Already shipped — commit {str(existing.get('sha') or '')[:7]}",
+                )
             return
 
         # Resume — push the commit for real.
-        self.state = LoopState.SHIPPING
-        self.phase = "ship"
+        await self._emit(LoopState.SHIPPING, "ship", step=5, total_steps=5,
+                         message="Preparing to ship…")
         # X1/W3 hardening (2026-08-30, overnight-loop-2 P0) — locked
         # decision: a mock-mode loop REFUSES to write to a real repo,
         # regardless of how far planning got. Never silently ships

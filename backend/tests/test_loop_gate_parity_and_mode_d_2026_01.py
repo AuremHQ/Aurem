@@ -392,6 +392,13 @@ class TestGateParityDashboard:
         # Also nuke any TEST- rows on pro tier from the earlier telemetry
         # tests so parity math is deterministic.
         now = datetime.now(timezone.utc)
+        # Quarantine REAL pro/team rows inside the 24h parity window so
+        # earlier live tests can't dilute the seeded drift; restored below.
+        _win = {"tier": {"$in": ["pro", "team"]},
+                "created_at": {"$gte": now - timedelta(hours=25)}}
+        _parked = list(mongo.loop_gate_log.find(_win))
+        if _parked:
+            mongo.loop_gate_log.delete_many({"_id": {"$in": [r["_id"] for r in _parked]}})
         # Seed: 6 loop_start rows for pro — 5 allowed, 1 denied  (denial ~17%)
         # Seed: 6 chat_stream rows for pro — 1 allowed, 5 denied (denial ~83%)
         # Delta = |0.17 - 0.83| ≈ 0.66 >= 0.30 → mismatch True.
@@ -424,6 +431,8 @@ class TestGateParityDashboard:
         mongo.loop_gate_log.insert_many(rows)
         yield
         mongo.loop_gate_log.delete_many({"user_id": SEED_UID})
+        if _parked:
+            mongo.loop_gate_log.insert_many(_parked)
 
     def test_status_returns_gate_parity_with_mismatch_flagged(
             self, founder_token, mongo):

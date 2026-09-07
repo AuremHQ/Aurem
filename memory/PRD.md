@@ -8727,3 +8727,6 @@ Traced this through `hooks/useGitHubConnectStatus.js` + `routers/github_app.py` 
 
 ---
 **2026-09-06 — Codebase-quality pass.** Single toast facade (`lib/toastApi.js`, sonner removed, 11 call sites unified/fixed), 341 dead backend imports removed with re-export surfaces preserved, `repo_heal` un-awaited `_finalise` bug fixed, stale tests rewritten; vitest 693/693, targeted backend 185/185, 0 new failures vs baseline. Details: CHANGELOG.md. Still pending deploy to production together with the HTML entry-file fallback.
+
+---
+**2026-09-06 — Cockpit gates pass.** G21 fixed (3 admin routers gated at router level), G15 fixed (browserslist CVE pin), CI drift fixed (workflow seeds CI founder + rate-limit env; 20 drifted tests repointed; CI selection 704/704 locally; real loop_engine `_emit` gap fixed). Remaining reds need founder inputs: rotate invalid RESEND_API_KEY (G10 + incident), top up Firecrawl/OpenRouter (G20), re-enable E2B at /admin/vanguard, optional VERCEL/AUREM_ORG env; then Save-to-GitHub → rebaseline visuals → deploy. Details: CHANGELOG.md.

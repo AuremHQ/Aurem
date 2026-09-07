@@ -38,6 +38,25 @@ os.environ.setdefault("JWT_SECRET", os.environ.get("JWT_SECRET", "test-secret-ke
 # ── Shared fixtures ───────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _app_only_token_stub(monkeypatch):
+    """2026-06 PAT removal — repo auth is GitHub-App-only. These tests
+    seed projects with per-project plaintext `github_token` rows to
+    prove isolation, so resolve tokens from the row (keeping the
+    per-project identity + the fail-closed behaviour when absent)."""
+    from services.pat_vault import GithubAppAuthError
+    from services.vault import decrypt
+    async def _tok(project):
+        ct = (project or {}).get("github_token")
+        if not ct:
+            raise GithubAppAuthError("app_installation_missing", "no installation")
+        try:
+            return await decrypt(project.get("user_id"), ct, kind="github_token")
+        except Exception as e:
+            raise GithubAppAuthError("app_token_rejected", str(e)) from e
+    monkeypatch.setattr("services.pat_vault.get_repo_token", _tok)
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_and_scratch_users():
     """Create two scratch users (A and B) + two projects for A + one
@@ -188,7 +207,7 @@ async def test_4_build_bin_context_pat_decrypt_fail(db_and_scratch_users):
             )
         # Vault decrypt returns None → OAuth fallback also None → 403.
         assert ei.value.status_code == 403
-        assert "github credentials failed" in str(ei.value.detail).lower()
+        assert "isn't available" in str(ei.value.detail).lower()  # user-safe App-only copy
     finally:
         await d["db"].cto_projects.delete_one({"project_id": poison_pid})
 

@@ -38,8 +38,9 @@ def test_loop_ship_calls_real_github_commit_files():
     )
     # Must import the real writer
     assert "from services.github_api_writer import commit_files" in src
-    # Must fall back to OAuth access_token if project github_token missing
-    assert "github" in src and "access_token" in src
+    # 2026-06 PAT/OAuth removal — GitHub App is the ONLY auth path; the
+    # old OAuth access_token fallback must stay gone.
+    assert "access_token" not in src, "OAuth token fallback crept back into loop_engine"
     # Must persist the commit metadata
     assert '"commit_sha":' in src or "commit_sha=" in src
     # Empty-files case must NOT fake a ship — must pause for user
@@ -54,10 +55,11 @@ def test_sanitizer_strips_xml_style_tool_call_tags():
     # Confirm the closing-tag pattern and an orphan-open fallback both
     # exist (the orphan path catches partial streams).
     assert "tool_call" in src
-    # The matched/closed regex
-    assert "<\\s*(tool_call" in src
-    # The orphan-open fallback regex (no closing tag)
-    occurrences = src.count("<\\s*(tool_call")
+    # Iter 388h — the tag set is now a list (`INTERNAL_FENCES`) joined into
+    # `_INTERNAL_TAG_RE`; both the paired regex and the orphan-open
+    # fallback regex are built from it.
+    assert '"tool_call"' in src
+    occurrences = src.count("<\\\\s*(${_INTERNAL_TAG_RE})")
     assert occurrences >= 2, (
         "Expected BOTH paired + orphan-open XML-tag strips for "
         "robust handling of cut streams."

@@ -30,13 +30,13 @@ BACKEND = Path(__file__).resolve().parents[1]
 def test_ora_learning_silent_catch_sites_now_log():
     src = (BACKEND / "services" / "ora_learning.py").read_text()
     # Must have a debug line for the rate-limit swallow
-    assert "logger.debug(" in src and "rate-limit lookup failed" in src, \
+    assert "logger.debug(" in src and "rate-limit-lookup failed" in src, \
         "rate-limit try/except must log at debug"
     # Must have a WARNING line for the top-level invariant catch-all
     assert "logger.warning(" in src and "shadow-logging invariant" in src, \
         "top-level invariant catch-all must log at warning"
     # Both messages must use the grep prefix
-    assert src.count('"[silent-catch] ora_learning.py:') == 2, \
+    assert src.count('"[silent-catch] ora_learning.maybe_log_ora_escalation') == 2, \
         "expected exactly 2 [silent-catch] prefix strings"
 
 
@@ -127,7 +127,7 @@ async def test_rate_limit_failure_logs_and_fails_open(caplog):
 
     # 1) Rate-limit debug log fired
     assert any(
-        "[silent-catch] ora_learning.py" in r.getMessage()
+        "[silent-catch] ora_learning." in r.getMessage()
         and "rate-limit" in r.getMessage()
         for r in caplog.records
     ), f"expected rate-limit debug log; got: {[r.getMessage() for r in caplog.records]}"
@@ -175,7 +175,7 @@ async def test_invariant_catch_all_logs_warning_and_swallows(caplog):
     # 2) WARNING log fired with the [silent-catch] prefix
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any(
-        "[silent-catch] ora_learning.py" in r.getMessage()
+        "[silent-catch] ora_learning." in r.getMessage()
         and "shadow-logging invariant" in r.getMessage()
         for r in warnings
     ), f"expected invariant WARNING log; got: {[(r.levelname, r.getMessage()) for r in caplog.records]}"

@@ -182,6 +182,31 @@ class _Coll:
         rows = [d for d in self.docs if self._match(d, query)]
         return dict(rows[0]) if rows else None
 
+    async def find_one_and_update(self, query, update, upsert=False, return_document=None, projection=None):
+        """Supports the pipeline-style `[{"$set": {...}}]` upsert used by
+        incident_log.open_incident ($ifNull / $add expressions only)."""
+        def _eval(expr, doc):
+            if isinstance(expr, dict):
+                if "$ifNull" in expr:
+                    cur = _eval(expr["$ifNull"][0], doc)
+                    return cur if cur is not None else _eval(expr["$ifNull"][1], doc)
+                if "$add" in expr:
+                    return sum(_eval(e, doc) or 0 for e in expr["$add"])
+            if isinstance(expr, str) and expr.startswith("$"):
+                return doc.get(expr[1:])
+            return expr
+        target = next((d for d in self.docs if self._match(d, query)), None)
+        if target is None:
+            if not upsert:
+                return None
+            target = {}
+            self.docs.append(target)
+        stages = update if isinstance(update, list) else [update]
+        for st in stages:
+            for k, v in st.get("$set", {}).items():
+                target[k] = _eval(v, target)
+        return dict(target)
+
     def find(self, query, proj=None):
         return _Cursor([d for d in self.docs if self._match(d, query)])
 

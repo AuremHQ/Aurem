@@ -11,6 +11,8 @@
     "test:visual:update": "playwright test --update-snapshots",
     "test:visual:report": "playwright show-report",
     "test": "vitest run",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "test:watch": "vitest",
     "test:a11y": "vitest run src/components/__tests__/a11y_components.test.jsx",
     "verify:prod": "node scripts/postdeploy-verify.mjs https://auremcto.com/signup",
@@ -58,6 +60,7 @@
     "vitest-axe": "^0.1.0"
   },
   "resolutions": {
+    "browserslist": "^4.28.7",
     "form-data": "^4.0.6",
     "tmp": "^0.2.6",
     "postcss": "^8.5.18",

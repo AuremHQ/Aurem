@@ -42,7 +42,27 @@ def test_auth_me_no_sensitive_keys(auth_headers):
     assert not leaks, f"Sensitive keys leaked in /auth/me: {leaks} body={r.text[:500]}"
 
 
+def _seed_history_session(auth_headers):
+    """Self-seed the 8-turn session (fresh CI DBs have none). Writes the
+    same `chat_sessions.turns` shape services/chat_helpers._persist_turn
+    produces, scoped to the logged-in user."""
+    from pymongo import MongoClient
+    me = requests.get(f"{BASE_URL}/api/aurem-dev/auth/me", headers=auth_headers, timeout=15).json()
+    uid = me.get("user_id") or (me.get("user") or {}).get("user_id")
+    assert uid, f"/auth/me returned no user_id: {me}"
+    turns = []
+    for i in range(4):
+        turns.append({"role": "user", "content": f"turn {i} question", "ts": float(i * 2)})
+        turns.append({"role": "assistant", "content": f"turn {i} answer", "ts": float(i * 2 + 1),
+                      "provider": "loop" if i == 3 else "seed"})
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    db.chat_sessions.update_one(
+        {"session_id": SESSION_ID, "user_id": uid},
+        {"$set": {"turns": turns, "title": "iter340 seed"}}, upsert=True)
+
+
 def test_chat_history_8_turns(auth_headers):
+    _seed_history_session(auth_headers)
     r = requests.get(f"{BASE_URL}/api/aurem-dev/chat/history",
                      params={"session_id": SESSION_ID}, headers=auth_headers, timeout=15)
     assert r.status_code == 200, r.text

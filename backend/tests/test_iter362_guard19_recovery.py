@@ -41,13 +41,18 @@ class FakeCollection:
             rows.sort(key=lambda d: d.get(key, 0), reverse=direction < 0)
         return rows[0] if rows else None
 
-    async def update_one(self, query, update):
+    async def update_one(self, query, update, upsert=False):
         n = 0
         for d in self.docs:
             if self._match(d, query):
                 self._apply(d, update)
                 n = 1
                 break
+        if n == 0 and upsert:
+            d = {k: v for k, v in query.items() if not isinstance(v, dict)}
+            d.update(update.get("$setOnInsert", {}))
+            self._apply(d, update)
+            self.docs.append(d)
         return type("R", (), {"modified_count": n})()
 
     async def update_many(self, query, update):
@@ -82,6 +87,8 @@ class FakeDB:
         self.process_boots = FakeCollection()
         self.process_loop_trips = FakeCollection()
         self.topup_alerts = FakeCollection()
+        self.process_shutdown_marker = FakeCollection()
+        self.incidents = FakeCollection()
 
 
 class TestSupervisorConfig:
@@ -175,7 +182,8 @@ class TestQARow:
         assert st["guard"] == "G19"
         assert st["supervisor_autorestart"] is True
         assert st["restarts_7d"] == 1
-        assert st["last_boot"]["reason"] == "supervisor_start"
+        # legacy default reason is re-attributed to the real cause
+        assert st["last_boot"]["reason"] == "first_boot"
         assert st["loop_trips_7d"] == 0
         assert "heartbeat_age_s" in st
 
