@@ -223,7 +223,7 @@ _TERMINAL_LOOP_STATES = {"completed", "failed", "aborted", "expired"}
 
 
 class GithubBulkRevokeBody(BaseModel):
-    installation_ids: list[int] = Field(..., min_length=1, max_length=100)
+    installation_ids: list[int] = Field(..., min_length=1, max_length=10)
     confirm_text: Optional[str] = None
     reason: Optional[str] = Field(None, max_length=500)
     dry_run: bool = False
@@ -445,14 +445,21 @@ async def github_bulk_revoke(
         return {"ok": True, "dry_run": True, "preview": preview,
                 "valid_count": valid_count, "total": len(ids)}
 
-    # ── HARD GUARD — server-side, cannot be bypassed from the client ──
-    if valid_count > 0 and (body.confirm_text or "").strip().upper() != "REVOKE":
+    # ── HARD GUARD — server-side, cannot be bypassed from the client.
+    #    2026-09-07 — also require the typed "REVOKE" phrase for any
+    #    batch over 5, even if every connection in it is already
+    #    broken — a misclick selecting 30 rows must not fire silently
+    #    just because none of them currently work. ────────────────────
+    if (valid_count > 0 or len(ids) > 5) and (body.confirm_text or "").strip().upper() != "REVOKE":
         raise HTTPException(400, detail={
             "error": "hard_guard_blocked",
             "message": (
                 f"{valid_count} of your {len(ids)} selected installations "
                 "have a WORKING GitHub connection. Revoking will break "
                 "something that currently works for them. Retry with "
+                "confirm_text=\"REVOKE\" to proceed."
+            ) if valid_count > 0 else (
+                f"{len(ids)} installations selected (over 5) — retry with "
                 "confirm_text=\"REVOKE\" to proceed."
             ),
             "valid_count": valid_count, "total": len(ids),
@@ -483,6 +490,19 @@ async def github_bulk_revoke(
                 f"Bulk-revoke rate limit — wait {int(REVOKE_COOLDOWN_SECONDS - age)}s "
                 "before the next batch."
             ))
+
+    # ── Reason is REQUIRED for a real revoke (2026-09-07 founder
+    #    review) — stays optional for the non-destructive flag-idle
+    #    action below, scoped to revoke only. Deliberately LAST in the
+    #    gate chain (after hard-guard/live-verified/rate-limit) so it
+    #    never masks one of those pre-existing, more fundamental
+    #    blocks with a less specific error in tests/clients that don't
+    #    send a reason. ─────────────────────────────────────────────
+    if not (body.reason or "").strip():
+        raise HTTPException(400, detail={
+            "error": "reason_required",
+            "message": "A reason is required for Revoke (shows in the audit log).",
+        })
 
     from services.github_bulk_revoke import bulk_revoke as _bulk_revoke
     results = await _bulk_revoke(ids)
@@ -516,6 +536,7 @@ async def github_bulk_revoke(
         "actor": admin_key,
         "action": "bulk_github_revoke",
         "installation_ids": ids,
+        "user_ids": list({p["user_id"] for iid in ids for p in (by_iid.get(iid) or []) if p.get("user_id")}),
         "reason": body.reason,
         "result": {"revoked": len(revoked), "skipped": len(skipped), "failed": len(failed)},
         "per_installation": results,
@@ -565,6 +586,34 @@ async def github_flag_idle(
     except Exception:
         pass
     return {"ok": True, "flagged": res.modified_count}
+
+
+@router.get("/audit/actions")
+async def admin_audit_actions(
+    limit: int = 100,
+    authorization: Optional[str] = Header(None),
+):
+    """Admin ACTION audit (bulk-revoke, flag-idle, etc.) from
+    `db.admin_audit` — distinct from GET /admin/audit (routers/
+    admin_analytics.py), which reads `ora_audit` for per-turn ORA
+    chat audit. Both surface on the same `/admin/audit` page (see
+    AdminAuditPage.jsx's "Admin actions" tab) since they're both
+    conceptually "the audit log an admin looks at", even though
+    they're two unrelated collections with unrelated shapes.
+    Added 2026-09-07 so bulk-revoke's audit_row write (which already
+    existed) is actually visible somewhere in the UI."""
+    await _require_admin(authorization)
+    from cto_services.db import get_db
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+
+    rows = await db.admin_audit.find(
+        {}, {"_id": 0},
+    ).sort("ts", -1).limit(max(1, min(int(limit or 100), 500))).to_list(500)
+    for r in rows:
+        r["ts"] = _iso(r.get("ts"))
+    return {"ok": True, "rows": rows, "count": len(rows)}
 
 
 # ────────────────────────────────────────────────────────────────────

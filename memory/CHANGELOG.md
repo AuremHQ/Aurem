@@ -2582,3 +2582,50 @@ onboarding_first_scan|identity|chat_send): 268 passed, 11 skipped, 6 failed —
 was a live-HTTP timeout that passes on rerun → **0 new failures vs the
 baseline (405/406-entry test-baseline.txt)**. Preview ingress intermittently
 429s Vite module fetches under rapid reloads (infra, not product).
+
+## 2026-09-07 — GitHub Bulk Revoke: Step 2 (UI bugs) + Step 3 (safety rails)
+
+Per founder's 4-step brief for `/admin/github-bulk-revoke`. **Step 1 (real
+disposable-installation live drill) remains BLOCKED** — sandbox has no
+configured GitHub App (`GitHubAppNotConfigured`), consistent with the
+2026-08-30 founder decision in `GITHUB_BULK_REVOKE_DRILL_VERIFY.md` to
+defer the live U1-U6 drill to production when the founder creates a
+disposable installation. **`github_bulk_revoke_live_verified` stays OFF
+and the Revoke button stays disabled end-to-end** — confirmed live via
+screenshot even with rows selected + reason filled.
+
+Shipped ahead of the drill (does not require it):
+- Fixed stale-tab-flash: rows only render when `rowsView === view`
+  (`AdminGithubBulkRevoke.jsx`).
+- Added tab subtext distinguishing "Revokable (broken only)" vs
+  "Idle (working, unused)".
+- Hard guard now also requires the typed REVOKE phrase for any selection
+  >5, even if none are currently valid (was: only when valid_count>0).
+- Batch capped at 10 (`GithubBulkRevokeBody.installation_ids` `max_length=10`)
+  + matching client-side guard/disabled state.
+- `reason` is now REQUIRED to revoke (still optional for the
+  non-destructive flag-idle action) — enforced LAST in the gate chain
+  (after hard-guard/live-verified/rate-limit) so it never masks those.
+- Audit row now also records `user_ids`; new `GET /admin/audit/actions`
+  + "Admin actions" tab on the existing `/admin/audit` sidebar page makes
+  every bulk-revoke/flag-idle audit entry actually visible (previously
+  written to `admin_audit` but surfaced nowhere in the UI — the sidebar
+  "Audit Log" only ever showed ORA chat-turn audit, a separate collection).
+- Fixed unrelated pre-existing gap: `sonner` was imported by `ChatPanel.jsx`
+  but never installed — added via `yarn add sonner`.
+
+**Tests:** `tests/test_bulk_github_revoke_2026_08_30.py` 23/23 passed
+(3 new: `test_reason_required_for_real_revoke`, `test_batch_capped_at_ten`,
+`test_hard_guard_blocks_over_five_even_all_broken`). testing_agent pass
+(`iteration_gbr_step2_step3_2026_01.json`): 0 critical/minor issues, all
+bug fixes + safety rails verified live, negative case (nothing can
+actually revoke while flag is OFF) explicitly confirmed. 2 pre-existing
+failures in `test_github_bulk_revoke_e2e_2026_01.py` are unrelated —
+that file posts to the wrong login path (`/auth/login` instead of the
+real `/aurem-dev/auth/login`), confirmed failing even with this
+session's changes fully stashed out.
+
+**Next for founder:** create a disposable GitHub App installation in
+production (not `152797252`/`ora-grounding`), run the real U1-U6 drill
+per `GITHUB_BULK_REVOKE_DRILL_VERIFY.md`, then flip
+`github_bulk_revoke_live_verified` when confirmed.

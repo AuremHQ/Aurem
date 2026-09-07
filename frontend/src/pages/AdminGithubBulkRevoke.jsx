@@ -47,14 +47,29 @@ function PATBadge({ status }) {
 }
 
 const VIEWS = [
-  { id: "revokable", label: "Revokable (broken only)" },
-  { id: "idle",      label: "Idle (working, unused)" },
+  { id: "revokable", label: "Revokable (broken only)",
+    hint: "Connection itself is broken (invalid token, uninstalled on GitHub's side, etc.)" },
+  { id: "idle",      label: "Idle (working, unused)",
+    hint: "Connection works fine, but 0 tasks run — candidates for re-engagement or cleanup" },
   { id: "all",       label: "All" },
 ];
+
+const MAX_REVOKE_BATCH = 10;
 
 export default function AdminGithubBulkRevoke() {
   const [view, setView] = useState("revokable");
   const [rows, setRows] = useState([]);
+  // 2026-09-07 bug fix — `rows` alone isn't enough to know whether
+  // it's safe to render: on a tab switch, React can commit a render
+  // where `view` has already changed but `loading`/`rows` still hold
+  // the PREVIOUS tab's values (the `useEffect` that kicks off the new
+  // fetch + `setLoading(true)` only runs AFTER that render commits).
+  // That one frame used to show the wrong tab's rows. `rowsView`
+  // tracks which `view` the current `rows` actually belong to, so the
+  // render check below can catch that frame and show the loading
+  // state instead — "don't render any rows for a tab until that
+  // tab's filtered fetch resolves."
+  const [rowsView, setRowsView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [liveVerified, setLiveVerified] = useState(false);
   const [selected, setSelected] = useState(new Set());
@@ -72,9 +87,11 @@ export default function AdminGithubBulkRevoke() {
     try {
       const r = await api.get("/admin/github/connections", { params: { view } });
       setRows(r.data.rows || []);
+      setRowsView(view);
       setLiveVerified(!!r.data.live_verified);
     } catch {
       setRows([]);
+      setRowsView(view);
       toast({ message: "Failed to load GitHub connections", kind: "error" });
     } finally {
       setLoading(false);
@@ -105,6 +122,14 @@ export default function AdminGithubBulkRevoke() {
 
   const startDryRun = async () => {
     if (selected.size === 0) return;
+    if (selected.size > MAX_REVOKE_BATCH) {
+      toast({ message: `Max ${MAX_REVOKE_BATCH} per batch — deselect some rows to continue.`, kind: "error" });
+      return;
+    }
+    if (!reason.trim()) {
+      toast({ message: "A reason is required before revoking (shows in the audit log).", kind: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const r = await api.post("/admin/github/bulk-revoke", {
@@ -155,8 +180,12 @@ export default function AdminGithubBulkRevoke() {
     }
   };
 
-  const needsTypedConfirm = preview && preview.valid_count > 0;
+  const showingStaleOrLoading = loading || rowsView !== view;
+
+  const needsTypedConfirm = preview && (preview.valid_count > 0 || preview.total > 5);
   const canExecute = preview && (!needsTypedConfirm || confirmText.trim().toUpperCase() === "REVOKE");
+  const overBatchCap = selected.size > MAX_REVOKE_BATCH;
+  const reasonMissingForRevoke = !reason.trim();
 
   return (
     <div style={{ padding: "24px 20px", maxWidth: 1280 }} data-testid="gbr-page">
@@ -187,17 +216,27 @@ export default function AdminGithubBulkRevoke() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
         {VIEWS.map((v) => (
           <button key={v.id}
                   data-testid={"gbr-view-" + v.id}
                   onClick={() => setView(v.id)}
+                  title={v.hint || undefined}
                   style={{
                     padding: "6px 10px", borderRadius: 3, fontSize: 11, cursor: "pointer",
                     border: "1px solid " + (view === v.id ? "var(--accent)" : "var(--border)"),
                     background: view === v.id ? "var(--accent-soft)" : "var(--panel-2)",
                     color: view === v.id ? "var(--accent)" : "var(--text-dim)",
-                  }}>{v.label}</button>
+                    textAlign: "left", maxWidth: 220,
+                  }}>
+            <div>{v.label}</div>
+            {v.hint && (
+              <div data-testid={"gbr-view-hint-" + v.id} style={{
+                fontSize: 9, marginTop: 2, fontWeight: 400, whiteSpace: "normal",
+                color: view === v.id ? "var(--accent)" : "var(--text-faint)", opacity: 0.85,
+              }}>{v.hint}</div>
+            )}
+          </button>
         ))}
         <button data-testid="gbr-refresh" onClick={load} disabled={loading}
                 style={{
@@ -227,7 +266,7 @@ export default function AdminGithubBulkRevoke() {
           <span>Email / Repo</span><span>Status</span><span>PAT</span>
           <span>Tasks</span><span>In-flight</span><span>Last session</span><span>Flagged</span>
         </div>
-        {loading ? (
+        {showingStaleOrLoading ? (
           <div style={{ padding: 20, color: "var(--text-faint)", fontSize: 11 }}>
             <Loader2 size={12} className="spin" style={{ marginRight: 6, verticalAlign: "middle" }} />
             Loading…
@@ -274,15 +313,16 @@ export default function AdminGithubBulkRevoke() {
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
         <input
           data-testid="gbr-reason-input"
-          type="text" placeholder="Optional reason (audit log)…"
+          type="text" placeholder="Reason (required to revoke, optional to flag idle)…"
           value={reason} onChange={(e) => setReason(e.target.value)}
           style={{
-            flex: "0 0 260px", padding: "6px 8px", background: "var(--panel-2)",
-            border: "1px solid var(--border)", color: "var(--text)", fontSize: 11, borderRadius: 3,
+            flex: "0 0 300px", padding: "6px 8px", background: "var(--panel-2)",
+            border: "1px solid " + (reasonMissingForRevoke ? "var(--border)" : "#4ade8060"),
+            color: "var(--text)", fontSize: 11, borderRadius: 3,
           }}
         />
-        <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
-          {selected.size} selected
+        <span style={{ fontSize: 11, color: overBatchCap ? "#f87171" : "var(--text-faint)" }}>
+          {selected.size} selected{overBatchCap ? ` (max ${MAX_REVOKE_BATCH} per revoke batch)` : ""}
         </span>
         <button data-testid="gbr-flag-idle-btn"
                 onClick={flagIdle}
@@ -297,15 +337,17 @@ export default function AdminGithubBulkRevoke() {
         </button>
         <button data-testid="gbr-revoke-preview-btn"
                 onClick={startDryRun}
-                disabled={busy || selected.size === 0 || !liveVerified}
+                disabled={busy || selected.size === 0 || !liveVerified || overBatchCap}
                 title={!liveVerified
                   ? "Live verification pending — this tool is not yet cleared for use"
-                  : "Preview blast radius before revoking"}
+                  : overBatchCap
+                    ? `Max ${MAX_REVOKE_BATCH} per batch — deselect some rows`
+                    : "Preview blast radius before revoking (reason required)"}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "7px 12px", borderRadius: 3, fontSize: 11, cursor: "pointer",
                   border: "1px solid #f8717140", background: "#f8717114", color: "#f87171",
-                  opacity: (selected.size === 0 || !liveVerified) ? 0.5 : 1,
+                  opacity: (selected.size === 0 || !liveVerified || overBatchCap) ? 0.5 : 1,
                 }}>
           <ShieldAlert size={12} /> Revoke selected…
         </button>
@@ -328,6 +370,10 @@ export default function AdminGithubBulkRevoke() {
           <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 10 }}>
             This kills AUREM App access + all install tokens for these installations.
             GitHub branches/PRs remain but AUREM loses access — one-way, they must re-install.
+            {" "}<strong style={{ color: "var(--text)" }}>
+              This will uninstall the GitHub App for these users. They will need to
+              reconnect if they return. Their project data is NOT deleted.
+            </strong>
           </div>
           {preview.preview.map((p) => (
             <div key={p.installation_id} data-testid={"gbr-preview-row-" + p.installation_id}
@@ -338,7 +384,7 @@ export default function AdminGithubBulkRevoke() {
             </div>
           ))}
 
-          {preview.valid_count > 0 && (
+          {needsTypedConfirm && (
             <div data-testid="gbr-hard-guard-warning" style={{
               display: "flex", gap: 8, alignItems: "flex-start",
               background: "#f8717118", border: "1px solid #f8717150",
@@ -347,10 +393,14 @@ export default function AdminGithubBulkRevoke() {
               <AlertTriangle size={14} style={{ color: "#f87171", flexShrink: 0, marginTop: 1 }} />
               <div style={{ color: "var(--text-dim)" }}>
                 <strong style={{ color: "#f87171" }}>
-                  {preview.valid_count} of your {preview.total} selected users have a WORKING
-                  GitHub connection.
+                  {preview.valid_count > 0
+                    ? `${preview.valid_count} of your ${preview.total} selected users have a WORKING GitHub connection.`
+                    : `${preview.total} installations selected — over the 5-account no-typing threshold.`}
                 </strong>{" "}
-                Revoking will break something that currently works for them. Type{" "}
+                {preview.valid_count > 0
+                  ? "Revoking will break something that currently works for them."
+                  : "A misclick this size is exactly what this check exists to catch."}{" "}
+                Type{" "}
                 <code style={{ color: "var(--code-fg)", background: "var(--code-bg)", padding: "0 4px", borderRadius: 3 }}>REVOKE</code>{" "}
                 below to proceed.
               </div>
