@@ -16,6 +16,15 @@ Definition of "stuck" (confirm/adjust with founder before any action):
     exclusion the funnel_nudge_cron uses for internal/test accounts —
     see services/funnel_nudge_cron.py::classify_users)
 
+2026-09-07 founder review — "installed but never returned" and
+"installed, explored/chatted, but never added a project" are two very
+different categories (the 2nd may be a still-interested user blocked
+by a UI confusion / onboarding bug on OUR side, not abandonment). This
+script does NOT filter either category out — both stay in the list —
+it adds a `category` column (`never_returned` vs `engaged_no_project`)
+plus a visible `chat_session_count` so a human can eyeball engagement
+before any revoke decision. Never lump these into one bucket silently.
+
 `last_active` is NOT a stored field anywhere in this codebase (no
 dev_users.last_active / last_login_at exists) — this script derives
 it as the most recent of {dev_users.created_at, MAX(chat_sessions.
@@ -108,15 +117,24 @@ async def main(days: int) -> None:
               "(excluded). Nothing to report.")
         return
 
-    # 4) Best-effort last_active_derived from chat_sessions.updated_at.
+    # 4) Best-effort last_active_derived + chat_session_count from
+    #    chat_sessions. Iter 2026-09-07 — COUNT every session per user
+    #    (not just the latest timestamp) so we can flag `category`
+    #    below: a user who chatted at all, even with zero projects, is
+    #    a materially different case from one who installed and never
+    #    came back.
     last_chat: dict[str, float] = {}
+    chat_count: dict[str, int] = {}
     cur = db.chat_sessions.find(
         {"user_id": {"$in": final_ids}}, {"_id": 0, "user_id": 1, "updated_at": 1},
     )
     async for s in cur:
         uid = s.get("user_id")
+        if not uid:
+            continue
+        chat_count[uid] = chat_count.get(uid, 0) + 1
         ts = s.get("updated_at") or 0
-        if uid and ts > last_chat.get(uid, 0):
+        if ts > last_chat.get(uid, 0):
             last_chat[uid] = ts
 
     rows = []
@@ -125,6 +143,7 @@ async def main(days: int) -> None:
         created = u.get("created_at")
         created_ts = created.timestamp() if hasattr(created, "timestamp") else (created or 0)
         last_active = max(last_chat.get(uid, 0), created_ts)
+        n_sessions = chat_count.get(uid, 0)
         rows.append({
             "user_id":         uid,
             "email":           u.get("email"),
@@ -133,17 +152,30 @@ async def main(days: int) -> None:
             "last_active_derived": (
                 time.strftime("%Y-%m-%d", time.gmtime(last_active)) if last_active else "unknown"
             ),
+            "chat_session_count": n_sessions,
+            # NOT a filter — visibility only. See module docstring:
+            # "engaged_no_project" users may be blocked by an onboarding
+            # bug on OUR side, not genuine abandonment. Never revoke
+            # both categories the same way without a human looking.
+            "category": "engaged_no_project" if n_sessions > 0 else "never_returned",
         })
 
-    rows.sort(key=lambda r: r["installed_at"])
+    rows.sort(key=lambda r: (r["category"], r["installed_at"]))
     print(f"{'user_id':<26} {'email':<32} {'installation_id':<16} "
-          f"{'installed_at':<12} {'last_active_derived':<12}")
-    print("-" * 102)
+          f"{'installed_at':<12} {'last_active_derived':<12} "
+          f"{'chat_session_count':<19} {'category':<20}")
+    print("-" * 143)
     for r in rows:
         print(f"{r['user_id']:<26} {str(r['email']):<32} {str(r['installation_id']):<16} "
-              f"{r['installed_at']:<12} {r['last_active_derived']:<12}")
+              f"{r['installed_at']:<12} {r['last_active_derived']:<12} "
+              f"{r['chat_session_count']:<19} {r['category']:<20}")
 
+    n_never = sum(1 for r in rows if r["category"] == "never_returned")
+    n_engaged = sum(1 for r in rows if r["category"] == "engaged_no_project")
     print(f"\nTOTAL stuck installs (read-only, nothing changed): {len(rows)}")
+    print(f"  never_returned      : {n_never}  (installed, zero chat activity since)")
+    print(f"  engaged_no_project  : {n_engaged}  (chatted at least once, still no project — "
+          f"check for an onboarding-flow bug before treating as abandoned)")
 
 
 if __name__ == "__main__":
