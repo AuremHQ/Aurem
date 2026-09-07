@@ -40,41 +40,52 @@ async def test_get_repo_token_dispatch_github_app():
 
 @pytest.mark.asyncio
 async def test_get_repo_token_dispatch_pat():
+    """2026-06 PAT-removal: `auth_method: "pat"` is no longer a valid
+    dispatch target — `_decrypt_pat` doesn't exist anymore, and
+    `get_repo_token` fails closed with `app_installation_missing`
+    instead of decrypting/returning a legacy PAT. This test used to
+    assert the pre-removal PAT-decrypt path; rewritten to assert the
+    current fail-closed, App-only contract (services/pat_vault.py
+    module docstring)."""
     from services import pat_vault
-    with patch("services.pat_vault._decrypt_pat",
-               new=AsyncMock(return_value="ghp_decrypted")) as m:
-        tok = await pat_vault.get_repo_token({
+    with pytest.raises(pat_vault.GithubAppAuthError) as exc:
+        await pat_vault.get_repo_token({
             "auth_method": "pat",
             "github_token": "v1:ciphertext",
             "user_id": "u1",
         })
-    assert tok == "ghp_decrypted"
-    m.assert_awaited_once()
+    assert exc.value.code == "app_installation_missing"
 
 
 @pytest.mark.asyncio
 async def test_get_repo_token_dispatch_legacy_missing_auth_method():
-    """Legacy rows with no auth_method must fall through to PAT."""
+    """Legacy rows with no auth_method used to fall through to PAT
+    decryption. Post PAT-removal, any project without
+    auth_method == "github_app" + a real installation_id fails
+    closed with app_installation_missing — there is no PAT fallback."""
     from services import pat_vault
-    with patch("services.pat_vault._decrypt_pat",
-               new=AsyncMock(return_value="ghp_leg")) as m:
-        tok = await pat_vault.get_repo_token({
+    with pytest.raises(pat_vault.GithubAppAuthError) as exc:
+        await pat_vault.get_repo_token({
             "github_token": "raw",
             "user_id": "u1",
         })
-    assert tok == "ghp_leg"
+    assert exc.value.code == "app_installation_missing"
 
 
 @pytest.mark.asyncio
-async def test_get_repo_token_app_missing_installation_id_returns_none():
+async def test_get_repo_token_app_missing_installation_id_raises():
+    """`get_repo_token` never returns None/empty (see its own
+    docstring) — a missing installation_id raises
+    app_installation_missing instead."""
     from services import pat_vault
-    tok = await pat_vault.get_repo_token({
-        "auth_method": "github_app",
-        "installation_id": None,
-        "github_token": None,
-        "user_id": "u1",
-    })
-    assert tok is None
+    with pytest.raises(pat_vault.GithubAppAuthError) as exc:
+        await pat_vault.get_repo_token({
+            "auth_method": "github_app",
+            "installation_id": None,
+            "github_token": None,
+            "user_id": "u1",
+        })
+    assert exc.value.code == "app_installation_missing"
 
 
 # ============================================================
