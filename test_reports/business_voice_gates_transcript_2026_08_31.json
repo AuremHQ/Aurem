@@ -1,14 +1,23 @@
 {
   "base_url": "https://bin-context-pat.preview.emergentagent.com",
   "gate1": [],
-  "gate2": [],
-  "gate3": [],
-  "regression": [
+  "gate2": [
     {
-      "prompt": "hello!",
-      "reply": "Hey there! 👋 Excited to help out with your project. What's on your mind?",
+      "prompt": "can you redesign our brand identity?",
+      "reply": "Got it — you want a fresher look for your brand and site. I can do a real visual refresh on your site right now: colors, fonts, spacing, and layout — and show you a before/after before anything goes live.\n\nA few directions that could fit: Clean & minimal (lots of white space, one accent color, a big clear headline), Bold & confident (strong color, bold type, sharp contrast), or Warm & friendly (soft colors, relaxed spacing). My top pick would be Clean & minimal to start.\n\nTell me one word for the feel you want — calm, bold, or premium — or just say go and I'll start with my top pick. A brand-new logo or a full brand-strategy book is a bigger project — I can help you start that too, but the site's look I can do right now.",
+      "checks": {
+        "no_refusal": true,
+        "no_session_jargon": true,
+        "has_can_do_now": true,
+        "has_concrete_directions": true,
+        "at_most_one_question": true,
+        "has_scope_line": true,
+        "question_count": 0
+      },
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }
-  ]
+  ],
+  "gate3": [],
+  "regression": []
 }

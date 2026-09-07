@@ -162,8 +162,8 @@ function FailedCard({ taskId, task, project, onOpenLivePopup }) {
             fontFamily: "inherit", lineHeight: 1.5,
           }}
         >
-          This looks like a backend/code issue rather than a network blip —
-          Retry may reproduce it.
+          This looks like a problem in the code itself, not your connection —
+          retrying may hit it again.
         </div>
       )}
 

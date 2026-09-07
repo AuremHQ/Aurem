@@ -2540,3 +2540,45 @@ above). Production projection with clean guard history: Bug Density
    in both node_modules to the globally installed formatter + react
    plugins (no package.json change) and minimal `.eslintrc.json`
    fallbacks at `/app` and `/app/frontend`. All 5 invocation modes exit 0.
+
+## 2026-09-07 — R10 real-GitHub E2E ✓ + P2 First-Experience Wave A–G
+
+**R10 — R9 rollback = VERIFIED (real GitHub).** Installation 152797252
+verified via App API (`scripts/verify_testbed_install.py`) to cover
+`polarisbuiltinc-wq/aurem-rollback-testbed`; driver
+`scripts/r10_e2e_testbed.py` (ship → merge+signed webhook → verify).
+SHAs: main before eca27937 → ship branch head 94782191 → squash
+merge_commit_sha d82c2367 (captured as loop_outcomes.merged_sha via the
+real signed webhook) → UI Ship history "Rollback" → "Rolled back ✓" →
+main HEAD 1fe24ee3 = revert of d82c2367; d82c2367 still in history;
+shipped file 404 on main. Report: `e2e-proof/R10-e2e/REPORT.md`.
+UI wording made verification-aware in OperationHistory ("Rolled back ✓" /
+"Rollback failed — revert didn't land" + Retry stays on the ship row for a
+failed rollback) — 2 new tests.
+
+**P2 wave** (`P2FirstExperienceWave.test.jsx` + existing suites; all PASS):
+- A: single ConnectRepoBanner hero, headline/CTA now "Connect your repo…";
+  FinishSetupBanner absent (t_p2a_single_connect_hero). Screenshot: fresh user.
+- B: NEW `FirstScanNudge.jsx` (shows when /onboarding/first-scan/status is
+  "skipped" and user hasn't typed; click prefills "/scan"; dismiss sticks
+  per project). 3 named tests. Live: nudge → "/scan" prefilled → gone after reload.
+- C: jargon sweep — 6 strings fixed (Ops history→Ship history, "backend/code
+  issue", "preview payload", "BINContext + ORAContext", "fires a webhook",
+  toggle title) + guard test t_p2c_no_jargon_in_first_experience over 12 surfaces.
+- D: shared ShipApproveCard/useShipState (ShipUIUnification 9 tests) + new
+  `/dev/visual?state=ship-approve-card` fixture (pending/live/rolled_back).
+- E: UserNotificationBell persistent-until-read (3 tests) — live: 9+ badge,
+  list with "Mark all read".
+- F: first reply "I'm ORA, by Aurem" (t_p2f_first_reply_identity) — live.
+- G: PrMiniGuide first-time-only (4 tests) — live: shown on pending card,
+  gone after dismiss + reload.
+- 7-journey dividers: seeded session `journey7_dividers_p2` → DOM dividers
+  ['29 August 2026','4 September 2026','Yesterday','Today'] + screenshot.
+
+**Regression:** vitest 131 files / 701 tests (was 693; +8 new) all green.
+Backend targeted selection (rollback|loop_safety|mock_short_circuit|r10|
+onboarding_first_scan|identity|chat_send): 268 passed, 11 skipped, 6 failed —
+5 are in `test-baseline.txt`, 1 (`test_rollback_v2_pillar1::test_drill_blocked`)
+was a live-HTTP timeout that passes on rerun → **0 new failures vs the
+baseline (405/406-entry test-baseline.txt)**. Preview ingress intermittently
+429s Vite module fetches under rapid reloads (infra, not product).

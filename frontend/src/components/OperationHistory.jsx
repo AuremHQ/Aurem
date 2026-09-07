@@ -51,6 +51,14 @@ function formatTime(iso) {
 
 function opLabel(op) {
   const typeLabel = op.op_type === "rollback" ? "Rollback" : "Ship";
+  // R10 — rollback wording is verification-aware: the backend only marks
+  // a rollback `completed` after confirming the revert commit is on the
+  // branch head, and `failed` when it could not be confirmed.
+  if (op.op_type === "rollback") {
+    if (op.state === "failed")    return "Rollback failed — revert didn't land";
+    if (op.state === "completed") return "Rolled back ✓";
+    return "Rolling back…";
+  }
   if (op.state === "failed")    return `${typeLabel} failed`;
   if (op.state === "completed") return `${typeLabel} finished`;
   return `${typeLabel} in progress`;
@@ -512,14 +520,23 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
 
   // Loop ids that already have a rollback op (row or live) — their
   // ship rows must NOT offer the rollback button.
+  // R10 — only a completed/running rollback hides the ship row's button; a
+  // FAILED rollback keeps it visible as "Retry" so the user can act.
   const rolledBackIds = useMemo(() => {
     const s = new Set();
     for (const o of (history || [])) {
-      if (o.op_type === "rollback") s.add(o.loop_id);
+      if (o.op_type === "rollback" && o.state !== "failed") s.add(o.loop_id);
     }
-    if (currentOp && currentOp.op_type === "rollback") s.add(currentOp.loop_id);
+    if (currentOp && currentOp.op_type === "rollback" && currentOp.state !== "failed") s.add(currentOp.loop_id);
     return s;
   }, [history, currentOp]);
+  const failedRollbackIds = useMemo(() => {
+    const s = new Set();
+    for (const o of (history || [])) {
+      if (o.op_type === "rollback" && o.state === "failed") s.add(o.loop_id);
+    }
+    return s;
+  }, [history]);
 
   const opKey = (o) => `${o.loop_id}::${o.op_type}`;
 
@@ -536,7 +553,7 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
           color: "#6e7681", textTransform: "uppercase",
         }}>
           <span data-testid="op-history-header">
-            Ops history · {items.length}
+            Ship history · {items.length}
           </span>
           <span style={{ flex: 1 }} />
           {items.length > 5 && (
@@ -579,7 +596,8 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
                    && op.commit_sha && !rolledBackIds.has(op.loop_id))
                 ? {
                     phase: (rbState && rbState.loopId === op.loop_id)
-                      ? rbState.phase : "idle",
+                      ? rbState.phase
+                      : (failedRollbackIds.has(op.loop_id) ? "failed" : "idle"),
                     error: (rbState && rbState.loopId === op.loop_id)
                       ? rbState.error : null,
                     onClick: handleRowRollback,

@@ -291,7 +291,7 @@ export default function Deploy() {
         </h3>
         <p style={{ fontSize: 12, color: "var(--text-faint)", margin: 0, maxWidth: 720 }}>
           Self-hosted deploy (above) SSHes into your own server and runs <code>git pull && docker compose up</code>.
-          Hosted deploy fires a webhook on Vercel or Netlify so they re-build & re-deploy your project automatically.
+          Hosted deploy tells Vercel or Netlify so they re-build & re-deploy your project automatically.
         </p>
         {projects.length === 0 ? (
           <div className="card" style={{ padding: 14, fontSize: 13, color: "var(--text-faint)" }}>

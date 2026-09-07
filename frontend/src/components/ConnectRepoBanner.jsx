@@ -167,7 +167,7 @@ export default function ConnectRepoBanner({ onConnect, onProjectCreated }) {
           >
             {hasReposButNoProject
               ? "You're connected — pick a repo to finish up"
-              : "Connect a repo to unlock your free SEO fix"}
+              : "Connect your repo to unlock your free SEO fix"}
           </div>
           <div
             data-testid="connect-repo-banner-counter"
@@ -196,7 +196,7 @@ export default function ConnectRepoBanner({ onConnect, onProjectCreated }) {
                 whiteSpace: "nowrap",
               }}
             >
-              {hasZeroRepos ? "Select your repos →" : "Connect repo →"}
+              {hasZeroRepos ? "Select your repos →" : "Connect your repo →"}
             </button>
           )}
           <button

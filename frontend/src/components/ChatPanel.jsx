@@ -32,6 +32,7 @@ import PostTaskScan from "./PostTaskScan";
 import LiveStepFloatingCard from "./LiveStepFloatingCard";  // Iter 212m-19
 import FounderOfferCard from "./FounderOfferCard";          // Iter 212m-30 PR-2
 import FirstScanCard from "./FirstScanCard";                 // Onboarding Step 4 · S-B
+import FirstScanNudge from "./FirstScanNudge";               // P2-B
 import SecurityScanDrawer from "./SecurityScanDrawer";      // Iter 212m-55 1-click scan
 import { getScanSeverityCounts, onScanUpdated, setCachedScan } from "../lib/securityScanCache";  // Iter 212m-56
 // Iter 212m-58 — Prompt / Loop execution-mode switcher + ancillary
@@ -5344,6 +5345,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         projectId={activeProject?.project_id}
         dismissOnFirstMessage={messages.some((m) => m.role === "user")}
       />
+      {/* P2-B — new-user first-scan nudge (only when no scan ever ran). */}
+      <FirstScanNudge
+        projectId={activeProject?.project_id}
+        hasUserMessage={messages.some((m) => m.role === "user")}
+      />
 
       {/* 2026-08-21 — Stream health pill moved to render inline right
           below the streaming assistant bubble (see the messages.map
@@ -5715,7 +5721,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           {activeProject?.project_id && activeProject.project_id !== "home" && (
             <ToolButton
               testid="ops-history-toggle-btn"
-              title="Ops history — ship / rollback timeline (click to show/hide)"
+              title="Ship history — what shipped and what was rolled back (click to show/hide)"
               onClick={() => setOpsHistoryOpen((v) => !v)}
               Icon={History}
               active={opsHistoryOpen}

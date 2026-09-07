@@ -8739,3 +8739,6 @@ Traced this through `hooks/useGitHubConnectStatus.js` + `routers/github_app.py` 
 
 ---
 **2026-09-07 — 3-point focus.** (1) CI red: `api.post` vitest mock fix already local (693/693); CI login-429 fixed via `RATE_LIMIT_DISABLED=1` on every CI-booted backend (3 workflow spots) — awaiting founder "Save to GitHub" push, then verify green. (2) MOCK_LLM now short-circuits `/chat/send` too (was stream + v2 only); named test + live proof (0 LLM calls). (3) Platform lint-engine error root-caused (unresolvable `eslint-formatter-unix`) and fixed. Details: CHANGELOG.md.
+
+---
+**2026-09-07 — R9 rollback = VERIFIED on real GitHub (testbed repo; SHAs in `e2e-proof/R10-e2e/REPORT.md`); P2 First-Experience Wave A–G all PASS (B = new FirstScanNudge, C = 6-string jargon sweep + guard test; A/D/E/F/G verified with named tests + live screenshots). vitest 701/701; 0 new backend failures vs baseline. Details: CHANGELOG.md.**

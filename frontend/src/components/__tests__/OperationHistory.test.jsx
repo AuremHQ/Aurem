@@ -79,7 +79,7 @@ describe("Iter 331 · OperationHistory regression suite", () => {
     expect(screen.getByTestId("op-history-row-collapsed-rollback-looprb00"))
       .toBeInTheDocument();
     expect(screen.getByText(/Ship finished/)).toBeInTheDocument();
-    expect(screen.getByText(/Rollback finished/)).toBeInTheDocument();
+    expect(screen.getByText(/Rolled back ✓/)).toBeInTheDocument();
     // No activeLoopId → no SSE subscription.
     expect(loopApi.streamLoopEvents).not.toHaveBeenCalled();
   });
@@ -209,5 +209,39 @@ describe("Iter 331 · OperationHistory regression suite", () => {
       expect(screen.getByTestId("op-history-row-collapsed-rollback-loop_e"))
         .toBeInTheDocument();
     });
+  });
+});
+
+describe("R10 · rollback wording is verification-aware", () => {
+  it("t_rollback_fail_if_revert_missing_ui: failed rollback shows the honest label and a Retry on the ship row", async () => {
+    seedHistory([
+      { loop_id: "loopfail01", op_type: "ship", state: "completed",
+        all_passed: true, step_count: 5, commit_sha: "deadbeef",
+        started_at: "2026-07-27T10:00:00Z", finished_at: "2026-07-27T10:02:00Z" },
+      { loop_id: "loopfail01", op_type: "rollback", state: "failed",
+        all_passed: false, step_count: 2, error: "could not verify",
+        started_at: "2026-07-27T11:00:00Z", finished_at: "2026-07-27T11:01:00Z" },
+    ]);
+    render(<OperationHistory projectId="p1" activeLoopId={null} />);
+    await waitFor(() => {
+      expect(screen.getByText(/Rollback failed — revert didn't land/)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("op-history-rollback-btn-loopfail")).toHaveTextContent(/Retry rollback/);
+  });
+
+  it("t_rolled_back_check_hides_retry: verified rollback shows 'Rolled back ✓' and no Rollback button", async () => {
+    seedHistory([
+      { loop_id: "loopok0001", op_type: "ship", state: "completed",
+        all_passed: true, step_count: 5, commit_sha: "deadbeef",
+        started_at: "2026-07-27T10:00:00Z", finished_at: "2026-07-27T10:02:00Z" },
+      { loop_id: "loopok0001", op_type: "rollback", state: "completed",
+        all_passed: true, step_count: 3, commit_sha: "cafebabe",
+        started_at: "2026-07-27T11:00:00Z", finished_at: "2026-07-27T11:01:00Z" },
+    ]);
+    render(<OperationHistory projectId="p1" activeLoopId={null} />);
+    await waitFor(() => {
+      expect(screen.getByText(/Rolled back ✓/)).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("op-history-rollback-btn-loopok00")).toBeNull();
   });
 });
