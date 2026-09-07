@@ -776,17 +776,42 @@ async def _probe_emergent_llm() -> dict:
                        summary="EMERGENT_LLM_KEY not configured",
                        fix_hint="Profile → Universal Key in Emergent dashboard")
     model_name = "gpt-5.4-mini"
-    try:
+    # 2026-09-07 deploy-log fix — `emergentintegrations.LlmChat.send_message`
+    # goes through LiteLLM's OpenAI provider, which was observed calling
+    # the SYNCHRONOUS `litellm.completion()` and internally doing
+    # `loop.run_until_complete(...)` on the calling thread (deploy logs:
+    # "coroutine 'OpenAIChatCompletion.acompletion' was never awaited" +
+    # `asyncio.runners.py run_until_complete`). Because this probe runs
+    # on the SAME uvicorn worker loop as every other request, that call
+    # blocked the entire event loop for its full duration — starving
+    # concurrent requests (including the trivial `/health` liveness
+    # probe) and producing the exact symptom reported: repeated nginx
+    # "upstream timed out ... /health" + `_global_rate_limit_guard`
+    # "RuntimeError: No response returned", which makes Kubernetes mark
+    # the pod unhealthy and the deploy fail/restart-loop. Same isolation
+    # pattern already used above for the Stripe probe's sync SDK calls
+    # (`asyncio.to_thread` running its own fresh event loop) — runs this
+    # entire call on a dedicated OS thread so nothing it does internally
+    # can ever touch the main event loop again.
+    def _sync_send() -> str:
+        import asyncio as _asyncio
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         import uuid as _uuid
-        chat = (
-            LlmChat(api_key=key, session_id=f"healthcheck-{_uuid.uuid4().hex[:8]}",
-                    system_message="Reply with exactly the word: OK")
-            .with_model("openai", model_name)
-            .with_params(max_tokens=10)  # gpt-5.4-mini only supports temperature=1 (default)
-        )
-        resp = await chat.send_message(UserMessage(text="ping"))
-        text = (resp or "").strip()
+
+        async def _inner() -> str:
+            chat = (
+                LlmChat(api_key=key, session_id=f"healthcheck-{_uuid.uuid4().hex[:8]}",
+                        system_message="Reply with exactly the word: OK")
+                .with_model("openai", model_name)
+                .with_params(max_tokens=10)  # gpt-5.4-mini only supports temperature=1 (default)
+            )
+            resp = await chat.send_message(UserMessage(text="ping"))
+            return (resp or "").strip()
+
+        return _asyncio.run(_inner())
+
+    try:
+        text = await asyncio.to_thread(_sync_send)
         try:
             from services.ora_chat.cost_tracker import log_call as _log_call
             await _log_call(
