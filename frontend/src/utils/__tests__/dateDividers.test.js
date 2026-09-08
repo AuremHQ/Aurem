@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from "vitest";
 import dayjs from "dayjs";
-import { computeDateDividers, dayKeyOf, dividerLabelFor } from "../dateDividers";
+import { computeDateDividers, dayKeyOf, dividerLabelFor, sortMessagesByTimestamp } from "../dateDividers";
 
 // Real "now" reference — the utility under test correctly uses the
 // REAL current date (dayjs()) to decide Today/Yesterday, so tests
@@ -105,5 +105,63 @@ describe("dateDividers", () => {
     // dividers.get(2) directly — no dependency on prior indices
     // having been rendered.
     expect(dividers.get(2)).toBe("Today");
+  });
+});
+
+// 2026-09-11 — real founder bug repro: a Loop turn-pair persisted at
+// TERMINAL state (which can be hours/days after the loop was paused
+// for human approval) can land at the END of the raw turns array even
+// though its real `ts` is much OLDER than turns sent in between.
+// sortMessagesByTimestamp must restore true chronological order.
+describe("sortMessagesByTimestamp", () => {
+  it("t_sort_restores_chronological_order: an old turn appended late (out of order) is moved back to its real position", () => {
+    const messages = [
+      { role: "user", content: "old prompt from 3 days ago", ts: daysAgoSec(3, 9) },
+      { role: "assistant", content: "old reply", ts: daysAgoSec(3, 9) + 1 },
+      { role: "user", content: "brand new message", ts: todaySec(10) },
+      { role: "assistant", content: "brand new reply", ts: todaySec(10) + 1 },
+      // Loop turn-pair for a task the user submitted long ago but only
+      // just approved/resumed — pushed LAST in the raw array, but its
+      // real ts is older than everything above.
+      { role: "user", content: "regression-test the commit", ts: daysAgoSec(5, 8) },
+      { role: "assistant", content: "loop run complete", ts: todaySec(11) },
+    ];
+    const sorted = sortMessagesByTimestamp(messages);
+    expect(sorted.map((m) => m.content)).toEqual([
+      "regression-test the commit",
+      "old prompt from 3 days ago",
+      "old reply",
+      "brand new message",
+      "brand new reply",
+      "loop run complete",
+    ]);
+  });
+
+  it("t_sort_stable_for_ties: two turns sharing the exact same ts (a user+assistant pair) keep their original relative order", () => {
+    const sharedTs = todaySec(9);
+    const messages = [
+      { role: "user", content: "u1", ts: sharedTs },
+      { role: "assistant", content: "a1", ts: sharedTs },
+    ];
+    const sorted = sortMessagesByTimestamp(messages);
+    expect(sorted.map((m) => m.content)).toEqual(["u1", "a1"]);
+  });
+
+  it("t_sort_stable_for_missing_ts: a message with no ts never gets aggressively reordered — stays in its original relative position", () => {
+    const messages = [
+      { role: "user", content: "first", ts: todaySec(9) },
+      { role: "assistant", content: "legacy-no-ts", ts: undefined },
+      { role: "user", content: "later", ts: todaySec(11) },
+    ];
+    const sorted = sortMessagesByTimestamp(messages);
+    expect(sorted.map((m) => m.content)).toEqual(["first", "legacy-no-ts", "later"]);
+  });
+
+  it("t_sort_noop_on_already_sorted: an already-chronological list is returned unchanged", () => {
+    const messages = [
+      { role: "user", content: "a", ts: daysAgoSec(1, 8) },
+      { role: "user", content: "b", ts: todaySec(8) },
+    ];
+    expect(sortMessagesByTimestamp(messages).map((m) => m.content)).toEqual(["a", "b"]);
   });
 });

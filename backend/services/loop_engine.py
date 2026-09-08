@@ -4202,6 +4202,22 @@ class LoopEngine:
             return
         self._chat_turns_saved = True
         now = time.time()
+        # 2026-09-11 — real founder bug repro: a loop paused for human
+        # approval (plan/ship gate) can sit for HOURS/DAYS before the
+        # user resumes it. This function only fires at TERMINAL state,
+        # so `now` here is the RESUME/completion moment, not when the
+        # user actually typed the prompt. Stamping the USER turn with
+        # `now` made an hours/days-old message look brand new: pushed
+        # to the END of chat_sessions.turns (out of true chronological
+        # order relative to anything sent in between) AND date-bucketed
+        # under "today" instead of the day it was really sent — exactly
+        # the founder's "old commit message appears at the bottom,
+        # mislabeled" repro. Fix: the USER turn uses the loop's real
+        # start time (`self._started_at`, set at LoopEngine construction
+        # in routers/loop.py — i.e. the instant the user's request was
+        # received). The ASSISTANT reply legitimately only exists now,
+        # so its `ts` stays `now`.
+        user_turn_ts = self._started_at
         commit = (self.context or {}).get("commit") or {}
         sha7 = (commit.get("sha") or commit.get("full_sha") or "")[:7]
         msg = (ev.get("message") or "").strip()
@@ -4230,7 +4246,7 @@ class LoopEngine:
                              "last_message": reply[:120]},
                     "$push": {"turns": {"$each": [
                         {"role": "user", "content": self.user_message,
-                         "ts": now, "loop_id": self.loop_id},
+                         "ts": user_turn_ts, "loop_id": self.loop_id},
                         {"role": "assistant", "content": reply, "ts": now,
                          "provider": "loop", "loop_id": self.loop_id},
                     ], "$slice": -200}},

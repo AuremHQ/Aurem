@@ -79,7 +79,7 @@ import {
   confirmShip, getLoopStatus,
 } from "../lib/loopApi";
 import { getChatBgTint } from "../utils/chatBgTint";        // Iter 212m-30 PR-2
-import { computeDateDividers } from "../utils/dateDividers"; // 2026-09 — chat date dividers
+import { computeDateDividers, sortMessagesByTimestamp } from "../utils/dateDividers"; // 2026-09 — chat date dividers
 import { DateDivider } from "./chat/DateDivider";             // 2026-09 — chat date dividers
 // Iter 140 — extracted chat hooks. ChatPanel.jsx grew past 1500 lines;
 // the hooks below ring-fence message-list mutations, session network
@@ -1508,7 +1508,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           // session (server returned OK with no turns). Never on error.
           setMessages([WELCOME]);
         } else {
-          setMessages(turns.map((t) => ({
+          // 2026-09-11 — see sortMessagesByTimestamp's docstring: a
+          // Loop turn-pair can be $push'd (appended) well AFTER other
+          // genuinely newer turns if the loop was paused for human
+          // approval — raw array order stops matching real
+          // chronological order. Sort by `ts` (stable — ties/missing
+          // values keep their original relative position) so reload
+          // always renders in the same order the live session did.
+          setMessages(sortMessagesByTimestamp(turns.map((t) => ({
             role: t.role,
             content: t.content,
             provider: t.provider,
@@ -1541,7 +1548,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             // refresh") — `interrupted` must round-trip through
             // reload or a mid-stream-drop turn renders as if complete.
             interrupted: t.interrupted || false,
-          })));
+          }))));
           // Iter 212m-44 — the user has prior turns in this session
           // (reloaded mid-conversation), so the chrome (top tabs +
           // sidebar) should be auto-hidden as if they had just sent

@@ -63,3 +63,34 @@ export function computeDateDividers(messages) {
   }
   return dividers;
 }
+
+/**
+ * 2026-09-11 — real bug repro: a Loop task paused for human approval
+ * (plan/ship gate) can be resumed hours/days after it was submitted.
+ * Its chat-turn pair only gets persisted (services/loop_engine.py
+ * `_persist_chat_turns`) once the loop reaches a TERMINAL state, so
+ * that write can land in `chat_sessions.turns` well AFTER other,
+ * genuinely newer turns were already appended — the raw array's
+ * PUSH order stops matching real chronological (`ts`) order. Since
+ * nothing sorts the array before rendering, the stale turn visually
+ * landed at the very bottom (the "most recent" slot) instead of its
+ * real chronological position, and desynced the date dividers above.
+ *
+ * Stable-sorts a message list by `ts` ascending. A message with a
+ * missing/invalid `ts`, or one that TIES with another (the user+
+ * assistant turn of one exchange share the same `ts`), falls back to
+ * its ORIGINAL array position — never aggressively reordered on
+ * incomplete data, mirroring computeDateDividers' own "missing ts
+ * inherits" philosophy above.
+ */
+export function sortMessagesByTimestamp(messages) {
+  return (messages || [])
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => {
+      const at = typeof a.m?.ts === "number" ? a.m.ts : null;
+      const bt = typeof b.m?.ts === "number" ? b.m.ts : null;
+      if (at !== null && bt !== null && at !== bt) return at - bt;
+      return a.i - b.i;
+    })
+    .map(({ m }) => m);
+}

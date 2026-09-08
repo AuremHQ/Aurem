@@ -1,3 +1,21 @@
+## 2026-09-11 (later still) — Chat history date-bucketing + chronological order bug: real root cause found & fixed
+
+**Founder bug report:** after a page refresh, messages sent "today" flip to showing under "Yesterday", and an old message (e.g. a Loop/regression-test commit message from hours/days earlier) appears at the very BOTTOM of the chat (the "most recent" slot), displacing genuinely recent messages.
+
+**Root cause (confirmed via code read, not guessed):** `services/loop_engine.py::_persist_chat_turns()` only fires once a Loop task reaches a TERMINAL state (COMPLETED/ABORTED/FAILED). A loop paused for human approval (plan/ship gate) can sit for hours/days before the user resumes it — and this method was stamping the user's ORIGINAL prompt with `time.time()` at the RESUME/completion moment, not the loop's real start time. That made hours/days-old content look brand new: pushed to the end of `chat_sessions.turns` (wrong position relative to anything sent in between) AND date-bucketed under "today" instead of its real day — exactly the founder's repro.
+
+**Fix (3 layers):**
+1. `services/loop_engine.py::_persist_chat_turns` — the USER turn now uses `self._started_at` (already captured at `LoopEngine.__init__`, i.e. real submission time); the ASSISTANT reply keeps `now` (it genuinely only exists at completion).
+2. `frontend/src/utils/dateDividers.js` — new `sortMessagesByTimestamp()` (stable sort by `ts`; ties/missing values fall back to original array position, mirroring `computeDateDividers`' own "missing ts inherits" philosophy). Wired into `ChatPanel.jsx`'s history-load `useEffect` so a page reload always renders in true chronological order, regardless of raw backend push order.
+3. `backend/routers/chat/history.py` — defense-in-depth: extracted `sort_turns_by_ts()` (same stable-sort semantics) and applied it to `GET /chat/history`'s response, so ANY client of that endpoint (not just ChatPanel.jsx) gets correctly-ordered turns.
+
+**Tests:** 4 new backend (`test_2026_09_11_loop_chat_turn_timestamp.py` — loop-start-vs-completion ts, fire-once guard, history sort ordering, sort stability) + 4 new frontend (`dateDividers.test.js` — t_sort_restores_chronological_order, t_sort_stable_for_ties, t_sort_stable_for_missing_ts, t_sort_noop_on_already_sorted) = 8/8 pass. Regression: 55/55 (loop_engine suites) + 22/22 (chat-history suites, 1 pre-existing unrelated citation-guard failure confirmed via git-stash A/B) + 11/11 frontend dateDividers + `py_compile`/`eslint` clean.
+
+**Verified via `testing_agent`** (`/app/test_reports/iteration_2026_09_11_chat_date_bucket_fix.json`): 100% unit-test pass rate, code review confirms correct wiring, no new bugs found. Full live E2E refresh-reproduction was blocked by an UNRELATED preview-env issue (this pod's demo project has a revoked GitHub App connection, so non-loop chat sends don't persist) — orthogonal to this fix, not a regression it introduced.
+
+**PROVENANCE: preview-only, pending deploy.** A true multi-hour loop-pause repro can't be forced live in a short test window — fix correctness rests on the unit tests (which directly simulate the "paused for days" scenario via time mocking) + code wiring review, not a live multi-day E2E.
+
+
 ## 2026-09-11 (later) — Repetition bug root-cause completed (repetition_penalty was the missing lever) + task_chains quality-degradation reclassification
 
 **Founder self-verified the 2026-09-08 deploy** (no credentials shared with any agent — founder used their own production access throughout, and retracted the earlier password-sharing offer permanently going forward):

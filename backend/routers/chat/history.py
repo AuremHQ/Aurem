@@ -18,6 +18,32 @@ from . import router
 logger = logging.getLogger(__name__)
 
 
+# 2026-09-11 — defense-in-depth for the chat date-bucket/ordering bug
+# (see services/loop_engine.py _persist_chat_turns' timestamp fix +
+# frontend sortMessagesByTimestamp): a stale/delayed $push (e.g. a
+# Loop turn-pair persisted long after it was submitted) can still
+# land out of true chronological order in the stored array. Mirrors
+# dateDividers.js's sortMessagesByTimestamp exactly: only compare by
+# `ts` when BOTH sides have a valid, DIFFERENT numeric value —
+# otherwise fall back to original array position, so ties/missing
+# values are never aggressively reordered. Extracted to a module-
+# level function so it's directly unit-testable without a DB/auth
+# harness.
+def sort_turns_by_ts(turns: list) -> list:
+    import functools
+
+    def _cmp(pair_a, pair_b):
+        idx_a, ta = pair_a
+        idx_b, tb = pair_b
+        at = ta.get("ts") if isinstance(ta.get("ts"), (int, float)) else None
+        bt = tb.get("ts") if isinstance(tb.get("ts"), (int, float)) else None
+        if at is not None and bt is not None and at != bt:
+            return -1 if at < bt else 1
+        return -1 if idx_a < idx_b else (1 if idx_a > idx_b else 0)
+
+    return [t for _, t in sorted(enumerate(turns), key=functools.cmp_to_key(_cmp))]
+
+
 @router.get("/history")
 async def chat_history(
     session_id: Optional[str] = None,
@@ -44,12 +70,14 @@ async def chat_history(
     # null on out-of-range positional $set from stale clients). One
     # null crashed the frontend hydration entirely.
     turns = [t for t in turns if isinstance(t, dict) and t.get("role")]
+    turns = sort_turns_by_ts(turns)
     return {
         "ok": True,
         "messages": turns,
         "session_id": session_id,
         "title": (doc or {}).get("title", ""),
     }
+
 
 
 
