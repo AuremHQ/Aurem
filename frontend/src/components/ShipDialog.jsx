@@ -44,6 +44,14 @@ export default function ShipDialog({
   const showDeployBanner = (
     shipState.status === "shipped"
     && taskInfo?.status === "done"
+    // 2026-09-11 — real QA repro: after a successful rollback, this
+    // banner kept saying "Code shipped — ready to go live?" even
+    // though the shipped commit had just been reverted — taskInfo's
+    // `status: "done"` reflects the SHIP task's own lifecycle (it
+    // finished), not whether that code is still the current state.
+    // `rollback_status: "done"` (services/loop_rollback.py) is set
+    // once a rollback actually completes — exclude it here.
+    && taskInfo?.rollback_status !== "done"
     && !!activeProject?.project_id
     && typeof onOpenDeployTab === "function"
   );

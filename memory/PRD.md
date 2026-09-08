@@ -1,3 +1,25 @@
+## 2026-09-11 (senior QA sweep) — 4 real bugs fixed, 3 root-caused as non-bugs (test data / LLM non-determinism / deprioritized polish)
+
+**Founder ran a deep, fast, self-directed regression sweep (8 findings).** Addressed per founder's own priority order:
+
+**FIXED (4):**
+1. **Character-limit UX (TC-C)** — `ChatPanel.jsx::send()` now hard-blocks any message over 20,000 chars with an immediate toast, BEFORE anything is appended to the chat (previously only the server's 422 caught it, AFTER an optimistic "sent" bubble already looked delivered). Composer text is preserved (not cleared) so the user can edit it down. Live-verified: sent 25,000 chars via direct DOM value-set (bypassing the native `maxLength`, matching how the founder's own stress-test worked) → bubble count unchanged, composer text preserved, no crash.
+2. **Stuck "looks sent" bubble (defense-in-depth)** — for ANY OTHER send failure (network error, session expiry, etc.), the user's bubble is now marked `sendFailed: true` and shows a "Not delivered" indicator (`MessageBubble.jsx`) instead of looking identical to a normal delivered message forever.
+3. **Panel-stacking bug** — Preview and Graph (Codebase Graph) were fully independent booleans; opening one never closed the other, so clicking through both stacked 3 panels (Chat + Preview/Diff + Graph) at once. `togglePreview`/`aurem:toggle-preview`/`aurem:toggle-graph`/`openDeployTab` in `ChatPanel.jsx` now enforce mutual exclusivity both directions.
+4. **Stale post-rollback banner** — `ShipDialog.jsx`'s "🚀 Code shipped — ready to go live?" banner only checked `taskInfo.status === "done"` (the ship task's own lifecycle, which never changes once finished) and ignored `taskInfo.rollback_status`. Now also requires `rollback_status !== "done"` — a FAILED rollback attempt correctly does NOT hide the banner (code is still live in that case).
+
+**ROOT-CAUSED AS NOT CODE BUGS (3, explained to founder, no fix applied):**
+5. **"Live Preview blank/white"** — confirmed via direct curl: the demo project's `preview_url` was the literal placeholder `"https://example.com/test-preview"` (test data, not a real deployed site) — `example.com` returns its own generic near-blank landing page for any path. The Preview panel's iframe embed already has a 10s-timeout + retry + "Open in new tab" safety net for genuinely slow/blocked real embeds.
+6. **Approve-button intermittent failure + "context confusion"** — these are linked: the model got confused about which task was current in a long, topic-heavy testing session (proposed a fix for an earlier UNRELATED char-limit error instead of the new README request), which correctly led to no valid file path → correctly-triggered (not a false-positive) "approve button didn't load" fallback. Fix #2 above (stuck-bubble marking) should reduce recurrence of one plausible contributing mechanism, but this remains genuine LLM non-determinism, not a deterministic bug that can be "fully fixed" via code.
+7. **"Insert vs replace"** (model replaced the README title line instead of inserting a new comment line) — LLM instruction-following nuance, explicitly deprioritized by founder as "polish", no code change.
+
+**Tests:** 4 new (`ShipDialog.deployBanner.test.jsx`) + regression (30 total across MessageBubble/dateDividers/TC11/ShipDialog suites) all pass. `eslint` clean.
+
+**Verified:** FIX A directly live-tested (see above). FIX B/C code-reviewed correct by `testing_agent` (matched exact line ranges) + confirmed via my own code read; live E2E hit repeated transient "Something went wrong loading this page" environment flakiness (unrelated to this code — confirmed via retry, same generic network-hiccup screen appeared even on a bare page load) that prevented a clean full visual re-confirmation of FIX B/C within this session's time budget. FIX C additionally covered by 4/4 passing unit tests that directly simulate the rollback-success vs rollback-failed cases.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-11 (TC-04) — Empty response bubble bug: root cause found & fixed
 
 **Founder screenshot repro:** an assistant reply bubble rendered with ONLY the "· double-checked by a second reviewer" badge and attribution line visible — the message body itself was completely blank.

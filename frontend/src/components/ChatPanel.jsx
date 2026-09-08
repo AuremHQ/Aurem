@@ -290,6 +290,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   const openDeployTab = useCallback(() => {
     setPreviewInitialMode("deploy");
     setPreviewOpen(true);
+    setGraphOpen(false); // 2026-09-11 — same panel-stacking fix
     try { localStorage.setItem(PREVIEW_KEY, "1"); } catch { /* noop */ }
   }, []);
   const [usage, setUsage] = useState(null);  // {used, effective_limit, remaining, pct_used, is_exhausted}
@@ -1177,6 +1178,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     setPreviewOpen((v) => {
       const next = !v;
       localStorage.setItem(PREVIEW_KEY, next ? "1" : "0");
+      // 2026-09-11 — real QA repro: Preview and Graph used to be
+      // fully independent booleans, so opening one never closed the
+      // other — clicking Preview → Graph stacked THREE panels
+      // (Chat + Diff/Preview + Codebase Graph) on top of each other
+      // instead of replacing. Only one full-width panel should ever
+      // be open at once.
+      if (next) setGraphOpen(false);
       // Iter 145 — notify Dashboard so the top-right button label stays
       // in sync (button is the only visible entrypoint now).
       try {
@@ -1196,6 +1204,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         const next = typeof desired === "boolean" ? desired : !cur;
         try { localStorage.setItem(PREVIEW_KEY, next ? "1" : "0"); }
         catch { /* ignore */ }
+        // 2026-09-11 — see togglePreview's comment above — same
+        // mutual-exclusivity fix for this second entrypoint.
+        if (next) setGraphOpen(false);
         return next;
       });
     };
@@ -1215,13 +1226,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // on the user's currently-active project. The same event is
   // also fired by the sidebar Codebase Graph link.
   useEffect(() => {
-    const open = () => setGraphOpen(true);
+    // 2026-09-11 — see togglePreview's comment above (same
+    // panel-stacking fix): opening Graph must close Preview too.
+    const open = () => { setGraphOpen(true); setPreviewOpen(false); };
     const close = () => setGraphOpen(false);
     const toggle = (e) => {
       const d = e?.detail || {};
       if (d.open === true) open();
       else if (d.open === false) close();
-      else setGraphOpen((v) => !v);
+      else setGraphOpen((v) => {
+        const next = !v;
+        if (next) setPreviewOpen(false);
+        return next;
+      });
     };
     window.addEventListener("aurem:toggle-graph", toggle);
     return () => window.removeEventListener("aurem:toggle-graph", toggle);
@@ -1843,6 +1860,25 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       || (busy && !isLoopQueueAttempt)
       || !sessionId
     ) return;
+    // 2026-09-11 — real QA repro (TC-C): the textarea's `maxLength`
+    // attribute only stops NATIVE keyboard/paste typing — it does
+    // NOTHING against a programmatically-set value (devtools, a
+    // scripted stress test, or a paste event a browser doesn't gate).
+    // Previously the only enforcement was server-side (Pydantic's
+    // `max_length=20000` on ChatBody.prompt, a 422), which fired
+    // AFTER the optimistic user bubble was already appended — so an
+    // over-limit send looked exactly like a normal "sent" message in
+    // the chat, then a separate, disconnected error bubble appeared.
+    // Block it here, before anything is appended, with an immediate,
+    // clear toast — the exact same limit the server enforces, just
+    // surfaced instantly instead of round-tripping to find out.
+    if (text.length > 20000) {
+      toast({
+        message: `Message is too long (${text.length.toLocaleString()} / 20,000 characters max). Please shorten it and try again.`,
+        kind: "error",
+      });
+      return;
+    }
     // Set the ref lock AFTER passing the input-validity guard so a
     // legitimately-blocked send (empty text, no session, busy in
     // non-loop mode) doesn't spuriously arm the lock and starve the
@@ -2822,6 +2858,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             copy[copy.length - 1] = {
               ...last, content: `⚠ ${errText}`, error: true, streaming: false,
             };
+          }
+          // 2026-09-11 — real QA repro (TC-C): the user bubble sent
+          // just before this failed assistant turn stayed looking
+          // exactly like a normal, successfully-delivered message —
+          // no visual difference from any other sent bubble — while
+          // a DISCONNECTED error bubble appeared separately below it.
+          // Defense-in-depth alongside the client-side length guard
+          // above: for ANY send failure (network error, 500, expired
+          // session, etc.), mark the preceding user bubble as not
+          // delivered instead of leaving it looking sent.
+          const userIdx = copy.length - 2;
+          if (userIdx >= 0 && copy[userIdx]?.role === "user") {
+            copy[userIdx] = { ...copy[userIdx], sendFailed: true };
           }
           return copy;
         });

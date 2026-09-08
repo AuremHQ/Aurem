@@ -887,6 +887,23 @@ export default function MessageBubble({
           ) : (
             m.content
           )}
+          {/* 2026-09-11 — real QA repro (TC-C): a failed send used to
+              leave the user bubble looking exactly like a normal,
+              delivered message. Now it's clearly marked so the user
+              never wonders "did that actually go through?". */}
+          {m.role === "user" && m.sendFailed && (
+            <div
+              data-testid={`send-failed-indicator-${idx}`}
+              style={{
+                marginTop: 6, fontSize: 12, color: "var(--danger)",
+                display: "flex", alignItems: "center", gap: 4,
+                justifyContent: "flex-end",
+              }}
+            >
+              <AlertTriangle size={12} />
+              Not delivered
+            </div>
+          )}
           {/* Iter 212m-61 — Mermaid diagram payload from /diagram. */}
           {m.role === "assistant" && m.diagram?.code && (
             <MermaidBlock
