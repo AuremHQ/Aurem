@@ -1,3 +1,35 @@
+## 2026-09-11 (TC-04) — Empty response bubble bug: root cause found & fixed
+
+**Founder screenshot repro:** an assistant reply bubble rendered with ONLY the "· double-checked by a second reviewer" badge and attribution line visible — the message body itself was completely blank.
+
+**Root cause:** `frontend/src/components/MessageBubble.jsx::stripHandoffFenceForDisplay()` strips the internal-only ` ```aurem-handoff ` fence before displaying a reply (the fence exists purely to drive the "Ship via CTO" button, never meant to be visible prose). When the model's ENTIRE reply was JUST the fence with zero surrounding prose (e.g. a terse response to a mutation request like "add a comment to README.md"), stripping correctly removed the fence but left NOTHING behind to render — while the review badge (which checks the RAW, unstripped `m.content` for truthiness) still showed since the original content was non-empty. Pure frontend display-logic gap, independent of backend/LLM output.
+
+**Fix:** `stripHandoffFenceForDisplay()` now detects "a fence was present AND stripping left an empty result" and returns a short honest fallback line ("Proposed a change — review it below.") instead of an empty string. When real prose accompanies the fence, that prose still displays exactly as before — fallback never triggers in that case.
+
+**Tests:** 3 new (`t_no_prose_fence_shows_fallback_not_blank`, `t_fence_only_with_whitespace_padding_still_falls_back`, `t_fence_with_prose_never_falls_back`) + 3 existing in `MessageBubble.p5.test.jsx` = 6/6 pass. `eslint` clean. Regression: `MessageBubble.k1_ship_fallback.test.jsx` 6/6 pass; broader `src/components/__tests__/` sweep — 8 pre-existing failures (StreamHealthPill/LoopLiveFeed/a11y, unrelated timing-based tests) confirmed identical via git-stash A/B, not caused by this change.
+
+**Verified via `testing_agent`** (`/app/test_reports/iteration_tc04_fence_only_empty_bubble_2026_09_11.json`): 100% pass, live smoke on preview (65 assistant bubbles inspected, zero empty-body bubbles, fallback string doesn't leak into normal replies), code review confirms minimal/correct/localized fix. Forcing the exact fence-only LLM response live wasn't feasible in the test window (non-deterministic + demo project's GitHub token was revoked) — unit tests are the authoritative verification, directly simulating the founder's exact screenshot scenario.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
+## 2026-09-11 (deploy investigation) — "RESTART LOOP DETECTED" is a false-positive alarm, not a functional deploy failure (root cause found + fixed)
+
+**Founder shared production deploy logs** showing `[G19] RESTART LOOP DETECTED — 4 boots in 600s (sha=unknown)`. Investigated end-to-end (deployment_agent's own general scan also reported "PASS — no deployment BLOCKERs found" both times it was called).
+
+**Key observation: the pasted logs show NO actual functional failure** — every boot cycle completes cleanly (MongoDB pings OK, GitHub API + OpenRouter probes succeed, all `/health` checks return 200). The only alarming signal is the G19 restart-loop detector's own ERROR log line.
+
+**Root cause #1 (confirmed, fixed):** `services/process_recovery.py::_git_sha()` only tried `git rev-parse` (git binary doesn't exist on Emergent prod pods) then fell back straight to `os.getenv("BUILD_HASH", "unknown")` — but Emergent doesn't inject `BUILD_HASH` yet (a known, already-documented gap — see `main.py::_resolve_build_hash`'s own docstring). So **every single production boot recorded `sha="unknown"`**, which breaks `_classify_boot_reason`'s change-detection (`sha != prev["sha"]` can never be true when both are always `"unknown"`) — meaning a perfectly normal multi-pod Kubernetes rolling-deploy restart sequence gets misclassified as `crash_or_kill` instead of `deploy_new_code`, tripping a false CRITICAL alert. **Fix:** `_git_sha()` now mirrors `main.py`'s already-proven fallback chain (env var → checked-in `backend/.build_info` file → git → `"unknown"`), so it resolves correctly in production exactly like `/api/health`'s `build_hash` field already does.
+
+**Root cause #2 (directly reproduced live, not just theorized):** the G19 detector's `LOOP_THRESHOLD=3` boots per `LOOP_WINDOW_S=600s` is easily tripped by ANY quick sequence of legitimate restarts — reproduced this exact `loop_detected: True` condition in this sandbox purely from normal hot-reload restarts during this session's own edits (no crash involved at all). Found **8650 accumulated `process_boots` rows, 7671 `process_loop_trips`, 211 false incidents** in this sandbox's DB from prior sessions' hot-reload churn — cleaned up as housekeeping. This strongly supports that a Kubernetes rolling deploy (which naturally creates 2-4 pod boots in quick succession as part of NORMAL rollout/health-check warmup) can trip the same false alarm. Note: `_trip_loop()` only logs/writes an alert+incident row — it does NOT take the app offline or block requests, so even when this fires, the running service itself is unaffected.
+
+**Tests:** 3 new (`TestGitSha` in `test_iter362_guard19_recovery.py`) + 13 existing G19 tests + 15 (G20/G5) = 28/28 pass. `py_compile` clean. Live sandbox restart confirmed `_git_sha()` now resolves a real hash instead of "unknown".
+
+**Open question for founder:** did the Emergent deploy pipeline/UI itself show a hard FAILED/rolled-back status, or is this just the alarming-looking backend log? The sha fix + evidence above address the LOG-LEVEL false alarm, but if there's a separate, actual pipeline-level failure (build error, image push failure, etc.) not visible in the pasted runtime logs, that would need the specific Cloud-Build/pipeline error text to diagnose.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-11 (later still) — Chat history date-bucketing + chronological order bug: real root cause found & fixed
 
 **Founder bug report:** after a page refresh, messages sent "today" flip to showing under "Yesterday", and an old message (e.g. a Loop/regression-test commit message from hours/days earlier) appears at the very BOTTOM of the chat (the "most recent" slot), displacing genuinely recent messages.

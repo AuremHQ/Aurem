@@ -110,6 +110,54 @@ class TestHeartbeat:
         assert pr.last_heartbeat_iso().endswith("+00:00")
 
 
+class TestGitSha:
+    """2026-09-11 — real deploy-log bug: production has no `git`
+    binary/`.git` folder, so the old subprocess-only `_git_sha()`
+    ALWAYS fell through to `os.getenv("BUILD_HASH", "unknown")` (never
+    set by Emergent yet) — every prod boot recorded `sha="unknown"`,
+    breaking `_classify_boot_reason`'s change-detection and
+    misclassifying normal multi-pod deploy rollouts as `crash_or_kill`,
+    tripping a false "RESTART LOOP DETECTED" CRITICAL alert. Fix:
+    mirror main.py's `_resolve_build_hash` priorities 1-2 (env var,
+    then the checked-in `backend/.build_info` file)."""
+
+    def test_git_sha_reads_build_info_file_when_git_unavailable(self, monkeypatch):
+        # Directly exercise the real backend/.build_info file (present
+        # in this sandbox — see /app/backend/.build_info) rather than
+        # monkeypatching path-resolution internals, which is fragile.
+        import subprocess as _sp
+
+        def _raise(*a, **k):
+            raise FileNotFoundError("git not found")
+        monkeypatch.setattr(_sp, "check_output", _raise)
+        monkeypatch.delenv("BUILD_HASH", raising=False)
+        monkeypatch.delenv("GIT_COMMIT", raising=False)
+        monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
+
+        info_path = os.path.join(os.path.dirname(pr.__file__), "..", ".build_info")
+        with open(info_path, "r", encoding="utf-8") as fh:
+            expected = fh.read().strip()[:7]
+        assert expected  # sandbox's real .build_info must be non-empty
+        assert pr._git_sha() == expected
+
+    def test_git_sha_prefers_env_var_over_build_info(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("BUILD_HASH", "envsha12")
+        assert pr._git_sha() == "envsha1"  # sliced to 7 chars
+        monkeypatch.delenv("BUILD_HASH", raising=False)
+
+    def test_git_sha_never_raises_when_all_sources_unavailable(self, monkeypatch):
+        monkeypatch.delenv("BUILD_HASH", raising=False)
+        monkeypatch.delenv("GIT_COMMIT", raising=False)
+        monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
+        monkeypatch.setattr(pr.os.path, "exists", lambda p: False)
+        import subprocess as _sp
+
+        def _raise(*a, **k):
+            raise FileNotFoundError("git not found")
+        monkeypatch.setattr(_sp, "check_output", _raise)
+        assert pr._git_sha() == "unknown"
+
+
 class TestBootRecording:
     @pytest.mark.asyncio
     async def test_single_boot_records_no_loop(self):

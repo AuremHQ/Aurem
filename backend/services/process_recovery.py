@@ -48,13 +48,42 @@ def last_heartbeat_iso() -> str:
 
 
 def _git_sha() -> str:
+    """2026-09-11 — real deploy-log bug: on Emergent prod pods there is
+    no `git` binary AND no `.git/` folder, so the old `subprocess`-only
+    implementation ALWAYS fell through to `os.getenv("BUILD_HASH",
+    "unknown")` — and since Emergent doesn't inject `BUILD_HASH` yet
+    (see main.py::_resolve_build_hash's own docstring), every single
+    production boot recorded `sha="unknown"`. That broke
+    `_classify_boot_reason`'s change-detection (`sha != prev["sha"]`
+    can never be true when both sides are always "unknown"), so a
+    perfectly normal multi-pod restart during a Kubernetes rolling
+    deploy was misclassified as `crash_or_kill` instead of
+    `deploy_new_code` — tripping a FALSE "RESTART LOOP DETECTED"
+    CRITICAL incident/banner on deploys that never actually had a
+    crash loop at all. Mirrors main.py's `_resolve_build_hash`
+    priorities 1–2 (env var, then the checked-in `backend/.build_info`
+    file) so this module sees the same real SHA prod already has.
+    """
+    env_h = (os.getenv("BUILD_HASH") or os.getenv("GIT_COMMIT")
+             or os.getenv("VERCEL_GIT_COMMIT_SHA"))
+    if env_h:
+        return env_h[:7]
+    try:
+        info_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".build_info")
+        if os.path.exists(info_path):
+            with open(info_path, "r", encoding="utf-8") as fh:
+                baked = fh.read().strip()
+            if baked:
+                return baked[:7]
+    except Exception:
+        pass
     try:
         import subprocess
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], cwd="/app",
             stderr=subprocess.DEVNULL, timeout=3).decode().strip()
     except Exception:
-        return os.getenv("BUILD_HASH", "unknown")
+        return "unknown"
 
 
 async def _classify_boot_reason(db, sha: str) -> str:

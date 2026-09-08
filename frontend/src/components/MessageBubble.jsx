@@ -205,7 +205,22 @@ function _normalisePath(p) {
 // m.content so the Ship button logic is unaffected.
 export function stripHandoffFenceForDisplay(content) {
   if (!content || typeof content !== "string") return content;
-  return content.replace(/```aurem-handoff\s*\n[\s\S]*?```/g, "").trim();
+  const hadFence = SHIP_FENCE_MARKER.test(content);
+  const stripped = content.replace(/```aurem-handoff\s*\n[\s\S]*?```/g, "").trim();
+  // 2026-09-11 — real bug repro (TC-04, founder screenshot): when the
+  // model's ENTIRE reply is JUST the internal aurem-handoff fence
+  // (no surrounding prose at all), stripping it for display left
+  // literally nothing behind — the bubble rendered with only its
+  // badges/attribution line and a blank body, looking broken. The
+  // Ship button below (driven by extractHandoffBrief on the
+  // UNSTRIPPED m.content) still worked fine — this was purely a
+  // "nothing to show in the bubble itself" display gap. If stripping
+  // actually removed a real fence and left nothing behind, show a
+  // short, honest one-liner instead of an empty body.
+  if (hadFence && !stripped) {
+    return "Proposed a change — review it below.";
+  }
+  return stripped;
 }
 
 function extractHandoffBrief(content, verifiedPaths) {
