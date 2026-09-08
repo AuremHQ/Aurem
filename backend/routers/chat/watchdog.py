@@ -123,6 +123,19 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
                 )
             except Exception:
                 logger.exception("timeout persist_turn failed")
+            # 2026-09-08 — task-chain logging (structured, not raw CoT).
+            try:
+                from cto_services.db import get_db
+                from services.task_chain_logging import log_task_chain
+                await log_task_chain(
+                    get_db(), user_id=state.user_id, session_id=body.session_id or "",
+                    project_id=body.project_id, user_prompt=body.prompt or "",
+                    tool_calls=partial_invocations or [], final_response=content,
+                    turn_state="partial" if partial_invocations else "error",
+                    failure_mode=None if partial_invocations else "provider_rate_or_5xx",
+                )
+            except Exception:
+                logger.debug("task_chain logging skipped (watchdog timeout)")
             yield (
                 "data: " + json.dumps({
                     "done": True,

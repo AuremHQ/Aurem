@@ -36,7 +36,13 @@ ORCHESTRATOR = BACKEND / "services" / "orchestrator.py"
 # all 7 sites verified still-hooks, only line numbers shifted). If a
 # real hygiene target ever slips into orchestrator.py, it will NOT be
 # in this set and the test below will fail.
-LEGIT_UI_HOOK_LINES = {2298, 2303, 2409, 2721, 2794, 2825, 2834}
+LEGIT_UI_HOOK_LINES = {2298, 2303, 2411, 2725, 2805, 2836, 2845}
+# 2026-09-08 (2nd pass) — task-chain / COT-on-failure wiring added
+# `"sequential_thoughts": local_ctx.get(...)` lines right next to the
+# `"tool_calls"` line on 4 of chat_with_tools()'s exit paths, shifting
+# everything below each insertion point by a further +1..+3 lines.
+# Re-derived directly from _collect_silent_catches() against the
+# current file — same 7 sites, still all UI-hook fail-opens.
 # 2026-08-23 audit fix — the last 3 of these 7 line numbers drifted
 # (+4) after this session's findings-to-fix-bridge edits added lines
 # earlier in orchestrator.py (capturing `findings_saved_this_turn`),

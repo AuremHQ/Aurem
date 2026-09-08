@@ -46,6 +46,7 @@ export const ADMIN_NAV = [
   { id: "tasks",           label: "Tasks",                route: "/admin/tasks",          group: "SYSTEM" },
   { id: "agent_perf",      label: "Agent Performance",    route: "/admin/agent-performance", group: "SYSTEM" },
   { id: "mcp",             label: "MCP Usage",            route: "/admin/mcp-usage",      group: "SYSTEM" },
+  { id: "failure_patterns", label: "Failure Patterns",    route: "/admin/failure-patterns", group: "SYSTEM" },
   { id: "reliability",     label: "Reliability",          route: "/admin/reliability",    group: "SYSTEM" },
   { id: "settings",        label: "Settings",             route: "/admin/settings",       group: "SYSTEM" },
 ];

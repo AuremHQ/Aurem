@@ -674,6 +674,19 @@ async def chat_send(
                         low_confidence=_low_confidence,
                         ship_suppressed=_ship_suppressed,
                         bin_ctx=bin_ctx)
+    # 2026-09-08 — task-chain logging (structured, not raw CoT).
+    try:
+        from services.task_chain_logging import log_task_chain
+        asyncio.create_task(log_task_chain(
+            _db, user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id, user_prompt=body.prompt or "",
+            tool_calls=result.get("tool_calls") or [], final_response=content,
+            turn_state=result.get("turn_state") or "success",
+            failure_mode=result.get("failure_mode") or result.get("error"),
+            sequential_thoughts=result.get("sequential_thoughts") or [],
+        ))
+    except Exception as _tc_exc:
+        logger.debug("task_chain logging skipped (chat_send): %r", _tc_exc)
     if body.session_id:
         asyncio.create_task(
             _maybe_set_title(user["user_id"], body.session_id, body.prompt)

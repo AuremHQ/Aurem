@@ -3070,3 +3070,69 @@ backend boots clean, both endpoints return 200, cache primitives
 tested directly (serves cached value, busts on demand), all 5
 pre-existing `founder_offer` reap tests still pass (they call the reap
 helper directly, unaffected by the new endpoint-level cache).
+
+## 2026-09-08 — Chain-of-thought pattern analysis / "self-improving loop" (task_chains + Failure Patterns admin tab)
+Founder asked: log a STRUCTURED (not raw) record of every ORA
+attempt, then refined it — persist the actual reasoning TEXT only on
+FAILURE (truncated, redacted), metadata-only on success — so failure
+patterns become mineable and prompts improve over time.
+- **`services/task_chain_logging.py`** (new) — `classify_task_type()`
+  (keyword heuristic: bug-fix/feature/refactor/scan/other),
+  `redact_secrets()` (regex-based, AWS/OpenAI/GitHub/Stripe key shapes
+  + generic `key=value`/Bearer), `log_task_chain()` — the single
+  best-effort entry point (never raises) that writes ONE record to
+  `task_chains`: task_type, user_prompt (\u2264200c), model_plan (\u2264500c,
+  derived from sequential-thinking steps \u2192 tool-call order \u2192 final
+  answer, in that priority), tool_calls/tool_sequence (\u226410),
+  final_response (\u2264500c), success, failure_reason, success_pattern.
+  On failure only (and only if the model actually used the
+  `sequential_thinking` tool that turn), also attaches
+  `failure_thoughts_truncated` (each thought \u22642000c, redacted) \u2014
+  absent entirely on success, per the founder's explicit
+  storage/cost-waste DO-NOT.
+- **`services/orchestrator.py`** — `chat_with_tools()` now exposes
+  `"sequential_thoughts": local_ctx.get("sequential_thoughts")` on all
+  4 major result-dict exit paths (success, max-iters, budget-guard,
+  tool-loop-guard) so callers can access the raw reasoning text when a
+  turn fails. (Line-locked test
+  `test_session5_item2_orchestrator_silent_catch_lock.py`'s 7-site
+  snapshot re-derived after this shifted lines \u2014 same 7 legit
+  UI-hook sites, values updated.)
+- **Wired into all 4 turn-completion call sites** — `routers/chat/
+  stream.py` (fire-and-forget on the normal path; directly awaited on
+  the mid-stream-drop/CancelledError path since the event loop is
+  already tearing down there), `routers/chat/watchdog.py` (~48s
+  soft-timeout path), `routers/chat/turn.py` (non-streaming
+  `/chat/send`).
+- **`routers/admin_analytics.py`** — new `GET /admin/failure-patterns`
+  (admin-only): top-10 failed/successful task types, top-10
+  failed/successful prompt patterns (grouped by first word), tool-
+  sequence success/fail rates, rule-based prompt-improvement
+  suggestions (e.g. *"Prompts starting with 'fix' fail 90% of the time
+  (9/10) \u2014 try naming the exact file or behavior"*), and a
+  `task_type`-filterable click-through sample (with the truncated
+  failure reasoning text) for any selected failed task type.
+- **New admin tab "Failure Patterns"** (`pages/Admin.jsx`, SYSTEM
+  group, route `/admin/failure-patterns`) \u2014 window selector, top
+  failed/success lists, prompt-pattern tables, tool-sequence rate
+  table, suggestions card, and a click-through samples card (shows a
+  clear "no reasoning captured" empty state when a failure has no
+  sequential-thinking trace, per testing_agent's UX suggestion).
+- **Tests**: 14 new backend tests
+  (`tests/test_task_chain_logging_2026_09_08.py`) covering every named
+  test from both founder specs (task-type classification, truncation,
+  secret redaction on prompts/responses/thoughts, failure-only COT
+  persistence with an explicit absent-on-success assertion, 2000-char
+  thought cap, orchestrator wiring, and a real end-to-end
+  `/admin/failure-patterns` call against seeded Mongo docs + a real
+  admin login). All pass. Targeted regression sweep (chat_stream/
+  watchdog/persist_turn/orchestrator/chat_send/chat_turn/task_chain/
+  turn_completion keywords): 205 passed, only the 2 already-confirmed
+  pre-existing/unrelated SEO test failures remain.
+- **Independently verified by testing_agent**
+  (`test_reports/iteration_task_chain_cot_pattern_2026_09_08.json`):
+  100%/100% pass, zero action items. Confirmed real live data end-to-
+  end \u2014 46 real `task_chains` records from actual chat turns (9
+  bug-fix failures, 37 successful turns), correct tool-sequence
+  success rates, and a genuinely useful auto-generated suggestion
+  surfaced in the UI. Sandbox-only \u2014 not yet deployed to production.

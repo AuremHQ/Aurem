@@ -3,6 +3,7 @@
 See PRD.md for original requirements/architecture, CHANGELOG.md for what's shipped.
 
 ## P0 — in-flight / founder-blocking (updated 2026-08-27, post-checkpoint decisions)
+- **Chain-of-thought pattern analysis / self-improving loop (2026-09-08) \u2014 SHIPPED + TESTED.** `task_chains` structured logging on every real chat turn + failure-only COT text persistence + "Failure Patterns" admin tab, all testing_agent-verified 100%/0 issues with real live data (46 records). See CHANGELOG.md 2026-09-08 entry. Sandbox-only \u2014 not yet deployed to production. No remaining scope from the founder's spec; this item is closed pending a production deploy.
 - **ROOT FIX \u2014 Turn-Completion Contract (2026-09-08) \u2014 CORE SLICE SHIPPED + TESTED, remainder tracked below.** See CHANGELOG.md 2026-09-08 entry for full detail + evidence. Core contract (turn_state/continue_available/failure_mode/recovery_action never-silent-idle, Continue/Retry UI, useActiveProject retry) is live in sandbox, 19+2 new tests passing, testing_agent-verified 100%/0 issues. **Remaining from founder's original spec, not yet built:**
   - 4 *distinct* timeout clocks (connect / first-token / stream-idle / hard end-to-end deadline) \u2014 today only the pre-existing ~48s soft-timeout + slow-notice ticker exist, not 4 separately-enforced clocks.
   - Provider-retry idempotency-key + capped-exponential-backoff layer for transient provider errors \u2014 today "Retry" resends a fresh user turn, not an idempotent retry of the same provider call.

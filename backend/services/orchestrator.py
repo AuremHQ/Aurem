@@ -2397,6 +2397,8 @@ async def chat_with_tools(
                 # summary is always genuinely partial, never silent.
                 "turn_state": "partial",
                 "continue_available": True,
+                "tool_calls": local_ctx.get("tool_calls") or [],
+                "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
             }
         iters += 1
         # Iter 36: surface activity to the SSE stream so the UI can show
@@ -2499,6 +2501,8 @@ async def chat_with_tools(
                     # tool-loop synthesis is genuinely partial, never silent.
                     "turn_state": "partial",
                     "continue_available": True,
+                    "tool_calls": local_ctx.get("tool_calls") or [],
+                    "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
                 }
 
         if not calls:
@@ -2775,6 +2779,13 @@ async def chat_with_tools(
                 # module-level docstring above _is_intent_only_announcement).
                 "turn_state": _turn_state,
                 "continue_available": _turn_state == "partial",
+                # 2026-09-08 — Chain-of-thought pattern analysis (see
+                # services/task_chain_logging.py). Raw thought TEXT
+                # only ever leaves this dict when the caller decides
+                # the turn failed — the metadata-only
+                # `sequential_thinking_calls` row is already written
+                # unconditionally by the tool itself.
+                "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
                 **agent_meta,
             }
 
@@ -3062,4 +3073,6 @@ async def chat_with_tools(
         "tool_calls":     local_ctx.get("tool_calls") or [],
         "findings_saved_this_turn": local_ctx.get("findings_saved_this_turn") or [],
         "palette_nudges": local_ctx.get("palette_nudges") or [],
+        # 2026-09-08 — see matching comment on the sibling exit path above.
+        "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
     }

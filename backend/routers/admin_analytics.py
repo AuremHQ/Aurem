@@ -11,6 +11,7 @@ Contains 42 handler(s)/helper(s):
   GET  /admin/eval-quality /admin/mode-telemetry /admin/product-analytics
   GET  /admin/vanguard/stats /admin/vanguard/recent
   GET  /admin/warm-start-stats /admin/skills-usage /admin/skills/status
+  GET  /admin/failure-patterns
   POST /admin/skills/* (web-search, fetch-url, firecrawl-*, search-and-summarize)
   GET  /admin/council/* /admin/ora/*  POST /admin/qa/cleanup-e2e-sessions
   POST /admin/seo/run
@@ -1385,6 +1386,147 @@ async def skills_usage(
         "total_calls": total,
         "skills":      rows,
         "hint":        "skills with share<0.02 are prune candidates (industry ceiling target: 18 skills)",
+    }
+
+
+# ─── 2026-09-08 — "Failure Patterns" admin tab (self-improving loop) ──
+# Simple group-by stats over `task_chains` (services/task_chain_logging.py)
+# — deliberately NOT an ML pipeline (DO-NOT: over-engineer the analysis).
+@router.get("/failure-patterns")
+async def failure_patterns(
+    days: int = 14,
+    limit: int = 10,
+    task_type: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """Which task types / prompt patterns / tool sequences fail most,
+    with a click-through to the truncated failure reasoning text (only
+    ever persisted on failure — see task_chain_logging.py's module
+    docstring). This is the analysis half of the self-improving loop —
+    prompts get better over time by looking at what's here."""
+    await _require_admin(authorization)
+    db = require_db()
+
+    days = max(1, min(int(days or 14), 90))
+    limit = max(1, min(int(limit or 10), 50))
+    from datetime import datetime, timedelta, timezone
+    cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
+    match = {"ts": {"$gte": cutoff_ts}}
+
+    async def _group_by(field: str, success: bool):
+        pipeline = [
+            {"$match": {**match, "success": success}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+        return [
+            {"value": r["_id"], "count": r["count"]}
+            async for r in db.task_chains.aggregate(pipeline)
+        ]
+
+    async def _group_by_prompt_pattern(success: bool):
+        # Crude, cheap "pattern" bucket — first word of the (already
+        # truncated) prompt, lowercased. Not NLP — a group-by key.
+        pipeline = [
+            {"$match": {**match, "success": success}},
+            {"$project": {"pattern": {"$toLower": {
+                "$arrayElemAt": [{"$split": ["$user_prompt", " "]}, 0],
+            }}}},
+            {"$group": {"_id": "$pattern", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+        return [
+            {"value": r["_id"], "count": r["count"]}
+            async for r in db.task_chains.aggregate(pipeline)
+        ]
+
+    top_failed_task_types    = await _group_by("task_type", False)
+    top_success_task_types   = await _group_by("task_type", True)
+    top_failed_patterns      = await _group_by_prompt_pattern(False)
+    top_success_patterns     = await _group_by_prompt_pattern(True)
+
+    # Tool-sequence success/fail rates.
+    pipeline_tool_seq = [
+        {"$match": match},
+        {"$project": {
+            "seq_key": {
+                "$cond": [
+                    {"$gt": [{"$size": {"$ifNull": ["$tool_sequence", []]}}, 0]},
+                    {"$reduce": {
+                        "input": "$tool_sequence", "initialValue": "",
+                        "in": {"$concat": [
+                            "$$value",
+                            {"$cond": [{"$eq": ["$$value", ""]}, "", ","]},
+                            "$$this",
+                        ]},
+                    }},
+                    "(no tools)",
+                ],
+            },
+            "success": 1,
+        }},
+        {"$group": {
+            "_id":           "$seq_key",
+            "count":         {"$sum": 1},
+            "success_count": {"$sum": {"$cond": ["$success", 1, 0]}},
+        }},
+        {"$sort": {"count": -1}},
+        {"$limit": limit},
+    ]
+    tool_sequence_rates = []
+    async for r in db.task_chains.aggregate(pipeline_tool_seq):
+        c = r["count"]
+        tool_sequence_rates.append({
+            "tool_sequence": r["_id"],
+            "count":         c,
+            "success_rate":  round(r["success_count"] / c, 3) if c else 0,
+        })
+
+    # Click-through: recent failures for the requested task type (or,
+    # if none picked yet, the single most-failed one) — WITH the
+    # truncated failure reasoning text when present.
+    sample_failures = []
+    _sample_type = task_type or (top_failed_task_types[0]["value"] if top_failed_task_types else None)
+    if _sample_type:
+        cur = db.task_chains.find(
+            {**match, "success": False, "task_type": _sample_type},
+            {"_id": 0, "user_prompt": 1, "task_type": 1, "failure_reason": 1,
+             "tool_sequence": 1, "failure_thoughts_truncated": 1, "ts": 1},
+        ).sort("ts", -1).limit(5)
+        sample_failures = await cur.to_list(length=5)
+
+    # Simple rule-based prompt-improvement suggestions — group-by
+    # stats only, NOT an LLM/ML pipeline.
+    counts_by_pattern: dict = {}
+    for row in top_failed_patterns:
+        counts_by_pattern.setdefault(row["value"], {"fail": 0, "success": 0})
+        counts_by_pattern[row["value"]]["fail"] = row["count"]
+    for row in top_success_patterns:
+        counts_by_pattern.setdefault(row["value"], {"fail": 0, "success": 0})
+        counts_by_pattern[row["value"]]["success"] = row["count"]
+    suggestions = []
+    for pattern, c in sorted(counts_by_pattern.items(), key=lambda kv: -kv[1]["fail"]):
+        total = c["fail"] + c["success"]
+        if total >= 3 and pattern and (c["fail"] / total) >= 0.3:
+            rate = round(c["fail"] / total * 100)
+            suggestions.append(
+                f"Prompts starting with \"{pattern}\" fail {rate}% of the "
+                f"time ({c['fail']}/{total}) — try naming the exact file "
+                f"or behavior instead of a bare \"{pattern}\"."
+            )
+
+    return {
+        "window_days":               days,
+        "top_failed_task_types":     top_failed_task_types,
+        "top_success_task_types":    top_success_task_types,
+        "top_failed_prompt_patterns": top_failed_patterns,
+        "top_success_prompt_patterns": top_success_patterns,
+        "tool_sequence_rates":       tool_sequence_rates,
+        "sample_task_type":          _sample_type,
+        "sample_failures":           sample_failures,
+        "suggestions":               suggestions,
     }
 
 

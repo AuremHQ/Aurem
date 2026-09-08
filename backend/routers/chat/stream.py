@@ -902,6 +902,22 @@ async def chat_stream(
                     )
                 except Exception:
                     logger.exception("mid-stream-drop persist_turn failed")
+                # 2026-09-08 — task-chain logging. Awaited directly (not
+                # create_task) — the enclosing generator is already being
+                # torn down by CancelledError/GeneratorExit here, so a
+                # detached task would race the event loop shutdown.
+                try:
+                    from services.task_chain_logging import log_task_chain
+                    await log_task_chain(
+                        get_db(), user_id=user_id, session_id=body.session_id or "",
+                        project_id=body.project_id, user_prompt=body.prompt or "",
+                        tool_calls=(result.get("tool_calls") if isinstance(result, dict) else None) or [],
+                        final_response=_emitted_so_far, turn_state="partial",
+                        failure_mode="network_drop_mid_stream",
+                        sequential_thoughts=(result.get("sequential_thoughts") if isinstance(result, dict) else None) or [],
+                    )
+                except Exception:
+                    logger.debug("task_chain logging skipped (mid-stream drop)")
 
         # Maxx mode: emit a stream marker, then run watchdog and emit result
         # Iter 161 — when `body.mode == "maxx"` Claude has ALREADY written
@@ -1145,6 +1161,23 @@ async def chat_stream(
                             low_confidence=state.low_confidence,
                             ship_suppressed=state.ship_suppressed,
                             bin_ctx=bin_ctx)
+
+        # 2026-09-08 — Chain-of-thought pattern analysis (structured,
+        # not raw). Fire-and-forget, same convention as the audit_log/
+        # quality_monitor calls elsewhere in this function — never
+        # blocks the user's response.
+        try:
+            from services.task_chain_logging import log_task_chain
+            _tc_turn_state = "error" if _hard_error else (result.get("turn_state") or "success")
+            asyncio.create_task(log_task_chain(
+                get_db(), user_id=user_id, session_id=body.session_id or "",
+                project_id=body.project_id, user_prompt=body.prompt or "",
+                tool_calls=result.get("tool_calls") or [], final_response=content,
+                turn_state=_tc_turn_state, failure_mode=_failure_mode,
+                sequential_thoughts=result.get("sequential_thoughts") or [],
+            ))
+        except Exception as _tc_exc:
+            logger.debug("task_chain logging skipped (chat_stream): %r", _tc_exc)
 
         # Fire-and-forget audit row — never block the response.
         try:

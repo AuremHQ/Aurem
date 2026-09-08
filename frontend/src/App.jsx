@@ -416,6 +416,7 @@ export default function App() {
           <Route path="/admin/tasks"          element={<AdminRoute><Admin initialTab="tasks" /></AdminRoute>} />
           <Route path="/admin/agent-performance" element={<AdminRoute><Admin initialTab="agent_perf" /></AdminRoute>} />
           <Route path="/admin/mcp-usage"      element={<AdminRoute><Admin initialTab="mcp" /></AdminRoute>} />
+          <Route path="/admin/failure-patterns" element={<AdminRoute><Admin initialTab="failure_patterns" /></AdminRoute>} />
           <Route path="/admin/reliability"    element={<AdminRoute><Admin initialTab="reliability" /></AdminRoute>} />
           <Route path="/admin/settings"       element={<AdminRoute><Admin initialTab="settings" /></AdminRoute>} />
           <Route path="/admin/integrations" element={<AdminRoute><AdminIntegrations /></AdminRoute>} />

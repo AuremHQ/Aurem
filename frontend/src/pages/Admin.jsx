@@ -10,7 +10,7 @@ import {
   Cpu, CreditCard, Network as SitemapIcon, Settings as SettingsIcon,
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
-  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter,
+  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown,
 } from "lucide-react";
 import { api } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -1438,6 +1438,223 @@ function McpUsagePage() {
   );
 }
 
+// 2026-09-08 — "Failure Patterns" admin tab (self-improving loop).
+// Simple group-by stats over /admin/failure-patterns (task_chains
+// collection, see services/task_chain_logging.py). Click a failed
+// task-type row to load its recent failure samples + the truncated
+// reasoning text (only ever persisted on failure).
+function FailurePatternsPage() {
+  const [d, setD] = useState(null);
+  const [days, setDays] = useState(14);
+  const [selectedType, setSelectedType] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((win, taskType) => {
+    setLoading(true);
+    api.get("/admin/failure-patterns", { params: { days: win, task_type: taskType || undefined } })
+      .then((r) => {
+        setD(r.data);
+        setSelectedType(r.data?.sample_task_type || null);
+      })
+      .catch(() => setD({}))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(days, null); }, [days, load]);
+
+  if (loading && !d) {
+    return <div style={{ padding: 24, color: "var(--text-faint)" }}><Loader2 size={14} className="spin" /> Loading…</div>;
+  }
+  const data = d || {};
+  const failedTypes = data.top_failed_task_types || [];
+  const successTypes = data.top_success_task_types || [];
+  const failedPatterns = data.top_failed_prompt_patterns || [];
+  const successPatterns = data.top_success_prompt_patterns || [];
+  const toolSeqRates = data.tool_sequence_rates || [];
+  const suggestions = data.suggestions || [];
+  const samples = data.sample_failures || [];
+
+  return (
+    <div style={{ padding: 24 }} data-testid="admin-failure-patterns-page">
+      <div style={{ display: "flex", justifyContent: "space-between",
+                     alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase",
+                      color: "var(--text-faint)", margin: 0 }}>
+          Failure Patterns — self-improving loop
+        </h3>
+        <select
+          data-testid="admin-failure-patterns-window"
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="input" style={{ width: 140 }}>
+          <option value={1}>Last 24 h</option>
+          <option value={7}>Last 7 days</option>
+          <option value={14}>Last 14 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+        </select>
+      </div>
+
+      <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 16 }}>
+        Every ORA turn logs a structured, truncated record (task type, prompt pattern,
+        tool sequence, success/fail) to <code>task_chains</code>. On failure only, the
+        model's reasoning text is also attached (truncated, secrets redacted) so you can
+        see WHY it failed, not just that it revised. Use this to spot which prompts need
+        rewording.
+      </div>
+
+      {suggestions.length > 0 && (
+        <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(234,179,8,0.35)" }}
+              data-testid="admin-failure-patterns-suggestions">
+          <h4 style={{ fontSize: 12, margin: "0 0 8px", color: "#eab308" }}>
+            Prompt improvement suggestions
+          </h4>
+          {suggestions.map((s, i) => (
+            <div key={i} style={{ fontSize: 12, color: "var(--text-dim)", padding: "4px 0" }}>
+              → {s}
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top failed task types
+          </h4>
+          <Card>
+            {failedTypes.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 12, color: "var(--text-faint)" }}>No failures logged yet.</div>
+            ) : failedTypes.map((row) => (
+              <div
+                key={row.value}
+                data-testid={`admin-failed-task-type-${row.value}`}
+                onClick={() => load(days, row.value)}
+                style={{
+                  padding: "8px 14px", display: "flex", justifyContent: "space-between",
+                  borderBottom: "1px solid var(--border)", cursor: "pointer", fontSize: 12,
+                  background: selectedType === row.value ? "var(--bg-elev)" : "transparent",
+                }}>
+                <span>{row.value}</span>
+                <Badge color="var(--danger)">{row.count}</Badge>
+              </div>
+            ))}
+          </Card>
+        </div>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top successful task types
+          </h4>
+          <Card>
+            {successTypes.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 12, color: "var(--text-faint)" }}>No successes logged yet.</div>
+            ) : successTypes.map((row) => (
+              <div key={row.value} style={{
+                padding: "8px 14px", display: "flex", justifyContent: "space-between",
+                borderBottom: "1px solid var(--border)", fontSize: 12,
+              }}>
+                <span>{row.value}</span>
+                <Badge color="var(--ok)">{row.count}</Badge>
+              </div>
+            ))}
+          </Card>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top failed prompt patterns
+          </h4>
+          <Card>
+            <Table
+              cols={["Pattern (first word)", "Fails"]}
+              rows={failedPatterns.map((row) => [row.value, row.count])}
+            />
+          </Card>
+        </div>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top successful prompt patterns
+          </h4>
+          <Card>
+            <Table
+              cols={["Pattern (first word)", "Successes"]}
+              rows={successPatterns.map((row) => [row.value, row.count])}
+            />
+          </Card>
+        </div>
+      </div>
+
+      <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                    color: "var(--text-faint)", margin: "0 0 8px" }}>
+        Tool-sequence success/fail rates
+      </h4>
+      <Card style={{ marginBottom: 16 }}>
+        <Table
+          cols={["Tool sequence", "Attempts", "Success rate"]}
+          rows={toolSeqRates.map((row) => [
+            <span key="seq" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+              {row.tool_sequence || "(no tools)"}
+            </span>,
+            row.count,
+            <Badge key="rate" color={row.success_rate >= 0.7 ? "var(--ok)" : row.success_rate >= 0.4 ? "var(--warn)" : "var(--danger)"}>
+              {Math.round(row.success_rate * 100)}%
+            </Badge>,
+          ])}
+        />
+      </Card>
+
+      <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                    color: "var(--text-faint)", margin: "0 0 8px" }}>
+        Click-through — recent failures{selectedType ? ` for "${selectedType}"` : ""}
+      </h4>
+      <Card data-testid="admin-failure-patterns-samples">
+        {samples.length === 0 ? (
+          <div style={{ padding: 16, fontSize: 12, color: "var(--text-faint)" }}>
+            Click a failed task type above to see recent examples.
+          </div>
+        ) : samples.map((s, i) => (
+          <div key={i} data-testid={`admin-failure-sample-${i}`}
+               style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>
+              <b>Prompt:</b> {s.user_prompt}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              failure_reason: <Badge color="var(--danger)">{s.failure_reason || "unknown"}</Badge>
+              {" · "}tools: {(s.tool_sequence || []).join(", ") || "none"}
+            </div>
+            {(s.failure_thoughts_truncated || []).length > 0 ? (
+              <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6,
+                            padding: "8px 10px", background: "rgba(255,255,255,0.03)",
+                            borderRadius: 6, fontFamily: "'JetBrains Mono', monospace",
+                            whiteSpace: "pre-wrap" }}>
+                {s.failure_thoughts_truncated.map((t, j) => (
+                  <div key={j} style={{ marginBottom: j < s.failure_thoughts_truncated.length - 1 ? 8 : 0 }}>
+                    {j + 1}. {t}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div data-testid={`admin-failure-sample-no-cot-${i}`}
+                   style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6,
+                            fontStyle: "italic" }}>
+                No sequential-thinking reasoning captured for this turn (the
+                model didn't use that tool here, or the turn failed before
+                any reasoning step ran).
+              </div>
+            )}
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
 // Iter 192 — Reliability page merges the old Warm Start and Post-scan
 // Issues tabs into one operational-health surface. Top half is warm
 // start (cold-boot speed + success), bottom half is Vanguard post-scan
@@ -1812,6 +2029,7 @@ const NAV = buildGroupedAdminNav({
   tasks: ListChecks,
   agent_perf: Activity,
   mcp: Plug,
+  failure_patterns: TrendingDown,
   reliability: ShieldAlert,
   settings: SettingsIcon,
 });
@@ -1973,6 +2191,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "tokens":         return <TokenPnL />;
       case "agent_perf":     return <AgentPerformancePage />;
       case "mcp":            return <McpUsagePage />;
+      case "failure_patterns": return <FailurePatternsPage />;
       case "reliability":    return <ReliabilityPage />;
       case "payments":       return <AdminFinancialsLazy />;
       case "support":        return <AdminSupportPageLazy />;
