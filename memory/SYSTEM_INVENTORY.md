@@ -924,3 +924,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `ENABLE_ONBOARDING_NUDGE` — auto-detected in backend/main.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578214Z] <!-- inv:envvar:ENABLE_ONBOARDING_NUDGE -->
 - `MIN_NUDGE_STAGE_AGE_HOURS` — auto-detected in backend/services/funnel_nudge_cron.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578275Z] <!-- inv:envvar:MIN_NUDGE_STAGE_AGE_HOURS -->
 - `MAX_NUDGES_PER_RUN` — auto-detected in backend/services/funnel_nudge_cron.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578292Z] <!-- inv:envvar:MAX_NUDGES_PER_RUN -->
+
+### Iter 0 · 2026-09-08
+
+- `services/task_chain_logging.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-08T02:24:44.373186Z] <!-- inv:service:services/task_chain_logging.py -->

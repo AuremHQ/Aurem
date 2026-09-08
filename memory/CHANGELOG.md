@@ -3136,3 +3136,24 @@ patterns become mineable and prompts improve over time.
   bug-fix failures, 37 successful turns), correct tool-sequence
   success rates, and a genuinely useful auto-generated suggestion
   surfaced in the UI. Sandbox-only \u2014 not yet deployed to production.
+
+## 2026-09-08 — Deploy-log fix: `loop_failures` index-name conflict firing on every boot
+Founder shared a second round of production boot logs. Confirmed via
+`deployment_agent` this boot was actually healthy (no blocker — all
+health checks 200, real traffic served, Redis LIVE via Upstash on
+prod) — but one recurring noisy item was worth fixing: `scripts/
+init_prod_collections.py`'s `loop_failures` collection declared its
+2 indexes with auto-generated names, while the real Atlas cluster (and,
+it turns out, this sandbox's own Mongo too) already had them under
+hand-picked names (`ix_loop_fail_window`, `ttl_occurred_at`) from an
+earlier version of this script. Every boot's `create_index` call
+collided with the existing index under a different name (Mongo error
+code 85) — caught as a harmless no-op, but on the TTL index specifically
+it also fired a failed drop-and-retry (`index not found with name
+[occurred_at_1]`) since that fallback only knows how to drop the
+*default* auto-generated name, not a custom one. Fixed by giving both
+index specs their real, already-live names explicitly. Verified: fresh
+boot's `init_prod_collections done — created=0, indexed=41, errors=0`
+line, zero conflict/warning lines for `loop_failures` afterward (was 3
+lines of noise every single boot before).
+
