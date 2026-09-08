@@ -86,6 +86,34 @@ _SECRET_PATTERNS = [
 ]
 
 
+# ── Output-quality degeneration detector (2026-09-11) ─────────────────
+# Founder live-caught: a "scan the whole repo" turn logged as 100%
+# SUCCESS in task_chains even though its actual reply contained the
+# known exact-phrase degeneration bug ("your page" repeated 20+ times
+# in one table cell) — turn_state only tracks "did it terminate",
+# never "was the text itself garbled". This is a narrow, cheap
+# heuristic for that ONE known failure shape (NOT a general quality
+# classifier — DO-NOT: over-engineer): a short phrase (1-5 words)
+# repeated 8+ times back-to-back, allowing typical table/list
+# separators (whitespace, commas, pipes, dashes) between repeats.
+_REPETITION_DEGENERATION_RE = re.compile(
+    r"\b(\w+(?:\s+\w+){0,4})\b(?:[\s,;|/\-]+\1\b){7,}",
+    re.IGNORECASE,
+)
+
+
+def detect_output_repetition_degeneration(text: str) -> bool:
+    """True if `text` contains the same short phrase repeated 8+ times
+    back-to-back — the live-reproduced exact-phrase degeneration bug.
+    Best-effort — never raises."""
+    if not text:
+        return False
+    try:
+        return bool(_REPETITION_DEGENERATION_RE.search(text))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def redact_secrets(text: str) -> str:
     """Best-effort — never raises, never blocks logging."""
     if not text:
@@ -149,6 +177,14 @@ async def log_task_chain(
         return
     try:
         success = (turn_state or "success") == "success"
+        # 2026-09-11 — see detect_output_repetition_degeneration's
+        # docstring: a terminal-success turn whose actual text is a
+        # known degenerated repeat-loop is reclassified as a failure
+        # here so /admin/failure-patterns surfaces it for triage,
+        # instead of it silently counting as a clean success.
+        degenerated = success and detect_output_repetition_degeneration(final_response)
+        if degenerated:
+            success = False
         tool_seq = _tool_sequence(tool_calls)
         record = {
             "user_id":        user_id,
@@ -161,7 +197,9 @@ async def log_task_chain(
             "tool_sequence":  tool_seq,
             "final_response": _truncate(redact_secrets(final_response or ""), 500),
             "success":        success,
-            "failure_reason": None if success else (failure_mode or turn_state or "unknown"),
+            "failure_reason": ("output_repetition_degeneration" if degenerated
+                                else None if success
+                                else (failure_mode or turn_state or "unknown")),
             "success_pattern": _derive_success_pattern(tool_calls, final_response) if success else None,
             "ts": time.time(),
         }
@@ -182,4 +220,5 @@ async def log_task_chain(
 
 __all__ = [
     "TASK_TYPES", "classify_task_type", "redact_secrets", "log_task_chain",
+    "detect_output_repetition_degeneration",
 ]

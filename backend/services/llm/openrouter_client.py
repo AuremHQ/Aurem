@@ -178,6 +178,19 @@ async def call_openrouter_model(
     # without perceptibly changing normal answer quality. Env-
     # overridable for easy tuning without a redeploy.
     _freq_penalty = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4"))
+    # 2026-09-11 — founder re-repro'd the SAME exact-phrase degeneration
+    # ("your page" x20+ in one table cell) live in production AFTER the
+    # frequency_penalty fix above had already deployed (confirmed via
+    # /api/health build_hash match). Root cause of the miss: OpenRouter
+    # forwards `frequency_penalty` to the underlying engine (vLLM/SGLang
+    # for GLM-5.2 + LongCat-2.0, both used here), but that alone doesn't
+    # reliably stop a determined EXACT-token-sequence loop — that's what
+    # `repetition_penalty` (a distinct, multiplicative lever, default 1.0
+    # = neutral) is specifically for. Using a light 1.1 value (GLM-5.2's
+    # own docs recommend ~1.05 to avoid heavier values causing cross-
+    # lingual "drift") to stack with frequency_penalty for this failure
+    # class without perceptibly changing normal answers.
+    _rep_penalty = float(os.getenv("LLM_REPETITION_PENALTY", "1.1"))
 
     # Try the requested model first, then each free fallback in turn.
     candidates = [model] + [m for m in _free_fallback_models() if m != model]
@@ -188,6 +201,7 @@ async def call_openrouter_model(
             "max_tokens": max_tokens,
             "temperature": temperature,
             "frequency_penalty": _freq_penalty,
+            "repetition_penalty": _rep_penalty,
             "messages": base_messages,
         }
         try:

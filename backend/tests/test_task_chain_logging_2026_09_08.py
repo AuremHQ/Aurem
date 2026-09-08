@@ -136,6 +136,71 @@ async def test_task_chain_no_sensitive_data_end_to_end():
         client.close()
 
 
+# ── output-repetition degeneration reclassification (2026-09-11) ──────
+# Founder live-caught: a "scan the whole repo" turn logged as SUCCESS
+# despite the reply containing the known exact-phrase degeneration bug
+# ("your page" x20+ in one table cell) — turn_state alone can't see
+# this. log_task_chain must reclassify such a record as a failure.
+
+def test_detect_output_repetition_degeneration():
+    from services.task_chain_logging import detect_output_repetition_degeneration
+
+    degenerated = (
+        "| folder | count |\n"
+        "| your page, your page, your page, your page, your page, "
+        "your page, your page, your page, your page | 16154 |"
+    )
+    clean = "16154 pages found across 5 folders, all distinct rows shown below."
+    assert detect_output_repetition_degeneration(degenerated) is True
+    assert detect_output_repetition_degeneration(clean) is False
+    assert detect_output_repetition_degeneration("") is False
+    assert detect_output_repetition_degeneration(None) is False
+
+
+@pytest.mark.asyncio
+async def test_task_chain_reclassifies_degenerated_success_as_failure():
+    from services.task_chain_logging import log_task_chain
+
+    client, db = _db()
+    marker = "tc-test-marker-degeneration"
+    try:
+        await db.task_chains.delete_many({"session_id": marker})
+        degenerated_reply = (
+            "your page, your page, your page, your page, your page, "
+            "your page, your page, your page, your page done."
+        )
+        await log_task_chain(
+            db, user_id="u1", session_id=marker, project_id="p1",
+            user_prompt="scan the whole repo and list every file",
+            tool_calls=[{"tool": "list_repo_files"}],
+            final_response=degenerated_reply,
+            turn_state="success",  # terminal contract says success…
+        )
+        doc = await db.task_chains.find_one({"session_id": marker})
+        assert doc is not None
+        # …but the logging layer must catch the garbled text and flip it.
+        assert doc["success"] is False
+        assert doc["failure_reason"] == "output_repetition_degeneration"
+
+        await db.task_chains.delete_many({"session_id": marker})
+
+        # Clean success (no repetition) must NOT be reclassified.
+        await log_task_chain(
+            db, user_id="u1", session_id=marker, project_id="p1",
+            user_prompt="scan the whole repo and list every file",
+            tool_calls=[{"tool": "list_repo_files"}],
+            final_response="16154 pages found across 5 folders, distinct rows.",
+            turn_state="success",
+        )
+        doc2 = await db.task_chains.find_one({"session_id": marker})
+        assert doc2["success"] is True
+        assert doc2["failure_reason"] is None
+
+        await db.task_chains.delete_many({"session_id": marker})
+    finally:
+        client.close()
+
+
 # ── t_cot_logged_on_failure_only ────────────────────────────────────────
 
 @pytest.mark.asyncio

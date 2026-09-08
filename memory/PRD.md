@@ -1,3 +1,25 @@
+## 2026-09-11 (later) — Repetition bug root-cause completed (repetition_penalty was the missing lever) + task_chains quality-degradation reclassification
+
+**Founder self-verified the 2026-09-08 deploy** (no credentials shared with any agent — founder used their own production access throughout, and retracted the earlier password-sharing offer permanently going forward):
+- `/admin/failure-patterns` confirmed live with real data (3 logged turns, tool_sequence_rates, task_type breakdowns) — `task_chains` structured logging is confirmed working end-to-end in production.
+- `/api/health` `build_hash` (`2c62173464af`) exactly matches commit `2c621734` — proves the prior repetition_penalty/approve-button deploy WAS live when the founder re-tested.
+- **Found: the "scan the whole repo" turn was STILL producing the repetition bug live in production** ("your page" x20+ in one table cell) despite the frequency_penalty fix being deployed and confirmed running.
+- **Found (founder's own insight): `task_chains` logged that exact degenerated turn as 100% SUCCESS** — `turn_state` only tracks "did the turn terminate", never "was the text itself garbled".
+
+**Root cause #1 — FIXED:** `frequency_penalty` alone (added 2026-09-08) wasn't sufficient for the exact-phrase repeat-loop failure class. The correct, distinct lever is `repetition_penalty` (multiplicative, not additive) — confirmed via web research that OpenRouter passes this through to GLM-5.2/LongCat-2.0's underlying vLLM/SGLang engines, and that GLM-5.2's own docs recommend a LIGHT value (~1.05) since heavier values (1.3+) cause cross-lingual "drift". Added `repetition_penalty=1.1` (env-overridable `LLM_REPETITION_PENALTY`) to both real OpenRouter call paths: `services/llm/openrouter_client.py::call_openrouter_model` (serves Claude/GLM/LongCat — confirmed via `/api/health`'s `council_a_model: meituan/longcat-2.0` that this is the actual path the repro'd scan turn used) and `services/llm/openrouter_providers.py::_call_deepseek`. Left Groq (`groq_client.py`) and DeepSeek-direct (`_call_deepseek_direct`, api.deepseek.com) untouched — researched and confirmed Groq silently ignores `frequency_penalty`/`repetition_penalty` (no functional effect either way, not worth the payload risk of adding an unsupported param to a different vendor's direct API).
+
+**Root cause #2 — FIXED:** `services/task_chain_logging.py` — new `detect_output_repetition_degeneration()` (same 1-5 word phrase repeated 8+ times back-to-back, allowing typical list/table separators). `log_task_chain()` now reclassifies a terminal-`success` turn as `success=False, failure_reason="output_repetition_degeneration"` when this fires, so `/admin/failure-patterns` surfaces it automatically (no endpoint changes needed — it already groups generically on `success`/`failure_reason`).
+
+**Tests:** 2 new (`test_detect_output_repetition_degeneration`, `test_task_chain_reclassifies_degenerated_success_as_failure`) + 14 existing = 16/16 pass. Broader LLM-suite regression sweep: 160/164 pass, 4 failures confirmed pre-existing/test-isolation pollution (module-reload state bleeding across test files in the same pytest process, NOT caused by this diff) via git-stash A/B — each of the 4 passes in isolation or fails identically on unstashed baseline.
+
+**PROVENANCE: preview-only, pending deploy.** Founder must redeploy and re-run the exact "scan the whole repo" repro to confirm the repetition bug is actually gone this time (repetition_penalty is a real, distinct fix vs. the incomplete frequency_penalty-only attempt) — cannot be fully confirmed without a fresh live LLM call, which is non-deterministic to force in sandbox.
+
+**Still open:**
+- P0-B (approve-button "didn't load" bug): the founder's own diagnostic turn ("scan the whole repo") was read-only/no-mutation, so it correctly produced no fence — this was NOT actually a repro of the approve-button bug (that needs a real fix/mutation request to reproduce the fence-gate path). Needs a fresh repro with an actual fix-type prompt before any further action, per founder's original no-frontend-fix-before-diagnosis instruction.
+- R10 rollback verify-verification — not yet actioned this round.
+- R8 (broader real-model re-test gate) — status still unconfirmed; no broad production model-call campaign has been run, only the single scoped diagnostic turns explicitly requested by the founder.
+
+
 ## 2026-09-11 — Token P&L vs MRR: founder decision implemented (keep separate, never blend)
 
 **Founder's decision** on the Token P&L $0 vs $76 MRR question flagged in the admin audit: keep Token P&L's "Revenue" strictly real-Stripe-only, and add a separate, clearly-labeled "assigned plan value" figure alongside it — never merge the two into one number.

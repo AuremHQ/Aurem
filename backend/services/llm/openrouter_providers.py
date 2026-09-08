@@ -407,6 +407,11 @@ async def _call_deepseek(messages: list, system: str = "",
             "max_tokens": max_tokens,
             "temperature": temperature,
             "frequency_penalty": float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4")),
+            # 2026-09-11 — see matching comment in openrouter_client.py's
+            # call_openrouter_model (repetition_penalty is the effective
+            # lever for exact-token-sequence loops; frequency_penalty
+            # alone wasn't enough per the founder's fresh prod repro).
+            "repetition_penalty": float(os.getenv("LLM_REPETITION_PENALTY", "1.1")),
         }
         if with_provider_block:
             # The host-routing block is OpenRouter-paid-tier specific; the
