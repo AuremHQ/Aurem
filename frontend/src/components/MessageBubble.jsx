@@ -55,7 +55,23 @@ export function detectShipCtaFallback(content) {
   }
   const hasFence = SHIP_FENCE_MARKER.test(content);
   const mentionsCta = SHIP_CTA_MENTION.test(content);
-  return { shouldFallback: hasFence || mentionsCta, hasFence };
+  // 2026-09-08 — root-cause fix for the recurring "Approve button
+  // didn't load" false-positive banner (live-reproduced: prompt
+  // "clean up the code ... and ship it" on a file that was already
+  // clean → model correctly concluded there was nothing to fix, but
+  // still emitted the ```aurem-handoff fence with no mutation verb
+  // inside it — a benign "no-op" conclusion, not a failed ship
+  // attempt). A fence with NO mutation verb was never going to
+  // become a real Approve button (extractHandoffBrief's own gate 5
+  // rejects it too) — so it shouldn't be reported as a UI failure.
+  // Only a fence that LOOKS like a genuine mutation attempt (has a
+  // mutation verb) but still got rejected by a later, stricter gate
+  // (fabricated citation, missing path, too long, etc.) is a real
+  // "should have shipped but couldn't" case worth the error banner.
+  const fenceMatch = content.match(/```aurem-handoff\s*\n([\s\S]*?)```/i);
+  const fenceIsNonActionable = !!fenceMatch && !MUTATION_VERBS.test(fenceMatch[1]);
+  const realHasFence = hasFence && !fenceIsNonActionable;
+  return { shouldFallback: realHasFence || mentionsCta, hasFence: realHasFence };
 }
 
 // ---- Helpers (only used here) ----------------------------------------------

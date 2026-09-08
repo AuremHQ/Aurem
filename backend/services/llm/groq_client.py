@@ -127,6 +127,9 @@ async def _call_groq(
         messages=msgs,
         max_tokens=max_tokens,
         temperature=temperature,
+        # 2026-09-08 — see call_openrouter_model's matching comment
+        # (QA regression Result 3 — degeneration-loop fix).
+        frequency_penalty=float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4")),
     )
     content = (completion.choices[0].message.content or "").strip()
     return content

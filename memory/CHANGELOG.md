@@ -3157,3 +3157,70 @@ boot's `init_prod_collections done — created=0, indexed=41, errors=0`
 line, zero conflict/warning lines for `loop_failures` afterward (was 3
 lines of noise every single boot before).
 
+
+## 2026-09-08 — Root-cause fixes: "Approve button didn't load" (5+ occurrences) + text-repetition/degeneration
+Founder's senior-QA pass on production (auremcto.com) confirmed the
+Turn-Completion Contract and ThinkingLoader fixes both PASS, and
+reported 2 active bugs with explicit priority + a "root cause, not a
+symptom patch" standard.
+
+**BUG 1 — false-positive "Approve button didn't load for that fix" banner (highest priority, 5+ occurrences, previously unaddressed):**
+Live-reproduced the real trigger by prompting a real project's ORA to
+"clean up the code ... and ship it" on a file that was already clean.
+The model correctly concluded there was nothing to fix — but still
+emitted the ```aurem-handoff fence (with no mutation verb inside, e.g.
+"already production-ready — no changes needed"). `extractHandoffBrief`
+correctly rejected that non-actionable fence (gate 5), but
+`detectShipCtaFallback` treated ANY fence presence as "should have
+shipped but failed", showing a scary false error banner for what was
+actually a correct answer. Two fixes:
+- **`services/orchestrator.py`** (persona instructions, ~line 943) —
+  explicitly tells the model: if you conclude nothing needs fixing,
+  say so in plain prose and do NOT emit the fence. Live-verified: the
+  exact same prompt now produces "Nothing to fix here — the content
+  passes review as-is." with zero fence.
+- **`frontend/src/components/MessageBubble.jsx`**'s
+  `detectShipCtaFallback()` — defense-in-depth: a fence with no
+  mutation verb inside no longer counts as `hasFence`, so even an
+  occasional non-compliant fence won't trigger the false banner. A
+  genuine mutation-verb fence rejected by a stricter gate (fabricated
+  citation, unread file, etc.) still correctly shows the banner —
+  verified no over-correction.
+- 2 new tests in `MessageBubble.k1_ship_fallback.test.jsx`
+  (`t_no_mutation_verb_fence_is_not_a_failure`,
+  `t_mutation_verb_fence_rejected_elsewhere_still_flags`), all 6 in
+  that file pass.
+
+**BUG 2 — text repetition/degeneration ("your page" repeated ~20+ times in a table cell, new finding):**
+Code-read confirmed the exact root cause the founder's own report
+hypothesized: **zero** of the 4 real LLM HTTP call-construction sites
+(`services/llm/openrouter_client.py::call_openrouter_model`,
+`services/llm/openrouter_providers.py::_call_deepseek` +
+`_call_deepseek_direct`, `services/llm/groq_client.py::_call_groq`)
+were passing `frequency_penalty` — the standard lever against exact-
+token-sequence degeneration loops, especially likely on very-short/
+low-entropy generations (a 1-page folder's table-cell description).
+Added `frequency_penalty=0.4` (env-overridable via
+`LLM_FREQUENCY_PENALTY`) to all 4 sites. Probabilistic fix (LLM
+sampling, not a deterministic guarantee) — spot-checked normal chat
+coherence is unaffected across several prompt types.
+
+**Verification:** targeted backend regression (openrouter/deepseek/
+groq/llm_client/llm_meta/call_llm keywords): 68 passed, 3 pre-existing/
+unrelated failures confirmed via git-stash. Frontend: 13/13 relevant
+gate-logic tests pass. Independently verified by testing_agent
+(`test_reports/iteration_approve_button_and_repetition_2026_09_08.json`):
+100%/100%, zero action items, own live repro confirmed zero false
+banners and turn_state contract still intact.
+
+**New finding, NOT fixed this round (flagged for a future dedicated pass):**
+during live-repro for Bug 1, found a separate-looking issue — a tool-
+error message ("The files X and Y were not found... I cannot provide
+any information about their contents...") sometimes leaking into the
+final displayed chat content right after a handoff fence, on a multi-
+new-file fix request. Not root-caused; needs its own investigation.
+
+**Pre-existing, unrelated, noted by testing_agent:** ~30+ HTTP 404
+console errors on Dashboard load — worth a separate cleanup pass, not
+touched here.
+

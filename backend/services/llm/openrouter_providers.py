@@ -348,6 +348,8 @@ async def _call_deepseek_direct(
         "messages": msgs,
         "max_tokens": max_tokens,
         "temperature": temperature,
+        # 2026-09-08 — see call_openrouter_model's matching comment.
+        "frequency_penalty": float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4")),
     }
     # Playbook-prescribed timeout (30s standard; 120s only for reasoning).
     timeout_s = float(os.getenv("DEEPSEEK_DIRECT_TIMEOUT_S", "30.0"))
@@ -395,11 +397,16 @@ async def _call_deepseek(messages: list, system: str = "",
     msgs = ([{"role": "system", "content": system}] + messages) if system else messages
 
     def _build_payload(model: str, with_provider_block: bool) -> dict:
+        # 2026-09-08 — see matching comment in openrouter_client.py's
+        # call_openrouter_model (QA regression Result 3 — exact-phrase
+        # degeneration loop, live-reproduced, root cause: no
+        # frequency_penalty configured anywhere in the LLM call stack).
         p: dict = {
             "model": model,
             "messages": msgs,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "frequency_penalty": float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4")),
         }
         if with_provider_block:
             # The host-routing block is OpenRouter-paid-tier specific; the

@@ -168,6 +168,16 @@ async def call_openrouter_model(
         {"role": "user",   "content": user},
     ]
     _timeout_s = float(os.getenv("LLM_HTTP_TIMEOUT_S", "25.0"))
+    # 2026-09-08 — QA regression report Result 3 (live-reproduced):
+    # exact-phrase degeneration loop ("your page" repeated 20+ times
+    # in a table cell) on a short/low-entropy generation. Confirmed
+    # via code read that NO OpenRouter call anywhere in this codebase
+    # passed frequency_penalty/presence_penalty — a well-known lever
+    # for exactly this failure mode. A modest, OpenAI-schema-standard
+    # value meaningfully suppresses exact-token-sequence repetition
+    # without perceptibly changing normal answer quality. Env-
+    # overridable for easy tuning without a redeploy.
+    _freq_penalty = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4"))
 
     # Try the requested model first, then each free fallback in turn.
     candidates = [model] + [m for m in _free_fallback_models() if m != model]
@@ -177,6 +187,7 @@ async def call_openrouter_model(
             "model": candidate,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "frequency_penalty": _freq_penalty,
             "messages": base_messages,
         }
         try:
