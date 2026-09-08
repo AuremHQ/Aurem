@@ -1,3 +1,16 @@
+## 2026-09-11 (senior QA round 2) — Double-click Approve/Rollback race condition fixed
+
+**Founder ran a second deep regression pass**, live-reproduced the exact bug flagged as "the single highest-value fix that surfaced in both rounds": double-clicking "Approve the fix" fast enough triggered TWO concurrent `/cto/tasks/submit` requests ("attempt 1/3 failed", "attempt 2/3 failed" — external API contention from the duplicate load). Backend-side de-dup happened to prevent an actual duplicate commit this time, but founder correctly flagged relying on that alone as risky (extra external-API load, and a different timing could still produce two real commits).
+
+**Root cause:** `MessageBubble.jsx::shipViaCTO()`'s guard (`if (shipState.status === "shipping") return;`) reads React STATE from a closure snapshotted at render time. State updates are batched/async — a second click landing before the first click's `setShipState({status: "shipping"})` has actually committed+re-rendered still sees the stale "idle" status and sails straight through the guard. Classic double-click race class.
+
+**Fix:** added a `useRef(false)` synchronous in-flight guard (`shipInFlightRef`) checked+set at the very top of `shipViaCTO()`, before any state read or async work — refs mutate immediately with zero batching, making this bulletproof against the exact timing this bug needs. Reset in a `finally` so a genuine retry after a real failure is never permanently blocked. Applied the identical pattern to `confirmRollbackShipped()` (`rollbackInFlightRef`) for consistency/defense-in-depth on the other critical action, per founder's own stated general principle.
+
+**Tests:** no new automated test added — `MessageBubble.k1_ship_fallback.test.jsx`'s own header comment explicitly documents this file's convention of testing pure functions only, not mounting the full component (too many context/prop dependencies) — extracting this ref-guard into a pure function would be over-engineering for testability alone. `eslint` clean. Live E2E re-confirmation (double-click the real Approve button, verify exactly one `/cto/tasks/submit` request) was attempted 3x but blocked each time by genuine backend/external-API slowness on this sandbox pod today ("ORA seemed to get stuck... auto-cancelled after 90s of silence" — matches the SAME external-API flakiness pattern the founder's own testing independently surfaced earlier in this session, unrelated to this fix). Confidence in this fix is high regardless: it's a deterministic, textbook JS/React idiom (synchronous ref-mutex against double-invocation), not probabilistic LLM behavior — fundamentally different risk profile than the "context confusion" issue from round 1.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-11 (senior QA sweep) — 4 real bugs fixed, 3 root-caused as non-bugs (test data / LLM non-determinism / deprioritized polish)
 
 **Founder ran a deep, fast, self-directed regression sweep (8 findings).** Addressed per founder's own priority order:

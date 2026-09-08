@@ -451,6 +451,22 @@ export default function MessageBubble({
     taskId: m.shipped_task_id || null,
     error: null,
   });
+  // 2026-09-11 — real QA repro (round 2): double-clicking "Approve
+  // the fix" fast enough triggered TWO concurrent /cto/tasks/submit
+  // requests ("attempt 1/3 failed", "attempt 2/3 failed" — external
+  // API contention). Root cause: the existing guard at the top of
+  // shipViaCTO() reads `shipState.status` from a CLOSURE snapshotted
+  // at render time — React state updates are batched/async, so a
+  // second click landing before the FIRST click's `setShipState({
+  // status: "shipping" })` has actually committed+re-rendered still
+  // sees the stale "idle" status and sails right through the guard.
+  // A ref is synchronous and mutates immediately (no batching, no
+  // stale-closure risk) — the bulletproof fix for this exact class
+  // of double-click race. Backend-side de-dup already prevented a
+  // duplicate COMMIT this time, but relying on that alone is risky
+  // (extra load on the external LLM API, and a different timing
+  // could still produce two real commits) — block it here instead.
+  const shipInFlightRef = useRef(false);
   // Live task progress (polled while shipped task is in-flight)
   const [taskInfo, setTaskInfo] = useState(null);
   // 2026-09 audit — Rollback fire-and-forget bug. confirmRollbackShipped()
@@ -628,10 +644,19 @@ export default function MessageBubble({
     setRbConfirmOpen(true);
   }
 
+  // 2026-09-11 — same double-click race class as shipInFlightRef
+  // above, applied to the OTHER critical action (Rollback) for
+  // consistency/defense-in-depth per the founder's own stated
+  // principle: any critical action button needs a synchronous
+  // in-flight guard, not just a state-based `disabled` prop.
+  const rollbackInFlightRef = useRef(false);
+
   async function confirmRollbackShipped() {
     setRbConfirmOpen(false);
     const tid = shipState.taskId;
     if (!tid) return;
+    if (rollbackInFlightRef.current) return;
+    rollbackInFlightRef.current = true;
     try {
       await api.post(`/cto/tasks/${tid}/rollback`, { confirm: "ROLLBACK" });
       toast({ message: "Rollback queued — this can take a few minutes, we'll update you here", kind: "info" });
@@ -641,6 +666,8 @@ export default function MessageBubble({
         message: sanitizeErrorMessage(e, "Rollback failed to start"),
         kind: "error",
       });
+    } finally {
+      rollbackInFlightRef.current = false;
     }
   }
 
@@ -732,6 +759,8 @@ export default function MessageBubble({
 
   async function shipViaCTO() {
     if (!canShip || shipState.status === "shipping" || shipState.status === "shipped") return;
+    if (shipInFlightRef.current) return;
+    shipInFlightRef.current = true;
     // Iter 212m-87 — replaced window.confirm() with the v0 Ship via CTO
     // modal. Files + Vanguard status now render inline in a dark overlay.
     const files = extractShipFiles(m.content, handoffBrief);
@@ -797,7 +826,14 @@ export default function MessageBubble({
     // TaskProgressCard/TaskLiveTape once shipped, so the modal's
     // post-ship UX was redundant too. One click now ships for real;
     // no second popup.
-    await doSubmit().catch(() => { /* doSubmit already surfaced the error via toast + shipState */ });
+    try {
+      await doSubmit().catch(() => { /* doSubmit already surfaced the error via toast + shipState */ });
+    } finally {
+      // Reset so a genuine retry after a real failure isn't blocked
+      // forever — only the double-click WITHIN one in-flight submit
+      // is guarded against.
+      shipInFlightRef.current = false;
+    }
   }
 
   return (
