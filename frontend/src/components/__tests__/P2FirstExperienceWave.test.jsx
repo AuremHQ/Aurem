@@ -24,13 +24,21 @@ import { api } from "../../lib/api";
 import FirstScanNudge from "../FirstScanNudge";
 
 describe("P2-A · first-session declutter", () => {
-  it("t_p2a_single_connect_hero: Dashboard mounts exactly one ConnectRepoBanner hero and no FinishSetupBanner", () => {
+  // 2026-09-09 — founder ticket Part 0: ConnectRepoBanner itself is
+  // now fully removed from Dashboard (not just deduped to one copy).
+  // It's superseded by the mandatory repo-connect gate (asGate=true
+  // NewUserWizard, shown before chat is reachable on first load) plus
+  // a single small post-skip toggle-badge (EngagementNudge) once a
+  // user has explicitly skipped that gate — never more than ONE
+  // connect-related affordance visible in chat at a time.
+  it("t_p2a_single_connect_hero: Dashboard has no ConnectRepoBanner, no FinishSetupBanner, and exactly one gated connect entry point", () => {
     const dash = read("pages/Dashboard.jsx");
     expect(dash).not.toMatch(/import\s+FinishSetupBanner/);
     expect(fs.existsSync(path.join(SRC, "components/FinishSetupBanner.jsx"))).toBe(false);
-    const mounts = dash.match(/<ConnectRepoBanner\b/g) || [];
-    expect(mounts.length).toBe(1);
-    expect(read("components/ConnectRepoBanner.jsx")).toMatch(/Connect your repo/i);
+    expect(dash).not.toMatch(/import\s+ConnectRepoBanner/);
+    expect(dash.match(/<ConnectRepoBanner\b/g) || []).toHaveLength(0);
+    expect(dash.match(/\{showGate\s*&&/g) || []).toHaveLength(1);
+    expect(dash.match(/<EngagementNudge\s+variant="post_skip"/g) || []).toHaveLength(1);
   });
 });
 

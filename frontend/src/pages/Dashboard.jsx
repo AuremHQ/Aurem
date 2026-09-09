@@ -42,7 +42,6 @@ import {
 } from "../components/TabBar";
 import NewUserWizard from "../components/NewUserWizard";
 import VisibilityKitPanel from "../components/VisibilityKitPanel";
-import ConnectRepoBanner from "../components/ConnectRepoBanner";
 import { EngagementNudge } from "../components/EngagementNudge";
 import RepoCleanupBanner from "../components/RepoCleanupBanner";
 import ConnectRepoTour from "../components/tour/ConnectRepoTour";     // Iter 212m-200
@@ -251,12 +250,16 @@ function DashboardV2Body() {
         try { localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(list)); }
         catch { /* quota / private mode — ignore */ }
         // 2026-08-27 · Journey Watch Phase 1 fix (signup drop-off F1):
-        // this used to auto-open the wizard at ZERO clicks, burying
-        // ConnectRepoBanner's value line ("unlock your free SEO fix")
-        // behind a permission-ask modal before the user ever saw it.
-        // Value now comes before the ask: the banner renders first,
-        // the wizard only opens when the user actually clicks its CTA
-        // (see openWizardFromBanner below).
+        // this used to auto-open the wizard at ZERO clicks. Later
+        // replaced with a banner-first, click-to-open flow.
+        // 2026-09-09 — founder ticket Part 0/1: real funnel data (not
+        // a guess) showed the banner-first approach was ALSO failing
+        // — new signups just never clicked it (Sessions:0). Reverted
+        // to auto-showing on first load, but now as a real, skippable
+        // gate (showGate below) rather than an unskippable modal —
+        // the earlier F1 fix's actual complaint (permission-ask
+        // before value) is addressed by Skip staying one real click
+        // away, not by hiding the ask behind a banner nobody clicks.
       })
       .catch(() => { /* silent — cached list keeps the UI populated */ });
   }, []);
@@ -672,18 +675,24 @@ function DashboardV2Body() {
           <div style={{ flex: 1, minHeight: 0, display: "flex",
                         flexDirection: "column", overflow: "hidden" }}>
             {/* Iter 212m-136 — orphan-repo cleanup banner. Auto-hides
-                when no projects are broken. Renders ABOVE
-                ConnectRepoBanner so the user is reminded to clean up
-                stale rows BEFORE we nudge them to connect a new repo. */}
+                when no projects are broken. Renders ABOVE the
+                post-skip engagement nudge below so the user is
+                reminded to clean up stale rows first. */}
             {/* Iter 390 — PersonalTrackBanner removed. Every new signup
                 now defaults to "developer" at insert time and the
                 startup backfill (main.py::_backfill_dev_users_track)
                 migrates any legacy null-track row on boot, so the
                 banner's "track is null" trigger can never fire. */}
+            {/* 2026-09-09 — founder ticket Part 0: the old always-on
+                "Connect your repo to unlock your free SEO fix" banner
+                (ConnectRepoBanner) is removed from here — it's now
+                fully superseded by the mandatory gate (Dashboard
+                renders <NewUserWizard asGate .../> below whenever
+                showGate is true) plus the small post-skip nudge
+                right below this comment once a user has explicitly
+                skipped that gate. Two competing always-visible
+                banners was the exact clutter problem being fixed. */}
             <RepoCleanupBanner />
-            {projectCount === 0 && (
-              <ConnectRepoBanner onConnect={openWizardFromBanner} onProjectCreated={onWizardComplete} />
-            )}
             {projectCount === 0 && gateSkipped === true && (
               <EngagementNudge variant="post_skip" onConnect={openWizardFromBanner} />
             )}

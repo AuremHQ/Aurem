@@ -7,6 +7,12 @@
  */
 export const Z_COOKIE_BANNER = 10000;
 export const Z_FLOATING_GUIDE = 10001; // must stay above the banner
+// 2026-09-09 — the engagement-nudge toggle-badge (EngagementNudge.jsx)
+// floats in the OPPOSITE corner from ORA GUIDE (bottom-left vs
+// bottom-right) so the two never visually stack, but still needs a
+// tracked value here rather than a hardcoded number — same rationale
+// as every other constant on this file.
+export const Z_ENGAGEMENT_NUDGE = 10001;
 // 2026-08-23 — the collapsed "ADVISOR" re-open tab (AskAdvisorReal.jsx)
 // is `fixed`, vertically-centered, anchored to the right edge — the
 // EXACT same screen region LiveTaskPopup.jsx's live ship/task progress
