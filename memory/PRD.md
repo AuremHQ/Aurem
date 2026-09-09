@@ -9017,4 +9017,74 @@ CPU pod limit itself. If `/health` timeouts recur after this fix, the
 next lever is raising the pod's CPU request/limit (infra change) — this
 fix only bounds the code-level thread-leak contributing to the burst.
 
+
+## 2026-09-09 (later still) — Part 0 round 2: single-entry-point nudge consolidation + stale-gate bubble bug
+
+**Founder feedback (2 annotated screenshots):**
+1. Chat still showed 3 competing floating prompts at once: the standalone
+   `EngagementNudge` badge ("Try a task" / "Connect repo", bottom-left),
+   the standalone `FirstScanNudge` banner ("New here? Start with a quick
+   scan…"), and the ORA GUIDE mascot (bottom-right). Ask: "don't show
+   anything twice… only one, through the robot" — consolidate all engagement
+   nudges into the single mascot icon.
+2. Bug: after connecting a repo through the DIRECT flow (no skip), the
+   mascot still showed the stale "One step left — pick a repo above…"
+   bubble. Ask: "must need to see first if already connected, do not ask
+   again."
+
+**Fix 1 — consolidation:** `EngagementNudge.jsx` rewritten headless (no
+own JSX render) — keeps its exact backend cap logic (`/onboarding/nudge/
+shown`, `/onboarding/nudge/post-scan-state`, session-cap) but hands the
+result to `OraGuideMascot` via a `window` `aurem:external-nudge` event
+instead of rendering its own badge. `FirstScanNudge.jsx` deleted entirely
+— same endpoint/message/dismiss-key/`/scan`-prefill logic now lives
+inside `OraGuideMascot` as a `secondaryNudge` state, gated on a new
+`aurem:user-message-sent` event (ChatPanel dispatches it since the
+mascot has no access to chat's local `messages` state). Priority: the
+existing stage bubble (connect_github/project_pending/no_chat) always
+wins and clears any secondaryNudge; secondaryNudge only auto-opens when
+no stage bubble is pending. `Dashboard.jsx` still mounts both
+`EngagementNudge` instances (same eligibility conditions, unchanged) but
+they render nothing visible now; a new `aurem:open-connect-wizard`
+listener replaces the old `onConnect` prop for the post_skip action.
+
+**Fix 2 — stale bubble bug:** root cause — `OraGuideMascot` polls
+`/auth/me/funnel-stage` on a fixed 15s timer with no way to know a
+connect had just happened; a user who connected directly could see the
+bubble from a tick that ran BEFORE the connect for up to 15s afterward.
+`NewUserWizard.jsx` now dispatches `window.dispatchEvent(new
+Event("aurem:project-connected"))` at all 3 success exits (fresh
+`submitRepo`, `openExistingProject`, `confirmMaterialize`) — NOT gated
+on `asGate` (unlike the existing `fireGateCompleted` funnel signal),
+since the stale-bubble bug can happen from any wizard entry point.
+`OraGuideMascot` listens and immediately re-runs its stage check instead
+of waiting for the next poll tick.
+
+**Verified:**
+- Full `yarn eslint src` clean; full `yarn vitest run` → same 9
+  pre-existing/unrelated failures with or without this change (StreamHealthPill,
+  LoopLiveFeed spinner, loop narration timer, rapid-send lock, a11y —
+  none touch these files), zero new regressions.
+- `P2FirstExperienceWave.test.jsx` rewritten (P2-B now statically
+  verifies the moved first-scan behavior inside `OraGuideMascot.jsx`
+  instead of the deleted standalone component) → 6/6 pass.
+- **Live screenshot** (test@aurem.dev, preview): after login, DOM has
+  zero `[data-testid="engagement-nudge"]`/`[data-testid="first-scan-
+  nudge"]` elements, zero literal "Try a task"/"New here? Start with a
+  quick scan" text anywhere on the page, cookie banner absent on
+  `/dashboard`. Clicking the single mascot icon (`ora-guide-mascot-
+  avatar`) opens exactly one panel (project-scoped suggestions).
+- **Not live-reproduced:** the exact "direct GitHub OAuth connect, no
+  skip" scenario from screenshot 2, since that requires a real GitHub
+  App installation handshake the sandboxed screenshot tool cannot
+  complete. The fix was verified by full code trace of all 3 success
+  exits + the mascot's listener, plus the pre-existing regression
+  suite — founder should do one live direct-connect run to confirm the
+  bubble no longer lingers.
+- Known transient issue hit during testing: Vite's `.vite/deps` cache
+  went stale after several rapid file edits/HMR reloads, causing a
+  "sonner could not be resolved" false error — fixed with `rm -rf
+  node_modules/.vite && supervisorctl restart frontend` (package was
+  never actually missing).
+
 - Preview only — not yet pushed to production.

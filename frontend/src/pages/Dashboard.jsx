@@ -289,6 +289,16 @@ function DashboardV2Body() {
     reloadProjects();
   }, [reloadProjects]);
 
+  // 2026-09-09 — founder ticket Part 0 (round 2): the post_skip
+  // nudge's "Connect" action now lives inside OraGuideMascot (single
+  // floating entry point) instead of its own removed badge, and the
+  // mascot has no direct handle on Dashboard's `showWizard` state —
+  // same cross-component event pattern as `aurem:ora-open` elsewhere.
+  useEffect(() => {
+    window.addEventListener("aurem:open-connect-wizard", openWizardFromBanner);
+    return () => window.removeEventListener("aurem:open-connect-wizard", openWizardFromBanner);
+  }, [openWizardFromBanner]);
+
   // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
   // `gateSkipped === null` while loading (fail nothing yet — the
   // gate simply doesn't render until we know); resolves to a bool.
@@ -694,7 +704,7 @@ function DashboardV2Body() {
                 banners was the exact clutter problem being fixed. */}
             <RepoCleanupBanner />
             {projectCount === 0 && gateSkipped === true && (
-              <EngagementNudge variant="post_skip" onConnect={openWizardFromBanner} />
+              <EngagementNudge variant="post_skip" />
             )}
             {!!activeProject && (
               <EngagementNudge variant="post_scan" projectId={activeProject.project_id} />

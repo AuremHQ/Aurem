@@ -153,6 +153,19 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
     api.post("/onboarding/repo-connect-gate/completed", { project_id: newProjectId }).catch(() => {});
   }
 
+  // 2026-09-09 — bug fix (founder-reported, screenshot): unlike
+  // `fireGateCompleted` above, this is NOT gated on `asGate` — the
+  // stale "One step left — pick a repo…" mascot bubble it fixes can
+  // happen from ANY wizard entry point (not just the mandatory gate),
+  // since OraGuideMascot polls `/auth/me/funnel-stage` independently
+  // on its own 15s timer and had no way to know a connect just
+  // happened. Fired at the same 3 success exits as the function
+  // above so the mascot can re-check immediately instead of leaving
+  // a just-connected user staring at a stale "please connect" ask.
+  function notifyProjectConnected() {
+    try { window.dispatchEvent(new Event("aurem:project-connected")); } catch { /* noop */ }
+  }
+
   // Initial OAuth status check.
   useEffect(() => {
     let cancelled = false;
@@ -411,6 +424,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       setProject(newProjectId);
       setActiveProjectId(newProjectId);
       fireGateCompleted(newProjectId);
+      notifyProjectConnected();
       // 2026-09-01 — connect-flow refinement (D3, standard pattern):
       // a ~1s "Connected ✓" beat, then auto-land — no 12s blocking
       // interstitial, no silent instant vanish either.
@@ -456,6 +470,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
     if (!alreadyConnected?.projectId) return;
     setActiveProjectId(alreadyConnected.projectId);
     fireGateCompleted(alreadyConnected.projectId);
+    notifyProjectConnected();
     close();
   }
 
@@ -492,6 +507,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       setProject(newProjectId);
       setActiveProjectId(newProjectId);
       fireGateCompleted(newProjectId);
+      notifyProjectConnected();
       close();
     } catch (e2) {
       const detail = e2?.response?.data?.detail;

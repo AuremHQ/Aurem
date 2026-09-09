@@ -32,7 +32,6 @@ import PostTaskScan from "./PostTaskScan";
 import LiveStepFloatingCard from "./LiveStepFloatingCard";  // Iter 212m-19
 import FounderOfferCard from "./FounderOfferCard";          // Iter 212m-30 PR-2
 import FirstScanCard from "./FirstScanCard";                 // Onboarding Step 4 · S-B
-import FirstScanNudge from "./FirstScanNudge";               // P2-B
 import SecurityScanDrawer from "./SecurityScanDrawer";      // Iter 212m-55 1-click scan
 import { getScanSeverityCounts, onScanUpdated, setCachedScan } from "../lib/securityScanCache";  // Iter 212m-56
 // Iter 212m-58 — Prompt / Loop execution-mode switcher + ancillary
@@ -211,6 +210,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   const chatStream = useChatStream();
   const [messages, setMessages] = useState([WELCOME]);
   const [input, setInput] = useState("");
+  // 2026-09-09 — founder ticket Part 0 (round 2): the removed
+  // FirstScanNudge banner used a local `messages.some(role==="user")`
+  // check to hide itself the moment the user typed anything. That
+  // nudge's logic now lives inside OraGuideMascot (single floating
+  // entry point, bottom-right) instead of a second banner here —
+  // this event is the only way it can still know "the user just
+  // sent a real message", since the mascot has no access to this
+  // component's local `messages` state.
+  useEffect(() => {
+    if (messages.some((m) => m.role === "user")) {
+      try { window.dispatchEvent(new Event("aurem:user-message-sent")); } catch { /* noop */ }
+    }
+  }, [messages]);
   // Iter 212m-190 · Session 3 — Chat-native scan commands. Slash-menu
   // is a controlled popover triggered by inputs starting with "/", and
   // ScanStatusStrip surfaces scan lifecycle events above the composer.
@@ -5446,11 +5458,6 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       <FirstScanCard
         projectId={activeProject?.project_id}
         dismissOnFirstMessage={messages.some((m) => m.role === "user")}
-      />
-      {/* P2-B — new-user first-scan nudge (only when no scan ever ran). */}
-      <FirstScanNudge
-        projectId={activeProject?.project_id}
-        hasUserMessage={messages.some((m) => m.role === "user")}
       />
 
       {/* 2026-08-21 — Stream health pill moved to render inline right

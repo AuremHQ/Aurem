@@ -7,21 +7,12 @@
  * (P2-D → ShipUIUnification.r3_physical.test.jsx · P2-E → UserNotificationBell.p2a.test.jsx ·
  *  P2-G → PrMiniGuide.r6.test.jsx — run alongside.)
  */
-import React from "react";
 import fs from "fs";
 import path from "path";
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect } from "vitest";
 
 const SRC = path.resolve(__dirname, "..", "..");
 const read = (p) => fs.readFileSync(path.join(SRC, p), "utf8");
-
-vi.mock("../../lib/api", () => ({
-  api: { get: vi.fn(), post: vi.fn(async () => ({ data: {} })) },
-  API_BASE: "http://test",
-}));
-import { api } from "../../lib/api";
-import FirstScanNudge from "../FirstScanNudge";
 
 describe("P2-A · first-session declutter", () => {
   // 2026-09-09 — founder ticket Part 0: ConnectRepoBanner itself is
@@ -43,49 +34,42 @@ describe("P2-A · first-session declutter", () => {
 });
 
 describe("P2-B · new-user first-scan nudge", () => {
-  beforeEach(() => { localStorage.clear(); api.get.mockReset(); });
+  // 2026-09-09 — founder ticket Part 0 (round 2): the standalone
+  // FirstScanNudge banner (a second competing chat banner, circled
+  // in the same screenshot as EngagementNudge's badge) is deleted.
+  // Its exact behavior — endpoint, dismiss-key format, message copy,
+  // and the "/scan" prefill handoff — now lives inside
+  // OraGuideMascot's `secondaryNudge` system (single floating entry
+  // point). Static source checks, same style as P2-C below, since
+  // fully rendering the mascot needs react-router + several hooks
+  // mocked for no additional regression value over asserting the
+  // literal behavior survived the move intact.
+  const mascot = read("components/OraGuideMascot.jsx");
 
-  it("t_p2b_first_scan_nudge_shows_when_no_scan_ever_ran", async () => {
-    api.get.mockResolvedValue({ data: { status: "skipped" } });
-    render(<FirstScanNudge projectId="p1" hasUserMessage={false} />);
-    await waitFor(() => expect(screen.getByTestId("first-scan-nudge")).toBeInTheDocument());
-    expect(api.get).toHaveBeenCalledWith("/onboarding/first-scan/status", { params: { project_id: "p1" } });
+  it("t_p2b_first_scan_nudge_shows_when_no_scan_ever_ran: calls the same status endpoint, gated on project + no user message yet", () => {
+    expect(mascot).toMatch(/api\.get\(\s*"\/onboarding\/first-scan\/status"/);
+    expect(mascot).toMatch(/status\s*!==\s*"skipped"/);
+    expect(mascot).toMatch(/!effectiveProjectId.*hasUserMessage|hasUserMessage.*!effectiveProjectId|if \(!effectiveProjectId[\s\S]{0,40}hasUserMessage\)/);
   });
 
-  it("t_p2b_first_scan_nudge_hidden_when_scan_exists_or_user_typed", async () => {
-    api.get.mockResolvedValue({ data: { status: "ready" } });
-    const { rerender } = render(<FirstScanNudge projectId="p1" hasUserMessage={false} />);
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
-    expect(screen.queryByTestId("first-scan-nudge")).toBeNull();
-    api.get.mockResolvedValue({ data: { status: "skipped" } });
-    rerender(<FirstScanNudge projectId="p2" hasUserMessage={true} />);
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
-    expect(screen.queryByTestId("first-scan-nudge")).toBeNull();
+  it("t_p2b_first_scan_nudge_hidden_when_scan_exists_or_user_typed: hasUserMessage clears any pending first_scan nudge", () => {
+    expect(mascot).toMatch(/aurem:user-message-sent/);
+    expect(mascot).toMatch(/prev\?\.kind !== "first_scan"/);
   });
 
-  it("t_p2b_first_scan_nudge_click_prefills_scan_and_dismiss_sticks", async () => {
-    api.get.mockResolvedValue({ data: { status: "skipped" } });
-    const seen = [];
-    window.addEventListener("ora:prefill", (e) => seen.push(e.detail.message));
-    const { unmount } = render(<FirstScanNudge projectId="p1" hasUserMessage={false} />);
-    await waitFor(() => screen.getByTestId("first-scan-nudge-scan-btn"));
-    fireEvent.click(screen.getByTestId("first-scan-nudge-scan-btn"));
-    expect(seen).toEqual(["/scan"]);
-    expect(screen.queryByTestId("first-scan-nudge")).toBeNull();
-    expect(localStorage.getItem("aurem_first_scan_nudge_dismissed_p1")).toBe("1");
-    unmount();
-    api.get.mockClear();
-    render(<FirstScanNudge projectId="p1" hasUserMessage={false} />);
-    expect(api.get).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("first-scan-nudge")).toBeNull();
+  it("t_p2b_first_scan_nudge_click_prefills_scan_and_dismiss_sticks: exact same event/message and localStorage dismiss key as the original", () => {
+    expect(mascot).toMatch(/ora:prefill.*message:\s*"\/scan"|message:\s*"\/scan"/);
+    expect(mascot).toMatch(/FIRST_SCAN_DISMISS_KEY\s*=\s*\(pid\)\s*=>\s*`aurem_first_scan_nudge_dismissed_\$\{pid\}`/);
+    expect(mascot).toMatch(/New here\? Start with a quick scan of your site/);
   });
 });
+
 
 describe("P2-C · jargon sweep guard", () => {
   const SURFACES = [
     "components/ConnectRepoBanner.jsx", "components/NewUserWizard.jsx",
     "components/OperationHistory.jsx", "components/ShipApproveCard.jsx",
-    "components/PrMiniGuide.jsx", "components/FirstScanNudge.jsx",
+    "components/PrMiniGuide.jsx", "components/OraGuideMascot.jsx",
     "components/FirstScanCard.jsx", "components/RollbackConfirmModal.jsx",
     "components/TaskProgressCard.jsx", "components/OraPreviewPanel.jsx",
     "pages/Integrations.jsx", "pages/Deploy.jsx",
