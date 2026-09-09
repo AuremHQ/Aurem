@@ -99,7 +99,21 @@ api.interceptors.response.use((response) => {
         || url.includes("/auth/change-password")
         || url.includes("/auth/forgot-password")
         || url.includes("/auth/reset-password");
-      if (hadToken && !isAuthEndpoint) {
+      // 2026-09-09 — CRITICAL defense-in-depth (founder-reported:
+      // "signs out automatically instead of connecting to a new
+      // GitHub App"). A 401 from a GITHUB-linked endpoint can mean
+      // "the user's linked GitHub OAuth/App token is stale/revoked"
+      // — a third-party credential problem, NOT "your AUREM JWT is
+      // dead". That distinction is now enforced server-side too
+      // (routers/github_oauth.py returns 409, not 401, for a revoked
+      // GitHub token) but this endpoint is excluded here as well so
+      // no endpoint on this family can ever again force-logout the
+      // whole browser (every open tab shares this localStorage key)
+      // over a problem that has nothing to do with the AUREM session.
+      const isThirdPartyTokenEndpoint =
+        url.includes("/github/oauth/")
+        || url.includes("/github/app/");
+      if (hadToken && !isAuthEndpoint && !isThirdPartyTokenEndpoint) {
         window.dispatchEvent(new CustomEvent("aurem:session-expired", {
           detail: {
             url,

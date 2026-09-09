@@ -7,9 +7,16 @@ stale/revoked (GitHub returned 401 for /user/repos), propagating
 through the entire FastAPI/Starlette stack as a raw, ugly 500 with a
 full traceback logged in production instead of a clean, actionable
 error. Fixed: catch httpx.HTTPStatusError in routers/github_oauth.py's
-`repos()` and convert to a clean 401 ("reconnect") or 502 (other
+`repos()` and convert to a clean 409 ("reconnect") or 502 (other
 GitHub errors), matching how other error paths in this router already
 behave.
+
+2026-09-09b — the reconnect case was FIRST shipped as a plain 401,
+which collided with the frontend's global "401 == AUREM session dead,
+force logout everywhere" contract (lib/api.js) and force-logged-out
+users the instant NewUserWizard's auto-mount check hit a stale legacy
+OAuth link. Changed to 409 Conflict so a revoked THIRD-PARTY GitHub
+token can never again be confused with an invalid AUREM JWT.
 """
 from __future__ import annotations
 
@@ -43,7 +50,11 @@ async def test_revoked_token_returns_clean_401_not_raw_500(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await gho.repos(authorization="Bearer x")
 
-    assert exc_info.value.status_code == 401
+    # 409, NOT 401 — a revoked GitHub OAuth token must never collide
+    # with the AUREM-session-401 contract the frontend force-logs-out
+    # on (see 2026-09-09b comment above the raise site).
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.status_code != 401
     assert "reconnect" in exc_info.value.detail.lower()
 
 
