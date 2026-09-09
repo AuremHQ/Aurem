@@ -8966,4 +8966,55 @@ Traced this through `hooks/useGitHubConnectStatus.js` + `routers/github_app.py` 
 - **Known residual / not yet UI-verified**: Test 4 (a real successful connect-from-the-gate) needs a live GitHub OAuth popup round-trip, which can't be automated in this sandbox — the `repo_connect_gate_completed` emission itself was proven correct via the earlier live curl work, just not click-driven through a real GitHub popup. Test 5's "Try it" → composer-prefill click wasn't exercised live because no account currently has `post-scan-state show:true` (both of `test@aurem.dev`'s projects already have a real task sent since their last scan) — the click handler just dispatches the SAME pre-existing `aurem:starter-pick` event ChatPanel already uses for its own starter prompts, so risk is low, but not click-verified in this round.
 - **Part 0 addendum (same day, follow-up round) — decluttered the on-screen result** after founder reviewed the first build's screenshots: (a) removed the old `ConnectRepoBanner` ("Connect your repo to unlock your free SEO fix" + "500 of 500 founder spots") from Dashboard entirely — fully superseded by the Part 1 gate now, so keeping both was reintroducing the exact "too many competing banners" problem this ticket exists to fix; (b) rewrote `EngagementNudge.jsx` from a full-width always-visible in-chat strip into a small "toggle-badge" modeled directly on the app's existing ORA GUIDE mascot pattern — collapsed by default (small pill, bottom-left, opposite corner from ORA GUIDE bottom-right so they never collide), expands into a small bubble with the full message + action only on click; (c) fixed the cookie-consent-vs-ORA-GUIDE z-index overlap bug by making `CookieConsentBanner` mutually exclusive with ORA GUIDE by construction — gated on the SAME `loggedIn` check ORA GUIDE already uses (`localStorage.aurem_token`) instead of patching z-index again, so it still shows correctly on `/login`, `/signup`, and public marketing pages for logged-out visitors (preserved, unchanged — confirmed no GDPR-compliance regression), but can never appear anywhere once a user is authenticated. New `Z_ENGAGEMENT_NUDGE` constant added to the tracked `lib/zIndex.js` registry rather than a hardcoded number. Updated the existing `P2FirstExperienceWave.test.jsx` guard test to assert zero `ConnectRepoBanner` mounts (previously asserted exactly one) plus exactly one gated connect entry point. `testing_agent` verified all 3 changes live with real screenshots + DOM bounding-box checks confirming the badge and ORA GUIDE never overlap: `/app/test_reports/iteration_part0_banner_badge_cookie_relocation_2026_09_09.json` — 6/6 PASS, zero action items. Fixed one minor a11y nit from that report's code-review comments (a nested `role="button"` dismiss-X inside the outer badge `<button>` — invalid HTML button-in-button semantics): removed the inline dismiss-X from the collapsed badge entirely; dismissal now only happens via the bubble's own proper `<button>` "Dismiss", consistent with how ORA GUIDE's own mascot handles it too.
 - Preview only — not yet pushed to production. Both rounds (Part 1/2 + Part 0) verified on preview; production still needs a "Save to GitHub" + redeploy to pick any of this up.
+
+## 2026-09-09 (later) — Deploy fix: orphaned health-probe thread starving /health
+
+**Symptom (from founder's prod deploy logs):** recurring nginx
+`upstream timed out (110) ... /health`, correlated with a
+`[G20] Emergent LLM Key: Probe timed out after 20.0s` incident and a
+`resend 401` warning (unrelated — expired `RESEND_API_KEY`, informational
+only, not a deploy blocker; founder should rotate that key separately).
+
+**Investigation:** `deployment_agent` static scan found no blockers
+(secrets/CORS/ports all clean). Traced the runtime symptom by hand:
+`/health` itself (`healthz_root`) is a trivial `{"ok": True}` short-circuited
+early in `_global_rate_limit_guard` middleware — provably non-blocking.
+`services/integration_health.py`'s `_probe_emergent_llm()` already isolates
+its LiteLLM/OpenAI call via `asyncio.to_thread(_sync_send)` (2026-09-07 fix)
+and `run_all_probes_serial()` already spaces all 13 probes 3s apart
+(2026-08-27 fix) — both prior mitigations for this exact class of bug.
+
+**Root cause (new):** `_run()`'s outer `asyncio.wait_for(coro, timeout=20s)`
+only cancels the *await* — it cannot kill the underlying OS thread
+(Python threads aren't cancellable). When OpenAI itself is slow, the
+orphaned thread keeps running for however long the real call actually
+takes (seconds to minutes) and keeps occupying a slot in the shared
+`to_thread` executor pool the whole time, invisible to the "timed out"
+bookkeeping. Repeated slow probes pile up orphaned threads, starving the
+pool other real work (e2b, Stripe) needs — adding to the CPU-burst
+pressure that starves `/health` on the 500m-CPU prod pod.
+
+**Fix:** `services/integration_health.py::_probe_emergent_llm` — gave
+`_sync_send`'s inner coroutine its own `asyncio.wait_for(_inner(), timeout=PROBE_TIMEOUT - 2.0)`
+so the background thread itself gives up and exits promptly instead of
+running indefinitely.
+
+**Verified:**
+- Simulated a 120s OpenAI hang → probe now returns "broken" in ~18s
+  (thread bounded, no longer orphaned for 120s). Simulated fast success
+  path unaffected (`status=ok`).
+- Full existing suite: `test_iter331_health_probe_offload.py`,
+  `test_deploy_2026_08_19_health_probe_and_exceptiongroup.py`,
+  `test_iter_deploy_health_probe_serial_everywhere.py`,
+  `test_integration_health_cron.py` → 32 passed.
+- `test_iter98_integration_health_center.py::test_admin_endpoints_registered`
+  fails identically with/without this change (pre-existing, unrelated —
+  route registration issue, not touched by this fix).
+- Backend restarted clean, local `/health` → 200 in ~2-5ms.
+
+**Not touched (infra, out of scope per founder instruction):** the 500m
+CPU pod limit itself. If `/health` timeouts recur after this fix, the
+next lever is raising the pod's CPU request/limit (infra change) — this
+fix only bounds the code-level thread-leak contributing to the burst.
+
 - Preview only — not yet pushed to production.

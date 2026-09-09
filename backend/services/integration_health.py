@@ -793,6 +793,25 @@ async def _probe_emergent_llm() -> dict:
     # (`asyncio.to_thread` running its own fresh event loop) — runs this
     # entire call on a dedicated OS thread so nothing it does internally
     # can ever touch the main event loop again.
+    #
+    # 2026-09-09 deploy-log fix — the isolation above stops this call
+    # from blocking the MAIN loop, but `_run()`'s outer
+    # `asyncio.wait_for(coro, timeout=PROBE_TIMEOUT)` only cancels the
+    # AWAIT — it cannot kill the underlying OS thread (Python threads
+    # aren't cancellable). Deploy logs still showed the exact same
+    # nginx `/health` timeout symptom recurring, correlated with a
+    # fresh `[G20] Emergent LLM Key: Probe timed out after 20.0s`
+    # incident: when OpenAI itself is slow, the orphaned thread keeps
+    # running (however long the real call takes — seconds to minutes)
+    # and keeps occupying a slot in the shared `to_thread` executor
+    # pool the whole time, invisible to the "timed out" bookkeeping.
+    # Repeated slow probes can pile up enough orphaned threads to
+    # starve the pool other real work (e2b, Stripe) needs, adding to
+    # the same CPU-burst pressure that starves /health on the 500m-CPU
+    # prod pod. Fix: give `_inner()` its OWN internal timeout (via
+    # `asyncio.wait_for` on ITS OWN fresh event loop, a few seconds
+    # under `PROBE_TIMEOUT`) so the thread itself gives up and exits
+    # promptly instead of being abandoned to run indefinitely.
     def _sync_send() -> str:
         import asyncio as _asyncio
         from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -808,7 +827,7 @@ async def _probe_emergent_llm() -> dict:
             resp = await chat.send_message(UserMessage(text="ping"))
             return (resp or "").strip()
 
-        return _asyncio.run(_inner())
+        return _asyncio.run(_asyncio.wait_for(_inner(), timeout=PROBE_TIMEOUT - 2.0))
 
     try:
         text = await asyncio.to_thread(_sync_send)
