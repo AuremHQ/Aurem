@@ -1,3 +1,16 @@
+## 2026-09-09 (follow-up) — Fixed remaining GitHub connect isolation leak: reconfiguring ONE org still leaked unrelated siblings
+
+**Founder's 2nd screen recording** showed the round-1 full-isolation fix hadn't fully solved it — the leak now happened "after the first step" (mount-time leak from round 1 was fixed, but a residual leak remained deeper in the flow): reconfiguring just ONE existing org (`auravw`) in GitHub's own picker caused an UNRELATED, completely untouched sibling org (`VeroCapper`) to ALSO appear in the repo picker.
+
+**Root cause:** round 1's poll-diff fallback (used when GitHub's postMessage callback doesn't arrive — the common case for "Configure an existing org" since no NEW `installation_id` is minted) treated "no new id appeared" as "mark ALL currently-active installations fresh" — a deliberately-flagged degraded fallback from round 1's own testing report ("a fresh reconfigure-only session... will mark all of them fresh"). This promoted every unrelated sibling org too.
+
+**Fix:** `preConnectIdsRef` now snapshots repo COUNT per installation id (a `Map`, not a `Set`) before `startConnect()` begins. After the poll succeeds, an installation is marked fresh only if its id is brand-new OR its repo count changed vs the snapshot for that same id — untouched siblings (same id, same count) are never resurrected just because some other installation was touched. Also added `autoComplete="off"` to `NewUserWizard.jsx`'s manual repo-URL/branch inputs (was inconsistent with `AddProjectWizard.jsx`'s equivalent field) as cheap defensive hardening against the recording's unexplained stray "twemeri/repo" value.
+
+**Tests:** new regression-lock test `t_reconfiguring_one_existing_org_does_not_leak_other_unrelated_orgs` + all 15 adjacent tests pass. `testing_agent_v3_fork` confirmed — 100% pass, no critical issues, confirmed the new test is meaningful (would have failed under round 1's logic).
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-09 — "Full isolation" fix: new projects no longer leak stale GitHub App installations from unrelated past projects
 
 **Founder uploaded a screen recording** showing: creating a NEW project's GitHub connect flow showed/auto-picked repos from OLD, unrelated GitHub App installations (`polaris.butler.org`, `AuronHQ` — installed for a completely different earlier project on the same account), and clicking "Continue" looped back to GitHub's own install screen. User chose the fix direction explicitly: **"2. Full isolation"** (each new project always starts fresh — previously-installed orgs/repos never shown for a new project, even if valid) **+ "3. fix the Continue button [loop] too."**

@@ -58,7 +58,7 @@ export default function useGitHubConnectStatus() {
   const pollRef = useRef(null);
   const bgSyncRef = useRef(null);
   const startRef = useRef(0);
-  const preConnectIdsRef = useRef(new Set());
+  const preConnectIdsRef = useRef(new Map());
   // Kept in sync with `status` via the effect below so
   // `startConnect` (a stable useCallback, deliberately NOT
   // re-created on every status change) can read the CURRENT status
@@ -142,8 +142,12 @@ export default function useGitHubConnectStatus() {
     // 2026-09-09 — snapshot BEFORE this attempt so the poll-success
     // branch below can tell "brand new installation" apart from
     // "pre-existing installation from a past session" by set-diff.
-    preConnectIdsRef.current = new Set(
-      (statusRef.current.installations || []).map((i) => String(i.installation_id)),
+    // Snapshots repo COUNT per id too (not just the id set) — see the
+    // 2026-09-09-b fix below for why.
+    preConnectIdsRef.current = new Map(
+      (statusRef.current.installations || []).map(
+        (i) => [String(i.installation_id), (i.repositories || []).length],
+      ),
     );
     stopPolling();
     stopBackgroundSync();
@@ -170,18 +174,37 @@ export default function useGitHubConnectStatus() {
         // 2026-09-09 — full-isolation fix, part 2: postMessage/claim
         // (below) is the precise source when it arrives, but it can
         // race or drop on some browser/extension combos. This is the
-        // guaranteed-to-run fallback: diff current installation ids
+        // guaranteed-to-run fallback: diff current installations
         // against the pre-attempt snapshot. A genuinely new org shows
-        // up as a new id; re-configuring an EXISTING org (no new id,
-        // just changed repo grants) has no diff to find, so fall back
-        // to treating every currently-active installation as fresh —
-        // still correct for that case, since the user just went
-        // through GitHub's own picker for it moments ago.
+        // up as a new id — fresh. Re-configuring an EXISTING org (no
+        // new id, GitHub's own "Configure" screen just changed which
+        // repos are granted) is caught by comparing repo COUNT for
+        // that same id against the snapshot — also fresh, but ONLY
+        // that one specific installation.
+        //
+        // 2026-09-09-b — founder-reported (2nd recording, still
+        // happening "after the first step" — i.e. the mount-time
+        // leak from part 1 was fixed, but this fallback path itself
+        // still leaked): the ORIGINAL fallback here was "no new id ⇒
+        // mark ALL currently-active installations fresh". On an
+        // account with several pre-existing orgs, reconfiguring just
+        // ONE of them (no new id, since it already existed) promoted
+        // every OTHER unrelated org to "fresh" too — the exact
+        // "@auravw shows twice, plus an unrelated VeroCapper group"
+        // symptom in the recording. Comparing repo count per id
+        // fixes this: only the installation whose grant genuinely
+        // changed during THIS session is marked fresh, never its
+        // untouched siblings.
         const currentIds = (data.installations || []).map((i) => String(i.installation_id));
-        const newIds = currentIds.filter((id) => !preConnectIdsRef.current.has(id));
+        const newOrChangedIds = currentIds.filter((id) => {
+          const before = preConnectIdsRef.current.get(id);
+          if (before === undefined) return true; // brand new installation
+          const inst = (data.installations || []).find((i) => String(i.installation_id) === id);
+          return (inst?.repositories || []).length !== before; // repo grant changed
+        });
         setFreshInstallIds((prev) => {
           const merged = new Set(prev);
-          for (const id of (newIds.length > 0 ? newIds : currentIds)) merged.add(id);
+          for (const id of newOrChangedIds) merged.add(id);
           return Array.from(merged);
         });
         if (data.state !== "connected") {

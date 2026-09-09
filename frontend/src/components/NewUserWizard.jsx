@@ -1040,6 +1040,7 @@ export default function NewUserWizard({ onComplete }) {
                   <input
                     data-testid="wizard-repo-input"
                     autoFocus={ghStatus !== "connected"}
+                    autoComplete="off"
                     value={repoUrl}
                     onChange={(e) => setRepoUrl(e.target.value)}
                     placeholder="https://github.com/owner/repo"
@@ -1048,6 +1049,7 @@ export default function NewUserWizard({ onComplete }) {
                   <label style={lStyle}>Branch</label>
                   <input
                     data-testid="wizard-branch-input"
+                    autoComplete="off"
                     value={branch}
                     onChange={(e) => setBranch(e.target.value)}
                     placeholder="main"

@@ -137,4 +137,60 @@ describe("2026-09-09 — full isolation: freshInstallIds", () => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
+
+  it("t_reconfiguring_one_existing_org_does_not_leak_other_unrelated_orgs", async () => {
+    // 2026-09-09-b — 2nd founder recording, still happening "after
+    // the first step": account has TWO pre-existing installations
+    // (e.g. `auravw` and `VeroCapper`, both from past unrelated
+    // projects). User re-configures ONLY `auravw` in GitHub's own
+    // "Configure" screen (adds a repo to it — no NEW installation_id
+    // appears, since the org itself was already installed). Only
+    // `auravw` must become fresh; `VeroCapper` must NOT leak in just
+    // because SOME connect session happened.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fakePopup = { close: vi.fn(), closed: false };
+    vi.stubGlobal("open", vi.fn(() => fakePopup));
+
+    const auravwBefore = {
+      installation_id: 10, github_login: "auravw",
+      repositories: [{ full_name: "auravw/one" }],
+    };
+    const veroCapperUntouched = {
+      installation_id: 20, github_login: "VeroCapper",
+      repositories: [{ full_name: "VeroCapper/old" }],
+    };
+    api.get.mockResolvedValueOnce({
+      data: {
+        installation_active: true,
+        installations: [auravwBefore, veroCapperUntouched],
+        state: "connected",
+      },
+    });
+    const { result } = renderHook(() => useGitHubConnectStatus());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.freshInstallIds).toEqual([]);
+
+    act(() => { result.current.startConnect(); });
+
+    // Poll resolves: auravw's repo grant GREW (same id, more repos —
+    // the "Configure existing org" case); VeroCapper is byte-for-byte
+    // unchanged (untouched this session).
+    const auravwAfter = {
+      installation_id: 10, github_login: "auravw",
+      repositories: [{ full_name: "auravw/one" }, { full_name: "auravw/two" }],
+    };
+    api.get.mockResolvedValue({
+      data: {
+        installation_active: true,
+        installations: [auravwAfter, veroCapperUntouched],
+        state: "connected",
+      },
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2600); });
+
+    expect(result.current.freshInstallIds).toEqual(["10"]);
+    expect(result.current.freshInstallIds).not.toContain("20");
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 });
