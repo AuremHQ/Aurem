@@ -1,3 +1,21 @@
+## 2026-09-09 — "Full isolation" fix: new projects no longer leak stale GitHub App installations from unrelated past projects
+
+**Founder uploaded a screen recording** showing: creating a NEW project's GitHub connect flow showed/auto-picked repos from OLD, unrelated GitHub App installations (`polaris.butler.org`, `AuronHQ` — installed for a completely different earlier project on the same account), and clicking "Continue" looped back to GitHub's own install screen. User chose the fix direction explicitly: **"2. Full isolation"** (each new project always starts fresh — previously-installed orgs/repos never shown for a new project, even if valid) **+ "3. fix the Continue button [loop] too."**
+
+**Root cause:** `GET /github/app/status` (backend) is intentionally GLOBAL — every installation a GitHub account has EVER granted, forever (correct for the backend, since GitHub Apps themselves have no per-project concept). The shared frontend hook `useGitHubConnectStatus.js` exposed this raw global list directly to both connect wizards (`NewUserWizard.jsx`, `AddProjectWizard.jsx`), which rendered/auto-selected repos from it on mount — so a brand-new project's wizard could silently show or even auto-submit an unrelated old project's repo. Separately, `NewUserWizard.submitRepo()`'s catch block force-reset the entire flow to `ghStatus="disconnected"` on any "GitHub not connected" error, even mid-flow in the App-picker — visually indistinguishable from the whole install screen reappearing.
+
+**Fix:**
+- New `freshInstallIds` state in `useGitHubConnectStatus.js`, populated ONLY by installations confirmed during the CURRENT hook-instance session: precisely via `claimInstallation`'s postMessage/redirect `install_id` (primary path), with a poll-diff-against-a-pre-`startConnect()`-snapshot fallback for dropped postMessage cases (`preConnectIdsRef` + `statusRef` — found and fixed a stale-closure bug of my own during implementation, since `status` wasn't in `startConnect`'s `useCallback` deps).
+- Both wizards now filter `status.installations` through `freshInstallIds` before rendering ANY repo picker or auto-selecting/auto-submitting a single-repo install (`appInstalls`/`appPickerActive`/`freshRepos` in NewUserWizard; `freshInstallations` in AddProjectWizard).
+- `NewUserWizard`'s initial-mount effect no longer auto-fills `repoUrl` from the backend's global `connected_repo` field.
+- `submitRepo`'s catch block now only does the full `"disconnected"` reset when `!appPickerActive` — mid-App-picker errors just show inline, no more full-flow-looking reset.
+- **Deliberately unchanged:** `ConnectRepoBanner.jsx` — only renders at zero-projects, so there's no cross-project leak risk there; its 2026-09-01 "show existing repos directly" fix is correct for that context and was left alone.
+
+**Tests:** 3 new hook tests (`useGitHubConnectStatus.freshIsolation.test.js`) + existing suites updated/re-verified — 14/14 pass. `testing_agent_v3_fork` confirmed live via Scenario A (fresh AddProjectWizard mount on an account with 12+ pre-existing projects/installations shows ONLY the fresh-install CTA, zero stale leakage) — 100% pass, no critical issues.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-09 — Confirmed + fixed 4 real infra findings from founder's production monitoring sweep
 
 **Founder's deep QA pass** on the internal `/admin/qa` dashboard + G19/G20 incident system found several concerning signals. User asked to CONFIRM root cause first, then build a real fix (not superficial). All 4 confirmed and fixed:

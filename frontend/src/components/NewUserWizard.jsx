@@ -81,9 +81,32 @@ export default function NewUserWizard({ onComplete }) {
     status: ghConnectStatus, connecting: appConnecting,
     timedOut: appTimedOut, denied: appDenied, startConnect: startAppConnect,
     retry: retryAppConnect, refresh: refreshGhConnectStatus, installUrl: appInstallUrl,
+    freshInstallIds = [],
   } = useGitHubConnectStatus();
-  const appInstalls = ghConnectStatus.installations;
-  const appPickerActive = ghConnectStatus.installation_active;
+  // 2026-09-09 — "full isolation" fix (founder-reported, screen
+  // recording: a brand new project's connect step showed/auto-picked
+  // repos from OLD, unrelated installations — e.g. `polaris.butler.org`
+  // / `AuronHQ` installed for a completely different earlier project
+  // — and looped back to GitHub's install screen when "Continue" was
+  // pressed with a stale repo already filled in). `ghConnectStatus` is
+  // the GLOBAL, all-time status for this GitHub account; `appInstalls`/
+  // `appPickerActive` below are narrowed to ONLY installations freshly
+  // confirmed during THIS wizard session, so a new project never shows
+  // or uses connect history from a different past project.
+  const appInstalls = React.useMemo(
+    () => (ghConnectStatus.installations || []).filter(
+      (inst) => freshInstallIds.includes(String(inst.installation_id)),
+    ),
+    [ghConnectStatus.installations, freshInstallIds],
+  );
+  const appPickerActive = appInstalls.length > 0;
+  // Flat list of repos across ONLY the fresh installations — the
+  // fresh-scoped equivalent of the backend's global `connected_repo`/
+  // `repos` fields, used by the one-click auto-submit effect below.
+  const freshRepos = React.useMemo(
+    () => appInstalls.flatMap((inst) => inst.repositories || []),
+    [appInstalls],
+  );
   // 2026-08-27 — founder-confirmed workaround: some accounts get stuck
   // with an orphaned/already-installed App that never links (retrying
   // the same install popup replays the same stuck state). After the
@@ -107,7 +130,7 @@ export default function NewUserWizard({ onComplete }) {
         // old logic treated them as equivalent. Fix: always check for
         // an active App installation FIRST. Only skip straight past
         // the App CTA if one already exists.
-        const [oauthRes, ghStatusData] = await Promise.allSettled([
+        const [oauthRes] = await Promise.allSettled([
           api.get("/github/oauth/status"),
           refreshGhConnectStatus(),
         ]);
@@ -119,25 +142,16 @@ export default function NewUserWizard({ onComplete }) {
           fetchRepos();  // convenience dropdown for OAuth-linked accounts
         }
 
-        const data = ghStatusData.status === "fulfilled" ? ghStatusData.value : null;
-        if (data?.installation_active) {
-          // Already has the App installed — go straight to its repo
-          // picker, no CTA needed.
-          if (data.connected_repo) {
-            setRepoUrl(`https://github.com/${data.connected_repo}`);
-            const inst = (data.installations || []).find(
-              (i) => (i.repositories || []).some((r) => r.full_name === data.connected_repo),
-            );
-            const repo = inst?.repositories?.find((r) => r.full_name === data.connected_repo);
-            setBranch(repo?.default_branch || "main");
-          }
-          setGhStatus("choosing");
-        } else {
-          // No App installed yet (whether or not legacy OAuth is
-          // linked) — land on "choosing" so the App-install CTA is
-          // always the first thing a user without an App sees.
-          setGhStatus("choosing");
-        }
+        // 2026-09-09 — full-isolation fix: no longer auto-fills repoUrl/
+        // branch from `data.connected_repo` here — that field is the
+        // GLOBAL "exactly one repo across this account's ENTIRE
+        // install history", which silently pre-filled an unrelated old
+        // project's repo into a brand new project. `ghStatus` still
+        // always lands on "choosing" either way — appPickerActive
+        // (now fresh-only, computed above) decides what actually
+        // renders there, so a fresh install still starts empty until
+        // the user goes through the App picker in THIS session.
+        setGhStatus("choosing");
       } catch {
         if (!cancelled) setGhStatus("choosing");
       }
@@ -158,18 +172,22 @@ export default function NewUserWizard({ onComplete }) {
   // click. Multi-repo installs still show the picker below (there's a
   // real choice to make there), but picking one now submits instantly
   // instead of just filling the URL field.
+  // 2026-09-09 — full-isolation fix: switched from the backend's
+  // GLOBAL `ghConnectStatus.connected_repo` (exactly one repo across
+  // this account's ENTIRE install history — could silently auto-
+  // submit an unrelated old project's repo) to `freshRepos`, scoped
+  // to installations confirmed during THIS session only.
   useEffect(() => {
-    if (ghConnectStatus.connected_repo && !repoUrl) {
-      const branchGuess = (ghConnectStatus.repos || [])[0]?.default_branch || "main";
-      setRepoUrl(`https://github.com/${ghConnectStatus.connected_repo}`);
+    if (freshRepos.length === 1 && !repoUrl) {
+      const only = freshRepos[0];
+      const branchGuess = only.default_branch || "main";
+      const url = `https://github.com/${only.full_name}`;
+      setRepoUrl(url);
       setBranch(branchGuess);
-      submitRepo(null, {
-        url: `https://github.com/${ghConnectStatus.connected_repo}`,
-        branchOverride: branchGuess,
-      });
+      submitRepo(null, { url, branchOverride: branchGuess });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ghConnectStatus.connected_repo]);
+  }, [freshRepos]);
 
   async function fetchRepos() {
     setReposBusy(true);
@@ -375,7 +393,15 @@ export default function NewUserWizard({ onComplete }) {
       // If the server replies "GitHub not connected" mid-flow (e.g. user
       // is in manual mode for a private repo), flip the panel back to
       // the OAuth-connect view instead of asking them to leave.
-      if (/github not connected/i.test(msg)) {
+      // 2026-09-09 — loop fix (founder-reported: this Full reset made
+      // an App-picker error look exactly like "starting over from
+      // scratch", reopening what looked like the GitHub install
+      // screen with no clear explanation). Only do the full OAuth-
+      // view reset for the plain manual-URL path — when the App
+      // picker is active, the user is already mid-flow with a real
+      // installation; just surface the error inline and let them
+      // pick again, never yank them back to square one.
+      if (/github not connected/i.test(msg) && !appPickerActive) {
         setGhStatus("disconnected");
         setErr("This repo needs GitHub access. Connect once below — your manual URL will stick.");
       } else {

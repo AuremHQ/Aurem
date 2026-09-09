@@ -43,10 +43,28 @@ export default function useGitHubConnectStatus() {
   const [connecting, setConnecting] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [denied, setDenied] = useState(false);
+  // 2026-09-09 — "full isolation" fix (founder-reported: a brand new
+  // project's connect wizard was showing/auto-picking repos from
+  // OLD, unrelated installations e.g. `polaris.butler.org`/`AuronHQ`
+  // installed for a completely different earlier project). `status`
+  // is authoritative but GLOBAL — every installation this GitHub
+  // account has EVER granted, forever. `freshInstallIds` narrows that
+  // down to ONLY the installation(s) actually touched during THIS
+  // startConnect() session, so a new-project wizard can show nothing
+  // at all until the user has freshly gone through GitHub's own
+  // picker in the current attempt — never silently reusing history.
+  const [freshInstallIds, setFreshInstallIds] = useState([]);
   const popupRef = useRef(null);
   const pollRef = useRef(null);
   const bgSyncRef = useRef(null);
   const startRef = useRef(0);
+  const preConnectIdsRef = useRef(new Set());
+  // Kept in sync with `status` via the effect below so
+  // `startConnect` (a stable useCallback, deliberately NOT
+  // re-created on every status change) can read the CURRENT status
+  // without a stale-closure bug.
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -121,6 +139,12 @@ export default function useGitHubConnectStatus() {
     setDenied(false);
     setConnecting(true);
     startRef.current = Date.now();
+    // 2026-09-09 — snapshot BEFORE this attempt so the poll-success
+    // branch below can tell "brand new installation" apart from
+    // "pre-existing installation from a past session" by set-diff.
+    preConnectIdsRef.current = new Set(
+      (statusRef.current.installations || []).map((i) => String(i.installation_id)),
+    );
     stopPolling();
     stopBackgroundSync();
     pollRef.current = setInterval(async () => {
@@ -143,6 +167,23 @@ export default function useGitHubConnectStatus() {
         setConnecting(false);
         try { popupRef.current?.close?.(); } catch { /* cross-origin */ }
         trackFunnel("app_install_granted", "wizard");
+        // 2026-09-09 — full-isolation fix, part 2: postMessage/claim
+        // (below) is the precise source when it arrives, but it can
+        // race or drop on some browser/extension combos. This is the
+        // guaranteed-to-run fallback: diff current installation ids
+        // against the pre-attempt snapshot. A genuinely new org shows
+        // up as a new id; re-configuring an EXISTING org (no new id,
+        // just changed repo grants) has no diff to find, so fall back
+        // to treating every currently-active installation as fresh —
+        // still correct for that case, since the user just went
+        // through GitHub's own picker for it moments ago.
+        const currentIds = (data.installations || []).map((i) => String(i.installation_id));
+        const newIds = currentIds.filter((id) => !preConnectIdsRef.current.has(id));
+        setFreshInstallIds((prev) => {
+          const merged = new Set(prev);
+          for (const id of (newIds.length > 0 ? newIds : currentIds)) merged.add(id);
+          return Array.from(merged);
+        });
         if (data.state !== "connected") {
           startBackgroundRepoSync();
         }
@@ -198,6 +239,9 @@ export default function useGitHubConnectStatus() {
   // all fine — the poll below is still authoritative either way).
   const claimInstallation = useCallback(async (installId) => {
     if (!installId) return;
+    // 2026-09-09 — precise source: postMessage/redirect hand us the
+    // EXACT installation_id GitHub just granted, no diffing needed.
+    setFreshInstallIds((prev) => (prev.includes(String(installId)) ? prev : [...prev, String(installId)]));
     try { await api.post("/github/app/claim", { installation_id: Number(installId) }); }
     catch { /* best-effort — polling below remains authoritative */ }
   }, []);
@@ -241,5 +285,5 @@ export default function useGitHubConnectStatus() {
     // load; claimInstallation/fetchStatus are stable useCallback refs.
   }, []);
 
-  return { status, connecting, timedOut, denied, startConnect, retry, refresh: fetchStatus, installUrl };
+  return { status, connecting, timedOut, denied, startConnect, retry, refresh: fetchStatus, installUrl, freshInstallIds };
 }

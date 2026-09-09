@@ -83,7 +83,20 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   // ONE shared hook (also used by NewUserWizard.jsx) — the wizard is a
   // pure function of the authoritative /github/app/status endpoint,
   // not a local postMessage/count-poll guess.
-  const { status, connecting, timedOut, denied, startConnect, installUrl } = useGitHubConnectStatus();
+  const { status, connecting, timedOut, denied, startConnect, installUrl, freshInstallIds } = useGitHubConnectStatus();
+  // 2026-09-09 — "full isolation" fix (founder-reported): this used
+  // to flatMap `status.installations` — EVERY installation this
+  // GitHub account has ever granted, across every past project. A
+  // brand new project must only ever see repos from an installation
+  // freshly confirmed in THIS wizard session (see
+  // useGitHubConnectStatus's freshInstallIds), never stale history
+  // from an unrelated earlier project.
+  const freshInstallations = React.useMemo(
+    () => (status.installations || []).filter(
+      (inst) => freshInstallIds.includes(String(inst.installation_id)),
+    ),
+    [status.installations, freshInstallIds],
+  );
   // 2026-08-27 — founder-confirmed workaround: some accounts get stuck
   // with an orphaned/already-installed App that never links (retrying
   // the same install popup replays the same stuck state). After the
@@ -93,25 +106,26 @@ export default function AddProjectWizard({ onClose, onAdded }) {
 
   const allGrantedRepos = React.useMemo(() => {
     const out = [];
-    for (const inst of (status.installations || [])) {
+    for (const inst of freshInstallations) {
       for (const r of (inst.repositories || [])) out.push({ ...r, installation_id: inst.installation_id, github_login: inst.github_login });
     }
     return out;
-  }, [status.installations]);
+  }, [freshInstallations]);
 
   // The specific installation (if any) that covers the current `repo`.
   // Non-null → App-install branch is available for this repo; the
-  // Save button uses installation_id.
+  // Save button uses installation_id. Scoped to freshInstallations
+  // for the same full-isolation reason as allGrantedRepos above.
   const installationForRepo = React.useMemo(() => {
     if (!repo) return null;
-    for (const inst of (status.installations || [])) {
+    for (const inst of freshInstallations) {
       const has = (inst.repositories || []).some(
         (r) => (r.full_name || "").toLowerCase() === repo.full_name.toLowerCase(),
       );
       if (has) return inst;
     }
     return null;
-  }, [repo, status.installations]);
+  }, [repo, freshInstallations]);
 
   function openAppInstallPopup() {
     setConnectAttempts((n) => n + 1);

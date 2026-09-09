@@ -65,6 +65,13 @@ function setupHook() {
     startConnect: vi.fn(),
     retry: vi.fn(),
     refresh: vi.fn().mockResolvedValue(HOOK_STATUS),
+    // 2026-09-09 — full-isolation fix: NewUserWizard now only auto-
+    // selects/auto-submits repos from installations confirmed FRESH
+    // in this session (see useGitHubConnectStatus's freshInstallIds).
+    // These tests are asserting behaviour AFTER a connect already
+    // happened, so installation_id 1 (matching HOOK_STATUS above) is
+    // fresh here — this is not simulating the stale-history bug case.
+    freshInstallIds: ["1"],
   });
 }
 
