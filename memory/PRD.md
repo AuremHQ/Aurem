@@ -1,3 +1,16 @@
+## 2026-09-09 — Fixed genuine JS bug: `TypeError: o.error is not a function` on Personal Track Admin smoke test
+
+**Founder's QA report** (deep dive on the disabled/not-yet-launched "Personal Track" admin page) flagged one genuine bug among otherwise-expected findings (missing GitHub/Vercel/Supabase creds — expected while feature is off; Parliament LLM 32s fallback — expected, not urgent until activated): a JS console `TypeError: o.error is not a function` firing right after clicking "Run smoke test", when the page tried to render "not_configured" step warnings.
+
+**Root cause:** `pages/admin/PersonalTrackAdmin.jsx` called `toast.success(...)` / `toast.error(...)` (sonner-style API) on every mutation path (smoke test, override, rearm, sweep, load-failure) — but this app's actual `toast` (imported from `components/Toast.jsx`) is a lightweight custom module where `toast` is a plain **function** (`toast({ message, kind })`), not an object with `.success`/`.error` methods. Every other admin page in the codebase (`AdminLLMCredits.jsx`, `AdminBINTracker.jsx`, etc.) already uses the correct `toast({ message, kind: "error" })` call shape — this one file alone had the wrong (sonner) convention, so any error/success path on this page threw and left a raw exception in the console.
+
+**Fix:** rewrote all 10 call sites in `PersonalTrackAdmin.jsx` to `toast({ message: "...", kind: "success"/"error" })`. Confirmed no other file importing this custom `Toast.jsx` has the same wrong-API mistake (grepped whole codebase).
+
+**Test:** live click-through on `/admin/personal-track` → "Run smoke test" → banner renders ("Not configured: preflight, github_repo, vercel_deploy, supabase_mgmt_token") with zero console `TypeError`s (only an unrelated pre-existing 403 on a gated resource, matching founder's own note that missing creds are expected while the feature is off). `eslint` clean.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-11 (senior QA round 2) — Double-click Approve/Rollback race condition fixed
 
 **Founder ran a second deep regression pass**, live-reproduced the exact bug flagged as "the single highest-value fix that surfaced in both rounds": double-clicking "Approve the fix" fast enough triggered TWO concurrent `/cto/tasks/submit` requests ("attempt 1/3 failed", "attempt 2/3 failed" — external API contention from the duplicate load). Backend-side de-dup happened to prevent an actual duplicate commit this time, but founder correctly flagged relying on that alone as risky (extra external-API load, and a different timing could still produce two real commits).

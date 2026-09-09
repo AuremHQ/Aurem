@@ -78,10 +78,10 @@ export default function PersonalTrackAdmin() {
     try {
       const res = await api.post("/scaffold/admin/smoke-test?cleanup=true");
       setSmoke(res.data);
-      if (res.data?.ok) toast.success("Smoke test: all configured steps passed");
-      else toast.error("Smoke test found issues — see step results");
+      if (res.data?.ok) toast({ message: "Smoke test: all configured steps passed", kind: "success" });
+      else toast({ message: "Smoke test found issues — see step results", kind: "error" });
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Smoke test failed to run");
+      toast({ message: e?.response?.data?.detail || "Smoke test failed to run", kind: "error" });
     } finally {
       setSmokeRunning(false);
     }
@@ -128,7 +128,7 @@ export default function PersonalTrackAdmin() {
       if (dgRes.status      === "fulfilled") setDowngrades(dgRes.value.data);
       if (revRes.status     === "fulfilled") setRevenue(revRes.value.data);
     } catch (e) {
-      toast.error("Load failed");
+      toast({ message: "Load failed", kind: "error" });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -144,30 +144,30 @@ export default function PersonalTrackAdmin() {
     if (!reason || reason.trim().length < 8) return;
     try {
       await api.post(`/scaffold/${draftId}/founder-override`, { reason });
-      toast.success("Override applied. Draft can now be materialized.");
+      toast({ message: "Override applied. Draft can now be materialized.", kind: "success" });
       load();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Override failed");
+      toast({ message: e?.response?.data?.detail || "Override failed", kind: "error" });
     }
   };
 
   const rearm = async (appId) => {
     try {
       await api.post(`/supabase/admin/rearm/${appId}`);
-      toast.success("Row rearmed. Sweeper will pick it up on next run.");
+      toast({ message: "Row rearmed. Sweeper will pick it up on next run.", kind: "success" });
       load();
     } catch (e) {
-      toast.error("Rearm failed");
+      toast({ message: "Rearm failed", kind: "error" });
     }
   };
 
   const sweepNow = async () => {
     try {
       const res = await api.post("/supabase/admin/sweep-now");
-      toast.success(`Sweep complete: ${JSON.stringify(res.data).slice(0, 100)}`);
+      toast({ message: `Sweep complete: ${JSON.stringify(res.data).slice(0, 100)}`, kind: "success" });
       load();
     } catch (e) {
-      toast.error("Sweep failed");
+      toast({ message: "Sweep failed", kind: "error" });
     }
   };
 
