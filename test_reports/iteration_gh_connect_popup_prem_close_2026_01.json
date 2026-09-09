@@ -1,0 +1,28 @@
+{
+  "summary": "Round 3 of GitHub-connect flow bug thread. Verified the fix in frontend/src/hooks/useGitHubConnectStatus.js's startConnect() poll-success branch: it now computes newOrChangedIds via a repo-count-per-installation-id diff against preConnectIdsRef BEFORE closing the popup or declaring success, early-returning when installation_active is true but nothing new/changed AND there was pre-existing data. Ran all 4 hook test files in /app/frontend/src/hooks/__tests__/ — 24/24 tests pass, including the new critical regression test t_popup_not_prematurely_closed_when_only_stale_data_is_active (asserts popup.close() NOT called and connecting stays true across 3 stale poll ticks (7.5s), then correctly closes + marks freshInstallIds=['99'] on the 4th tick when a genuinely new installation appears). The corrected mock in repoSyncLag.test.js (initial mount now returns installation_active:false/installations:[] and first poll returns the newly-appeared install) is a legitimate fix — it preserves the test's true intent (installation_active alone should mean success even with an empty repo list — the GitHub repo-list lag case) while being realistic for the new-or-changed diff. TEST 4 live SSO round-trip is not feasible in sandbox; instead verified app loads clean on the public URL with zero console errors and zero GitHub-connect-related errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.freshIsolation.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.repoSyncLag.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.claimFallback.test.js"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix logic in useGitHubConnectStatus.js:200 is correct — the early-return `if (newOrChangedIds.length === 0 && preConnectIdsRef.current.size > 0) return;` correctly distinguishes: (a) brand-new user (preConnectIdsRef.size===0 → proceeds immediately on any active install, unchanged behavior), and (b) returning user with pre-existing installations (waits for a genuinely new/changed installation before closing the popup).",
+    "Snapshotting repo COUNT per installation_id (line 147-151) — not just the id set — correctly handles the 'reconfigure existing org' case (same installation_id, added a new repo grant) that would otherwise be missed by set-diff alone. This is the same diff logic reused between poll-success detection and freshInstallIds computation, so drift between them is impossible by construction.",
+    "Assessment agrees with agent-to-agent context note: this is very likely the TRUE root cause of the user's repeated frustration — rounds 1-2 fixed downstream freshInstallIds rendering, but the poll itself still force-closed the popup on stale global installation_active. Now that ALL three gates (poll-success, freshInstallIds fallback, and postMessage precise-source) use consistent per-installation diffing, the same class of bug is architecturally locked out."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100% (24/24 vitest)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (not exercised — live SSO round-trip explicitly out of scope per TEST 4)",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "This is the 3rd round on this GitHub-connect popup bug thread. The critical regression test t_popup_not_prematurely_closed_when_only_stale_data_is_active in useGitHubConnectStatus.freshIsolation.test.js is the exact lock for the 'popup dies at about:blank while user is still on GitHub/Google auth pages' bug. If a future round touches the poll-success branch (around lines 169-226 of useGitHubConnectStatus.js), re-run all 4 hook test files. Live SSO validation on a real GitHub account with 12+ pre-existing installations is the only remaining verification path — not feasible in sandbox.",
+  "rca of the issue": "startConnect()'s poll-success branch checked `if (data && data.installation_active)` to stopPolling + popupRef.close() + declare success. `installation_active` is TRUE globally the instant ANY installation exists on the account (including from unrelated past sessions). For a returning user with pre-existing installations, this fired on the FIRST poll tick (~2.5s in) — WHILE the user was still mid-flow inside GitHub's own Google sign-in sub-flow — killing the in-progress popup and declaring 'connected' against stale data. Fix: compute newOrChangedIds diff (against a pre-connect snapshot of installation_id → repo count) BEFORE deciding to close the popup, and early-return if nothing new/changed AND there was pre-existing data. Brand-new users (empty snapshot) are unaffected. All 24 tests in /app/frontend/src/hooks/__tests__/ pass."
+}

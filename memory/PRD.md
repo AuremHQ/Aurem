@@ -1,3 +1,16 @@
+## 2026-09-09 (round 3, critical) — Fixed the TRUE root cause of the repeated GitHub-connect popup bug: premature popup close on stale global state
+
+**User's 3rd screen recording** on this thread (very frustrated) showed the popup dying at "about:blank" right after picking a Google account (mid-flow inside GitHub's own "Sign in with Google" sub-flow, clearing a Windows Hello PIN prompt), with the main app left showing a stale "Connected to: RepoReady" from an unrelated old installation.
+
+**Root cause (previously missed by rounds 1-2):** `useGitHubConnectStatus.js::startConnect()`'s poll-success branch checked `if (data && data.installation_active)` to `stopPolling()` + **force-close the popup** + declare success. `installation_active` is true globally the instant ANY installation exists on the account — including from a completely unrelated past session (this test account has 12+). For a returning user, this fires on the very FIRST poll tick (~2.5s in) — often WHILE the user is still mid-authentication inside the actual popup (GitHub → Google → Windows Hello) — silently killing their in-progress popup out from under them and declaring "connected" against stale data. Rounds 1-2 fixed the DOWNSTREAM `freshInstallIds` rendering logic in the wizards, but never touched this upstream poll-detection code that was still closing the popup based on stale global state.
+
+**Fix:** the poll-success branch now computes the same new-or-changed-installation diff (repo-count-per-id snapshot taken right before `startConnect()` begins) BEFORE deciding to close the popup. If `installation_active` is true but nothing genuinely new/changed is found AND there was pre-existing data to compare against, it now `return`s early — keeps polling, leaves the popup alone, lets the user actually finish. A brand-new user (empty snapshot) is unaffected — succeeds immediately as before. All three gates (poll-success, `freshInstallIds` fallback, precise postMessage source) now use the exact same diffing logic, architecturally preventing drift between them.
+
+**Tests:** new critical regression test `t_popup_not_prematurely_closed_when_only_stale_data_is_active` (asserts popup.close() NOT called across 3 stale poll ticks, then correctly fires on a genuinely new installation). Also corrected an existing test's unrealistic mock data (`repoSyncLag.test.js`) to distinguish pre-existing-before-session from freshly-created-this-session, preserving its original intent. 24/24 hook tests pass. `testing_agent_v3_fork` independently confirmed this is very likely the TRUE root cause of the user's repeated frustration across all 3 recordings.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-09 (deployment logs round 2) — Fixed health-check timeout root cause + unhandled 500 on revoked OAuth token
 
 **User shared new production logs** with `deployment_agent` for analysis: nginx logged 3 consecutive `/health` upstream timeouts (110: Connection timed out) in the same ~15s window as GitHub App connect activity, plus an unhandled `httpx.HTTPStatusError` traceback for `GET /github/oauth/repos`. Confirmed both via direct log-timestamp correlation and code review (deployment_agent found no build/Docker-level blocker, consistent with prior rounds).

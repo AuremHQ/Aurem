@@ -167,34 +167,29 @@ export default function useGitHubConnectStatus() {
       // stranded the user on an empty repo picker with nothing to
       // click — indistinguishable from "nothing happened".
       if (data && data.installation_active) {
-        stopPolling();
-        setConnecting(false);
-        try { popupRef.current?.close?.(); } catch { /* cross-origin */ }
-        trackFunnel("app_install_granted", "wizard");
-        // 2026-09-09 — full-isolation fix, part 2: postMessage/claim
-        // (below) is the precise source when it arrives, but it can
-        // race or drop on some browser/extension combos. This is the
-        // guaranteed-to-run fallback: diff current installations
-        // against the pre-attempt snapshot. A genuinely new org shows
-        // up as a new id — fresh. Re-configuring an EXISTING org (no
-        // new id, GitHub's own "Configure" screen just changed which
-        // repos are granted) is caught by comparing repo COUNT for
-        // that same id against the snapshot — also fresh, but ONLY
-        // that one specific installation.
-        //
-        // 2026-09-09-b — founder-reported (2nd recording, still
-        // happening "after the first step" — i.e. the mount-time
-        // leak from part 1 was fixed, but this fallback path itself
-        // still leaked): the ORIGINAL fallback here was "no new id ⇒
-        // mark ALL currently-active installations fresh". On an
-        // account with several pre-existing orgs, reconfiguring just
-        // ONE of them (no new id, since it already existed) promoted
-        // every OTHER unrelated org to "fresh" too — the exact
-        // "@auravw shows twice, plus an unrelated VeroCapper group"
-        // symptom in the recording. Comparing repo count per id
-        // fixes this: only the installation whose grant genuinely
-        // changed during THIS session is marked fresh, never its
-        // untouched siblings.
+        // 2026-09-09-c — CRITICAL fix (3rd founder recording, real
+        // production repro): `installation_active` is true the
+        // MOMENT any installation exists for this account, globally
+        // — including ones from a completely unrelated past session.
+        // The code below used to stop polling + force-close the
+        // popup + declare success the INSTANT this went true, even
+        // if the user was still mid-flow (e.g. still inside GitHub's
+        // own "Sign in with Google" sub-flow, picking a Google
+        // account, clearing a Windows Hello PIN prompt) authorizing
+        // something entirely different. For ANY returning user with
+        // an existing installation (this test account has 12+), that
+        // condition is true on literally the FIRST poll tick — often
+        // while they're still on GitHub/Google's own pages — silently
+        // killing their in-progress popup out from under them and
+        // declaring "connected" against stale data (matches the
+        // recording exactly: popup dies at "about:blank" right after
+        // Google account selection, main UI is left showing a stale
+        // "Connected to: RepoReady" from an unrelated old install).
+        // Fix: compute the SAME new-or-changed diff used for
+        // freshInstallIds FIRST, and only treat this as success once
+        // something genuinely new/changed is found. A brand-new user
+        // (nothing pre-existing at all) still succeeds immediately —
+        // there's nothing stale to wait out.
         const currentIds = (data.installations || []).map((i) => String(i.installation_id));
         const newOrChangedIds = currentIds.filter((id) => {
           const before = preConnectIdsRef.current.get(id);
@@ -202,6 +197,23 @@ export default function useGitHubConnectStatus() {
           const inst = (data.installations || []).find((i) => String(i.installation_id) === id);
           return (inst?.repositories || []).length !== before; // repo grant changed
         });
+        if (newOrChangedIds.length === 0 && preConnectIdsRef.current.size > 0) {
+          return; // nothing this session has done yet — keep waiting, leave the popup alone
+        }
+        stopPolling();
+        setConnecting(false);
+        try { popupRef.current?.close?.(); } catch { /* cross-origin */ }
+        trackFunnel("app_install_granted", "wizard");
+        // 2026-09-09 — full-isolation fix, part 2: postMessage/claim
+        // (below) is the precise source when it arrives, but it can
+        // race or drop on some browser/extension combos. This is the
+        // guaranteed-to-run fallback, computed above.
+        //
+        // 2026-09-09-b — founder-reported (2nd recording): the
+        // ORIGINAL fallback here was "no new id ⇒ mark ALL currently-
+        // active installations fresh", which leaked unrelated sibling
+        // orgs. Fixed by comparing repo COUNT per id (above), not
+        // just the id set.
         setFreshInstallIds((prev) => {
           const merged = new Set(prev);
           for (const id of newOrChangedIds) merged.add(id);

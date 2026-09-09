@@ -36,6 +36,14 @@ describe("Bug-2/Bug-3 shared root — installation_active vs state===connected",
   it("t_no_false_denied_when_installation_active_but_repos_still_empty", async () => {
     const popup = fakePopup();
     vi.spyOn(window, "open").mockReturnValue(popup);
+    // Initial mount: nothing installed yet (this is the FIRST time
+    // this session — 2026-09-09-c's new-or-changed diff needs a
+    // realistic "before" snapshot, i.e. nothing existed before
+    // startConnect() was called, otherwise it can't tell this apart
+    // from a stale pre-existing installation from a past session).
+    api.get.mockResolvedValueOnce({
+      data: { installation_active: false, state: "pending", installations: [] },
+    });
     // First poll tick: install succeeded, but GitHub's repo list is
     // still empty (real production case — can last well over an
     // hour). The popup already auto-closed (bridge closes in 400ms).

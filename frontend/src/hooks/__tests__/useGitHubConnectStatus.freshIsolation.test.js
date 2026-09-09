@@ -193,4 +193,65 @@ describe("2026-09-09 — full isolation: freshInstallIds", () => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
+
+  it("t_popup_not_prematurely_closed_when_only_stale_data_is_active", async () => {
+    // 2026-09-09-c — CRITICAL fix, 3rd founder recording (real prod
+    // repro, video evidence): user with a pre-existing installation
+    // clicks "Continue with GitHub App" to connect a DIFFERENT/new
+    // org via GitHub's own "Sign in with Google" sub-flow. Because
+    // `installation_active` was already true from the OLD install,
+    // the very FIRST poll tick (2.5s in) used to stopPolling() +
+    // popupRef.close() + declare success — killing the user's
+    // in-progress popup while they were still mid-authentication on
+    // GitHub/Google's own pages (recording: popup dies at
+    // "about:blank" right after picking a Google account). Fixed:
+    // must NOT close the popup or declare connecting=false/success
+    // while the poll is only ever seeing the SAME pre-existing,
+    // unchanged installation — has to actually wait for something
+    // new/changed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fakePopup = { close: vi.fn(), closed: false };
+    vi.stubGlobal("open", vi.fn(() => fakePopup));
+
+    // Mount: account already has 1 pre-existing installation (from a
+    // totally different past project/session).
+    api.get.mockResolvedValueOnce({
+      data: { installation_active: true, installations: [STALE_INSTALL], state: "connected" },
+    });
+    const { result } = renderHook(() => useGitHubConnectStatus());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    act(() => { result.current.startConnect(); });
+    expect(result.current.connecting).toBe(true);
+
+    // Poll ticks 1-3 (7.5s of wall time) all return the EXACT SAME
+    // stale installation — nothing has happened yet on GitHub's side,
+    // the user is still in the middle of their Google sign-in
+    // sub-flow. Every one of these MUST leave the popup alone.
+    api.get.mockResolvedValue({
+      data: { installation_active: true, installations: [STALE_INSTALL], state: "connected" },
+    });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(2600); });
+      expect(fakePopup.close).not.toHaveBeenCalled();
+      expect(result.current.connecting).toBe(true);
+      expect(result.current.freshInstallIds).toEqual([]);
+    }
+
+    // NOW the user actually finishes — a genuinely new org appears.
+    api.get.mockResolvedValue({
+      data: {
+        installation_active: true,
+        installations: [STALE_INSTALL, { installation_id: 99, github_login: "brand-new-org", repositories: [{ full_name: "brand-new-org/repo" }] }],
+        state: "connected",
+      },
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2600); });
+
+    expect(fakePopup.close).toHaveBeenCalled();
+    expect(result.current.connecting).toBe(false);
+    expect(result.current.freshInstallIds).toEqual(["99"]);
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 });
