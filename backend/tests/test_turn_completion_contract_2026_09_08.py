@@ -34,12 +34,47 @@ from services.orchestrator import (
 
 BUG1_TEXT = "Let me grab the remaining top-level directories I haven't scanned yet."
 
+# 2026-09-09 — 4th live repro on this exact bug class (founder
+# screenshot: "we fixed this before" — chat stalled forever, no
+# spinner, no reply). Opens with a GERUND ("Checking...") the
+# original _INTENT_LEAD_RE never covered, plus explicit stall-
+# language ("stand by", "No reply needed yet") that on its own is an
+# even stronger tell. Fixed by broadening _is_intent_only_announcement
+# to catch this whole class rather than one more specific phrase.
+BUG4_TEXT = (
+    "Checking the Inter font imports now\u2014stand by one moment "
+    "while I verify the actual CSS and JS bundles. (No reply needed "
+    "yet; I'll update when I have the concrete answer.)"
+)
+
 
 # ─── t_turn_ends_only_in_three_states ─────────────────────────────────
 
 class TestTurnEndsOnlyInThreeStates:
     def test_bug1_exact_text_detected_as_intent_only(self):
         assert _is_intent_only_announcement(BUG1_TEXT) is True
+
+    def test_bug4_gerund_lead_with_stall_tell_detected_as_intent_only(self):
+        assert _is_intent_only_announcement(BUG4_TEXT) is True
+
+    def test_bug4_contract_raises_on_violating_case(self):
+        with pytest.raises(TurnCompletionViolation):
+            assert_turn_completion_contract(BUG4_TEXT, {})
+
+    def test_bug4_wrapped_partial_satisfies_contract(self):
+        wrapped = _wrap_as_explicit_partial(BUG4_TEXT, [], "check the Inter font imports")
+        assert wrapped != BUG4_TEXT
+        assert "continue" in wrapped.lower()
+        assert_turn_completion_contract(
+            wrapped, {"turn_state": "partial", "continue_available": True},
+        )  # must not raise
+
+    def test_stall_tell_alone_without_intent_lead_still_caught(self):
+        """The stall-tell signal must work even when the sentence does
+        NOT open with a recognized intent-lead phrase at all — this is
+        the whole point of adding it as an independent signal."""
+        text = "Working through the auth module. One moment please, this is taking a bit longer than usual."
+        assert _is_intent_only_announcement(text) is True
 
     def test_real_delivered_list_is_not_intent_only(self):
         real = "Here are the files:\n- a.py\n- b.py\n- c.py\n- d.py"

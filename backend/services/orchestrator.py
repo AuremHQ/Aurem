@@ -250,26 +250,56 @@ def build_timeout_message(
 # a valid final answer on its own.
 _INTENT_LEAD_RE = re.compile(
     r"^(let me|i'll|i will|i'm going to|i am going to|"
-    r"next,?\s+i(?:'ll|\s+will)|now,?\s+i(?:'ll|\s+will)|going to)\b",
+    r"next,?\s+i(?:'ll|\s+will)|now,?\s+i(?:'ll|\s+will)|going to|"
+    r"checking|verifying|looking|investigating|digging|reviewing|"
+    r"analyzing|analysing|confirming|examining|scanning|searching|"
+    r"inspecting|working on)\b",
+    re.IGNORECASE,
+)
+
+# 2026-09-09 — founder-reported production repro (screenshot: chat
+# stalled forever, no spinner, no reply, "we fixed this before" — this
+# IS the Turn-Completion Contract's exact bug class from 2026-09-08,
+# just with a phrasing the original regex didn't cover): "Checking
+# the Inter font imports now—stand by one moment while I verify the
+# actual CSS and JS bundles. (No reply needed yet; I'll update when I
+# have the concrete answer.)" opens with a gerund ("Checking") that
+# _INTENT_LEAD_RE didn't match at all, so the whole contract never
+# tripped and the turn was allowed to close silently on it. Rather
+# than whack-a-mole one more opener onto the list (the model can phrase
+# a stall in unbounded ways), this adds a SEPARATE, stronger signal:
+# explicit stall-language the model itself uses to say "this isn't a
+# final answer yet" — "stand by", "no reply needed", "I'll update
+# when", "hang tight", "give me a moment" — regardless of how the
+# sentence opens. A model that tells you outright not to expect a
+# reply yet is, by definition, not delivering one.
+_STALL_TELL_RE = re.compile(
+    r"(stand by|no reply (?:is )?needed|i'll update (?:you )?when|"
+    r"hang tight|give me (?:a|one) moment|one moment(?:,|\s+please)?|"
+    r"bear with me|hold on(?:\s+a\s+(?:sec|second|moment))?)",
     re.IGNORECASE,
 )
 
 
 def _is_intent_only_announcement(content: str) -> bool:
     """True when `content` is a bare STEP ANNOUNCEMENT — e.g. "Let me
-    grab the remaining top-level directories I haven't scanned yet." —
+    grab the remaining top-level directories I haven't scanned yet."
+    or "Checking the Inter font imports now—stand by one moment..." —
     masquerading as a final answer, with no actual delivered result.
 
-    Deliberately narrow to avoid false positives on legitimate short
-    replies that happen to open with "I'll ...": only trips when (a)
-    the reply opens with an intent-lead phrase, AND (b) there's no
-    code fence or a real delivered list (3+ items — an actual file
-    list, for instance), AND (c) the whole reply is short — a genuine
-    answer that opens with "I'll walk you through X" before actually
-    delivering X runs far longer than a bare announcement.
+    Trips on EITHER of two independent signals: (a) the reply opens
+    with an intent/progressive-tense lead phrase, OR (b) the reply
+    contains explicit stall-language ("stand by", "no reply needed
+    yet", etc.) — the model announcing outright that this isn't done.
+    Either way, still gated by (c) no code fence or a real delivered
+    list (3+ items), AND (d) the whole reply is short — a genuine
+    answer that happens to open with "I'll walk you through X" before
+    actually delivering X runs far longer than a bare announcement.
     """
     text = (content or "").strip()
-    if not text or not _INTENT_LEAD_RE.match(text):
+    if not text:
+        return False
+    if not (_INTENT_LEAD_RE.match(text) or _STALL_TELL_RE.search(text)):
         return False
     if "```" in text:
         return False
