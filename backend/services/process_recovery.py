@@ -155,9 +155,24 @@ async def record_boot(db, *, reason: str = "supervisor_start") -> dict:
             {"ts": {"$gte": window_start}})
         summary["boots_in_window"] = boots_in_window
 
-        if boots_in_window >= LOOP_THRESHOLD:
+        # 2026-09-09 — false "RESTART LOOP DETECTED" CRITICAL incident
+        # fix. This counted EVERY boot in the window toward the trip
+        # threshold, including `deploy_new_code`/`clean_restart` (an
+        # intentional rolling deploy or a platform-managed restart —
+        # not a crash at all). `recovery_status()` already made this
+        # exact crash-only distinction below for the health-score
+        # metric (see its 2026-08-23 doc comment) but the actual
+        # alert-tripping check here was never updated to match, so 3
+        # legitimate deploys inside LOOP_WINDOW_S (routine during an
+        # active dev/ship session) opened a G20 "hard boot failure
+        # masked" incident even though nothing crashed. Mirrors the
+        # same `reason == "crash_or_kill"` filter.
+        crash_boots_in_window = await db.process_boots.count_documents(
+            {"ts": {"$gte": window_start}, "reason": "crash_or_kill"})
+
+        if crash_boots_in_window >= LOOP_THRESHOLD:
             summary["loop_detected"] = True
-            await _trip_loop(db, boots_in_window, doc["sha"])
+            await _trip_loop(db, crash_boots_in_window, doc["sha"])
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[G19] record_boot best-effort failure: %r", e)
     return summary
@@ -268,8 +283,13 @@ async def resolve_if_stable(db) -> bool:
     if db is None:
         return False
     try:
+        # 2026-09-09 — same crash-only fix as record_boot() above:
+        # only `crash_or_kill` boots should gate resolution, so a
+        # deploy-triggered alert clears the moment boots stop, not
+        # only once the RAW (deploy-inclusive) count ages out.
         boots = await db.process_boots.count_documents(
-            {"ts": {"$gte": time.time() - LOOP_WINDOW_S}})
+            {"ts": {"$gte": time.time() - LOOP_WINDOW_S},
+             "reason": "crash_or_kill"})
         if boots < LOOP_THRESHOLD:
             res = await db.topup_alerts.update_many(
                 {"integration_id": "process_recovery", "status": "active"},

@@ -6,6 +6,7 @@ import os
 import time
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -282,6 +283,25 @@ START_TIME = time.time()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("AUREM starting...")
+    # 2026-09-09 — fixes the intermittent, recurring "Emergent LLM Key
+    # / E2B Sandbox probe timeout after 20.0s" incidents (founder QA
+    # report: recurs every 15-70 min, self-resolves in 7-14 min). Root
+    # cause: every blocking-SDK call in this app (Stripe, E2B sandbox
+    # boot, the LLM-key health probe, GitHub calls, etc.) goes through
+    # `asyncio.to_thread(...)`, which — with NO executor configured —
+    # all draw from Python's single PROCESS-WIDE default
+    # ThreadPoolExecutor, sized `min(32, os.cpu_count()+4)`. On a
+    # container with few visible vCPUs that's a handful of workers
+    # shared by every real user's live E2B/Stripe/LLM call PLUS the
+    # periodic integration_health cron probes — under a real
+    # concurrent-traffic burst the pool runs dry and queued calls miss
+    # the probes' 20s timeout, even though each individual call is
+    # fast once it actually gets a thread. Giving the loop's default
+    # executor real headroom (independent of the container's visible
+    # CPU count, since every one of these calls is I/O-bound network
+    # wait, not CPU-bound work) removes the contention at its source.
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=48, thread_name_prefix="aurem-io"))
     # Iter 127 — cold-start fix. uvicorn doesn't bind port 8001 until the
     # lifespan.startup phase completes, so any awaited work here blocks
     # the entire HTTP listener. The previous flow ran a synchronous

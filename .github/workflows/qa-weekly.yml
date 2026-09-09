@@ -72,7 +72,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: qa/simulated-user/package-lock.json
 
@@ -248,7 +248,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           # No cache — we want a fresh yarn install so audit reads a
           # fresh lock resolution (catches lockfile drift too).
 

@@ -14,7 +14,13 @@ Thumbs.db
 
 # Local caches (huge — 264 MB in .aurem_cache alone)
 .aurem_cache
-.emergent
+.emergent/*
+# 2026-09-09 — carve-out for the auto-qa-bot-committed report so
+# routers/admin_qa.py's GET /admin/qa/latest-report can read a real
+# file in production (see auto-qa.yml's new commit-back step). Same
+# `dir/*` + negation idiom as the docs/ carve-out below — everything
+# else in .emergent/ (large local caches, scratch state) stays out.
+!.emergent/latest-qa-report.md
 .pytest_cache
 .ruff_cache
 __pycache__
@@ -82,7 +88,19 @@ tests-aurem
 
 # Docs / memory / dev-only content
 memory
-docs
+docs/*
+# 2026-09-09 — these 2 tiny JSON baselines (< 1KB combined) are the
+# ONLY thing routers/admin_qa.py::_harvest_a11y() reads to populate
+# the admin QA dashboard's a11y card. Excluding the whole `docs/`
+# dir (as before) made that card permanently report "unavailable" in
+# production even though the underlying a11y data is real and
+# healthy — the ONLY consumer of these 2 files never got to see them.
+# `docs/*` (vs bare `docs`) + explicit negation is required here:
+# gitignore/dockerignore syntax can't re-include children of a
+# directory excluded via a bare/recursive pattern, only children of
+# a wildcard match.
+!docs/a11y_baseline.json
+!docs/a11y_journey_baseline.json
 *.md
 !README.md
 

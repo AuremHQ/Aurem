@@ -55,7 +55,7 @@ jobs:
       - name: Set up Node (vitest locks)
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install frontend deps (vitest locks)
         working-directory: frontend
@@ -96,3 +96,31 @@ jobs:
           name: auto-qa-regression-report
           path: .emergent/latest-qa-report.md
           retention-days: 14
+
+      - name: Commit report back to repo (admin dashboard reads this file)
+        # 2026-09-09 — routers/admin_qa.py's GET /admin/qa/latest-report
+        # (the "Auto-QA report" card on the founder's QA dashboard) reads
+        # this exact path off the LIVE production filesystem. The step
+        # above only ever uploaded it as a GH Actions artifact (visible
+        # on the run page, never in the repo), so that card could never
+        # show a real report in production — it always said "has not
+        # run" even on every green CI pass. Same GITHUB_TOKEN
+        # bot-commit pattern already used by the delete-gate job below
+        # (its own comment: "GITHUB_TOKEN-authored pushes don't
+        # re-trigger push-based workflows" — safe to push here, no
+        # infinite-CI-loop risk).
+        if: always() && github.event_name == 'push'
+        run: |
+          if [ ! -f .emergent/latest-qa-report.md ]; then
+            echo "No report file to commit (run step failed before writing it) — skipping."
+            exit 0
+          fi
+          git config user.name "aurem-auto-qa-bot"
+          git config user.email "auto-qa-bot@users.noreply.github.com"
+          git add .emergent/latest-qa-report.md
+          if git diff --cached --quiet; then
+            echo "Report unchanged — nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: update auto-qa regression report [auto-qa-bot]"
+          git push origin HEAD:"${GITHUB_REF#refs/heads/}"

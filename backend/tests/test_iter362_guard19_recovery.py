@@ -175,7 +175,7 @@ class TestBootRecording:
         db = FakeDB()
         out = None
         for _ in range(3):
-            out = await pr.record_boot(db, reason="crash")
+            out = await pr.record_boot(db, reason="crash_or_kill")
         assert out["loop_detected"] is True
         # loop-trip logged
         assert len(db.process_loop_trips.docs) == 1
@@ -191,7 +191,7 @@ class TestBootRecording:
         monkeypatch.setattr(pr, "LOOP_THRESHOLD", 3)
         db = FakeDB()
         for _ in range(5):
-            await pr.record_boot(db, reason="crash")
+            await pr.record_boot(db, reason="crash_or_kill")
         active = [d for d in db.topup_alerts.docs
                   if d.get("integration_id") == "process_recovery"
                   and d.get("status") == "active"]
@@ -202,6 +202,44 @@ class TestBootRecording:
         out = await pr.record_boot(None, reason="x")
         assert out["recorded"] is False
 
+    @pytest.mark.asyncio
+    async def test_deploy_restarts_never_trip_loop(self, monkeypatch):
+        """2026-09-09 regression lock — the exact false-positive the
+        founder's own QA report hit live: 3 legitimate deploys inside
+        LOOP_WINDOW_S must NEVER open a "RESTART LOOP DETECTED"
+        CRITICAL incident. Only `crash_or_kill` boots should count."""
+        monkeypatch.setattr(pr, "LOOP_THRESHOLD", 3)
+        monkeypatch.setattr(pr, "LOOP_WINDOW_S", 600)
+        db = FakeDB()
+        out = None
+        for _ in range(3):
+            out = await pr.record_boot(db, reason="deploy_new_code")
+        assert out["loop_detected"] is False
+        assert len(db.process_loop_trips.docs) == 0
+        active = await db.topup_alerts.find_one(
+            {"integration_id": "process_recovery", "status": "active"})
+        assert active is None
+
+    @pytest.mark.asyncio
+    async def test_mixed_deploy_and_crash_boots_only_count_crashes(self, monkeypatch):
+        """2 deploys + 2 real crashes in the window must trip on the
+        crash count (>= 3 threshold not met by crashes alone here is
+        the negative case; 3 real crashes among the mix IS the
+        positive case) — never on the combined raw total."""
+        monkeypatch.setattr(pr, "LOOP_THRESHOLD", 3)
+        monkeypatch.setattr(pr, "LOOP_WINDOW_S", 600)
+        db = FakeDB()
+        await pr.record_boot(db, reason="deploy_new_code")
+        await pr.record_boot(db, reason="deploy_new_code")
+        out = await pr.record_boot(db, reason="crash_or_kill")
+        # Only 1 real crash so far — must not trip even though the
+        # RAW total (3) already hits the old, buggy threshold.
+        assert out["loop_detected"] is False
+        out = await pr.record_boot(db, reason="crash_or_kill")
+        out = await pr.record_boot(db, reason="crash_or_kill")
+        # Now 3 real crashes — should trip for real.
+        assert out["loop_detected"] is True
+
 
 class TestResolveStable:
     @pytest.mark.asyncio
@@ -210,7 +248,7 @@ class TestResolveStable:
         monkeypatch.setattr(pr, "LOOP_WINDOW_S", 600)
         db = FakeDB()
         for _ in range(3):
-            await pr.record_boot(db, reason="crash")
+            await pr.record_boot(db, reason="crash_or_kill")
         # Age out every boot beyond the window.
         for d in db.process_boots.docs:
             d["ts"] -= 10_000
