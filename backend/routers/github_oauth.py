@@ -548,7 +548,19 @@ async def repos(authorization: Optional[str] = Header(None)) -> dict:
     token = ((u or {}).get("github") or {}).get("access_token")
     if not token:
         raise HTTPException(400, "GitHub not connected")
-    data = await gh_repos(token)
+    try:
+        data = await gh_repos(token)
+    except httpx.HTTPStatusError as e:
+        # 2026-09-09 — founder-reported production incident: a stale/
+        # revoked OAuth token here previously raised an UNHANDLED
+        # httpx.HTTPStatusError, propagating through the whole
+        # FastAPI/Starlette stack as a raw 500 (full traceback logged
+        # in prod) instead of a clean, actionable error. GitHub 401s
+        # mean the token was revoked/expired — tell the client to
+        # reconnect; anything else from GitHub's side is a clean 502.
+        if e.response.status_code == 401:
+            raise HTTPException(401, "Your GitHub connection expired — please reconnect.")
+        raise HTTPException(502, "GitHub couldn't be reached right now. Please try again.")
     return {
         "ok": True,
         "repos": [

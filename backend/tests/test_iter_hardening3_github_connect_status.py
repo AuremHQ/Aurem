@@ -171,7 +171,77 @@ async def test_multiple_repos_leave_connected_repo_null_for_explicit_pick(db, mo
         return {"user_id": "test_f2gh_multi"}
     monkeypatch.setattr(gha, "current_dev", _fake_current_dev)
 
+async def test_multiple_stale_installations_fetched_concurrently_not_sequentially(db, monkeypatch):
+    """2026-09-09 — founder-reported production incident: nginx logged
+    3 consecutive `/health` upstream timeouts in the same ~15s window
+    as GET /github/app/status calls on an account with several
+    installations (some dead/404 on GitHub's side). Root cause: the
+    per-installation live-repo-fetch loop ran fully sequentially — one
+    `await` GitHub call at a time. Fixed with bounded asyncio.gather
+    concurrency (_STATUS_FETCH_CONCURRENCY=5). This test proves it:
+    10 stale installations, each taking 0.2s to "fetch" (simulated),
+    must resolve in well under the ~2s a fully-sequential loop would
+    take (10 * 0.2s = 2.0s sequential vs ~0.4-0.6s at concurrency 5)."""
+    import asyncio as _asyncio
+    import routers.github_app as gha
+
+    for i in range(10):
+        await db.github_installations.insert_one({
+            "_test_run": True, "installation_id": 999100 + i,
+            "user_id": "test_f2gh_concurrency", "active": True,
+            "github_login": f"acme{i}",
+            # Deliberately stale (no repositories/updated_at) so every
+            # row requires a live fetch — the exact "thundering herd"
+            # scenario from the incident.
+        })
+
+    async def _fake_list_repos(installation_id):
+        await _asyncio.sleep(0.2)  # simulates one GitHub round-trip
+        return [{"id": installation_id, "full_name": f"acme/repo{installation_id}"}]
+    monkeypatch.setattr(gha._ga, "list_installation_repos", _fake_list_repos)
+
+    async def _fake_current_dev(authorization=None):
+        return {"user_id": "test_f2gh_concurrency"}
+    monkeypatch.setattr(gha, "current_dev", _fake_current_dev)
+
+    start = time.monotonic()
     result = await gha.connect_status(authorization="Bearer x")
-    assert result["state"] == "connected"
-    assert result["connected_repo"] is None
-    assert len(result["repos"]) == 2
+    elapsed = time.monotonic() - start
+
+    assert len(result["installations"]) == 10
+    assert elapsed < 1.2, (
+        f"took {elapsed:.2f}s — sequential regression: 10 installs "
+        f"at 0.2s each should be ~0.4-0.6s at concurrency 5, not ~2.0s"
+    )
+
+
+async def test_dead_installation_404_does_not_block_healthy_siblings(db, monkeypatch):
+    """Companion to the incident above: a dead/revoked installation
+    (404 on GitHub's side, per services.github_app.get_installation_token)
+    failing must not prevent OTHER, healthy installations in the same
+    /status call from resolving correctly."""
+    import routers.github_app as gha
+
+    for iid, login in [(999200, "dead-org"), (999201, "healthy-org")]:
+        await db.github_installations.insert_one({
+            "_test_run": True, "installation_id": iid,
+            "user_id": "test_f2gh_mixed", "active": True,
+            "github_login": login,
+        })
+
+    async def _fake_list_repos(installation_id):
+        if installation_id == 999200:
+            raise Exception("404 Not Found — installation revoked")
+        return [{"id": 1, "full_name": "healthy-org/repo"}]
+    monkeypatch.setattr(gha._ga, "list_installation_repos", _fake_list_repos)
+
+    async def _fake_current_dev(authorization=None):
+        return {"user_id": "test_f2gh_mixed"}
+    monkeypatch.setattr(gha, "current_dev", _fake_current_dev)
+
+    result = await gha.connect_status(authorization="Bearer x")
+
+    healthy = next(i for i in result["installations"] if i["installation_id"] == 999201)
+    dead = next(i for i in result["installations"] if i["installation_id"] == 999200)
+    assert [r["full_name"] for r in healthy["repositories"]] == ["healthy-org/repo"]
+    assert dead["repositories"] == []

@@ -38,6 +38,7 @@ Security:
 # for JWT signing and installation-token handling.
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -1006,6 +1007,22 @@ async def claim_installation(
 # ═════════════════════════════════════════════════════════════════════
 _STATUS_CACHE_TTL_S = 10
 
+# 2026-09-09 — founder-reported production incident: nginx logged 3
+# consecutive `/health` upstream timeouts (110: Connection timed out)
+# in the same ~15s window as two overlapping `GET /github/app/status`
+# calls (dashboard polls this every ~2.5s) plus 2 dead-installation
+# 404s ("access_tokens" 404 — installation revoked on GitHub's side).
+# Root cause: the loop below ran fully SEQUENTIALLY — one `await`
+# GitHub call per installation, one at a time — for up to 50 rows.
+# With a 10s cache TTL and ~2.5s polling, every installation's cache
+# tends to expire in the same window, so a user with several
+# installations (some now dead) triggers a "thundering herd" of
+# sequential GitHub round-trips on EVERY poll while any tab has this
+# open. Bounding concurrency (instead of one-at-a-time) cuts total
+# wall time roughly proportionally to installation count, without
+# hammering GitHub's rate limits (still capped, just not serial).
+_STATUS_FETCH_CONCURRENCY = 5
+
 
 @router.get("/status")
 async def connect_status(authorization: Optional[str] = Header(None)):
@@ -1028,8 +1045,13 @@ async def connect_status(authorization: Optional[str] = Header(None)):
 
     now = time.time()
     any_error: Optional[str] = None
-    out_installs = []
-    for row in rows:
+
+    # 2026-09-09 — bounded-concurrency fetch (see comment above
+    # _STATUS_FETCH_CONCURRENCY). Same per-row logic as before, just
+    # no longer forced onto one sequential await chain.
+    sem = asyncio.Semaphore(_STATUS_FETCH_CONCURRENCY)
+
+    async def _resolve_row(row: dict) -> tuple[dict, bool]:
         iid = row.get("installation_id")
         cached_repos = row.get("repositories")
         updated_at = row.get("updated_at") or 0
@@ -1038,8 +1060,12 @@ async def connect_status(authorization: Optional[str] = Header(None)):
             and (now - updated_at) < _STATUS_CACHE_TTL_S
         )
         if fresh:
-            repos = cached_repos
-        else:
+            return {
+                "installation_id": iid,
+                "github_login":    row.get("github_login"),
+                "repositories":    cached_repos,
+            }, False
+        async with sem:
             try:
                 fetched = await _ga.list_installation_repos(int(iid))
                 repos = [_slim_repo(r) for r in fetched]
@@ -1047,6 +1073,11 @@ async def connect_status(authorization: Optional[str] = Header(None)):
                     {"installation_id": iid},
                     {"$set": {"repositories": repos, "updated_at": now}},
                 )
+                return {
+                    "installation_id": iid,
+                    "github_login":    row.get("github_login"),
+                    "repositories":    repos,
+                }, False
             except Exception as e:
                 logger.warning(
                     "[status] live repo fetch failed for install %s: %r",
@@ -1055,13 +1086,18 @@ async def connect_status(authorization: Optional[str] = Header(None)):
                 # Do NOT overwrite/long-cache the failure — keep whatever
                 # was cached (even if empty) and let the NEXT poll retry.
                 repos = cached_repos if isinstance(cached_repos, list) else []
-                if not repos:
-                    any_error = "github_fetch_failed"
-        out_installs.append({
-            "installation_id": iid,
-            "github_login":    row.get("github_login"),
-            "repositories":    repos,
-        })
+                return {
+                    "installation_id": iid,
+                    "github_login":    row.get("github_login"),
+                    "repositories":    repos,
+                }, not repos
+
+    resolved = await asyncio.gather(*(_resolve_row(row) for row in rows))
+    out_installs = []
+    for inst, had_error in resolved:
+        out_installs.append(inst)
+        if had_error:
+            any_error = "github_fetch_failed"
 
     all_repos = [
         {**r, "installation_id": inst["installation_id"],

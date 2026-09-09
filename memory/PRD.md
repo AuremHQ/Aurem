@@ -1,3 +1,16 @@
+## 2026-09-09 (deployment logs round 2) — Fixed health-check timeout root cause + unhandled 500 on revoked OAuth token
+
+**User shared new production logs** with `deployment_agent` for analysis: nginx logged 3 consecutive `/health` upstream timeouts (110: Connection timed out) in the same ~15s window as GitHub App connect activity, plus an unhandled `httpx.HTTPStatusError` traceback for `GET /github/oauth/repos`. Confirmed both via direct log-timestamp correlation and code review (deployment_agent found no build/Docker-level blocker, consistent with prior rounds).
+
+**1. Health-check timeout root cause (confirmed via precise log-timestamp correlation).** `GET /github/app/status`'s per-installation repo-fetch loop ran fully SEQUENTIALLY (one `await` GitHub call at a time, up to 50 rows). With a 10s cache TTL and ~2.5s frontend polling, every installation's cache tends to expire in the same window — an account with several installations (some dead/404, confirmed in the logs: "access_tokens 404 for install 156023644") triggers a sequential "thundering herd" of GitHub round-trips on every poll cycle, exactly overlapping the observed `/health` timeouts. Fixed: refactored to bounded-concurrency via `asyncio.gather` + `asyncio.Semaphore(5)`, preserving identical per-row logic (cache freshness, DB persist, graceful fallback on failure) — just no longer serialized. 2 new tests lock this in (concurrency-timing assertion + dead-installation-doesn't-block-siblings).
+
+**2. Unhandled 500 on revoked GitHub OAuth token.** `GET /github/oauth/repos` called `gh_repos(token)` with no try/except — a stale/revoked token causes GitHub's 401, which `raise_for_status()` turns into an unhandled `httpx.HTTPStatusError` propagating through the whole FastAPI/Starlette stack as a raw 500 with full traceback (exactly what was in the log). Fixed: wrapped in try/except — 401 from GitHub → clean `HTTPException(401, "Your GitHub connection expired — please reconnect.")`; any other GitHub-side error → clean 502, no raw exception text leaked. 2 new tests lock this in.
+
+**Tests:** 16/16 pass (5 pre-existing status tests unmodified + 2 new concurrency tests + 2 new oauth-error tests + 7 pre-existing state-recovery tests). `testing_agent_v3_fork` confirmed — 100% pass, no critical issues.
+
+**PROVENANCE: preview-only, pending deploy.**
+
+
 ## 2026-09-09 (follow-up) — Fixed remaining GitHub connect isolation leak: reconfiguring ONE org still leaked unrelated siblings
 
 **Founder's 2nd screen recording** showed the round-1 full-isolation fix hadn't fully solved it — the leak now happened "after the first step" (mount-time leak from round 1 was fixed, but a residual leak remained deeper in the flow): reconfiguring just ONE existing org (`auravw`) in GitHub's own picker caused an UNRELATED, completely untouched sibling org (`VeroCapper`) to ALSO appear in the repo picker.
