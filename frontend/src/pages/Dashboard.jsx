@@ -43,6 +43,7 @@ import {
 import NewUserWizard from "../components/NewUserWizard";
 import VisibilityKitPanel from "../components/VisibilityKitPanel";
 import ConnectRepoBanner from "../components/ConnectRepoBanner";
+import { EngagementNudge } from "../components/EngagementNudge";
 import RepoCleanupBanner from "../components/RepoCleanupBanner";
 import ConnectRepoTour from "../components/tour/ConnectRepoTour";     // Iter 212m-200
 import AddLiveSiteModal from "../components/AddLiveSiteModal";        // Iter 212m-203
@@ -284,6 +285,21 @@ function DashboardV2Body() {
     setShowWizard(false);
     reloadProjects();
   }, [reloadProjects]);
+
+  // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
+  // `gateSkipped === null` while loading (fail nothing yet — the
+  // gate simply doesn't render until we know); resolves to a bool.
+  // Fails OPEN on error (treated as "skipped") so a broken check can
+  // never trap a user behind a gate that will never clear — same
+  // philosophy as the rest of this onboarding flow: skippable, not
+  // a hard wall.
+  const [gateSkipped, setGateSkipped] = useState(null);
+  useEffect(() => {
+    api.get("/onboarding/repo-connect-gate/state")
+      .then((r) => setGateSkipped(!!r.data?.skipped))
+      .catch(() => setGateSkipped(true));
+  }, []);
+  const showGate = projectCount === 0 && gateSkipped === false;
 
   // Iter 145 — celebratory ship milestone toast (carried over from
   // the old Dashboard verbatim — no functional change).
@@ -668,6 +684,12 @@ function DashboardV2Body() {
             {projectCount === 0 && (
               <ConnectRepoBanner onConnect={openWizardFromBanner} onProjectCreated={onWizardComplete} />
             )}
+            {projectCount === 0 && gateSkipped === true && (
+              <EngagementNudge variant="post_skip" onConnect={openWizardFromBanner} />
+            )}
+            {!!activeProject && (
+              <EngagementNudge variant="post_scan" projectId={activeProject.project_id} />
+            )}
             <div data-testid="chat-pane"
               style={{ flex: 1, minHeight: 0, width: "100%",
                        minWidth: 0, overflow: "hidden" }}>
@@ -692,6 +714,13 @@ function DashboardV2Body() {
       </div>
 
       {showWizard && <NewUserWizard onComplete={onWizardComplete} />}
+      {showGate && (
+        <NewUserWizard
+          asGate
+          onComplete={onWizardComplete}
+          onSkip={() => setGateSkipped(true)}
+        />
+      )}
       {/* Iter 212m-200 — Connect-Repo interactive tour overlay. */}
       {tourOpen && <ConnectRepoTour onClose={() => setTourOpen(false)} />}
 

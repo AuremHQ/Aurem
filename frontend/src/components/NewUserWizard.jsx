@@ -33,7 +33,7 @@ export function dismissWizard() {
   try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* private mode */ }
 }
 
-export default function NewUserWizard({ onComplete }) {
+export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   const [step]         = useState(1);
   const [repoUrl, setRepoUrl]   = useState("");
   const [branch, setBranch]     = useState("main");
@@ -113,6 +113,45 @@ export default function NewUserWizard({ onComplete }) {
   // first failed attempt, surface the manual reset path the founder
   // proved works: revoke the App on GitHub, then reinstall fresh.
   const [connectAttempts, setConnectAttempts] = useState(0);
+
+  // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
+  // When rendered as the pre-chat gate (`asGate`), fire the funnel
+  // signal exactly once on mount — best-effort, never blocks the UI.
+  // useRef guard (same pattern as sessionStartedRef elsewhere in this
+  // file) so React 18 StrictMode's dev-only double-invoke of mount
+  // effects can't double-log this in the funnel data.
+  const gateShownFiredRef = useRef(false);
+  useEffect(() => {
+    if (!asGate || gateShownFiredRef.current) return;
+    gateShownFiredRef.current = true;
+    api.post("/onboarding/repo-connect-gate/shown").catch(() => {});
+  }, [asGate]);
+
+  // Explicit "Skip for now" action — the ONLY way out of the gate
+  // besides a real connect. Distinct from closing/Escape (which the
+  // gate build disables entirely, see the header + useModalA11y wiring
+  // below) so an accidental tab-close/refresh is never mistaken for a
+  // deliberate skip (Part 1, Case C — the gate just shows again next
+  // load, with zero extra code needed for that: it's a pure function
+  // of "has a project? skipped?", both re-checked fresh every load).
+  function handleSkip() {
+    if (asGate) {
+      api.post("/onboarding/repo-connect-gate/skip").catch(() => {});
+      onSkip?.();
+    }
+    close();
+  }
+
+  // Part 1, Case A — fired at every "user now has a real project"
+  // exit from the gate (fresh connect, scaffold-from-idea, or picking
+  // an already-connected repo). Best-effort funnel signal only; the
+  // gate itself stops showing again purely because `has_project`
+  // becomes true — this event just tells us it was THIS screen that
+  // got them there.
+  function fireGateCompleted(newProjectId) {
+    if (!asGate) return;
+    api.post("/onboarding/repo-connect-gate/completed", { project_id: newProjectId }).catch(() => {});
+  }
 
   // Initial OAuth status check.
   useEffect(() => {
@@ -371,6 +410,7 @@ export default function NewUserWizard({ onComplete }) {
       const newProjectId = r.data?.project_id;
       setProject(newProjectId);
       setActiveProjectId(newProjectId);
+      fireGateCompleted(newProjectId);
       // 2026-09-01 — connect-flow refinement (D3, standard pattern):
       // a ~1s "Connected ✓" beat, then auto-land — no 12s blocking
       // interstitial, no silent instant vanish either.
@@ -415,6 +455,7 @@ export default function NewUserWizard({ onComplete }) {
   function openExistingProject() {
     if (!alreadyConnected?.projectId) return;
     setActiveProjectId(alreadyConnected.projectId);
+    fireGateCompleted(alreadyConnected.projectId);
     close();
   }
 
@@ -450,6 +491,7 @@ export default function NewUserWizard({ onComplete }) {
       if (!newProjectId) throw new Error("No project_id returned");
       setProject(newProjectId);
       setActiveProjectId(newProjectId);
+      fireGateCompleted(newProjectId);
       close();
     } catch (e2) {
       const detail = e2?.response?.data?.detail;
@@ -468,11 +510,17 @@ export default function NewUserWizard({ onComplete }) {
   // the first-time wizard could not Escape out of it if the form was
   // broken.  Now hooks in the reusable a11y trap; onClose invokes
   // the same `close()` function the "Skip for now" link uses.
+  // 2026-09-09 — Mandatory Gate: when `asGate`, Escape/X are
+  // disabled entirely (`onClose: undefined`, X hidden below) — the
+  // ONLY ways out are a real connect or the explicit "Skip for now"
+  // action (handleSkip). Closing via any other means (tab close,
+  // refresh, back) is Part 1's Case C: no state changes, so the
+  // gate simply shows again next chat load.
   const wizardRef = useRef(null);
   useModalA11y({
     ref:     wizardRef,
     isOpen:  true,
-    onClose: close,
+    onClose: asGate ? undefined : close,
   });
 
   return (
@@ -523,11 +571,13 @@ export default function NewUserWizard({ onComplete }) {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {!asGate && (
             <button data-testid="wizard-close" onClick={close} title="Skip"
                     style={{ background:"transparent", border:"none", padding:4,
                              color:"#64748b", cursor:"pointer", display:"flex" }}>
               <X size={14} />
             </button>
+            )}
           </div>
         </header>
 
@@ -655,7 +705,7 @@ export default function NewUserWizard({ onComplete }) {
                     busy={false}
                     primary="Skip — paste a URL"
                     onPrimary={() => setGhStatus("manual")}
-                    onSkip={close}
+                    onSkip={handleSkip}
                   />
                 </div>
               )}
@@ -1072,7 +1122,7 @@ export default function NewUserWizard({ onComplete }) {
                       true CTA already lives in the app-cta-block above. */}
                   {(ghStatus === "choosing" && !appPickerActive) ? (
                     <div style={{ display: "flex", justifyContent: "flex-end", padding: "16px 0 4px" }}>
-                      <button data-testid="wizard-skip-link" type="button" onClick={close}
+                      <button data-testid="wizard-skip-link" type="button" onClick={handleSkip}
                               style={{ background: "transparent", border: "none",
                                        color: "var(--text-faint)", fontSize: 11,
                                        padding: "6px 4px", cursor: "pointer" }}>
@@ -1084,7 +1134,7 @@ export default function NewUserWizard({ onComplete }) {
                       busy={busy}
                       primary="Continue"
                       onPrimary={submitRepo}
-                      onSkip={close}
+                      onSkip={handleSkip}
                     />
                   )}
                 </>
@@ -1114,7 +1164,7 @@ export default function NewUserWizard({ onComplete }) {
                         busy={scaffoldBusy}
                         primary="Draft my project"
                         onPrimary={submitIdea}
-                        onSkip={close}
+                        onSkip={handleSkip}
                       />
                     </>
                   )}

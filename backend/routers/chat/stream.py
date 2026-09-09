@@ -126,6 +126,12 @@ async def chat_stream(
     logger.info("R10_TIMING turn_start prompt=%r session=%s project=%s",
                 (body.prompt or "")[:40], body.session_id, body.project_id)
     user = await current_dev(authorization)
+    # Engagement Nudge (2026-09-09), Part 2 — see routers/chat/turn.py
+    # for the full rationale; identical fire-and-forget hook here so
+    # the SSE streaming chat path (ChatPanel's primary send path) is
+    # covered too, not just the non-streaming /chat/send fallback.
+    from .turn import _fire_task_sent_bg
+    asyncio.ensure_future(_fire_task_sent_bg(user["user_id"], body.prompt))
     # Overnight loop W2 Step 2 (2026-08-29) — MOCK_LLM short-circuit,
     # BEFORE any provider routing/tool/repo-context construction. The
     # live main-chat path (this function) was the one surface

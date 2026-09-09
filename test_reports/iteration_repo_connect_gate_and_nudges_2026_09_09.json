@@ -1,0 +1,50 @@
+{
+  "summary": "UI + backend verification of the new mandatory Repo-Connect Gate + Post-Skip / Post-Scan engagement nudges. Tests 1, 2, 3, and 6 PASS end-to-end via real browser walkthrough + MongoDB verification. Test 5 partially verified (endpoint is called on chat load, nudge correctly hides when show:false; could not verify 'Try it' prefill live because both existing projects for test@aurem.dev already had show:false — main agent's server-side proof still stands). Test 4 (real connect-from-gate flow) not exercised via UI because it requires a live GitHub App OAuth popup which is impractical from automation; backend already proven by main agent (repo_connect_gate_completed fires). Regression: X-close hiding did NOT leak into non-gate wizard mode — wizard-close is correctly present when the wizard is opened via the 'Add repository' path on an account with existing projects. One minor semantic-only issue found: 'Skip for now' link is ALSO rendered in non-gate mode (harmless because users with projects never see the gate anyway, but if they click it while adding an additional repo it will still POST /onboarding/repo-connect-gate/skip and flip their repo_connect_gate_skipped flag — no functional impact since gate visibility already requires projectCount===0). Also noticed the repo_connect_gate_shown event fires twice per mount (see 'minor' below).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /onboarding/repo-connect-gate/shown", "issue": "Fires twice in quick succession on every gate mount (observed pairs in db.funnel_events at 17:42:57.117 & 17:42:57.119, 17:43:30.987 & 17:43:31.018, 17:44:01.369 & 17:44:01.373). Likely a React StrictMode double-invoke or an effect-dependency causing a re-fire. Not user-visible but doubles funnel event volume for this event type."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "NewUserWizard (non-gate mode)", "issue": "The 'Skip for now' link (data-testid='wizard-skip-link') is rendered even when asGate=false. If a user who ALREADY has projects opens the wizard via aurem:open-add-repo and clicks Skip, the frontend POSTs /onboarding/repo-connect-gate/skip and flips repo_connect_gate_skipped=true on their profile. No user-visible impact (gate check also requires projectCount===0) but is semantically incorrect and pollutes their gate-state row. Suggested fix: only render skip-link when asGate is true.", "selector": "[data-testid='wizard-skip-link']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "tests_performed": {
+    "TEST_1_gate_render": "PASS — After login as fresh-p2-empty-0903@aurem.dev, the gate ([data-testid='new-user-wizard']) renders blocking chat. wizard-close is absent, wizard-skip-link is present. Screenshot: /app/test_reports/screenshots/post_login.png",
+    "TEST_2_skip_flow": "PASS — Clicking wizard-skip-link closes the gate, chat textarea becomes interactable (typed 'test' successfully), and the post-skip nudge strip ([data-testid='engagement-nudge-post_skip']) renders with visible action and dismiss buttons. Nudge text: 'Connect your repo so ORA can actually ship fixes for you — not just chat about them.' Screenshot: /app/test_reports/screenshots/after_skip.png",
+    "TEST_3_reload_no_regate": "PASS — After reload with skipped state persisted, gate does NOT reappear and chat loads directly. Post-skip nudge did NOT re-render on reload, consistent with sessionStorage once-per-session cap (spec-compliant, not a bug). Server confirms state={skipped:true, has_project:false, post_skip_nudge_count:1}. Screenshot: /app/test_reports/screenshots/after_reload.png",
+    "TEST_4_connect_from_gate": "NOT EXERCISED via UI — requires live GitHub App OAuth popup, not automatable. Backend already verified by main agent (repo_connect_gate_completed emits and gate stays gone). Recommend main agent do a manual one-shot in the browser or rely on the existing server proof.",
+    "TEST_5_post_scan_nudge_wiring": "PARTIAL PASS — On login as test@aurem.dev, GET /onboarding/nudge/post-scan-state?project_id=p_demo_a is called on chat load (confirmed in network log). Response is {show:false, prefill_task:null} (both p_demo_a AND p_r10_testbed_e2e already fired), so engagement-nudge-post_scan correctly does NOT render. Could not exercise the 'Try it' → aurem:starter-pick → composer prefill path because neither of the account's projects is currently in a show:true state. Wiring integrity confirmed (endpoint call + conditional render behave correctly).",
+    "TEST_6_funnel_logging": "PASS — Direct MongoDB read of db.funnel_events confirms repo_connect_gate_shown (multiple), repo_connect_gate_skipped (@ 17:44:02.570Z), and post_scan_nudge_shown all persisted for user_id 612673b71f2e424d9bc711f26eec195e with correct timestamps aligned to my UI actions. Earlier post_scan_nudge_task_sent for test_admin_001 also confirmed.",
+    "REGRESSION_non_gate_wizard": "PARTIAL PASS — Opened wizard via window.dispatchEvent('aurem:open-add-repo') as test@aurem.dev. wizard-close X IS present and visible (correct — asGate flag correctly gated the X-hide). Minor issue: wizard-skip-link still shows in non-gate mode (see frontend_issues.ui_bugs[0])."
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/post_login.png",
+    "/app/test_reports/screenshots/after_skip.png",
+    "/app/test_reports/screenshots/after_reload.png",
+    "/app/test_reports/screenshots/test5_post_scan.png",
+    "/app/test_reports/screenshots/regression_wizard_non_gate.png"
+  ],
+  "action_items": [
+    "Consider gating the 'Skip for now' link with asGate prop so it only renders in gate mode (non-blocking, semantics-only fix).",
+    "Investigate duplicate repo_connect_gate_shown emit on every gate mount (React StrictMode double-invoke or effect dep issue — currently 2 rows per real mount).",
+    "Consider having the main agent do a one-shot manual UI walkthrough of Test 4 (real connect-from-gate) to close the last un-UI-verified acceptance criterion; backend proof already covers it."
+  ],
+  "critical_code_review_comments": [
+    "Duplicate POST /onboarding/repo-connect-gate/shown emissions per gate mount — clean this up in NewUserWizard mount effect (likely missing dep-array guard or a useEffect firing twice under React 18 StrictMode).",
+    "asGate={true} correctly hides wizard-close; asGate={false} correctly shows it; but the skip-link visibility isn't gated on asGate — trivial one-line fix.",
+    "Dashboard's fail-open GET /onboarding/repo-connect-gate/state behavior (default skipped:true on error) is a sound choice; documented in code and verified working."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "test_credentials": "fresh-p2-empty-0903@aurem.dev / FreshEmpty2026! (now has repo_connect_gate_skipped=true, post_skip_nudge_count=1 — needs a $unset reset if next round wants a fresh gate render). test@aurem.dev / AuremTest2026! (unchanged).",
+  "seed_data_creation": "None. Live funnel_events rows were written for the fresh-p2-empty user's JWT user_id (612673b71f2e424d9bc711f26eec195e) as a side effect of the real UI walkthrough — this is expected and desired for TEST 6 verification.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The gate + nudge feature is functionally complete and shipped-quality. Only two minor code-hygiene items remain (see action_items). If the main agent addresses those, no re-test is strictly required; a simple diff review suffices. Test 4 (successful-connect path) is the only acceptance criterion not exercised via a real browser walkthrough in this session — main agent can verify it manually in one login.",
+  "rca of the issue": "N/A — no bugs blocking. Duplicate 'shown' emit is almost certainly React 18 StrictMode double-mount in dev (Vite dev server). Confirm by checking if the effect's dependency array is [] and by reading the mount effect body — if it POSTs unconditionally on mount without a ref-guard, StrictMode's double-invoke will produce exactly this 2x pattern seen in the DB."
+}

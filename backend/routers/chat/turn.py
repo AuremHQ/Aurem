@@ -34,6 +34,16 @@ from .misc import PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT
 logger = logging.getLogger(__name__)
 
 
+async def _fire_task_sent_bg(user_id: str, prompt: str) -> None:
+    """Background wrapper — see services/engagement_nudge.py. Isolated
+    here so a failure can never propagate into the chat request."""
+    try:
+        from services.engagement_nudge import maybe_fire_task_sent
+        await maybe_fire_task_sent(get_db(), user_id=user_id, prompt=prompt)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("_fire_task_sent_bg failed: %r", e)
+
+
 class ChatBody(BaseModel):
     # Iter 44 — bounded length to prevent prompt-bomb DoS + match
     # downstream cap_for() context windows.
@@ -142,6 +152,12 @@ async def chat_send(
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
     user = await current_dev(authorization)
+    # Engagement Nudge (2026-09-09), Part 2 — fire-and-forget signal
+    # for "did the user try to ask ORA for something", independent of
+    # mock mode / budget / whatever the orchestrator ends up doing
+    # with this prompt. Never awaited inline — must add zero latency
+    # and never affect the real response.
+    asyncio.ensure_future(_fire_task_sent_bg(user["user_id"], body.prompt))
     # MOCK_LLM short-circuit (2026-09-08) — mirrors chat_stream's W2 Step 2
     # guard. Sits BEFORE budget/pre-LLM/orchestrator so no provider,
     # intent-escalation, watchdog or council call can ever fire in mock.
