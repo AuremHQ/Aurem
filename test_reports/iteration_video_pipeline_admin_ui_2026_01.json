@@ -1,0 +1,36 @@
+{
+  "summary": "Frontend + auth-gating spot-check for the new ORA Chat Video-mode feature (Deepgram + RunPod + ffmpeg pipeline). All 7 review-request scenarios PASS. Video-generation keys card on /admin/settings supports partial-save (endpoint-only) and cancel; ORA drawer mode-switch renders Chat vs Video panels; keys-missing banner + disabled Generate button behave as expected (no real Deepgram/RunPod keys, per founder note this is the correct state); avatar upload persists server-side (R2 URL) across reload; chat mode is fully preserved as regression after toggling modes multiple times, including live send round-trip. Backend spot-check: all 6 /admin/video/* endpoints correctly return 401 without auth.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "tests_executed": {
+    "settings_card_initial_not_configured_badge": "PASS",
+    "settings_card_partial_save_endpoint_only": "PASS (endpoint='test-endpoint-123', deepgram/runpod states remain 'not set')",
+    "settings_card_cancel_does_not_save": "PASS (deepgram remains 'not set' after typing then cancelling)",
+    "ora_drawer_mode_tabs_present": "PASS (chat + video buttons render)",
+    "chat_mode_default_and_input_present": "PASS",
+    "video_mode_panel_renders": "PASS",
+    "video_mode_keys_missing_banner_visible": "PASS",
+    "video_mode_generate_btn_disabled_when_keys_missing": "PASS (disabled=True)",
+    "video_mode_hides_chat_composer": "PASS (ora-chat-input not in DOM in video mode)",
+    "avatar_upload_and_preview": "PASS (R2 cloudflarestorage URL returned)",
+    "avatar_persists_across_reload": "PASS",
+    "mode_toggle_back_to_chat_restores_composer": "PASS",
+    "chat_send_regression_after_mode_toggle": "PASS (message rendered, no state loss)",
+    "multi_toggle_video_video_chat_video_stable": "PASS",
+    "auth_gating_401_all_endpoints": "PASS (GET/PUT secrets, GET/POST avatar, GET/POST jobs all 401 without auth)"
+  },
+  "test_report_links": ["/app/test_reports/screenshots/vpk_video_mode.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "VideoGenPanel.jsx polling interval (3s) is never cleared if user closes drawer while a job is in-flight — mode switch to 'chat' unmounts the panel and clears via useEffect cleanup (good), but if user leaves the drawer open while job runs then re-opens later, no issue since job state resets. Minor: consider stopping poll on failed status branch too (already handled). No action needed.",
+    "OraChatDrawer.jsx has grown to ~1000 lines with 15+ useState hooks — exceeds the >700-line guideline in the standing rules. Recommend splitting the ActionProposalCard / MessageBubble / DrawerThinkingDots / picker/audit modals into separate files in a future refactor. Not blocking.",
+    "VideoGenPanel does not cap avatar file size client-side; if user uploads a huge video, backend should enforce — outside this test scope but worth verifying separately."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (6/6 auth-gating spot-checks)", "frontend": "100% (15/15 scenarios)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview, from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Saved partial video-pipeline secrets (runpod_endpoint_id='test-endpoint-123' only) to admin_settings via UI — not sensitive, safe test value. Uploaded 1x1 PNG founder avatar (R2 object) for test@aurem.dev.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Founder still needs to provide real Deepgram + RunPod keys before an end-to-end video render can be tested. Until then, the Generate button remains correctly disabled and POST /admin/video/jobs returns 409 — validated as expected behavior, not a bug. Test avatar (1x1 PNG in R2) and endpoint='test-endpoint-123' remain saved on test@aurem.dev in this preview pod; safe to overwrite."
+}

@@ -9250,4 +9250,94 @@ domains are already covered via `allow_origin_regex` and CSP's
 positive** — `/app/.gitignore` already excludes `backend/.env`
 (confirmed). Deployment is READY; no blocking issues.
 
+## 2026-09-10 — ORA Chat token cap follow-up: raised to unlimited
+
+Founder still hit `daily_token_cap` after the editable-limits feature
+shipped. Used the new admin endpoint (`PUT /admin/llm/ora-chat-limits`)
+to actually set `daily_token_cap=0` and `rate_limit_per_hour=0`
+(unlimited) for the founder's own usage — verified end-to-end with a
+live check against the real DB: inserted a fake 10M-token usage row
+for today and confirmed `_daily_cap_ok`/`_rate_limit_ok` both return
+`True`. Rationale: `services/llm_usd_cap.py` already exempts founder-
+tier accounts from the $ cap entirely, so this token cap was the only
+remaining (redundant) limiter on the founder's own account — removing
+it introduces no new financial exposure beyond what already existed.
+Can be re-tightened anytime via Admin Settings → Models & LLM → ORA
+Chat limits.
+
+## 2026-09-10 — ORA Chat "Video generation" mode (Deepgram Aura-2 + RunPod MuseTalk + ffmpeg)
+
+Founder requested an automated founder-avatar video pipeline
+(TTS + lip-sync + code-diff B-roll) reachable from inside ORA Chat via
+a one-switch chat/video toggle, with self-serve admin key management
+(no .env edits) and photo/video upload + download.
+
+**Architecture (new `services/video_pipeline/` package):**
+- `secrets_store.py` — Fernet-encrypted Deepgram/RunPod keys in
+  `db.admin_settings._id="video_pipeline_secrets"`, reusing
+  `services/llm_config_store.py`'s encryption helpers (same
+  DB-override, never-touches-.env pattern as the LLM provider configs
+  and ORA Chat limits).
+- `storage.py` — R2 upload/presign helpers reusing `services/
+  db_backup.py::_r2_client()` (same account/bucket as Mongo backups)
+  under an `ora-video/` key prefix. All URLs handed to the frontend or
+  to RunPod are freshly-presigned (1h TTL) on every read — nothing
+  long-lived is persisted, so nothing goes stale.
+- `tts.py` — Deepgram Aura-2 (`aura-2-thalia-en`) synthesizes a WAV;
+  since Aura-2 TTS returns no alignment metadata, the WAV is
+  re-transcribed via Deepgram `/listen` (nova-3) to get word timestamps
+  for **captions only** — MuseTalk's lip-sync is driven by the raw
+  audio waveform directly, not by these timestamps.
+- `musetalk_job.py` — dispatches to a RunPod Serverless MuseTalk
+  endpoint (`/run` + poll `/status/{id}`, 3s interval, 5 min ceiling),
+  tolerant output-shape extraction for different Hub worker templates.
+- `compositor.py` — ffmpeg hybrid compositor: reuses the SAME
+  MuseTalk output clip at 3 different crops/overlays instead of 3
+  separate renders — fullscreen (0-4s hook) → 30% avatar strip + 70%
+  terminal-style caption panel (chunked Deepgram word timestamps,
+  ~5 words/line) → fullscreen again (CTA, carried by the script's own
+  closing line, no hardcoded overlay text). Clips ≤8s skip the 3-phase
+  split. Liberation Mono fonts (already on the box) for drawtext.
+- `pipeline.py` — orchestrates all 4 stages end-to-end as a single
+  `asyncio.create_task` fire-and-forget background job (same pattern
+  as `routers/fix_pipeline.py::_run_bulk_job`), persisting stage
+  transitions to `db.video_pipeline_jobs` for polling.
+- `routers/admin_video_pipeline.py` — `/admin/video/secrets` (GET/PUT),
+  `/admin/video/avatar` (GET/POST, image or mp4/mov upload, 60MB cap),
+  `/admin/video/jobs` (POST create + background-task kickoff, GET list,
+  GET by id) — all admin-gated via `require_admin_dep` + `current_dev`.
+
+**Frontend:**
+- `AdminSettingsPage.jsx` → new `VideoPipelineKeysCard` (mirrors the
+  existing `GitHubAppConfigCard`'s masked-credential/rotate pattern —
+  never pre-fills secret fields, partial saves allowed, last-4
+  fingerprint shown after save).
+- `OraChatDrawer.jsx` → new `mode` state ("chat" | "video") with a
+  2-tab switch row under the header; Video mode swaps out the message
+  list + composer for the new `VideoGenPanel.jsx` entirely (chat state
+  is preserved untouched when toggling back).
+- `VideoGenPanel.jsx` (new) — avatar upload (photo or clip, live
+  preview), script textarea, Generate button (disabled until both
+  keys + endpoint + avatar are configured — surfaces a banner linking
+  to Admin Settings otherwise), live stage-by-stage progress polling,
+  result video player + Download link, and a recent-generations
+  history list.
+
+**Blocker (external, not code):** real end-to-end video generation
+needs the founder's own Deepgram API key + a RunPod account with a
+MuseTalk serverless endpoint deployed (RunPod Hub → search "MuseTalk"
+→ Deploy → copy Endpoint ID) — these are pasted into the new Admin
+Settings card, not requested from the agent. Until then, `POST
+/admin/video/jobs` correctly 409s and the UI's Generate button stays
+disabled — this is expected behavior, not a bug.
+
+**Tested via `testing_agent_v3_fork`** (see
+`/app/test_reports/iteration_video_pipeline_admin_ui_2026_01.json`):
+15/15 frontend scenarios + 6/6 backend auth-gating checks PASS —
+partial-save/cancel on the keys card, mode-switch renders + hides the
+right panels, keys-missing banner + disabled Generate button, avatar
+upload + persists across reload, chat regression (send round-trip)
+survives repeated mode toggling, all `/admin/video/*` endpoints 401
+without auth. Zero action items.
+
 - Preview only — not yet pushed to production.

@@ -13,10 +13,11 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, X, Send, RefreshCw, Zap, AlertTriangle,
-          Settings, Clock, Plus, Square, ListChecks } from "lucide-react";
+          Settings, Clock, Plus, Square, ListChecks, Video } from "lucide-react";
 import { api } from "../lib/api";
 import { getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "./OraChatHouseRulesPanel";
+import VideoGenPanel from "./VideoGenPanel";
 // Feb 2026 · Phase 1 (Streamdown) — swap plain-text bubble body for a
 // streaming-safe markdown renderer (GFM, code blocks, LaTeX, Mermaid,
 // inline images, XSS-safe defaults). Chosen over react-markdown +
@@ -35,6 +36,10 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
   const [budget, setBudget] = useState(null);
   const [stream, setStream] = useState({ route: null, model: null, buf: "", err: null, stateAsOf: null });
   const [showRules, setShowRules] = useState(false);
+  // 2026-09-10 — one-switch chat/video mode. "Video" swaps the whole
+  // body (message list + composer) for VideoGenPanel; the header,
+  // budget pill, and session controls stay chat-specific and hide.
+  const [mode, setMode] = useState("chat"); // "chat" | "video"
   const [recentSessions, setRecentSessions] = useState([]);
   const [showPicker, setShowPicker] = useState(false);
   // ORA Chat v2 (2026-08-27) — think mode reasons harder (higher-latency
@@ -452,8 +457,36 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
             </button>
           </div>
 
+          {/* One-switch chat/video mode (2026-09-10) */}
+          <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+            <button type="button" data-testid="ora-chat-mode-chat-btn"
+                    onClick={() => setMode("chat")}
+                    style={{
+                      flex: 1, padding: "8px 0", background: "transparent", border: "none",
+                      borderBottom: mode === "chat" ? "2px solid #E07A5F" : "2px solid transparent",
+                      color: mode === "chat" ? "#e8e3d3" : "#7a7466",
+                      fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    }}>
+              <MessageSquare size={13} /> Chat
+            </button>
+            <button type="button" data-testid="ora-chat-mode-video-btn"
+                    onClick={() => setMode("video")}
+                    style={{
+                      flex: 1, padding: "8px 0", background: "transparent", border: "none",
+                      borderBottom: mode === "video" ? "2px solid #E07A5F" : "2px solid transparent",
+                      color: mode === "video" ? "#e8e3d3" : "#7a7466",
+                      fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    }}>
+              <Video size={13} /> Video
+            </button>
+          </div>
+
+          {mode === "video" && <VideoGenPanel />}
+
           {/* Warning/economy banner */}
-          {(warningMode || economyMode) && (
+          {mode === "chat" && (warningMode || economyMode) && (
             <div data-testid="ora-chat-budget-banner"
                  style={{
                    padding: "8px 16px", fontSize: 11,
@@ -470,6 +503,7 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
           )}
 
           {/* Message list */}
+          {mode === "chat" && (
           <div
             ref={listRef}
             data-testid="ora-chat-messages"
@@ -511,9 +545,10 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
               </div>
             )}
           </div>
+          )}
 
           {/* Input */}
-          {overBudget ? (
+          {mode === "chat" && (overBudget ? (
             <div
               data-testid="ora-chat-budget-locked"
               style={{
@@ -620,7 +655,8 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
               )}
               </div>
             </form>
-          )}
+          ))}
+          {mode === "chat" && (
           <div style={{ padding: "0 12px 8px", fontSize: 10, color: "#6b6558",
                           display: "flex", justifyContent: "flex-end" }}>
             <a href="/admin/settings" data-testid="ora-chat-model-settings-link"
@@ -630,6 +666,7 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
               Model settings ↗
             </a>
           </div>
+          )}
         </div>
       )}
 

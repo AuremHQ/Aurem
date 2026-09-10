@@ -198,6 +198,13 @@ export default function AdminSettingsPage() {
           pattern as the provider configs above. */}
       <OraChatLimitsCard />
 
+      {/* 2026-09-10 — ORA Chat "Video generation" mode (Deepgram
+          Aura-2 TTS + RunPod MuseTalk lip-sync). Deepgram/RunPod keys
+          live in Mongo (Fernet-encrypted, same store as the LLM
+          provider configs), never in backend/.env — paste once here,
+          the pipeline picks them up immediately. */}
+      <VideoPipelineKeysCard />
+
       {/* Iter 158 — thinking-hint manager (tier-aware upsell pills
           shown next to the chat spinner). Full CRUD + global toggle
           + delay slider. */}
@@ -1023,6 +1030,172 @@ function OraChatLimitsCard() {
         {saving ? "Saving…" : "Save"}
       </button>
     </Card>
+  );
+}
+
+function VideoPipelineKeysCard() {
+  const [data, setData] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [inputs, setInputs] = useState({
+    deepgram_api_key: "", runpod_api_key: "", runpod_endpoint_id: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState(null);
+
+  async function refresh() {
+    try {
+      const r = await api.get("/admin/video/secrets");
+      setData(r.data);
+    } catch (e) {
+      setData({ error: e?.response?.data?.detail || "Could not load video generation keys" });
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  function startEdit() {
+    setInputs({
+      deepgram_api_key: "",   // never pre-fill secrets
+      runpod_api_key: "",     // never pre-fill secrets
+      runpod_endpoint_id: data?.runpod_endpoint_id || "",
+    });
+    setSaveResult(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    const trimmed = {
+      deepgram_api_key: (inputs.deepgram_api_key || "").trim(),
+      runpod_api_key: (inputs.runpod_api_key || "").trim(),
+      runpod_endpoint_id: (inputs.runpod_endpoint_id || "").trim(),
+    };
+    if (!trimmed.deepgram_api_key && !trimmed.runpod_api_key && !trimmed.runpod_endpoint_id) {
+      toast({ message: "Fill in at least one field to save.", kind: "warning" });
+      return;
+    }
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      await api.put("/admin/video/secrets", trimmed);
+      const msg = "Saved — the video pipeline picks this up on the next generate, no restart.";
+      toast({ message: msg, kind: "success" });
+      setSaveResult({ ok: true, message: msg });
+      setEditing(false);
+      setInputs({ deepgram_api_key: "", runpod_api_key: "", runpod_endpoint_id: "" });
+      await refresh();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      const msg = typeof d === "string" ? d : "Save failed.";
+      toast({ message: msg, kind: "error" });
+      setSaveResult({ ok: false, message: `Save failed: ${msg}` });
+    } finally { setSaving(false); }
+  }
+
+  if (!data) {
+    return (
+      <Card style={{ padding: 18, marginTop: 16 }}>
+        <div style={{ color: "var(--text-faint)", fontSize: 12 }}>Loading video generation keys…</div>
+      </Card>
+    );
+  }
+
+  const ready = data.deepgram_configured && data.runpod_configured && data.runpod_endpoint_id;
+
+  return (
+    <div data-testid="video-pipeline-keys-card">
+    <Card style={{ padding: 18, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Cpu size={14} style={{ color: "var(--accent, #ff8a2a)" }} />
+          <h3 style={{ fontSize: 13, margin: 0 }}>Video generation keys</h3>
+          <Badge color={ready ? "var(--ok)" : "var(--warn)"}>
+            {ready ? "ready" : "not configured"}
+          </Badge>
+        </div>
+        {!editing && (
+          <button data-testid="video-pipeline-keys-edit" className="btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 14px" }} onClick={startEdit}>
+            {ready ? "Rotate keys" : "Add keys"}
+          </button>
+        )}
+      </div>
+
+      {saveResult && (
+        <div style={{ padding: "8px 12px", marginBottom: 10,
+                      background: saveResult.ok ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+                      border: `1px solid ${saveResult.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+                      borderRadius: 8, fontSize: 12,
+                      color: saveResult.ok ? "#86efac" : "#fca5a5" }}>
+          {saveResult.message}
+        </div>
+      )}
+
+      {!editing && (
+        <>
+          <div style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 14, lineHeight: 1.5 }}>
+            Powers the ORA Chat <strong>Video</strong> mode (Deepgram Aura-2 TTS + RunPod
+            MuseTalk lip-sync). Keys are Fernet-encrypted in Mongo, never in backend/.env —
+            only a last-4 fingerprint is shown after saving.
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
+            <div>Deepgram: <strong data-testid="video-pipeline-deepgram-state">
+              {data.deepgram_configured ? `configured (…${data.deepgram_key_hint})` : "not set"}
+            </strong></div>
+            <div>RunPod key: <strong data-testid="video-pipeline-runpod-key-state">
+              {data.runpod_configured ? `configured (…${data.runpod_key_hint})` : "not set"}
+            </strong></div>
+            <div>RunPod endpoint: <strong data-testid="video-pipeline-runpod-endpoint-state">
+              {data.runpod_endpoint_id || "not set"}
+            </strong></div>
+          </div>
+        </>
+      )}
+
+      {editing && (
+        <div style={{ display: "grid", gap: 12, maxWidth: 440 }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              Deepgram API key
+            </label>
+            <input data-testid="video-pipeline-deepgram-input" className="input" type="password"
+                   placeholder={data.deepgram_configured ? "•••• leave blank to keep current" : "paste key"}
+                   value={inputs.deepgram_api_key}
+                   onChange={(e) => setInputs({ ...inputs, deepgram_api_key: e.target.value })}
+                   style={{ width: "100%" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              RunPod API key
+            </label>
+            <input data-testid="video-pipeline-runpod-key-input" className="input" type="password"
+                   placeholder={data.runpod_configured ? "•••• leave blank to keep current" : "paste key"}
+                   value={inputs.runpod_api_key}
+                   onChange={(e) => setInputs({ ...inputs, runpod_api_key: e.target.value })}
+                   style={{ width: "100%" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              RunPod endpoint ID (MuseTalk)
+            </label>
+            <input data-testid="video-pipeline-runpod-endpoint-input" className="input" type="text"
+                   placeholder="e.g. abc123xyz"
+                   value={inputs.runpod_endpoint_id}
+                   onChange={(e) => setInputs({ ...inputs, runpod_endpoint_id: e.target.value })}
+                   style={{ width: "100%" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button data-testid="video-pipeline-keys-save" className="btn-primary" onClick={save}
+                    disabled={saving} style={{ fontSize: 12 }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button data-testid="video-pipeline-keys-cancel" className="btn-secondary"
+                    onClick={() => setEditing(false)} style={{ fontSize: 12 }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </Card>
+    </div>
   );
 }
 

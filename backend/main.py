@@ -55,6 +55,7 @@ from routers.admin_projects_brain import router as admin_projects_brain_router  
 from routers.admin_ops_config import router as admin_ops_config_router  # 2026-02-11 — Phase 2 split: /admin/cache, /feature-flags, /integrations, /settings, /github-app-config
 from routers.admin_llm_config import router as admin_llm_config_router  # 2026-08-27 — Admin self-serve LLM Settings
 from routers.admin_ora_chat_limits import router as admin_ora_chat_limits_router  # 2026-09-10 — editable daily token cap / rate limit
+from routers.admin_video_pipeline import router as admin_video_pipeline_router  # 2026-09-10 — ORA Chat video generation (Deepgram + MuseTalk)
 from routers.admin_llm_usd_cap import router as admin_llm_usd_cap_router  # 2026-08-28 — R6 USD cap
 from routers.notifications_bell import router as notifications_bell_router  # 2026-08-28 — P2-A user-facing bell
 from routers.admin_analytics import router as admin_analytics_router  # 2026-02-11 — Phase 2 split: /admin/dashboard, /audit, /loop-metrics, /council, /skills
@@ -3479,6 +3480,7 @@ app.include_router(admin_ops_config_router,     prefix="/api/aurem-dev")  # 2026
 app.include_router(admin_llm_config_router,     prefix="/api/aurem-dev")  # 2026-08-27 — Admin self-serve LLM Settings
 app.include_router(admin_llm_usd_cap_router,    prefix="/api/aurem-dev")  # 2026-08-28 — R6 USD cap
 app.include_router(admin_ora_chat_limits_router, prefix="/api/aurem-dev")  # 2026-09-10 — editable ORA Chat token cap / rate limit
+app.include_router(admin_video_pipeline_router, prefix="/api/aurem-dev")  # 2026-09-10 — ORA Chat video generation (Deepgram + MuseTalk)
 app.include_router(notifications_bell_router,   prefix="/api/aurem-dev")  # 2026-08-28 — P2-A user-facing bell
 app.include_router(admin_analytics_router,      prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_bi_router,             prefix="/api/aurem-dev")  # Slice A · BI Cockpit
