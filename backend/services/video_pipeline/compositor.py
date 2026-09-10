@@ -51,9 +51,18 @@ async def probe_duration(path: str) -> float:
 
 
 def _escape_drawtext(text: str) -> str:
-    text = text.replace("\\", "\\\\").replace(":", "\\:")
-    text = text.replace("'", "\\'").replace("%", "\\%")
-    return text
+    """Escape a raw string for use inside a single-quoted ffmpeg
+    filtergraph value (`text='...'`). Inside single quotes ffmpeg
+    treats backslash literally (NOT as an escape char), so `:`/`\\`/`%`
+    need no escaping at all here — quoting already protects them.
+    The one character that truly can't appear inside a single-quoted
+    value is `'` itself; the standard ffmpeg trick is to close the
+    quote, insert a literal escaped quote, then reopen it: `'\\''`.
+    (A prior version used `\\'` here, which ffmpeg parses as
+    "end the quoted string early", corrupting the whole filter graph
+    on any caption containing an apostrophe, e.g. "That's it".)
+    """
+    return text.replace("'", "'\\''")
 
 
 def _chunk_captions(words: list[dict], window_start: float, window_end: float,
@@ -105,7 +114,7 @@ async def build_final_video(*, talking_head_path: str, words: list[dict],
     last = "with_full"
     header_txt = _escape_drawtext("$ aurem ship --changelog")
     filters.append(
-        f"[{last}]drawtext=fontfile={FONT_BOLD}:text='{header_txt}':"
+        f"[{last}]drawtext=fontfile={FONT_BOLD}:text='{header_txt}':expansion=none:"
         f"fontsize=34:fontcolor=0x6ee7a0:x=48:y={TOP_H + 48}:"
         f"enable='between(t,{hook_end},{cta_start})'[cap0]"
     )
@@ -114,7 +123,7 @@ async def build_final_video(*, talking_head_path: str, words: list[dict],
         txt = _escape_drawtext(chunk["text"])
         node = f"cap{i + 1}"
         filters.append(
-            f"[{last}]drawtext=fontfile={FONT_REGULAR}:text='{txt}':"
+            f"[{last}]drawtext=fontfile={FONT_REGULAR}:text='{txt}':expansion=none:"
             f"fontsize=46:fontcolor=white:box=1:boxcolor=0x1a1d22@0.85:boxborderw=16:"
             f"x=(w-text_w)/2:y=1150:"
             f"enable='between(t,{chunk['start']},{chunk['end']})'[{node}]"

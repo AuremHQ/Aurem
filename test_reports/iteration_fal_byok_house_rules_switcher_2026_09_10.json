@@ -1,0 +1,70 @@
+{
+  "summary": "Tested (1) OraChatHouseRulesPanel Chat/Video switcher and (2) fal.ai BYOK key + Universal Key fallback (3 backend endpoints + Admin Settings card). Backend 5/5 PASS. Frontend fal.ai BYOK end-to-end PASS with 1 cosmetic double-ellipsis defect. House Rules switcher has 2 real UX bugs: (a) per-scope textarea state is LOST when the user switches tabs (state should persist per spec), (b) initialScope prop is not honoured when the panel opens from a drawer already in Video mode — panel still opens on Chat tab.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "OraChatHouseRulesPanel",
+        "issue": "Video-tab textarea state is not preserved when switching Chat -> Video -> back to Video. Filled 'TEST_INDEPENDENT_VIDEO_XYZ' in Video textarea, switched to Chat, switched back to Video: text resets to server-loaded value and Save button becomes disabled again (dirty=false). Root cause: parent renders `scope === 'chat' ? <ChatRulesBody /> : <VideoRulesBody />` so the inactive body unmounts and its useState is lost. Fix: either render both bodies with display:none toggling, OR lift text/mode/dirty into the parent component. Spec explicitly requires: 'edit Video textarea, switch to Chat, switch back to Video — text should persist in component state, not reset'.",
+        "selector": "[data-testid=\"video-house-rules-textarea\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "OraChatHouseRulesPanel",
+        "issue": "initialScope prop is not respected when drawer is in Video mode. Opening the drawer, clicking ora-chat-mode-video-btn, then opening the rules panel still shows the Chat pill highlighted and hr-textarea (Chat body) rendered — video-house-rules-body is not mounted. Expected: panel should default to Video tab. Confirmed via computed background colours (chat pill = rgb(224,122,95), video pill = transparent). Likely mode toggle in drawer doesn't reach OraChatHouseRulesPanel, or the useState(initialScope) initialiser runs before the prop stabilises. Recommend verifying `mode` prop value at the drawer render site.",
+        "selector": "[data-testid=\"hr-scope-video\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "VideoPipelineKeysCard (Admin Settings)",
+        "issue": "Cosmetic double-ellipsis in collapsed-state fal.ai fingerprint: displays 'BYOK (……9876)' because the JSX template already prefixes '…' while `key_hint` from backend also begins with '…'. Compare Deepgram row which correctly shows 'configured (……2345)' — same double-ellipsis bug actually exists there too. Fix: either drop the '…' in the JSX template (`BYOK (${data.fal_key_hint})`) or return a plain 4-char hint from `key_hint()`.",
+        "selector": "[data-testid=\"video-pipeline-fal-state\"]",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_working": [
+    "Backend GET /api/aurem-dev/admin/video/secrets — 401 without auth, 200 with admin token",
+    "Backend PUT /api/aurem-dev/admin/video/secrets with fal_api_key='fal_test_key_12345' — returns fal_configured=true and fal_key_hint containing last-4",
+    "Backend DELETE /api/aurem-dev/admin/video/secrets/fal-key — 401 without auth, 200 with admin token, GET afterwards shows fal_configured=false and empty hint",
+    "Backend PUT with empty body -> 400",
+    "Admin Settings 'Video generation keys' card collapsed summary shows 'Universal Key fallback' when no BYOK key",
+    "Admin Settings card expand ('Rotate / add keys') shows BOTH Deepgram AND new fal.ai input fields",
+    "Saving fal key via UI updates the collapsed summary to 'BYOK (……XXXX)', persists across page reload, and the 'remove' link reverts to Universal Key fallback (also fires success toast)",
+    "House Rules panel opens from ORA Chat drawer gear icon; hr-scope-switcher visible with hr-scope-chat + hr-scope-video pills",
+    "Chat tab (default): hr-textarea, hr-counter, hr-save, hr-reset, hr-version-{n} + hr-restore all render — no regression",
+    "Video tab: video-house-rules-body renders with pre-seeded rules_text='Never say the word guaranteed or promise specific revenue numbers.' and enforcement_mode='block' loaded from backend",
+    "Chat tab textarea does NOT leak the Video tab's test input (Chat state remains isolated)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_fal_byok_secrets.py",
+    "/app/test_reports/pytest/fal_byok_secrets.xml"
+  ],
+  "action_items": [
+    "Lift text/mode/dirty state up into OraChatHouseRulesPanel or render both bodies simultaneously (with visibility toggle) so switching tabs preserves per-scope edits — required by spec.",
+    "Fix initialScope handling so opening the House Rules panel from a drawer in Video mode defaults the switcher to the Video pill.",
+    "Remove the double-ellipsis in VideoPipelineKeysCard's collapsed summary (both fal.ai and Deepgram lines) — decide whether to strip '…' from the JSX template or from services/llm_config_store.key_hint()."
+  ],
+  "critical_code_review_comments": [
+    "OraChatHouseRulesPanel.jsx line 90: `scope === 'chat' ? <ChatRulesBody /> : <VideoRulesBody />` unmounts inactive body. This directly causes the two switcher bugs.",
+    "AdminSettingsPage.jsx line 1152 and 1156: prefixing '…' before `data.*_key_hint` produces double ellipsis because backend's key_hint helper already prefixes '…' (see services/llm_config_store.key_hint)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fal_byok_secrets.py"
+  ],
+  "success_rate": {
+    "backend": "100% (5/5)",
+    "frontend": "8/11 checks (state preservation + initialScope + cosmetic-ellipsis failed; all core happy paths + backend contract via UI pass)"
+  },
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview, admin) — used successfully",
+  "seed_data_creation": "None persistent — test cleans up its fake fal key via DELETE at end of both backend pytest and Playwright run. Preview DB now has fal_configured=false again.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend contract for /admin/video/secrets (Deepgram + fal.ai BYOK) is solid — reuse /app/backend/tests/test_fal_byok_secrets.py as regression. Frontend fal.ai UI wiring is solid EXCEPT the '……XXXX' double-ellipsis cosmetic issue (same on Deepgram row). For House Rules, after the fix, re-verify: (a) editing Video textarea, switching to Chat, back to Video preserves both text AND dirty state (Save button stays enabled); (b) opening panel from drawer in Video mode selects Video pill by default. Also confirm the Video body still loads seed rules_text from backend on first mount.",
+  "rca of the issue": "State-loss bug: OraChatHouseRulesPanel uses conditional rendering (`scope === 'chat' ? <ChatRulesBody/> : <VideoRulesBody/>`), which unmounts the inactive body and destroys its local useState. Every re-mount re-fetches from the backend, so unsaved edits are lost. initialScope bug: even though `<OraChatHouseRulesPanel initialScope={mode} />` is passed correctly, the visible outcome on-screen is that opening the panel while drawer mode-video is active still lands on the Chat pill — either the drawer's `mode` state isn't yet 'video' at the moment the panel opens, or the prop value isn't what we expect. Both bugs sit inside `OraChatHouseRulesPanel.jsx` and its callsite in `OraChatDrawer.jsx` line 740."
+}

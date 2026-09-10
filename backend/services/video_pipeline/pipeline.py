@@ -96,11 +96,12 @@ async def run_job(db, job_id: str) -> None:
         else:
             avatar_video_url = storage.presign_get(job["avatar_r2_key"], expires_in=3600)
 
-        # 2 — fal.ai LatentSync lip-sync (Emergent Universal Key —
-        # blocking `requests` call, so run it off the event loop).
+        # 2 — fal.ai LatentSync lip-sync (BYOK if the admin configured
+        # their own fal.ai key, else the Emergent Universal Key).
         await _set(db, job_id, status="lip_syncing")
-        talking_head_url = await asyncio.to_thread(
-            lipsync_fal.run_lipsync, video_url=avatar_video_url, audio_url=audio_url)
+        talking_head_url = await lipsync_fal.run_lipsync(
+            video_url=avatar_video_url, audio_url=audio_url,
+            fal_api_key=secrets.get("fal_api_key"))
 
         talking_head_path = os.path.join(tmp_dir, "talking_head.mp4")
         await _download(talking_head_url, talking_head_path)

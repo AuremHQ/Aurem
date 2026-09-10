@@ -1,14 +1,14 @@
 /**
  * components/VideoGenPanel.jsx — 2026-09-10, ORA Chat "Video" mode.
  *
- * Deepgram Aura-2 TTS + RunPod MuseTalk lip-sync + ffmpeg hybrid
- * compositor (backend: services/video_pipeline/pipeline.py, routes:
- * routers/admin_video_pipeline.py under /admin/video/*). Renders
- * inside OraChatDrawer when its mode switch is set to "Video" instead
- * of the normal chat message list.
+ * Deepgram Aura-2 TTS + fal.ai LatentSync lip-sync (Emergent Universal
+ * Key) + ffmpeg hybrid compositor (backend: services/video_pipeline/
+ * pipeline.py, routes: routers/admin_video_pipeline.py under
+ * /admin/video/*). Renders inside OraChatDrawer when its mode switch
+ * is set to "Video" instead of the normal chat message list.
  */
 import React, { useEffect, useRef, useState } from "react";
-import { Upload, Video, Download, Loader2, AlertTriangle } from "lucide-react";
+import { Upload, Video, Download, Loader2, AlertTriangle, Trash2, Check } from "lucide-react";
 import { api } from "../lib/api";
 
 const STAGE_LABEL = {
@@ -22,7 +22,8 @@ const STAGE_LABEL = {
 
 export default function VideoGenPanel() {
   const [keys, setKeys] = useState(null);
-  const [avatar, setAvatar] = useState(null);
+  const [avatars, setAvatars] = useState([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [script, setScript] = useState("");
   const [job, setJob] = useState(null);
@@ -34,13 +35,17 @@ export default function VideoGenPanel() {
     try {
       const [k, a, h] = await Promise.all([
         api.get("/admin/video/secrets"),
-        api.get("/admin/video/avatar"),
+        api.get("/admin/video/avatars"),
         api.get("/admin/video/jobs"),
       ]);
       setKeys(k.data);
-      setAvatar(a.data);
+      setAvatars(a.data.avatars || []);
+      setSelectedAvatarId((prev) => {
+        if (prev && (a.data.avatars || []).some((av) => av.avatar_id === prev)) return prev;
+        return (a.data.avatars || [])[0]?.avatar_id || null;
+      });
       setHistory(h.data.jobs || []);
-    } catch { /* keys/avatar sections show their own empty states */ }
+    } catch { /* sections show their own empty states */ }
   }
   useEffect(() => { refreshAll(); return () => clearInterval(pollRef.current); }, []);
 
@@ -51,14 +56,23 @@ export default function VideoGenPanel() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const r = await api.post("/admin/video/avatar", form);
-      setAvatar({ configured: true, ...r.data });
+      const r = await api.post("/admin/video/avatars", form);
+      setSelectedAvatarId(r.data.avatar_id);
+      await refreshAll();
     } catch (err) {
-      setAvatar({ configured: false, error: err?.response?.data?.detail || "Upload failed" });
+      // surfaced via the library section staying at its current state; toast-free to keep this lightweight
+      console.error("avatar upload failed", err?.response?.data?.detail);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  }
+
+  async function deleteAvatar(avatarId) {
+    try {
+      await api.delete(`/admin/video/avatars/${avatarId}`);
+      await refreshAll();
+    } catch { /* ignore — list just won't change */ }
   }
 
   function pollJob(jobId) {
@@ -76,13 +90,18 @@ export default function VideoGenPanel() {
   }
 
   async function generate() {
-    if (!script.trim()) return;
+    if (!script.trim() || !selectedAvatarId) return;
     try {
-      const r = await api.post("/admin/video/jobs", { script: script.trim() });
+      const r = await api.post("/admin/video/jobs", { script: script.trim(), avatar_id: selectedAvatarId });
       setJob({ job_id: r.data.job_id, status: r.data.status, script: script.trim() });
       pollJob(r.data.job_id);
     } catch (err) {
-      setJob({ status: "failed", error: err?.response?.data?.detail || "Could not start job" });
+      const blocked = err?.response?.status === 422;
+      setJob({
+        status: "failed",
+        error: err?.response?.data?.detail || "Could not start job",
+        houseRulesBlocked: blocked,
+      });
     }
   }
 
@@ -107,30 +126,63 @@ export default function VideoGenPanel() {
         </div>
       )}
 
-      {/* Avatar */}
+      {/* Avatar library */}
       <div data-testid="video-gen-avatar-section">
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>Founder avatar</div>
-        {avatar?.configured ? (
-          avatar.kind === "video" ? (
-            <video data-testid="video-gen-avatar-preview" src={avatar.preview_url}
-                    muted loop autoPlay style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 8 }} />
-          ) : (
-            <img data-testid="video-gen-avatar-preview" src={avatar.preview_url} alt="avatar"
-                  style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 8 }} />
-          )
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Avatar library</div>
+        {avatars.length === 0 ? (
+          <div style={{ color: "#7a7466", marginBottom: 8 }}>No avatars uploaded yet.</div>
         ) : (
-          <div style={{ color: "#7a7466" }}>No avatar uploaded yet.</div>
+          <div data-testid="video-gen-avatar-library" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            {avatars.map((av) => {
+              const active = av.avatar_id === selectedAvatarId;
+              return (
+                <div key={av.avatar_id} data-testid={`video-gen-avatar-item-${av.avatar_id}`}
+                     onClick={() => setSelectedAvatarId(av.avatar_id)}
+                     style={{ position: "relative", cursor: "pointer", width: 88,
+                               border: active ? "2px solid #E07A5F" : "2px solid transparent",
+                               borderRadius: 10, padding: 2 }}>
+                    {av.kind === "video" ? (
+                      <video src={av.preview_url} muted loop autoPlay playsInline
+                              style={{ width: 82, height: 82, objectFit: "cover", borderRadius: 8, display: "block" }} />
+                    ) : (
+                      <img src={av.preview_url} alt={av.label}
+                            style={{ width: 82, height: 82, objectFit: "cover", borderRadius: 8, display: "block" }} />
+                    )}
+                    {active && (
+                      <div style={{ position: "absolute", top: 4, right: 4, background: "#E07A5F",
+                                      borderRadius: "50%", width: 18, height: 18, display: "flex",
+                                      alignItems: "center", justifyContent: "center" }}>
+                        <Check size={11} color="#0a0a0a" />
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                                    marginTop: 4, gap: 4 }}>
+                      <span style={{ fontSize: 10, color: "#a39d8a", overflow: "hidden",
+                                      textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                        {av.label}
+                      </span>
+                      <button type="button" data-testid={`video-gen-avatar-delete-${av.avatar_id}`}
+                              onClick={(e) => { e.stopPropagation(); deleteAvatar(av.avatar_id); }}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#7a7466", padding: 0 }}>
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                </div>
+              );
+            })}
+          </div>
         )}
         <input ref={fileInputRef} data-testid="video-gen-avatar-input" type="file"
                accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime"
                onChange={uploadAvatar} style={{ display: "none" }} />
         <button type="button" data-testid="video-gen-avatar-upload-btn"
-                onClick={() => fileInputRef.current?.click()} disabled={uploading}
-                style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6,
+                onClick={() => fileInputRef.current?.click()} disabled={uploading || avatars.length >= 8}
+                style={{ display: "flex", alignItems: "center", gap: 6,
                           background: "#3a3428", color: "#e8e3d3", border: "none",
-                          borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12 }}>
+                          borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12,
+                          opacity: avatars.length >= 8 ? 0.5 : 1 }}>
           <Upload size={13} />
-          {uploading ? "Uploading…" : avatar?.configured ? "Change photo/clip" : "Upload photo or video loop"}
+          {uploading ? "Uploading…" : avatars.length >= 8 ? "Library full (8 max)" : "Add photo or video loop"}
         </button>
       </div>
 
@@ -147,11 +199,11 @@ export default function VideoGenPanel() {
       </div>
 
       <button type="button" data-testid="video-gen-generate-btn" onClick={generate}
-              disabled={!ready || !avatar?.configured || !script.trim() || generating}
+              disabled={!ready || !selectedAvatarId || !script.trim() || generating}
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                         background: "#E07A5F", color: "#0a0a0a", border: "none", borderRadius: 8,
                         padding: "10px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600,
-                        opacity: (!ready || !avatar?.configured || !script.trim() || generating) ? 0.5 : 1 }}>
+                        opacity: (!ready || !selectedAvatarId || !script.trim() || generating) ? 0.5 : 1 }}>
         {generating ? <Loader2 size={14} className="animate-spin" /> : <Video size={14} />}
         {generating ? "Generating…" : "Generate video"}
       </button>
@@ -163,9 +215,16 @@ export default function VideoGenPanel() {
                         background: job.status === "failed" ? "rgba(220,80,80,0.08)" : "rgba(255,255,255,0.04)",
                         border: `1px solid ${job.status === "failed" ? "rgba(220,80,80,0.3)" : "rgba(255,255,255,0.08)"}` }}>
           {job.status === "failed" ? (
-            <span style={{ color: "#f88" }}>{job.error || "Generation failed."}</span>
+            <span data-testid="video-gen-error-text" style={{ color: "#f88" }}>
+              {job.houseRulesBlocked ? `🛑 ${job.error}` : (job.error || "Generation failed.")}
+            </span>
           ) : (
             <span>{STAGE_LABEL[job.status] || job.status}</span>
+          )}
+          {job.was_rewritten && job.status !== "failed" && (
+            <div style={{ marginTop: 6, color: "#a39d8a", fontSize: 11 }}>
+              Script was auto-adjusted to follow your house rules before generating.
+            </div>
           )}
           {job.status === "done" && job.video_url && (
             <div style={{ marginTop: 10 }}>

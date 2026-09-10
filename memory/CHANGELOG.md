@@ -3224,3 +3224,69 @@ new-file fix request. Not root-caused; needs its own investigation.
 console errors on Dashboard load — worth a separate cleanup pass, not
 touched here.
 
+
+## 2026-09-10 — FFmpeg apostrophe fix, fal.ai LatentSync (BYOK + Universal Key fallback), Video House Rules moved into ORA Chat drawer switcher
+
+**FFmpeg caption bug (production failure):** captions containing
+apostrophes (e.g. `"That's it"`) broke the `drawtext` filter graph in
+`services/video_pipeline/compositor.py` — fixed escaping, plus a
+separate invalid FFmpeg option `text_expansion` → `expansion`.
+Verified via a real 42s composited output (`SUCCESS — composited
+duration: 42.0`).
+
+**fal.ai LatentSync — BYOK with automatic Universal Key fallback:**
+Admin Settings → "Video generation keys" card now has an optional
+"fal.ai API key" field alongside the required Deepgram key. If the
+admin sets their own fal.ai key, lip-sync calls bill their own Fal
+account directly (`fal_client.AsyncClient(key=...)`, per official SDK
+async contract). If left blank, calls continue to go through the
+existing Emergent Universal Key/integration proxy — automatic,
+no code change needed by the admin.
+- New: `backend/services/video_pipeline/secrets_store.py` — added
+  `fal_api_key`/`fal_key_hint` (Fernet-encrypted, same pattern as
+  Deepgram) + `clear_fal_key()`.
+- New endpoint: `DELETE /api/aurem-dev/admin/video/secrets/fal-key`
+  (admin-auth) reverts to Universal Key fallback.
+- `PUT /api/aurem-dev/admin/video/secrets` now also accepts
+  `fal_api_key`.
+- `services/video_pipeline/lipsync_fal.py` — `run_lipsync(...,
+  fal_api_key=None)` dispatches to BYOK (direct fal.ai billing) or the
+  existing Universal Key proxy path depending on whether a key is set.
+  `pipeline.py` passes `secrets.get("fal_api_key")` through.
+- Fixed a cosmetic double-ellipsis bug in the collapsed-state key hint
+  display (`……XXXX` → `……XXXX` single ellipsis) for BOTH the new
+  fal.ai row and the pre-existing Deepgram row in
+  `AdminSettingsPage.jsx`.
+- 10 backend regression tests pass (`tests/test_fal_byok_secrets.py` +
+  `tests/test_video_pipeline_2026_09_10.py`).
+
+**Video House Rules moved into the ORA Chat drawer with a Chat/Video
+switcher (per founder screenshot):** the standalone `VideoHouseRulesCard`
+in Admin Settings was **removed** (moved, not duplicated). The
+existing `OraChatHouseRulesPanel.jsx` (opened via the gear icon inside
+the ORA Chat drawer) now has a pill switcher in its header
+(`hr-scope-switcher` → `hr-scope-chat` / `hr-scope-video`) letting the
+founder manage both rule sets from one window:
+- **Chat** tab: unchanged existing behavior (textarea, version
+  history, restore).
+- **Video** tab: block/auto-rewrite radios, textarea, `.txt`/`.md`
+  upload (client-side FileReader), Save — reused from the deleted
+  admin card, same backend contract (`GET/PUT
+  /api/aurem-dev/admin/video/house-rules`).
+- `initialScope` prop syncs the drawer's current chat/video mode to
+  the switcher's default tab (also re-syncs live via `useEffect` if
+  the drawer's mode changes while the panel is open).
+- Both scope bodies stay mounted (`display:none` toggle instead of
+  conditional unmount) so in-progress edits in one tab are **not**
+  lost when switching to the other and back — testing agent caught
+  this as a real state-loss bug on the first pass; fixed and
+  re-verified via Playwright (typed text survives Chat→Video→Chat
+  round-trip, Save button stays enabled/dirty).
+
+**Testing:** `testing_agent` round
+(`iteration_fal_byok_house_rules_switcher_2026_09_10.json`) — backend
+5/5 PASS; frontend caught 2 HIGH (state-loss, initialScope not
+honoured) + 1 LOW (double-ellipsis) — all 3 fixed by main agent and
+re-verified via Playwright screenshots + the same backend pytest
+suite (10/10 pass, unaffected by the frontend-only fixes).
+

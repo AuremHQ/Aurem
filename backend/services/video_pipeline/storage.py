@@ -37,3 +37,8 @@ def presign_get(key: str, expires_in: int = 3600) -> str:
         Params={"Bucket": os.environ["R2_BUCKET"], "Key": key},
         ExpiresIn=expires_in,
     )
+
+
+def delete(key: str) -> None:
+    client = _r2_client()
+    client.delete_object(Bucket=os.environ["R2_BUCKET"], Key=key)

@@ -1037,7 +1037,9 @@ function VideoPipelineKeysCard() {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(false);
   const [deepgramInput, setDeepgramInput] = useState("");
+  const [falInput, setFalInput] = useState("");
   const [saving, setSaving] = useState(false);
+  const [removingFal, setRemovingFal] = useState(false);
   const [saveResult, setSaveResult] = useState(null);
 
   async function refresh() {
@@ -1052,25 +1054,31 @@ function VideoPipelineKeysCard() {
 
   function startEdit() {
     setDeepgramInput("");   // never pre-fill secrets
+    setFalInput("");        // never pre-fill secrets
     setSaveResult(null);
     setEditing(true);
   }
 
   async function save() {
-    const trimmed = deepgramInput.trim();
-    if (!trimmed) {
-      toast({ message: "Paste a Deepgram API key to save.", kind: "warning" });
+    const deepgram = deepgramInput.trim();
+    const fal = falInput.trim();
+    if (!deepgram && !fal) {
+      toast({ message: "Paste a Deepgram and/or fal.ai key to save.", kind: "warning" });
       return;
     }
     setSaving(true);
     setSaveResult(null);
     try {
-      await api.put("/admin/video/secrets", { deepgram_api_key: trimmed });
+      const body = {};
+      if (deepgram) body.deepgram_api_key = deepgram;
+      if (fal) body.fal_api_key = fal;
+      await api.put("/admin/video/secrets", body);
       const msg = "Saved — the video pipeline picks this up on the next generate, no restart.";
       toast({ message: msg, kind: "success" });
       setSaveResult({ ok: true, message: msg });
       setEditing(false);
       setDeepgramInput("");
+      setFalInput("");
       await refresh();
     } catch (e) {
       const d = e?.response?.data?.detail;
@@ -1078,6 +1086,17 @@ function VideoPipelineKeysCard() {
       toast({ message: msg, kind: "error" });
       setSaveResult({ ok: false, message: `Save failed: ${msg}` });
     } finally { setSaving(false); }
+  }
+
+  async function removeFalKey() {
+    setRemovingFal(true);
+    try {
+      await api.delete("/admin/video/secrets/fal-key");
+      toast({ message: "fal.ai key removed — lip-sync now falls back to your Universal Key.", kind: "success" });
+      await refresh();
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Could not remove key.", kind: "error" });
+    } finally { setRemovingFal(false); }
   }
 
   if (!data) {
@@ -1104,7 +1123,7 @@ function VideoPipelineKeysCard() {
         {!editing && (
           <button data-testid="video-pipeline-keys-edit" className="btn-secondary"
                   style={{ fontSize: 12, padding: "6px 14px" }} onClick={startEdit}>
-            {ready ? "Rotate key" : "Add key"}
+            {ready ? "Rotate / add keys" : "Add keys"}
           </button>
         )}
       </div>
@@ -1123,14 +1142,27 @@ function VideoPipelineKeysCard() {
         <>
           <div style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 14, lineHeight: 1.5 }}>
             Powers the ORA Chat <strong>Video</strong> mode (Deepgram Aura-2 TTS + fal.ai
-            LatentSync lip-sync). Only Deepgram needs a key here — lip-sync billing runs
-            through your existing Universal Key. The key is Fernet-encrypted in Mongo,
-            never in backend/.env — only a last-4 fingerprint is shown after saving.
+            LatentSync lip-sync). Deepgram is required. fal.ai is optional — leave it unset
+            and lip-sync bills through your existing Universal Key automatically; add your
+            own fal.ai key to bill your own Fal account instead. Both are Fernet-encrypted
+            in Mongo, never in backend/.env — only a last-4 fingerprint is shown after saving.
           </div>
-          <div style={{ fontSize: 12 }}>
-            Deepgram: <strong data-testid="video-pipeline-deepgram-state">
-              {data.deepgram_configured ? `configured (…${data.deepgram_key_hint})` : "not set"}
-            </strong>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, alignItems: "center" }}>
+            <div>Deepgram: <strong data-testid="video-pipeline-deepgram-state">
+              {data.deepgram_configured ? `configured (${data.deepgram_key_hint})` : "not set"}
+            </strong></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              fal.ai: <strong data-testid="video-pipeline-fal-state">
+                {data.fal_configured ? `BYOK (${data.fal_key_hint})` : "Universal Key fallback"}
+              </strong>
+              {data.fal_configured && (
+                <button data-testid="video-pipeline-fal-remove" onClick={removeFalKey} disabled={removingFal}
+                        style={{ background: "none", border: "none", color: "#9ca3af",
+                                  fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                  {removingFal ? "removing…" : "remove"}
+                </button>
+              )}
+            </div>
           </div>
         </>
       )}
@@ -1145,6 +1177,16 @@ function VideoPipelineKeysCard() {
                    placeholder={data.deepgram_configured ? "•••• leave blank to keep current" : "paste key"}
                    value={deepgramInput}
                    onChange={(e) => setDeepgramInput(e.target.value)}
+                   style={{ width: "100%" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              fal.ai API key (optional — BYOK, falls back to Universal Key if left blank)
+            </label>
+            <input data-testid="video-pipeline-fal-input" className="input" type="password"
+                   placeholder={data.fal_configured ? "•••• leave blank to keep current" : "paste key, or leave blank"}
+                   value={falInput}
+                   onChange={(e) => setFalInput(e.target.value)}
                    style={{ width: "100%" }} />
           </div>
           <div style={{ display: "flex", gap: 8 }}>

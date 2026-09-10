@@ -737,7 +737,7 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
 
       {/* House rules panel */}
       {open && showRules && (
-        <OraChatHouseRulesPanel onClose={() => setShowRules(false)} />
+        <OraChatHouseRulesPanel onClose={() => setShowRules(false)} initialScope={mode} />
       )}
 
       {/* Recent ORA actions — audit trail (P4) */}

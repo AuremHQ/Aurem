@@ -1,29 +1,29 @@
 """
 services/video_pipeline/lipsync_fal.py — 2026-09-10, fal.ai LatentSync
-lip-sync via the Emergent Universal Key integration proxy.
+lip-sync, with two credential modes:
 
-Replaces the earlier RunPod + custom-MuseTalk-Docker-worker design —
-fal.ai already hosts LatentSync as a pay-per-use queue endpoint, so
-there is no Docker image to build/maintain and no GPU account to
-provision. Billed against the Integration Wallet (EMERGENT_LLM_KEY),
-not a separate API key — nothing for the admin to configure here.
+  - Universal Key (default): backend authenticates to the Emergent
+    integration proxy with EMERGENT_LLM_KEY, billed to the Integration
+    Wallet. Nothing for the admin to configure.
+  - BYOK: if the admin pastes their own FAL_KEY in Admin Settings →
+    Video generation keys, calls go directly to fal.ai via the
+    official `fal_client` SDK instead, billed to their own Fal
+    account. Never mixes credentials/routes between the two modes.
 
 Verified live against fal's own catalog (builder-time only, not
 repeated at runtime): endpoint_id="fal-ai/latentsync", input
 {video_url, audio_url, guidance_scale, seed, loop_mode}, output
 {video: {url, file_name, file_size, content_type}}.
-
-Per playbook: this Universal Key runtime client talks ONLY to the
-Emergent integration proxy's Fal queue-inference contract — never to
-api.fal.ai directly, never with a `FAL_KEY`.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
+import fal_client
 import requests
 
 ENDPOINT_ID = "fal-ai/latentsync"
@@ -35,6 +35,40 @@ class LipsyncError(Exception):
 
 class InsufficientCreditsError(LipsyncError):
     pass
+
+
+async def run_lipsync(*, video_url: str, audio_url: str,
+                        fal_api_key: Optional[str] = None, timeout_s: int = 600) -> str:
+    """Returns the resulting synced video's URL. Uses BYOK (direct
+    fal.ai via the official SDK) when `fal_api_key` is set, otherwise
+    falls back to the Emergent Universal Key via the integration
+    proxy — never mixes the two."""
+    if fal_api_key:
+        return await _run_lipsync_byok(video_url=video_url, audio_url=audio_url,
+                                         fal_api_key=fal_api_key, timeout_s=timeout_s)
+    return await asyncio.to_thread(
+        _run_lipsync_universal_key, video_url=video_url, audio_url=audio_url, timeout_s=timeout_s)
+
+
+async def _run_lipsync_byok(*, video_url: str, audio_url: str,
+                              fal_api_key: str, timeout_s: int) -> str:
+    """Direct fal.ai call with the admin's own FAL_KEY — never uses
+    EMERGENT_LLM_KEY or the integration proxy in this path."""
+    client = fal_client.AsyncClient(key=fal_api_key)
+    try:
+        handle = await client.submit(
+            ENDPOINT_ID, arguments={"video_url": video_url, "audio_url": audio_url, "loop_mode": "loop"})
+        result = await asyncio.wait_for(handle.get(), timeout=timeout_s)
+    except fal_client.FalClientHTTPError as e:
+        if getattr(e, "status_code", None) == 401:
+            raise LipsyncError("fal_auth_failed — check the fal.ai key in Admin Settings") from e
+        raise LipsyncError(f"lip_sync_failed: {e}") from e
+    except asyncio.TimeoutError as e:
+        raise LipsyncError("timed_out_waiting_for_lip_sync") from e
+    video_url_out = (result.get("video") or {}).get("url")
+    if not video_url_out:
+        raise LipsyncError("lip_sync_completed_but_no_video_url_in_result")
+    return video_url_out
 
 
 def _integration_proxy_base() -> str:
@@ -82,9 +116,10 @@ def _get_with_retry(url: str, *, timeout_s: int, deadline: float, max_attempts: 
     raise LipsyncError("timed_out_waiting_for_lip_sync")
 
 
-def run_lipsync(*, video_url: str, audio_url: str, timeout_s: int = 600) -> str:
-    """Blocking — call via asyncio.to_thread from async code. Returns
-    the resulting synced video's URL."""
+def _run_lipsync_universal_key(*, video_url: str, audio_url: str, timeout_s: int = 600) -> str:
+    """Blocking — called via asyncio.to_thread by run_lipsync above.
+    Talks ONLY to the Emergent integration proxy's Fal queue-inference
+    contract — never to api.fal.ai directly, never with a FAL_KEY."""
     payload: dict[str, Any] = {"video_url": video_url, "audio_url": audio_url, "loop_mode": "loop"}
     submit = requests.post(
         f"{_control_base()}/proxy",
