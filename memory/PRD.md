@@ -9186,4 +9186,68 @@ standalone directory — not part of the served web app):
   manual load + a real click-through per the extension's README to
   finish verification end-to-end.
 
+
+## 2026-09-10 — Bug fix: "Stream error: daily_token_cap" confused with $ balance
+
+**Founder report:** Production Admin ORA Chat showed "Stream error:
+daily_token_cap" while the $ balance shown at the top of that same
+chat panel still had plenty of room — looked like a bug/inconsistency.
+Founder pointed at the existing "Models & LLM" admin settings panel
+(provider configs with Test/Set active/Edit/Delete) and asked for an
+edit option there instead of building something new.
+
+**Root cause:** `daily_token_cap` (default 200,000 tokens/24h) was a
+hardcoded env var (`ORA_CHAT_DAILY_TOKEN_CAP`) in
+`services/ora_chat_v2/engine.py`, completely independent of the $
+spend cap (`services/llm_usd_cap.py`, which IS DB-editable via
+`/admin/llm/usd-caps` and already exempts founder/admin tier) — a
+real inconsistency between the two cap systems. The raw error code
+also rendered with zero explanation in the UI
+(`OraChatDrawer.jsx`: `Stream error: {stream.err}`, ignoring the
+backend's `detail` field entirely).
+
+**Fix:**
+- `services/ora_chat_v2/limits_store.py` (new) — DB-backed override
+  (`admin_settings._id="ora_chat_limits"`) wins over the env var, same
+  pattern as LLM provider configs — no restart needed. `0` = admin's
+  own explicit choice of "unlimited" for either field.
+- `routers/admin_ora_chat_limits.py` (new) — `GET`/`PUT
+  /admin/llm/ora-chat-limits`, admin-gated.
+- `engine.py`'s `_rate_limit_ok`/`_daily_cap_ok` now check the store;
+  error `detail` text now explicitly says this is separate from $
+  balance and points to where to raise it.
+- `OraChatDrawer.jsx` now renders the backend's `detail` message
+  instead of the bare error code.
+- `AdminSettingsPage.jsx` — new "ORA Chat limits" card rendered right
+  below the existing "Models & LLM" provider list (same visual
+  convention), with Messages/hour + Daily token cap inputs and Save.
+
+**Verified:** `tests/test_ora_chat_limits_2026_09_10.py` (6 new tests:
+auth-required, default-matches-env, update+readback, 0=unlimited
+accepted, negative rejected, empty-body rejected) — all pass. Existing
+`test_iter2026_08_27_ora_chat_v2_p1_p5.py` — same 3 pre-existing
+failures with or without this change (unrelated LLM-council mock
+issue), 22 passed either way, zero new regressions. Live screenshot:
+new card renders correctly in Admin Settings with live values (20 /
+200000) loaded from the endpoint. `yarn eslint src` clean.
+
+## 2026-09-10 — Deployment readiness check
+
+Ran `deployment_agent`. Result: **1 flagged BLOCKER, reviewed and
+accepted as intentional** — `services/supabase_sweeper.py`'s 24h cron
+deletes Supabase project rows, but ONLY for rows a user explicitly put
+into `downgrade_pending` state weeks earlier (7-30 day grace period),
+only after verifying the reverse-migration into shared Mongo actually
+landed (retries + escalates to founder after 5 failed verifications,
+audit trail in `supabase_projects_history`) — a consent-gated,
+extensively-guarded downgrade-completion flow, not an unguarded
+startup wipe. No code change made; flagging was appropriate caution
+from a static scanner that can't see the runtime guard logic.
+Two WARN items (CORS env var name mismatch, CSP hardcodes
+auremcto.com) are pre-existing and non-blocking — Emergent's deploy
+domains are already covered via `allow_origin_regex` and CSP's
+`'self'`. One INFO item (missing `.gitignore`) was a **false
+positive** — `/app/.gitignore` already excludes `backend/.env`
+(confirmed). Deployment is READY; no blocking issues.
+
 - Preview only — not yet pushed to production.

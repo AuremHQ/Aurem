@@ -190,6 +190,14 @@ export default function AdminSettingsPage() {
           (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL) when nothing's active. */}
       <LlmSettingsCard />
 
+      {/* 2026-09-10 — founder-reported bug: the Admin ORA Chat's
+          daily token cap was a hardcoded env var with no way to edit
+          it here, unrelated to the $ balance shown in that chat's
+          header — hitting it while $ balance was fine looked like a
+          bug. Editable now, same "wins over env var, no restart"
+          pattern as the provider configs above. */}
+      <OraChatLimitsCard />
+
       {/* Iter 158 — thinking-hint manager (tier-aware upsell pills
           shown next to the chat spinner). Full CRUD + global toggle
           + delay slider. */}
@@ -925,6 +933,96 @@ function LlmSettingsCard() {
       )}
     </Card>
     </div>
+  );
+}
+
+function OraChatLimitsCard() {
+  const [limits, setLimits] = useState(null);
+  const [form, setForm] = useState({ rate_limit_per_hour: "", daily_token_cap: "" });
+  const [saving, setSaving] = useState(false);
+
+  async function refresh() {
+    try {
+      const r = await api.get("/admin/llm/ora-chat-limits");
+      setLimits(r.data);
+      setForm({
+        rate_limit_per_hour: String(r.data.rate_limit_per_hour),
+        daily_token_cap: String(r.data.daily_token_cap),
+      });
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Could not load ORA Chat limits", kind: "error" });
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const r = await api.put("/admin/llm/ora-chat-limits", {
+        rate_limit_per_hour: Number(form.rate_limit_per_hour),
+        daily_token_cap: Number(form.daily_token_cap),
+      });
+      setLimits(r.data);
+      toast({ message: "ORA Chat limits saved — takes effect immediately, no restart.", kind: "success" });
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Could not save ORA Chat limits", kind: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (limits === null) return null;
+
+  return (
+    <Card data-testid="ora-chat-limits-card" style={{ padding: 18, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <Brain size={14} style={{ color: "var(--accent, #ff8a2a)" }} />
+        <h3 style={{ fontSize: 13, margin: 0 }}>ORA Chat limits</h3>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 14, lineHeight: 1.5 }}>
+        Caps how much the <strong>Admin ORA Chat</strong> (the chat panel in this
+        admin area) can be used per admin — a separate, token-count limit,
+        <strong> unrelated to your $ balance</strong> shown in that chat's header.
+        Hitting this shows "Stream error: daily_token_cap" even with $ left.
+        Set either field to <code>0</code> for unlimited. Saves instantly, no restart.
+      </div>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 180 }}>
+          <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)",
+                          textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            Messages / hour
+          </label>
+          <input
+            data-testid="ora-chat-limits-rate-input"
+            className="input"
+            type="number" min="0"
+            value={form.rate_limit_per_hour}
+            onChange={(e) => setForm({ ...form, rate_limit_per_hour: e.target.value })}
+            style={{ width: "100%" }} />
+        </div>
+        <div style={{ minWidth: 180 }}>
+          <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)",
+                          textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            Daily token cap
+          </label>
+          <input
+            data-testid="ora-chat-limits-cap-input"
+            className="input"
+            type="number" min="0"
+            value={form.daily_token_cap}
+            onChange={(e) => setForm({ ...form, daily_token_cap: e.target.value })}
+            style={{ width: "100%" }} />
+        </div>
+      </div>
+      <button
+        data-testid="ora-chat-limits-save-btn"
+        className="btn-primary"
+        onClick={save}
+        disabled={saving}
+        style={{ marginTop: 14, fontSize: 12 }}>
+        {saving ? "Saving…" : "Save"}
+      </button>
+    </Card>
   );
 }
 

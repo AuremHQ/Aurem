@@ -928,3 +928,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-09-08
 
 - `services/task_chain_logging.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-08T02:24:44.373186Z] <!-- inv:service:services/task_chain_logging.py -->
+
+### Iter 0 · 2026-09-10
+
+| `routers/admin_context_bridge.py` | `/admin/ora` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-10T02:06:49.556822Z) | <!-- inv:router:routers/admin_context_bridge.py -->

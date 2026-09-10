@@ -205,7 +205,7 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
             setStream(s => ({ ...s, buf: assistantBuf }));
           } else if (evtType === "error" || obj.type === "error") {
             errored = obj.error || "stream_error";
-            setStream(s => ({ ...s, err: errored }));
+            setStream(s => ({ ...s, err: errored, errDetail: obj.detail || null }));
           } else if (evtType === "slash_result" || obj.type === "slash_result") {
             // Iter 212m-263 · Feb 2026 — string values (e.g. /repo-tree)
             // rendered verbatim inside a code fence; JSON.stringify only
@@ -502,10 +502,12 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
                 data-testid="ora-chat-error"
                 style={{
                   fontSize: 12, color: "#f88",
-                  display: "flex", gap: 8, alignItems: "center",
+                  display: "flex", gap: 8, alignItems: "flex-start",
+                  lineHeight: 1.5,
                 }}
               >
-                <AlertTriangle size={13} /> Stream error: {stream.err}
+                <AlertTriangle size={13} style={{ marginTop: 2, flexShrink: 0 }} />
+                <span>{stream.errDetail || `Stream error: ${stream.err}`}</span>
               </div>
             )}
           </div>

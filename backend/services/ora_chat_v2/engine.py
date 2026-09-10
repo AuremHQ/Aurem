@@ -30,7 +30,10 @@ def _history_turns(session: dict) -> list:
 
 
 async def _rate_limit_ok(db, admin_id: str) -> bool:
-    limit = int(os.getenv("ORA_CHAT_RATE_LIMIT_PER_HOUR", "20"))
+    from services.ora_chat_v2.limits_store import get_limits
+    limit = (await get_limits(db))["rate_limit_per_hour"]
+    if limit <= 0:  # admin explicitly set this to "unlimited"
+        return True
     since = time.time() - 3600
     count = await db.ora_chat_usage.count_documents(
         {"admin_id": admin_id, "ts": {"$gte": since}})
@@ -38,7 +41,10 @@ async def _rate_limit_ok(db, admin_id: str) -> bool:
 
 
 async def _daily_cap_ok(db, admin_id: str) -> bool:
-    cap = int(os.getenv("ORA_CHAT_DAILY_TOKEN_CAP", "200000"))
+    from services.ora_chat_v2.limits_store import get_limits
+    cap = (await get_limits(db))["daily_token_cap"]
+    if cap <= 0:  # admin explicitly set this to "unlimited"
+        return True
     since = time.time() - 86400
     cur = db.ora_chat_usage.find(
         {"admin_id": admin_id, "ts": {"$gte": since}},
@@ -66,13 +72,17 @@ async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
     """Yields SSE-ready dict events. See routers/ora_chat.py for the
     exact event contract forwarded to the frontend."""
     if not await _rate_limit_ok(db, admin_id):
+        from services.ora_chat_v2.limits_store import get_limits
+        hourly = (await get_limits(db))["rate_limit_per_hour"]
         yield {"type": "error", "error": "rate_limited",
-               "detail": f"You've hit the {os.getenv('ORA_CHAT_RATE_LIMIT_PER_HOUR', '20')}/hour "
-                         f"chat limit for beta. Try again in a few minutes."}
+               "detail": f"You've hit the {hourly}/hour chat limit for beta. "
+                         f"Try again in a few minutes, or raise it in Admin Settings → Models & LLM."}
         return
     if not await _daily_cap_ok(db, admin_id):
         yield {"type": "error", "error": "daily_token_cap",
-               "detail": "Today's ORA Chat token budget is used up — resets tomorrow."}
+               "detail": "Today's ORA Chat token limit is used up — this is a separate "
+                         "token-count cap, not your $ balance (which is unaffected). "
+                         "Resets tomorrow, or raise the daily cap in Admin Settings → Models & LLM."}
         return
 
     actions_on = os.getenv("ORA_CHAT_ACTIONS", "on").strip().lower() == "on"
