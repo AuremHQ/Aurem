@@ -150,12 +150,17 @@ async def list_avatars(authorization: Optional[str] = Header(None)) -> dict:
     db = get_db()
     user = await current_dev(authorization)
     cur = db.video_pipeline_avatars.find(
-        {"admin_id": user["user_id"]}).sort("uploaded_at", -1)
-    avatars = [
-        {"avatar_id": d["avatar_id"], "kind": d["kind"], "label": d.get("label", "avatar"),
-         "preview_url": storage.presign_get(d["r2_key"], expires_in=3600)}
-        async for d in cur
-    ]
+        {"admin_id": user["user_id"], "avatar_id": {"$exists": True}}
+    ).sort("uploaded_at", -1)
+    avatars = []
+    async for d in cur:
+        avatar_id, r2_key, kind = d.get("avatar_id"), d.get("r2_key"), d.get("kind")
+        if not (avatar_id and r2_key and kind):
+            continue  # skip malformed/pre-migration docs instead of 500ing the whole list
+        avatars.append({
+            "avatar_id": avatar_id, "kind": kind, "label": d.get("label", "avatar"),
+            "preview_url": storage.presign_get(r2_key, expires_in=3600),
+        })
     return {"avatars": avatars}
 
 

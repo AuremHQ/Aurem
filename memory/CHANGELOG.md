@@ -3285,6 +3285,36 @@ founder manage both rule sets from one window:
 
 **Testing:** `testing_agent` round
 (`iteration_fal_byok_house_rules_switcher_2026_09_10.json`) — backend
+
+## 2026-09-10 (follow-up) — Avatar library upload bug fix
+
+**Bug report:** "issue in Avatar library upload not working in video
+generation." Reproduced via backend logs first: `GET
+/admin/video/avatars` raised an unhandled `KeyError: 'avatar_id'`
+(500) whenever a malformed/pre-migration doc existed in
+`video_pipeline_avatars` (missing `avatar_id`). Because the frontend's
+`refreshAll()` used a single `Promise.all([secrets, avatars, jobs])`,
+that one failure silently blanked the ENTIRE Video panel with no
+visible error — looked exactly like "upload not working."
+
+**Fix:**
+- `routers/admin_video_pipeline.py::list_avatars` — query now filters
+  `avatar_id: {"$exists": True}` and the loop defensively skips any
+  doc missing `avatar_id`/`r2_key`/`kind` instead of raising.
+- `VideoGenPanel.jsx::refreshAll()` — the 3 fetches (secrets, avatars,
+  jobs) are now independent try/catch blocks instead of one
+  all-or-nothing `Promise.all`, so a failure in one section can't
+  blank the other two.
+- Added visible error banners: `video-gen-avatar-load-error` (list
+  fetch fails) and `video-gen-avatar-upload-error` (upload fails) —
+  previously swallowed to `console.error` only.
+- Regression test `tests/test_avatar_library_malformed_doc_2026_09_10.py`
+  injects the exact malformed doc and asserts `GET /avatars` still
+  returns 200 with the bad doc silently skipped. Verified live via
+  curl (200 with 4 avatars incl. the injected bad one filtered out)
+  and via Playwright (image + video-clip upload both succeed, panel
+  renders 2-4 avatar thumbnails correctly, no console errors).
+
 5/5 PASS; frontend caught 2 HIGH (state-loss, initialScope not
 honoured) + 1 LOW (double-ellipsis) — all 3 fixed by main agent and
 re-verified via Playwright screenshots + the same backend pytest

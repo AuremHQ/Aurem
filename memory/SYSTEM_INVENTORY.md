@@ -934,3 +934,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 | `routers/admin_context_bridge.py` | `/admin/ora` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-10T02:06:49.556822Z) | <!-- inv:router:routers/admin_context_bridge.py -->
 | `routers/admin_ora_chat_limits.py` | `/admin/llm` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-10T03:21:40.699028Z) | <!-- inv:router:routers/admin_ora_chat_limits.py -->
 | `routers/admin_video_pipeline.py` | `/admin/video` | 7 | auto-detected new router (verify) (Iter 0, 2026-09-10T03:50:40.877514Z) | <!-- inv:router:routers/admin_video_pipeline.py -->
+- `REACT_APP_BACKEND_URL_FOR_TESTS` — auto-detected in backend/tests/test_video_pipeline_2026_09_10.py (verify) (default: unset) [Iter 0, 2026-09-10T06:06:06.380653Z] <!-- inv:envvar:REACT_APP_BACKEND_URL_FOR_TESTS -->

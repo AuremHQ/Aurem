@@ -25,6 +25,8 @@ export default function VideoGenPanel() {
   const [avatars, setAvatars] = useState([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [avatarLoadError, setAvatarLoadError] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
   const [script, setScript] = useState("");
   const [job, setJob] = useState(null);
   const [history, setHistory] = useState([]);
@@ -33,19 +35,26 @@ export default function VideoGenPanel() {
 
   async function refreshAll() {
     try {
-      const [k, a, h] = await Promise.all([
-        api.get("/admin/video/secrets"),
-        api.get("/admin/video/avatars"),
-        api.get("/admin/video/jobs"),
-      ]);
+      const k = await api.get("/admin/video/secrets");
       setKeys(k.data);
+    } catch { /* keys card shows its own not-ready state */ }
+
+    try {
+      const a = await api.get("/admin/video/avatars");
       setAvatars(a.data.avatars || []);
       setSelectedAvatarId((prev) => {
         if (prev && (a.data.avatars || []).some((av) => av.avatar_id === prev)) return prev;
         return (a.data.avatars || [])[0]?.avatar_id || null;
       });
+      setAvatarLoadError(null);
+    } catch (err) {
+      setAvatarLoadError(err?.response?.data?.detail || "Could not load your avatar library — try refreshing.");
+    }
+
+    try {
+      const h = await api.get("/admin/video/jobs");
       setHistory(h.data.jobs || []);
-    } catch { /* sections show their own empty states */ }
+    } catch { /* history section shows its own empty state */ }
   }
   useEffect(() => { refreshAll(); return () => clearInterval(pollRef.current); }, []);
 
@@ -53,6 +62,7 @@ export default function VideoGenPanel() {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
+    setUploadError(null);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -60,8 +70,7 @@ export default function VideoGenPanel() {
       setSelectedAvatarId(r.data.avatar_id);
       await refreshAll();
     } catch (err) {
-      // surfaced via the library section staying at its current state; toast-free to keep this lightweight
-      console.error("avatar upload failed", err?.response?.data?.detail);
+      setUploadError(err?.response?.data?.detail || "Upload failed — try a smaller file or a different format.");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -129,9 +138,19 @@ export default function VideoGenPanel() {
       {/* Avatar library */}
       <div data-testid="video-gen-avatar-section">
         <div style={{ fontWeight: 600, marginBottom: 8 }}>Avatar library</div>
-        {avatars.length === 0 ? (
+        {avatarLoadError && (
+          <div data-testid="video-gen-avatar-load-error" style={{
+            display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8,
+            padding: "8px 10px", borderRadius: 6, fontSize: 11.5, color: "#f48282",
+            background: "rgba(220,80,80,0.10)", border: "1px solid rgba(220,80,80,0.3)",
+          }}>
+            <AlertTriangle size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+            {avatarLoadError}
+          </div>
+        )}
+        {avatars.length === 0 && !avatarLoadError ? (
           <div style={{ color: "#7a7466", marginBottom: 8 }}>No avatars uploaded yet.</div>
-        ) : (
+        ) : avatars.length > 0 ? (
           <div data-testid="video-gen-avatar-library" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
             {avatars.map((av) => {
               const active = av.avatar_id === selectedAvatarId;
@@ -170,6 +189,16 @@ export default function VideoGenPanel() {
                 </div>
               );
             })}
+          </div>
+        ) : null}
+        {uploadError && (
+          <div data-testid="video-gen-avatar-upload-error" style={{
+            display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8,
+            padding: "8px 10px", borderRadius: 6, fontSize: 11.5, color: "#f48282",
+            background: "rgba(220,80,80,0.10)", border: "1px solid rgba(220,80,80,0.3)",
+          }}>
+            <AlertTriangle size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+            {uploadError}
           </div>
         )}
         <input ref={fileInputRef} data-testid="video-gen-avatar-input" type="file"
