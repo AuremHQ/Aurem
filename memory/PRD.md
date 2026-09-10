@@ -9087,4 +9087,103 @@ of waiting for the next poll tick.
   node_modules/.vite && supervisorctl restart frontend` (package was
   never actually missing).
 
+
+## 2026-09-10 — NEW FEATURE: AUREM Admin Context Bridge Chrome Extension (Manifest V3)
+
+**Ask:** founder/admin-only Chrome extension that captures sanitized
+visible text, console errors, and network timing from ANY active tab
+(e.g. external vendor portals) with one click, and delivers it into an
+ORA chat session — without new backend credential storage.
+
+**User-approved design (all 4 recommended options):**
+1. Extension auth = login form in popup, reuses existing AUREM
+   email/password → JWT stored only in `chrome.storage.local`.
+2. Capture is tied to a specific chat session ID (founder pastes it),
+   not a global "latest snapshot".
+3. Distribution = unpacked/local install via `chrome://extensions`.
+4. Vanilla TypeScript + Manifest V3, no framework (just `tsc`, no bundler).
+
+**Backend** (`routers/admin_context_bridge.py`, new):
+- `POST /api/aurem-dev/admin/ora/context-bridge`, gated by the same
+  `require_admin_dep` every other `/admin/*` router uses.
+- Server-side sanitize pass (2nd layer, defense-in-depth vs. the
+  extension's own client-side pass) — regex-redacts passwords, bearer
+  headers, `sk-`/`ghp_`/AWS keys, JWT-shaped tokens.
+- Hard size caps (visible_text 4000 chars, 20 console errors × 600
+  chars each, top-15 network entries by duration) applied AFTER
+  Pydantic accepts the raw payload (up to 200KB text / 500 errors /
+  200 network entries) so oversized input is truncated, not rejected.
+- Reuses `chat_helpers._persist_turn` (the SAME function every real
+  chat turn goes through) to inject a synthetic user+assistant pair
+  into that `session_id`'s `chat_sessions.turns` array — the
+  assistant message contains the full formatted, sanitized snapshot.
+  This means: (a) it's immediately visible in that chat's transcript
+  (satisfies "verify payload received in the active admin session"),
+  and (b) ORA's EXISTING chat-history-based LLM context automatically
+  includes it in later turns — zero changes to LLM prompt-assembly
+  code needed. Also writes an audit row to
+  `db.ora_context_bridge_snapshots` independent of chat history.
+- New tests: `tests/test_admin_context_bridge_2026_09_09.py` (4 tests,
+  live-HTTP against running backend): auth-required, full round-trip
+  into `GET /chat/history`, server-side secret redaction, oversized-
+  payload truncation. All 4 pass.
+
+**Frontend addition** (`components/TopBarStatusSlot.jsx`): a small
+founder/admin-only "Session: xxxxxxxxxx…" copy badge
+(`data-testid="context-bridge-session-id-copy"`) — the chat session
+ID wasn't visible anywhere in the UI before, and the extension needs
+it pasted in. Click copies the full ID to clipboard, shows "Copied ✓"
+for 1.5s. Wired via `<TopBarStatusSlot sessionId={sessionId} />` in
+`Dashboard.jsx`.
+
+**Extension** (`/app/browser-extension/aurem-context-bridge/`, new
+standalone directory — not part of the served web app):
+- `manifest.json`: MV3, permissions `activeTab`/`scripting`/`storage`
+  only (no `<all_urls>`, no persistent content scripts, no background
+  worker). `host_permissions` defaults to this preview's origin —
+  **founder must change to the real production domain before loading
+  there** (documented prominently in the extension's own README).
+- `src/capture.ts`: the function injected via
+  `chrome.scripting.executeScript({func: captureContext})` on click.
+  Visible text + network timing (`performance.getEntriesByType`) are
+  retroactive/instant. Console errors are NOT retroactive by design —
+  browsers expose no "console history" API to page JS without the
+  intrusive `debugger` permission, which was deliberately left out per
+  the approved minimal-permissions constraint — so this listens for
+  `console.error`/`window.onerror`/`unhandledrejection` during a ~4s
+  window after the click, with a visible countdown telling the
+  founder to reproduce the issue during that window. Clearly
+  documented as a known, honest limitation (not oversold).
+- `src/sanitize.ts`: client-side redaction (layer 1), same regex
+  family as the backend's layer 2.
+- `src/api.ts`: login + context-bridge POST, JWT in
+  `chrome.storage.local`.
+- `src/popup.ts` + `popup.html`/`popup.css`: setup (API base, once) →
+  login → paste session ID → capture/sanitize/send with live status.
+- Build: `yarn install && yarn build` (`tsc -p .`, no bundler) compiles
+  `src/*.ts` → `src/*.js` in place; founder loads the whole folder via
+  `chrome://extensions` → Load unpacked.
+
+**Verified:**
+- `tsc -p .` compiles clean, zero type errors.
+- Full extension-module → backend → chat-history round trip run via
+  Node (importing the REAL compiled `sanitize.js`/`api.js`, not a
+  reimplementation): login → sanitize a payload with a password +
+  bearer JWT + `sk-` key → POST → confirmed `[REDACTED_*]` markers in
+  the stored assistant message, raw secrets never present.
+  `yarn eslint src` (main app) clean. `pytest
+  tests/test_admin_context_bridge_2026_09_09.py` 4/4 pass.
+- Live screenshot: session-ID copy badge renders correctly in
+  TopBar for `test@aurem.dev` (admin), click → copy action fires,
+  no visual regressions to existing F12 badge/Advisor/mascot icons.
+- `testing_agent_v3_fork` full review: 0 critical/minor bugs. Advisory
+  action items only (all either already handled — icons verified as
+  real PNGs at correct sizes — or explicitly out-of-scope/non-blocking
+  for an admin-only internal tool — rate limiting on the endpoint).
+- **Not automatable in this sandbox:** actually loading the unpacked
+  extension into a real Chrome instance (screenshot tool can't pass
+  `--load-extension` launch args) — founder should do the one-time
+  manual load + a real click-through per the extension's README to
+  finish verification end-to-end.
+
 - Preview only — not yet pushed to production.

@@ -667,7 +667,7 @@ function DashboardV2Body() {
             hasRepo={!!activeProject}
             healthScore={healthScore}
             healthScoreLoading={healthScoreLoading}
-            statusSlot={<TopBarStatusSlot />}
+            statusSlot={<TopBarStatusSlot sessionId={sessionId} />}
             historySlot={<SessionSwitcher />}
             streakSlot={
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>

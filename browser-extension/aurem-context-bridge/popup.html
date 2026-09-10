@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>AUREM Context Bridge</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <img src="icons/icon48.png" alt="" width="24" height="24" />
+      <h1>AUREM Context Bridge</h1>
+    </header>
+
+    <section id="setup-view" class="view hidden">
+      <p class="muted">First time — set your AUREM URL once.</p>
+      <label for="api-base-input">AUREM URL</label>
+      <input id="api-base-input" type="text" placeholder="https://your-aurem-domain.com" data-testid="cb-api-base-input" />
+      <button id="save-api-base-btn" data-testid="cb-save-api-base-btn">Save</button>
+    </section>
+
+    <section id="login-view" class="view hidden">
+      <label for="email-input">Email</label>
+      <input id="email-input" type="email" autocomplete="username" data-testid="cb-email-input" />
+      <label for="password-input">Password</label>
+      <input id="password-input" type="password" autocomplete="current-password" data-testid="cb-password-input" />
+      <button id="login-btn" data-testid="cb-login-btn">Sign in</button>
+      <div id="login-error" class="error hidden" data-testid="cb-login-error"></div>
+    </section>
+
+    <section id="main-view" class="view hidden">
+      <div class="row">
+        <span id="account-email" class="muted"></span>
+        <button id="logout-btn" class="link-btn" data-testid="cb-logout-btn">Sign out</button>
+      </div>
+      <label for="session-id-input">Chat session ID</label>
+      <input id="session-id-input" type="text" placeholder="Paste from AUREM's top bar" data-testid="cb-session-id-input" />
+      <div id="tab-info" class="muted" data-testid="cb-tab-info"></div>
+      <button id="capture-btn" data-testid="cb-capture-btn">Send Context to ORA</button>
+      <div id="status" class="hidden" data-testid="cb-status"></div>
+    </section>
+  </div>
+  <script type="module" src="src/popup.js"></script>
+</body>
+</html>

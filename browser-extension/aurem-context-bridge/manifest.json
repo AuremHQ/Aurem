@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "AUREM Admin Context Bridge",
+  "version": "1.0.0",
+  "description": "One click: send sanitized page text, console errors, and network timing from your active tab into an ORA chat session. Founder/admin-only.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Send context to ORA"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://bin-context-pat.preview.emergentagent.com/*"
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
