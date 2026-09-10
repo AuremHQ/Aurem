@@ -14,7 +14,7 @@ import { api } from "../lib/api";
 const STAGE_LABEL = {
   queued: "Queued…",
   synthesizing_audio: "Generating voice (Deepgram Aura-2)…",
-  lip_syncing: "Syncing lips (RunPod MuseTalk) — can take 30-90s…",
+  lip_syncing: "Syncing lips (fal.ai LatentSync)…",
   compositing: "Compositing final video (ffmpeg)…",
   done: "Done",
   failed: "Failed",
@@ -86,7 +86,7 @@ export default function VideoGenPanel() {
     }
   }
 
-  const ready = keys && keys.deepgram_configured && keys.runpod_configured && keys.runpod_endpoint_id;
+  const ready = keys && keys.deepgram_configured;
   const generating = job && !["done", "failed"].includes(job.status);
 
   return (
@@ -100,7 +100,7 @@ export default function VideoGenPanel() {
                       display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.5 }}>
           <AlertTriangle size={14} style={{ marginTop: 1, flexShrink: 0, color: "#E07A5F" }} />
           <span>
-            Add your Deepgram + RunPod keys in{" "}
+            Add your Deepgram key in{" "}
             <a href="/admin/settings" style={{ color: "#f4a082" }}>Admin Settings → Video generation keys</a>{" "}
             before generating.
           </span>

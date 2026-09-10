@@ -1036,9 +1036,7 @@ function OraChatLimitsCard() {
 function VideoPipelineKeysCard() {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [inputs, setInputs] = useState({
-    deepgram_api_key: "", runpod_api_key: "", runpod_endpoint_id: "",
-  });
+  const [deepgramInput, setDeepgramInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState(null);
 
@@ -1053,34 +1051,26 @@ function VideoPipelineKeysCard() {
   useEffect(() => { refresh(); }, []);
 
   function startEdit() {
-    setInputs({
-      deepgram_api_key: "",   // never pre-fill secrets
-      runpod_api_key: "",     // never pre-fill secrets
-      runpod_endpoint_id: data?.runpod_endpoint_id || "",
-    });
+    setDeepgramInput("");   // never pre-fill secrets
     setSaveResult(null);
     setEditing(true);
   }
 
   async function save() {
-    const trimmed = {
-      deepgram_api_key: (inputs.deepgram_api_key || "").trim(),
-      runpod_api_key: (inputs.runpod_api_key || "").trim(),
-      runpod_endpoint_id: (inputs.runpod_endpoint_id || "").trim(),
-    };
-    if (!trimmed.deepgram_api_key && !trimmed.runpod_api_key && !trimmed.runpod_endpoint_id) {
-      toast({ message: "Fill in at least one field to save.", kind: "warning" });
+    const trimmed = deepgramInput.trim();
+    if (!trimmed) {
+      toast({ message: "Paste a Deepgram API key to save.", kind: "warning" });
       return;
     }
     setSaving(true);
     setSaveResult(null);
     try {
-      await api.put("/admin/video/secrets", trimmed);
+      await api.put("/admin/video/secrets", { deepgram_api_key: trimmed });
       const msg = "Saved — the video pipeline picks this up on the next generate, no restart.";
       toast({ message: msg, kind: "success" });
       setSaveResult({ ok: true, message: msg });
       setEditing(false);
-      setInputs({ deepgram_api_key: "", runpod_api_key: "", runpod_endpoint_id: "" });
+      setDeepgramInput("");
       await refresh();
     } catch (e) {
       const d = e?.response?.data?.detail;
@@ -1098,7 +1088,7 @@ function VideoPipelineKeysCard() {
     );
   }
 
-  const ready = data.deepgram_configured && data.runpod_configured && data.runpod_endpoint_id;
+  const ready = data.deepgram_configured;
 
   return (
     <div data-testid="video-pipeline-keys-card">
@@ -1114,7 +1104,7 @@ function VideoPipelineKeysCard() {
         {!editing && (
           <button data-testid="video-pipeline-keys-edit" className="btn-secondary"
                   style={{ fontSize: 12, padding: "6px 14px" }} onClick={startEdit}>
-            {ready ? "Rotate keys" : "Add keys"}
+            {ready ? "Rotate key" : "Add key"}
           </button>
         )}
       </div>
@@ -1132,20 +1122,15 @@ function VideoPipelineKeysCard() {
       {!editing && (
         <>
           <div style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 14, lineHeight: 1.5 }}>
-            Powers the ORA Chat <strong>Video</strong> mode (Deepgram Aura-2 TTS + RunPod
-            MuseTalk lip-sync). Keys are Fernet-encrypted in Mongo, never in backend/.env —
-            only a last-4 fingerprint is shown after saving.
+            Powers the ORA Chat <strong>Video</strong> mode (Deepgram Aura-2 TTS + fal.ai
+            LatentSync lip-sync). Only Deepgram needs a key here — lip-sync billing runs
+            through your existing Universal Key. The key is Fernet-encrypted in Mongo,
+            never in backend/.env — only a last-4 fingerprint is shown after saving.
           </div>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
-            <div>Deepgram: <strong data-testid="video-pipeline-deepgram-state">
+          <div style={{ fontSize: 12 }}>
+            Deepgram: <strong data-testid="video-pipeline-deepgram-state">
               {data.deepgram_configured ? `configured (…${data.deepgram_key_hint})` : "not set"}
-            </strong></div>
-            <div>RunPod key: <strong data-testid="video-pipeline-runpod-key-state">
-              {data.runpod_configured ? `configured (…${data.runpod_key_hint})` : "not set"}
-            </strong></div>
-            <div>RunPod endpoint: <strong data-testid="video-pipeline-runpod-endpoint-state">
-              {data.runpod_endpoint_id || "not set"}
-            </strong></div>
+            </strong>
           </div>
         </>
       )}
@@ -1158,28 +1143,8 @@ function VideoPipelineKeysCard() {
             </label>
             <input data-testid="video-pipeline-deepgram-input" className="input" type="password"
                    placeholder={data.deepgram_configured ? "•••• leave blank to keep current" : "paste key"}
-                   value={inputs.deepgram_api_key}
-                   onChange={(e) => setInputs({ ...inputs, deepgram_api_key: e.target.value })}
-                   style={{ width: "100%" }} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
-              RunPod API key
-            </label>
-            <input data-testid="video-pipeline-runpod-key-input" className="input" type="password"
-                   placeholder={data.runpod_configured ? "•••• leave blank to keep current" : "paste key"}
-                   value={inputs.runpod_api_key}
-                   onChange={(e) => setInputs({ ...inputs, runpod_api_key: e.target.value })}
-                   style={{ width: "100%" }} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
-              RunPod endpoint ID (MuseTalk)
-            </label>
-            <input data-testid="video-pipeline-runpod-endpoint-input" className="input" type="text"
-                   placeholder="e.g. abc123xyz"
-                   value={inputs.runpod_endpoint_id}
-                   onChange={(e) => setInputs({ ...inputs, runpod_endpoint_id: e.target.value })}
+                   value={deepgramInput}
+                   onChange={(e) => setDeepgramInput(e.target.value)}
                    style={{ width: "100%" }} />
           </div>
           <div style={{ display: "flex", gap: 8 }}>

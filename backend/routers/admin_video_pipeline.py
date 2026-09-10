@@ -1,12 +1,12 @@
 """
 routers/admin_video_pipeline.py — 2026-09-10, ORA Chat "Video
-generation" mode: Deepgram Aura-2 TTS + RunPod MuseTalk lip-sync +
-ffmpeg hybrid compositor, orchestrated by services/video_pipeline
-/pipeline.py as a background asyncio task (same pattern as
-routers/fix_pipeline.py).
+generation" mode: Deepgram Aura-2 TTS + fal.ai LatentSync lip-sync
+(Emergent Universal Key) + ffmpeg hybrid compositor, orchestrated by
+services/video_pipeline/pipeline.py as a background asyncio task
+(same pattern as routers/fix_pipeline.py).
 
   GET  /admin/video/secrets            — key state (never returns raw keys)
-  PUT  /admin/video/secrets            — save/rotate Deepgram + RunPod keys
+  PUT  /admin/video/secrets            — save/rotate the Deepgram key
   POST /admin/video/avatar             — upload founder avatar (photo or mp4 loop)
   GET  /admin/video/avatar             — current avatar (fresh presigned preview URL)
   POST /admin/video/jobs               — start a new video-gen job
@@ -40,8 +40,6 @@ VIDEO_TYPES = {"video/mp4", "video/quicktime"}
 
 class UpdateSecretsBody(BaseModel):
     deepgram_api_key: Optional[str] = Field(None, max_length=500)
-    runpod_api_key: Optional[str] = Field(None, max_length=500)
-    runpod_endpoint_id: Optional[str] = Field(None, max_length=200)
 
 
 class CreateJobBody(BaseModel):
@@ -56,16 +54,13 @@ async def read_secrets() -> dict:
 @router.put("/secrets")
 async def update_secrets(body: UpdateSecretsBody,
                            authorization: Optional[str] = Header(None)) -> dict:
-    if not any([body.deepgram_api_key, body.runpod_api_key, body.runpod_endpoint_id]):
-        raise HTTPException(400, "Provide at least one field to update")
+    if not body.deepgram_api_key:
+        raise HTTPException(400, "Provide a Deepgram API key to update")
     db = get_db()
     user = await current_dev(authorization)
     try:
         return await secrets_store.set_secrets(
-            db, deepgram_api_key=body.deepgram_api_key,
-            runpod_api_key=body.runpod_api_key,
-            runpod_endpoint_id=body.runpod_endpoint_id,
-            updated_by=user.get("user_id"))
+            db, deepgram_api_key=body.deepgram_api_key, updated_by=user.get("user_id"))
     except EncryptionNotConfigured as e:
         raise HTTPException(503, str(e))
 
@@ -118,10 +113,9 @@ async def create_job(body: CreateJobBody,
     admin_id = user["user_id"]
 
     secrets = await secrets_store.get_secrets_public(db)
-    if not secrets["deepgram_configured"] or not secrets["runpod_configured"] \
-            or not secrets["runpod_endpoint_id"]:
+    if not secrets["deepgram_configured"]:
         raise HTTPException(
-            409, "Add Deepgram + RunPod keys in Admin Settings → Video generation keys first")
+            409, "Add your Deepgram key in Admin Settings → Video generation keys first")
 
     avatar = await db.video_pipeline_avatars.find_one({"admin_id": admin_id})
     if not avatar:

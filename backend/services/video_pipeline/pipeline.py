@@ -1,8 +1,8 @@
 """
 services/video_pipeline/pipeline.py — 2026-09-10, end-to-end
 orchestration for one ORA Chat video-generation job: Deepgram Aura-2
-TTS -> RunPod MuseTalk lip-sync -> ffmpeg hybrid compositor -> R2
-upload.
+TTS -> fal.ai LatentSync lip-sync (Emergent Universal Key) -> ffmpeg
+hybrid compositor -> R2 upload.
 
 Runs as a fire-and-forget `asyncio.create_task` from
 routers/admin_video_pipeline.py (same background-job pattern as
@@ -12,6 +12,7 @@ GET /admin/video/jobs/{id} for live status.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -21,9 +22,11 @@ import uuid
 
 import httpx
 
-from services.video_pipeline import compositor, musetalk_job, secrets_store, storage, tts
+from services.video_pipeline import compositor, lipsync_fal, secrets_store, storage, tts
 
 logger = logging.getLogger("video_pipeline")
+
+STATIC_AVATAR_DURATION_S = 8.0  # photo avatars -> a short static loop clip
 
 
 async def _set(db, job_id: str, **fields) -> None:
@@ -41,6 +44,21 @@ async def _download(url: str, out_path: str) -> None:
                     fh.write(chunk)
 
 
+async def _image_to_static_clip(image_path: str, out_path: str) -> None:
+    """LatentSync (like MuseTalk) needs a VIDEO source, not a still
+    photo — turn an uploaded photo into a short silent loop clip that
+    fal's own `loop_mode="loop"` then stretches to match the audio."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-t", str(STATIC_AVATAR_DURATION_S),
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=25",
+        "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", out_path,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"avatar_photo_to_clip_failed: {stderr.decode(errors='ignore')[-500:]}")
+
+
 async def run_job(db, job_id: str) -> None:
     job = await db.video_pipeline_jobs.find_one({"job_id": job_id})
     if not job:
@@ -51,12 +69,9 @@ async def run_job(db, job_id: str) -> None:
         if not secrets.get("deepgram_api_key"):
             raise RuntimeError(
                 "deepgram_not_configured — add it in Admin Settings → Video generation keys")
-        if not secrets.get("runpod_api_key") or not secrets.get("runpod_endpoint_id"):
-            raise RuntimeError(
-                "runpod_not_configured — add both in Admin Settings → Video generation keys")
 
         # 1 — Deepgram Aura-2 TTS + word timestamps (captions only —
-        # MuseTalk syncs lips to the raw audio, not to these timings).
+        # the lip-sync step is driven by the raw audio, not by these timings).
         await _set(db, job_id, status="synthesizing_audio")
         wav = await tts.synthesize(job["script"], secrets["deepgram_api_key"])
         audio_path = os.path.join(tmp_dir, "speech.wav")
@@ -67,20 +82,25 @@ async def run_job(db, job_id: str) -> None:
         audio_key = f"{storage.PREFIX}audio/{job_id}.wav"
         storage.upload_file(audio_path, audio_key, "audio/wav")
         audio_url = storage.presign_get(audio_key, expires_in=3600)
-        avatar_url = storage.presign_get(job["avatar_r2_key"], expires_in=3600)
 
-        # 2 — RunPod MuseTalk lip-sync
+        # Photo avatars need converting to a short clip first — video
+        # avatars are used as-is.
+        if job["avatar_kind"] == "image":
+            avatar_local = os.path.join(tmp_dir, "avatar_source")
+            await _download(storage.presign_get(job["avatar_r2_key"], expires_in=600), avatar_local)
+            static_clip_path = os.path.join(tmp_dir, "avatar_clip.mp4")
+            await _image_to_static_clip(avatar_local, static_clip_path)
+            clip_key = f"{storage.PREFIX}avatar_clips/{job_id}.mp4"
+            storage.upload_file(static_clip_path, clip_key, "video/mp4")
+            avatar_video_url = storage.presign_get(clip_key, expires_in=3600)
+        else:
+            avatar_video_url = storage.presign_get(job["avatar_r2_key"], expires_in=3600)
+
+        # 2 — fal.ai LatentSync lip-sync (Emergent Universal Key —
+        # blocking `requests` call, so run it off the event loop).
         await _set(db, job_id, status="lip_syncing")
-        runpod_job_id = await musetalk_job.submit_job(
-            video_url=avatar_url, audio_url=audio_url,
-            api_key=secrets["runpod_api_key"], endpoint_id=secrets["runpod_endpoint_id"])
-
-        async def _on_status(s: str) -> None:
-            await _set(db, job_id, stage_detail=f"runpod:{s}")
-
-        talking_head_url = await musetalk_job.wait_for_result(
-            runpod_job_id, api_key=secrets["runpod_api_key"],
-            endpoint_id=secrets["runpod_endpoint_id"], on_status=_on_status)
+        talking_head_url = await asyncio.to_thread(
+            lipsync_fal.run_lipsync, video_url=avatar_video_url, audio_url=audio_url)
 
         talking_head_path = os.path.join(tmp_dir, "talking_head.mp4")
         await _download(talking_head_url, talking_head_path)

@@ -9340,4 +9340,64 @@ upload + persists across reload, chat regression (send round-trip)
 survives repeated mode toggling, all `/admin/video/*` endpoints 401
 without auth. Zero action items.
 
+## 2026-09-10 — Video pipeline pivot: RunPod → fal.ai LatentSync (Universal Key)
+
+The founder pushed back on the RunPod setup steps (manual RunPod Hub
+click-throughs the agent can't perform, plus a hallucinated "1-click
+community image" from another tool that doesn't actually exist —
+verified via web search: no `runpod/worker-musetalk` or
+`ghcr.io/ashleykleynhans/musetalk-serverless` image exists anywhere).
+A custom Dockerfile + `handler.py` MuseTalk worker was fully written
+(`/app/runpod-musetalk-worker/`, based on a verified real RunPod
+install writeup — `runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel`,
+torch 2.0.1+cu118, mmcv/mmdet/mmpose via openmim, pinned
+`huggingface_hub[cli]==0.25.2`) but was **scrapped** once fal.ai was
+confirmed (via `integration_expert` + a live catalog lookup) to
+already host both `fal-ai/musetalk` and `fal-ai/latentsync` as
+pay-per-use queue endpoints — zero Docker, zero GPU account, zero
+cold-start management.
+
+**Switched to `fal-ai/latentsync` via the Emergent Universal Key**
+(`EMERGENT_LLM_KEY`, already in backend/.env — no new credential
+needed for this stage at all):
+- `services/video_pipeline/lipsync_fal.py` (new, replaces the deleted
+  `musetalk_job.py`) — submits to the integration proxy's Fal queue
+  contract (`POST {INTEGRATION_PROXY_URL}/api/v1/fal/proxy` with
+  `X-Fal-Target-Url: https://queue.fal.run/fal-ai/latentsync`), polls
+  the returned same-origin status/response URLs, extracts
+  `output.video.url`. Verified contract live against fal's own
+  catalog before implementing (per the mandatory integration
+  playbook flow) — input `{video_url, audio_url, guidance_scale,
+  seed, loop_mode}`, output `{video: {url, ...}}`. `loop_mode="loop"`
+  is passed so a short avatar clip auto-loops to match longer audio.
+- `secrets_store.py` simplified to Deepgram-only — no RunPod fields
+  at all now, since fal billing runs through the Universal Key.
+- `pipeline.py` updated: calls `lipsync_fal.run_lipsync` via
+  `asyncio.to_thread` (it's a blocking `requests` client per the
+  playbook's framework-safety rule); also now converts photo avatars
+  to a short static video clip via ffmpeg before lip-sync, since
+  LatentSync (like MuseTalk) needs a video input, not a still image.
+- `admin_video_pipeline.py` + `AdminSettingsPage.jsx`'s
+  `VideoPipelineKeysCard` + `VideoGenPanel.jsx`: all RunPod
+  fields/copy removed, readiness gate is now Deepgram-only.
+- Deleted `/app/runpod-musetalk-worker/` (no longer needed).
+
+**Proven live end-to-end by the main agent** (not mocked): generated
+a test founder headshot photo → ffmpeg static clip → uploaded to R2
+→ real `fal-ai/latentsync` call via the Universal Key proxy → real
+synced talking-head video returned → piped through the ffmpeg
+compositor → final composited clip uploaded to R2. Confirms the
+entire pipeline works end-to-end except the Deepgram TTS stage, which
+needs the founder's own real Deepgram key (the only remaining manual
+step — paste it into Admin Settings → Video generation keys, nothing
+else to configure).
+
+**Tested via `testing_agent_v3_fork`** (see
+`/app/test_reports/iteration_video_pipeline_deepgram_only_2026_01.json`):
+15/15 frontend + 3/3 backend spot-checks PASS — no RunPod fields/text
+remain anywhere, save/cancel/badge-flip work, readiness gate confirmed
+Deepgram-only (job submission returns 202 not 409 once only Deepgram
+is set, progresses through a real `synthesizing_audio` stage). Zero
+action items.
+
 - Preview only — not yet pushed to production.
