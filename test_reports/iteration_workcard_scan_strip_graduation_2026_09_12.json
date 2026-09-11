@@ -1,0 +1,45 @@
+{
+  "summary": "Third-round regression + live UI verification for the founder's 3 findings. FINDING 1 & 2 (business_voice_filter nonpage-filename + URL mangling): re-ran the full existing pytest suite (36/36 passing, 100%) — no regression. FINDING 3 (feature flag graduation for workcard_scan_strip): verified end-to-end in the live preview UI — the DB-backed persistent ScanStatusStrip receipt WorkCard now renders correctly for a normal user after /scan and /security-scan slash commands complete, and it survives a full page reload (proving DB-backed, not sessionStorage-backed). Feature flag confirmed at rollout_pct:100 via admin API. This is the exact fix the founder needs graduated to production; the preview pod's copy is now correct.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_business_voice_nonpage_filename_2026_09_12.py",
+    "/app/backend/tests/test_business_owner_voice_2026_08_31.py",
+    "/app/backend/tests/test_business_voice_url_mangling_2026_09_12.py",
+    "/app/backend/tests/test_business_voice_url_bypass_paths_2026_09_12.py",
+    "/app/test_reports/pytest/business_voice_regression_2026_09_12_round3.xml"
+  ],
+  "action_items": [
+    "PRODUCTION-ONLY (out of preview scope): Founder must run POST /api/aurem-dev/admin/feature-flags on auremcto.com with production admin JWT to graduate `workcard_scan_strip` to rollout_pct:100 (currently only graduated in the preview pod's Mongo). Payload: {\"flag\":\"workcard_scan_strip\",\"enabled\":true,\"rollout_pct\":100,\"tier_allowlist\":[],\"user_allowlist\":[]}. Until this is done, real production users (including the founder) will continue to see the OLD legacy behavior (single 4-second toast, no durable receipt for clean scans).",
+    "OPTIONAL: Founder to reconnect GitHub App on `aurem-demo/frontend` and `aurem-demo/backend` (their tokens are revoked in this preview pod — banner is shown correctly)."
+  ],
+  "critical_code_review_comments": [
+    "ScanStatusStrip priority order (in_progress > receipt > just_completed(legacy) > backlog) was verified via live testing on the receipt branch. Legacy `just_completed` self-delete-on-clean bug is now moot since receipt always wins when workcard_enabled:true.",
+    "Small quality-of-life observation (not a bug): the top-right chip 'Scan clean — no critical/high issues (Run all scanners)' overlaps timestamp area on narrow widths; consider truncation.",
+    "Non-blocking: 12 projects still shown as 'unreachable' in the preview pod's switcher — could add a bulk-cleanup CTA in the banner (already partially present)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (36/36 pytest tests, findings 1+2 regression suite)", "frontend": "100% (finding 3 primary + secondary live UI tests all pass — receipt renders for /scan, /security-scan; persists after reload)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview) — used with project p_r10_testbed_e2e -> polarisbuiltinc-wq/aurem-rollback-testbed (installation_active:true).",
+  "seed_data_creation": "None. Used existing test admin account and existing connected testbed project. Feature flag graduation (workcard_scan_strip -> rollout_pct:100) was done PRIOR to this testing round by main agent; this round confirmed it is live and applied.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature flag workcard_scan_strip is now graduated to 100% rollout in the preview pod. ScanStatusStrip's receipt branch (data-testid='scan-strip-receipt') is the canonical durable feedback surface for all 5 scan slash commands (/scan, /health-scan, /security-scan, /bug-hunt, /docker-scan) — verified end-to-end for /scan + /security-scan. If any future test involves clean-scan feedback, look for the scan-strip-receipt testid and expect it to persist across reloads (fetched from GET /api/aurem-dev/codebase-health/last?project_id=...). The old sessionStorage-based markScanJustCompleted() path is dead when workcard_enabled:true.",
+  "live_verification_evidence": {
+    "flag_state_verified_via_api": "workcard_scan_strip: {enabled:true, rollout_pct:100, tier_allowlist:[], user_allowlist:[]} — confirmed via GET /api/aurem-dev/admin/feature-flags",
+    "backend_workcard_enabled_field": "GET /api/aurem-dev/codebase-health/last?project_id=p_r10_testbed_e2e returns workcard_enabled:true, score:100, label:HEALTHY, total:0",
+    "scan_slash_command_e2e": "POST /codebase-health/scan -> 200 OK; scan-strip-receipt renders with 'Scan clean — no critical or high issues / SCAN COMPLETE / 1 files scanned — aurem-rollback-testbed / Dismiss'",
+    "reload_persistence": "After page.reload(), scan-strip-receipt still visible with identical text (proves DB-backed via GET /codebase-health/last, not sessionStorage)",
+    "secondary_command_verified": "/security-scan produces identical receipt WorkCard behavior",
+    "screenshots": [
+      "/app/test_reports/screenshots/f3b_scan_after_wait.png",
+      "/app/test_reports/screenshots/f3b_after_reload.png",
+      "/app/test_reports/screenshots/f3c_security_scan.png"
+    ]
+  },
+  "rca of the issue": "Finding 3 RCA (already fixed pre-testing): ScanStatusStrip.jsx had a legacy code path where clean scans (no critical/high) explicitly removed the sessionStorage entry in markScanJustCompleted(), leaving only a 4-second toast as user feedback — easy to miss and matching the founder's report of 'nothing durable happens'. A newer DB-backed receipt branch (reads GET /codebase-health/last, renders scan-strip-receipt WorkCard that survives reload for ANY outcome) already existed but was feature-flagged behind workcard_scan_strip with rollout_pct:0 and user_allowlist:['test_admin_001'] only. Real users (including founder) never hit the fix. Mitigation: main agent POSTed to admin/feature-flags to set rollout_pct:100 in this preview pod's Mongo. This test round proves that after graduation, the receipt WorkCard renders end-to-end and persists across reloads for a normal /scan flow. Founder must repeat the same admin POST against production Mongo to make the fix visible on auremcto.com."
+}

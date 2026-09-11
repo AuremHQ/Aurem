@@ -1,4 +1,58 @@
 # AUREM CTO — Changelog (append-only)
+- **"/scan" slash-command showed no durable result — feature flag never
+  graduated past internal test account (2026-09-12, 3rd founder
+  regression round, same session as the two business_voice_filter fixes
+  below)**
+  - Founder sent `/scan` in the ORA chat composer. The "Scan running ·
+    Aurem" progress banner disappeared with nothing lasting afterward —
+    no chat message (by design, slash-commands intentionally bypass the
+    LLM pipeline — see `SlashCommandMenu.jsx`'s own docstring) and no
+    persistent confirmation either.
+  - **Root cause:** `ScanStatusStrip.jsx` has a legacy path where
+    `markScanJustCompleted()` explicitly deletes/skips its own
+    sessionStorage entry for any clean (0 critical/high) scan result —
+    the code's OWN comment already named this "the confirmed bug: a
+    clean scan... relied on a 4s toast, leaving nothing durable." A
+    newer DB-backed "receipt" WorkCard (reads `GET /codebase-health/last`,
+    renders a persistent card that survives reload for ANY outcome,
+    clean or not) already existed in the same file specifically to fix
+    this — but it was gated behind feature flag `workcard_scan_strip`
+    set to `rollout_pct: 0, user_allowlist: ['test_admin_001']` (the
+    internal preview test account only, i.e. `test@aurem.dev`). Every
+    real user, including the founder's production account, never
+    reached the fix and kept hitting the exact bug it was built to
+    close.
+  - **Fix (pure data/ops, zero code change):** used the pre-existing
+    admin endpoint `POST /admin/feature-flags` to graduate
+    `workcard_scan_strip` to `rollout_pct: 100` in this preview pod's DB.
+    Verified via curl that a brand-new, non-admin, non-allowlisted test
+    account now gets `workcard_enabled: true`.
+  - Testing agent verified live end-to-end in the actual React UI: ran
+    `/scan` and `/security-scan`, confirmed the persistent
+    `scan-strip-receipt` WorkCard renders ("Scan clean — no critical or
+    high issues... 1 files scanned — aurem-rollback-testbed") and
+    **survives a full page reload** (proving it's DB-backed, not the
+    old sessionStorage path) —
+    `/app/test_reports/iteration_workcard_scan_strip_graduation_2026_09_12.json`.
+    100% pass, zero UI bugs found.
+  - **⚠️ ACTION NEEDED FROM FOUNDER (production is a separate database
+    from this preview pod — this graduation only applied here):**
+    run the same call against `auremcto.com` with your own production
+    admin JWT:
+    ```
+    POST https://auremcto.com/api/aurem-dev/admin/feature-flags
+    Authorization: Bearer <your prod admin JWT>
+    Content-Type: application/json
+    {"flag":"workcard_scan_strip","enabled":true,"rollout_pct":100,
+     "tier_allowlist":[],"user_allowlist":[]}
+    ```
+    Until this runs on production, real users there (including you)
+    keep seeing the old silent-clean-scan behavior.
+  - Related, not yet reported/fixed: `workcard_first_scan`,
+    `workcard_loop_receipts`, `workcard_chip_v2` are gated the exact
+    same way (test-account-only, `rollout_pct: 0`) — worth checking
+    whether they hide the same class of bug for other real users.
+
 - **business_voice_filter.py — commit link domain mangled ("website's
   connection.com" instead of "github.com") (2026-09-12, SAME founder
   turn as the "your page" fix below — confirmed shared root cause)**
