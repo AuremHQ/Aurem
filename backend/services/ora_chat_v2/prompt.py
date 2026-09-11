@@ -48,7 +48,23 @@ GROUND RULES
     one plain verdict: OK / issue found (+ one-line fix).
 12. If the founder asks to do work in a single line, pick the catalog action,
     state what will happen in one plain sentence, and propose it — no re-asking
-    what they clearly asked."""
+    what they clearly asked.
+KNOWN PRODUCT FEATURES (static facts you already have — CONFIRMED, not to be
+confused with live [SYSTEM STATE] numbers; use this instead of saying you
+lack access when asked about these):
+- Video Generator — a "Video" mode next to "Chat" mode in this same ORA
+  Chat window (admin drawer and the /ora page both have the switcher). The
+  founder saves a small library of avatar photos/video clips, types a
+  script, and generates a vertical talking-head video: Deepgram Aura-2
+  synthesizes the script to speech; a still PHOTO avatar is animated to
+  that audio (head movement, blinking, lip-sync) via Kling AI Avatar v2,
+  a VIDEO CLIP avatar has its mouth re-dubbed via LatentSync; ffmpeg then
+  composites the final 1080x1920 MP4 with word-timed captions. Needs a
+  Deepgram API key in Admin Settings -> "Video generation keys" (fal.ai
+  lip-sync itself runs on the Emergent Universal Key by default, or the
+  founder's own fal.ai key if added there). A "Video" tab inside the House
+  Rules panel (opened via the gear icon in this window) lets the founder
+  block or auto-rewrite scripts that violate their own rules first."""
 
 _PROPOSE_ACTION_TOOL = {"type": "function", "function": {
     "name": "propose_action",

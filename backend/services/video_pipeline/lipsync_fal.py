@@ -1,6 +1,6 @@
 """
-services/video_pipeline/lipsync_fal.py — 2026-09-10, fal.ai LatentSync
-lip-sync, with two credential modes:
+services/video_pipeline/lipsync_fal.py — 2026-09-10/11, fal.ai avatar
+animation + lip-sync, with two credential modes:
 
   - Universal Key (default): backend authenticates to the Emergent
     integration proxy with EMERGENT_LLM_KEY, billed to the Integration
@@ -10,10 +10,27 @@ lip-sync, with two credential modes:
     official `fal_client` SDK instead, billed to their own Fal
     account. Never mixes credentials/routes between the two modes.
 
+Two DIFFERENT fal endpoints are used depending on the avatar's kind
+— this is a deliberate architecture fix (2026-09-11): LatentSync is a
+video-to-video "mouth touch-up" model built to refine footage of a
+person who is ALREADY moving/talking on camera. Fed a frozen still
+photo (our old `_image_to_static_clip` approach), it has no motion
+to work with, so photo avatars rendered with ZERO head movement /
+blinking / expression — a real founder-reported bug, not a config
+issue. Kling AI Avatar v2 is an image-to-video model purpose-built to
+animate a STILL PHOTO from audio (head movement, blinking, lip-sync,
+expression), so it is used for `avatar_kind == "image"` instead;
+LatentSync remains correct for `avatar_kind == "video"` (the user's
+own footage already moves — we only need to redub the mouth).
+
+  - run_lipsync(...)          -> fal-ai/latentsync (video avatars)
+  - run_avatar_animation(...) -> fal-ai/kling-video/ai-avatar/v2/standard
+                                  (photo avatars)
+
 Verified live against fal's own catalog (builder-time only, not
-repeated at runtime): endpoint_id="fal-ai/latentsync", input
-{video_url, audio_url, guidance_scale, seed, loop_mode}, output
-{video: {url, file_name, file_size, content_type}}.
+repeated at runtime):
+  latentsync:    input {video_url, audio_url, loop_mode}, output {video: {url, ...}}
+  kling-avatar:  input {image_url, audio_url}, output {video: {url}}
 """
 from __future__ import annotations
 
@@ -26,7 +43,8 @@ from urllib.parse import urlparse
 import fal_client
 import requests
 
-ENDPOINT_ID = "fal-ai/latentsync"
+LATENTSYNC_ENDPOINT_ID = "fal-ai/latentsync"
+KLING_AVATAR_ENDPOINT_ID = "fal-ai/kling-video/ai-avatar/v2/standard"
 
 
 class LipsyncError(Exception):
@@ -39,25 +57,38 @@ class InsufficientCreditsError(LipsyncError):
 
 async def run_lipsync(*, video_url: str, audio_url: str,
                         fal_api_key: Optional[str] = None, timeout_s: int = 600) -> str:
-    """Returns the resulting synced video's URL. Uses BYOK (direct
-    fal.ai via the official SDK) when `fal_api_key` is set, otherwise
-    falls back to the Emergent Universal Key via the integration
-    proxy — never mixes the two."""
+    """Video avatars: re-dub the mouth on EXISTING footage via
+    fal-ai/latentsync. Returns the resulting synced video's URL."""
+    payload = {"video_url": video_url, "audio_url": audio_url, "loop_mode": "loop"}
+    return await _submit(LATENTSYNC_ENDPOINT_ID, payload,
+                           fal_api_key=fal_api_key, timeout_s=timeout_s)
+
+
+async def run_avatar_animation(*, image_url: str, audio_url: str,
+                                 fal_api_key: Optional[str] = None, timeout_s: int = 600) -> str:
+    """Photo avatars: animate a STILL PHOTO from audio (head
+    movement, blinking, lip-sync) via fal-ai/kling-video/ai-avatar/v2.
+    Returns the resulting animated video's URL."""
+    payload = {"image_url": image_url, "audio_url": audio_url}
+    return await _submit(KLING_AVATAR_ENDPOINT_ID, payload,
+                           fal_api_key=fal_api_key, timeout_s=timeout_s)
+
+
+async def _submit(endpoint_id: str, payload: dict, *,
+                    fal_api_key: Optional[str], timeout_s: int) -> str:
     if fal_api_key:
-        return await _run_lipsync_byok(video_url=video_url, audio_url=audio_url,
-                                         fal_api_key=fal_api_key, timeout_s=timeout_s)
+        return await _submit_byok(endpoint_id, payload, fal_api_key=fal_api_key, timeout_s=timeout_s)
     return await asyncio.to_thread(
-        _run_lipsync_universal_key, video_url=video_url, audio_url=audio_url, timeout_s=timeout_s)
+        _submit_universal_key, endpoint_id, payload, timeout_s=timeout_s)
 
 
-async def _run_lipsync_byok(*, video_url: str, audio_url: str,
-                              fal_api_key: str, timeout_s: int) -> str:
+async def _submit_byok(endpoint_id: str, payload: dict, *,
+                         fal_api_key: str, timeout_s: int) -> str:
     """Direct fal.ai call with the admin's own FAL_KEY — never uses
     EMERGENT_LLM_KEY or the integration proxy in this path."""
     client = fal_client.AsyncClient(key=fal_api_key)
     try:
-        handle = await client.submit(
-            ENDPOINT_ID, arguments={"video_url": video_url, "audio_url": audio_url, "loop_mode": "loop"})
+        handle = await client.submit(endpoint_id, arguments=payload)
         result = await asyncio.wait_for(handle.get(), timeout=timeout_s)
     except fal_client.FalClientHTTPError as e:
         if getattr(e, "status_code", None) == 401:
@@ -116,14 +147,13 @@ def _get_with_retry(url: str, *, timeout_s: int, deadline: float, max_attempts: 
     raise LipsyncError("timed_out_waiting_for_lip_sync")
 
 
-def _run_lipsync_universal_key(*, video_url: str, audio_url: str, timeout_s: int = 600) -> str:
-    """Blocking — called via asyncio.to_thread by run_lipsync above.
+def _submit_universal_key(endpoint_id: str, payload: dict[str, Any], *, timeout_s: int = 600) -> str:
+    """Blocking — called via asyncio.to_thread by _submit above.
     Talks ONLY to the Emergent integration proxy's Fal queue-inference
     contract — never to api.fal.ai directly, never with a FAL_KEY."""
-    payload: dict[str, Any] = {"video_url": video_url, "audio_url": audio_url, "loop_mode": "loop"}
     submit = requests.post(
         f"{_control_base()}/proxy",
-        headers={**_headers(), "X-Fal-Target-Url": f"https://queue.fal.run/{ENDPOINT_ID}"},
+        headers={**_headers(), "X-Fal-Target-Url": f"https://queue.fal.run/{endpoint_id}"},
         json=payload, timeout=60,
     )
     if submit.status_code == 402:

@@ -3370,3 +3370,69 @@ outage; the missing handler was a contributing "silent failure" bug
 worth fixing regardless so a future outage is visible instead of a
 silent black hole.
 
+
+## 2026-09-11 — Root-cause fix: static "photo with audio" videos + ORA had zero knowledge of the Video Generator
+
+**User report:** uploaded a generated sample — "no movement of the
+character... looks garbage." Verified via multimodal analysis of the
+actual file: **completely static image, zero lip-sync, zero
+blinking, zero head movement** — audio played behind a frozen photo.
+
+**Root cause (architecture bug, not a config issue):** photo avatars
+were ffmpeg-looped into a frozen static clip
+(`_image_to_static_clip`) and fed to **LatentSync**, which is a
+video-to-video "mouth touch-up" model — it re-dubs the mouth on
+footage that's ALREADY moving. Given a frozen input with zero
+motion, there's nothing for it to carry through, so the whole clip
+stayed static.
+
+**Fix — researched fal.ai's own catalog for the right tool for a
+STILL PHOTO input:** `avatar_kind == "image"` now calls **fal-ai/
+kling-video/ai-avatar/v2/standard** directly (image-to-video,
+purpose-built to animate a still photo from audio: head movement,
+blinking, lip-sync) — no ffmpeg pre-conversion needed, duration
+follows the audio automatically. `avatar_kind == "video"` is
+unchanged (LatentSync remains correct there — the user's own footage
+already moves).
+- `lipsync_fal.py` refactored: `run_lipsync()` (LatentSync, video
+  avatars) and new `run_avatar_animation()` (Kling, photo avatars)
+  share one generic BYOK/Universal-Key submit helper.
+- `pipeline.py`: dispatches by `avatar_kind`; removed the now-dead
+  `_image_to_static_clip` ffmpeg step entirely.
+- Live-verified end-to-end against fal's own public example
+  image+audio: submit → COMPLETED (queue wait ~10min for this
+  heavier/more-popular model — bumped the photo-avatar timeout to
+  1200s; LatentSync's stays at the default). Multimodal analysis of
+  the actual output: "natural-looking head motion, realistic
+  blinking, and lip-sync synchronized with speech... genuinely
+  animated, not static."
+- New regression test `test_avatar_kind_routing_2026_09_11.py` locks
+  in the routing + guards against the old static-clip path silently
+  coming back.
+- **Found + fixed in passing:** the admin's configured Deepgram key
+  was a leftover fake test value from an earlier testing round
+  (`…2345`, `deepgram_auth_failed` on every real job) — cleared it so
+  Admin Settings honestly shows "not configured" instead of a false
+  "configured" state. **ACTION NEEDED FROM FOUNDER: a real Deepgram
+  API key must be added in Admin Settings → Video generation keys
+  before any script can actually be voiced** — this was blocking
+  100% of real generations regardless of the animation-quality fix
+  above.
+
+**Second report — "I asked ORA about our video generator, it said it
+doesn't have access":** traced to editing the WRONG module first
+(`services/ora_chat/safety.py`'s `AUREM_CONTEXT` — confirmed dead
+code, superseded by `ora_chat_v2` per its own inline comment,
+reverted that edit). The LIVE system prompt for `/ora-chat/message`
+is `services/ora_chat_v2/prompt.py::SYSTEM_PROMPT`, which by design
+only knows live [SYSTEM STATE] evidence, not static product facts.
+Added a "KNOWN PRODUCT FEATURES" section there describing the Video
+Generator (avatars, TTS, Kling/LatentSync split, Deepgram key
+requirement, House Rules tab) as CONFIRMED background knowledge.
+Live-verified: ORA now answers "what is in our video generator, what
+models does it use" with the full, accurate pipeline breakdown
+instead of "I don't have access."
+
+**Testing:** 67 backend regression tests pass (ora_chat, fal BYOK,
+video pipeline, avatar library, new avatar-kind routing).
+
