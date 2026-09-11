@@ -1,4 +1,49 @@
 # AUREM CTO — Changelog (append-only)
+- **Mandatory onboarding gate — 3rd confirmed real user hit the same
+  "gate ignores successful install" pattern (2026-09-12), root cause
+  #2 found and fixed (different from the 2026-09-11 appInstalls/asGate
+  fix, which was correct and remains in place) — plus a related, lower-
+  priority `app_install_denied` friction report investigated and fixed**
+  - Founder reported a 3rd real user: `app_installed` + `app_install_granted`
+    succeeded, gate reappeared right after, user confused and skipped.
+    Reproduced LIVE (screenshot_tool against this preview env, a
+    realistic 0-project-user + real-linked-installation DB fixture) —
+    found a genuinely DIFFERENT root cause than the earlier fix.
+  - **Root cause A:** `NewUserWizard.jsx`'s one-click auto-submit fires
+    the INSTANT `freshRepos.length === 1` on mount — zero delay.
+    GitHub's own permission-*grant* propagation (separate from the
+    already-handled repo-*list* sync lag) can trail `installation_active`
+    becoming true by a few seconds. The backend's real verify call
+    404s as `installation_no_repo_access` in that window — and because
+    this fires with no user action yet, the FIRST thing the user sees
+    right after successfully granting access is a scary "doesn't have
+    access, grant it on GitHub" error. Reads as "still broken," drives
+    the Skip click.
+  - **Fix A:** `submitRepo()` now auto-retries up to 3× (3s apart) for
+    exactly this one error code before ever surfacing it as a failure,
+    showing a friendly "Almost there — GitHub is still finishing up
+    your access grant…" message during retries instead. Any other
+    error code is never retried, surfaces immediately as before.
+  - **Root cause B (separate, founder-flagged as lower priority):**
+    2 `app_install_denied` events before eventual success for the same
+    user. `useGitHubConnectStatus.js`'s popup-closed branch had no
+    grace period — GitHub Apps have no real deny callback, so a closed
+    popup with `installation_active` still false was the ONLY signal
+    for denial. A real grant's own auto-close can race ahead of this
+    app's webhook processing by more than one 2.5s poll tick, falsely
+    declaring denial for what was really a success.
+  - **Fix B:** on a closed popup, spend a short grace window (2
+    re-checks, 1s apart) re-testing for the grant before ever
+    declaring denial — recovered as a normal success if found.
+  - Added `tests/NewUserWizard.repoAccessRetry.test.jsx` (4 tests) and
+    `hooks/__tests__/useGitHubConnectStatus.deniedRace.test.js` (1
+    test); updated one pre-existing assertion in `repoSyncLag.test.js`
+    to account for the new grace window. Testing agent verified 100%
+    (21/21 unit tests across 6 files + live UI reproduction of the
+    exact founder symptom) —
+    `/app/test_reports/iteration_wizard_repo_access_retry_2026_09_12.json`.
+    Zero issues found.
+
 - **"/scan" slash-command showed no durable result — feature flag never
   graduated past internal test account (2026-09-12, 3rd founder
   regression round, same session as the two business_voice_filter fixes

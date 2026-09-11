@@ -130,6 +130,33 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // proved works: revoke the App on GitHub, then reinstall fresh.
   const [connectAttempts, setConnectAttempts] = useState(0);
 
+  // 2026-09-12 — founder-reported (3rd confirmed real user, same
+  // pattern as Rebecca's case): repro'd live — the one-click
+  // auto-submit below (freshRepos.length===1) fires the INSTANT the
+  // App-install grant completes, with zero delay. GitHub's own
+  // permission-grant propagation can lag behind `installation_active`
+  // becoming true by a few seconds even though the repo already shows
+  // up in the installation's repo LIST (a documented, separate GitHub-
+  // side timing gap from the repo-list-sync lag already handled
+  // elsewhere in this file via `wizard-app-repos-syncing`). The
+  // backend's real GitHub verify call 404s as `installation_no_repo_
+  // access` during that window, and — because this fires the INSTANT
+  // install succeeds, with no user action yet — the user sees a
+  // scary-looking "doesn't have access, grant it on GitHub" error
+  // appear seemingly out of nowhere right after doing everything
+  // right, reads it as "still broken", and skips. Auto-retry with a
+  // short backoff for exactly this one transient error code before
+  // ever surfacing it as a real, actionable failure.
+  const repoAccessRetryRef = useRef(0);
+  const [retryingAccess, setRetryingAccess] = useState(false);
+  // Synchronous companion to `retryingAccess` (state updates aren't
+  // visible within the SAME function call that triggered them) — the
+  // `finally` block below reads THIS ref, not the state, to decide
+  // whether to release `busy` for the CURRENT invocation.
+  const retryPendingRef = useRef(false);
+  const _REPO_ACCESS_MAX_RETRIES = 3;
+  const _REPO_ACCESS_RETRY_DELAY_MS = 3000;
+
   // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
   // When rendered as the pre-chat gate (`asGate`), fire the funnel
   // signal exactly once on mount — best-effort, never blocks the UI.
@@ -392,6 +419,9 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       return;
     }
     setBusy(true);
+    // Each fresh call starts clean — only THIS invocation's own retry
+    // branch below is allowed to flip this back to true for `finally`.
+    retryPendingRef.current = false;
     try {
       const parts = urlToUse.trim().replace(/\/$/, "").split("/");
       const name = parts[parts.length - 1].replace(/\.git$/, "");
@@ -432,6 +462,8 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       // clone (unauthenticated). Private repos need the GitHub App.
 
       const r = await api.post("/cto/projects/add", payload);
+      repoAccessRetryRef.current = 0;
+      setRetryingAccess(false);
       // 2026-08-20 — founder's call: no forced "first task" step
       // inside the wizard anymore. Connecting the repo is the whole
       // job here — land straight in the normal chat window, same as
@@ -457,6 +489,26 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
         });
         return;
       }
+      // 2026-09-12 — see repoAccessRetryRef comment above: this ONE
+      // error code specifically means "the install itself is real and
+      // fine, GitHub's own permission propagation just hasn't caught
+      // up yet" — auto-retry a few times with a short gap, silently,
+      // before treating it as a real failure the user needs to act on.
+      if (
+        typeof detail === "object" &&
+        detail?.error === "installation_no_repo_access" &&
+        repoAccessRetryRef.current < _REPO_ACCESS_MAX_RETRIES
+      ) {
+        repoAccessRetryRef.current += 1;
+        retryPendingRef.current = true;
+        setRetryingAccess(true);
+        setTimeout(() => {
+          submitRepo(null, { url: urlToUse, branchOverride: branchToUse });
+        }, _REPO_ACCESS_RETRY_DELAY_MS);
+        return;
+      }
+      retryPendingRef.current = false;
+      setRetryingAccess(false);
       const msg = (typeof detail === "object" && detail?.message)
         ? detail.message
         : (typeof detail === "string" ? detail : (e2?.message || "Could not connect repo."));
@@ -478,7 +530,11 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
         setErr(msg);
       }
     } finally {
-      setBusy(false);
+      // 2026-09-12 — keep the busy/spinner state alive through a
+      // silent retry so the UI never flickers back to an idle
+      // "Continue" button in between attempts, only settling once
+      // we've truly succeeded or truly given up.
+      if (!retryPendingRef.current) setBusy(false);
     }
   }
 
@@ -1142,7 +1198,20 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
                   {/* end URL/branch outer conditional
                       (hidden on pure "choosing" landing) */}
 
-                  {err && <div data-testid="wizard-error" style={errStyle}>{err}</div>}
+                  {retryingAccess && (
+                    <div data-testid="wizard-repo-access-retrying" style={{
+                      fontSize: 12, color: "var(--text-faint)",
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "8px 0",
+                    }}>
+                      <Loader2 size={13} className="spin" color="#ff9d5c" />
+                      <span>
+                        Almost there — GitHub is still finishing up your
+                        access grant. Connecting automatically…
+                      </span>
+                    </div>
+                  )}
+                  {!retryingAccess && err && <div data-testid="wizard-error" style={errStyle}>{err}</div>}
                   {/* 2026-08-27 · Journey Watch Phase 1 — ROOT FIX for the
                       duplicate-CTA bug: on the pure "choosing" landing (no
                       App installed yet) this Footer used to render a

@@ -151,6 +151,41 @@ export default function useGitHubConnectStatus() {
     );
     stopPolling();
     stopBackgroundSync();
+    // 2026-09-12 — founder-reported (3 users, plausible independent
+    // friction point flagged alongside the gate bug: hitting
+    // app_install_denied once or twice before eventually succeeding
+    // on a later attempt). Root cause found: on a REAL successful
+    // grant, GitHub's own flow can auto-close this popup the instant
+    // the user finishes — but our backend's webhook can take a beat
+    // longer than one `POLL_INTERVAL_MS` (2.5s) tick to actually
+    // persist `installation_active`. A closed popup caught in that
+    // exact window falsely reads as "user backed out". Factored the
+    // success check out so the popup-closed branch below can spend a
+    // short grace period re-checking with it before ever declaring a
+    // real denial, instead of duplicating this logic twice.
+    const checkGrantSuccess = (data) => {
+      if (!data || !data.installation_active) return false;
+      const currentIds = (data.installations || []).map((i) => String(i.installation_id));
+      const newOrChangedIds = currentIds.filter((id) => {
+        const before = preConnectIdsRef.current.get(id);
+        if (before === undefined) return true; // brand new installation
+        const inst = (data.installations || []).find((i) => String(i.installation_id) === id);
+        return (inst?.repositories || []).length !== before; // repo grant changed
+      });
+      if (newOrChangedIds.length === 0 && preConnectIdsRef.current.size > 0) {
+        return false; // nothing this session has done yet — keep waiting
+      }
+      setConnecting(false);
+      try { popupRef.current?.close?.(); } catch { /* cross-origin */ }
+      trackFunnel("app_install_granted", "wizard");
+      setFreshInstallIds((prev) => {
+        const merged = new Set(prev);
+        for (const id of newOrChangedIds) merged.add(id);
+        return Array.from(merged);
+      });
+      if (data.state !== "connected") startBackgroundRepoSync();
+      return true;
+    };
     pollRef.current = setInterval(async () => {
       const data = await fetchStatus();
       // 2026-09-01 — CONFIRMED FIX (connect-flow investigation,
@@ -166,62 +201,32 @@ export default function useGitHubConnectStatus() {
       // 400ms) during that lag fired a FALSE app_install_denied and
       // stranded the user on an empty repo picker with nothing to
       // click — indistinguishable from "nothing happened".
-      if (data && data.installation_active) {
-        // 2026-09-09-c — CRITICAL fix (3rd founder recording, real
-        // production repro): `installation_active` is true the
-        // MOMENT any installation exists for this account, globally
-        // — including ones from a completely unrelated past session.
-        // The code below used to stop polling + force-close the
-        // popup + declare success the INSTANT this went true, even
-        // if the user was still mid-flow (e.g. still inside GitHub's
-        // own "Sign in with Google" sub-flow, picking a Google
-        // account, clearing a Windows Hello PIN prompt) authorizing
-        // something entirely different. For ANY returning user with
-        // an existing installation (this test account has 12+), that
-        // condition is true on literally the FIRST poll tick — often
-        // while they're still on GitHub/Google's own pages — silently
-        // killing their in-progress popup out from under them and
-        // declaring "connected" against stale data (matches the
-        // recording exactly: popup dies at "about:blank" right after
-        // Google account selection, main UI is left showing a stale
-        // "Connected to: RepoReady" from an unrelated old install).
-        // Fix: compute the SAME new-or-changed diff used for
-        // freshInstallIds FIRST, and only treat this as success once
-        // something genuinely new/changed is found. A brand-new user
-        // (nothing pre-existing at all) still succeeds immediately —
-        // there's nothing stale to wait out.
-        const currentIds = (data.installations || []).map((i) => String(i.installation_id));
-        const newOrChangedIds = currentIds.filter((id) => {
-          const before = preConnectIdsRef.current.get(id);
-          if (before === undefined) return true; // brand new installation
-          const inst = (data.installations || []).find((i) => String(i.installation_id) === id);
-          return (inst?.repositories || []).length !== before; // repo grant changed
-        });
-        if (newOrChangedIds.length === 0 && preConnectIdsRef.current.size > 0) {
-          return; // nothing this session has done yet — keep waiting, leave the popup alone
-        }
+      //
+      // 2026-09-09-c — CRITICAL fix (3rd founder recording, real
+      // production repro): `installation_active` is true the
+      // MOMENT any installation exists for this account, globally
+      // — including ones from a completely unrelated past session.
+      // The code below used to stop polling + force-close the
+      // popup + declare success the INSTANT this went true, even
+      // if the user was still mid-flow (e.g. still inside GitHub's
+      // own "Sign in with Google" sub-flow, picking a Google
+      // account, clearing a Windows Hello PIN prompt) authorizing
+      // something entirely different. For ANY returning user with
+      // an existing installation (this test account has 12+), that
+      // condition is true on literally the FIRST poll tick — often
+      // while they're still on GitHub/Google's own pages — silently
+      // killing their in-progress popup out from under them and
+      // declaring "connected" against stale data (matches the
+      // recording exactly: popup dies at "about:blank" right after
+      // Google account selection, main UI is left showing a stale
+      // "Connected to: RepoReady" from an unrelated old install).
+      // Fix: compute the SAME new-or-changed diff used for
+      // freshInstallIds FIRST, and only treat this as success once
+      // something genuinely new/changed is found. A brand-new user
+      // (nothing pre-existing at all) still succeeds immediately —
+      // there's nothing stale to wait out.
+      if (checkGrantSuccess(data)) {
         stopPolling();
-        setConnecting(false);
-        try { popupRef.current?.close?.(); } catch { /* cross-origin */ }
-        trackFunnel("app_install_granted", "wizard");
-        // 2026-09-09 — full-isolation fix, part 2: postMessage/claim
-        // (below) is the precise source when it arrives, but it can
-        // race or drop on some browser/extension combos. This is the
-        // guaranteed-to-run fallback, computed above.
-        //
-        // 2026-09-09-b — founder-reported (2nd recording): the
-        // ORIGINAL fallback here was "no new id ⇒ mark ALL currently-
-        // active installations fresh", which leaked unrelated sibling
-        // orgs. Fixed by comparing repo COUNT per id (above), not
-        // just the id set.
-        setFreshInstallIds((prev) => {
-          const merged = new Set(prev);
-          for (const id of newOrChangedIds) merged.add(id);
-          return Array.from(merged);
-        });
-        if (data.state !== "connected") {
-          startBackgroundRepoSync();
-        }
         return;
       }
       // GitHub Apps have no real "deny" callback (unlike OAuth Apps) —
@@ -230,6 +235,15 @@ export default function useGitHubConnectStatus() {
       // backed out (a real success is caught above BEFORE this runs).
       if (popupRef.current?.closed) {
         stopPolling();
+        // 2026-09-12 — grace window (see checkGrantSuccess comment
+        // above): re-check twice, 1s apart, before declaring denial.
+        for (let i = 0; i < 2; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          // eslint-disable-next-line no-await-in-loop
+          const graceData = await fetchStatus();
+          if (checkGrantSuccess(graceData)) return;
+        }
         setConnecting(false);
         setDenied(true);
         trackFunnel("app_install_denied", "wizard", { reason: "popup_closed" });

@@ -89,6 +89,15 @@ describe("Bug-2/Bug-3 shared root — installation_active vs state===connected",
       await Promise.resolve();
     });
 
+    // 2026-09-12 — grace window fix: a closed popup no longer declares
+    // denial on the very next tick — it spends ~2s re-checking first
+    // (2 re-checks, 1s apart) in case the backend's webhook was just
+    // still catching up. Still truly nothing installed here, so it
+    // must still correctly end in `denied` once that grace window
+    // elapses with no change.
+    expect(result.current.denied).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2200); });
+
     expect(result.current.denied).toBe(true);
     expect(trackFunnel).toHaveBeenCalledWith(
       "app_install_denied", "wizard", { reason: "popup_closed" },
