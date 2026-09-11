@@ -133,16 +133,48 @@ def _fix_a_an(text: str) -> str:
     return _AN_FIX_RE.sub(_repl, text)
 
 
+# 2026-09-12 — confirmed live bug (founder repro, SAME turn as the
+# "your page" fix above): a commit link's real domain got mangled —
+# "https://github.com/OWNER/repo/update/<sha>" came back as
+# "https://website's connection.com/...". Root cause: EVERY regex
+# pass below (_FILENAME_RE, _combined_pattern's word map, etc.) runs
+# over the ENTIRE reply text with zero awareness that some spans are
+# URLs, not prose. "github" inside the domain "github.com" is still a
+# whole word by `\b` standards, so the map's "github" -> "website's
+# connection" entry fires on it exactly like it would in a sentence.
+# Any map term, or any dotted-extension the URL path happens to end
+# in (e.g. a link ending in `...data.json`), is equally exposed — one
+# shared root cause, not two unrelated bugs (confirmed via re-repro).
+# Fix: pull every http(s) URL out FIRST, substitute it for a sentinel
+# placeholder that cannot collide with any map term or the filename/
+# grammar regexes, run every existing pass unchanged on what's left,
+# then restore the exact original URL bytes verbatim. A link's
+# functional correctness always outranks hiding jargon inside it.
+_URL_RE = re.compile(r"https?://\S+")
+_URL_PLACEHOLDER = "\x00URL{}\x00"
+
+
 def filter_for_business_owner(text: str) -> str:
     """Deterministic — same input always produces the same output, no
     LLM call. Strips filenames-with-extension (replaced with a plain
-    page reference) and rewrites dev terms to business-owner terms."""
+    page reference) and rewrites dev terms to business-owner terms.
+    Any embedded URL is passed through byte-for-byte, untouched."""
     if not text:
         return text
-    out = _FILENAME_RE.sub(_humanize_filename, text)
+    urls: list[str] = []
+
+    def _stash_url(m: re.Match) -> str:
+        urls.append(m.group(0))
+        return _URL_PLACEHOLDER.format(len(urls) - 1)
+
+    protected = _URL_RE.sub(_stash_url, text)
+    out = _FILENAME_RE.sub(_humanize_filename, protected)
     out = _ACCESS_TO_RE.sub(lambda m: _preserve_case(m.group(0), "I can't see"), out)
     out = _combined_pattern().sub(_replace_term, out)
-    return _fix_a_an(out)
+    out = _fix_a_an(out)
+    for i, url in enumerate(urls):
+        out = out.replace(_URL_PLACEHOLDER.format(i), url)
+    return out
 
 
 def apply_business_voice(ora_panel: bool, content: str) -> str:

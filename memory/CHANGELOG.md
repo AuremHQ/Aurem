@@ -1,4 +1,35 @@
 # AUREM CTO — Changelog (append-only)
+- **business_voice_filter.py — commit link domain mangled ("website's
+  connection.com" instead of "github.com") (2026-09-12, SAME founder
+  turn as the "your page" fix below — confirmed shared root cause)**
+  - Founder re-tested the "your page" fix live and found a second bug
+    in the same reply: the commit-confirmation link came back as
+    `https://website's connection.com/TJSNDHU/Aurem/update/<sha>`
+    instead of the real `https://github.com/...` link.
+  - **Root cause (confirmed shared with the "your page" bug):**
+    `filter_for_business_owner()` ran every regex pass (the word-level
+    jargon map from `business_voice_map.json`, plus `_FILENAME_RE`)
+    over the ENTIRE reply with zero URL-awareness. `business_voice_map.json`
+    maps `"github" -> "website's connection"`; since "github" inside
+    the domain "github.com" is still a whole word by `\b` boundary
+    rules, the map fired on it exactly as it would in prose. A URL
+    ending in a recognized extension (e.g. `.json`) would have been
+    equally exposed to `_FILENAME_RE`.
+  - **Fix:** every `http(s)://` URL in the reply is now extracted
+    FIRST via a new `_URL_RE`, swapped for a null-byte-delimited
+    sentinel immune to any current/future map term or filename regex,
+    then restored byte-for-byte verbatim after all substitution passes
+    complete. URLs are now structurally immune to this filter.
+  - Reproduced the exact live string first, confirmed the fix,
+    added `tests/test_business_voice_url_mangling_2026_09_12.py` (5
+    tests). Testing agent independently verified 100% (41/41 across
+    both new + all pre-existing filter tests) and added a companion
+    file `tests/test_business_voice_url_bypass_paths_2026_09_12.py`
+    (4 tests) explicitly locking the `ora_panel=True` bypass and the
+    `aurem-handoff` fence exemption against future regression:
+    `/app/test_reports/iteration_business_voice_url_mangling_2026_09_12.json`.
+    Zero critical/minor issues found.
+
 - **business_voice_filter.py — "your page" leaking unresolved for non-page
   filenames (2026-09-12, live founder repro on TJSNDHU/Aurem@main)**
   - Founder message asking to add a comment to `package.json` came

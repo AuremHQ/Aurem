@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can help fix issues and go live with updates directly to your Website.",
+      "reply": "I can help fix bugs, suggest improvements, and go live with updates directly to your website—just share the link!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -22,7 +22,7 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I'd love to make that change for you — but right now I don't see a website connected to this chat. If you pick your project from the sidebar, I'll be able to read your pages and publish the update directly.\n\nOne quick thing I'll need from you either way: **what are your opening hours?** For example, \"Mon–Fri 9am–5pm, Sat 10am–2pm, Sun closed.\" Once I have those and your site is connected, I'll put them right at the top of your main page.",
+      "reply": "I'd love to make that change for you, but I need two things first:\n\n1. **Select your website project** from the sidebar — right now no project is connected, so I can't see or edit your pages.\n2. **Tell me your opening hours** — just the days and times you'd like shown at the top of your main page (e.g. \"Mon–Fri 9am–5pm, Sat 10am–2pm, Sun closed\").\n\nOnce you've picked the project and given me the hours, I'll add them right to the top of your main page and make it live for you.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -40,7 +40,7 @@
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Perfect! Once you connect your website in the sidebar, I'll update your hours to \"9am–5pm daily\" and publish it straight to your site.",
+      "reply": "Got it! Once you select your website project from the sidebar, I'll update your opening hours to show \"9am–5pm, daily\". Just one click away!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -58,7 +58,7 @@
     {
       "turn": 4,
       "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I'll add your phone number to the bottom of your main page as soon as you connect your website in the sidebar. Once it's connected, I'll be able to read your page and publish the update directly.\n\nJust to confirm — you want:\n- **Phone number:** 1-800-555-0199 at the bottom of the main page\n- **Opening hours:** 9am–5pm daily at the top (from earlier)\n\nShould I do both at once, or just the phone number for now?",
+      "reply": "I'll add your phone number to the bottom of your main page as soon as you **select your website project** from the sidebar — right now no project is connected, so I can't see or edit your pages.\n\nOnce you've picked the project, I'll add both:\n- **Opening hours** (9am–5pm, daily) at the top\n- **Phone number** (1-800-555-0199) at the bottom\n\nand make it live for you. What else?",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -137,7 +137,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey! How can I help today? 😊",
+      "reply": "Hey! Ready to dive into your content together. What's up?",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }

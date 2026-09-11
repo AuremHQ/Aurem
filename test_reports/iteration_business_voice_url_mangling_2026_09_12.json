@@ -1,0 +1,38 @@
+{
+  "summary": "Verified the URL-mangling fix in backend/services/business_voice_filter.py. Ran the full pre-existing regression suite for this filter (37 tests across 4 files: test_business_voice_url_mangling_2026_09_12.py, test_business_voice_nonpage_filename_2026_09_12.py, test_business_owner_voice_2026_08_31.py, test_business_voice_github_repo_doublesub_2026_09_03.py) — 100% passing. Added a new 4-test companion file test_business_voice_url_bypass_paths_2026_09_12.py that explicitly locks TEST 6 (ora_panel=True bypass leaves raw github.com URLs and raw filenames untouched) and TEST 7 (aurem-handoff fence exemption in apply_business_owner_guards short-circuits before the filter runs). All 4 new tests pass. Backend-only per request; frontend not tested. TEST 1–5 from the review request are already covered by the founder-added test_business_voice_url_mangling_2026_09_12.py, TEST 6/7 are now explicitly covered by the new companion file.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_business_voice_url_mangling_2026_09_12.py",
+    "/app/backend/tests/test_business_voice_url_bypass_paths_2026_09_12.py",
+    "/app/backend/tests/test_business_voice_nonpage_filename_2026_09_12.py",
+    "/app/backend/tests/test_business_owner_voice_2026_08_31.py",
+    "/app/backend/tests/test_business_voice_github_repo_doublesub_2026_09_03.py",
+    "/app/test_reports/pytest/url_mangling_2026_09_12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is minimal, correct, and addresses the shared root cause (URL-agnostic regex passes) rather than patching the single reported string — good hygiene.",
+    "_URL_RE = r'https?://\\S+' is greedy on trailing punctuation (period, closing paren, comma) — the URL span captured may include a trailing sentence terminator or the closing ')' of a markdown link. Because the fix restores bytes verbatim, this is functionally harmless (the URL round-trips exactly), but it means the *sentinel* also swallowed the trailing char, so any downstream markdown parser sees the URL exactly as the model emitted it. Not a bug; noting as a subtle characteristic of the regex.",
+    "The \\x00-delimited sentinel is a clean choice — no collision risk with the map/filename regexes. Consider a brief comment noting why null bytes are safe (they can never appear in LLM-emitted UTF-8 text under normal conditions) for future maintainers.",
+    "No regression risk observed in the 37-test pre-existing suite; the change is well-contained to filter_for_business_owner().",
+    "Suggestion (non-blocking): a fuzz-style property test that generates random URLs inside random prose could future-proof this filter against any new map entry addition — but the current 9 URL-focused tests already lock the concrete failure modes."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_business_voice_url_bypass_paths_2026_09_12.py (NEW — 4 tests locking ora_panel + aurem-handoff bypass paths)"
+  ],
+  "success_rate": {"backend": "100% (41/41)", "frontend": "N/A (backend-only per request)"},
+  "test_credentials": "N/A — pure unit tests on a deterministic filter function; no auth/DB touched.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "business_voice_filter.py URL-protection fix is verified and locked by 9 URL-specific tests (5 in test_business_voice_url_mangling_2026_09_12.py + 4 in test_business_voice_url_bypass_paths_2026_09_12.py) plus a 32-test pre-existing suite covering the broader filter. All 41 pass in 0.33s. Both founder-reported bugs from the 2026-09-12 verification session (the 'your page' non-page-filename bug and the mangled github.com domain bug) share the same fix file and are both locked. No production changes needed.",
+  "rca of the issue": "Root cause (already fixed): filter_for_business_owner() applied _FILENAME_RE, _combined_pattern (word-jargon map), and _ACCESS_TO_RE substitutions across the entire reply string with zero URL-awareness. The word 'github' inside 'github.com' is a whole word by \\b boundary standards, so the map entry 'github' -> \"website's connection\" fired inside URL domains exactly as it would in prose, producing the broken 'https://website\\'s connection.com/...'. Same class of bug would fire for any URL whose path ended in a recognized extension (e.g. '.json') via _FILENAME_RE. Reproduction: filter_for_business_owner('Commit: https://github.com/x/y/z') would return 'Commit: https://website\\'s connection.com/x/y/z' pre-fix. Mitigation (applied): new _URL_RE = re.compile(r'https?://\\S+') extracts every URL into a null-byte-delimited sentinel BEFORE any substitution pass runs, then restores each URL byte-for-byte AFTER all passes complete. This immunizes URLs against any current or future map entry / filename regex."
+}
