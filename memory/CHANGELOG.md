@@ -3436,3 +3436,58 @@ instead of "I don't have access."
 **Testing:** 67 backend regression tests pass (ora_chat, fal BYOK,
 video pipeline, avatar library, new avatar-kind routing).
 
+
+## 2026-09-11 (cont'd) — post_scan_nudge mislabeling fix + gate resume fix (funnel/onboarding)
+
+**Founder report, evidence-based (4 real production users):**
+`post_scan_nudge_shown` appeared right after `repo_connect_gate_skipped`
+for 3 users who never connected a repo or ran a scan, while a 4th user
+with a fully completed connect+scan flow never got it at all. A
+separate sub-case (user 3) showed the gate re-presenting "Install
+Aurem for your repos" + Skip from scratch even though she had already
+completed the GitHub App install + granted access in an earlier
+session — only repo selection remained.
+
+**Fix 1 (confirmed root cause, high confidence):**
+`services/signup_guards.py::emit_engagement_nudge_shown()` /
+`emit_engagement_nudge_task_sent()` hardcoded
+`event_type="post_scan_nudge_shown"` regardless of the `trigger`
+argument — so every legitimate "post_skip" nudge (correctly shown
+right after a skip) was logged under the WRONG funnel event name.
+Pure analytics mislabeling, not a UX defect — the nudge itself was
+right, only its logged name was wrong. Now `event_type` always
+matches `trigger`: `"post_skip_nudge_shown"` / `"post_scan_nudge_shown"`
+(same for `_task_sent`). Added a trigger allowlist (drops + logs a
+warning on an unrecognized trigger instead of silently minting a
+garbage event_type). New test:
+`test_engagement_nudge_event_labeling_2026_09_11.py` (3/3 pass).
+DB-verified: pre-fix funnel_events rows (09-09) show the old wrong
+label; post-fix rows (09-11, same run) show the corrected label.
+
+**Fix 2 (confirmed root cause):** `NewUserWizard.jsx`'s `appInstalls`
+memo always filtered to only-this-browser-session-fresh installs
+(`freshInstallIds`) — a deliberate "full isolation" fix from
+2026-09-09 meant to stop a NEW project's connect step from
+auto-picking a repo from a DIFFERENT, unrelated past project. That
+filter leaked into the mandatory `asGate=true` path, where the user
+by definition has zero existing projects — there's no "different
+past project" to isolate from there. Fixed: when `asGate`, use the
+account's full global installation history instead of the fresh-only
+filter; the `AddProjectWizard` reuse case (`asGate=false`, which
+genuinely needs the isolation) is unchanged.
+
+**Not fixed — case 4 (post_scan nudge never fires for a fully
+completed flow):** investigated via static code reading; both the
+backend condition (`GET /onboarding/nudge/post-scan-state`) and the
+frontend mount condition (`useActiveProject` truthiness) look correct
+on paper. No definitive code bug found without production log/DB
+access. Flagged as open, not closed — needs live debugging (browser
+network tab on the actual account, or confirming which route they
+were on after the scan, since the nudge only mounts on the Dashboard
+page).
+
+**Testing:** `testing_agent` round confirmed both fixes (100% pass),
+verified the brand-new/zero-install user path still renders the
+normal gate CTA (no regression), and confirmed via DB inspection that
+funnel_events now log the corrected event names.
+

@@ -93,11 +93,27 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // `appPickerActive` below are narrowed to ONLY installations freshly
   // confirmed during THIS wizard session, so a new project never shows
   // or uses connect history from a different past project.
+  //
+  // 2026-09-11 — founder-reported (3 real users, evidence-confirmed):
+  // that same isolation filter was ALSO applied when this wizard is
+  // rendered as the mandatory `asGate` — where the user by definition
+  // has ZERO existing projects (the gate only shows pre-first-project).
+  // There is no "different past project" to isolate from there, so a
+  // user who already installed the App and granted repo access in an
+  // earlier page load (e.g. closed the tab before finishing repo
+  // selection) was shown the "Install Aurem for your repos" CTA again
+  // from scratch, as if nothing had happened — confusing, and a real
+  // cause of users clicking Skip right after doing the hard part. When
+  // `asGate`, use the account's full global installation history
+  // instead of the fresh-only filter; the AddProjectWizard reuse case
+  // (which genuinely has other projects to isolate from) is unaffected.
   const appInstalls = React.useMemo(
-    () => (ghConnectStatus.installations || []).filter(
-      (inst) => freshInstallIds.includes(String(inst.installation_id)),
-    ),
-    [ghConnectStatus.installations, freshInstallIds],
+    () => asGate
+      ? (ghConnectStatus.installations || [])
+      : (ghConnectStatus.installations || []).filter(
+          (inst) => freshInstallIds.includes(String(inst.installation_id)),
+        ),
+    [ghConnectStatus.installations, freshInstallIds, asGate],
   );
   const appPickerActive = appInstalls.length > 0;
   // Flat list of repos across ONLY the fresh installations — the
