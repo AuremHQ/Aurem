@@ -1,4 +1,42 @@
 # AUREM CTO — Changelog (append-only)
+- **business_voice_filter.py — "your page" leaking unresolved for non-page
+  filenames (2026-09-12, live founder repro on TJSNDHU/Aurem@main)**
+  - Founder message asking to add a comment to `package.json` came
+    back with the literal, incoherent phrase "your page" 3 times
+    ("your page is strict JSON... Let me read your page first...").
+    Confirmed UNRELATED to the earlier LLM-decoding repetition bug
+    (frequency_penalty/repetition_penalty in `openrouter_client.py`,
+    which fixes the model looping the SAME phrase 20+ times — this
+    was a coherent 3-sentence reply, not a degeneration loop).
+  - **Root cause:** `business_voice_filter.py`'s `_FILENAME_RE` matches
+    any known extension (py/jsx/tsx/json/md/yaml/css/html/txt/sql/env/
+    sh), then `_humanize_filename()` tries `_PAGE_NAME_HINTS` keyword
+    matches (home/about/contact/footer/header/pricing). Backend/config
+    files (`package.json`, `.py`, `.sql`, `.env`, `.sh`, `.txt`, `.yml`,
+    `.md`) can never match any of those page keywords, so EVERY one of
+    them fell through to the generic `_DEFAULT_PAGE_TERM = "your page"`
+    — falsely implying the business owner's own website page.
+  - **Fix:** `_humanize_filename()` now only falls back to "your page"
+    for genuinely page-like extensions (`html/htm/jsx/tsx/css/scss`).
+    Every other extension falls back to a new `_DEFAULT_FILE_TERM =
+    "that file"`, which then passes through the pre-existing word-level
+    `file→page` map in `business_voice_map.json` (already used
+    elsewhere in this filter), landing on the neutral "that page"
+    instead of the ownership-implying "your page".
+  - Reproduced the exact live string first, confirmed the fix resolves
+    it, then added `tests/test_business_voice_nonpage_filename_2026_09_12.py`
+    (3 tests). Full existing suite (29 + 3 related files, 48 tests
+    total across voice/page_resolver/dead_end/incomplete_reply) still
+    100% passing — no regression to page-like filename handling
+    (index.html → "your homepage", Footer.tsx → "the bottom of your
+    page", etc.) or to the `ora_panel=True` raw-filename bypass.
+  - Testing agent verified independently (backend-only, 32/32 pytest +
+    5/5 manual scenarios): `/app/test_reports/iteration_business_voice_nonpage_filename_2026_09_12.json`.
+    Zero critical issues. One PRE-EXISTING, non-blocking gap noted for
+    future follow-up: bare dotfiles (`.env`, `.gitignore`) without a
+    stem before the dot aren't matched by `_FILENAME_RE` at all (not
+    introduced by this fix).
+
 - **Visibility Kit — "index.html not found" was hardcoded to repo
   root only; now searches the real tree (2026-09-06, same-day
   follow-up #2)**

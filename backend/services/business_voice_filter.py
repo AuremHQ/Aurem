@@ -45,6 +45,23 @@ _PAGE_NAME_HINTS = (
 )
 _DEFAULT_PAGE_TERM = "your page"
 
+# 2026-09-12 — confirmed live bug (founder repro: "add a comment to
+# the top of package.json"): _FILENAME_RE also matches non-page
+# extensions (json/py/yml/sql/env/sh/txt/md) — real backend/config
+# files that have NOTHING to do with a "page". None of the
+# _PAGE_NAME_HINTS patterns above can ever match those (there's no
+# "home"/"about"/"footer" concept in a config file), so every one of
+# them silently fell through to the generic _DEFAULT_PAGE_TERM,
+# producing an incoherent "your page" in place of a real filename
+# reference the user themselves had just typed (e.g. "package.json"
+# -> "your page" x3 in one reply). Only extensions a business owner
+# would actually think of as a visual "page" get the page-flavored
+# default; everything else gets an accurate, still-jargon-free
+# fallback instead of a nonsensical one.
+_PAGE_LIKE_EXTS = {"html", "htm", "jsx", "tsx", "css", "scss"}
+_EXT_RE = re.compile(r"\.([A-Za-z0-9]+)$")
+_DEFAULT_FILE_TERM = "that file"
+
 
 @lru_cache(maxsize=1)
 def _load_map() -> dict[str, str]:
@@ -81,7 +98,11 @@ def _humanize_filename(match: re.Match) -> str:
     for pattern, label in _PAGE_NAME_HINTS:
         if pattern.search(stem):
             return label
-    return _DEFAULT_PAGE_TERM
+    ext_match = _EXT_RE.search(stem)
+    ext = ext_match.group(1).lower() if ext_match else ""
+    if ext in _PAGE_LIKE_EXTS:
+        return _DEFAULT_PAGE_TERM
+    return _DEFAULT_FILE_TERM
 
 
 def _preserve_case(original: str, replacement: str) -> str:

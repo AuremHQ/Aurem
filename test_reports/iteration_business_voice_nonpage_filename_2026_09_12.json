@@ -1,0 +1,32 @@
+{
+  "summary": "Backend-only verification of the business_voice_filter.py fix for the 'your page' x3 incoherent-reply bug on non-page config/backend filenames (live repro: package.json). Ran full existing business_voice test suite (32 tests) plus dedicated ad-hoc runtime checks covering all 5 requested test scenarios. All pass. Fix is correct, targeted, and does not regress prior page-like extension behavior, ora_panel bypass, aurem-handoff exemption, or general chat.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "services/business_voice_filter.py::_FILENAME_RE", "issue": "Regex requires >=1 char stem before the extension (\\b[\\w\\-./]+\\.ext\\b), so bare dotfiles like '.env', '.gitignore', '.eslintrc' are NOT matched and would leak verbatim to business-owner-facing replies. Pre-existing limitation, NOT introduced by this fix, but worth a follow-up (allow zero-length stem or add an explicit dotfile branch). 'config.env' and 'app.env' are correctly filtered."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_business_voice_nonpage_filename_2026_09_12.py",
+    "/app/backend/tests/test_business_owner_voice_2026_08_31.py",
+    "/app/backend/tests/test_business_voice_github_repo_doublesub_2026_09_03.py",
+    "/app/test_reports/pytest/business_voice_nonpage_2026_09_12.xml"
+  ],
+  "action_items": [
+    "OPTIONAL follow-up (not blocking this fix): extend _FILENAME_RE to also catch dotfiles (.env, .gitignore, .eslintrc, .prettierrc) so they don't leak verbatim to business-owner replies. Current fix only addressed the observed live case (stemmed non-page extensions)."
+  ],
+  "critical_code_review_comments": [
+    "Fix is minimal, surgical, and correct: _humanize_filename now branches on extension via _PAGE_LIKE_EXTS -> 'your page' vs _DEFAULT_FILE_TERM='that file' -> mapped to 'that page' via the pre-existing word-level file->page substitution. Deterministic, no LLM, matches the module's stated discipline.",
+    "Good separation: tool-call args and ora_panel view remain untouched. Test coverage for the exact live repro (package.json x3) is locked in.",
+    "Minor gap noted above re: bare dotfiles (.env). Not a regression from this fix; original _FILENAME_RE has always failed to match them."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "N/A - pure unit-level verification of a deterministic text filter; no auth or live-repo hit required.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The fix in backend/services/business_voice_filter.py is verified correct via 32/32 pytest and 5/5 manual scenario checks (live-repro package.json, all non-page extensions [txt/py/yml/sql/sh/md/env], page-like extensions [html/jsx/tsx/css including Home/About/Contact/Footer/Header/pricing hints], ora_panel bypass, and aurem-handoff fence exemption). Only follow-up worth noting: bare-dotfile filenames (.env, .gitignore) escape _FILENAME_RE entirely because the regex requires a non-empty stem before the dot -- separate, pre-existing issue.",
+  "rca of the issue": "RCA already documented in the review request and codified in the fix + regression test: _FILENAME_RE matched non-page extensions (py/json/md/yaml/txt/sql/env/sh) but _PAGE_NAME_HINTS could only ever match page-ish stems, so all backend/config filenames fell through to _DEFAULT_PAGE_TERM='your page'. Fix branches the fallback on extension: page-like exts keep 'your page'; everything else uses 'that file' which the pre-existing file->page word map then rewrites to 'that page'. Reproduction confirmed against the exact founder-quoted string; output no longer contains 'your page' or the raw filename."
+}
