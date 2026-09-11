@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { Lock, Settings, LogOut, ArrowUp, RefreshCw, Zap, Clock, Plus, Square, Copy, Play, Paperclip, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { api, setToken, getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "../components/OraChatHouseRulesPanel";
+import VideoGenPanel from "../components/VideoGenPanel";
 // Feb 2026 · Phase 1 (Streamdown) — see OraChatDrawer.jsx for the full
 // rationale. XSS-safe defaults, streaming caret, GFM/LaTeX/Mermaid.
 import { Streamdown } from "streamdown";
@@ -121,6 +122,26 @@ export default function OraDirect() {
       api.get("/auth/me").then(() => setAuthed(true))
                           .catch(() => setToken(null));
     }
+  }, []);
+
+  // 2026-09-10 — This page is ALWAYS the light-cream theme (hardcoded
+  // PAL above), independent of the app-wide Day/Night toggle. But CSS
+  // vars like --code-fg/--code-bg (used by `.ora-md code` for markdown
+  // code blocks) are only flipped to their light-mode values when
+  // `<html data-theme="light">` is set. Without forcing it here, a
+  // founder whose global theme is "dark" (or unset) sees pale/near-
+  // invisible fenced-code-block text on this page's white background
+  // — the exact bug reported 2026-09-10. Force light while mounted,
+  // restore whatever the app-wide toggle had on unmount so leaving
+  // /ora doesn't strand dark-mode pages in light mode.
+  useEffect(() => {
+    const html = document.documentElement;
+    const prev = html.getAttribute("data-theme");
+    html.setAttribute("data-theme", "light");
+    return () => {
+      if (prev === null) html.removeAttribute("data-theme");
+      else html.setAttribute("data-theme", prev);
+    };
   }, []);
 
   return authorized ? <ChatShell onLogout={() => { setToken(null); setAuthed(false); }} />
@@ -349,6 +370,7 @@ function ChatShell({ onLogout }) {
   const [budget, setBudget]       = useState(null);
   const [stream, setStream]       = useState({ buf: "", route: null, model: null });
   const [showRules, setShowRules] = useState(false);
+  const [mode, setMode] = useState("chat"); // "chat" | "video" — 2026-09-10
   const [showPicker, setShowPicker] = useState(false);
   const [recentSessions, setRecent] = useState([]);
   const listRef = useRef(null);
@@ -640,6 +662,17 @@ function ChatShell({ onLogout }) {
                                          ...routeMeta,
                                          cost_usd: obj.cost_usd }]);
             setStream({ buf: "", route: null, model: null });
+          } else if (evtType === "error" || obj.type === "error") {
+            // 2026-09-10 — this SSE event previously had no handler at
+            // all, so a backend-side failure (e.g. no LLM key
+            // configured for this role) silently hung the UI forever
+            // with zero feedback — looked exactly like "ORA isn't
+            // responding." Surface it as a visible error bubble.
+            const reason = obj.error === "llm_api_key_missing"
+              ? "No chat model is configured yet — the founder needs to activate one in Admin Settings → Models & LLM."
+              : `Something went wrong (${obj.error || "unknown error"}). Try again.`;
+            setMessages(m => [...m, { role: "assistant", content: reason, isError: true }]);
+            setStream({ buf: "", route: null, model: null });
           }
         }
       }
@@ -679,6 +712,29 @@ function ChatShell({ onLogout }) {
                           borderBottom: `1px solid ${PAL.border}`,
                           background: PAL.card }}>
         <div style={{ fontWeight: 700, letterSpacing: 2, fontSize: 15 }}>AUREM</div>
+
+        <div data-testid="ora-mode-switcher"
+             style={{ display: "flex", gap: 3, padding: 3, marginLeft: 20,
+                        background: PAL.chip, borderRadius: 8,
+                        border: `1px solid ${PAL.border}` }}>
+          <button data-testid="ora-mode-chat-btn" onClick={() => setMode("chat")}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "none",
+                            cursor: "pointer", fontSize: 12, fontWeight: 600,
+                            background: mode === "chat" ? PAL.accent : "transparent",
+                            color: mode === "chat" ? "#fff" : PAL.muted,
+                            transition: "background 0.15s, color 0.15s" }}>
+            Chat
+          </button>
+          <button data-testid="ora-mode-video-btn" onClick={() => setMode("video")}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "none",
+                            cursor: "pointer", fontSize: 12, fontWeight: 600,
+                            background: mode === "video" ? PAL.accent : "transparent",
+                            color: mode === "video" ? "#fff" : PAL.muted,
+                            transition: "background 0.15s, color 0.15s" }}>
+            Video
+          </button>
+        </div>
+
         <div style={{ flex: 1 }} />
         {budget && debug && (
           <div data-testid="ora-budget-pill"
@@ -697,6 +753,15 @@ function ChatShell({ onLogout }) {
       {/* Main area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column",
                      overflow: "hidden", position: "relative" }}>
+        {mode === "video" ? (
+          <div data-testid="ora-video-gen-wrapper"
+               style={{ flex: 1, overflow: "hidden", display: "flex",
+                          margin: "16px 32px 20px", borderRadius: 16,
+                          background: "#0f1113", border: `1px solid ${PAL.border}`,
+                          boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+            <VideoGenPanel />
+          </div>
+        ) : <>
         {!hasChat && (
           // ── EMPTY STATE — centered hero ─────────────────────────
           <div style={{ flex: 1, display: "flex", flexDirection: "column",
@@ -811,6 +876,7 @@ function ChatShell({ onLogout }) {
             </div>
           </>
         )}
+        </>}
       </div>
 
       {/* Sessions picker overlay */}
@@ -820,7 +886,7 @@ function ChatShell({ onLogout }) {
       )}
       {/* House rules panel */}
       {showRules && (
-        <OraChatHouseRulesPanel onClose={() => setShowRules(false)} />
+        <OraChatHouseRulesPanel onClose={() => setShowRules(false)} initialScope={mode} />
       )}
 
       {/* Iter 212m-264 · Feb 2026 · Phase 2 — Security-hardened live

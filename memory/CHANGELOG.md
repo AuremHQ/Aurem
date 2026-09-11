@@ -3320,3 +3320,53 @@ honoured) + 1 LOW (double-ellipsis) — all 3 fixed by main agent and
 re-verified via Playwright screenshots + the same backend pytest
 suite (10/10 pass, unaffected by the frontend-only fixes).
 
+
+## 2026-09-10/11 — /ora page: code-block contrast fix + Video mode added + critical ORA Chat outage fixed
+
+**Bug 1 — fenced code blocks unreadable on `/ora` (OraDirect.jsx):**
+Root cause: `.ora-md pre code { background: transparent }` (index.css)
+was written assuming it only ever renders on the dark admin drawer's
+background. `--code-fg`/`--code-bg` only flip to light-appropriate
+values when `<html data-theme="light">` is set, and `OraDirect.jsx`
+never set it — so on this always-light-cream page, the fenced-block
+text stayed the DARK theme's pale color (`#e6edf3`) while its
+background went transparent onto the light page, i.e. near-white text
+on near-white. Fixed by forcing `data-theme="light"` while `OraDirect`
+is mounted (restoring the previous value on unmount). Applied the
+mirror-image fix to `OraChatDrawer.jsx` (forces `data-theme="dark"`
+while the drawer is open) since it has the identical latent risk in
+the opposite direction. Verified live: `.ora-md pre code` color now
+computes to `rgb(17,24,39)` (dark, correct) with a real generated
+code block fully legible.
+
+**Bug 2 — Video Generator missing from `/ora`:** the Chat/Video
+one-switch toggle + `VideoGenPanel` only existed in the admin drawer
+(`OraChatDrawer.jsx`). Added the same header pill switcher
+(`ora-mode-switcher` → `ora-mode-chat-btn`/`ora-mode-video-btn`) to
+`OraDirect.jsx`; Video mode renders `VideoGenPanel` inside a dark
+rounded card (matching the panel's own hardcoded dark palette, which
+would otherwise look broken directly on the light page). House Rules
+panel's `initialScope` now also tracks this page's mode, same as the
+drawer.
+
+**Bug 3 (found during verification, unrelated to the above two but a
+severe live blocker) — ORA Chat gave ZERO response to any message,
+on BOTH `/ora` and the admin drawer:** traced via a raw curl to
+`/api/aurem-dev/ora-chat/message` → `event: error, data:
+{"error":"llm_api_key_missing"}`. Root cause: `llm_active` singleton
+doc only had `{"vision": null}` — the "chat" role had never been
+(or was no longer) mapped to an active config, so `_resolve()` fell
+through to the empty `LLM_API_KEY` env var. A valid, working config
+already existed (`OpenRouter — Qwen 3.8 27B`, tested OK, 803ms
+latency) — just never activated for "chat". Fixed via
+`POST /admin/llm/configs/{id}/set-active {"role":"chat"}`. Re-verified
+with a real end-to-end SSE message → `event: final` with real
+`tokens_in`/`tokens_out`. Also patched `OraDirect.jsx`'s SSE reader,
+which had NO handler at all for `event: error` (silently dropped it,
+which is why the UI hung forever with no feedback instead of showing
+an error) — `OraChatDrawer.jsx` already handled this correctly, so
+only OraDirect needed the fix. This was the actual root cause of the
+outage; the missing handler was a contributing "silent failure" bug
+worth fixing regardless so a future outage is visible instead of a
+silent black hole.
+

@@ -53,6 +53,26 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
   const listRef = useRef(null);
   const abortRef = useRef(null);
 
+  // 2026-09-10 — mirror of the OraDirect.jsx fix: this drawer is
+  // ALWAYS a dark UI (hardcoded #0f1113 background) regardless of the
+  // app-wide Day/Night toggle. `--code-fg`/`--code-bg` (used by
+  // `.ora-md code`) only flip to dark-appropriate values when
+  // `<html data-theme="dark">` (or unset) is active — if a founder's
+  // global theme happens to be "light" while this drawer is open,
+  // fenced-code-block text would render dark-on-dark and disappear,
+  // the same contrast bug reported for OraDirect. Force dark only
+  // while the drawer is actually open (visible), restore on close.
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const prev = html.getAttribute("data-theme");
+    html.setAttribute("data-theme", "dark");
+    return () => {
+      if (prev === null) html.removeAttribute("data-theme");
+      else html.setAttribute("data-theme", prev);
+    };
+  }, [open]);
+
   // ── on first open: fetch recent sessions instead of auto-creating.
   //    Empty list → auto-create a fresh one. Non-empty → show picker.
   useEffect(() => {
