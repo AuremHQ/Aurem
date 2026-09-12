@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+from typing import Optional
 
 import httpx
 
@@ -31,6 +32,12 @@ logger = logging.getLogger(__name__)
 
 # ─── Endpoint + retry policy ─────────────────────────────────────────────
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# 2026-09-12 — OpenRouter dashboard attribution. Fixed branding value,
+# intentionally NOT read from the APP_URL env var (that one correctly
+# tracks this deployment's OAuth-callback domain, currently aurem.dev
+# — an unrelated concern).
+_OPENROUTER_REFERER = "https://auremcto.com"
 
 # Iter 124 — retry policy for transient upstream failures (rate limit / 5xx).
 # Exponential backoff with full jitter so concurrent callers don't sync up.
@@ -122,6 +129,7 @@ async def call_openrouter_model(
     user: str,
     max_tokens: int = 1000,
     temperature: float = 0.2,
+    feature: Optional[str] = None,
 ) -> str:
     """Iter 165 — generic OpenRouter caller for the agents pipeline.
 
@@ -137,6 +145,13 @@ async def call_openrouter_model(
     `:free` tier models. The caller never has to know — they still get
     a usable completion string, with a log line marking which model
     actually answered.
+
+    2026-09-12 — `feature` (e.g. "Loop Planning", "Self-Heal Retry",
+    "Vision Describe") tags the OpenRouter dashboard's `X-Title` per
+    call-site so background/guard traffic is distinguishable from
+    user-facing traffic in openrouter.ai/logs — previously every
+    caller shared one generic "AUREM" title. Optional, defaults to
+    the generic title for any caller that hasn't been tagged yet.
 
     Returns "" on any failure; the agents layer handles fallback so we
     keep this function thin and predictable.
@@ -159,8 +174,12 @@ async def call_openrouter_model(
         return ""
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": os.getenv("APP_URL", "https://auremcto.com"),
-        "X-Title": "AUREM",
+        # 2026-09-12 — decoupled from the general-purpose APP_URL env
+        # var (which correctly tracks this deployment's OAuth-callback
+        # domain, currently aurem.dev) — OpenRouter attribution is a
+        # fixed branding value, not a per-deployment redirect URL.
+        "HTTP-Referer": _OPENROUTER_REFERER,
+        "X-Title": f"AUREM - {feature}" if feature else "AUREM",
         "Content-Type": "application/json",
     }
     base_messages = [

@@ -50,7 +50,8 @@ async def call_llm_with_meta(system: str, user: str,
                               mode: str = "chat",
                               user_id: Optional[str] = None,
                               review_mode: Optional[str] = None,
-                              step_hook=None) -> dict:
+                              step_hook=None,
+                              feature: Optional[str] = None) -> dict:
     """
     Orchestrator-facing entry point.
 
@@ -87,6 +88,12 @@ async def call_llm_with_meta(system: str, user: str,
     (https://us.cloud.langfuse.com) via services.langfuse_tracing.
     Tracing is silently disabled when LANGFUSE_*_KEY env vars are
     missing; a Langfuse outage never breaks an LLM call.
+
+    2026-09-12 — `feature` (e.g. "Loop Planning", "Self-Heal Retry")
+    tags the OpenRouter dashboard's X-Title per call-site so
+    background/guard traffic is distinguishable from user-facing
+    traffic in openrouter.ai/logs. Optional — every existing caller
+    that doesn't pass it keeps the generic "AUREM" title unchanged.
     """
     # X1/W3 hardening (2026-08-30, overnight-loop-2 P0) — this is the
     # ONE shared gateway every orchestrator/loop-plan/Council A/B/C
@@ -170,12 +177,12 @@ async def call_llm_with_meta(system: str, user: str,
         mode=mode, review_mode=review_mode,
         user_id=user_id,
         system_prompt=system, user_prompt=user,
-        extra_metadata={"max_tokens": max_tokens},
+        extra_metadata={"max_tokens": max_tokens, "feature": feature},
     ) as _lf:
         result = await _call_llm_with_meta_inner(
             system=system, user=user, max_tokens=max_tokens,
             mode=mode, user_id=user_id, review_mode=review_mode,
-            step_hook=step_hook,
+            step_hook=step_hook, feature=feature,
         )
         _lf["success"](result)
 
@@ -219,7 +226,8 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                                      mode: str = "chat",
                                      user_id: Optional[str] = None,
                                      review_mode: Optional[str] = None,
-                                     step_hook=None) -> dict:
+                                     step_hook=None,
+                                     feature: Optional[str] = None) -> dict:
     """Real body of call_llm_with_meta — Iter 212m-119 split for tracing.
 
     Iter 367 (audit cleanup) — Removed the litellm.Router opt-in path
@@ -305,6 +313,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
             glm_content = await primary_caller(
                 system=system, user=user,
                 max_tokens=actual_tokens, temperature=temperature,
+                feature=feature,
             )
         except Exception as e:
             glm_err = e
@@ -356,6 +365,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 claude_content = await _call_claude(
                     system=system, user=user,
                     max_tokens=actual_tokens, temperature=temperature,
+                    feature=feature,
                 )
             except Exception as e:
                 logger.error(f"Pro mode: Claude fallback also failed: {e!r}")
@@ -400,6 +410,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 claude_content = await _call_claude(
                     system=system, user=user,
                     max_tokens=actual_tokens, temperature=temperature,
+                    feature=feature,
                 )
             except Exception as e:
                 return {
@@ -446,6 +457,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
             claude_content = await _call_claude(
                 system=system, user=review_user,
                 max_tokens=actual_tokens, temperature=temperature,
+                feature=feature,
             )
         except Exception as e:
             logger.warning(
@@ -519,6 +531,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 glm_content = await _call_glm(
                     system=system, user=user,
                     max_tokens=actual_tokens, temperature=temperature,
+                    feature=feature,
                 )
             except Exception as e:
                 logger.warning(f"Council B GLM-5.2 raised: {e!r} — using DeepSeek rescue")
@@ -543,6 +556,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                     messages=[{"role": "user", "content": user}],
                     system=system,
                     max_tokens=actual_tokens, temperature=temperature,
+                    feature=feature,
                 )
             except Exception as e:
                 logger.error(f"Council B: both GLM and DeepSeek failed: {e!r}")
@@ -580,6 +594,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 messages=[{"role": "user", "content": user}],
                 system=system,
                 max_tokens=actual_tokens, temperature=temperature,
+                feature=feature,
             )
         except Exception as e:
             logger.error(f"Council C: DeepSeek write failed: {e!r}")
@@ -640,7 +655,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
 
     try:
         if use_claude:
-            content = await _call_claude(system, user, actual_tokens, temperature)
+            content = await _call_claude(system, user, actual_tokens, temperature, feature=feature)
             # Count the Claude call against the user's monthly Maxx quota.
             if user_id:
                 try:
@@ -658,6 +673,7 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 system=system,
                 max_tokens=actual_tokens,
                 temperature=temperature,
+                feature=feature,
             )
         return {
             "ok":           True,

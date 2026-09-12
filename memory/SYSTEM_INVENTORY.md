@@ -941,3 +941,6 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 | `routers/visual_bugfix.py` | `/visual-bugfix` | 3 | auto-detected new router (verify) (Iter 0, 2026-09-12T17:37:17.972600Z) | <!-- inv:router:routers/visual_bugfix.py -->
 - `services/visual_bugfix_storage.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T17:37:17.972635Z] <!-- inv:service:services/visual_bugfix_storage.py -->
 - `services/visual_bugfix_vision.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T17:37:17.972690Z] <!-- inv:service:services/visual_bugfix_vision.py -->
+- `services/visual_bugfix_patch.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T18:16:37.797246Z] <!-- inv:service:services/visual_bugfix_patch.py -->
+- `services/visual_bugfix_pr.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T18:16:37.797315Z] <!-- inv:service:services/visual_bugfix_pr.py -->
+- `services/visual_bugfix_preview.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T18:16:37.797337Z] <!-- inv:service:services/visual_bugfix_preview.py -->

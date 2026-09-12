@@ -162,7 +162,7 @@ async def _log_reviewer_errors(user_id: str, session_id: str,
 
 async def run_review(*, user_id: str, session_id: str, query: str,
                      draft: str, context: str,
-                     reason: str = "") -> dict:
+                     reason: str = "", feature: Optional[str] = None) -> dict:
     """One hostile-review pass. Never raises. Returns:
     {flags, hard, soft, dropped, latency_s, usage, cost_usd,
      skipped, passed}"""
@@ -200,6 +200,7 @@ async def run_review(*, user_id: str, session_id: str, query: str,
                   {"role": "user",   "content": user_prompt}],
         temperature=0.0, top_p=0.9, presence_penalty=0.0,
         max_tokens=1024,
+        feature=feature,
     )
     latency = round(time.time() - t0, 2)
     cost = 0.0

@@ -76,7 +76,7 @@ async def describe_image_via_vision(raw: bytes, content_type: str,
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://auremcto.com",
-            "X-Title": "AUREM - upload/convert (image)",
+            "X-Title": "AUREM - Vision Describe",
         }
         async with ext_client("openrouter", timeout=httpx.Timeout(45.0)) as c:
             r = await c.post(

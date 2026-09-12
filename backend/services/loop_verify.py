@@ -241,6 +241,7 @@ async def self_heal(file_obj: dict, lint_errors: list[str],
             system=sys_msg, user=user_msg,
             max_tokens=2500, mode="code",
             user_id=user_id, review_mode="pro",
+            feature="Self-Heal Retry",
         )
         out = (meta or {}).get("content", "").strip()
         # Strip stray fences.

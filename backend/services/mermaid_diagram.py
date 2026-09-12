@@ -108,7 +108,7 @@ async def _openrouter_call(model: str, system: str, user: str,
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://auremcto.com",
-        "X-Title": "Aurem - Graph Diagram",
+        "X-Title": "AUREM - Mermaid Diagram",
     }
     try:
         r = await ext_request(

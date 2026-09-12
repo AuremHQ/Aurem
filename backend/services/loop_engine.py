@@ -4707,7 +4707,8 @@ async def _generate_plan(user_id: str, project_id: Optional[str],
         meta = await asyncio.wait_for(
             call_llm_with_meta(sys_msg, user_message,
                                review_mode="pro",
-                               mode="loop_plan"),
+                               mode="loop_plan",
+                               feature="Loop Planning"),
             timeout=PLAN_LLM_TIMEOUT_S,
         )
     except asyncio.TimeoutError:

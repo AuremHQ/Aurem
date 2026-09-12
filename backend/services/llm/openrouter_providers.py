@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import os
 import re as _re
+from typing import Optional
 
 
 logger = logging.getLogger(__name__)
@@ -70,13 +71,19 @@ _LONGCAT_MODEL = os.getenv("LONGCAT_MODEL", "anthropic/claude-sonnet-4.5")
 
 async def _call_claude(system: str, user: str,
                        max_tokens: int = 3500,
-                       temperature: float = 0.0) -> str:
+                       temperature: float = 0.0,
+                       feature: Optional[str] = None) -> str:
     """Call Claude Sonnet 4.5 via OpenRouter for code tasks.
 
     Iter 166 — Migrated from Emergent SDK to OpenRouter. Single key
     (OPENROUTER_API_KEY) now serves DeepSeek + Claude + all agents.
     Falls back to DeepSeek if Claude call returns empty (network /
     upstream failure) so code tasks never hard-fail.
+
+    2026-09-12 — `feature` tags the OpenRouter X-Title (see
+    call_openrouter_model's docstring) and is threaded into the
+    DeepSeek fallback below so a caller's dashboard tag survives a
+    provider failover.
     """
     # Session D · D-2c — lazy imports for helpers that stay in
     # `services/llm/__init__.py` (`_openrouter_key`, `_call_deepseek`).
@@ -92,6 +99,7 @@ async def _call_claude(system: str, user: str,
             system=system,
             max_tokens=max_tokens,
             temperature=temperature,
+            feature=feature,
         )
 
     content = await call_openrouter_model(
@@ -100,6 +108,7 @@ async def _call_claude(system: str, user: str,
         user=user,
         max_tokens=max_tokens,
         temperature=temperature,
+        feature=feature,
     )
     if content:
         return content
@@ -111,6 +120,7 @@ async def _call_claude(system: str, user: str,
         system=system,
         max_tokens=max_tokens,
         temperature=temperature,
+        feature=feature,
     )
 
 
@@ -118,7 +128,8 @@ async def _call_claude(system: str, user: str,
 
 async def _call_glm(system: str, user: str,
                     max_tokens: int = 3500,
-                    temperature: float = 0.0) -> str:
+                    temperature: float = 0.0,
+                    feature: Optional[str] = None) -> str:
     """Iter 212m-18 — Call GLM-5.2 (`z-ai/glm-5.2`) via OpenRouter.
 
     Mirrors `_call_claude`'s shape so the orchestrator and review-mode
@@ -139,6 +150,7 @@ async def _call_glm(system: str, user: str,
             system=system,
             max_tokens=max_tokens,
             temperature=temperature,
+            feature=feature,
         )
     content = await call_openrouter_model(
         model=_GLM_MODEL,
@@ -146,6 +158,7 @@ async def _call_glm(system: str, user: str,
         user=user,
         max_tokens=max_tokens,
         temperature=temperature,
+        feature=feature,
     )
     return content or ""
 
@@ -190,7 +203,8 @@ def _strip_tool_call_xml_len(raw: str) -> int:
 
 async def _call_longcat(system: str, user: str,
                         max_tokens: int = 3500,
-                        temperature: float = 0.0) -> str:
+                        temperature: float = 0.0,
+                        feature: Optional[str] = None) -> str:
     """Call LongCat-2.0 (`meituan/longcat-2.0`) via OpenRouter.
 
     Only invoked when `LONGCAT_ENABLED=true` and the caller routes via
@@ -217,6 +231,7 @@ async def _call_longcat(system: str, user: str,
         return await _call_glm(
             system=system, user=user,
             max_tokens=max_tokens, temperature=temperature,
+            feature=feature,
         )
     if not _openrouter_key():
         logger.info(
@@ -227,6 +242,7 @@ async def _call_longcat(system: str, user: str,
             system=system,
             max_tokens=max_tokens,
             temperature=temperature,
+            feature=feature,
         )
     content = await call_openrouter_model(
         model=_LONGCAT_MODEL,
@@ -234,6 +250,7 @@ async def _call_longcat(system: str, user: str,
         user=user,
         max_tokens=max_tokens,
         temperature=temperature,
+        feature=feature,
     )
     # 2026-02-18 — Detect the "content is ONLY tool-call XML with no
     # prose" case. LongCat-2.0 occasionally responds with a bare
@@ -263,6 +280,7 @@ async def _call_longcat(system: str, user: str,
             return await _call_glm(
                 system=system, user=user,
                 max_tokens=max_tokens, temperature=temperature,
+                feature=feature,
             )
         except Exception as e:
             logger.error("_call_longcat: GLM-5.2 fallback also failed: %r", e)
@@ -288,6 +306,7 @@ async def _call_longcat(system: str, user: str,
             return await _call_glm(
                 system=system, user=user,
                 max_tokens=max_tokens, temperature=temperature,
+                feature=feature,
             )
         except Exception as e:
             logger.error("_call_longcat: GLM-5.2 fallback also failed: %r", e)
@@ -369,7 +388,8 @@ async def _call_deepseek_direct(
 
 async def _call_deepseek(messages: list, system: str = "",
                          max_tokens: int = 1500,
-                         temperature: float = 0.7) -> str:
+                         temperature: float = 0.7,
+                         feature: Optional[str] = None) -> str:
     # Session D · D-2d — lazy imports for sibling-module symbols.
     # Module-level imports here would create a circular chain because
     # the parent `services/llm/__init__.py` imports THIS module at
@@ -379,7 +399,7 @@ async def _call_deepseek(messages: list, system: str = "",
     from ._probes import _deepseek_model
     from ._routing import _DEEPSEEK_HOSTS
     from .openrouter_client import (
-        OPENROUTER_URL, _MAX_RETRIES,
+        OPENROUTER_URL, _MAX_RETRIES, _OPENROUTER_REFERER,
         _free_fallback_models, _retryable, _retry_delay, _is_fallback_worthy,
     )
     from .groq_client import _call_groq, _groq_key, _GROQ_MODEL
@@ -390,8 +410,11 @@ async def _call_deepseek(messages: list, system: str = "",
 
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": os.getenv("APP_URL", "https://auremcto.com"),
-        "X-Title": "AUREM",
+        # 2026-09-12 — see call_openrouter_model's matching comment;
+        # decoupled from APP_URL (that env var tracks the OAuth-
+        # callback domain, an unrelated concern).
+        "HTTP-Referer": _OPENROUTER_REFERER,
+        "X-Title": f"AUREM - {feature}" if feature else "AUREM",
         "X-No-Cache": "true",
     }
     msgs = ([{"role": "system", "content": system}] + messages) if system else messages

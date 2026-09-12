@@ -1,4 +1,51 @@
 # AUREM CTO — Changelog (append-only)
+- **OpenRouter Token Bleed Fix — Header Metadata & Caller Audit
+  (2026-09-12)**
+  - Root cause: `HTTP-Referer` on several call paths read from
+    `APP_URL` env (resolves to `https://aurem.dev`, wrong domain) and
+    `X-Title` was generic (`"AUREM"`, `"AUREM Dev"`, `"Aurem Advisor"`,
+    `"Aurem - Graph Diagram"`) — impossible to distinguish spend by
+    feature on the OpenRouter dashboard, and `App:` showed the wrong
+    site.
+  - **Fixed HTTP-Referer** to hardcoded `https://auremcto.com` in
+    `openrouter_client.py` (`_OPENROUTER_REFERER`) and
+    `ora_chat/providers.py` (was previously `os.getenv("APP_URL", ...)`
+    in both).
+  - **Added feature-specific `X-Title="AUREM - <FeatureName>"`**
+    threaded end-to-end: `openrouter_client.call_openrouter_model`,
+    `openrouter_providers.py` (`_call_claude/_call_glm/_call_longcat/
+    _call_deepseek`, incl. fallback branches), `llm/_meta.py`
+    (`call_llm_with_meta`, ~9 internal dispatch sites),
+    `ora_chat/providers.py` (`_headers/stream_call/one_shot`).
+  - **Tagged every top-level caller** with its own feature name:
+    `Loop Planning` (loop_engine.py), `Self-Heal Retry`
+    (loop_verify.py), `Vision Describe` (vision_describe.py),
+    `Advisor Vision` (advisor_vision.py), `ORA Chat`
+    (ora_chat/providers.py default), `Mermaid Diagram`
+    (mermaid_diagram.py), `Reader/Coder/Reviewer/Security Agent`
+    (agents.py, per role), `Vanguard Verify`
+    (vanguard_verify_agent.py), `Watchdog Review`
+    (services/llm/__init__.py), `Hallucination Classifier`
+    (runs every 4h via cron), `Grounding Canary` (nightly cron).
+  - **Guard-model downgrade investigated, not needed:** audited every
+    periodic/background caller (4h hallucination classifier, nightly
+    grounding canary, daily persona-eval battery) — all already use
+    the cheapest tier (DeepSeek V3 "cheapest capable", or default
+    `review_mode="swift"`). No caller was found running an expensive
+    model in a background loop, so no downgrade was applied.
+  - **Subscription token/task budget gating verified intact**
+    (pre-existing, not modified): `assert_has_budget` /
+    `assert_has_task_budget` still gate `chat/stream`, `chat/turn`,
+    `diagram/generate`, `upload`, and `cto_projects/tasks` before any
+    LLM spend.
+  - Tested: new regression suite
+    `tests/test_2026_09_12_openrouter_feature_headers.py` (23/23
+    passing) + live smoke (`chat/stream`, `diagram/generate`) against
+    preview URL. Zero regressions in the broader ~250-test sweep
+    across ora_chat/agents/loop modules (4 pre-existing unrelated
+    failures confirmed via `git stash` bisection, not caused by this
+    change). Report:
+    `/app/test_reports/iteration_openrouter_feature_headers_2026_09_12.json`.
 - **Multimodal Visual Bug-Fix & Preview Pipeline — Phase 3 (patch
   synthesis + isolated headless preview) + Phase 4 (before/after
   workbench + draft-PR action bar) shipped and fully tested

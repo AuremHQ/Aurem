@@ -1,0 +1,32 @@
+{
+  "summary": "Regression tested the 2026-09-12 OpenRouter Token Bleed / Header Metadata / Guard Model Downgrade task. Created backend regression test suite (23 tests, all passing) covering: (1) call_openrouter_model builds X-Title='AUREM - <feature>' with hardcoded HTTP-Referer=https://auremcto.com; (2) ora_chat.providers._headers() correctly falls back to 'AUREM - ORA Chat' and honors feature kwarg; (3) mermaid_diagram/vision_describe/advisor_vision X-Title strings match required values with hardcoded auremcto.com Referer; (4) provider fanout (_call_claude/_call_glm/_call_longcat/_call_deepseek) and call_llm_with_meta accept 'feature' kwarg; (5) agents.py role features (Reader/Coder/Reviewer/Security Agent) wired; loop_engine passes feature='Loop Planning'; loop_verify passes feature='Self-Heal Retry'; (6) budget-gate call sites (assert_has_budget / assert_has_task_budget) still present in chat/stream, chat/turn, diagram, upload, cto_projects/tasks; (7) live smoke tests against preview URL — /api/aurem-dev/chat/stream returned real OpenRouter/DeepSeek response with proper SSE tokens; /api/aurem-dev/diagram/generate returned valid mermaid_code. Backend booted cleanly, all crons (hallucination_cron every 4h, ORA grounding canary daily 02:30 UTC, daily persona-eval, preview-sandbox sweeper 5min) armed with no import errors. Frontend home loads cleanly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_2026_09_12_openrouter_feature_headers.py",
+    "/app/test_reports/pytest/openrouter_feature_headers.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Header/feature wiring is consistent across all 4 feature-tagged services (mermaid, vision_describe, advisor_vision, ora_chat providers) and the generic client (openrouter_client.call_openrouter_model). No hardcoded/stale 'Aurem' (lowercase e) or 'Graph Diagram' titles remain — verified via grep.",
+    "openrouter_client._OPENROUTER_REFERER is a module-level constant; ora_chat/providers.py, mermaid, vision, advisor each independently hardcode 'https://auremcto.com' as literals. Consider consolidating to a single shared constant in a future cleanup to prevent future drift if the branding domain ever changes (minor / non-blocking).",
+    "Task said 'downgrade non-user-facing callers to cheap model if expensive'. Investigation-note confirms all identified periodic callers (hallucination classifier, grounding canary, persona-eval) already used cheap tier — verified in code (hallucination_classifier uses DeepSeek V3, canary uses default 'swift' review_mode). No model downgrade was applied and none needed.",
+    "Free-tier budget-gate regression: live call with free-gate-test-0822@aurem.dev account still allowed a chat/stream request even when 'tokens_remaining: 0' surfaced in the done frame. This is likely because assert_has_budget checks pre-call state (is_exhausted flag) and tokens are decremented post-call — so the FIRST call after balance is 'about to hit zero' passes through and only subsequent calls get blocked. This matches PRE-EXISTING behavior (not touched this session). No regression."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_2026_09_12_openrouter_feature_headers.py (new)"
+  ],
+  "success_rate": {"backend": "100% (23/23 unit + 3 live smoke)", "frontend": "100% (home loads)"},
+  "test_credentials": "Preview admin: test@aurem.dev / AuremTest2026! (used for live chat+diagram smoke). Preview free-tier: free-gate-test-0822@aurem.dev / FreeGateTest2026! (used for quota-gate observation).",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "OpenRouter header/feature tagging is now fully wired end-to-end. Regression suite at tests/test_2026_09_12_openrouter_feature_headers.py can be re-run any time (no external network deps except a single /api/health smoke). Base URL still uses /api/aurem-dev prefix (NOT /api/) for auth/chat/diagram/upload routes. Free-tier budget gate is decrement-post-call, so blocking of an exhausted account only takes effect on the request AFTER the one that consumes their last tokens — this is expected pre-existing behavior."
+}
