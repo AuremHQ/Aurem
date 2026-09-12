@@ -1,4 +1,104 @@
 # AUREM CTO — Changelog (append-only)
+- **Multimodal Visual Bug-Fix & Preview Pipeline — Phase 3 (patch
+  synthesis + isolated headless preview) + Phase 4 (before/after
+  workbench + draft-PR action bar) shipped and fully tested
+  (2026-09-12)**
+  - Completes the 4-phase lifecycle started earlier the same day
+    (Phase 1+2 entry below). Founder-confirmed decisions: patch-gen
+    model = Gemini 3.1 Pro (same key/provider as Phase 2's vision
+    call); node_modules cached per repo+lockfile-hash so only the
+    FIRST preview on a never-before-seen repo may exceed 45s
+    ("Building dependency cache — first run only" UI state), every
+    later preview on that repo comfortably fits under 45s; "Approve &
+    Create PR" opens a DRAFT PR by default.
+  - **New backend service `services/visual_bugfix_patch.py`:** one
+    Gemini 3.1 Pro text call per run (Cost Guard). Model returns FULL
+    new file bodies (not a raw diff) — same convention
+    `write_repo_file` already uses elsewhere, sidesteps LLM diffs
+    failing to apply. The actual unified diff shown to the user is
+    computed locally via `difflib`. Every returned file is
+    syntax-checked via the existing `_run_syntax_check` before it can
+    be previewed or shipped. **Directly verified working** with a
+    synthetic white-on-white-button test — produced a correct,
+    syntactically valid contrast fix.
+  - **New backend service `services/visual_bugfix_preview.py`:**
+    Zero Live Server Mutation — copies the (already-existing, shared)
+    repo tarball snapshot to a fresh `/tmp` dir per run, applies the
+    patch there, installs deps (symlinked from a
+    `/app/.aurem_cache/preview_deps` cache keyed by
+    repo+lockfile-hash when available, else a real install, LRU-
+    evicted at ~1.5GB given this pod's tight disk), builds
+    (`yarn build`/`npm run build`), serves the static output on an
+    OS-assigned ephemeral port via `python3 -m http.server`, captures
+    a headless Chromium screenshot (Playwright + Chromium newly
+    installed on this pod this session via `playwright install
+    chromium`), tears everything down in a `finally` block. Fail-Safe
+    Degradation: any failure at any stage returns a clean
+    `preview_error` — never raises, never hides the already-computed
+    diff. **Directly verified working end-to-end** (minus the GitHub
+    tarball step, which needs a live repo connection unavailable in
+    this sandbox — see gap note below): copied a real snapshot of
+    this very frontend, applied a visible marker-text patch, ran a
+    real `yarn build`, served it, and captured a real headless
+    screenshot with the patched text clearly visible.
+  - **New backend service `services/visual_bugfix_pr.py`:** "Approve
+    & Create PR" — a thin wrapper reusing the EXISTING Loop Mode
+    branch/commit/PR primitives (`services.loop_safety.
+    create_or_reuse_branch`/`open_draft_pr`,
+    `services.github_api_writer.commit_files`) — no new git logic
+    built from scratch.
+  - **New router endpoints** on `routers/visual_bugfix.py`: `POST
+    /{id}/generate-patch` (blocking, handles both first-generation and
+    "Refine Fix" re-entry, capped at 3 refines/report), `POST
+    /{id}/preview` (fires a background `asyncio.create_task` and
+    returns immediately — a cold install can exceed this pod's ~60s
+    external-proxy ceiling, so the frontend polls the new `GET
+    /{id}/status` every 2s instead of holding one long request open),
+    `POST /{id}/approve-pr`, `POST /{id}/discard`.
+  - **Subscription quota enforcement (founder-mandated guard):**
+    reused the app's EXISTING flat-fee monthly task-count cap
+    (`services.usage.assert_has_task_budget`, the same 402 gate a
+    normal chat edit already hits) rather than building a parallel
+    token-balance system — this app's real pricing model is
+    task-count based (10 free tasks/month), not raw-token based (see
+    `usage.py`'s own docstring: "the headline pricing model is
+    flat-fee, no token surprises"). Checked pre-flight at `/upload`
+    (before ANY vision $ is spent) and again at `/generate-patch`
+    (the actual point where a run's ONE task gets counted — added to
+    `get_usage()`'s existing multi-collection aggregation, mirroring
+    the pre-existing `scan_fix_usage`/`loop_sessions` precedent
+    rather than a new counter field). Granular per-call token
+    estimates (vision + patch) are ALSO logged to the existing
+    `cost_tracker.log_call()` ledger for admin cost observability —
+    disclosed honestly as a chars/4 ESTIMATE, since
+    `emergentintegrations.llm.chat`'s `LlmChat` does not expose real
+    prompt/completion token counts through any stable API surface.
+  - **New frontend:** `VisualDiffWorkbench.jsx` (state machine:
+    generating_patch → patch_ready → preview_generating →
+    previewed/preview_failed → pr_creating → pr_created), reused as
+    small subcomponents `BeforeAfterViewer.jsx` (side-by-side/slider
+    toggle, static images only) and `CodeDiffViewer.jsx` (collapsible
+    per-file unified diff with a syntax-error badge). Wired in via a
+    new "Generate fix" button on the existing `VisualBugAnalysisCard`
+    (Phase 2), which then swaps the analysis card out for the
+    workbench in `ChatPanel.jsx`. A quota 402 dispatches the SAME
+    `aurem:token-limit-reached` event the rest of the app already
+    listens for — no new paywall UI invented.
+  - **Disclosed sandbox gap (not a code bug):** no project in this
+    sandbox has a working GitHub App installation, so the full
+    generate-patch → preview → approve-pr happy path could not be
+    exercised end-to-end through the live API here — only its (fully
+    verified) 400 error paths, plus the preview mechanism's build/
+    serve/screenshot core proven separately as above.
+  - **Tested:** `testing_agent_v3_fork` — backend 10/10 pytest
+    (`test_visual_bugfix_phase3_4_2026_09_12.py`), 0 critical/minor
+    issues from a full code-review pass (state machine, cleanup
+    interval, prop wiring, quota gate placement, `usage.py`
+    extension), confirmed `GET /usage/me` unaffected for both
+    admin/founder and free-tier accounts. `action_items: []`.
+  - **PROVENANCE: preview-only, pending deploy.**
+
+
 - **Multimodal Visual Bug-Fix & Preview Pipeline — Phase 1 (upload/
   storage ingestion) + Phase 2 (vision extraction + codebase
   grounding) shipped and fully tested (2026-09-12)**

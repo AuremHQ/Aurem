@@ -59,6 +59,7 @@ import LoopLiveFeed from "./LoopLiveFeed";
 import OperationHistory from "./OperationHistory";
 import PlanApprovalCard from "./PlanApprovalCard";
 import VisualBugAnalysisCard from "./VisualBugAnalysisCard";  // 2026-09-12 — Visual Bug-Fix Phase 1+2
+import VisualDiffWorkbench from "./VisualDiffWorkbench";      // 2026-09-12 — Visual Bug-Fix Phase 3+4
 // Iter 212m-65 — Phase D wiring: Self-heal indicator + paused-loop
 // User Action card (powered by the real /loop/* SSE stream).
 import { SelfHealIndicator, UserActionCard, LoopExpiredCard } from "./LoopActionCards";
@@ -586,6 +587,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   //  visual_defects, extracted_strings, inferred_dom_elements,
   //  suggested_patterns, candidate_files, error}
   const [visualBugAnalysis, setVisualBugAnalysis] = useState(null);
+  const [workbenchReportId, setWorkbenchReportId] = useState(null);   // 2026-09-12 — Visual Bug-Fix Phase 3+4
   // Iter 114 — Live task popup state. Set when a CTO task is dispatched
   // (onTaskHandoff). Auto-dismisses on success after 5s, persists on
   // failure until the user closes it manually, vanishes immediately on
@@ -5835,10 +5837,36 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           </div>
         )}
 
-        {visualBugAnalysis && (
+        {visualBugAnalysis && !workbenchReportId && (
           <VisualBugAnalysisCard
             result={visualBugAnalysis}
             onDismiss={() => setVisualBugAnalysis(null)}
+            onGenerateFix={() => setWorkbenchReportId(visualBugAnalysis.imageId)}
+          />
+        )}
+
+        {workbenchReportId && (
+          <VisualDiffWorkbench
+            reportId={workbenchReportId}
+            token={getToken()}
+            onClose={() => {
+              const t = getToken();
+              fetch(`${API_BASE}/visual-bugfix/${workbenchReportId}/discard`, {
+                method: "POST",
+                headers: t ? { Authorization: `Bearer ${t}` } : {},
+              }).catch(() => { /* best-effort — closing the card matters more than the API call succeeding */ });
+              setWorkbenchReportId(null);
+              setVisualBugAnalysis(null);
+            }}
+            onTokenLimit={(detail) => {
+              window.dispatchEvent(new CustomEvent("aurem:token-limit-reached", {
+                detail: {
+                  kind: detail?.error || "monthly_task_limit_reached",
+                  message: detail?.message || "You've used your free fixes this month — upgrade to continue.",
+                  upgrade_url: detail?.upgrade_url || "/pricing",
+                },
+              }));
+            }}
           />
         )}
 

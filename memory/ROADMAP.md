@@ -2,11 +2,11 @@
 
 See PRD.md for original requirements/architecture, CHANGELOG.md for what's shipped.
 
-## P0 — Multimodal Visual Bug-Fix Pipeline — next phase
-- **Phase 1 (upload/storage) + Phase 2 (vision extraction + codebase grounding) — SHIPPED + TESTED (2026-09-12).** See CHANGELOG.md 2026-09-12 entry. Backend 13/13 pytest, frontend 100% Playwright e2e. Sandbox-only, not yet deployed.
-- **Phase 3 (not started) — localized patch synthesis + isolated preview runner.** Founder explicitly REJECTED hot-patching the shared dev server (concurrent-session crash/race risk) — must use an isolated build/static serve or isolated port. Cost Guard caps this at 1 code-gen call per run (on top of the 1 vision call already spent in Phase 2).
-- **Phase 4 (not started) — before/after comparison UI + diff viewer + approve/refine workbench.** No automatic production merge, per founder's original spec.
-- Trigger to resume: founder go-ahead for Phase 3 (large scope, isolation-runner design needs its own review before coding starts).
+## P0 — Multimodal Visual Bug-Fix Pipeline — ALL 4 PHASES SHIPPED (2026-09-12)
+- **Phase 1 (upload/storage) + Phase 2 (vision extraction + codebase grounding) — SHIPPED + TESTED.** Backend 13/13 pytest, frontend 100% Playwright e2e.
+- **Phase 3 (patch synthesis + isolated preview) + Phase 4 (before/after workbench + draft-PR action bar) — SHIPPED + TESTED.** Backend 10/10 pytest, 0 critical/minor code issues from review. See CHANGELOG.md 2026-09-12 entry for full detail.
+- **Known gap, not a bug:** this sandbox has no project with a working GitHub App installation, so the full generate-patch → preview → approve-pr happy path has never been exercised end-to-end here — only the (thoroughly verified) error paths, and the preview-runner's build/serve/screenshot mechanics were separately proven against a real local copy of this very repo. **Next trigger:** the first time a user actually runs this in production with a real connected repo, watch closely for issues in that untested happy path — cold-install timing and PR body formatting are the highest-risk spots.
+- All 4 phases are sandbox-only, not yet deployed to production.
 
 
 ## P0 — in-flight / founder-blocking (updated 2026-08-27, post-checkpoint decisions)

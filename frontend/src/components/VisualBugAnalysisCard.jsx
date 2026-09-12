@@ -10,9 +10,9 @@
  * (before/after comparison UI) are NOT built yet — this card only
  * shows the vision analysis + ranked candidate source files.
  */
-import { Loader2, X, Search, FileCode, AlertTriangle } from "lucide-react";
+import { Loader2, X, Search, FileCode, AlertTriangle, Wand2 } from "lucide-react";
 
-export const VisualBugAnalysisCard = ({ result, onDismiss }) => {
+export const VisualBugAnalysisCard = ({ result, onDismiss, onGenerateFix }) => {
   if (!result) return null;
   const { status, name, error } = result;
 
@@ -109,6 +109,21 @@ export const VisualBugAnalysisCard = ({ result, onDismiss }) => {
             <div data-testid="visual-bug-card-no-candidates" style={{ opacity: 0.6 }}>
               No connected repo to search for a matching file yet — analysis above still stands.
             </div>
+          )}
+
+          {result.candidate_files?.length > 0 && onGenerateFix && (
+            <button
+              type="button"
+              data-testid="visual-bug-card-generate-fix-btn"
+              onClick={onGenerateFix}
+              style={{
+                alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6,
+                padding: "6px 14px", borderRadius: 999, background: "#FF6608", border: "none",
+                color: "#0a0a0a", fontWeight: 600, fontSize: 12, cursor: "pointer",
+              }}
+            >
+              <Wand2 size={13} /> Generate fix
+            </button>
           )}
         </div>
       )}

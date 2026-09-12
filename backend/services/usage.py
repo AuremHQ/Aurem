@@ -151,6 +151,17 @@ async def get_usage(user_id: str) -> dict:
         ]},
     })
     tasks_this_month += loop_runs_this_month
+    # Iter 2026-09-12 — Visual Bug-Fix pipeline. A completed run (vision
+    # + patch generation) counts as ONE task, same as any other real
+    # edit — counted the moment a patch is successfully synthesized
+    # (not merely uploaded/analyzed), mirroring the scan_fix_usage /
+    # loop_sessions precedent just above instead of a new counter field.
+    visual_bugfix_this_month = await db.visual_bug_reports.count_documents({
+        "user_id": user_id,
+        "created_at": {"$gte": month_start},
+        "status": {"$in": ["patch_generated", "previewed", "preview_failed", "pr_created"]},
+    })
+    tasks_this_month += visual_bugfix_this_month
     task_cap = MONTHLY_TASK_LIMITS.get(tier, MONTHLY_TASK_LIMITS["free"])
 
     return {
