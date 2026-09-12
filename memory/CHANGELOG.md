@@ -1,4 +1,124 @@
 # AUREM CTO — Changelog (append-only)
+- **Multimodal Visual Bug-Fix & Preview Pipeline — Phase 1 (upload/
+  storage ingestion) + Phase 2 (vision extraction + codebase
+  grounding) shipped and fully tested (2026-09-12)**
+  - **Founder-approved scope for this ticket:** Phase 1+2 only. Phase
+    3 (localized patch synthesis + isolated preview runner) and
+    Phase 4 (before/after comparison UI) are explicitly deferred —
+    not built, not stubbed.
+  - **New backend:** `routers/visual_bugfix.py` (mounted at
+    `/api/aurem-dev/visual-bugfix/*`) — `POST /upload` (multipart,
+    png/jpeg/webp, 10MB cap, PIL dimension validation, sha256 hash),
+    `GET /{id}/image` (serves stored bytes; accepts either an
+    `Authorization` header OR a `?auth=` query param so a plain
+    `<img src>` can load it without custom headers — same convention
+    as the GitHub App install-redirect route), `POST /{id}/analyze`
+    (one Gemini 3.1 Pro vision call + codebase correlation).
+    Ownership-checked on every route — a report_id owned by a
+    different user 404s, doesn't leak.
+  - **New backend services:** `services/visual_bugfix_storage.py`
+    (Emergent Managed Object Storage wrapper — `put_object`/
+    `get_object`/`init_storage`, warmed at startup as a background
+    task). `services/visual_bugfix_vision.py` (one
+    `emergentintegrations.llm.chat` Gemini 3.1 Pro vision call per
+    run — Cost Guard from the spec — returns structured
+    `visual_defects`/`extracted_strings`/`inferred_dom_elements`/
+    `suggested_patterns`; never raises, returns `ok:false` +
+    `error` string on any failure).
+  - **Codebase grounding reuses existing tools as-is** (no new
+    indexing system built): literal-text `search_repo` (grep) on
+    `extracted_strings` for highest-confidence matches, conceptual
+    `semantic_search_repo` on `suggested_patterns` for lower-
+    confidence matches, merged into a single ranked
+    `candidate_files` list with confidence scores. Gracefully
+    returns `[]` (not a 500) when the project has no working GitHub
+    connection.
+  - **Disclosed spec deviations (founder asks vs. actual platform
+    capability):** (1) "presigned PUT URLs" — the real Object
+    Storage API has no presigned-URL support; all access is proxied
+    through our own backend routes instead, which is functionally
+    equivalent from the user's point of view. (2) "14-day auto-TTL"
+    — the storage API has no delete/expire endpoint at all; what's
+    actually enforced is a MongoDB TTL index on
+    `visual_bug_reports.created_at` (same pattern as
+    `scaffold_drafts`), so the DB reference — and the app's ability
+    to ever serve the image again — expires in 14 days, even though
+    the raw bytes in the backing bucket cannot be deleted from here.
+  - **Frontend:** reused the EXISTING `ChatPanel.jsx` paperclip/
+    paste/drag-drop image-attachment flow (no parallel uploader
+    built) — added a "Find & fix this bug" affordance on ready image
+    pills, wired to `handleVisualBugAnalyze` → new
+    `VisualBugAnalysisCard.jsx` (thumbnail, defects list, extracted-
+    string pills, ranked candidate files or a graceful no-candidates
+    fallback, dismissible).
+  - **Bug found + fixed during testing:** a spread-order bug in
+    `handleVisualBugAnalyze` had the backend's `status:'analyzed'`
+    silently clobber the frontend's own `status:'done'` key (spread
+    came last) — card rendered only its header, never the result.
+    Fixed by putting the analysis spread first. Also found + fixed:
+    the route was hitting the existing global 2MB request-body-size
+    middleware before its own 10MB check could run — added to the
+    existing `_BODY_LIMIT_BYPASS_PREFIXES` allowlist (same mechanism
+    already used by the other upload routes).
+  - **Tested:** `testing_agent_v3_fork` — backend 13/13 pytest
+    (upload validation, cross-user 404 isolation, OCR-accuracy
+    verified live against a synthetic image — "Submit Payment" and
+    "Checkout" extracted verbatim, graceful empty-candidates path,
+    413-vs-400 sizing), frontend 100% (full Playwright e2e: attach →
+    analyze → card renders thumbnail + defects + extracted strings +
+    fallback). Retest after the two fixes: both green, 0 issues.
+  - **PROVENANCE: preview-only, pending deploy.**
+
+
+- **GitHub "unreachable" root-cause fix + free-tier edit-gating
+  business-logic bug fix (2026-09-12)**
+  - **Issue 1 — root cause, not just display:** `get_installation_
+    token()` / `get_repo_via_installation()` (services/github_app.py)
+    and `validate_github_token()` (services/loop_safety.py) were
+    single-shot HTTP calls with ZERO retry — any transient network
+    blip surfaced instantly as "GitHub unreachable", despite the app
+    having a working retry+circuit-breaker system
+    (services/retry_guard.py) that "github" never actually used.
+    Confirmed via direct DB query: `breaker_events` had 0 rows for
+    dep="github" ever (vs 46 for "openrouter") — proving this path
+    bypassed the breaker entirely. Wrapped the actual network calls
+    in `call_with_retry()` (2 retries for the two GitHub App calls, 1
+    for the Loop Mode preflight — kept its "fail fast <2s" budget
+    intact), retrying only `httpx.TimeoutException`/`NetworkError`,
+    never real HTTP status errors. This is ALSO the shared root cause
+    behind the separately-reported "gate re-shows after successful
+    install" bug — `get_repo_via_installation()` is exactly what the
+    onboarding gate's repo-access check calls right after a fresh
+    install, when GitHub's own permission-propagation lag is highest.
+    Added `reset_breakers_for_tests()` + an autouse conftest fixture
+    (mirrors the existing rate-limiter one) so tests simulating
+    GitHub failures can't trip the shared breaker and cascade into
+    unrelated tests. **Limitation disclosed to founder**: could not
+    measure real production firing frequency from this preview pod
+    (separate local DB, no production log/monitoring access) — fix
+    addresses the structural root cause regardless of historical
+    frequency.
+  - **Issue 2 — confirmed business-logic bug, high priority:**
+    `needs_edit_upgrade_offer()` was unconditionally short-circuiting
+    EVERY free-tier agentic/swift edit request with an upgrade-offer
+    paywall, before the account's real 10-tasks/month quota
+    (`assert_has_task_budget`) ever ran — making that quota system
+    unreachable dead code and leaving "keep browsing on the free
+    plan" with nowhere to go (re-sending just re-triggered the same
+    block). Removed the unconditional short-circuit in
+    `routers/chat_pre_llm.py`; the real quota check is now the sole
+    gate — a free account with quota remaining now genuinely runs its
+    edit on "swift" mode (never silently billed as "pro"), only
+    seeing the (pre-existing, unchanged) quota-exceeded message once
+    all 10 monthly tasks are used.
+  - Verified via `testing_agent_v3_fork`: 100% pass — 20 targeted
+    unit tests + 5 live E2E tests against the running preview backend
+    + 68 GitHub-App/loop-safety regression tests, all green. Live
+    proof: free-tier account (0/10 tasks used) sending "update my
+    opening hours" now returns a real model provider instead of the
+    paywall.
+  - Iteration report:
+    `/app/test_reports/iteration_2026_01_13_edit_gate_and_gh_retry.json`
 - **Rapid Stop-click AbortError, Stop-button self-cancel, Vercel
   env-var leak, GitHub banners → toggle-only signal (2026-09-12)**
   - **P1 (confirmed, fixed):** rapid clicking Stop 2-3× threw an

@@ -87,13 +87,30 @@ async def test_new_request_falls_through_with_none_result(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_upgrade_offer_short_circuit_unified_shape(monkeypatch):
+async def test_quota_exceeded_short_circuit_unified_shape(monkeypatch):
+    """2026-09-12 — replaces the old `test_upgrade_offer_short_circuit_
+    unified_shape`: founder-confirmed business-logic bug fix removed
+    the unconditional free-tier upgrade-offer short-circuit entirely
+    (it used to block EVERY free-tier swift edit regardless of the
+    real 10-task/month quota, making that quota system unreachable
+    dead code — see routers/chat_pre_llm.py's 2026-09-12 note). The
+    ONLY way a free-tier agentic/swift turn gets short-circuited now
+    is the real quota check; this test verifies THAT short-circuit
+    still has the same unified (superset) shape the old one did."""
+    from fastapi import HTTPException
     async def _classify(*a, **kw):
         return {"tier": "agentic", "confidence": 0.95}
     monkeypatch.setattr("core.intent_gateway.classify", _classify)
-    monkeypatch.setattr(
-        "services.mode_routing.needs_edit_upgrade_offer", lambda *a, **kw: True,
-    )
+
+    async def _quota_exceeded(*a, **kw):
+        raise HTTPException(402, detail={
+            "error": "monthly_task_limit_reached", "tier": "free",
+            "tasks_this_month": 10, "monthly_task_cap": 10,
+            "upgrade_url": "/settings#pricing",
+            "message": "You've used your 10 free fixes this month on the Free plan.",
+        })
+    monkeypatch.setattr("services.usage.assert_has_task_budget", _quota_exceeded)
+
     outcome = await resolve_pre_llm(
         db=None, user=USER, body=_Body("update my opening hours"), bin_ctx=None,
         prior_fix_signal=False, prior_turn_text="", session_summary="",
@@ -102,13 +119,42 @@ async def test_upgrade_offer_short_circuit_unified_shape(monkeypatch):
     )
     r = outcome.result
     assert r is not None
-    assert r["provider"] == "edit-tier-upgrade-offer"
+    assert r["provider"] == "fix-quota-exceeded"
+    assert r["meta"]["quota_exceeded"] is True
     # the unified (superset) shape — every key either endpoint's OWN
     # copy of this dict used, before this refactor.
     for key in ("ok", "content", "provider", "fallback_chain", "iterations",
                "tool_calls_run", "tool_invocations", "meta", "council",
                "task_type", "findings_saved_this_turn", "intent", "tier", "mode"):
-        assert key in r, f"unified upgrade-offer shape missing key: {key}"
+        assert key in r, f"unified quota-exceeded shape missing key: {key}"
+
+
+@pytest.mark.asyncio
+async def test_free_tier_edit_runs_for_real_with_quota_remaining(monkeypatch):
+    """2026-09-12 — the actual founder-reported bug repro: a free
+    account with quota REMAINING must fall through with `result`
+    still None (i.e. the edit actually runs on chat_with_tools),
+    never the old unconditional upgrade-offer wall."""
+    async def _classify(*a, **kw):
+        return {"tier": "agentic", "confidence": 0.9}
+    monkeypatch.setattr("core.intent_gateway.classify", _classify)
+
+    async def _quota_ok(*a, **kw):
+        return None  # quota remaining — assert_has_task_budget is a no-op
+    monkeypatch.setattr("services.usage.assert_has_task_budget", _quota_ok)
+
+    outcome = await resolve_pre_llm(
+        db=None, user=USER, body=_Body("update my opening hours"), bin_ctx=None,
+        prior_fix_signal=False, prior_turn_text="", session_summary="",
+        allowed_modes=["swift"], req_mode="swift",  # free account, no Pro
+        run_confirm_boundary=False,
+    )
+    assert outcome.result is None, (
+        "a free-tier account with quota remaining must be allowed to "
+        "run its edit for real, not hit an upgrade-offer wall"
+    )
+    # mode stays "swift" — never silently escalated/billed as "pro".
+    assert outcome.mode == "swift"
 
 
 @pytest.mark.asyncio

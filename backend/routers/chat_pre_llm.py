@@ -155,19 +155,29 @@ async def resolve_pre_llm(
     # is already set (matches both endpoints' pre-existing
     # `if result is None and ...` guards) so `mode` is always
     # correctly resolved for the caller's later cost-logging etc.
-    from services.mode_routing import (
-        resolve_model_mode, needs_edit_upgrade_offer, UPGRADE_OFFER_MESSAGE,
-    )
+    #
+    # 2026-09-12 — founder-confirmed BUSINESS-LOGIC BUG, not a display
+    # issue: `needs_edit_upgrade_offer()` used to fire UNCONDITIONALLY
+    # for every free-tier agentic/swift turn — before the account's
+    # real monthly quota (10 free tasks — `assert_has_task_budget`,
+    # directly below) ever got a chance to run, since this block set
+    # `result` first and every later `if result is None` guard then
+    # skipped. A brand-new free account with 0/10 tasks used hit the
+    # SAME "upgrade to Pro" wall as one that had used all 10 — the
+    # quota system was completely unreachable dead code for the swift
+    # pill, and "keep browsing on the free plan for now" had nowhere
+    # to go (re-sending the same edit just re-triggered this same
+    # unconditional block again). `resolve_model_mode()` already
+    # correctly keeps the mode at "swift" (never silently escalates
+    # billing to "pro") for this case — the ONLY thing that needs to
+    # gate the edit is the real quota, so the upgrade offer now only
+    # fires once quota is actually exhausted; the quota-exceeded
+    # short-circuit right below already carries an equivalent, more
+    # accurate ("You've used your 10 free fixes...") message, so it
+    # alone is sufficient once quota runs out.
+    from services.mode_routing import resolve_model_mode
     account_has_pro = "pro" in allowed_modes
-    needs_upgrade_offer = needs_edit_upgrade_offer(tier, req_mode, account_has_pro=account_has_pro)
     mode = resolve_model_mode(tier, req_mode, account_has_pro=account_has_pro)
-
-    if result is None and needs_upgrade_offer and not ora_panel:
-        result = _shape_short_circuit(
-            UPGRADE_OFFER_MESSAGE, "edit-tier-upgrade-offer",
-            intent_result=intent_result, tier=tier,
-            fallback_chain=["edit_tier_upgrade_offer"],
-        )
 
     # 3.5) D3 (2026-09) freemium fix-ship quota. "Chat is unlimited,
     # token-capped only" — the monthly task cap must ONLY gate an
@@ -181,6 +191,11 @@ async def resolve_pre_llm(
     # an exception mid-stream) — the deterministic single-file
     # confirm/edit path is gated separately in
     # services/actions/pending_action.py::execute_action.
+    #
+    # This is now ALSO the sole gate for the free-tier swift-mode
+    # upgrade offer (see the 2026-09-12 note above) — a free account
+    # with quota remaining falls all the way through with `result`
+    # still None, so the edit actually runs on "swift" for real.
     if result is None and tier == "agentic" and not ora_panel:
         from fastapi import HTTPException
         from services.usage import assert_has_task_budget

@@ -83,6 +83,7 @@ async def get_repo_token(project: dict) -> str:
         from services.github_app import (
             GitHubAppNotConfigured, get_installation_token,
         )
+        from services.retry_guard import BreakerOpenError
     except ImportError as e:  # pragma: no cover — packaging error
         raise GithubAppAuthError("app_installation_missing",
                                  _MISSING_DETAIL) from e
@@ -91,7 +92,13 @@ async def get_repo_token(project: dict) -> str:
     except GitHubAppNotConfigured as e:
         raise GithubAppAuthError("app_installation_missing",
                                  _MISSING_DETAIL) from e
-    except (httpx.TimeoutException, httpx.NetworkError) as e:
+    except (httpx.TimeoutException, httpx.NetworkError, BreakerOpenError) as e:
+        # 2026-09-12 — get_installation_token() now retries transient
+        # network errors internally (services/retry_guard); reaching
+        # here means retries were already exhausted (or the breaker
+        # is OPEN from repeated recent failures) — a genuinely
+        # sustained issue, not a single blip. Still temporary/never a
+        # revocation signal.
         raise GithubAppAuthError("github_unreachable",
                                  _UNREACHABLE_DETAIL) from e
     except httpx.HTTPStatusError as e:

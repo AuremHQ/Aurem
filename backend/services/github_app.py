@@ -62,6 +62,7 @@ from typing import Optional
 import httpx
 
 from services.http import ext_client
+from services.retry_guard import call_with_retry, BreakerOpenError
 import jwt  # PyJWT 2.10.0
 
 from services.github_app_config import (
@@ -216,11 +217,33 @@ async def get_installation_token(installation_id: int) -> tuple[str, float]:
 
     # Mint fresh
     url = f"{GITHUB_API}/app/installations/{installation_id}/access_tokens"
+    # 2026-09-12 — founder-reported (root-cause investigation): this was
+    # a single-shot HTTP call with NO retry — any transient network
+    # blip (dropped packet, momentary DNS hiccup, brief GitHub 5xx)
+    # immediately surfaced as a hard "GitHub unreachable" to the user,
+    # even though the rest of the app has a perfectly good retry +
+    # circuit-breaker layer (services/retry_guard.py) that "github" is
+    # even registered in — this call just never went through it
+    # (confirmed: zero `breaker_events` rows for dep="github" ever,
+    # vs 46 for "openrouter", proving this path bypassed the breaker
+    # entirely). Retrying transient network errors here — never HTTP
+    # status errors, which are real signals — lets a single blip
+    # self-heal in under a second instead of flashing "unreachable"
+    # to every poller of /cto/projects/connection-status, AND reduces
+    # false failures during `verify_installation_for_repo()`'s
+    # onboarding repo-access check (same root cause as the "gate
+    # re-shows after install" reports — both hit this exact call).
     async with ext_client(
         "github",
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
     ) as client:
-        r = await client.post(url, headers=_headers_app())
+        async def _mint():
+            return await client.post(url, headers=_headers_app())
+        r = await call_with_retry(
+            "github", _mint,
+            max_retries=2, base_delay=0.3, max_delay=2.0,
+            retry_on=(httpx.TimeoutException, httpx.NetworkError),
+        )
     if r.status_code == 404:
         # Installation was deleted or suspended — evict any stale
         # cache row and raise so the caller can propagate a clean 410.
@@ -344,11 +367,22 @@ async def get_repo_via_installation(
     """
     token, _ = await get_installation_token(installation_id)
     url = f"{GITHUB_API}/repos/{owner}/{repo}"
+    # 2026-09-12 — same transient-network-retry fix as
+    # get_installation_token() above; this is the exact call
+    # `verify_installation_for_repo()` (the onboarding "connect a
+    # repo" gate) hits right after a fresh App install, when GitHub's
+    # own permission propagation is most likely to still be settling.
     async with ext_client(
         "github",
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
     ) as client:
-        r = await client.get(url, headers=_headers_bearer(token))
+        async def _get():
+            return await client.get(url, headers=_headers_bearer(token))
+        r = await call_with_retry(
+            "github", _get,
+            max_retries=2, base_delay=0.3, max_delay=2.0,
+            retry_on=(httpx.TimeoutException, httpx.NetworkError),
+        )
     r.raise_for_status()
     return r.json() or {}
 
@@ -407,9 +441,18 @@ async def verify_installation_for_repo(
             f"access to {owner}/{repo}."
         )
     except httpx.RequestError as _e:
+        # httpx.TimeoutException / NetworkError are RequestError
+        # subclasses — this is the "retries inside get_repo_via_
+        # installation() were already exhausted" case, i.e. a
+        # genuinely sustained issue, not a single blip.
         return False, "installation_probe_request_error", (
             f"Couldn't reach GitHub to verify installation access "
             f"({type(_e).__name__}). Try again in a moment."
+        )
+    except BreakerOpenError as _e:
+        return False, "installation_probe_request_error", (
+            "GitHub looks unreachable right now — the connection has "
+            "been retried automatically. Try again in a moment."
         )
     return True, None, None
 

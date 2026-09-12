@@ -2,6 +2,13 @@
 
 See PRD.md for original requirements/architecture, CHANGELOG.md for what's shipped.
 
+## P0 — Multimodal Visual Bug-Fix Pipeline — next phase
+- **Phase 1 (upload/storage) + Phase 2 (vision extraction + codebase grounding) — SHIPPED + TESTED (2026-09-12).** See CHANGELOG.md 2026-09-12 entry. Backend 13/13 pytest, frontend 100% Playwright e2e. Sandbox-only, not yet deployed.
+- **Phase 3 (not started) — localized patch synthesis + isolated preview runner.** Founder explicitly REJECTED hot-patching the shared dev server (concurrent-session crash/race risk) — must use an isolated build/static serve or isolated port. Cost Guard caps this at 1 code-gen call per run (on top of the 1 vision call already spent in Phase 2).
+- **Phase 4 (not started) — before/after comparison UI + diff viewer + approve/refine workbench.** No automatic production merge, per founder's original spec.
+- Trigger to resume: founder go-ahead for Phase 3 (large scope, isolation-runner design needs its own review before coding starts).
+
+
 ## P0 — in-flight / founder-blocking (updated 2026-08-27, post-checkpoint decisions)
 - **Chain-of-thought pattern analysis / self-improving loop (2026-09-08) \u2014 SHIPPED + TESTED.** `task_chains` structured logging on every real chat turn + failure-only COT text persistence + "Failure Patterns" admin tab, all testing_agent-verified 100%/0 issues with real live data (46 records). See CHANGELOG.md 2026-09-08 entry. Sandbox-only \u2014 not yet deployed to production. No remaining scope from the founder's spec; this item is closed pending a production deploy.
 - **ROOT FIX \u2014 Turn-Completion Contract (2026-09-08) \u2014 CORE SLICE SHIPPED + TESTED, remainder tracked below.** See CHANGELOG.md 2026-09-08 entry for full detail + evidence. Core contract (turn_state/continue_available/failure_mode/recovery_action never-silent-idle, Continue/Retry UI, useActiveProject retry) is live in sandbox, 19+2 new tests passing, testing_agent-verified 100%/0 issues. **Remaining from founder's original spec, not yet built:**

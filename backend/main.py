@@ -95,6 +95,7 @@ from routers.fix_pipeline import router as fix_pipeline_router      # Iter 212m-
 from routers.repo_status import router as repo_status_router        # Iter 212m-125 live repo connection ping
 from routers.codebase_health import router as codebase_health_router # Iter 212m-72 5-category health scanner
 from routers.scaffold import router as scaffold_router                # Iter 212m-231 Personal Track blank-slate
+from routers.visual_bugfix import router as visual_bugfix_router      # 2026-09-12 Multimodal Visual Bug-Fix Phase 1+2
 from routers.managed_db import router as managed_db_router            # Iter 212m-233 Personal Track shared DB
 from routers.supabase   import router as supabase_router              # Iter 212m-234 Personal Track paid-tier Supabase
 from routers.personal_track import router as personal_track_router    # Iter 212m-237 Personal Track activation events
@@ -960,6 +961,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:                              # noqa: BLE001
             logger.warning("ORA codebase index warm failed: %r", e)
     _asyncio.create_task(_warm_codebase_index())
+    # 2026-09-12 — Visual Bug-Fix pipeline: mint the object-storage
+    # key eagerly so the FIRST real upload isn't the one paying for
+    # the init round-trip. Best-effort — put_object()/get_object()
+    # already lazy-init + retry on their own if this hasn't finished
+    # (or failed) yet.
+    async def _warm_visual_bugfix_storage():
+        from services.visual_bugfix_storage import warm_up as _storage_warm_up
+        await _storage_warm_up()
+    _asyncio.create_task(_warm_visual_bugfix_storage())
     # 2026-08-20 — retired the old single-message "connect a repo"
     # nudge (services/onboarding_email.py). It only knew "0 projects"
     # and couldn't tell a user who never touched GitHub apart from one
@@ -1974,6 +1984,7 @@ _DEFAULT_MAX_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
 _BODY_LIMIT_BYPASS_PREFIXES = (
     "/api/aurem-dev/uploads",
     "/api/aurem-dev/cto-projects/repo/upload",
+    "/api/aurem-dev/visual-bugfix/upload",  # 2026-09-12 — screenshot upload, up to 10MB (own check in the route)
 )
 
 
@@ -3505,6 +3516,7 @@ app.include_router(wrapped_router,       prefix="/api/aurem-dev")
 app.include_router(hosted_deploy_router, prefix="/api/aurem-dev")
 app.include_router(codebase_router,      prefix="/api/aurem-dev")
 app.include_router(scaffold_router,      prefix="/api/aurem-dev")  # Iter 212m-231
+app.include_router(visual_bugfix_router, prefix="/api/aurem-dev")  # 2026-09-12
 app.include_router(managed_db_router,    prefix="/api/aurem-dev")  # Iter 212m-233
 app.include_router(supabase_router,      prefix="/api/aurem-dev")  # Iter 212m-234 Phase 5 paid-tier
 app.include_router(personal_track_router, prefix="/api/aurem-dev")  # Iter 212m-237 activation events

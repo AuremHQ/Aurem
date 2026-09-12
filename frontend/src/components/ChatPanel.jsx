@@ -58,6 +58,7 @@ import PaymentFailedBanner from "./PaymentFailedBanner"; // 2026-08-22 — in-ch
 import LoopLiveFeed from "./LoopLiveFeed";
 import OperationHistory from "./OperationHistory";
 import PlanApprovalCard from "./PlanApprovalCard";
+import VisualBugAnalysisCard from "./VisualBugAnalysisCard";  // 2026-09-12 — Visual Bug-Fix Phase 1+2
 // Iter 212m-65 — Phase D wiring: Self-heal indicator + paused-loop
 // User Action card (powered by the real /loop/* SSE stream).
 import { SelfHealIndicator, UserActionCard, LoopExpiredCard } from "./LoopActionCards";
@@ -575,6 +576,16 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   //  markdown: string, error?: string}
   const [attachments, setAttachments] = useState([]);
   const [dragOver, setDragOver] = useState(false);
+  // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1+2). Raw File blobs
+  // for image attachments, keyed by pill id — `attachments` above
+  // only ever stores the CONVERTED markdown description, never the
+  // original bytes, so this is the only place the real file lives
+  // long enough for the "Find & fix" action to re-upload it.
+  const imageFilesRef = useRef({});
+  // {status: 'uploading'|'analyzing'|'done'|'error', name, imageUrl,
+  //  visual_defects, extracted_strings, inferred_dom_elements,
+  //  suggested_patterns, candidate_files, error}
+  const [visualBugAnalysis, setVisualBugAnalysis] = useState(null);
   // Iter 114 — Live task popup state. Set when a CTO task is dispatched
   // (onTaskHandoff). Auto-dismisses on success after 5s, persists on
   // failure until the user closes it manually, vanishes immediately on
@@ -1847,6 +1858,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         status: "uploading",
         markdown: "",
       }]);
+      // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1): stash the raw
+      // File blob for image attachments so the "Find & fix this bug"
+      // action (rendered on the pill once ready — see attachments.map
+      // below) can re-upload the ORIGINAL bytes to the purpose-built
+      // /visual-bugfix/upload endpoint without asking the user to
+      // re-pick the file. Fully separate from the markdown-description
+      // flow above — zero changes to that existing, working path.
+      if (isImage) imageFilesRef.current[pillId] = f;
 
       try {
         let mdBody;
@@ -1901,6 +1920,64 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         message: `Attached ${newAttachments.filter((a) => a.ok).length} file(s).`,
         kind: "success",
       });
+    }
+  }
+
+  // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1+2). Separate from
+  // handleFiles() above: uploads the ORIGINAL image bytes to the
+  // purpose-built /visual-bugfix endpoints (persisted via object
+  // storage, unlike the ephemeral markdown-description flow), runs
+  // ONE Gemini vision call, then correlates against the connected
+  // project's repo. Phase 3 (patch generation + preview) is not
+  // built yet — this only surfaces the analysis + candidate files.
+  async function handleVisualBugAnalyze(pillId, fileName) {
+    const file = imageFilesRef.current[pillId];
+    if (!file) {
+      toast({ message: "That image is no longer available — try attaching it again.", kind: "error" });
+      return;
+    }
+    setVisualBugAnalysis({ status: "uploading", name: fileName });
+    try {
+      const token = getToken();
+      const form = new FormData();
+      form.append("file", file);
+      if (activeProject?.project_id) form.append("project_id", activeProject.project_id);
+      const uploadRes = await fetch(`${API_BASE}/visual-bugfix/upload`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      if (!uploadRes.ok) {
+        const errBody = await uploadRes.json().catch(() => ({}));
+        throw new Error(errBody?.detail || `Upload failed (${uploadRes.status})`);
+      }
+      const uploaded = await uploadRes.json();
+
+      setVisualBugAnalysis({ status: "analyzing", name: fileName, imageId: uploaded.id });
+      const analyzeRes = await fetch(`${API_BASE}/visual-bugfix/${uploaded.id}/analyze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          bug_description: input || "Find and explain the visual bug in this screenshot.",
+          project_id: activeProject?.project_id,
+        }),
+      });
+      const analysis = await analyzeRes.json().catch(() => ({}));
+      if (!analyzeRes.ok || !analysis.ok) {
+        throw new Error(analysis?.error || analysis?.detail || `Analysis failed (${analyzeRes.status})`);
+      }
+      setVisualBugAnalysis({
+        ...analysis,
+        status: "done",
+        name: fileName,
+        imageId: uploaded.id,
+        imageUrl: `${API_BASE}/visual-bugfix/${uploaded.id}/image?auth=${encodeURIComponent(token || "")}`,
+      });
+    } catch (e) {
+      setVisualBugAnalysis({ status: "error", name: fileName, error: e?.message || String(e) });
     }
   }
 
@@ -5719,7 +5796,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                       <button
                         type="button"
                         data-testid={`chat-attach-remove-${a.id}`}
-                        onClick={() => setAttachments((arr) => arr.filter((x) => x.id !== a.id))}
+                        onClick={() => {
+                          delete imageFilesRef.current[a.id];
+                          setAttachments((arr) => arr.filter((x) => x.id !== a.id));
+                        }}
                         style={{
                           background: "none", border: "none",
                           color: colour, cursor: "pointer",
@@ -5728,11 +5808,40 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                         aria-label={`Remove ${a.name}`}
                       >×</button>
                     )}
+                  {/* 2026-09-12 — Visual Bug-Fix pipeline entry point.
+                      Only for a ready image pill; fires the SEPARATE
+                      purpose-built upload+analyze flow (never touches
+                      the existing markdown-description attachment
+                      above it). */}
+                  {a.kind === "image" && a.status === "ready" && (
+                    <button
+                      type="button"
+                      data-testid={`visual-bug-analyze-btn-${a.id}`}
+                      title="Find & explain this visual bug"
+                      onClick={() => handleVisualBugAnalyze(a.id, a.name)}
+                      disabled={visualBugAnalysis?.status === "uploading" || visualBugAnalysis?.status === "analyzing"}
+                      style={{
+                        background: "none", border: "none",
+                        color: "var(--accent)", cursor: "pointer",
+                        padding: 0, lineHeight: 1, fontSize: 13,
+                        opacity: (visualBugAnalysis?.status === "uploading" || visualBugAnalysis?.status === "analyzing") ? 0.4 : 1,
+                      }}
+                      aria-label={`Find and fix bug in ${a.name}`}
+                    >🔍</button>
+                  )}
                 </span>
               );
             })}
           </div>
         )}
+
+        {visualBugAnalysis && (
+          <VisualBugAnalysisCard
+            result={visualBugAnalysis}
+            onDismiss={() => setVisualBugAnalysis(null)}
+          />
+        )}
+
 
         {/* 2026-02-18 — Active project chip.
             Replaces the legacy `[Working on project: …]` prompt-preamble

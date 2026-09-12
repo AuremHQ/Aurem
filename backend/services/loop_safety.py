@@ -49,9 +49,23 @@ async def validate_github_token(
         "User-Agent":    "aurem-loop-preflight",
     }
     try:
-        async with httpx.AsyncClient(timeout=8.0) as cx:
-            r = await cx.get(f"https://api.github.com/repos/{owner}/{repo}",
-                             headers=headers)
+        # 2026-09-12 — root-cause fix: this preflight was a single-shot
+        # call with zero retry, so ANY transient blip during Plan
+        # immediately failed the whole loop run as "network_error"
+        # (surfaced to the user as "GitHub is unreachable right now").
+        # One quick retry (≤~1s added, well within the "fail fast in
+        # <2s" budget this function documents) lets a single dropped
+        # packet self-heal instead of aborting the run.
+        from services.retry_guard import call_with_retry
+        async def _preflight():
+            async with httpx.AsyncClient(timeout=8.0) as cx:
+                return await cx.get(f"https://api.github.com/repos/{owner}/{repo}",
+                                    headers=headers)
+        r = await call_with_retry(
+            "github", _preflight,
+            max_retries=1, base_delay=0.2, max_delay=1.0,
+            retry_on=(httpx.TimeoutException, httpx.NetworkError),
+        )
         if r.status_code == 200:
             return True, None
         if r.status_code == 401:
@@ -69,6 +83,9 @@ async def validate_github_token(
         logger.warning("GitHub preflight network err: %r", e)
         return False, "network_error"
     except Exception as e:                                # noqa: BLE001
+        from services.retry_guard import BreakerOpenError
+        if isinstance(e, BreakerOpenError):
+            return False, "network_error"
         logger.exception("GitHub preflight unexpected err")
         return False, f"unexpected: {e}"
 
