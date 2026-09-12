@@ -307,27 +307,46 @@ export async function streamChat({ prompt, sessionId, session_id,
   // Iter 212m-212 — screenshot passthrough
   const _screenshotB64 = screenshot_b64 ?? screenshotB64;
   const token = getToken();
-  const res = await fetch(`${API_BASE}/chat/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      prompt,
-      session_id: _sessionId,
-      max_tool_iters: _maxToolIters,
-      maxx_mode: _maxxMode,
-      agent,
-      mode,
-      execution_mode: _executionMode,
-      project_id: _projectId,
-      f12_payload: _f12Payload,
-      ora_panel,                       // Iter 212m-194 — was being dropped
-      screenshot_b64: _screenshotB64,  // Iter 212m-212
-    }),
-    signal,
-  });
+  // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
+  // reproducible): this initial `fetch()` had no try/catch of its
+  // own. If the AbortController fires while it's still in flight (a
+  // 2nd/3rd rapid Stop click after the 1st already aborted), the
+  // rejection propagated uncaught all the way to the caller —
+  // "AbortError: signal is aborted without reason" in the console.
+  // The reader loop below already treats an abort as expected, not a
+  // failure (see its own catch further down); mirror that exact
+  // convention here for the pre-stream window too, so every caller
+  // of streamChat() gets this for free, not just one call site.
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        prompt,
+        session_id: _sessionId,
+        max_tool_iters: _maxToolIters,
+        maxx_mode: _maxxMode,
+        agent,
+        mode,
+        execution_mode: _executionMode,
+        project_id: _projectId,
+        f12_payload: _f12Payload,
+        ora_panel,                       // Iter 212m-194 — was being dropped
+        screenshot_b64: _screenshotB64,  // Iter 212m-212
+      }),
+      signal,
+    });
+  } catch (e) {
+    const name = e?.name || "";
+    const msg = (e?.message || "").toLowerCase();
+    const isAbort = name === "AbortError" || msg.includes("aborted");
+    if (!isAbort) onError?.(`Request failed: ${e?.message || e}`);
+    return;
+  }
   if (!res.ok || !res.body) {
     const txt = await res.text().catch(() => "");
     // Iter 388f — friendly 422 handling. When the backend rejects a

@@ -239,6 +239,21 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     ).sort("created_at", -1).limit(20).to_list(20)
     user["project_count"] = len(user["projects"])
     user["task_count"] = await db.cto_tasks.count_documents({"user_id": user_id})
+    # 2026-09-12 — founder-reported UX confusion (Joe Sebright case):
+    # "Tasks: 0" next to a post_scan_nudge_task_sent activity-log entry
+    # looked like a tracking bug. It isn't — `task_count` above counts
+    # actual `cto_tasks` documents (real work items the orchestrator
+    # created), while nudge_task_sent is a deliberate, DIFFERENT signal
+    # (see engagement_nudge.py docstring): "did the user try to ask ORA
+    # for something", fired the moment a real message arrives, BEFORE
+    # the orchestrator decides whether it becomes a task, a plain
+    # answer, or nothing. Surfacing both counts distinctly so this
+    # reads as "two different things", not "one broken counter".
+    user["nudge_task_sent_count"] = await db.funnel_events.count_documents(
+        {"user_id": user_id, "event_type": {"$in": [
+            "post_scan_nudge_task_sent", "post_skip_nudge_task_sent",
+        ]}},
+    )
     user["session_count"] = await db.chat_sessions.count_documents({"user_id": user_id})
     # Live token budget (plan + admin-granted bonus - used)
     try:

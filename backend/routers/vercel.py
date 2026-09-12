@@ -61,7 +61,7 @@ async def vercel_status(authorization: Optional[str] = Header(None)):
         return {
             "connected":      False,
             "mode":            "shared-token",
-            "reason":          "VERCEL_API_TOKEN not set",
+            "reason":          "Vercel not connected yet",
             "tool_count":      len(VERCEL_TOOLS),
         }
     # Probe the actual account so we can show "Connected as

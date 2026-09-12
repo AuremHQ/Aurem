@@ -287,6 +287,40 @@ class TestListAndGetUser:
         assert r.status_code == 200
         assert r.json()["usage"] is None
 
+    def test_get_user_nudge_task_sent_count_distinct_from_task_count(self, client, fake_db):
+        """2026-09-12 — founder-reported (Joe Sebright case): admin
+        detail view showed "Tasks: 0" right next to a
+        post_scan_nudge_task_sent entry in the same user's activity
+        log, read as a tracking bug. It isn't — task_count counts real
+        cto_tasks documents; nudge_task_sent is a deliberate, earlier
+        intent signal (see engagement_nudge.py) that can fire even when
+        no task document is ever created. New field
+        nudge_task_sent_count surfaces this as a genuinely separate,
+        correctly-labeled number instead of looking like one broken
+        counter."""
+        fake_db.dev_users.rows.append({"user_id": "u1", "email": "u1@x.com"})
+        # Zero cto_tasks documents — mirrors "Tasks: 0" in the report.
+        fake_db.funnel_events.rows.append({
+            "user_id": "u1", "event_type": "post_scan_nudge_task_sent",
+        })
+        fake_db.funnel_events.rows.append({
+            "user_id": "u1", "event_type": "post_skip_nudge_task_sent",
+        })
+        # A different user's event must never leak into this count.
+        fake_db.funnel_events.rows.append({
+            "user_id": "u2", "event_type": "post_scan_nudge_task_sent",
+        })
+        # An unrelated event type for the SAME user must not be counted.
+        fake_db.funnel_events.rows.append({
+            "user_id": "u1", "event_type": "repo_connect_gate_shown",
+        })
+        with patch("routers.admin_users.get_usage", AsyncMock(return_value=None)):
+            r = client.get("/api/aurem-dev/admin/users/u1", headers=AUTH)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["task_count"] == 0
+        assert body["nudge_task_sent_count"] == 2
+
 
 # ═════════════════════════════════════════════════════════════════════
 # POST /admin/users/{id}/grant-tokens

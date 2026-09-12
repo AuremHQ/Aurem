@@ -54,7 +54,6 @@ const SHIP_SUPPRESSED_NOTE = {
 };
 
 import LoopStatusChip from "./LoopStatusChip";        // Iter 309 · Batch-2 aftermath — sticky loop-status chip
-import RevokedRepoBanner from "./RevokedRepoBanner";   // 2026-08-20 — in-chat revoked-access banner
 import PaymentFailedBanner from "./PaymentFailedBanner"; // 2026-08-22 — in-chat "update your card" banner
 import LoopLiveFeed from "./LoopLiveFeed";
 import OperationHistory from "./OperationHistory";
@@ -89,6 +88,7 @@ import { DateDivider } from "./chat/DateDivider";             // 2026-09 — cha
 import { useChatMessages } from "../hooks/useChatMessages";
 import { useChatSession } from "../hooks/useChatSession";
 import { useChatStream } from "../hooks/useChatStream";
+import { useGithubConnectionStatus } from "../hooks/useGithubConnectionStatus";
 
 // Iter 212m-153 — leaf components + pure helpers extracted from
 // ChatPanel.jsx into focused files.  Behaviour is identical; the
@@ -236,6 +236,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // Updated when an SSE `intent` frame arrives during a chat turn.
   const [lastIntentTier, setLastIntentTier] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 2026-09-12 — founder-reported P2 (same root cause as the
+  // AbortError fix above): the Send button toggles to "Stop" the
+  // instant `busy` flips true, in the exact same screen position.
+  // A normal impatient double-click's 2nd click therefore lands on
+  // Stop and self-cancels the message the user just sent. Debounce
+  // the Stop button for a short window after it first appears so an
+  // accidental double-click can't register as "Stop" — a deliberate
+  // Stop click a beat later still works instantly.
+  const [stopArmed, setStopArmed] = useState(false);
+  const STOP_ARM_DELAY_MS = 350;
+  useEffect(() => {
+    if (!busy) { setStopArmed(false); return undefined; }
+    setStopArmed(false);
+    const t = setTimeout(() => setStopArmed(true), STOP_ARM_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [busy]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   // Iter 212m-19 — Live step floating card. Tracks the steps + model
   // + token estimate emitted during the current chat turn. Hidden
@@ -283,6 +299,70 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // by the no-repo warning pill above the composer and by clicking the
   // red GH status indicator in the toolbar.
   const [showRepoHelp, setShowRepoHelp] = useState(false);
+  // 2026-09-12 — GitHub connection health (connected / unreachable /
+  // disconnected + reason). Drives the toggle's color + click action
+  // below; see the file-level comment in useGithubConnectionStatus.js
+  // for why this replaced the standalone revoked/unreachable banners.
+  const githubConn = useGithubConnectionStatus(activeProject);
+  // 2026-09-12 — "popup blocked" is action feedback for a user-
+  // initiated reconnect click, not a passive connection-status
+  // banner — a one-shot toast fits the spec without reintroducing
+  // a persistent banner.
+  useEffect(() => {
+    if (!githubConn.popupBlocked) return;
+    toast({ message: "Popup blocked — please allow popups for this site and try again.", kind: "error" });
+    githubConn.setPopupBlocked(false);
+  }, [githubConn.popupBlocked, githubConn.setPopupBlocked]);
+  // 2026-09-12 — single source of truth for the toggle's 3-color
+  // signal + tooltip + click action. `hasRepo` = project has
+  // github_owner/repo set at all (never-connected case, distinct
+  // from a previously-working repo that's now revoked/unreachable).
+  const ghHasRepo = !!(activeProject?.github_owner && activeProject?.github_repo);
+  const ghDisplay = useMemo(() => {
+    if (!ghHasRepo) {
+      return {
+        color: "red",
+        title: "GitHub: not connected — click to configure",
+        onClick: () => setShowRepoHelp(true),
+      };
+    }
+    if (githubConn.status === "unreachable") {
+      return {
+        color: "amber",
+        title: "GitHub: temporary network issue — retrying automatically",
+        onClick: null, // transient, self-resolving — nothing to click
+      };
+    }
+    if (githubConn.status === "disconnected") {
+      const label = githubConn.suspended
+        ? "GitHub App access paused"
+        : githubConn.neverConnected
+          ? "GitHub App not connected"
+          : githubConn.appLevel
+            ? "GitHub App installation removed"
+            : "GitHub access revoked";
+      const suffix = githubConn.reasonLabel ? ` (${githubConn.reasonLabel})` : "";
+      return {
+        color: "red",
+        title: githubConn.reconnecting
+          ? "Reconnecting…"
+          : `${label}${suffix} — click to reconnect`,
+        onClick: (githubConn.suspended && githubConn.installationId)
+          ? () => window.open(
+              `https://github.com/settings/installations/${githubConn.installationId}`,
+              "_blank",
+            )
+          : githubConn.reconnect,
+      };
+    }
+    // "connected" or not-yet-loaded — treat as healthy.
+    return {
+      color: "green",
+      title: `GitHub: connected — ${activeProject.github_owner}/${activeProject.github_repo}`,
+      onClick: null, // passive once healthy — sidebar handles switching
+    };
+  }, [ghHasRepo, activeProject, githubConn]);
+  const GH_DOT_COLOR = { green: "#22c55e", amber: "#f59e0b", red: "#ef4444" };
   // Iter 154 — legacy `maxxMode` boolean is now derived from `chatMode`.
   // The standalone Maxx toggle button has been removed from the toolbar
   // (redundant with ModeSelector's Maxx pill). Backend payload still
@@ -1487,7 +1567,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
 
     return () => {
       aborted = true;
-      try { ctrl.abort(); } catch { /* ignore */ }
+      try { ctrl.abort("component_cleanup"); } catch { /* ignore */ }
     };
   }, [latestAssistant?.shipped_task_id]);
 
@@ -1627,16 +1707,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     // hook-owned controller covers any future stream() call we route
     // through useChatStream, while abortRef stays in service of the
     // existing inline streamChat path.
-    chatStream.abort();
+    chatStream.abort("user_stopped");
     if (abortRef.current) {
-      abortRef.current.abort();
+      // 2026-09-12 — pass an explicit reason so a rapid-click AbortError
+      // reads as "user_stopped" in traces instead of the default,
+      // confusing "signal is aborted without reason".
+      abortRef.current.abort("user_stopped");
       abortRef.current = null;
     }
     manualRetryRef.current = null;
     // Iter 212m-65 — also abort any active Loop Mode SSE stream so a
     // user Stop click reliably cancels mid-pipeline.
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("user_stopped"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     // Iter 283 — also send an explicit /loop/{id}/cancel to the
@@ -2296,7 +2379,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       // never silently no-op just because the auto-retry already
       // used its one shot.
       function performRetry(idleFor, { manual }) {
-        try { ctrl.abort(); } catch { /* ignore */ }
+        try { ctrl.abort(manual ? "manual_retry" : "idle_watchdog_retry"); } catch { /* ignore */ }
         abortRef.current = null;
         if (manual) retryAttemptRef.current = 0;
         if (retryAttemptRef.current < MAX_RETRIES) {
@@ -2900,7 +2983,30 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       },
     });
     };
-    await runTurn();
+    // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
+    // reproducible): `runTurn()` calls `streamChat()`, whose initial
+    // `fetch(...)` (lib/api.js) has no try/catch of its own — if the
+    // AbortController fires while that fetch is still in flight (a
+    // 2nd/3rd rapid click after the 1st already aborted), the
+    // rejection propagates all the way up through this `await` with
+    // nothing to catch it, surfacing as an uncaught
+    // "AbortError: signal is aborted without reason" in the console.
+    // The streamChat() reader-loop's OWN catch already handles this
+    // same error correctly once the body starts streaming (Iter
+    // 212m-57) — this is purely the earlier, pre-stream window. An
+    // AbortError here is always the user's own Stop click or the idle
+    // watchdog, never a real failure — swallow it silently; anything
+    // else is truly unexpected and worth a console.warn.
+    try {
+      await runTurn();
+    } catch (e) {
+      const name = e?.name || "";
+      const msg = (e?.message || "").toLowerCase();
+      const isAbort = name === "AbortError" || msg.includes("aborted");
+      if (!isAbort) {
+        console.warn("send(): unexpected error outside streamChat's own handling", e);
+      }
+    }
   }
 
   function regenerate() {
@@ -3150,7 +3256,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     if (!sessionId) return;
     // Cancel any prior loop session (defensive — should be a no-op).
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     setLoopId(null);
@@ -4155,7 +4261,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
 
   function openLoopStream(lid) {
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
     }
     // Iter 275 — reset the live-feed on every fresh open so a
     // reconnect / new run doesn't inherit the previous run's ring.
@@ -4383,7 +4489,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       catch { /* engine already cleaned up */ }
     }
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     // Iter 316 · Fix A — cancel fallback poll on user cancel.
@@ -4419,7 +4525,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   async function handleRestartLoop() {
     const targetLoopId = loopId;
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     setLoopExpired(null);
@@ -4634,14 +4740,16 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         }}
       />
 
-      {/* 2026-08-20 — Revoked-Repo Banner. Founder's explicit ask:
-          defense-in-depth so a revoked GitHub connection is unmissable
-          right inside the chat pane, regardless of what else (sidebar
-          dot, cleanup banner) also catches it. */}
-      <RevokedRepoBanner activeProject={activeProject} />
+      {/* 2026-09-12 — Founder's clarified spec: GitHub connection
+          state (revoked / unreachable / disconnected) must NEVER
+          surface as a banner — the ONLY signal is the color of the
+          GitHub toggle in the composer (below). The former
+          RevokedRepoBanner's polling + reconnect logic now lives in
+          useGithubConnectionStatus() and drives that toggle
+          directly; see githubConn below. */}
 
-      {/* 2026-08-22 — Payment-Failed Banner. Same defense-in-depth
-          pattern as above, for a failed recurring Stripe charge. */}
+      {/* 2026-08-22 — Payment-Failed Banner. Unrelated to GitHub
+          connection status (Stripe billing) — kept as-is. */}
       <PaymentFailedBanner />
 
       {/* Iter 212m-49 — "⚡ free mode" pill. Surfaces when the most
@@ -5860,27 +5968,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               from the Projects page). Red dot = no repo configured.
               Click routes to Projects so the user can wire one up — we
               no longer expose AUREM-owned PAT pushes to end users. */}
+          {/* 2026-09-12 — GitHub connection toggle is now the ONLY
+              UI signal for connection state, per the founder's
+              clarified spec (no banners of any kind for this
+              category — see ghDisplay above + useGithubConnectionStatus).
+              green = connected & healthy, amber = transient issue /
+              retrying, red = disconnected / never connected / failed. */}
           <button
             type="button"
             data-testid="chat-github-status"
-            title={
-              activeProject?.github_owner && activeProject?.github_repo
-                ? `GitHub: connected — ${activeProject.github_owner}/${activeProject.github_repo}`
-                : "GitHub: not connected — click to configure"
-            }
-            onClick={() => {
-              // Iter 212m-199 — Founder request: clicking the connected
-              // GitHub toggle used to `window.location.href = "/projects"`
-              // which threw users into the legacy Projects page (with the
-              // old sidebar). That felt like a regression back to the V1
-              // interface. When the repo is already connected we now
-              // treat this toggle as a passive status indicator — the
-              // tooltip already exposes owner/repo, and the sidebar
-              // handles switching. Only the disconnected state still
-              // opens the in-place RepoHelpDialog.
-              const connected = !!(activeProject?.github_owner && activeProject?.github_repo);
-              if (!connected) setShowRepoHelp(true);
-            }}
+            title={ghDisplay.title}
+            onClick={() => { if (ghDisplay.onClick) ghDisplay.onClick(); }}
             style={{
               position: "relative",
               display: "inline-flex",
@@ -5891,17 +5989,16 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               borderRadius: 8,
               background: "transparent",
               border: "1px solid var(--border, rgba(255,200,120,0.16))",
-              // Iter 212m-199 — connected state is passive → default
-              // cursor so the button doesn't over-promise interaction.
-              cursor: (activeProject?.github_owner && activeProject?.github_repo)
-                ? "default"
-                : "pointer",
+              cursor: ghDisplay.onClick ? "pointer" : "default",
               color: "var(--text-dim)",
             }}
           >
             <Github size={15} />
             <span
               aria-hidden="true"
+              data-testid="chat-github-status-dot"
+              data-status={ghDisplay.color}
+              className={ghDisplay.color === "amber" ? "animate-pulse" : undefined}
               style={{
                 position: "absolute",
                 top: 4,
@@ -5909,12 +6006,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                 width: 6,
                 height: 6,
                 borderRadius: 999,
-                background: (activeProject?.github_owner && activeProject?.github_repo)
-                  ? "#22c55e"
-                  : "#ef4444",
-                boxShadow: (activeProject?.github_owner && activeProject?.github_repo)
-                  ? "0 0 6px rgba(34,197,94,0.7)"
-                  : "0 0 6px rgba(239,68,68,0.7)",
+                background: GH_DOT_COLOR[ghDisplay.color],
+                boxShadow: `0 0 6px ${GH_DOT_COLOR[ghDisplay.color]}b3`,
               }}
             />
           </button>
@@ -6019,8 +6112,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               )}
               <button
                 type="button" data-testid="chat-stop"
-                onClick={stop}
-                title="Stop streaming"
+                onClick={stopArmed ? stop : undefined}
+                disabled={!stopArmed}
+                title={stopArmed ? "Stop streaming" : "Stopping available in a moment…"}
                 aria-label="Stop generation"
                 style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -6029,8 +6123,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                   background: "rgba(255,102,8,0.18)",
                   border: "1px solid rgba(255,102,8,0.45)",
                   color: "#FF6608",
-                  cursor: "pointer",
-                  transition: "background 140ms, transform 100ms",
+                  cursor: stopArmed ? "pointer" : "default",
+                  opacity: stopArmed ? 1 : 0.5,
+                  transition: "background 140ms, transform 100ms, opacity 200ms",
                 }}
               >
                 <Square size={14} strokeWidth={2.5} />

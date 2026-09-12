@@ -1,4 +1,102 @@
 # AUREM CTO — Changelog (append-only)
+- **Rapid Stop-click AbortError, Stop-button self-cancel, Vercel
+  env-var leak, GitHub banners → toggle-only signal (2026-09-12)**
+  - **P1 (confirmed, fixed):** rapid clicking Stop 2-3× threw an
+    uncaught `AbortError: signal is aborted without reason`. Root
+    cause: `streamChat()`'s initial `await fetch(...)` in `lib/api.js`
+    had no try/catch of its own (the reader-loop's OWN catch, added
+    earlier, only covers the *post-stream* window); the rejection
+    propagated all the way up through `runTurn()` → `send()` with
+    nothing to catch it. Wrapped the initial fetch in `lib/api.js` and
+    added a defensive try/catch around `await runTurn()` in
+    `ChatPanel.jsx`'s `send()`; also hardened `useChatStream.js`'s
+    `stream()` the same way. All `.abort()` calls now pass an explicit
+    reason string (`"user_stopped"`, `"idle_watchdog_retry"`,
+    `"manual_retry"`, `"loop_cancelled"`, `"component_cleanup"`) for
+    clearer signal-tracing.
+  - **Related P2 (fixed):** Stop renders in the exact same spot Send
+    was, the instant `busy` flips true — an impatient double-click's
+    2nd click landed on Stop and self-cancelled the message. Added a
+    350ms debounce: the Stop button is visibly dimmed + `disabled` for
+    the first 350ms it's on screen, then becomes fully interactive.
+  - **P2 (fixed):** `/settings?tab=integrations` showed the raw
+    `VERCEL_API_TOKEN not set` / `not configured` strings straight
+    from the backend env-var name. Changed to `"Vercel not connected
+    yet"` in `routers/vercel.py`'s status endpoint, `services/
+    vercel_skills.py`'s 3 tool-call error returns, and the frontend
+    fallback text in `VercelCard.jsx`.
+  - **Clarified spec, applies broadly (implemented):** founder's hard
+    rule — GitHub-connection-status changes must NEVER show a banner;
+    the ONLY signal is the color of the GitHub toggle in the chat
+    composer (green=connected, amber=transient/retrying,
+    red=disconnected/failed/never-connected). Deleted
+    `RevokedRepoBanner.jsx` (the source of the "unreachable" amber
+    banner, the "disconnected + reconnect button" red banner, and the
+    "popup blocked" banner). Extracted its polling (`GET
+    /cto/projects/connection-status`) + reconnect-popup logic into a
+    new headless hook, `hooks/useGithubConnectionStatus.js` — no JSX,
+    pure state + `reconnect()`. The composer's GitHub toggle
+    (`data-testid="chat-github-status"`) now consumes this hook and
+    shows 3 colors instead of the old binary green/red; clicking it
+    routes contextually: never-connected → `RepoHelpDialog`;
+    disconnected/revoked → `reconnect()` directly (same one-click
+    popup flow the old banner's button had), or the GitHub
+    installations settings page in a new tab if App-level-suspended;
+    unreachable/connected → passive (no click action). "Popup
+    blocked" now surfaces as a one-shot toast (action-feedback for a
+    click, not a passive status banner) instead of a banner.
+    `PaymentFailedBanner` (Stripe billing — unrelated) was explicitly
+    left untouched.
+  - Verified via `testing_agent_v3_fork`: all 4 fixes PASS (0
+    AbortError after 5 rapid clicks; debounce confirmed; backend +
+    card text confirmed; old banner testids confirmed gone from DOM
+    regardless of connection state; login/chat/settings smoke tests
+    clean). Backend: `9 passed` (vercel-related suite, excluding one
+    pre-existing/unrelated flaky env-shape test). ESLint: clean on all
+    touched files.
+  - Iteration report:
+    `/app/test_reports/iteration_ghstop_abort_vercel_2026_01_12.json`
+- **Admin user detail — "Tasks: 0" next to a task_sent activity-log
+  entry looked like a tracking bug, confirmed BY DESIGN + display fix
+  (2026-09-12, Joe Sebright/truejoeyc@gmail.com case — first fully-
+  correct nudge→task_sent funnel observed in production)**
+  - Founder flagged 2 minor issues from a real user's 28-event
+    activity log. Investigated both thoroughly:
+  - **Issue 2 (confirmed NOT a bug, display fix applied):**
+    `task_count` (shown as "Tasks") counts real `cto_tasks` documents.
+    `post_scan_nudge_task_sent` is a DELIBERATE, earlier signal (see
+    `engagement_nudge.py`'s own docstring) that fires the moment a
+    real message arrives — BEFORE the orchestrator decides whether it
+    becomes a task, a plain answer, or nothing. The two are genuinely
+    different things reading the same word "task", which is what made
+    it look broken. Added `nudge_task_sent_count` (counts
+    `post_scan_nudge_task_sent`/`post_skip_nudge_task_sent` funnel
+    events) to `routers/admin_users.py`'s user-detail endpoint, and
+    relabeled the admin UI row to `Tasks created: N · Nudge replies
+    sent: N` with explanatory tooltips, so the two numbers read as
+    distinct instead of contradictory. Verified live: backend
+    `nudge_task_sent_count` correctly isolated from `task_count`; UI
+    renders "Tasks created: 20 · ... · Nudge replies sent: 3"
+    correctly. Added `tests/test_phase2_admin_users_coverage.py::test_get_user_nudge_task_sent_count_distinct_from_task_count`
+    — 44/44 passing in that file, 102/102 across the related admin
+    test suite.
+  - **Issue 1 (investigated, no code bug found):** `repo_connect_gate_shown`
+    fired 4× in one session before completion. Checked the mount-time
+    tracking effect (ref-guarded, fires once per genuine component
+    mount — cannot re-fire from a button click), checked the
+    "Install"/"Connect" button (already correctly `disabled` while
+    connecting, preventing double-submit), and checked for any
+    Dashboard-level `showGate` flicker path (found none — no code
+    dispatches a refresh event during the connect window). The
+    timeline (2 full `app_install_redirect` + `github_auth_started`
+    cycles, separated by re-shows with no intervening `chat_opened`)
+    is most consistent with the user genuinely reloading the page /
+    retrying the whole connect flow multiple times before succeeding
+    — each fresh page load correctly re-shows the gate per its by-
+    design behavior (0 projects ⇒ show gate). No reproducible code-
+    level "false re-show" defect found; not fixed because no concrete
+    bug was located to fix. Flagged as closed-unless-new-evidence.
+
 - **Mandatory onboarding gate — 3rd confirmed real user hit the same
   "gate ignores successful install" pattern (2026-09-12), root cause
   #2 found and fixed (different from the 2026-09-11 appInstalls/asGate

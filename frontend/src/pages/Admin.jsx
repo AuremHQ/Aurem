@@ -738,7 +738,21 @@ function UserDetail({ user, onBack }) {
               </div>
             )}
             <div><b>Joined:</b> {ago(d.created_at)}</div>
-            <div><b>Projects:</b> {d.project_count ?? 0} · <b>Tasks:</b> {d.task_count ?? 0} · <b>Sessions:</b> {d.session_count ?? 0}</div>
+            <div data-testid="admin-user-counts-row">
+              <b>Projects:</b> {d.project_count ?? 0} ·{" "}
+              <b title="Actual work items the orchestrator created (cto_tasks documents) — NOT the same as a nudge-task-sent signal below.">
+                Tasks created:
+              </b> {d.task_count ?? 0} ·{" "}
+              <b>Sessions:</b> {d.session_count ?? 0}
+              {(d.nudge_task_sent_count ?? 0) > 0 && (
+                <>
+                  {" · "}
+                  <b title="Fires the moment a real message arrives, BEFORE the orchestrator decides whether it becomes a task, a plain answer, or nothing — an intent signal, distinct from Tasks created above.">
+                    Nudge replies sent:
+                  </b> {d.nudge_task_sent_count}
+                </>
+              )}
+            </div>
           </div>
           <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
