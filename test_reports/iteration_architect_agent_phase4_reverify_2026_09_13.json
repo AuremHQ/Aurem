@@ -1,0 +1,63 @@
+{
+  "summary": "Re-verification of Architect Agent Phase 4 'What I set up' panel with CONCRETE saved evidence as founder requested. Logged in via real form (test@aurem.dev / AuremTest2026!), navigated to /projects, opened all 3 seeded demo projects (coffeeshop, csvtool, leaderboard), saved actual full-page PNGs on disk, and captured literal inner_text() of the architect-blueprint-panel for each. All 3 panels rendered with real LLM-generated blueprint data. Type B ('Waiting on your input') section correctly appears ONLY for coffeeshop and is correctly ABSENT for csvtool and leaderboard -- negative case verified. Suspense LOADING blocker reported by main agent was NOT reproduced: /login form was interactive within ~1020ms of page.goto, no retries needed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "screenshots_saved_on_disk": [
+    {"path": "/app/test_reports/screenshots/phase4_coffeeshop_ACTUAL.png", "bytes": 200672, "exists": true},
+    {"path": "/app/test_reports/screenshots/phase4_csvtool_ACTUAL.png", "bytes": 178736, "exists": true},
+    {"path": "/app/test_reports/screenshots/phase4_leaderboard_ACTUAL.png", "bytes": 182193, "exists": true},
+    {"path": "/app/test_reports/screenshots/phase4_results.json", "bytes": 2588, "exists": true, "note": "machine-readable capture: inner_text + variant testid + type-a/b presence flags"}
+  ],
+  "panel_inner_text_verbatim": {
+    "Coffee Shop Booking (demo)": {
+      "project_id": "phase4-raw-doc-coffeeshop-1789314273",
+      "variant_testid": "architect-blueprint-panel",
+      "type_a_section_present": true,
+      "type_b_section_present": true,
+      "inner_text": "WHAT I SET UP\nfrom: \u201ca coffee shop booking app where customers reserve a table for a specific time slot\u201d\nDECIDED AUTOMATICALLY\nauth type: email/password\nStandard authentication method sufficient for initial version.\ncache: enabled\nNeeded for real-time table availability checks.\nbackground jobs: enabled\nRequired for sending notifications and reminders.\nnotification channels: email, sms\nBasic notification methods for reservation updates.\nWAITING ON YOUR INPUT\npayment provider\nUsing safe default for now: placeholder checkout button\nPENDING"
+    },
+    "CSV to JSON Tool (demo)": {
+      "project_id": "phase4-raw-doc-csvtool-1789314273",
+      "variant_testid": "architect-blueprint-panel",
+      "type_a_section_present": true,
+      "type_b_section_present": false,
+      "inner_text": "WHAT I SET UP\nfrom: \u201ca single-page tool that converts CSV to JSON\u201d\nDECIDED AUTOMATICALLY\nauth: none\nNo user accounts or ownership required for a stateless converter.\ndata persistence: client-side only\nNo need for server-side storage of conversion data.\ninfra complexity: minimal (static hosting only)\nThe tool can be deployed as a static single-page application."
+    },
+    "Live Leaderboard (demo)": {
+      "project_id": "phase4-raw-doc-leaderboard-1789314273",
+      "variant_testid": "architect-blueprint-panel",
+      "type_a_section_present": true,
+      "type_b_section_present": false,
+      "type_b_negative_case_explicitly_verified": true,
+      "type_b_negative_case_note": "Confirmed via page.query_selector('[data-testid=\"architect-type-b-section\"]') returning None. The 'Waiting on your input' heading does NOT appear anywhere in inner_text() either. Negative case holds.",
+      "inner_text": "WHAT I SET UP\nfrom: \u201can app where thousands of people might check the same live leaderboard at once\u201d\nDECIDED AUTOMATICALLY\nauth: none\nPublic leaderboard does not require authentication.\ncache_or_redis: enabled\nHigh read concurrency necessitates caching.\ndata_model.entities: LeaderboardEntry with id, name, score, rank, timestamp\nMinimal fields needed for a live leaderboard.\nconcurrency: high read, low write\nThousands of reads, occasional writes for score updates."
+    }
+  },
+  "navigation_timing": {
+    "login_form_visible_ms_after_page_goto": 1020,
+    "suspense_LOADING_seen_in_early_body_text": false,
+    "retries_needed_to_get_past_suspense": 0,
+    "note": "page.goto('/login', wait_until='domcontentloaded') -> [data-testid=\"login-email\"] was queryable in ~1s. No Suspense 'LOADING...' fallback observed at any point on /login, /dashboard, or /projects. The main agent's reproducible block getting past Suspense was NOT reproduced in this browser automation environment on this run (nor in the prior 2026_09_13 round). Likely a client/tool-side transient, not a code bug."
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/phase4_results.json",
+    "/app/test_reports/screenshots/phase4_coffeeshop_ACTUAL.png",
+    "/app/test_reports/screenshots/phase4_csvtool_ACTUAL.png",
+    "/app/test_reports/screenshots/phase4_leaderboard_ACTUAL.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ArchitectBlueprintPanel.jsx: proper 4-way state split (loading/error/empty/data) with distinct data-testids — good for testability.",
+    "Type B section is conditionally rendered only when typeBPending.length > 0 — verified: coffeeshop (1 pending item) renders it; csvtool + leaderboard (0 pending) correctly do not render the section at all, not just an empty container.",
+    "Type B 'safe default' phrasing 'Using safe default for now: placeholder checkout button' is safe — no real provider name leaked. Contract holds.",
+    "PENDING badge is source-cased 'Pending' but CSS text-transforms to uppercase; inner_text() returned 'PENDING'. Consistent with previous round observation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not re-tested this round (per founder instruction)", "frontend": "100% (3/3 demo projects rendered real data, screenshots+inner_text captured and persisted on disk)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (test_admin_001) — worked; single-attempt login, no retries",
+  "seed_data_creation": "None. Used the 3 pre-seeded demo blueprints. Nothing deleted or modified.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 4 architect panel evidence is now on disk. If the founder or a future agent wants to verify, the exact files are: /app/test_reports/screenshots/phase4_{coffeeshop,csvtool,leaderboard}_ACTUAL.png plus phase4_results.json (machine-readable). Prior round's arch_*.png paths were reported but did not exist on disk — those are still missing and are unrelated to this run. The Suspense LOADING blocker main agent hit remains non-reproducible from browser automation; suggest main agent try a different client / clear service worker cache if it recurs.",
+  "rca of the issue": "N/A — no code bug. Prior round's report referenced screenshot files that were never actually written to disk (likely the browser automation tool discarded them or wrote to an ephemeral path). This round explicitly verified with `ls -la` before reporting, and the JSON above lists actual byte sizes to prove the files exist."
+}

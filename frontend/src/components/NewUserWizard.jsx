@@ -130,32 +130,32 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // proved works: revoke the App on GitHub, then reinstall fresh.
   const [connectAttempts, setConnectAttempts] = useState(0);
 
-  // 2026-09-12 — founder-reported (3rd confirmed real user, same
-  // pattern as Rebecca's case): repro'd live — the one-click
-  // auto-submit below (freshRepos.length===1) fires the INSTANT the
-  // App-install grant completes, with zero delay. GitHub's own
-  // permission-grant propagation can lag behind `installation_active`
-  // becoming true by a few seconds even though the repo already shows
-  // up in the installation's repo LIST (a documented, separate GitHub-
-  // side timing gap from the repo-list-sync lag already handled
-  // elsewhere in this file via `wizard-app-repos-syncing`). The
-  // backend's real GitHub verify call 404s as `installation_no_repo_
-  // access` during that window, and — because this fires the INSTANT
-  // install succeeds, with no user action yet — the user sees a
-  // scary-looking "doesn't have access, grant it on GitHub" error
-  // appear seemingly out of nowhere right after doing everything
-  // right, reads it as "still broken", and skips. Auto-retry with a
-  // short backoff for exactly this one transient error code before
-  // ever surfacing it as a real, actionable failure.
+  // 2026-09-13 — 4th confirmed real user hit this EXACT failure class
+  // (canndalf@gmail.com, Meta Ads signup): their real production
+  // activity log shows `app_install_granted` fired 3 times before
+  // `repo_connect_gate_skipped` — i.e. all 3 of the retries below ran
+  // out and STILL hit `installation_no_repo_access`, meaning the 9s
+  // total budget (3 × 3s) is measurably too short against the same
+  // GitHub-side propagation lag this file already documents elsewhere
+  // as "well past 60s" for the repo-LIST sync (`useGitHubConnectStatus.js`,
+  // `BACKGROUND_SYNC_MAX_MS = 2 * 60_000`). This is the single-repo
+  // verify-call's OWN lag on the exact same underlying GitHub
+  // eventual-consistency gap — no reason its retry budget should be
+  // ~13x shorter than the budget already proven necessary for the
+  // closely related check. Switched from a fixed retry COUNT to a
+  // time BUDGET so it keeps quietly retrying (via `retryingAccess`'s
+  // calm "still finishing up" message, never the scary error) until
+  // real time has actually run out, not an arbitrary attempt count.
   const repoAccessRetryRef = useRef(0);
+  const repoAccessRetryStartRef = useRef(0);
   const [retryingAccess, setRetryingAccess] = useState(false);
   // Synchronous companion to `retryingAccess` (state updates aren't
   // visible within the SAME function call that triggered them) — the
   // `finally` block below reads THIS ref, not the state, to decide
   // whether to release `busy` for the CURRENT invocation.
   const retryPendingRef = useRef(false);
-  const _REPO_ACCESS_MAX_RETRIES = 3;
-  const _REPO_ACCESS_RETRY_DELAY_MS = 3000;
+  const _REPO_ACCESS_RETRY_BUDGET_MS = 90_000;
+  const _REPO_ACCESS_RETRY_DELAY_MS = 4000;
 
   // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
   // When rendered as the pre-chat gate (`asGate`), fire the funnel
@@ -463,6 +463,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
 
       const r = await api.post("/cto/projects/add", payload);
       repoAccessRetryRef.current = 0;
+      repoAccessRetryStartRef.current = 0;
       setRetryingAccess(false);
       // 2026-08-20 — founder's call: no forced "first task" step
       // inside the wizard anymore. Connecting the repo is the whole
@@ -489,16 +490,21 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
         });
         return;
       }
-      // 2026-09-12 — see repoAccessRetryRef comment above: this ONE
+      // 2026-09-12/13 — see repoAccessRetryRef comment above: this ONE
       // error code specifically means "the install itself is real and
       // fine, GitHub's own permission propagation just hasn't caught
-      // up yet" — auto-retry a few times with a short gap, silently,
-      // before treating it as a real failure the user needs to act on.
+      // up yet" — auto-retry quietly, for a real TIME budget (not a
+      // small fixed attempt count), before treating it as a real
+      // failure the user needs to act on.
       if (
         typeof detail === "object" &&
         detail?.error === "installation_no_repo_access" &&
-        repoAccessRetryRef.current < _REPO_ACCESS_MAX_RETRIES
+        (repoAccessRetryRef.current === 0
+          || Date.now() - repoAccessRetryStartRef.current < _REPO_ACCESS_RETRY_BUDGET_MS)
       ) {
+        if (repoAccessRetryRef.current === 0) {
+          repoAccessRetryStartRef.current = Date.now();
+        }
         repoAccessRetryRef.current += 1;
         retryPendingRef.current = true;
         setRetryingAccess(true);
@@ -507,6 +513,8 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
         }, _REPO_ACCESS_RETRY_DELAY_MS);
         return;
       }
+      repoAccessRetryRef.current = 0;
+      repoAccessRetryStartRef.current = 0;
       retryPendingRef.current = false;
       setRetryingAccess(false);
       const msg = (typeof detail === "object" && detail?.message)

@@ -4364,3 +4364,62 @@ restart, confirming the code is running, but git HEAD (and therefore
 "deployed") has not advanced. Founder should treat this as
 preview-verified, not yet deployment-confirmed.
 
+
+
+## 2026-09-13 (cont.) — GitHub repo-connect: 4th real-user report of the same funnel bug, root-caused and fixed
+
+Founder report: `canndalf@gmail.com` (real Meta Ads signup) connected
+their GitHub App successfully (`app_install_granted` logged) but ended
+with 0 projects (`repo_connect_gate_skipped` ~1 min later,
+`post_skip_nudge_shown`). Traced via source code to
+`frontend/src/components/NewUserWizard.jsx`'s single-repo auto-submit:
+fires the INSTANT a GitHub App grant completes; the backend's live
+GitHub verify call can 404 (`installation_no_repo_access`) if GitHub's
+own permission-propagation hasn't caught up yet — a lag this same
+codebase already measured elsewhere as "well past 60s"
+(`useGitHubConnectStatus.js`, `BACKGROUND_SYNC_MAX_MS = 2*60_000`, for
+the closely related repo-list sync). The OLD retry budget for this
+specific verify call was only 3 attempts × 3s = 9s — independently
+confirmed too short by the founder checking canndalf's REAL production
+activity log: `app_install_granted` fired exactly 3 times before the
+skip, matching the old `_REPO_ACCESS_MAX_RETRIES=3` constant exactly.
+This is the 4th confirmed real user hitting this exact failure class
+(3-4 prior partial fixes: 2026-09-01, 09-09, 09-09-c, 09-12).
+
+**Fix**: replaced the fixed-attempt-count retry with a 90-second TIME
+budget (4s apart) — `_REPO_ACCESS_RETRY_BUDGET_MS = 90_000`,
+`repoAccessRetryStartRef` anchors the window on first failure. User
+sees the same calm "Almost there — GitHub is still finishing up..."
+message throughout; the scary "doesn't have access" error only
+surfaces if 90 real seconds elapse without success, comfortably past
+the documented lag. `NewUserWizard.repoAccessRetry.test.jsx` rewritten
+(5 tests, was 4) with a dedicated regression test
+(`t_keeps_retrying_quietly_well_past_the_OLD_9s_budget_never_showing_
+the_error`) that directly replays canndalf's exact timeline shape.
+8/8 tests passing (this suite + `connectRefinement.test.jsx`),
+independently re-run and confirmed by `testing_agent_v3_fork`
+(report: `iteration_repo_access_retry_fix_2026_01_13.json`), including
+a code-review pass confirming the old constant is completely removed,
+not just shadowed.
+
+Scoped to `NewUserWizard.jsx` only (the exact path canndalf hit,
+per founder's explicit ask) — `AddProjectWizard.jsx` does not have
+this same single-repo auto-submit code path, left untouched.
+
+**Environment limitation disclosed**: no real GitHub App private key
+is configured in this preview pod, so a true end-to-end live GitHub
+OAuth reproduction of the exact race wasn't possible here — the
+vitest suite (real component code, real render tree, fake-timer-
+controlled wall-clock, only the network layer mocked) is the most
+faithful reproduction achievable in this environment, and was
+explicitly disclosed as such rather than presented as a full live repro.
+
+**Action item for founder (not something this agent can do)**: manual
+support outreach to `canndalf@gmail.com` — they did everything right,
+have an installed-but-unused GitHub App and 0 projects, real production
+account not reachable from this preview pod's database.
+
+**Separately discovered and NOT fixed inline** (correctly, per
+founder): `/api/health`'s `build_hash` field is unreliable across
+backend restarts — tracked as ROADMAP F34.
+

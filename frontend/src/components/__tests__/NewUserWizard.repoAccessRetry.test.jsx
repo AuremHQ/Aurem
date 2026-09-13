@@ -1,5 +1,5 @@
 /**
- * NewUserWizard.repoAccessRetry.test.jsx — 2026-09-12
+ * NewUserWizard.repoAccessRetry.test.jsx — 2026-09-12, widened 2026-09-13
  *
  * THIRD confirmed real-user report of the same pattern first flagged
  * as "Rebecca's case": app_installed + app_install_granted succeed,
@@ -20,9 +20,18 @@
  * "doesn't have access, grant it on GitHub" error, which reads as
  * "still broken" and drives the Skip click.
  *
- * Fix: auto-retry up to 3 times (3s apart) for this ONE specific error
- * code before ever surfacing it as a real failure, showing a friendly
- * "Almost there..." message in the interim instead of the red error.
+ * 2026-09-13 — 4TH confirmed real user (canndalf@gmail.com, Meta Ads
+ * signup): production activity log showed `app_install_granted` fired
+ * exactly 3 times before `repo_connect_gate_skipped` — i.e. all 3 of
+ * the original retries ran out and STILL hit the transient error,
+ * confirming the 9s total budget (3 x 3s) is measurably too short
+ * against the same GitHub-side lag this codebase already documents
+ * elsewhere as "well past 60s" (`useGitHubConnectStatus.js`,
+ * `BACKGROUND_SYNC_MAX_MS = 2 * 60_000`, for the closely related
+ * repo-LIST sync). Widened to a 90s TIME budget (not a fixed attempt
+ * count), 4s apart, so it keeps quietly retrying — via the same
+ * friendly "Almost there..." message, never the scary error — until
+ * real time has actually run out.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -107,7 +116,7 @@ async function mountAsGate(onComplete = vi.fn()) {
 // attempt). Tests below use blanket (not "-Once") mocks and avoid
 // asserting exact call counts so they verify real behavior without
 // being brittle to that unrelated harness quirk.
-describe("2026-09-12 — transient installation_no_repo_access auto-retry", () => {
+describe("2026-09-12/13 — transient installation_no_repo_access auto-retry", () => {
   it("t_shows_friendly_retry_message_not_scary_error_on_first_failure", async () => {
     api.post.mockRejectedValue(NO_REPO_ACCESS_ERROR);
     await mountAsGate();
@@ -126,9 +135,9 @@ describe("2026-09-12 — transient installation_no_repo_access auto-retry", () =
     expect(screen.queryByTestId("wizard-error")).toBeNull();
 
     // Now let a subsequent attempt succeed, then advance past the
-    // retry delay so it actually fires.
+    // retry delay (4s) so it actually fires.
     api.post.mockResolvedValue({ data: { project_id: "px-retry-ok" } });
-    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
     await waitFor(() => expect(screen.getByTestId("wizard-success-beat")).toBeTruthy());
     expect(screen.queryByTestId("wizard-error")).toBeNull();
 
@@ -136,24 +145,41 @@ describe("2026-09-12 — transient installation_no_repo_access auto-retry", () =
     expect(onComplete).toHaveBeenCalled();
   });
 
-  it("t_gives_up_after_max_retries_and_shows_the_real_error", async () => {
+  it("t_keeps_retrying_quietly_well_past_the_OLD_9s_budget_never_showing_the_error", async () => {
+    // THE 4TH-USER REGRESSION TEST: canndalf@gmail.com's real timeline
+    // ran out of retries at ~9s (the old budget). Prove that same
+    // elapsed time now still shows the calm message, not the error.
+    api.post.mockRejectedValue(NO_REPO_ACCESS_ERROR);
+    await mountAsGate();
+    await waitFor(() => expect(screen.getByTestId("wizard-repo-access-retrying")).toBeTruthy());
+
+    // Advance to ~40s — well past the old 9s budget, well within the
+    // new 90s one.
+    for (let i = 0; i < 10; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+    }
+    expect(screen.getByTestId("wizard-repo-access-retrying")).toBeTruthy();
+    expect(screen.queryByTestId("wizard-error")).toBeNull();
+  });
+
+  it("t_gives_up_after_the_90s_time_budget_and_shows_the_real_error", async () => {
     api.post.mockRejectedValue(NO_REPO_ACCESS_ERROR);
     await mountAsGate();
 
     await waitFor(() => expect(screen.getByTestId("wizard-repo-access-retrying")).toBeTruthy());
 
-    // 3 retries max, 3s apart — advance well past all of them.
-    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
+    // 90s budget, 4s apart — advance well past all of it (~24 ticks).
+    for (let i = 0; i < 26; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+    }
 
     await waitFor(() => expect(screen.getByTestId("wizard-error")).toBeTruthy());
     expect(screen.getByTestId("wizard-error").textContent).toMatch(/doesn.t have access/i);
     expect(screen.queryByTestId("wizard-repo-access-retrying")).toBeNull();
     // No infinite silent retry loop — a bounded number of attempts,
-    // not one per render forever.
-    expect(api.post.mock.calls.length).toBeLessThanOrEqual(8);
+    // not one per render forever. ~90s/4s + mount attempts + harness
+    // double-fire headroom.
+    expect(api.post.mock.calls.length).toBeLessThanOrEqual(35);
   });
 
   it("t_unrelated_errors_never_trigger_a_retry", async () => {
