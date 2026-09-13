@@ -287,12 +287,29 @@ async def _run_verify_inner(
         try:
             browser = await pw.chromium.launch(**launch_kwargs)
         except Exception as e:
-            # C1 — graceful degrade ONLY for a missing Chromium binary.
-            # Any other launch failure still hard-fails via the outer
-            # run_verify() try/except, unchanged.
-            if _is_browser_missing_error(e):
+            # 2026-09-13 — CRITICAL fix (recurrence of the exact class
+            # of bug this file's own 2026-08-31 note anticipated).
+            # PLAYWRIGHT_CHROME_EXECUTABLE_PATH is a convenience
+            # symlink maintained OUTSIDE this app (base image /
+            # preview-pod provisioning) — it goes stale independently
+            # of anything in this repo whenever the Chromium build it
+            # points at gets replaced. If the override is what failed,
+            # retry ONCE without it before giving up — Playwright's
+            # own bundled-browser resolution might still be fine.
+            if launch_kwargs.get("executable_path") and _is_browser_missing_error(e):
+                try:
+                    browser = await pw.chromium.launch(headless=True)
+                except Exception as e2:
+                    if _is_browser_missing_error(e2):
+                        return await _browser_free_fallback(url, result, e2)
+                    raise
+            elif _is_browser_missing_error(e):
+                # C1 — graceful degrade ONLY for a missing Chromium binary.
+                # Any other launch failure still hard-fails via the outer
+                # run_verify() try/except, unchanged.
                 return await _browser_free_fallback(url, result, e)
-            raise
+            else:
+                raise
         try:
             # V1c rule 4 — fresh, isolated context every run. No prior
             # session or saved credentials carried in, downloads off.

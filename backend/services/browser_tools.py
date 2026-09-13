@@ -163,13 +163,30 @@ async def _run_steps(steps: list[dict]) -> dict:
         try:
             browser = await pw.chromium.launch(**launch_kwargs)
         except Exception as e:                             # noqa: BLE001
-            if _is_browser_missing_error(e):
+            # 2026-09-13 — same fallback-retry fix as web_inspect.py /
+            # deploy_verify.py (recurring bug: PLAYWRIGHT_CHROME_EXECUTABLE_PATH
+            # is a base-image-maintained symlink that goes stale
+            # independently of this repo). Retry once without the
+            # override before degrading.
+            if launch_kwargs.get("executable_path") and _is_browser_missing_error(e):
+                try:
+                    browser = await pw.chromium.launch(headless=True)
+                except Exception as e2:                       # noqa: BLE001
+                    if _is_browser_missing_error(e2):
+                        return {
+                            "ok": False, "browser_available": False,
+                            "error": "browser_unavailable", "message": UNAVAILABLE_MESSAGE,
+                        }
+                    return {"ok": False, "browser_available": True,
+                            "error": f"browser_launch_failed: {type(e2).__name__}: {e2}"}
+            elif _is_browser_missing_error(e):
                 return {
                     "ok": False, "browser_available": False,
                     "error": "browser_unavailable", "message": UNAVAILABLE_MESSAGE,
                 }
-            return {"ok": False, "browser_available": True,
-                    "error": f"browser_launch_failed: {type(e).__name__}: {e}"}
+            else:
+                return {"ok": False, "browser_available": True,
+                        "error": f"browser_launch_failed: {type(e).__name__}: {e}"}
 
         try:
             # Fresh, isolated context every session — no persisted

@@ -151,14 +151,38 @@ async def _fetch_snapshot_and_screenshot_meta(url: str, allowlist_host: str) -> 
         try:
             browser = await pw.chromium.launch(**launch_kwargs)
         except Exception as e:
-            # C1 — same graceful degrade as deploy_verify: only when
-            # Chromium's own binary is missing, fall back to a plain
-            # httpx GET of the raw HTML (no rendered text, no
-            # screenshot). Any other launch failure still hard-fails.
-            if dv._is_browser_missing_error(e):
+            # 2026-09-13 — CRITICAL fix (2nd recurrence of this exact
+            # class of bug — see deploy_verify.py's 2026-08-31 note).
+            # PLAYWRIGHT_CHROME_EXECUTABLE_PATH is an env-level
+            # convenience symlink maintained OUTSIDE this app (the
+            # platform's base image / preview-pod provisioning) — it
+            # goes stale independently of anything in this repo
+            # whenever the underlying Chromium build it points at
+            # gets replaced. Previously any staleness there was a
+            # hard failure straight to the browser-free degrade, even
+            # though Playwright's OWN bundled-browser resolution
+            # (PLAYWRIGHT_BROWSERS_PATH / default cache) might be
+            # perfectly fine. Now: if an executable_path override was
+            # configured and it's what failed, retry ONCE without it
+            # before giving up — only degrade if BOTH resolution
+            # paths are actually broken.
+            if launch_kwargs.get("executable_path") and dv._is_browser_missing_error(e):
+                try:
+                    browser = await pw.chromium.launch(headless=True)
+                except Exception as e2:
+                    if dv._is_browser_missing_error(e2):
+                        return await _browser_free_snapshot_fallback(url, e2)
+                    out["error"] = f"launch_failed:{type(e2).__name__}"
+                    return out
+            elif dv._is_browser_missing_error(e):
+                # C1 — same graceful degrade as deploy_verify: only when
+                # Chromium's own binary is missing, fall back to a plain
+                # httpx GET of the raw HTML (no rendered text, no
+                # screenshot). Any other launch failure still hard-fails.
                 return await _browser_free_snapshot_fallback(url, e)
-            out["error"] = f"launch_failed:{type(e).__name__}"
-            return out
+            else:
+                out["error"] = f"launch_failed:{type(e).__name__}"
+                return out
         try:
             context = await browser.new_context(
                 viewport=dv.DEVICE_VIEWPORTS["desktop"], accept_downloads=False,

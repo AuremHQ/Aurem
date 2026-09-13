@@ -1736,6 +1736,112 @@ async def lifespan(app: FastAPI):
                 )
     _asyncio.create_task(_probe_loop_linters())
 
+    async def _probe_chromium():
+        """2026-09-13 — CRITICAL bug fix follow-up. Founder-reported:
+        ORA Chat's web_inspect tool failed with "Chromium executable
+        unavailable" against a REACHABLE URL.
+
+        Root cause (confirmed directly, two layers):
+          1. `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` (checked FIRST by
+             `web_inspect.py` / `deploy_verify.py` / `browser_tools.py`)
+             is a convenience symlink maintained OUTSIDE this repo —
+             by the platform's own preview-pod base image — pointing
+             at whichever Chromium build happens to be installed
+             under `PLAYWRIGHT_BROWSERS_PATH`. It goes stale
+             independently of this app whenever that build gets
+             replaced (e.g. a `playwright` pip version bump expects a
+             newer build revision than what's on disk).
+          2. Playwright's OWN default bundled-browser resolution
+             (used when the override above is unset/broken) checks
+             `PLAYWRIGHT_BROWSERS_PATH` if set, else `~/.cache/
+             ms-playwright` — which was found completely EMPTY for
+             the actual supervisor-spawned backend process in this
+             pod (that env var is only exported in interactive
+             shells here, not passed through supervisor's controlled
+             environment).
+        Both `web_inspect.py` and `deploy_verify.py` now retry once
+        without the executable_path override if it's what failed
+        (2026-09-13 fix) before degrading — this probe mirrors that
+        EXACT same fallback chain (not just Playwright's raw default)
+        so it accurately reflects what the real tool will do, and
+        self-heals path #2 via `playwright install chromium` if
+        BOTH resolution paths are broken. Mirrors the result onto
+        `app.state.chromium_status` / `/api/health` so a future
+        staleness episode is visible on the dashboard immediately."""
+        await _asyncio.sleep(45)
+        import subprocess
+
+        def _try_launch(use_override: bool) -> Optional[str]:
+            try:
+                from playwright.sync_api import sync_playwright
+                kwargs = {"headless": True}
+                exe = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
+                if use_override and exe:
+                    kwargs["executable_path"] = exe
+                with sync_playwright() as pw:
+                    b = pw.chromium.launch(**kwargs)
+                    b.close()
+                return None
+            except Exception as e:                                # noqa: BLE001
+                return str(e)[:400]
+
+        # Mirror the app's real resolution order: override first,
+        # then Playwright's own bundled-browser fallback.
+        err = await _asyncio.to_thread(_try_launch, True)
+        via = "executable_path override"
+        if err is not None:
+            err2 = await _asyncio.to_thread(_try_launch, False)
+            if err2 is None:
+                err, via = None, "bundled resolution (override was stale)"
+
+        if err is None:
+            app.state.chromium_status = {"ok": True, "self_healed": False, "via": via}
+            logger.info("✅ Chromium OK (%s) — web_inspect / deploy_verify can render pages.", via)
+            return
+
+        if "executable doesn't exist" not in err.lower():
+            # Some other launch failure (missing shared libs, etc.) —
+            # not the staleness case this probe self-heals; surface
+            # it plainly and stop, no point retrying blindly.
+            app.state.chromium_status = {"ok": False, "self_healed": False, "error": err}
+            logger.warning("⚠️  Chromium launch failed (non-missing-binary "
+                            "error) — web_inspect/deploy_verify will degrade "
+                            "to browser-free fallback: %s", err)
+            return
+
+        logger.warning("⚠️  Chromium binary missing/stale on BOTH resolution "
+                        "paths at boot (%s) — attempting self-heal via "
+                        "`playwright install chromium`...", err[:200])
+        try:
+            proc = await _asyncio.wait_for(
+                _asyncio.to_thread(
+                    subprocess.run,
+                    ["python", "-m", "playwright", "install", "chromium"],
+                    capture_output=True, text=True,
+                ),
+                timeout=180.0,
+            )
+        except Exception:                                          # noqa: BLE001
+            proc = None
+
+        reprobe_err = await _asyncio.to_thread(_try_launch, False)
+        if reprobe_err is None:
+            app.state.chromium_status = {"ok": True, "self_healed": True,
+                                          "via": "bundled resolution (freshly installed)"}
+            logger.info("✅ Chromium self-healed at boot — "
+                        "`playwright install chromium` fixed it.")
+        else:
+            app.state.chromium_status = {
+                "ok": False, "self_healed": False,
+                "error": reprobe_err,
+                "install_rc": (proc.returncode if proc else None),
+                "install_stderr": (proc.stderr[:300] if proc and proc.returncode != 0 else None),
+            }
+            logger.warning("⚠️  Chromium STILL unavailable after self-heal "
+                            "attempt — web_inspect/deploy_verify will degrade "
+                            "to browser-free fallback: %s", reprobe_err)
+    _asyncio.create_task(_probe_chromium())
+
     # Iter 212m-172 — Awaiting-confirmation stale sweeper.
     # Iter 309 · Phase 0.1 — Awaiting-confirmation sweeper was previously
     # a SECOND background task defined at this block. It has been
@@ -3116,6 +3222,13 @@ async def health():
         # dashboards can show a "Verify phase degraded" pill when the
         # pod is missing ruff / eslint.
         "loop_linters_missing": getattr(app.state, "loop_linters_missing", None),
+        # 2026-09-13 — surface Chromium/Playwright health so a stale
+        # or version-mismatched browser binary (which silently
+        # degrades ORA Chat's web_inspect tool + deploy_verify's full
+        # checks to a browser-free HTTP-only fallback) shows up on
+        # the dashboard instead of only being discovered when a
+        # founder happens to ask ORA to inspect a URL.
+        "chromium_status": getattr(app.state, "chromium_status", None),
         # Iter 212m-172 — live model routing surface.
         "council_a_model":  council_a_model,
         "longcat_live":     longcat_live,

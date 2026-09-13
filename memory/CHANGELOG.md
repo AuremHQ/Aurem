@@ -1,4 +1,60 @@
 # AUREM CTO — Changelog (append-only)
+- **CRITICAL — Chromium/Playwright Unavailable Fix (web_inspect tool)
+  (2026-09-13)**
+  - Founder-reported: ORA Chat's `web_inspect` tool failed with
+    "Chromium executable unavailable" against a confirmed-reachable
+    URL (github.com/obra/superpowers). Model behavior was correct
+    (honestly flagged the failure instead of fabricating an answer).
+  - **Root cause, confirmed directly on this pod (two layers):**
+    (1) `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` (checked first by
+    `web_inspect.py`/`deploy_verify.py`/`browser_tools.py`) resolved
+    to `/usr/local/bin/browser-use-chromium`, a symlink into
+    `/pw-browsers/chromium_headless_shell-1208/...` that no longer
+    existed — the installed Chromium build (1208) didn't match what
+    the currently pinned `playwright==1.61.0` package expects (build
+    1228). This symlink is maintained by the platform's own
+    preview-pod base image, entirely outside this repo, so it can go
+    stale independent of any code change here. (2) Playwright's OWN
+    default bundled-browser resolution (the fallback when the
+    override is unset) was ALSO empty for the real supervisor-
+    spawned backend process — `PLAYWRIGHT_BROWSERS_PATH` is only
+    exported in interactive shells on this pod, never passed through
+    supervisor's controlled `environment=` list, so it silently fell
+    back to an empty `~/.cache/ms-playwright`.
+  - This exact class of bug had already recurred once before (see
+    `deploy_verify.py`'s own 2026-08-31 note anticipating it) — the
+    prior fix only improved diagnostics, it didn't add resilience.
+  - **Fix (root-cause, not a one-time manual patch):** re-pointed the
+    stale symlink to the current build immediately, AND — the
+    durable part — `web_inspect.py`, `deploy_verify.py`, and
+    `browser_tools.py` now retry the Chromium launch ONCE without the
+    `executable_path` override if that override is specifically what
+    failed, before degrading. Staleness in either resolution path
+    alone no longer takes the tool down — only staleness in BOTH
+    does. A new boot-time probe (`main.py::_probe_chromium`) also
+    self-heals the bundled path via `playwright install chromium` if
+    both are broken, and mirrors the live verdict onto
+    `app.state.chromium_status` / `/api/health` so any future
+    staleness episode is visible on the dashboard immediately instead
+    of only surfacing the next time someone happens to ask ORA to
+    inspect a URL.
+  - Tested: new suite
+    `tests/test_2026_09_13_chromium_stale_executable_path_fallback.py`
+    (3/3 — fallback triggers correctly on a simulated stale override,
+    still degrades gracefully if BOTH paths are broken, and a live
+    real-environment sanity launch). Full existing browser/deploy-
+    verify/web-inspect suite re-run clean (65/65, zero regressions).
+    **Live end-to-end confirmed** with the founder's exact request
+    (`web_inspect` on github.com/obra/superpowers through the real
+    admin ORA Chat v2 `run_turn` pipeline): real screenshot captured,
+    real rendered page content extracted, real grounded comparison
+    answer produced — `browser_available: True` on every run.
+  - **PREVIEW-ONLY** — not yet deployed to auremcto.com. Production's
+    own Dockerfile already bakes `playwright install --with-deps
+    chromium` into the image build (a different, already-correct
+    mechanism verified separately), so this specific stale-symlink
+    failure mode is a preview-pod-only risk; the new app-level
+    fallback-retry code ships to production too as extra resilience.
 - **CRITICAL — ORA Chat v2 Tool-Call JSON Corruption Fix (2026-09-13)**
   - Founder-reported exact error: `Validation:
     messages[26].tool_calls[0].function.arguments must be a valid
