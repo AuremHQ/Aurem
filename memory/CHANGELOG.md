@@ -1,4 +1,61 @@
 # AUREM CTO — Changelog (append-only)
+- **CRITICAL — ORA Chat v2 Tool-Call JSON Corruption Fix (2026-09-13)**
+  - Founder-reported exact error: `Validation:
+    messages[26].tool_calls[0].function.arguments must be a valid
+    JSON object string: key must be a string at line 1 column 2` —
+    triggered by asking admin ORA Chat to check
+    github.com/obra/superpowers and compare it to AUREM's own skills.
+    A separate reproduction attempt got a different symptom instead:
+    a stale, unrelated answer despite the tool-call trace showing
+    "Reading URL...".
+  - **Root cause (confirmed by direct code trace):**
+    `services/ora_chat_v2/llm_client.py` correctly parses a streamed
+    tool call's arguments with `json.loads(...)` into a Python dict.
+    `services/ora_chat_v2/engine.py`'s tool-loop then re-serialized
+    that SAME dict back into the replayed message history with
+    `str(c["arguments"])` — Python's `str()` on a dict produces its
+    single-quoted repr (`"{'url': 'https://...'}"`), which is NOT
+    valid JSON. Every OpenAI-compatible tool-calling spec requires
+    `tool_calls[].function.arguments` to be a JSON-encoded string.
+    This corrupted entry gets replayed to the provider on the very
+    next tool round, in the SAME turn — reproduced directly: parsing
+    the old serialized string with `json.loads()` fails at EXACTLY
+    line 1, column 2 (right after the opening brace, where a strict
+    JSON parser expects `"` and finds Python's `'`) — the identical
+    error-class the founder's provider reported. A stricter
+    provider/gateway hard-rejects it (the founder's exact symptom); a
+    more lenient one silently mangles/ignores the malformed history
+    entry instead, which plausibly explains the separate "stale
+    unrelated answer" symptom — same single root cause, two
+    different provider-side failure modes. **Not gated by
+    conversation length** — message index 26 was simply where a tool
+    call happened to occur in that particular long conversation; any
+    turn with at least one tool call, on a conversation of any
+    length including a brand-new one, hits the same corrupted replay
+    on the very next round of that same turn.
+  - **Fix:** `json.dumps(c["arguments"])` instead of
+    `str(c["arguments"])` — one line, `services/ora_chat_v2/engine.py`
+    (plus the `import json` it needed).
+  - Tested: new suite
+    `tests/test_2026_09_13_ora_chat_v2_tool_call_json_corruption.py`
+    (5/5) — includes a direct reproduction of the exact
+    `json.JSONDecodeError` at line 1 / column 2 from the OLD code, a
+    round-trip proof of the fix, a static regression guard, and a
+    REAL (non-mocked) end-to-end live call on a completely FRESH
+    (zero prior messages) conversation through the actual configured
+    provider (OpenRouter/Qwen), proving the bug is not length-gated.
+    Full existing `ora_chat_v2` suite re-run — 4 pre-existing
+    failures confirmed unrelated via `git stash` bisection (both with
+    and without the fix), 25 passing, no new regressions.
+  - **Honest disclosure:** this preview pod's active admin chat
+    provider (OpenRouter → Qwen) was observed to be lenient about the
+    malformed JSON (no hard error in direct testing here) rather
+    than reproducing the founder's exact hard-error message —
+    consistent with the "different provider, different failure mode"
+    explanation above. The root cause and fix are proven directly
+    via `json.loads()` on the actual corrupted string, independent of
+    which specific provider is configured. **PREVIEW-ONLY** — not
+    yet deployed to auremcto.com.
 - **CRITICAL — Diff-Hallucination Safety Gate + Ship-Cancel Fix
   (2026-09-13)**
   - Founder-reported live incident (RerootsBeauty/ReRoots- test

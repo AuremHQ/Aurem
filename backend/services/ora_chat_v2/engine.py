@@ -7,6 +7,7 @@ proposal per turn (P4) + streamed text (final round only).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -222,7 +223,42 @@ async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
                           "tool_calls": [
                               {"id": c["id"], "type": "function",
                                "function": {"name": c["name"],
-                                            "arguments": str(c["arguments"])}}
+                                            # 2026-09-13 — CRITICAL fix.
+                                            # Was `str(c["arguments"])`.
+                                            # `c["arguments"]` is a
+                                            # Python dict (parsed by
+                                            # llm_client.py's
+                                            # `json.loads()`); `str()`
+                                            # on a dict produces
+                                            # Python's single-quoted
+                                            # repr — e.g.
+                                            # "{'url': 'x'}" — which is
+                                            # NOT valid JSON. When this
+                                            # message is replayed back
+                                            # to the LLM API on the
+                                            # NEXT tool round, strict
+                                            # providers reject it with
+                                            # "must be a valid JSON
+                                            # object string: key must
+                                            # be a string at line 1
+                                            # column 2" (the position
+                                            # right after `{` where a
+                                            # single-quoted key breaks
+                                            # a JSON parser). Lenient
+                                            # providers instead silently
+                                            # mangle/ignore the corrupt
+                                            # history entry, which is
+                                            # why a second repro
+                                            # attempt could surface as
+                                            # a confused, unrelated
+                                            # answer instead of a hard
+                                            # error. `json.dumps()` is
+                                            # the correct, valid-JSON
+                                            # round-trip of the same
+                                            # dict — required by every
+                                            # OpenAI-compatible tool
+                                            # -calling spec.
+                                            "arguments": json.dumps(c["arguments"])}}
                               for c in tool_calls]})
         for call in tool_calls:
             if call["name"] == "propose_action" and allow_actions and proposed_action is None:
