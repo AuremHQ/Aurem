@@ -1652,6 +1652,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             watchdog: t.watchdog,
             feedback: t.feedback,
             shipped_task_id: t.shipped_task_id,
+            // 2026-09-12 — Bug 2 fix (critical-diff cancel bug):
+            // hydrate the persisted cancel flag so a rejected
+            // "Approve the fix" button stays dismissed after a page
+            // refresh/rejoin instead of silently coming back.
+            ship_cancelled: t.ship_cancelled || false,
             // Chat UX #4 (Tier 1) — hydrate the persisted "📖 Reading
             // repo… ✍️ Writing files…" step trail so it survives a
             // page refresh instead of vanishing (MessageBubble already
@@ -1983,6 +1988,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     }
   }
 
+  // 2026-09-12 — Bug 2 fix (critical-diff cancel bug). Symmetric to
+  // the backend's own bare-confirmation detector
+  // (services/orchestrator.py `_CONFIRM_RX` — "go" / "ship it" after
+  // a handoff fence = ship shortcut). This is the rejection mirror:
+  // an explicit stop/cancel/don't-apply intent anywhere in the new
+  // message invalidates any still-pending "Approve the fix" button
+  // instead of leaving it live and clickable.
+  const CANCEL_SHIP_RX = /\b(stop|cancel|abort)\b|\bdon'?t\s+(apply|do|ship|approve|commit)\b|\bdo\s+not\s+(apply|do|ship|approve|commit)\b|\bnever\s*mind\b/i;
+
   async function send(e, opts = {}) {
     e?.preventDefault();
     // Iter 212m-58 — optional loop-phase override. Called with
@@ -2052,6 +2066,48 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         kind: "error",
       });
       return;
+    }
+    // 2026-09-12 — Bug 2 fix (critical-diff cancel bug). Founder
+    // repro: after seeing a dangerous auto-generated diff, typing
+    // "STOP - do not apply this... Cancel this." left the earlier
+    // "Approve the fix" button live and clickable — no mechanism
+    // ever invalidated it from a LATER message. Detect the rejection
+    // intent here and immediately disable EVERY currently-pending
+    // (not yet shipped, not yet cancelled) handoff in this session —
+    // erring toward cancelling all of them rather than guessing which
+    // one the user meant, since a destructive action must never stay
+    // reachable after an explicit "stop". Best-effort persisted so
+    // the button stays gone after a refresh; the local setMessages
+    // update below is what actually disables the button right now,
+    // synchronously, regardless of whether the persist call succeeds.
+    if (promptOverride == null && CANCEL_SHIP_RX.test(text)) {
+      const isPendingHandoff = (msg) => (
+        msg.role === "assistant"
+        && !msg.shipped_task_id
+        && !msg.ship_cancelled
+        && typeof msg.content === "string"
+        && msg.content.includes("```aurem-handoff")
+      );
+      const turnIndicesToCancel = [];
+      messages.forEach((msg, mi) => {
+        if (isPendingHandoff(msg)) {
+          turnIndicesToCancel.push(
+            messages.slice(0, mi + 1)
+              .filter((mm) => mm.provider !== "system").length - 1,
+          );
+        }
+      });
+      if (turnIndicesToCancel.length) {
+        setMessages((m) => m.map((msg) => (
+          isPendingHandoff(msg) ? { ...msg, ship_cancelled: true } : msg
+        )));
+        turnIndicesToCancel.forEach((turnIndex) => {
+          api.post("/chat/turn/ship-cancelled",
+            { session_id: sessionId, turn_index: turnIndex })
+            .catch(() => { /* local state already reflects the cancel */ });
+        });
+        toast({ message: "Cancelled the pending fix — it will not be applied.", kind: "info" });
+      }
     }
     // Set the ref lock AFTER passing the input-validity guard so a
     // legitimately-blocked send (empty text, no session, busy in

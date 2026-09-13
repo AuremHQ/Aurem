@@ -69,10 +69,14 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         # 2) read target files
         await _pkg._set_status(task_id, status="reading")
         contents = {}
+        # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug) —
+        # see the matching fix + full rationale in worker_api.py.
+        from services.cto_projects_helpers import _context_with_truncation_marker
         for f in (files or [])[:6]:
             fp = repo_path / f
             if fp.is_file():
-                contents[f] = fp.read_text(errors="replace")[:10000]
+                _body = fp.read_text(errors="replace")
+                contents[f], _ = _context_with_truncation_marker(_body)
                 await _pkg._log(task_id, f"📄 read {f}")
         if not contents:
             # auto-pick a few likely files
@@ -80,7 +84,8 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                          "src/App.jsx", "src/main.jsx", "pages/index.js", "README.md"]:
                 fp = repo_path / cand
                 if fp.is_file():
-                    contents[cand] = fp.read_text(errors="replace")[:10000]
+                    _body = fp.read_text(errors="replace")
+                    contents[cand], _ = _context_with_truncation_marker(_body)
                     if len(contents) >= 4:
                         break
 
@@ -161,7 +166,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
             reply = await _retry(
                 lambda: _pkg.call_llm(
                     messages=[{"role": "user", "content": user_msg}],
-                    system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                    system=_AI_SYS, max_tokens=12000, temperature=0.0,
                 ),
                 what="AI codegen", task_id=task_id,
             )
@@ -184,7 +189,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                     lambda: _pkg.call_llm(
                         messages=[{"role": "user",
                                    "content": user_msg + "\n\n" + _nudge}],
-                        system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                        system=_AI_SYS, max_tokens=12000, temperature=0.0,
                     ),
                     what="AI codegen auto-retry", task_id=task_id,
                 )
@@ -318,7 +323,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                         lambda: _pkg.call_llm(
                             messages=[{"role": "user",
                                        "content": user_msg + "\n\n" + _vg_nudge}],
-                            system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
                         ),
                         what="Vanguard auto-fix retry", task_id=task_id,
                     )

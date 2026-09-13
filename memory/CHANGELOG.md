@@ -1,4 +1,88 @@
 # AUREM CTO — Changelog (append-only)
+- **CRITICAL — Diff-Hallucination Safety Gate + Ship-Cancel Fix
+  (2026-09-13)**
+  - Founder-reported live incident (RerootsBeauty/ReRoots- test
+    account): a trivial "update the footer copyright text" chat
+    request came back with a diff on `App.js` showing "+2 / -58",
+    deleting the top-level React import and 4 context-provider
+    imports, marked "clean ✓" with a live "Approve the fix" button.
+    A follow-up "STOP — cancel this" message did not disable that
+    button.
+  - **Root cause A (input truncation, zero warning):**
+    `contents[path] = body[:10000]` in `worker_api.py`/`worker_git.py`
+    hard-truncated the ORIGINAL file shown to the AI well below real
+    file sizes while still instructing it to return a COMPLETE new
+    file body — guaranteed blind spots for any file over 10KB. Fixed
+    via a shared helper `_context_with_truncation_marker()`
+    (`services/cto_projects_helpers.py`): raised the cap to 40,000
+    chars and, for anything still too big, appends an explicit
+    in-prompt warning telling the model to refuse a full-file
+    rewrite rather than guess.
+  - **Root cause B (output budget too small):** `max_tokens=3500` on
+    the AI codegen call (9 call sites across `worker_api.py`,
+    `worker_git.py`, `cto_pipeline_steps.py`) is insufficient to even
+    reproduce a realistic ~17KB file in one completion — confirmed
+    live: the model's own response got cut off mid-file with an
+    unterminated code fence. `llm_file_parser.py` already discards
+    unterminated fences safely (no partial-capture bug found there),
+    but retries used the SAME too-small budget every time,
+    guaranteeing repeated failure for any realistically-sized file.
+    Raised to `max_tokens=12000` at all 9 sites.
+  - **Root cause C (safety-gate blind spot — the more urgent half):**
+    the existing `_hallucination_reasons()` gate only trips below a
+    40%-of-lines-kept ratio — it catches WHOLESALE rewrites but
+    completely misses a "surgical but critical" deletion (dropping
+    just the import block while keeping ~90% of the rest of a large
+    file), exactly the reported pattern. Added a new, independent,
+    deterministic (regex, zero LLM cost) check —
+    `_dropped_import_reasons()` / `_extract_top_level_imports()` in
+    `cto_projects_helpers.py` — that flags ANY top-level
+    import/require/from-import present in the original file but
+    missing from the new content (JS/TS/JSX/TSX + Python), wired
+    into the same retry-with-real-file-reinjection path
+    `_run_hallucination_gate()` already uses
+    (`services/cto_pipeline_steps.py`, both pre- and post-retry
+    checks).
+  - **Root cause D (misleading UI signal):** the "clean ✓" badge next
+    to "Approve the fix" (`ShipLintBadge.jsx`) only ever lint-checked
+    the natural-language BRIEF text — the actual code doesn't exist
+    until after Approve is clicked, so it never verified the diff at
+    all, despite reasonably being read as a code-safety signal.
+    Relabelled to "plan clean ✓" with an accurate tooltip.
+  - **Defense-in-depth:** strengthened the AI system prompt
+    (`_AI_SYS` rule #3 in `worker_api.py`) to explicitly call out
+    import preservation, on top of the deterministic gate.
+  - **Bug 2 fix (cancel mechanism):** typing a message matching
+    `/\b(stop|cancel|abort)\b|\bdon'?t\s+(apply|do|ship|approve|commit)\b|.../i`
+    now immediately (client-side, synchronous) marks EVERY currently
+    pending, not-yet-shipped "Approve the fix" card in the session as
+    cancelled — button replaced by a "Cancelled — this fix was not
+    applied" badge (`ChatPanel.jsx`, `MessageBubble.jsx`) — and
+    persists via a new `POST /api/aurem-dev/chat/turn/ship-cancelled`
+    endpoint (`routers/chat/misc.py`, mirrors the existing
+    `/turn/shipped`) so the cancelled state survives a page refresh.
+  - Tested: new suite
+    `tests/test_2026_09_12_critical_diff_hallucination_and_cancel.py`
+    (7/7, including one REAL non-mocked live LLM call proving the
+    new gate correctly classifies actual model output) + testing
+    agent's independent re-run (12/12 backend incl. new
+    `/turn/ship-cancelled` endpoint coverage) + live-browser
+    end-to-end proof (seed handoff → Approve visible → type STOP →
+    Approve replaced by Cancelled badge → refresh → state persists
+    from Mongo). Full regression sweep on cto_projects
+    (266/267 passing; the 1 failure is pre-existing/unrelated,
+    confirmed via `git stash` bisection). Report:
+    `/app/test_reports/iteration_bug2_ship_cancelled_2026_09_13.json`.
+  - **Honest disclosure:** could NOT reproduce the founder's EXACT
+    byte-for-byte "+2/-58" diff against the real production model —
+    the real ReRoots repo is production-only (inaccessible from this
+    preview pod) and repeated live-model test calls hit OpenRouter
+    rate limits. Reproduced the STRUCTURAL failure class (large file
+    exceeding old input/output budgets) and proved the new gate
+    reliably catches the exact reported damage pattern whenever it
+    occurs, regardless of upstream cause. **PREVIEW-ONLY** — not yet
+    deployed to auremcto.com; `/api/health` build_hash unchanged
+    (`496ac1a56faf`) pending the next platform commit.
 - **OpenRouter Token Bleed Fix — Header Metadata & Caller Audit
   (2026-09-12)**
   - Root cause: `HTTP-Referer` on several call paths read from

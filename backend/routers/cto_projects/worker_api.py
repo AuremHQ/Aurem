@@ -110,7 +110,13 @@ _AI_SYS = (
     "     '<keep the rest>', or any synonym. If you cannot fit the whole\n"
     "     file, split the task — do NOT abbreviate.\n"
     "  3. If editing a file you were shown, preserve everything you did\n"
-    "     not intend to change. Copy lines verbatim if needed.\n"
+    "     not intend to change. Copy lines verbatim if needed. This is\n"
+    "     ESPECIALLY true for import/require statements at the top of\n"
+    "     the file — NEVER drop an import unless the task explicitly\n"
+    "     asks you to remove that specific dependency. A file that\n"
+    "     compiles but is missing an import used elsewhere in the file\n"
+    "     breaks the app at runtime, even though it looked like a\n"
+    "     small, safe edit.\n"
     "  4. Do not invent file paths. Only emit paths that exist in the\n"
     "     context, OR paths you genuinely want to create.\n"
     "  5. Tests, configs and docs that need to change MUST also be emitted\n"
@@ -244,13 +250,34 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             for f in target_files[:8]
         ])
         contents: dict = {}
+        # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug).
+        # Was `body[:10000]` — for a real, feature-ful frontend entry
+        # file (many imports/providers/routes) that's well under the
+        # file's real size, so the model never saw large chunks of
+        # the file yet was still told to return a COMPLETE new file
+        # body. Shared helper raises the budget + explicitly warns
+        # the model off a full-file rewrite for anything still too
+        # big to fit, instead of letting it silently guess.
+        from services.cto_projects_helpers import _context_with_truncation_marker
+        truncated_files: dict[str, int] = {}   # path -> real size
         for path, body in zip(target_files[:8], fetched):
             if body is not None:
-                contents[path] = body[:10000]
+                contents[path], _was_trunc = _context_with_truncation_marker(body)
+                if _was_trunc:
+                    truncated_files[path] = len(body)
                 await _pkg._log(task_id, f"📄 read {path}")
                 # When user didn't specify files, keep first 4 hits
                 if not files and len(contents) >= 4:
                     break
+        if truncated_files:
+            await _pkg._log(
+                task_id,
+                "⚠️ " + ", ".join(
+                    f"{p} ({n:,} chars)" for p, n in truncated_files.items()
+                ) + " exceeded the context budget — AUREM was told NOT "
+                    "to rewrite these files whole",
+                "warning",
+            )
         # iter 114 — persist files_read for the live popup
         try:
             from services.task_diff import build_files_read
@@ -460,7 +487,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 reply = await _retry(
                     lambda: _pkg.call_llm(
                         messages=[{"role": "user", "content": user_msg}],
-                        system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                        system=_AI_SYS, max_tokens=12000, temperature=0.0,
                     ),
                     what="AI codegen", task_id=task_id,
                 )
@@ -544,7 +571,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             reply2 = await _retry(
                 lambda: _pkg.call_llm(
                     messages=[{"role": "user", "content": user_msg + "\n\n" + nudge}],
-                    system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                    system=_AI_SYS, max_tokens=12000, temperature=0.0,
                 ),
                 what="AI codegen auto-retry", task_id=task_id,
             )
@@ -645,7 +672,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                         lambda: _pkg.call_llm(
                             messages=[{"role": "user",
                                        "content": user_msg + "\n\n" + _miss_nudge}],
-                            system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
                         ),
                         what="multi-file contract retry", task_id=task_id,
                     )
@@ -801,7 +828,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                         lambda: _pkg.call_llm(
                             messages=[{"role": "user",
                                        "content": user_msg + "\n\n" + _vg_nudge}],
-                            system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
                         ),
                         what="Vanguard auto-fix retry", task_id=task_id,
                     )

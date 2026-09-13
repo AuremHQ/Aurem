@@ -274,6 +274,36 @@ def _load_design_system() -> str:
     return ""
 
 
+# 2026-09-12 — Bug 1 fix (critical-diff hallucination bug). Shared by
+# both `worker_api.py` (GitHub-fetched files) and `worker_git.py`
+# (local clone files) so the SAME safe budget + explicit "don't guess
+# the part you can't see" warning applies regardless of which worker
+# reads the file. See the fuller rationale on `_dropped_import_reasons`
+# below — this is the input-side half of that same fix.
+FILE_CONTEXT_CHAR_CAP = 40_000
+
+
+def _context_with_truncation_marker(body: str, cap: int = FILE_CONTEXT_CHAR_CAP) -> tuple[str, bool]:
+    """Cap `body` to `cap` chars for the AI-context prompt. Returns
+    `(possibly-truncated body, was_truncated)`. When truncated, an
+    explicit in-band warning is appended telling the model NOT to
+    attempt a full-file rewrite of this specific file — the whole
+    point of the cap is to bound prompt cost, not to make the model
+    guess at content it never saw and silently delete it."""
+    if len(body) <= cap:
+        return body, False
+    real_len = len(body)
+    marker = (
+        f"\n\n/* ⚠️ TRUNCATED — this file is {real_len:,} chars total; "
+        f"only the first {cap:,} are shown above. DO NOT attempt a "
+        f"full-file rewrite of this file — you have not seen all of "
+        f"it and would delete real content you never saw. If this "
+        f"file must change, say so in SUMMARY and skip its FILE "
+        f"block instead of guessing. */"
+    )
+    return body[:cap] + marker, True
+
+
 # Patterns the verifier rejects — AI sometimes sneaks placeholders past
 # the prompt. We catch them client-side BEFORE pushing to GitHub so the
 # user never sees a commit that silently truncates their file.
@@ -385,6 +415,87 @@ def _hallucination_reasons(blocks: dict, originals: dict) -> list[str]:
                 f"{_p} — proposed rewrite keeps only "
                 f"{int(_ratio * 100)}% of the real file's lines "
                 f"(likely hallucinated content)")
+    return out
+
+
+# 2026-09-12 — Bug 1 fix (critical-diff hallucination bug). The
+# keep-ratio gate above ONLY catches WHOLESALE rewrites (>60% of the
+# file replaced). Confirmed live: a trivial "update the footer text"
+# request on a real App.js came back with 4 context-provider imports
+# and the top-level React import silently deleted, while ~90%+ of the
+# rest of the file was preserved verbatim — a keep-ratio around 0.85,
+# nowhere near the 0.4 trip-wire, so the existing gate never fired and
+# the diff (which would have broken auth/cart/content/translations
+# across the whole site) reached the "Approve the fix" button marked
+# safe. Root cause: a SURGICAL-looking edit can still delete a
+# structurally load-bearing line (a top-level import/require) while
+# leaving the bulk of the file untouched — that class of damage is
+# invisible to a percentage-of-lines metric. This check is independent
+# of the ratio above and deterministic (regex, zero LLM cost): any
+# top-level import/require/from-import statement present in the
+# ORIGINAL file is REQUIRED to still be present (verbatim, whitespace-
+# insensitive) in the new content, for every language we support
+# editing. A single missing import is treated exactly like a
+# hallucination — same retry-with-real-file-reinjection path.
+_JS_IMPORT_RX = re.compile(
+    r"^\s*(?:import\b[^;\n]*?(?:from\s+['\"][^'\"]+['\"])?"
+    r"|const\s+[\w${},\s]+=\s*require\(['\"][^'\"]+['\"]\))\s*;?\s*$",
+    re.MULTILINE,
+)
+_PY_IMPORT_RX = re.compile(
+    r"^\s*(?:import\s+[\w.]+(?:\s+as\s+\w+)?"
+    r"|from\s+[\w.]+\s+import\s+.+)\s*$",
+    re.MULTILINE,
+)
+
+
+def _extract_top_level_imports(path: str, body: str) -> list[str]:
+    """Every top-level import/require statement in `body`, normalised
+    (whitespace-collapsed) so a purely-cosmetic reformat (extra
+    spaces, trailing semicolon) doesn't false-positive as "removed"."""
+    if not body:
+        return []
+    if path.endswith((".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")):
+        rx = _JS_IMPORT_RX
+    elif path.endswith(".py"):
+        rx = _PY_IMPORT_RX
+    else:
+        return []
+    out = []
+    for m in rx.finditer(body):
+        norm = re.sub(r"\s+", " ", m.group(0)).strip().rstrip(";")
+        if norm:
+            out.append(norm)
+    return out
+
+
+def _dropped_import_reasons(blocks: dict, originals: dict) -> list[str]:
+    """Return a human reason per file where the new content is missing
+    ANY top-level import/require the original file had. Skips files
+    truncated on read (see `contents[path] = body[:N]` in the worker)
+    — those are already flagged separately by the truncation-aware
+    prompt note, and penalising a model for not reproducing content it
+    was never shown would be unfair and noisy."""
+    out: list[str] = []
+    for _p, _new in blocks.items():
+        _orig = originals.get(_p) or originals.get(_p.lstrip("./"))
+        if not _orig:
+            continue                      # brand-new file — allowed
+        _orig_imports = _extract_top_level_imports(_p, _orig)
+        if not _orig_imports:
+            continue                      # nothing importy to preserve
+        _new_norm = re.sub(r"\s+", " ", _new or "")
+        _missing = [
+            imp for imp in _orig_imports
+            if imp not in _new_norm
+        ]
+        if _missing:
+            out.append(
+                f"{_p} — dropped {len(_missing)} import/require "
+                f"statement(s) present in the real file: "
+                + "; ".join(_missing[:4])
+                + (f" (+{len(_missing) - 4} more)" if len(_missing) > 4 else "")
+            )
     return out
 
 

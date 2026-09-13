@@ -465,6 +465,61 @@ async def chat_turn_shipped(
     return {"ok": True, "turn_index": body.turn_index}
 
 
+class TurnShipCancelledBody(BaseModel):
+    session_id: str
+    turn_index: int
+
+
+@router.post("/turn/ship-cancelled")
+async def chat_turn_ship_cancelled(
+    body: TurnShipCancelledBody,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """2026-09-12 — Bug 2 fix (critical-diff cancel bug). Record that
+    the user explicitly rejected a still-pending ```aurem-handoff```
+    "Approve the fix" affordance on this turn, so it does NOT
+    resurface after a page refresh/rejoin.
+
+    Mirrors `/turn/shipped` above exactly — same out-of-range
+    defensive fallback (marks the latest un-shipped assistant turn
+    instead of corrupting a sparse array index).
+    """
+    user = await current_dev(authorization)
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "Database not connected")
+    if body.turn_index < 0:
+        raise HTTPException(400, "turn_index must be >= 0")
+
+    sess = await db.chat_sessions.find_one(
+        {"session_id": body.session_id, "user_id": user["user_id"]},
+        {"_id": 0, "turns": 1},
+    )
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    turns = sess.get("turns") or []
+    if body.turn_index >= len(turns):
+        last_asst = max(
+            (i for i, t in enumerate(turns)
+             if (t or {}).get("role") == "assistant"
+             and not (t or {}).get("shipped_task_id")),
+            default=None,
+        )
+        if last_asst is None:
+            raise HTTPException(409,
+                                "Cannot record cancelled state — no "
+                                "pending assistant turns in this session")
+        body = TurnShipCancelledBody(session_id=body.session_id,
+                                     turn_index=last_asst)
+
+    set_field = f"turns.{body.turn_index}.ship_cancelled"
+    await db.chat_sessions.update_one(
+        {"session_id": body.session_id, "user_id": user["user_id"]},
+        {"$set": {set_field: True}},
+    )
+    return {"ok": True, "turn_index": body.turn_index}
+
+
 
 class FeedbackBody(BaseModel):
     session_id: str

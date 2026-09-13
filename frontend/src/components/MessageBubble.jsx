@@ -15,7 +15,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   User, Bot, Loader2, ShieldCheck, AlertTriangle, RefreshCw,
-  Copy as CopyIcon, ThumbsUp, ThumbsDown, Zap,
+  Copy as CopyIcon, ThumbsUp, ThumbsDown, Zap, X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
@@ -719,7 +719,7 @@ export default function MessageBubble({
   // This is the user-reported fix: previously the button reappeared
   // after refresh / re-login because extractHandoffBrief ran against
   // the raw content and didn't know the turn had already shipped.
-  const handoffBrief = showActions && !m.shipped_task_id
+  const handoffBrief = showActions && !m.shipped_task_id && !m.ship_cancelled
     ? extractHandoffBrief(m.content, m.verifiedPaths)
     : null;
   const canShip = !!(handoffBrief && activeProject?.project_id && !exhausted);
@@ -1519,6 +1519,29 @@ export default function MessageBubble({
               <RefreshCw size={11} strokeWidth={2.5} />
               Retry this fix
             </button>
+          </div>
+        )}
+        {/* 2026-09-12 — Bug 2 fix (critical-diff cancel bug). The user
+            explicitly rejected this pending fix in a later message
+            (or on a prior visit before refresh) — show that plainly
+            instead of letting the Approve button silently vanish,
+            which would read as a broken app. */}
+        {m.role === "assistant" && m.ship_cancelled && !m.shipped_task_id && (
+          <div
+            data-testid={`ship-cancelled-note-${idx}`}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              margin: "8px 0 2px 4px", padding: "5px 11px",
+              fontSize: 11.5, fontWeight: 600,
+              color: "var(--text-dim)",
+              background: "rgba(148,163,184,0.08)",
+              border: "1px solid rgba(148,163,184,0.25)",
+              borderRadius: 999,
+            }}
+            title="You cancelled this fix — nothing was applied to your repo."
+          >
+            <X size={12} strokeWidth={2.5} />
+            Cancelled — this fix was not applied
           </div>
         )}
         <ShipDialog

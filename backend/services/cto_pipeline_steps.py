@@ -27,6 +27,7 @@ from services.llm import call_llm
 from services.cto_projects_helpers import (
     _log, _emit, _retry, _hallucination_reasons,
     _verbatim_reasons, _extract_verbatim_literals,
+    _dropped_import_reasons,
 )
 
 
@@ -127,7 +128,8 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     exact required text was.
     Returns (possibly-updated edits, error_or_None)."""
     _verb = _verbatim_reasons(user_msg, edits)
-    _hallu = _hallucination_reasons(edits, contents) + _verb
+    _dropped_imports = _dropped_import_reasons(edits, contents)
+    _hallu = _hallucination_reasons(edits, contents) + _verb + _dropped_imports
     if not _hallu:
         return edits, None
     await _log(task_id,
@@ -148,19 +150,32 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
             "paraphrase, summarize, or leave it blank):\n"
             + "\n".join(f"  {lit!r}" for lit in _literals)
         )
+    _import_reminder = ""
+    if _dropped_imports:
+        _import_reminder = (
+            "\n\nCRITICAL: your last attempt DELETED import/require "
+            "statement(s) that exist in the real file below, even "
+            "though the task never asked you to remove them. This "
+            "breaks the app (undefined references at runtime). Every "
+            "import/require line present in the real file below MUST "
+            "still be present in your new version unless the task "
+            "explicitly says to remove that specific dependency:\n  - "
+            + "\n  - ".join(_dropped_imports)
+        )
     _h_nudge = (
         "Your previous edit did NOT match the real file — it "
         "invented code that does not exist. Below is the REAL, "
         "current content of each file. Re-apply the requested "
         "change as a MINIMAL modification of this exact content. "
         "Preserve every existing line unless the task requires "
-        "changing it." + _literal_reminder + "\n\n" + _real_blob
+        "changing it." + _literal_reminder + _import_reminder
+        + "\n\n" + _real_blob
     )
     reply3 = await _retry(
         lambda: call_llm(
             messages=[{"role": "user",
                        "content": user_msg + "\n\n" + _h_nudge}],
-            system=ai_sys, max_tokens=3500, temperature=0.0,
+            system=ai_sys, max_tokens=12000, temperature=0.0,
         ),
         what="AI hallucination-retry", task_id=task_id,
     )
@@ -168,7 +183,9 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     _edits2 = _pfb(reply3)
     if _edits2:
         edits = _edits2
-    _hallu = _hallucination_reasons(edits, contents) + _verbatim_reasons(user_msg, edits)
+    _hallu = (_hallucination_reasons(edits, contents)
+              + _verbatim_reasons(user_msg, edits)
+              + _dropped_import_reasons(edits, contents))
     if _hallu:
         err = ("AI kept producing content that does not match the "
                "real file (refusing to push):\n  - "
@@ -208,7 +225,7 @@ async def _run_syntax_gate(task_id: str, edits: dict,
             lambda: call_llm(
                 messages=[{"role": "user",
                            "content": user_msg + "\n\n" + _syn_nudge}],
-                system=ai_sys, max_tokens=3500, temperature=0.0,
+                system=ai_sys, max_tokens=12000, temperature=0.0,
             ),
             what="AI syntax-fix auto-retry", task_id=task_id,
         )
