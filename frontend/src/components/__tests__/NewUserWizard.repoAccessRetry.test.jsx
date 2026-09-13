@@ -26,12 +26,19 @@
  * the original retries ran out and STILL hit the transient error,
  * confirming the 9s total budget (3 x 3s) is measurably too short
  * against the same GitHub-side lag this codebase already documents
- * elsewhere as "well past 60s" (`useGitHubConnectStatus.js`,
- * `BACKGROUND_SYNC_MAX_MS = 2 * 60_000`, for the closely related
- * repo-LIST sync). Widened to a 90s TIME budget (not a fixed attempt
- * count), 4s apart, so it keeps quietly retrying — via the same
- * friendly "Almost there..." message, never the scary error — until
- * real time has actually run out.
+ * elsewhere for the closely related repo-LIST sync check
+ * (`useGitHubConnectStatus.js`'s `BACKGROUND_SYNC_MAX_MS = 2 * 60_000`
+ * — that file separately documents an observed worst case of "well
+ * over an hour" for the repo-list itself, which this budget does NOT
+ * cover; no foreground retry loop reasonably should).
+ * Widened to a 120s TIME budget (not a fixed attempt count) — matching
+ * the exact ceiling this codebase already trusts for the closely
+ * related check, rather than a new invented number — 4s apart, so it
+ * keeps quietly retrying via the same friendly "Almost there..."
+ * message, never the scary error, until real time has actually run
+ * out. This closes the gap between the old 9s and the 120s this
+ * codebase already has evidence for; it is NOT proven sufficient for
+ * every possible case, only measurably better-grounded than before.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -154,7 +161,7 @@ describe("2026-09-12/13 — transient installation_no_repo_access auto-retry", (
     await waitFor(() => expect(screen.getByTestId("wizard-repo-access-retrying")).toBeTruthy());
 
     // Advance to ~40s — well past the old 9s budget, well within the
-    // new 90s one.
+    // new 120s one.
     for (let i = 0; i < 10; i++) {
       await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
     }
@@ -162,14 +169,14 @@ describe("2026-09-12/13 — transient installation_no_repo_access auto-retry", (
     expect(screen.queryByTestId("wizard-error")).toBeNull();
   });
 
-  it("t_gives_up_after_the_90s_time_budget_and_shows_the_real_error", async () => {
+  it("t_gives_up_after_the_120s_time_budget_and_shows_the_real_error", async () => {
     api.post.mockRejectedValue(NO_REPO_ACCESS_ERROR);
     await mountAsGate();
 
     await waitFor(() => expect(screen.getByTestId("wizard-repo-access-retrying")).toBeTruthy());
 
-    // 90s budget, 4s apart — advance well past all of it (~24 ticks).
-    for (let i = 0; i < 26; i++) {
+    // 120s budget, 4s apart — advance well past all of it (~30 ticks).
+    for (let i = 0; i < 34; i++) {
       await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
     }
 
@@ -177,9 +184,9 @@ describe("2026-09-12/13 — transient installation_no_repo_access auto-retry", (
     expect(screen.getByTestId("wizard-error").textContent).toMatch(/doesn.t have access/i);
     expect(screen.queryByTestId("wizard-repo-access-retrying")).toBeNull();
     // No infinite silent retry loop — a bounded number of attempts,
-    // not one per render forever. ~90s/4s + mount attempts + harness
+    // not one per render forever. ~120s/4s + mount attempts + harness
     // double-fire headroom.
-    expect(api.post.mock.calls.length).toBeLessThanOrEqual(35);
+    expect(api.post.mock.calls.length).toBeLessThanOrEqual(45);
   });
 
   it("t_unrelated_errors_never_trigger_a_retry", async () => {

@@ -4386,21 +4386,38 @@ skip, matching the old `_REPO_ACCESS_MAX_RETRIES=3` constant exactly.
 This is the 4th confirmed real user hitting this exact failure class
 (3-4 prior partial fixes: 2026-09-01, 09-09, 09-09-c, 09-12).
 
-**Fix**: replaced the fixed-attempt-count retry with a 90-second TIME
-budget (4s apart) — `_REPO_ACCESS_RETRY_BUDGET_MS = 90_000`,
-`repoAccessRetryStartRef` anchors the window on first failure. User
-sees the same calm "Almost there — GitHub is still finishing up..."
-message throughout; the scary "doesn't have access" error only
-surfaces if 90 real seconds elapse without success, comfortably past
-the documented lag. `NewUserWizard.repoAccessRetry.test.jsx` rewritten
-(5 tests, was 4) with a dedicated regression test
+**Fix**: replaced the fixed-attempt-count retry with a 120-second TIME
+budget (4s apart) — `_REPO_ACCESS_RETRY_BUDGET_MS = 2 * 60_000`,
+`repoAccessRetryStartRef` anchors the window on first failure. Matches
+(does not just "roughly exceed") the exact ceiling this codebase
+already has real production evidence for on the closely related
+repo-list sync check (`BACKGROUND_SYNC_MAX_MS`), rather than an
+invented number — 90s (the first cut of this fix) was corrected to
+120s after re-reading `useGitHubConnectStatus.js` more carefully:
+that file separately documents an observed worst case of the
+repo-list itself lagging "well over an hour," which no foreground
+retry budget reasonably covers. 120s only closes the gap between the
+old 9s and the ceiling this codebase already trusts for this class of
+lag — it is NOT proven sufficient for every case. User sees the same
+calm "Almost there — GitHub is still finishing up..." message
+throughout; the scary "doesn't have access" error only surfaces after
+120 real seconds without success.
+`NewUserWizard.repoAccessRetry.test.jsx` rewritten (5 tests, was 4)
+with a dedicated regression test
 (`t_keeps_retrying_quietly_well_past_the_OLD_9s_budget_never_showing_
 the_error`) that directly replays canndalf's exact timeline shape.
-8/8 tests passing (this suite + `connectRefinement.test.jsx`),
-independently re-run and confirmed by `testing_agent_v3_fork`
-(report: `iteration_repo_access_retry_fix_2026_01_13.json`), including
-a code-review pass confirming the old constant is completely removed,
-not just shadowed.
+
+**"Independent verification" — precisely what that means here**: (1)
+`yarn vitest run` on `NewUserWizard.repoAccessRetry.test.jsx` +
+`NewUserWizard.connectRefinement.test.jsx` — 8/8 passing, exit 0,
+re-run directly by this agent after the 90s→120s correction; (2)
+`testing_agent_v3_fork` separately re-ran the same suite in its own
+sandbox and did a code-review pass confirming the old
+`_REPO_ACCESS_MAX_RETRIES=3` constant is fully removed, not shadowed
+(report: `iteration_repo_access_retry_fix_2026_01_13.json`). Both are
+**mocked-timer unit tests exercising the real component's retry
+logic** — neither is a live GitHub OAuth reproduction. That
+distinction matters and is not glossed over below.
 
 Scoped to `NewUserWizard.jsx` only (the exact path canndalf hit,
 per founder's explicit ask) — `AddProjectWizard.jsx` does not have
@@ -4408,18 +4425,83 @@ this same single-repo auto-submit code path, left untouched.
 
 **Environment limitation disclosed**: no real GitHub App private key
 is configured in this preview pod, so a true end-to-end live GitHub
-OAuth reproduction of the exact race wasn't possible here — the
-vitest suite (real component code, real render tree, fake-timer-
-controlled wall-clock, only the network layer mocked) is the most
-faithful reproduction achievable in this environment, and was
-explicitly disclosed as such rather than presented as a full live repro.
+OAuth reproduction of the exact race wasn't possible here. The vitest
+suite (real component code, real render tree, fake-timer-controlled
+wall-clock, only the network layer mocked) verifies the component's
+retry LOGIC correctly, but it cannot and does not replicate GitHub's
+real network-propagation timing — it is a mocked-timer unit test, not
+a live-timing reproduction, and must not be described as "closely
+replicating" the real production scenario.
+
+**SEQUENCING — do NOT notify canndalf yet (founder's explicit
+instruction)**: this fix is preview-verified only. The founder will
+verify live in production themselves once deployed (checking
+`build_hash`, then a real GitHub connect flow) before any outreach to
+canndalf@gmail.com happens. Do not tell canndalf "this is fixed,
+please retry" until that live verification passes.
 
 **Action item for founder (not something this agent can do)**: manual
-support outreach to `canndalf@gmail.com` — they did everything right,
-have an installed-but-unused GitHub App and 0 projects, real production
-account not reachable from this preview pod's database.
+support outreach to `canndalf@gmail.com` — ONLY after the founder's
+own live production verification passes (see sequencing note above).
+They did everything right, have an installed-but-unused GitHub App
+and 0 projects, real production account not reachable from this
+preview pod's database.
 
 **Separately discovered and NOT fixed inline** (correctly, per
 founder): `/api/health`'s `build_hash` field is unreliable across
 backend restarts — tracked as ROADMAP F34.
+
+
+## 2026-02 — exec_usage false positive on vendored security-scanner skill plugin, root-caused and fixed
+
+Two open CRITICAL findings in `cto_open_findings` (`onboarding_auto_scan`
+source, project `p_64987820ec`) flagged `exec_usage` in
+`.agent/skills/plugins/antigravity-awesome-skills-claude/skills/007/
+scripts/full_audit.py:237` and `scripts/scanners/injection_scanner.py:194`.
+
+**Investigated, not assumed**: `is_scanner_rule_file()`
+(`services/scanner_utils.py`) already exists specifically to skip
+self-referential false positives on AUREM's OWN scanner-definition
+files (e.g. `generation_rules.py` literally spells out `eval_usage`
+as a rule id). It only recognized a hardcoded list of AUREM's own
+files — it had no concept of vendored third-party scanner-SKILL
+plugins hitting the exact same self-referential pattern. Confirmed
+false positive with direct evidence: parsed both flagged files with
+Python's `ast` module and found **zero real `exec()`/`eval()` Call
+nodes** in either — every regex hit was inside a string literal that
+is itself a rule-description message (e.g.
+`"exec() usage -- verify input is not user-controlled"`).
+
+**Third-party distinction flagged, not skipped**: both files live
+under `.agent/skills/plugins/antigravity-awesome-skills-claude/` —
+vendored third-party code bundled into the sample "Aurem-1" project,
+not AUREM's own codebase. Because both are confirmed false positives
+with no actual vulnerable code, there is nothing to patch in the
+vendored file itself (so the "silently overwritten on next plugin
+update" risk doesn't apply here) — the real fix belongs entirely in
+AUREM's own scanner.
+
+**Fix**: extended `is_scanner_rule_file()` to also recognize files
+under any `.agent/skills/plugins/<bundle>/` directory that follow
+scanner/audit script conventions (path contains `/scanners/`, or
+basename is `full_audit.py` / `quick_scan.py` / `score_calculator.py`)
+— scoped narrowly so it does NOT blanket-exempt arbitrary plugin code
+(a `SKILL.md` doc or unrelated plugin `.py` file is still scanned
+normally; a real `exec()` call in an unrelated plugin file is still
+caught — both verified by test). Re-ran the actual `_scan_security()`
+entrypoint against all 6 real scanner scripts in this vendored skill
+bundle: 0 findings (was 2). The two stale `cto_open_findings` docs
+were updated to `status: "fixed"` with a `resolution_note` explaining
+the false-positive root cause, matching the exact convention already
+used by `routers/findings.py::resolve_one`.
+
+New regression test: `tests/test_2026_02_exec_usage_vendored_plugin_
+false_positive.py` (4 tests, all passing) — covers the 2 confirmed
+false positives, a non-exempted plugin doc file, a real `exec()` call
+in an unrelated plugin file (must still be caught), and a real
+`exec()` call in normal app code (must still be caught). Pre-existing,
+unrelated failures in `tests/test_iter44_vanguard.py` (5 secret-
+pattern tests) were confirmed via `git stash` to fail identically
+before this change — not caused by this fix, not touched.
+
 

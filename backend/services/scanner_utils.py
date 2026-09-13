@@ -78,7 +78,29 @@ def is_scanner_rule_file(path: str) -> bool:
     if not path:
         return False
     lower = path.replace("\\", "/").lower()
-    return any(lower.endswith(suf.lower()) for suf in _SCANNER_RULE_FILES)
+    if any(lower.endswith(suf.lower()) for suf in _SCANNER_RULE_FILES):
+        return True
+    # Confirmed false positive (2026 exec_usage / cto_open_findings
+    # investigation): vendored third-party security-scanner SKILL
+    # plugins bundled under .agent/skills/plugins/<bundle>/scripts/
+    # hit the exact same self-referential pattern as AUREM's own
+    # rule files above — their rule-description strings (e.g.
+    # "exec() usage -- verify input is not user-controlled") contain
+    # the literal dangerous-code text they exist to detect in OTHER
+    # people's code. Confirmed via AST parse of both flagged files
+    # (antigravity-awesome-skills-claude/skills/007/scripts/
+    # full_audit.py and scripts/scanners/injection_scanner.py): zero
+    # real exec()/eval() Call nodes in either — every regex hit was
+    # inside a string literal. Scoped narrowly to scanner/audit
+    # script conventions inside vendored skill-plugin dirs only, so
+    # this does not blanket-exempt arbitrary plugin code.
+    if "/.agent/skills/plugins/" in lower or lower.startswith(".agent/skills/plugins/"):
+        basename = lower.rsplit("/", 1)[-1]
+        if "/scanners/" in lower or basename in (
+            "full_audit.py", "quick_scan.py", "score_calculator.py",
+        ):
+            return True
+    return False
 
 
 __all__ = ["is_scanner_rule_file", "_SCANNER_RULE_FILES"]

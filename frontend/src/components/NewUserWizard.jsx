@@ -136,16 +136,27 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // `repo_connect_gate_skipped` — i.e. all 3 of the retries below ran
   // out and STILL hit `installation_no_repo_access`, meaning the 9s
   // total budget (3 × 3s) is measurably too short against the same
-  // GitHub-side propagation lag this file already documents elsewhere
-  // as "well past 60s" for the repo-LIST sync (`useGitHubConnectStatus.js`,
-  // `BACKGROUND_SYNC_MAX_MS = 2 * 60_000`). This is the single-repo
-  // verify-call's OWN lag on the exact same underlying GitHub
-  // eventual-consistency gap — no reason its retry budget should be
-  // ~13x shorter than the budget already proven necessary for the
-  // closely related check. Switched from a fixed retry COUNT to a
-  // time BUDGET so it keeps quietly retrying (via `retryingAccess`'s
-  // calm "still finishing up" message, never the scary error) until
-  // real time has actually run out, not an arbitrary attempt count.
+  // GitHub-side propagation lag this file already documents elsewhere.
+  // Matched (not just "roughly aligned with") the ceiling this
+  // codebase already has real production evidence for on the closely
+  // related repo-LIST sync check: `useGitHubConnectStatus.js`'s
+  // `BACKGROUND_SYNC_MAX_MS = 2 * 60_000` (120s). NOTE: that same file
+  // also documents an observed worst case of the repo-LIST becoming
+  // non-empty lagging "well over an hour" after a genuine install —
+  // 120s does NOT cover that extreme tail, and no foreground retry
+  // loop reasonably should. This budget only closes the gap between
+  // the old 9s and the 120s ceiling this codebase already trusts for
+  // the same class of lag; the single-repo verify call resolving
+  // faster than a full repo-list sync is plausible but NOT proven
+  // with dedicated evidence for this specific check. If this still
+  // isn't enough in production, the next step is the same fallback
+  // `useGitHubConnectStatus.js` already uses for its own worst case —
+  // hand off to `startBackgroundRepoSync` instead of failing in the
+  // foreground — not another larger fixed number.
+  // Switched from a fixed retry COUNT to a time BUDGET so it keeps
+  // quietly retrying (via `retryingAccess`'s calm "still finishing
+  // up" message, never the scary error) until real time has actually
+  // run out, not an arbitrary attempt count.
   const repoAccessRetryRef = useRef(0);
   const repoAccessRetryStartRef = useRef(0);
   const [retryingAccess, setRetryingAccess] = useState(false);
@@ -154,7 +165,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // `finally` block below reads THIS ref, not the state, to decide
   // whether to release `busy` for the CURRENT invocation.
   const retryPendingRef = useRef(false);
-  const _REPO_ACCESS_RETRY_BUDGET_MS = 90_000;
+  const _REPO_ACCESS_RETRY_BUDGET_MS = 2 * 60_000;
   const _REPO_ACCESS_RETRY_DELAY_MS = 4000;
 
   // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
