@@ -24,6 +24,7 @@ import AddProjectWizard from "../components/AddProjectWizard";
 import FounderOfferPill from "../components/FounderOfferPill";
 import ConfirmModal from "../components/ConfirmModal";
 import RollbackConfirmModal from "../components/RollbackConfirmModal";
+import ArchitectBlueprintPanel from "../components/ArchitectBlueprintPanel";
 
 export default function Projects() {
   return (
@@ -1840,6 +1841,10 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
       {/* Iter 147 — Hosted deploy widget moved to the /deploy page so all
           deploy-related controls live in one window. To manage hosted
           deploys for this project, go to Sidebar → Deploy. */}
+
+      {/* 2026-09-13 — Phase 4, Architect Agent "What I set up" panel.
+          Read-only, sourced directly from `project_blueprints`. */}
+      <ArchitectBlueprintPanel projectId={project.project_id} />
 
       <div className="card" data-testid="task-history">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>

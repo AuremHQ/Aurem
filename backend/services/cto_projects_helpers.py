@@ -499,6 +499,190 @@ def _dropped_import_reasons(blocks: dict, originals: dict) -> list[str]:
     return out
 
 
+# 2026-09-13 — Phase 1 scope-creep broadening. The two gates above
+# (`_hallucination_reasons`, `_dropped_import_reasons`) only ever
+# looked at whole-file line-preservation or the import block. Neither
+# catches a THIRD failure mode confirmed possible in the Phase 0 live
+# adversarial rerun of this same incident: a model that keeps every
+# import intact and keeps the overall keep-ratio high, but silently
+# rewrites (or deletes) an EXISTING top-level function/class/const it
+# was never asked to touch — i.e. same-file, different-symbol scope
+# creep. A "fix the footer text" task that also quietly changes
+# `formatPrice()`'s rounding logic three functions down would sail
+# through both prior gates untouched. This is a deterministic,
+# name-based check (no LLM cost): every top-level symbol present in
+# the ORIGINAL file is extracted by name + full source span; if that
+# same symbol exists in the new content but its body is substantially
+# different (or it's gone entirely), and the symbol's own name is
+# never mentioned anywhere in the task text, it's flagged exactly like
+# a dropped import — same retry-with-real-file-reinjection path.
+_JS_TOP_SYMBOL_RX = re.compile(
+    r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*\("
+    r"|^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>"
+    r"|^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?function\b"
+    r"|^(?:export\s+)?class\s+(\w+)\b",
+    re.MULTILINE,
+)
+_PY_TOP_SYMBOL_RX = re.compile(
+    r"^(?:async\s+)?def\s+(\w+)\s*\("
+    r"|^class\s+(\w+)\b",
+    re.MULTILINE,
+)
+
+
+def _extract_top_level_symbols(path: str, body: str) -> dict[str, str]:
+    """Best-effort {symbol_name: full_source_span} for every top-level
+    function/class/const-arrow-fn in `body`. Brace-balanced for
+    JS/TS, indentation-balanced for Python — good enough to diff a
+    symbol's ACTUAL body across two file versions, not just detect
+    its name exists somewhere. Returns {} for unsupported extensions
+    or files with no matches (e.g. pure config/markdown)."""
+    if not body:
+        return {}
+    out: dict[str, str] = {}
+    if path.endswith((".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")):
+        for m in _JS_TOP_SYMBOL_RX.finditer(body):
+            name = next((g for g in m.groups() if g), None)
+            if not name or name in out:
+                continue
+            brace_start = body.find("{", m.end() - 1)
+            if brace_start == -1:
+                continue
+            depth = 0
+            end = None
+            for i in range(brace_start, len(body)):
+                if body[i] == "{":
+                    depth += 1
+                elif body[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end is not None:
+                out[name] = body[m.start():end]
+    elif path.endswith(".py"):
+        lines = body.splitlines()
+        for m in _PY_TOP_SYMBOL_RX.finditer(body):
+            name = next((g for g in m.groups() if g), None)
+            if not name or name in out:
+                continue
+            start_line_idx = body.count("\n", 0, m.start())
+            base_indent = len(lines[start_line_idx]) - len(lines[start_line_idx].lstrip())
+            span_lines = [lines[start_line_idx]]
+            for ln in lines[start_line_idx + 1:]:
+                if not ln.strip():
+                    span_lines.append(ln)
+                    continue
+                indent = len(ln) - len(ln.lstrip())
+                if indent > base_indent:
+                    span_lines.append(ln)
+                else:
+                    break
+            out[name] = "\n".join(span_lines)
+    return out
+
+
+def _norm_span(src: str) -> str:
+    return re.sub(r"\s+", " ", src or "").strip()
+
+
+_SCOPE_CREEP_STOPWORDS = {
+    "the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "is",
+    "it", "this", "that", "with", "as", "update", "updates", "change",
+    "changes", "fix", "add", "adds", "remove", "make", "makes", "set",
+    "sets", "say", "text", "file", "please", "your", "task", "code",
+}
+
+
+def _task_keywords(task: str) -> list[str]:
+    """Lowercased content words (>=4 chars, stopwords stripped) from
+    the task text — used as a looser "plausibly related to the task"
+    signal than a literal symbol-name match (a task about "the footer
+    copyright text" is legitimately allowed to touch whichever
+    top-level component happens to render that footer, even though
+    the task never says the component's name)."""
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9_]{3,}", task or "")
+    return [w.lower() for w in words if w.lower() not in _SCOPE_CREEP_STOPWORDS]
+
+
+def _symbol_scope_creep_reasons(task: str, blocks: dict, originals: dict) -> list[str]:
+    """Flag any EXISTING top-level symbol (function/class/const-fn)
+    that got substantially rewritten or deleted, where the symbol is
+    NOT plausibly related to the task — same-file-different-symbol
+    scope creep, independent of the import gate above.
+
+    "Plausibly related" = the task names the symbol directly, OR any
+    task content-word already appears in that symbol's own source
+    (before or after the edit) — e.g. a task about "the footer
+    copyright text" is allowed to touch whichever component's source
+    actually contains the word "footer", without having to name that
+    component. This avoids false-positiving on the single most common
+    real edit shape (content change inside the component that renders
+    it) while still catching an unrelated symbol (e.g. a pricing
+    helper) whose source has no connection to the task at all."""
+    task_low = (task or "").lower()
+    kws = _task_keywords(task)
+    out: list[str] = []
+    for _p, _new in blocks.items():
+        _orig = originals.get(_p) or originals.get(_p.lstrip("./"))
+        if not _orig:
+            continue                      # brand-new file — allowed
+        orig_syms = _extract_top_level_symbols(_p, _orig)
+        if not orig_syms:
+            continue
+        new_syms = _extract_top_level_symbols(_p, _new or "")
+        for name, orig_src in orig_syms.items():
+            new_src = new_syms.get(name)
+            combined_low = (orig_src + " " + (new_src or "")).lower()
+            plausibly_related = (
+                name.lower() in task_low
+                or any(kw in combined_low for kw in kws)
+            )
+            if plausibly_related:
+                continue
+            if new_src is None:
+                out.append(
+                    f"{_p} — top-level symbol `{name}` was REMOVED "
+                    f"even though the task never mentions it")
+                continue
+            if _norm_span(new_src) != _norm_span(orig_src):
+                import difflib as _difflib
+                ratio = _difflib.SequenceMatcher(
+                    None, _norm_span(orig_src), _norm_span(new_src),
+                ).ratio()
+                if ratio < 0.9:
+                    out.append(
+                        f"{_p} — top-level symbol `{name}`'s body was "
+                        f"substantially changed ({int(ratio * 100)}% "
+                        f"similar) even though it has no connection to "
+                        f"the task — likely unrelated behavior change")
+    return out
+
+
+def _file_scope_creep_reasons(task: str, blocks: dict, originals: dict) -> list[str]:
+    """Flag any file in the proposed edit that was NEVER shown to the
+    model (not in `originals`) AND is never named (path or basename)
+    in the task text — a genuinely new/unrelated file the model
+    invented on its own, as opposed to a new file the task actually
+    asked to create."""
+    task_low = (task or "").lower()
+    known = {p for p in originals} | {p.lstrip("./") for p in originals}
+    out: list[str] = []
+    for _p in blocks:
+        if _p in known or _p.lstrip("./") in known:
+            continue
+        basename = _p.rsplit("/", 1)[-1].lower()
+        if basename and basename in task_low:
+            continue
+        if _p.lower() in task_low:
+            continue
+        out.append(
+            f"{_p} — new file created but never shown to the model "
+            f"NOR named anywhere in the task (possible unrelated "
+            f"scope creep)")
+    return out
+
+
 # 2026-09-12 — content-fidelity fix, round 2. Confirmed live (commit
 # 2e74ea1, founder repro "verify-3"): the round-1 keep-ratio gate above
 # only catches WHOLESALE rewrites. It does nothing for the opposite,

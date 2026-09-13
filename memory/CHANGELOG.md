@@ -4221,3 +4221,146 @@ verified the brand-new/zero-install user path still renders the
 normal gate CTA (no regression), and confirmed via DB inspection that
 funnel_events now log the corrected event names.
 
+
+
+## 2026-09-13 — Architect Agent (4 phases, founder-approved one at a time)
+
+Ticket: "Make ORA Genuinely Autonomous, Start to Finish." Founder named
+`crew_ai_router.py` as the integration point — confirmed via search
+this file does not exist in the codebase; real equivalents mapped and
+confirmed with the founder before any code was written: `routers/scaffold.py`
+(new-build entry point), `core/parliament/` (Council/Parliament),
+`services/vanguard_verify_agent.py`/`vanguard_scanner.py` (security
+scanning — NOT scope-creep, a naming mismatch clarified this round),
+`services/cto_pipeline_steps.py`'s hallucination gate (the actual
+scope-creep checker, built earlier this session).
+
+**Phase 0 — live re-verification of the two prior critical safety
+fixes** (founder explicitly rejected "already fixed this session" as
+sufficient evidence; required a FRESH live reproduction). Destructive-
+diff: 3 fresh real-DeepSeek-call runs of the exact original ReRoots
+incident shape (footer-text edit) all produced minimal, safe diffs;
+separately, the exact `+2/-58`-shaped adversarial pattern (all 8
+imports dropped) was fed directly into the real
+`_run_hallucination_gate` — detected deterministically, self-healed
+via one real retry call, 0/8 imports missing in the final output.
+Cancellation: live `POST /api/aurem-dev/chat/turn/ship-cancelled`
+against a real inserted pending-handoff turn, confirmed
+`ship_cancelled: true` persisted via a fresh Mongo read (not the
+endpoint's own response). Deployment status disclosed honestly:
+`build_hash` unchanged at `203453f6f52d` (no new platform commit
+checkpoint since the prior session's fixes landed there) —
+`built_at` on `/api/health` refreshes on every restart, confirming
+the running preview process has the code, but "deployed to
+production" is a separate, founder-only action this agent cannot
+confirm or trigger.
+
+**Phase 1 — broadened the scope-creep gate** (`services/
+cto_projects_helpers.py`, wired into the existing
+`_run_hallucination_gate` in `cto_pipeline_steps.py` — extended, not
+duplicated, per founder's explicit instruction). Two new deterministic
+checks: `_symbol_scope_creep_reasons` (extracts every top-level
+function/class/const-fn by name from the original file, brace-balanced
+for JS/TS, indentation-balanced for Python; flags a symbol as scope
+creep only if REMOVED or substantially changed — SequenceMatcher
+ratio <0.9 — AND has no connection to the task, checked via task
+keyword-in-symbol-source rather than a literal name match, to avoid
+false-positiving on the common case of "content edit inside the
+component that renders it") and `_file_scope_creep_reasons` (flags a
+file touched that was never shown to the model and never named in the
+task). Founder's specific adversarial ask — same-file-different-
+symbol change with imports intact — reproduced twice: synthetically
+(`formatPrice()` gets a silent +5% markup while the task only asks for
+a footer edit) and live with a real LLM call through the full gate
+(detected, retried, self-healed, sneaky `1.05` markup gone from the
+final output). 9/9 new tests pass
+(`tests/test_2026_09_13_scope_creep_gate.py`), zero regressions on
+534 related tests (9 pre-existing unrelated failures confirmed via
+`git stash` bisection).
+
+**Phase 2 — Architect Agent core** (`services/architect_agent.py`,
+NOT yet wired into `scaffold.py` — built/verified in isolation first,
+per founder's choice). `infer_blueprint()` makes a real LLM call (no
+hardcoded requirement templates) producing: auth need+type, data-model
+entities+persistence, concurrency/conflict logic, notifications+
+triggers, infra inference (cache/Redis, vector store/RAG, background
+jobs — must NOT default to enabling everything), explicit non-scope
+list with reasons. Founder explicitly demanded 3 genuinely different
+ideas side-by-side (not just one, since one example is what a
+hardcoded template would handle fine too) — coffee shop booking (auth
+true, 4 entities, cache+jobs true, concurrency="compete for the same
+slot"), CSV-to-JSON tool (auth false, 1 ephemeral entity, ALL infra
+flags false), live leaderboard (auth false, cache TRUE purely inferred
+from "thousands...check...at once" phrasing — the words "cache"/
+"Redis" never appear in the idea — jobs FALSE, distinguishing it from
+the coffee-shop's cache+jobs-both-true shape). `write_blueprint()`/
+`get_blueprint()` persist to `project_blueprints` (one current doc per
+project_id, versioned in place, no duplicates), `invoke_architect()`
+orchestrates + logs `architect_agent_invoked`/
+`architect_agent_blueprint_written` to a new `architect_events`
+collection (same best-effort, never-raises convention as
+`task_chain_logging.py`). 6/6 new tests
+(`tests/test_2026_09_13_architect_agent_core.py`), full live
+end-to-end proof (real LLM + real Mongo write/read/version-bump).
+
+**Phase 3 — Type A/B decision classification, code-enforced**
+(founder REJECTED the original one-LLM-call-classifies-itself design
+as a self-judging conflict of interest — "a model that just invented
+a requirement has no independent incentive to correctly flag it as
+needing human input" — required instead: `apply_type_b_overrides()`,
+a deterministic, code-level SECOND pass, independent of the model,
+that force-reclassifies ANY decision matching a known Type-B category
+— payment, domain, branding, pricing, legal/financial, irreversible,
+the exact categories the ticket named — to Type B regardless of what
+the LLM called it; can only tighten A→B, never loosen B→A). Found and
+fixed a genuine precision bug during the agent's own adversarial
+testing before reporting: the first version matched the keyword list
+against `field + value + reasoning`, which caused an UNRELATED Type A
+decision's free-text reasoning ("...informs users about subscription
+and payment events") to falsely flip it to Type B — fixed by matching
+only `field + value` (what's actually being decided, never the
+explanation text); regression test added
+(`test_9_reasoning_text_mentioning_payment_does_not_falsely_flip...`).
+9/9 new tests (`tests/test_2026_09_13_architect_type_ab_override.py`),
+including a live real-LLM proof that even when the model classifies
+correctly on its own, the override still runs (not a lucky no-op —
+`test_8` proves it forcibly flips a deliberately-mis-classified
+decision). `resolve_type_b_decision()` built for a later ticket to
+call (marks a pending item resolved + logs
+`type_b_decision_resolved`) — not yet wired to any UI action this
+round (deliberately, see Phase 4).
+
+**Phase 4 — admin "What I set up" panel** (read-only this round, per
+founder's explicit scoping — resolve-actions are a follow-up ticket).
+`GET /api/aurem-dev/architect/blueprint/{project_id}`
+(`routers/architect.py`), ownership-scoped identically to every other
+`cto_projects`-scoped read endpoint, returns `{"exists": false}`
+(not a 404) when the Architect Agent has never run for a project —
+that's a normal state, not an error. `ArchitectBlueprintPanel.jsx`
+reads DIRECTLY from this endpoint (which reads directly from
+`project_blueprints`) — no summarisation/caching layer, so the panel
+can never drift from what was actually decided. Mounted in
+`Projects.jsx`'s `ProjectDetail()`, reusing the app's existing `.card`
+class convention (per founder's instruction to reuse the existing
+project-settings visual pattern, not invent a new UI system) —
+green/`CheckCircle2` rows for Type A ("Decided automatically"),
+orange/`Clock`+"Pending" badge rows for Type B ("Waiting on your
+input", showing the safe_default text, never a real configured
+provider). 3 real demo blueprints seeded (coffee shop = mixed A+B,
+CSV tool = A-only, leaderboard = A-only with the B section correctly
+absent when there are zero pending items) for verification and future
+regression. `testing_agent_v3_fork` independently verified all 4 UI
+scenarios pass, backend 36/36, ownership-404 confirmed, and explicitly
+did NOT reproduce a Suspense-loading screenshot-tool blocker the main
+agent hit on its own automation attempts (concluded environment/tool-
+side, not a code bug).
+
+**Deployment status at close of this ticket:** all 4 phases live in
+this preview pod (confirmed via passing tests + live LLM/Mongo calls
+against the running server); `build_hash` still `203453f6f52d` — no
+new platform commit checkpoint has landed as of this writing despite
+multiple checks across all 4 phases; `built_at` refreshes on every
+restart, confirming the code is running, but git HEAD (and therefore
+"deployed") has not advanced. Founder should treat this as
+preview-verified, not yet deployment-confirmed.
+

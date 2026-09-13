@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()  # MUST run before importing routers/services that read env at module load
 
 # Routers
+from routers.architect import router as architect_router
 from routers.deploy import router as deploy_router
 from routers.vault import router as vault_router
 from routers.stacks import router as stacks_router
@@ -3567,6 +3568,7 @@ async def diag_memory(authorization: str | None = Header(None)):
 
 # ── Routers ──
 app.include_router(deploy_router,       prefix="/api/aurem-dev")
+app.include_router(architect_router,    prefix="/api/aurem-dev")  # 2026-09-13 — Phase 4, "What I set up" panel
 app.include_router(vault_router,        prefix="/api/aurem-dev")
 app.include_router(stacks_router,       prefix="/api/aurem-dev")
 app.include_router(domain_router,       prefix="/api/aurem-dev")

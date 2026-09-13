@@ -28,6 +28,7 @@ from services.cto_projects_helpers import (
     _log, _emit, _retry, _hallucination_reasons,
     _verbatim_reasons, _extract_verbatim_literals,
     _dropped_import_reasons,
+    _symbol_scope_creep_reasons, _file_scope_creep_reasons,
 )
 
 
@@ -126,10 +127,20 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     explicitly restates any missing literal(s) verbatim so the model
     isn't just told "you were wrong" without being re-told what the
     exact required text was.
+
+    2026-09-13 — Phase 1 scope-creep broadening. Also runs
+    `_symbol_scope_creep_reasons()` (an existing function/class
+    rewritten or deleted without the task ever naming it) and
+    `_file_scope_creep_reasons()` (a file touched that was never
+    shown to the model and never named in the task) — same
+    retry-then-abort path, same in-band nudge pattern.
     Returns (possibly-updated edits, error_or_None)."""
     _verb = _verbatim_reasons(user_msg, edits)
     _dropped_imports = _dropped_import_reasons(edits, contents)
-    _hallu = _hallucination_reasons(edits, contents) + _verb + _dropped_imports
+    _symbol_creep = _symbol_scope_creep_reasons(user_msg, edits, contents)
+    _file_creep = _file_scope_creep_reasons(user_msg, edits, contents)
+    _hallu = (_hallucination_reasons(edits, contents) + _verb
+              + _dropped_imports + _symbol_creep + _file_creep)
     if not _hallu:
         return edits, None
     await _log(task_id,
@@ -162,6 +173,16 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
             "explicitly says to remove that specific dependency:\n  - "
             + "\n  - ".join(_dropped_imports)
         )
+    _scope_reminder = ""
+    if _symbol_creep or _file_creep:
+        _scope_reminder = (
+            "\n\nCRITICAL: your last attempt changed/removed existing "
+            "code or created a file that the task never asked about. "
+            "ONLY touch what the task explicitly requires; leave every "
+            "other function, class, and file exactly as it was in the "
+            "real content below:\n  - "
+            + "\n  - ".join(_symbol_creep + _file_creep)
+        )
     _h_nudge = (
         "Your previous edit did NOT match the real file — it "
         "invented code that does not exist. Below is the REAL, "
@@ -169,7 +190,7 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
         "change as a MINIMAL modification of this exact content. "
         "Preserve every existing line unless the task requires "
         "changing it." + _literal_reminder + _import_reminder
-        + "\n\n" + _real_blob
+        + _scope_reminder + "\n\n" + _real_blob
     )
     reply3 = await _retry(
         lambda: call_llm(
@@ -185,7 +206,9 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
         edits = _edits2
     _hallu = (_hallucination_reasons(edits, contents)
               + _verbatim_reasons(user_msg, edits)
-              + _dropped_import_reasons(edits, contents))
+              + _dropped_import_reasons(edits, contents)
+              + _symbol_scope_creep_reasons(user_msg, edits, contents)
+              + _file_scope_creep_reasons(user_msg, edits, contents))
     if _hallu:
         err = ("AI kept producing content that does not match the "
                "real file (refusing to push):\n  - "
