@@ -4601,3 +4601,55 @@ Known gap NOT yet implemented: directive #2 (confirmation-only
 messages must call `get_pending_action(session_id)` before responding)
 was approved but not separately verified this round — carried to
 ROADMAP as a follow-up.
+
+## 2026-02 — Deploy blocker fixed: broken requirements.txt (dead editable install + pip hash-mismatch resolver conflict)
+
+Founder reported a failing production deploy via Emergent Deployments
+(K8s). Ran `deployment_agent`, which found a confirmed BUILD-BREAKING
+blocker: `backend/requirements.txt` had `-e /tmp/ora-grounding-verify`
+(line 124), an editable install pointing at an ephemeral dev-session
+path that doesn't exist in the repo — `pip install -r requirements.txt`
+hard-fails with "Directory does not exist" on any fresh container
+build. Confirmed no source file actually imports this as a top-level
+pip package (`ora_grounding` refs elsewhere are all
+`from services.ora_chat import grounding_check as ora_grounding`, an
+internal alias, unrelated). Removed the line.
+
+While re-verifying via `pip install --dry-run -r requirements.txt`,
+found a SECOND real blocker the first fix uncovered: `litellm`'s pin
+(line 93) carried an explicit `#sha256=...` URL fragment, while
+`emergentintegrations==0.1.2`'s own bundled metadata references the
+IDENTICAL litellm wheel URL WITHOUT that hash fragment — pip's
+resolver treated these as two different, irreconcilable requirement
+specs for the same package/URL and failed with
+`ResolutionImpossible: ... no matching distributions available for
+your environment: litellm`, even though the URL itself resolves fine
+(confirmed reachable, 200 OK) and the exact same version is already
+installed and running. Fixed by stripping the hash fragment from the
+top-level pin so both requirers reference the identical unhashed URL.
+
+Verified: `pip install --dry-run -r requirements.txt` now resolves
+cleanly with zero errors (previously failed both ways). Re-ran
+`deployment_agent` for a final confirmation scan — PASS, only a
+pre-existing cosmetic warning (dead unused `CORS_ORIGINS` env var,
+`ALLOWED_ORIGINS` is the one actually read) remains, not a blocker.
+
+Also investigated the shared `/health` nginx-upstream-timeout log
+lines from the same report (`upstream timed out ... GET /health`)
+against `routers/admin_health.py`'s `[status/all] AGGREGATOR TIMED
+OUT after 20s` warning in the same window — traced every registered
+`check_fn` in `services/health_checks.py`: all are either pure Mongo/
+dict reads or already wrapped in `asyncio.to_thread` (G18, G21, CI-
+drift — fixed in earlier rounds) for their one genuinely sync/CPU-
+heavy step. The plain `/health` handler (`main.py`'s `healthz_root`)
+is a zero-dependency `return {"ok": True}`, and `main.py`'s rate-limit
+middleware already has an inline fast-path exemption for `/health`/
+`/healthz`/`/ping` that returns BEFORE any other middleware/rate-
+limit logic runs. No blocking-event-loop bug found in code; the
+timeouts cluster entirely in the first ~40s after boot (many
+sequential startup index-creation + external-API warmup calls) while
+direct localhost probes to the same endpoint succeed throughout in
+the same window — consistent with transient cold-start congestion,
+not a sustained code-level block. Flagged for the founder to monitor
+post-deploy; nginx/keep-alive-level tuning (if still needed) is
+outside this round's code-only scope.
