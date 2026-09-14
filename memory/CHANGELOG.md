@@ -4505,3 +4505,99 @@ pattern tests) were confirmed via `git stash` to fail identically
 before this change — not caused by this fix, not touched.
 
 
+## 2026-02 — Production-readiness Parts A-D (AGENTS.md + B1-B4 + Part C + Part D), plus B3 gate round 2-4 hardening
+
+Founder-approved batch: real-codebase-grounded `AGENTS.md`, four tool-
+observability/determinism safeguards (B1-B4), audit/scan claim
+verification (Part C), and an ORA House Rules `TOOL USE` policy
+section (Part D). Each implemented against real code, not templated.
+
+**AGENTS.md** — replaced the previous 375-line generic file with a
+104-line / 5,897-byte repo-specific version (limit: 150 lines / 32KiB),
+grounded in this app's real architecture, commands, tool conventions,
+security boundaries, and completion-report expectations.
+
+**B1 (tool-call observability)** — `services/task_chain_logging.py`
+now persists a rich per-turn `tool_call_records` array (tool, args,
+ok/error, elapsed_ms, turn_id) on `task_chains`, not just tool names.
+`get_turn_tool_records()` added for B2's use. `services/orchestrator.py`
+returns real `invocations` at all terminal response sites instead of
+sparse fallback data.
+
+**B2 (claim-to-trace verification)** — `services/citation_guard.py`
+extended to detect "verified via X" / "checked using X" style claims
+and block/strip them when `X` wasn't actually called this turn (per
+the persisted trace). Logs `unverified_tool_claim_blocked`. Wired into
+both `/chat/send` (via `orchestrator.py`'s existing CitationGuard call)
+and `/chat/stream`.
+
+**B3 (required-read gate)** — new `services/required_tool_gate.py`:
+when a message names both a real Vanguard rule-id (e.g. `exec_usage`)
+AND a file path, `read_repo_file` fires deterministically before any
+LLM turn, and a post-response enforcement step guarantees the final
+reply never asks a clarifying question the user already answered.
+Took 4 rounds to fully close (each round found a new real bug via
+live reproduction + independent testing-agent verification):
+  - R1: intent classifier misclassified the incident message as
+    "clarify" tier and short-circuited before the gate ever ran —
+    fixed in `routers/chat_pre_llm.py`.
+  - R2: `/chat/send` enforcement placement was correct but
+    `/chat/stream`'s enforcement ran too early (right after the
+    orchestrator), before `run_confidence_gate` / `apply_output_guards`
+    / `business_voice_filter` could still overwrite content — moved to
+    the true last content-mutating step in `routers/chat/stream.py`.
+  - R3 found via testing agent: (a) `/chat/stream` only fired the gate
+    on ~1/3 of runs — root cause: `routers/chat/worker.py`'s
+    `run_worker()` computed `state.required_read_gate` deep inside the
+    orchestrator branch, AFTER 5 earlier mode-dispatch short-circuits
+    (Mode D/E/B/F/ORA-panel) that could intercept the turn first
+    (confirmed: Mode D's debug-session branch sometimes claims this
+    exact message shape); (b) `enforce_required_read_gate()` accepted
+    a response mentioning the rule-id even when `business_voice_filter`
+    had mangled the file path to `.that page` — too lenient a check.
+  - R4 fixes: `state.required_read_gate` is now computed at the very
+    TOP of `run_worker()`, before any mode-dispatch branch, so it's
+    populated regardless of which branch produces the final result;
+    `enforce_required_read_gate()` now requires the real path
+    verbatim in the response (rule-id alone is no longer sufficient
+    proof). Also closed a related B1 gap: this gate's own
+    `read_repo_file` call happens outside the orchestrator's normal
+    tool-dispatch loop, so it was invisible to the persisted trace —
+    `run_required_read_gate()` now returns a `tool_call_record` that
+    `turn.py`/`stream.py` append to `result["tool_calls"]`. De-duped a
+    resulting double-read by passing the hoisted gate into
+    `resolve_pre_llm()` via a new `precomputed_required_read_gate` param.
+  - Verified via `testing_agent`, final round: 5/5 fresh-session
+    `/chat/stream` runs and 3/3 `/chat/send` runs produced the exact
+    rule-id + exact verbatim path with zero mangling; ordinary chat
+    regression clean on both endpoints; Mongo `task_chains` trace
+    confirmed to contain the gate's `read_repo_file` record.
+    (`/app/test_reports/iteration_2026_02_ora_b3_round4_final.json`,
+    11/11 passed.)
+  - New tests: `test_2026_02_required_tool_gate_b3.py` (11),
+    `test_2026_02_worker_gate_hoist_round4.py` (2, proves the hoist
+    fires before a simulated Mode D bypass).
+
+**B4 (minimal-diff edits)** — new `patch_repo_file` tool in
+`services/local_tools.py` (targeted exact-replacement edits, reuses
+pending-action edit semantics, read-back verified), registered in
+`LOCAL_TOOLS`, `orchestrator.py`'s write-tool classification, and
+`tools_bridge.py`. `write_repo_file`'s description now steers the
+model toward `patch_repo_file` for targeted edits.
+
+**Part C (audit/scan claim verification)** — `services/mode_e_auditor.py`
+now verifies each candidate finding against real repo/file evidence
+before `run_audit()` returns it, filtering unsupported bulk findings
+(same class of bug as the earlier confirmed `exec_usage` false
+positive, now caught systematically instead of case-by-case).
+
+**Part D (ORA House Rules)** — appended a `TOOL USE` section to the
+active ORA House Rules (`services/ora_chat/house_rules.py`, version
+1 → 2) codifying: read-before-answer for named path+issue, no
+tool-verification claims without a real tool call that turn, and
+pending-state lookup before acting on bare confirmations.
+
+Known gap NOT yet implemented: directive #2 (confirmation-only
+messages must call `get_pending_action(session_id)` before responding)
+was approved but not separately verified this round — carried to
+ROADMAP as a follow-up.

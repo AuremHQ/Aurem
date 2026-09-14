@@ -858,6 +858,28 @@ async def chat_stream(
             except Exception as _bvf_e:
                 logger.debug("business_voice filter skipped (chat_stream): %r", _bvf_e)
 
+        # Part B3 enforcement — deterministic override, placed as the
+        # ABSOLUTE LAST content-mutating step (mirrors turn.py's
+        # identical fix). Confirmed live: run_confidence_gate /
+        # apply_output_guards / business_voice_filter above can each
+        # independently rewrite `content` back into the exact
+        # clarifying-question class this gate exists to prevent, with
+        # zero awareness of required_read_gate — worker.py's earlier
+        # attempt to enforce this (right after _run_orchestrator, now
+        # removed) ran too early and got overwritten by these same
+        # guards. This MUST be the true last word before streaming.
+        if state.required_read_gate:
+            from services.required_tool_gate import enforce_required_read_gate
+            content = enforce_required_read_gate(state.required_read_gate, content)
+            # 2026-02 round-4 — see turn.py's identical fix: this
+            # gate's read happens outside the orchestrator's own
+            # tool-dispatch loop, so append it to result["tool_calls"]
+            # so B1's persisted trace (log_task_chain below) reflects
+            # the read that actually happened.
+            _gate_tcr = state.required_read_gate.get("tool_call_record")
+            if _gate_tcr and isinstance(result, dict):
+                result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
+
         meta = {"meta": True, "session_id": body.session_id,
                 "provider": provider, "mode": mode, "temperature": temperature,
                 "thinking_s": round(_t.monotonic() - state.t_start, 1),
@@ -1173,7 +1195,7 @@ async def chat_stream(
         # quality_monitor calls elsewhere in this function — never
         # blocks the user's response.
         try:
-            from services.task_chain_logging import log_task_chain
+            from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
             _tc_turn_state = "error" if _hard_error else (result.get("turn_state") or "success")
             asyncio.create_task(log_task_chain(
                 get_db(), user_id=user_id, session_id=body.session_id or "",
@@ -1181,6 +1203,11 @@ async def chat_stream(
                 tool_calls=result.get("tool_calls") or [], final_response=content,
                 turn_state=_tc_turn_state, failure_mode=_failure_mode,
                 sequential_thoughts=result.get("sequential_thoughts") or [],
+            ))
+            asyncio.create_task(log_unverified_tool_claims(
+                get_db(), user_id=user_id, session_id=body.session_id or "",
+                project_id=body.project_id,
+                claims=result.get("unverified_tool_claims_blocked") or [],
             ))
         except Exception as _tc_exc:
             logger.debug("task_chain logging skipped (chat_stream): %r", _tc_exc)

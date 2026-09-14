@@ -9401,3 +9401,24 @@ is set, progresses through a real `synthesizing_audio` stage). Zero
 action items.
 
 - Preview only — not yet pushed to production.
+## 2026-02 — Production-readiness Parts A-D closed; B3 required-read gate fully hardened (4 rounds)
+
+Founder-approved batch delivered: real-codebase-grounded `AGENTS.md`
+(104 lines / 5,897 bytes, was 375 lines), B1 tool-call trace
+persistence, B2 unsupported-tool-claim blocking, B3 deterministic
+required-read gate, B4 `patch_repo_file` minimal-diff tool, Part C
+audit-finding evidence verification, Part D ORA House Rules `TOOL USE`
+section. Full detail (root causes, fixes, test counts, live evidence)
+in CHANGELOG.md's matching 2026-02 entry — not duplicated here.
+
+B3 in particular took 4 rounds of live reproduction + independent
+testing-agent verification to fully close, each round surfacing a
+genuinely new root cause (intent misclassification → enforcement
+ordering → mode-dispatch bypass + path-mangling bypass). Final round:
+5/5 `/chat/stream` + 3/3 `/chat/send` fresh-session runs confirmed
+clean by `testing_agent`
+(`/app/test_reports/iteration_2026_02_ora_b3_round4_final.json`).
+
+Not yet done: directive #2 of the founder's 4-directive batch
+(confirmation-only messages must look up pending state before
+responding) — tracked as ROADMAP F38.

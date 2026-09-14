@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Awaitable, Callable, Iterable
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,29 @@ _COUNT = re.compile(
     r"\b\d{2,4}\+?\s*(?:packages?|dependencies|modules|files|lines)\b",
     re.IGNORECASE,
 )
+
+# ─── Part B2 — "verified via X" tool-name claims ─────────────────────
+# Confirmed incident class: a response states a specific TOOL was used
+# to check/verify something ("verified via frontend_audit", "confirmed
+# by the read_repo_file tool") when no such tool call exists in this
+# turn's real trace. This is a distinct claim shape from a bare file
+# path — captured separately so it can be checked against the actual
+# `tool_calls` list (Part B1's `get_turn_tool_records`) rather than
+# against `read_repo_file` paths specifically.
+_TOOL_CLAIM = re.compile(
+    r"\b(?:verified|checked|confirmed|validated)\s+(?:via|using|with|by)\s+"
+    r"(?:the\s+)?`?([a-z][a-z0-9_]{2,40})`?\s*(?:tool|call)?\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_tool_claims(text: str) -> list[str]:
+    """Distinct tool names the response claims were used to verify
+    something. Deliberately narrow — only the explicit "verified via
+    X" phrasing shape, not vague prose like "I double-checked this"."""
+    if not text:
+        return []
+    return sorted({m.group(1).lower() for m in _TOOL_CLAIM.finditer(text)})
 
 
 def _extract_claims(text: str) -> dict[str, list[str]]:
@@ -87,6 +111,22 @@ def _read_paths_this_turn(tool_calls: Iterable[dict]) -> set[str]:
 class CitationGuard:
     """Stateless guard — instantiate once, reuse across turns."""
 
+    @staticmethod
+    def _flag_unverified_tool_claim(ctx: dict, claimed_tools: list[str]) -> None:
+        """Part B2 — records the block so the router layer (which has
+        a real `db` handle, unlike this deep in the call stack) can
+        persist a `unverified_tool_claim_blocked` event. Mirrors the
+        existing `ctx.setdefault("system_signals", [])` pattern in
+        `local_tools.py::invoke_local_tool` — accumulate in-memory
+        during the turn, harvest once at the end."""
+        try:
+            ctx.setdefault("unverified_tool_claims_blocked", []).append({
+                "claimed_tools": claimed_tools,
+                "ts": time.time(),
+            })
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("CitationGuard: failed to flag unverified tool claim: %r", e)
+
     def verify(
         self,
         response_text: str,
@@ -112,11 +152,25 @@ class CitationGuard:
         claims = _extract_claims(response_text)
         read   = _read_paths_this_turn(tool_calls)
         unverified_paths = [p for p in claims["paths"] if p not in read]
+
+        # Part B2 — "verified via X" tool-name claims, checked against
+        # the REAL set of tools this turn actually called (Part B1's
+        # get_turn_tool_records). Only known local tool names count —
+        # this stays narrow so ordinary prose never false-triggers.
+        from services.local_tools import LOCAL_TOOLS
+        from services.task_chain_logging import get_turn_tool_records
+        claimed_tools = [
+            t for t in _extract_tool_claims(response_text) if t in LOCAL_TOOLS
+        ]
+        called_tools = get_turn_tool_records(list(tool_calls or []))
+        unverified_tool_claims = [t for t in claimed_tools if t not in called_tools]
+
         return {
-            "pass":                  len(unverified_paths) == 0,
+            "pass":                  len(unverified_paths) == 0 and len(unverified_tool_claims) == 0,
             "unverified_paths":      unverified_paths,
             "unverified_versions":   claims["versions"] if not read else [],
             "unverified_counts":     claims["counts"]   if not read else [],
+            "unverified_tool_claims": unverified_tool_claims,
             "claims":                claims,
             "read_paths":            sorted(read),
         }
@@ -170,14 +224,38 @@ class CitationGuard:
             f"### VERIFIED FILE — {p}\n```\n{c}\n```"
             for p, c in fetched.items()
         ]
+        tool_claims = report.get("unverified_tool_claims") or []
+        header_lines = []
+        if fetched:
+            header_lines.append(
+                "Your previous draft referenced files you did not read. "
+                "REWRITE your answer using ONLY the content below. "
+                "For any path marked `FILE NOT FOUND`, say so explicitly "
+                "instead of guessing."
+            )
+        if tool_claims:
+            # Part B2 — the response claimed to have used a tool (e.g.
+            # "verified via X") that the real trace shows was NEVER
+            # called this turn. There is no file to auto-fetch here —
+            # this is a false process claim, not an unsourced fact —
+            # so the remediation is: strip the claim and say honestly
+            # it wasn't actually verified, exactly like a hedged claim
+            # would have read in the first place.
+            header_lines.append(
+                "Your previous draft claimed to have used the "
+                f"following tool(s) to verify something: {', '.join(tool_claims)}. "
+                "The real tool-call trace for this turn shows NONE of "
+                "these were actually called. REMOVE that claim entirely — "
+                "say plainly that this was not actually verified this turn, "
+                "instead of stating it as fact."
+            )
+            self._flag_unverified_tool_claim(ctx, tool_claims)
         injection = (
-            "── CITATION GUARD: VERIFIED FILE CONTENTS ──\n"
-            "Your previous draft referenced files you did not read. "
-            "REWRITE your answer using ONLY the content below. "
-            "For any path marked `FILE NOT FOUND`, say so explicitly "
-            "instead of guessing. This rewrite is a plain text answer "
-            "only — do NOT emit a `tool_call` fence or request any "
-            "more tools here; there is no tool loop to run them.\n\n"
+            "── CITATION GUARD: VERIFIED CONTENT / PROCESS CHECK ──\n"
+            + " ".join(header_lines)
+            + " This rewrite is a plain text answer only — do NOT emit a "
+            "`tool_call` fence or request any more tools here; there is "
+            "no tool loop to run them.\n\n"
             + "\n\n".join(injection_parts)
         )
 

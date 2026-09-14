@@ -412,6 +412,8 @@ async def chat_send(
     _intent_result = _pre.intent_result
     _tier = _pre.tier
     req_mode = _pre.mode
+    if _pre.forced_read_context:
+        extra_sys = (extra_sys + "\n\n" + _pre.forced_read_context).strip()
     if result is None:
         _max_iters_eff = 3 if _tier == "query" else min(body.max_tool_iters, 4)
         # 2026-09-04 — FIX for the "promise-then-silence" hang
@@ -648,6 +650,31 @@ async def chat_send(
         except Exception as _bvf_e:
             logger.debug("business_voice filter skipped (chat_send): %r", _bvf_e)
 
+    # Part B3 enforcement — deterministic override, placed as the
+    # ABSOLUTE LAST content-mutating step (after response_confidence/
+    # bail_reason, output_guard, AND business_voice_filter above —
+    # each of those can itself rewrite `content`, including back into
+    # the exact canned clarifying-question class this gate exists to
+    # prevent, e.g. bail_reason.py's _LOW_CONFIDENCE_MESSAGE, with
+    # zero awareness of required_read_gate). Whatever `content` is at
+    # this point, if it still looks like that failure, replace it
+    # with the guaranteed-correct fallback built straight from the
+    # real read result. This MUST be the true last word — moved here
+    # (was originally right after response_confidence, which turned
+    # out not to be last either) after confirming live that even THAT
+    # placement still got overwritten downstream.
+    if _pre.required_read_gate:
+        from services.required_tool_gate import enforce_required_read_gate
+        content = enforce_required_read_gate(_pre.required_read_gate, content)
+        # 2026-02 round-4 — this gate's read_repo_file call happens
+        # OUTSIDE the orchestrator's own tool-dispatch loop, so without
+        # this it was invisible to B1's persisted trace (log_task_chain
+        # below reads result["tool_calls"]) even though a real read
+        # happened. Append it so the trace matches reality.
+        _gate_tcr = _pre.required_read_gate.get("tool_call_record")
+        if _gate_tcr:
+            result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
+
     # Maxx mode: watchdog review (only if we have non-empty content)
     # Iter 161 — same legacy-only gating as the streaming path: skip
     # when the new mode="maxx" pill is set because Claude already wrote
@@ -692,7 +719,7 @@ async def chat_send(
                         bin_ctx=bin_ctx)
     # 2026-09-08 — task-chain logging (structured, not raw CoT).
     try:
-        from services.task_chain_logging import log_task_chain
+        from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
         asyncio.create_task(log_task_chain(
             _db, user_id=user["user_id"], session_id=body.session_id or "",
             project_id=body.project_id, user_prompt=body.prompt or "",
@@ -700,6 +727,11 @@ async def chat_send(
             turn_state=result.get("turn_state") or "success",
             failure_mode=result.get("failure_mode") or result.get("error"),
             sequential_thoughts=result.get("sequential_thoughts") or [],
+        ))
+        asyncio.create_task(log_unverified_tool_claims(
+            _db, user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id,
+            claims=result.get("unverified_tool_claims_blocked") or [],
         ))
     except Exception as _tc_exc:
         logger.debug("task_chain logging skipped (chat_send): %r", _tc_exc)

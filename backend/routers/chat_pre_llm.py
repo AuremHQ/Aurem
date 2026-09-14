@@ -71,6 +71,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# 2026-02 round-4 — sentinel distinguishing "caller didn't pass a
+# precomputed gate, compute one fresh" from "caller explicitly passed
+# None because the gate genuinely didn't fire for this message". See
+# resolve_pre_llm()'s `precomputed_required_read_gate` param.
+_GATE_UNSET = object()
+
 
 @dataclass
 class PreLLMOutcome:
@@ -78,6 +84,8 @@ class PreLLMOutcome:
     intent_result: dict
     tier: str
     mode: str
+    forced_read_context: str = ""
+    required_read_gate: Optional[dict] = None
 
 
 def _shape_short_circuit(
@@ -113,6 +121,7 @@ async def resolve_pre_llm(
     ora_panel: bool = False,
     intent_probe_text: Optional[str] = None,
     log_ctx: Optional[dict] = None,
+    precomputed_required_read_gate: Optional[dict] = _GATE_UNSET,  # type: ignore[assignment]
 ) -> PreLLMOutcome:
     """The pre-LLM boundary — checked BEFORE any tool-calling LLM
     call, for both /chat/send and /chat/stream identically.
@@ -123,6 +132,46 @@ async def resolve_pre_llm(
     fired and the caller should use THAT as the turn's result
     instead — and must NEVER hand this turn to the model."""
     result = None
+
+    # 0) Required-tool-call pre-check (Part B3) — deterministic, runs
+    # BEFORE the confirm-boundary and BEFORE any LLM call. If the
+    # message names both a known Vanguard rule-id and a file path
+    # (the exact "Fix this critical issue: exec_usage (in <path>)"
+    # shape), read_repo_file fires HERE for real and the actual file
+    # content is injected as forced_read_context — the caller appends
+    # it to `extra_sys` before calling chat_with_tools. This never
+    # short-circuits `result`; the LLM still generates the reply, but
+    # now with the file already read, so "what should change?" can
+    # never be the first move when the exact file was already named.
+    #
+    # 2026-02 round-4 — worker.py's run_worker() now computes this
+    # SAME gate at the very top of the function (before its 5 mode-
+    # dispatch short-circuits, one of which used to bypass it
+    # entirely). Passing that result in via
+    # `precomputed_required_read_gate` avoids calling the real
+    # read_repo_file tool a second time for the same message on the
+    # chat/stream path. Sentinel default "unset" (not None) lets
+    # turn.py's chat/send call (which has no such hoist / no mode-
+    # dispatch cascade to bypass) keep computing it fresh here,
+    # unchanged.
+    forced_read_context = ""
+    if precomputed_required_read_gate is not _GATE_UNSET:
+        required_read_gate = precomputed_required_read_gate
+        if required_read_gate:
+            forced_read_context = required_read_gate["context"]
+    else:
+        required_read_gate = None
+        try:
+            from services.required_tool_gate import run_required_read_gate
+            required_read_gate = await run_required_read_gate(
+                message=body.prompt or "",
+                ctx={"user_id": (user or {}).get("user_id"),
+                     "project_id": body.project_id, "bin_ctx": bin_ctx},
+            )
+            if required_read_gate:
+                forced_read_context = required_read_gate["context"]
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("required_tool_gate failed (non-blocking): %r", e)
 
     # 1) Confirm-boundary — S5: a confirm/cancel resolving a real
     # pending action is a deterministic server-side state transition,
@@ -252,7 +301,17 @@ async def resolve_pre_llm(
     # improvise a false "Approved!"/"Shipped!"); otherwise a direct,
     # no-tools LLM reply, falling through to the caller's own
     # chat_with_tools() on any failure (never blank-screens).
-    if result is None and tier in ("casual", "clarify") and not ora_panel:
+    # `and not required_read_gate` — 2026-02 fix for the exec_usage
+    # incident's REAL root cause: the intent classifier misclassified
+    # "Fix this critical issue: exec_usage (in <path>)" as tier=
+    # "clarify", so this step fired FIRST and short-circuited straight
+    # to a canned clarifying question — entirely bypassing step 0's
+    # forced_read_context AND turn.py/worker.py's post-response
+    # enforcement (both only run on the chat_with_tools path below,
+    # which this step never reaches). A message with a real rule-id
+    # AND a real path is, by definition, not vague — never let the
+    # classifier's tier guess override that.
+    if result is None and tier in ("casual", "clarify") and not ora_panel and not required_read_gate:
         from services.response_confidence import is_confirmation_reply, NO_PENDING_FIX_MESSAGE
         if is_confirmation_reply(body.prompt or "") and not prior_fix_signal:
             result = _shape_short_circuit(
@@ -287,4 +346,6 @@ async def resolve_pre_llm(
                     "to chat_with_tools", tier, _ce,
                 )
 
-    return PreLLMOutcome(result=result, intent_result=intent_result, tier=tier, mode=mode)
+    return PreLLMOutcome(result=result, intent_result=intent_result, tier=tier, mode=mode,
+                         forced_read_context=forced_read_context,
+                         required_read_gate=required_read_gate)

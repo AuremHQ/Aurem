@@ -258,6 +258,7 @@ def extract_tool_calls(text: str) -> list[dict]:
     import re as _re
     _KNOWN_TOOLS = {
         "read_repo_file", "read_repo_files", "write_repo_file",
+        "patch_repo_file",
         "get_repo_structure",
         "list_repo_files",
         "search_repo", "semantic_search_repo", "get_commit_diff",

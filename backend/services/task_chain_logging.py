@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,36 @@ def _tool_sequence(tool_calls: Optional[list]) -> list[str]:
     return names
 
 
+# ── Part B1 (tool-call observability) ──────────────────────────────
+# `tool_calls`/`tool_sequence` above only ever kept NAMES — args and
+# the actual result were discarded before persistence, so a claim
+# like "verified via read_repo_file" could never be checked against
+# what was ACTUALLY called (Part B2 needs this). Extends the SAME
+# `task_chains` record with a parallel `tool_call_records` field
+# carrying the full per-call shape orchestrator.py's `entry` dict
+# already builds in-memory (name, args, ok, error, elapsed_ms,
+# timestamp) — secret-redacted, still capped at 10 calls, still
+# best-effort. Does not touch the existing fields at all.
+def _tool_call_records(tool_calls: Optional[list], turn_id: str) -> list[dict]:
+    out = []
+    for tc in (tool_calls or [])[:10]:
+        if isinstance(tc, str):
+            out.append({"tool": tc, "turn_id": turn_id})
+            continue
+        tc = tc or {}
+        args = tc.get("args") or {}
+        out.append({
+            "tool":       tc.get("tool") or tc.get("name") or "?",
+            "args":       redact_secrets(_truncate(str(args), 300)),
+            "ok":         tc.get("ok"),
+            "error":      _truncate(tc.get("error"), 200) if tc.get("error") else None,
+            "elapsed_ms": tc.get("elapsed_ms"),
+            "timestamp":  tc.get("timestamp"),
+            "turn_id":    turn_id,
+        })
+    return out
+
+
 def _derive_model_plan(sequential_thoughts, tool_calls, final_response) -> str:
     """'What the model planned' — approximated from (in priority
     order): its own recorded sequential-thinking steps, else the
@@ -186,15 +217,22 @@ async def log_task_chain(
         if degenerated:
             success = False
         tool_seq = _tool_sequence(tool_calls)
+        turn_id = uuid.uuid4().hex
         record = {
             "user_id":        user_id,
             "session_id":     session_id,
             "project_id":     project_id,
+            "turn_id":        turn_id,
             "task_type":      classify_task_type(user_prompt),
             "user_prompt":    _truncate(redact_secrets(user_prompt or ""), 200),
             "model_plan":     _derive_model_plan(sequential_thoughts, tool_calls, final_response),
             "tool_calls":     tool_seq,
             "tool_sequence":  tool_seq,
+            # Part B1 — full per-call trace (name, args, ok/error,
+            # elapsed_ms, timestamp, turn_id) alongside the pre-
+            # existing names-only fields above (unchanged, still used
+            # by /admin/failure-patterns's group-by).
+            "tool_call_records": _tool_call_records(tool_calls, turn_id),
             "final_response": _truncate(redact_secrets(final_response or ""), 500),
             "success":        success,
             "failure_reason": ("output_repetition_degeneration" if degenerated
@@ -218,7 +256,43 @@ async def log_task_chain(
         logger.debug("log_task_chain failed (non-blocking): %r", e)
 
 
+def get_turn_tool_records(tool_calls: Optional[list]) -> set[str]:
+    """Part B2 helper — the set of tool NAMES actually invoked this
+    turn, straight from the in-memory `tool_calls` list (same shape
+    `_tool_sequence` reads). Used by `citation_guard.py::CitationGuard`
+    to check a "verified via X" claim against what was REALLY called
+    this turn, synchronously, before the response ships — no DB round
+    trip, since this must block/regenerate before persistence."""
+    return {n.lower() for n in _tool_sequence(tool_calls) if n and n != "?"}
+
+
+async def log_unverified_tool_claims(
+    db, *, user_id: str, session_id: str, project_id: Optional[str],
+    claims: Optional[list],
+) -> None:
+    """Part B2 — persists each `unverified_tool_claims_blocked` entry
+    CitationGuard flagged on `ctx` (it has no `db` handle that deep in
+    the call stack) as a distinct, queryable event. Best-effort, same
+    convention as `log_task_chain`/`log_architect_event` — never
+    raises, logging must never break the turn it's observing."""
+    if not claims or db is None:
+        return
+    try:
+        for c in claims:
+            await db.tool_claim_guard_events.insert_one({
+                "event_type":    "unverified_tool_claim_blocked",
+                "user_id":       user_id,
+                "session_id":    session_id,
+                "project_id":    project_id,
+                "claimed_tools": c.get("claimed_tools") or [],
+                "ts":            c.get("ts") or time.time(),
+            })
+    except Exception as e:  # noqa: BLE001
+        logger.debug("log_unverified_tool_claims failed (non-blocking): %r", e)
+
+
 __all__ = [
     "TASK_TYPES", "classify_task_type", "redact_secrets", "log_task_chain",
-    "detect_output_repetition_degeneration",
+    "detect_output_repetition_degeneration", "get_turn_tool_records",
+    "log_unverified_tool_claims",
 ]

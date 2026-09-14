@@ -57,6 +57,19 @@ class StreamState:
     # ── worker.py output, read by sse_stream.py's cost-logging call
     # after the worker completes ──
     sys_for_advisor: str = ""
+    # Part B3 — required_read_gate (services/required_tool_gate.py).
+    # 2026-02 round-4 — set at the very TOP of worker.py's run_worker(),
+    # BEFORE any of its mode-dispatch branches (Mode D/E/B/F/ORA-panel/
+    # orchestrator) run, so it's populated no matter which branch ends
+    # up producing `state.result` (confirmed live: the exact incident
+    # message can non-deterministically land in either Mode D's debug
+    # session or the general orchestrator path — both must be covered).
+    # Read by stream.py's own enforce_required_read_gate() call AFTER
+    # run_confidence_gate / apply_output_guards / business_voice_filter
+    # — mirrors turn.py's identical last-step placement (worker.py's
+    # OWN enforcement call runs too early, before those 3 guards,
+    # which can undo it).
+    required_read_gate: Optional[dict] = None
 
     # ── watchdog.py output, read by sse_stream.py after the queue-
     # consumption loop ends ──

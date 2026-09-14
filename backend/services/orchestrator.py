@@ -512,6 +512,7 @@ _STEP_LABELS = {
     "firecrawl_crawl_site":     "📖 Crawling web…",
     # Write tools → ✍️
     "write_repo_file":          "✍️ Writing files…",
+    "patch_repo_file":          "✍️ Patching file…",
     "write_file":               "✍️ Writing files…",
     "edit_file":                "✍️ Writing files…",
     "create_file":              "✍️ Writing files…",
@@ -534,7 +535,7 @@ def _step_label_for_tool(tool_name: str) -> str:
 # tool. The others stay for compatibility with any external tools that
 # may register under these names.
 _WRITE_TOOL_NAMES: frozenset = frozenset({
-    "write_repo_file",
+    "write_repo_file", "patch_repo_file",
     "write_file", "edit_file", "push_fix", "create_file", "patch_file",
 })
 
@@ -2436,7 +2437,7 @@ async def chat_with_tools(
                 # summary is always genuinely partial, never silent.
                 "turn_state": "partial",
                 "continue_available": True,
-                "tool_calls": local_ctx.get("tool_calls") or [],
+                "tool_calls": invocations or local_ctx.get("tool_calls") or [],
                 "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
             }
         iters += 1
@@ -2540,7 +2541,7 @@ async def chat_with_tools(
                     # tool-loop synthesis is genuinely partial, never silent.
                     "turn_state": "partial",
                     "continue_available": True,
-                    "tool_calls": local_ctx.get("tool_calls") or [],
+                    "tool_calls": invocations or local_ctx.get("tool_calls") or [],
                     "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
                 }
 
@@ -2804,7 +2805,23 @@ async def chat_with_tools(
                 # Iter 210 — typed tool-failure signals + per-turn tool
                 # calls (consumed by SystemSignalBanner + CitationGuard).
                 "system_signals": local_ctx.get("system_signals") or [],
-                "tool_calls":     local_ctx.get("tool_calls") or [],
+                # Part B1 — prefer `invocations` (this function's own
+                # rich per-call list: ok/error/elapsed_ms/timestamp,
+                # see `entry` above) over the thinner
+                # `local_ctx["tool_calls"]` stub that `invoke_local_tool`
+                # appends (name+args only). Both used to diverge — the
+                # router's `log_task_chain` call only ever saw the
+                # thin one, so `tool_call_records` persisted with
+                # every ok/error/timestamp field null. `invocations`
+                # is a superset built across this whole turn.
+                "tool_calls":     invocations or local_ctx.get("tool_calls") or [],
+                # Part B2 — "verified via X" tool-name claims the
+                # CitationGuard caught with no matching real tool call
+                # this turn. Surfaced here so the router layer can
+                # persist `unverified_tool_claim_blocked` events
+                # (services/task_chain_logging.py doesn't have `db`
+                # access from this deep in the call stack).
+                "unverified_tool_claims_blocked": local_ctx.get("unverified_tool_claims_blocked") or [],
                 # Item 2 (2026-08-31) — palette nudges made this turn,
                 # surfaced to chat.py so the owner SEES the before/after
                 # (see services/contrast_guard.py::describe_nudge).
@@ -2857,6 +2874,12 @@ async def chat_with_tools(
                 "elapsed_ms": None,
                 "error":      None,
                 "web_sources": [],
+                # Part B1 (tool-call observability) — real absolute
+                # wall-clock timestamp at invocation start. `elapsed_ms`
+                # below already gives duration; this gives ordering/
+                # correlation across calls in the same turn once this
+                # flows into task_chains via log_task_chain.
+                "timestamp":  time.time(),
                 # Iter 388s — Bug 18 root fix.  Store the actual tool
                 # RESULT alongside the invocation record so the
                 # synthesiser has real content to inline in the
@@ -2919,6 +2942,11 @@ async def chat_with_tools(
                        "timed_out": True}
             entry["elapsed_ms"] = res.get("elapsed_ms")
             entry["error"]      = res.get("error")
+            entry["ok"]         = bool(res.get("ok")) if res else False
+            # Part B1 — this was permanently stuck at "running" (never
+            # reassigned after the tool actually finished), so
+            # task_chains' persisted result status was always stale.
+            entry["status"]     = "ok" if entry["ok"] else "error"
             # Iter 388s — Bug 18 root fix.  Store a trimmed copy of the
             # tool result so `_synthesise_max_iters_summary` can inline
             # actual content (file bytes, web-search snippets, PR
@@ -3109,7 +3137,8 @@ async def chat_with_tools(
         # Iter 210 — propagate even on max-iter hit so users still get
         # the typed banner instead of a generic timeout.
         "system_signals": local_ctx.get("system_signals") or [],
-        "tool_calls":     local_ctx.get("tool_calls") or [],
+        "tool_calls":     invocations or local_ctx.get("tool_calls") or [],
+        "unverified_tool_claims_blocked": local_ctx.get("unverified_tool_claims_blocked") or [],
         "findings_saved_this_turn": local_ctx.get("findings_saved_this_turn") or [],
         "palette_nudges": local_ctx.get("palette_nudges") or [],
         # 2026-09-08 — see matching comment on the sibling exit path above.

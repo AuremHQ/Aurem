@@ -1,0 +1,24 @@
+{
+  "session_id": "round4-stream-8ed2aa4f-a172-47f0-9121-a229fb61e24e",
+  "matching_entries": [
+    {
+      "tool": "read_repo_file",
+      "args": "{'path': '.agent/skills/plugins/antigravity-awesome-skills-claude/skills/007/scripts/scanners/injection_scanner.py'}",
+      "ok": false,
+      "error": "No project selected. Please select a project from the sidebar and try again \u2014 repo tools cannot run against Home.",
+      "elapsed_ms": null,
+      "timestamp": 1789351352.1369643,
+      "turn_id": "ed7b36acc72e494badcb6ca6869695a2"
+    },
+    {
+      "tool": "read_repo_file",
+      "args": "{'path': '.agent/skills/plugins/antigravity-awesome-skills-claude/skills/007/scripts/scanners/injection_scanner.py'}",
+      "ok": false,
+      "error": "No project selected. Please select a project from the sidebar and try again \u2014 repo tools cannot run against Home.",
+      "elapsed_ms": 0.0,
+      "timestamp": null,
+      "turn_id": "ed7b36acc72e494badcb6ca6869695a2"
+    }
+  ],
+  "all_records_count": 3
+}

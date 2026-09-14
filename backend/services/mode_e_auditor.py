@@ -215,6 +215,65 @@ async def llm_deep_audit(file_summaries: str, repo_ctx: str) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Part C — LLM-finding verification (extend the diff-hallucination gate's
+# "does the evidence actually support this claim" logic to bulk-summary
+# output). Confirmed real incident: a "37 issues found" report included a
+# "duplicate font imports" finding that did not exist on inspection. Unlike
+# `cto_pipeline_steps.py`'s diff gate (which verifies a code CHANGE against
+# the real file), there is no diff here — the LLM free-text-parses its own
+# "ISSUE:/FILE:/SEVERITY:" blocks with zero grounding check against the
+# files it was actually shown. Two checks, weakest evidence first:
+#   1. Hard drop — claimed `filepath` doesn't exist in the real scanned
+#      set at all (the LLM invented a path).
+#   2. Soft drop — the finding's own description shares NO real keyword
+#      with the claimed file's actual content. A genuine finding, even in
+#      loose prose, usually echoes at least one real identifier/word from
+#      the file; a fabricated one (like "duplicate font imports" on a file
+#      with no "font" anywhere) shares none.
+# Deliberately NOT a second LLM call — that would just add a second
+# hallucination-risk on top of the first. Purely deterministic.
+_STOPWORDS = frozenset({
+    "the", "this", "that", "with", "from", "into", "have", "does", "should",
+    "could", "would", "there", "which", "when", "where", "file", "code",
+    "issue", "found", "missing", "possible", "likely", "these", "those",
+})
+
+
+def _finding_keywords(description: str) -> list[str]:
+    words = re.findall(r"[a-zA-Z_]{4,}", (description or "").lower())
+    return [w for w in words if w not in _STOPWORDS]
+
+
+def verify_llm_findings(llm_findings: list[dict], file_blocks: dict) -> list[dict]:
+    """Filters `llm_findings` (mutates nothing, returns a new list) —
+    drops findings whose claimed file doesn't exist, or whose
+    description shares no real keyword with that file's actual
+    content. Never raises; a verification failure keeps the finding
+    rather than silently losing real signal."""
+    verified: list[dict] = []
+    for f in llm_findings or []:
+        try:
+            claimed_path = (f.get("filepath") or "").strip()
+            # exact match first, then "ends with" for a path the LLM
+            # abbreviated (e.g. "auth.py" for "backend/routers/auth.py")
+            real_path = claimed_path if claimed_path in file_blocks else next(
+                (p for p in file_blocks if p.endswith(claimed_path)), None,
+            ) if claimed_path else None
+            if not real_path:
+                continue  # hard drop — file doesn't exist in the real scan
+            content_lower = (file_blocks.get(real_path) or "").lower()
+            keywords = _finding_keywords(f.get("description", ""))
+            if keywords and not any(kw in content_lower for kw in keywords):
+                continue  # soft drop — zero grounding in the real file
+            f["filepath"] = real_path
+            f["verified"] = True
+            verified.append(f)
+        except Exception:                                    # noqa: BLE001
+            verified.append(f)  # never lose a finding to a guard bug
+    return verified
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Quick wins checker
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -367,6 +426,9 @@ async def run_audit(
         llm_deep_audit(file_summaries, repo_ctx),
         _async_wins(),
     )
+    # Part C — verify LLM-authored findings against the real scanned
+    # content before they ever reach the user-facing report.
+    llm_findings = verify_llm_findings(llm_findings, dict(important_files))
 
     # Build report
     report = build_audit_report(

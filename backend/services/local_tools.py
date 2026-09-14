@@ -1091,7 +1091,97 @@ async def write_repo_file(ctx: dict, args: dict) -> dict:
     }
 
 
-# ── TOOL 2c: get_repo_structure (cached symbol map) ──────────────────────────
+# ── TOOL 2b: patch_repo_file (Part B4 — minimal-diff default) ────────────────
+
+async def patch_repo_file(ctx: dict, args: dict) -> dict:
+    """Targeted old-value -> new-value replacement — the DEFAULT way
+    to edit an EXISTING file. Prefer this over `write_repo_file` for
+    anything short of a genuine full-file rewrite: passing a whole
+    regenerated file body to the LLM (write_repo_file's contract) is
+    exactly the shape of mistake that caused the App.jsx incident
+    (see AGENTS.md §9) — a "update the footer text" edit silently
+    dropped 4 unrelated context-provider imports because the model
+    was regenerating the ENTIRE file instead of touching one spot.
+
+    Args:
+      path             str — repo-relative file path
+      old_value        str — exact existing text, must appear EXACTLY
+                              ONCE in the current file (re-fetched
+                              fresh here, not trusted from an earlier
+                              read this turn — the file may have
+                              changed). Ambiguous or stale matches are
+                              rejected rather than guessed at.
+      new_value        str — replacement text
+      commit_message?  str
+
+    Returns the same shape as `write_repo_file` on success, or
+    `{"ok": False, "error": ..., "gate": "patch_not_unique"|...}` —
+    the caller (LLM) is expected to re-read the file and retry with
+    a more specific `old_value`, or fall back to `write_repo_file`
+    only if the task genuinely requires a full rewrite.
+
+    Deliberately delegates ALL safety gates (Vanguard, syntax check,
+    test-file lock, contrast guard, write_guard) to `write_repo_file`
+    itself instead of duplicating them — this only computes the new
+    full body and hands it off, exactly like
+    `pending_action.py::_execute_edit` already does for chat-approved
+    edits.
+    """
+    path      = (args or {}).get("path")
+    old_value = (args or {}).get("old_value")
+    new_value = (args or {}).get("new_value")
+
+    if not path or not isinstance(path, str):
+        return {"ok": False, "error": "Missing required arg `path`."}
+    if old_value is None or new_value is None:
+        return {"ok": False, "error": "Missing required arg `old_value` or `new_value`."}
+    if old_value == "":
+        return {"ok": False, "error": "`old_value` cannot be empty — that would match everywhere."}
+
+    read_res = await read_repo_file(ctx, {"path": path})
+    if not read_res.get("ok"):
+        return {"ok": False, "error": f"Could not read `{path}` to patch it: "
+                                       f"{read_res.get('error', 'unknown error')}",
+                "gate": "patch_read_failed", "path": path}
+    current = read_res.get("content") or ""
+    occurrences = current.count(old_value)
+    if occurrences == 0:
+        return {
+            "ok": False, "gate": "patch_not_found", "path": path,
+            "error": (
+                "`old_value` was not found in the current file content — "
+                "re-read the file and use the exact current text, not a "
+                "remembered or paraphrased version."
+            ),
+        }
+    if occurrences > 1:
+        return {
+            "ok": False, "gate": "patch_not_unique", "path": path,
+            "error": (
+                f"`old_value` matches {occurrences} times — ambiguous. "
+                "Include more surrounding context in `old_value` so it "
+                "matches exactly one location."
+            ),
+        }
+    new_content = current.replace(old_value, new_value, 1)
+
+    write_res = await write_repo_file(ctx, {
+        "path": path, "content": new_content,
+        "commit_message": (args or {}).get("commit_message") or f"chore: patch {path}",
+        "allow_test_file_change": (args or {}).get("allow_test_file_change"),
+    })
+    if not write_res.get("ok"):
+        return write_res
+
+    # Read-back verification — same CBR-5/8 standard as
+    # pending_action.py::_execute_edit: never claim success without
+    # independently re-reading the committed content.
+    verify_res = await read_repo_file(ctx, {"path": path})
+    verified = bool(verify_res.get("ok")) and new_value in (verify_res.get("content") or "")
+    write_res["verified"] = verified
+    return write_res
+
+
 
 async def get_repo_structure(ctx: dict, args: dict) -> dict:
     """Iter 212m-7 — Return the cached function/class/route symbol map
@@ -2476,12 +2566,38 @@ TOOL_SPECS: list[dict] = [
         },
     },
     {
+        "name": "patch_repo_file",
+        "description": (
+            "Part B4 — the DEFAULT way to edit an EXISTING file. Give the "
+            "exact current text (`old_value`) and what it should become "
+            "(`new_value`) — only that one spot changes, everything else "
+            "in the file is left byte-for-byte untouched. PREFER THIS over "
+            "write_repo_file for anything short of a genuine full-file "
+            "rewrite: regenerating a whole file body risks silently "
+            "dropping unrelated code (a real incident dropped 4 top-level "
+            "imports from App.jsx during a 'change the footer text' edit "
+            "— see AGENTS.md). `old_value` must match EXACTLY ONCE in the "
+            "CURRENT file — if you're not sure it's still current, "
+            "read_repo_file first. Runs the same Vanguard/syntax/test-file "
+            "safety gates as write_repo_file."
+        ),
+        "args_spec": {
+            "path":            "string — repo-relative file path",
+            "old_value":       "string — exact existing text, must be unique in the file",
+            "new_value":       "string — replacement text",
+            "commit_message":  "optional string",
+        },
+    },
+    {
         "name": "write_repo_file",
         "description": (
             "Iter 212m-6 — Commit a SINGLE file directly to the connected "
-            "repo with the supplied full content. Use this for SMALL surgical "
-            "fixes you can ship in one round-trip (typo, missing import, "
-            "single-function patch). DO NOT use for multi-file refactors — "
+            "repo with the supplied full content. Reserve this for a "
+            "genuine full-file rewrite or a brand-new file — for any "
+            "targeted change to an EXISTING file, use patch_repo_file "
+            "instead (old_value -> new_value); regenerating the whole "
+            "body risks silently dropping unrelated code that wasn't "
+            "part of the actual ask. DO NOT use for multi-file refactors — "
             "for those, emit an `aurem-handoff` brief instead so the task "
             "queue runs the full agent+verify pipeline.\n"
             "\n"
@@ -2653,6 +2769,7 @@ LOCAL_TOOLS: dict[str, callable] = {
     "read_repo_file":       read_repo_file,
     "read_repo_files":      read_repo_files,
     "write_repo_file":      write_repo_file,
+    "patch_repo_file":      patch_repo_file,
     "get_repo_structure":   get_repo_structure,
     "list_repo_files":      list_repo_files,
     "search_repo":          search_repo,

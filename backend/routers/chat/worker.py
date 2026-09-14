@@ -687,6 +687,10 @@ async def _prep_pre_llm(state: StreamState) -> dict:
         ora_panel=bool(body.ora_panel),
         intent_probe_text=_intent_probe_text,
         log_ctx={"db": get_db(), "user_id": user_id, "project_id": body.project_id},
+        # 2026-02 round-4 — already computed at the top of run_worker(),
+        # before this function's caller even ran; reuse it instead of
+        # calling the real read_repo_file tool a second time.
+        precomputed_required_read_gate=state.required_read_gate,
     )
     _intent_result = _pre.intent_result
     _tier = _pre.tier
@@ -726,6 +730,8 @@ async def _prep_pre_llm(state: StreamState) -> dict:
         "req_mode_stream": req_mode_stream,
         "max_iters_eff": _max_iters_eff,
         "published": _published,
+        "forced_read_context": _pre.forced_read_context,
+        "required_read_gate": _pre.required_read_gate,
     }
 
 
@@ -1170,6 +1176,29 @@ async def run_worker(state: StreamState) -> None:
     watchdog.py's queue consumption loop can't wait forever."""
     q = state.q
     try:
+        # Part B3 (round 4 fix) — hoisted to the TOP, before ANY mode
+        # dispatch below. Confirmed live (testing round 3): "Fix this
+        # critical issue: exec_usage (in <path>)" is ambiguous between
+        # Mode D (debug session, _mode_d_e below) and the general
+        # orchestrator path — whichever branch's classifier claims the
+        # turn, `state.required_read_gate` must already be populated so
+        # stream.py's enforce_required_read_gate() applies uniformly to
+        # whatever `content` THAT branch produces, not only the
+        # orchestrator's. Cheap + idempotent (same read either way);
+        # _prep_pre_llm below still recomputes it for the orchestrator
+        # branch's own forced_read_context injection — harmless, same
+        # deterministic result.
+        try:
+            from services.required_tool_gate import run_required_read_gate
+            state.required_read_gate = await run_required_read_gate(
+                message=state.body.prompt or "",
+                ctx={"user_id": state.user_id,
+                     "project_id": state.body.project_id, "bin_ctx": state.bin_ctx},
+            )
+        except Exception as _gate_e:                              # noqa: BLE001
+            logger.warning("required_tool_gate hoist failed (non-blocking): %r", _gate_e)
+            state.required_read_gate = None
+
         r = await _mode_d_fast_path(state)
         if r is not None:
             await q.put({"type": "result", "result": r})
@@ -1213,6 +1242,21 @@ async def run_worker(state: StreamState) -> None:
             return
 
         state.sys_for_advisor = state.extra_sys
+        if pre.get("forced_read_context"):
+            state.sys_for_advisor = (
+                (state.sys_for_advisor or "") + "\n\n" + pre["forced_read_context"]
+            ).strip()
+        # Part B3 — state.required_read_gate was already stashed at
+        # the very TOP of run_worker() (before this branch), and
+        # resolve_pre_llm() above was given that SAME value via
+        # `precomputed_required_read_gate` (no second read_repo_file
+        # call). NOT enforced here — stream.py (this function's
+        # caller) reads it AFTER its own run_confidence_gate /
+        # apply_output_guards / business_voice_filter guards run —
+        # any of those can rewrite `content` back into the exact
+        # clarifying-question class this gate exists to prevent
+        # (confirmed live), so enforcement must happen there, as the
+        # true last content-mutating step, not here.
         result = await _run_orchestrator(
             state, req_mode_stream, max_iters_eff, _published,
             intent_result, tier,
