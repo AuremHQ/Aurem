@@ -114,6 +114,21 @@ async def run_required_read_gate(*, message: str, ctx: dict) -> Optional[dict]:
 
     if not res or not res.get("ok"):
         error = (res or {}).get("error", "unknown error")
+        # 2026-02 round-4 — confirmed live: local_tools.py's read_repo_file
+        # 404 error embeds an internal, model-only retry directive
+        # ("STOP guessing paths. Your next tool call MUST be
+        # list_repo_files...") IN THE SAME STRING as the actual
+        # user-relevant reason ("FILE NOT FOUND: X does not exist on
+        # owner/repo@branch"). `fallback_response` below is this
+        # module's OWN deterministic, non-LLM text — it runs in
+        # turn.py/stream.py AFTER apply_output_guards (the true last
+        # content-mutating step, so a later LLM retry can't undo it),
+        # which means services/internal_directive_guard.py's identical
+        # strip never gets a chance to run on it. Apply the same strip
+        # here, at the source, so this deterministic fallback can never
+        # itself leak the internal-only half of the error it's quoting.
+        from services.internal_directive_guard import strip_leaked_tool_directives
+        error = strip_leaked_tool_directives(error).rstrip().rstrip(".")
         return {
             "hit": hit,
             "tool_call_record": _tool_call_record,

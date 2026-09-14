@@ -77,6 +77,52 @@ async def test_forced_read_context_reports_real_failure_not_silent(monkeypatch):
     assert "file_not_found" in block
 
 
+@pytest.mark.asyncio
+async def test_fallback_response_never_leaks_internal_retry_directive(monkeypatch):
+    """2026-02 round-4 — confirmed LIVE (founder QA report, Bug 3):
+    the deterministic fallback_response for a not-found read embedded
+    local_tools.py's raw error verbatim, including the internal-only
+    "STOP guessing paths. Your next tool call MUST be list_repo_files
+    ... do not cite any file paths — until you have called
+    list_repo_files and seen the actual layout." directive — meant
+    ONLY to steer the model's OWN next tool call, never the user. This
+    fallback_response is this module's OWN deterministic text (not
+    LLM-generated) and runs AFTER apply_output_guards in turn.py/
+    stream.py, so services/internal_directive_guard.py's identical
+    strip (wired into apply_output_guards) never got a chance to run
+    on it. Fixed by applying the same strip at the source."""
+    from services.required_tool_gate import run_required_read_gate
+
+    async def fake_read_repo_file(ctx, args):
+        return {
+            "ok": False,
+            "error": (
+                f"FILE NOT FOUND: `{REAL_PATH}` does not exist on "
+                "owner/repo@main. STOP guessing paths. Your next tool "
+                "call MUST be `list_repo_files` with a glob (e.g. "
+                "`**/auth*.py`, `**/*router*.py`) to DISCOVER the real "
+                "paths in this repo. Do not write a plan, do not "
+                "produce a handoff brief, do not cite any file paths "
+                "— until you have called list_repo_files and seen the "
+                "actual layout."
+            ),
+        }
+
+    import services.local_tools as local_tools_mod
+    monkeypatch.setattr(local_tools_mod, "read_repo_file", fake_read_repo_file)
+
+    gate = await run_required_read_gate(
+        message=INCIDENT_MESSAGE, ctx={"user_id": "u1", "project_id": "p1", "bin_ctx": None},
+    )
+    reply = gate["fallback_response"]
+    assert "STOP guessing paths" not in reply
+    assert "list_repo_files" not in reply
+    assert "do not cite any file paths" not in reply
+    # The real, informative part of the error survives.
+    assert "FILE NOT FOUND" in reply
+    assert REAL_PATH in reply
+
+
 # ── integration: wired into the REAL resolve_pre_llm pipeline ──────
 # Confirms this isn't just a standalone unit that nothing calls —
 # both /chat/send (turn.py) and /chat/stream (worker.py) route through

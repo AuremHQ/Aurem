@@ -27,11 +27,25 @@ from functools import lru_cache
 
 _MAP_PATH = Path(__file__).resolve().parent.parent / "config" / "business_voice_map.json"
 
-# Same file-path signal response_confidence.py uses for its own
-# _FILE_PATH_RE, kept in sync deliberately (both must recognize the
-# same universe of "this looks like a filename").
+# 2026-02 — confirmed live bug (same-engagement founder repro): a
+# filename referenced with a leading relative-path dot/slash (e.g.
+# ".gif_dimension_checker.py", "./validators.py") lost that leading
+# punctuation because `\b` only anchors on a transition INTO a word
+# character — a leading "." is itself a non-word char, so the match
+# started one character late, leaving the dot/slash orphaned OUTSIDE
+# the match and glued directly onto the humanized replacement label
+# (".that page", "./that file"). Root cause, not a one-off: this is
+# the SAME underlying "regex boundary doesn't account for a real
+# filename's own leading punctuation" class as the URL-mangling fix
+# above, just on the other end of the filename instead of embedded in
+# a larger string. Fix: the negative lookbehind `(?<![\w.])` still
+# blocks a match starting mid-identifier (e.g. never matches "app.py"
+# out of "myapp.py"), but now explicitly allows — and CONSUMES — an
+# optional leading "." / ".." / "./" / "../" as part of the same
+# match, so it gets replaced together with the rest of the filename
+# instead of being left behind.
 _FILENAME_RE = re.compile(
-    r"\b[\w\-./]+\.(?:py|jsx?|tsx?|json|md|ya?ml|css|s?css|html?|txt|sql|env|sh)\b",
+    r"(?<![\w.])\.{0,2}/?[\w\-./]+\.(?:py|jsx?|tsx?|json|md|ya?ml|css|s?css|html?|txt|sql|env|sh)\b",
     re.IGNORECASE,
 )
 
@@ -153,6 +167,46 @@ def _fix_a_an(text: str) -> str:
 _URL_RE = re.compile(r"https?://\S+")
 _URL_PLACEHOLDER = "\x00URL{}\x00"
 
+# 2026-02 round-4 — confirmed live, and MUCH more severe than the two
+# bugs above: this whole filter has no concept of a fenced code block.
+# When a real source-file excerpt is quoted back to the user (e.g.
+# after read_repo_file), EVERY dev-term/filename substitution below
+# fires on the CODE ITSELF, not just the prose around it — corrupting
+# real Python inside a ``` fence: "Path to GIF file" -> "Path to GIF
+# page", `File not found: {x}` -> `Page not found: {x}` (an f-string,
+# now lying about what error it raises), `gif_path.stat().st_size` ->
+# `gif_path.stat()a project page` (a "file"/"page"-class substitution
+# landing mid-expression with no word boundary at all, breaking the
+# Python syntax outright), and `except Exception` mangled beyond
+# recognition. This is not cosmetic — it silently rewrites the actual
+# code the user is looking at. Fix: same technique as URLs/labels
+# above, but MUST run FIRST — stash every ``` fenced block, verbatim,
+# before anything else in the pipeline gets a chance to touch it.
+_CODE_FENCE_RE = re.compile(r"```[\s\S]*?```")
+_CODE_PLACEHOLDER = "\x00CODE{}\x00"
+
+# 2026-02 — confirmed live bug (same-engagement founder repro,
+# "sql_injection in validators.py" -> ".that page ... .that page"):
+# `_humanize_filename` correctly picks `_DEFAULT_FILE_TERM`
+# ("that file") for non-page-like extensions like .py/.json/.sql/etc
+# — but that output text then runs through the GENERIC dev-term map
+# below (_combined_pattern/_replace_term), which has its own
+# unrelated entry `"file" -> "page"` (a real business-owner
+# simplification for sentences that say "your file" in prose). That
+# later pass has zero awareness the word "file" it's looking at was
+# JUST produced by the filename step two lines above — it fires on
+# it exactly like it would in any other sentence, silently turning
+# every single "that file" back into "that page" regardless of what
+# `_PAGE_LIKE_EXTS` decided. The `_PAGE_LIKE_EXTS`/`_DEFAULT_FILE_TERM`
+# distinction has therefore never actually been effective for ANY
+# non-page-like file since it was introduced — same root class as the
+# URL fix above (a later, context-blind pass re-processing text an
+# earlier pass already finalized). Fix: identical technique — stash
+# `_humanize_filename`'s OUTPUT behind its own sentinel placeholder so
+# the combined-term pass can't touch it, then restore the real label
+# verbatim at the very end, after every other pass has already run.
+_LABEL_PLACEHOLDER = "\x00LBL{}\x00"
+
 
 def filter_for_business_owner(text: str) -> str:
     """Deterministic — same input always produces the same output, no
@@ -161,19 +215,34 @@ def filter_for_business_owner(text: str) -> str:
     Any embedded URL is passed through byte-for-byte, untouched."""
     if not text:
         return text
+    codes: list[str] = []
     urls: list[str] = []
+    labels: list[str] = []
+
+    def _stash_code(m: re.Match) -> str:
+        codes.append(m.group(0))
+        return _CODE_PLACEHOLDER.format(len(codes) - 1)
 
     def _stash_url(m: re.Match) -> str:
         urls.append(m.group(0))
         return _URL_PLACEHOLDER.format(len(urls) - 1)
 
-    protected = _URL_RE.sub(_stash_url, text)
-    out = _FILENAME_RE.sub(_humanize_filename, protected)
+    def _stash_label(m: re.Match) -> str:
+        labels.append(_humanize_filename(m))
+        return _LABEL_PLACEHOLDER.format(len(labels) - 1)
+
+    shielded = _CODE_FENCE_RE.sub(_stash_code, text)
+    protected = _URL_RE.sub(_stash_url, shielded)
+    out = _FILENAME_RE.sub(_stash_label, protected)
     out = _ACCESS_TO_RE.sub(lambda m: _preserve_case(m.group(0), "I can't see"), out)
     out = _combined_pattern().sub(_replace_term, out)
     out = _fix_a_an(out)
+    for i, label in enumerate(labels):
+        out = out.replace(_LABEL_PLACEHOLDER.format(i), label)
     for i, url in enumerate(urls):
         out = out.replace(_URL_PLACEHOLDER.format(i), url)
+    for i, code in enumerate(codes):
+        out = out.replace(_CODE_PLACEHOLDER.format(i), code)
     return out
 
 

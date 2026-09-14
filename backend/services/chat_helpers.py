@@ -82,6 +82,9 @@ def apply_output_guards(
     if content:
         from services.commit_boundary import strip_false_confirm_promise
         content = strip_false_confirm_promise(content)
+    if content:
+        from services.commit_boundary import strip_stray_code_blocks_near_handoff
+        content = strip_stray_code_blocks_near_handoff(content)
     if skip or not content:
         return content
     try:
@@ -109,6 +112,11 @@ def apply_output_guards(
         content = apply_live_content_claim_guard(content, tool_calls_run)
     except Exception as e:                                # noqa: BLE001
         logger.debug("live_content_claim guard skipped: %r", e)
+    try:
+        from services.internal_directive_guard import strip_leaked_tool_directives
+        content = strip_leaked_tool_directives(content)
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("internal_directive guard skipped: %r", e)
     return content
 
 

@@ -4653,3 +4653,113 @@ the same window — consistent with transient cold-start congestion,
 not a sustained code-level block. Flagged for the founder to monitor
 post-deploy; nginx/keep-alive-level tuning (if still needed) is
 outside this round's code-only scope.
+
+## 2026-02 — 4 confirmed live bugs (founder QA, TJSNDHU/Aurem project p_64987820ec) — all fixed, live-verified
+
+Founder ran live QA against a real connected project and reported 4
+bugs with exact repro prompts. All root-caused with real evidence
+(not assumed) and fixed. build_hash at time of fix: bc02820d1a8d
+(hot-reloaded; not yet a new commit).
+
+**Bug 1 (CRITICAL, reported as a regression)** — a trivial "add a
+comment" request returned a destructive diff on frontend/src/index.js
+(+2/-47, dropping all 4 top-level imports), marked "plan clean ✓"
+with an active "Approve the fix" button, never applied. NOT a
+narrower-coverage version of the earlier App.js "+2/-58" fix
+(2026-09-13, `_dropped_import_reasons()` in cto_projects_helpers.py) —
+that fix only runs inside worker_api.py's task-execution pipeline,
+AFTER "Approve" is clicked. The diff the founder actually SAW comes
+from a completely different, ungated surface: the frontend's
+Cursor-like diff-peek (`extractShipFiles`/`FileDiffPeek` in
+MessageBubble.jsx) picks up ANY fenced code block the model writes
+alongside its ```aurem-handoff brief — a violation of that fence's
+own documented contract ("No code blocks inside — the worker writes
+the code itself based on this brief", services/orchestrator.py) — and
+renders a live, zero-verification diff before Approve is ever
+clicked. Fixed in `services/commit_boundary.py`:
+`strip_stray_code_blocks_near_handoff()` deterministically strips
+every fenced block that isn't the handoff fence itself, wired into
+`apply_output_guards()`. 6/6 unit tests pass, including exact-shape
+repro. Live re-repro attempted 12x total (8 by main agent, 4 by
+testing_agent) with founder-style prompts — could not force the
+underlying model misbehavior (writing a stray block) to recur
+naturally; confirmed stochastic, not evidence the fix is broken — the
+unit-level exact-text regression is the durable gate for this one.
+
+**Bug 2 (HIGH)** — "the only .that page in your project is .that
+page" instead of a real filename. Two real, distinct root causes in
+`services/business_voice_filter.py`, both fixed:
+  - Leading-dot/relative-path orphaning: `_FILENAME_RE`'s old `\b`
+    anchor only matches a transition INTO a word char, so a filename
+    with a leading "." or "./" had that punctuation survive OUTSIDE
+    the match, glued onto the humanized label. Fixed with a negative
+    lookbehind that now explicitly consumes an optional leading
+    "."/".."/"./"/"../" as part of the match.
+  - Deeper, silently-broken-since-introduction bug: `_humanize_filename`
+    correctly picks `_DEFAULT_FILE_TERM` ("that file") for non-page
+    extensions (.py/.json/etc, the 2026-09-12 fix), but that output
+    then runs through the generic dev-term word map, which has its
+    OWN unrelated `"file" -> "page"` entry — turning EVERY "that
+    file" back into "that page" regardless of what the 2026-09-12 fix
+    decided. That fix's own test only asserted absence of "your page"
+    (never presence of "that file"), so it passed despite the
+    collision existing the whole time. Fixed by stashing
+    `_humanize_filename`'s output behind its own placeholder (same
+    technique as the existing URL protection) before the word-map
+    pass runs, restored verbatim at the end.
+  - THIRD, more severe issue found during live re-verification of
+    this same fix: the filter has zero protection for ``` fenced code
+    blocks — when real source is quoted back to the user (e.g. after
+    read_repo_file), the SAME word-map substitutions fire on the CODE
+    ITSELF: `gif_path.stat().st_size` became syntactically-broken
+    `gif_path.stat()a project page`, an f-string's error message text
+    got silently rewritten, `except Exception` got mangled. Fixed by
+    stashing entire ``` fenced blocks verbatim before ANY other pass
+    in the pipeline runs.
+  - 22/22 unit tests pass (6 new, 3 updated with stronger assertions
+    on the existing 2026-09-12 test whose weak assertion had masked
+    the collision). Live-verified: no leading-dot orphaning, no
+    code-fence corruption, on real repeated `/chat/send` calls against
+    p_64987820ec.
+
+**Bug 3 (MEDIUM)** — internal model self-instructions ("STOP guessing
+paths. Your next tool call MUST be list_repo_files...") leaking into
+a user-facing "file not found" reply. Two-layer fix:
+  - New `services/internal_directive_guard.py`:
+    `strip_leaked_tool_directives()` removes this known literal
+    template (and the analogous purely-internal sentences in
+    local_tools.py's GitHub-access-revoked error, leaving that
+    template's real end-user message intact) if the MODEL pastes it
+    verbatim. Wired into `apply_output_guards()`.
+  - Deeper bug found while live-testing the fix: `required_tool_gate.py`'s
+    OWN deterministic `fallback_response` (used when the LLM ignores
+    the forced-read context — this module's B3 override, not
+    LLM-generated) embeds the SAME raw internal-directive-laden error
+    string directly. That fallback runs AFTER `apply_output_guards`
+    (the true last content-mutating step, per this engagement's B3
+    architecture, specifically so a later step can't undo it) — so
+    guard (a) never got a chance to run on it. Fixed by applying the
+    identical strip at the source, inside `required_tool_gate.py`,
+    before the error is embedded.
+  - 15/15 unit tests pass (3 new + 12 in the existing B3 suite,
+    including a new exact-leak regression). Live-verified clean on a
+    real not-found path against p_64987820ec.
+
+**Bug 4 (LOW)** — not a separate code bug; confirmed both branches of
+the required-read gate (not-found and success) now behave correctly
+and consistently, covered by Bug 3's live test plus an earlier
+round's already-verified success-path evidence.
+
+**New, separate 5th bug found (not fixed this round, per explicit
+scope discipline — "do not mix tickets")**: a DIFFERENT word-map
+substitution collision in the same general area renders distinct real
+file/repo paths as duplicated "a project page/a project page" text
+(reproduced live twice, independently, by both the main agent and
+`testing_agent`). Root cause not yet investigated — likely a different
+`business_voice_map.json` entry (not `"file"->"page"`) colliding with
+itself when multiple real paths appear close together. Tracked as
+ROADMAP F39.
+
+Verified via `testing_agent`: 30/30 unit tests + 7/7 fresh live
+reproductions of the exact reported prompts = 37/37,
+`/app/test_reports/iteration_2026_02_ora_4bugs.json`.
