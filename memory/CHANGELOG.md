@@ -4857,3 +4857,96 @@ empty because conversation never matched triggers" from "brain empty
 because wiring broke" without needing to grep code — tracked as
 ROADMAP F40.
 
+
+---
+
+## 2026-02 — F40 built (Project Brain trigger-audit) + Bug 1's REAL root cause found (frontend, not the earlier backend fix)
+
+Founder push-back on the "working as designed" Part B finding asked
+3 precise questions before accepting closure. Q1 (exact matching
+logic) and Q3 (the "functioning as intended" vs "widen triggers"
+tension) were answered directly. Q2 ("show the actual count against
+our real 608 interactions") could not be answered from this sandbox
+— production and preview use separate MongoDBs, and TJSNDHU/Aurem's
+real history isn't reachable from here. Built the real answer instead
+of a non-answer: `services/project_brain.py::detect_brain_triggers`
+(the exact pure matching logic, extracted with zero behavior change
+from `update_brain_from_conversation` so there is only ONE copy of
+the keyword/phrase list, never two that could drift) + `GET /admin/
+project-brain/{project_id}/trigger-audit` (read-only, re-runs that
+same function against every real logged turn in `ora_council_logs`
+for a project, no writes to `project_brains`) — this is F40 from the
+prior round's roadmap follow-up, now actually shipped, not just
+suggested. Live-verified on `p_r10_testbed_e2e` (6 real turns, 4
+matched/2 didn't, with the exact miss reasons shown) + 5 new unit
+tests (`tests/test_2026_02_project_brain_trigger_audit.py`).
+
+Founder then live-tested after deployment (build_hash `f3e9b87eb8c2`,
+confirmed live in production): Bug 2 and Bug 3 held clean; the new
+trigger-audit endpoint 404'd for the founder on every path tried; and
+**Bug 1 (destructive diff) was STILL reproducing, reliably, 3/3
+times**, with the plain, repeatable prompt "add a comment '<any
+text>' to package.json or a valid file" — not stochastic at all on
+the founder's end, directly contradicting the earlier round's "12
+attempts, couldn't force it naturally, that's expected for a
+stochastic model behavior" framing.
+
+**Trigger-audit 404 — not a real bug.** Verified directly against
+production: the correct full path (`https://auremcto.com/api/
+aurem-dev/admin/project-brain/{project_id}/trigger-audit`) returns a
+real 401 with no auth header (route is registered, reaches its auth
+dependency) and a real 200 with a valid token. A path missing the
+`/api/aurem-dev` prefix silently routes to the React SPA and returns
+HTML — easily mistaken for "the API 404'd" in a browser, which is
+almost certainly what the founder hit. `testing_agent` independently
+confirmed both the correct path (200, real counts) and the exact
+misleading-HTML-response failure mode of the wrong path.
+
+**Bug 1 — the founder's skepticism was justified: this is a SECOND,
+completely different root cause, not a failure of the earlier fix.**
+Traced `frontend/src/components/MessageBubble.jsx`'s `extractShipFiles()`
+and `frontend/src/components/FileDiffPeek.jsx` end-to-end (the exact
+"Cursor-like inline file-diff peek" chip that auto-renders under
+every assistant message with a handoff, no click needed — matching
+the founder's "I did NOT approve this diff" report precisely). A
+well-formed `aurem-handoff` brief is REQUIRED by its own contract to
+contain plain English and NO code block ("the worker writes the code
+itself based on this brief") — but its prose naturally NAMES the
+target file ("In `frontend/src/index.js` add the comment..."). With
+no code block to pair against that path, `extractShipFiles` used to
+default to `code: ""`. `FileDiffPeek` then fetches the REAL current
+file from GitHub on hover and diffs it against that empty string —
+every real line has no counterpart in `""`, so every line renders as
+deleted, zero added. **100% deterministic on any correctly-formatted,
+plan-only handoff naming an existing file** — this is exactly why the
+founder's simple, repeatable prompt hit it 3/3 times while the
+EARLIER fix's target (a stray code block spontaneously appearing IN
+the chat text, a rare model-behavior quirk) stayed genuinely hard to
+force. Two unrelated bugs, same visible symptom, same file names
+involved (React/ReactDOM/index.css/App) purely because that's what a
+real `frontend/src/index.js` actually imports.
+
+Fix (2 frontend files, no backend changes): `extractShipFiles()` now
+skips any path with no real matched code block entirely (nothing to
+preview → no chip, not a false one). Found and fixed a subtler
+self-match bug while writing this fix's own test: the generic fence
+regex matches ANY ```lang block including the ```aurem-handoff fence
+itself, and that fence's own prose mentions the filename — explicitly
+excluded `aurem-handoff`-tagged fences from the candidate list.
+`FileDiffPeek.jsx` added a 2nd defensive layer: an empty/whitespace
+`proposedCode` prop now no-ops (no fetch, no tooltip) rather than
+relying solely on the caller never passing one.
+
+4 new unit tests (`frontend/src/components/__tests__/
+MessageBubble.filediffpeek_no_code_2026_02.test.jsx`) lock in the
+exact founder repro shape + the legitimate-code-present case (no
+regression). `testing_agent`: 26/26 MessageBubble/FileDiffPeek tests
+pass, 162/162 backend regression unaffected (no backend files
+touched), trigger-audit confirmed live end-to-end with a real admin
+token. Live `/chat/send` re-run of the exact prompt was intentionally
+NOT repeated by `testing_agent` (the fix is fully deterministic and
+already covered by targeted unit tests; a real LLM turn adds latency
+and model variance with no additional signal) — flagging this
+honestly rather than presenting it as "live-verified" when it wasn't
+this round. `/app/test_reports/iteration_2026_02_bug1_frontend_root_cause_and_trigger_audit.json`.
+

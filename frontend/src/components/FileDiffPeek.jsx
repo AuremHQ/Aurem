@@ -53,6 +53,13 @@ export default function FileDiffPeek({ path, projectId, proposedCode }) {
   const chipRef            = useRef(null);
 
   const filename = path.split("/").pop();
+  // 2026-02 — defensive 2nd layer (MessageBubble's extractShipFiles is
+  // the primary fix: it no longer returns a path at all when there's
+  // no real matched code block). Guards this component too, in case
+  // any OTHER future caller ever passes an empty proposedCode — a
+  // diff against "" would mark every real current line as deleted,
+  // which is never a real proposed change, just a missing one.
+  const hasProposedCode = !!(proposedCode && proposedCode.trim());
 
   async function load() {
     if (current !== null || busy || !projectId) return;
@@ -73,6 +80,7 @@ export default function FileDiffPeek({ path, projectId, proposedCode }) {
   }
 
   function onEnter() {
+    if (!hasProposedCode) return;   // nothing to preview, don't fetch/open
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       setOpen(true); load();
@@ -84,9 +92,9 @@ export default function FileDiffPeek({ path, projectId, proposedCode }) {
   }
 
   const diff = useMemo(() => {
-    if (current === null) return null;
-    return naiveDiff(current, proposedCode || "").slice(0, 60); // cap render
-  }, [current, proposedCode]);
+    if (current === null || !hasProposedCode) return null;
+    return naiveDiff(current, proposedCode).slice(0, 60); // cap render
+  }, [current, proposedCode, hasProposedCode]);
 
   const addedCount = diff?.filter((d) => d.kind === "add").length ?? 0;
   const removedCount = diff?.filter((d) => d.kind === "del").length ?? 0;

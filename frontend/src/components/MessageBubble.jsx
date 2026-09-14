@@ -301,28 +301,51 @@ function extractHandoffBrief(content, verifiedPaths) {
 // Ship-via-CTO modal. Returns `[{ path, added }]` — `added` is a best-effort
 // estimate based on the matching code block in the message, or 0 when
 // we couldn't tie a code block to the path.
+//
+// 2026-02 — CRITICAL FIX (founder-confirmed, 3/3 reliable repro:
+// "add a comment '<any text>' to package.json or a valid file"):
+// a well-formed `aurem-handoff` brief is REQUIRED to contain plain-
+// English instructions and NO code block ("the worker writes the
+// code itself based on this brief" — that's the whole point of a
+// brief, not a diff). Its prose naturally NAMES the target file
+// (e.g. "In `frontend/src/index.js` add the comment...") — `FILE_RX`
+// correctly matches that path token, but with NO code block to pair
+// it with, `block` was always `undefined` and every path got
+// returned anyway with `code: ""`. `FileDiffPeek` then diffed the
+// REAL current file against that empty string and showed EVERY
+// real line as deleted — a false, deterministic "destructive diff"
+// on literally every correctly-formatted handoff naming an existing
+// file, 100% independent of the EARLIER stray-code-block fix (which
+// targets a completely different problem: a stray block appearing
+// IN THE CHAT TEXT, not this hover-diff computation). There's
+// nothing to preview when the worker hasn't written any code yet —
+// only surface a peek chip for a path that has a REAL matched code
+// block to diff against.
 function extractShipFiles(content, brief) {
   if (!brief) return [];
   const FILE_RX = /(?:[\w./_-]+\/)*[\w._-]+\.(?:jsx|tsx|yaml|toml|html|json|js|ts|py|yml|md|css|sh|env|sql|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|c|h)\b/g;
   const paths = Array.from(new Set((brief.match(FILE_RX) || [])
     .filter((p) => p.length < 200)
     .slice(0, 12)));
-  // Estimate added lines per file: count lines in any ```fenced block
-  // whose first comment line mentions the path. Falls back to total
-  // code-block line count / number of files.
-  const codeBlocks = Array.from(content.matchAll(/```[\w-]*\n([\s\S]*?)```/g))
-    .map((m) => m[1] || "");
-  const totalLines = codeBlocks.reduce((s, b) => s + b.split("\n").length, 0);
-  const perFile = paths.length ? Math.round(totalLines / paths.length) : 0;
-  return paths.map((p) => {
-    const block = codeBlocks.find((b) =>
-      b.slice(0, 200).includes(p.split("/").pop()) || b.slice(0, 200).includes(p),
-    );
-    const added = block
-      ? block.split("\n").filter((l) => l.trim()).length
-      : perFile;
-    return { path: p, added, removed: 0, code: block || "" };
-  });
+  // 2026-02 — the generic fence regex matches ANY ```lang block,
+  // including ```aurem-handoff itself (its own brief prose naturally
+  // mentions the target filename, which would otherwise false-match
+  // as "proposed code" for that path — the exact subtler bug this
+  // fix's own first draft had). Explicitly exclude the handoff fence
+  // by its language tag; only a REAL code fence counts as a preview.
+  const codeBlocks = Array.from(content.matchAll(/```([\w-]*)\n([\s\S]*?)```/g))
+    .filter((m) => (m[1] || "").trim().toLowerCase() !== "aurem-handoff")
+    .map((m) => m[2] || "");
+  return paths
+    .map((p) => {
+      const block = codeBlocks.find((b) =>
+        b.slice(0, 200).includes(p.split("/").pop()) || b.slice(0, 200).includes(p),
+      );
+      if (!block) return null;   // plan-only brief, no code to preview yet
+      const added = block.split("\n").filter((l) => l.trim()).length;
+      return { path: p, added, removed: 0, code: block };
+    })
+    .filter(Boolean);
 }
 
 // ---- Sub-components --------------------------------------------------------
