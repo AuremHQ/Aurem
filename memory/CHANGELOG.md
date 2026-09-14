@@ -5032,3 +5032,118 @@ unchanged), 40/47 across the 3 pre-existing design_linter-adjacent
 backend files (7 pre-existing unrelated failures, confirmed
 unchanged) — no new regressions from either fix.
 `/app/test_reports/iteration_2026_02_f12_retry_and_console_log_autofix.json`.
+
+---
+
+## 2026-02 — Root Architectural Fix: "Context Confusion / Context Pollution / Context Rot" (Parts A–D)
+
+The founder rejected further one-off patches and demanded a root
+architectural remediation across 4 parts, with LIVE reproduction
+(not mocks) required before acceptance. Investigation-first, per
+standing rule — before writing any code, read `confirm_execution.py`,
+`pending_action.py`, `chat_helpers.py`'s `classify_intent`, and
+`local_tools.py`'s dispatcher to find the ACTUAL mechanisms already
+in place vs. genuinely missing ones (avoided rebuilding what already
+worked; avoided a 5th one-off special case).
+
+**Part A — explicit `current_task_state`.** Investigation finding:
+the deterministic requirement itself ("a short confirmation resolves
+against an explicit stored `pending_action_ref`, never an LLM
+re-inferring from raw chat history") was **already built and
+default-on** since an earlier round — `services/actions/
+pending_action.py`'s `resolve_confirm()` runs pre-LLM, in its own
+Mongo collection, with explicit PROPOSED→AWAITING_CONFIRM→EXECUTING→
+VERIFIED transitions, TTL, and multi-action disambiguation. Rebuilding
+it would have been exactly the "parallel/duplicate mechanism" the
+founder explicitly forbade. What was missing: the uniform, named
+`current_task_state` *view* the ticket specifies — added as a new,
+read-only `services/task_state.py::get_current_task_state()`
+projecting `{task_id, task_description, pending_action_ref, scope,
+created_at, updated_at}` over that existing machine. Wired into
+`routers/chat_pre_llm.py::resolve_pre_llm()` (now returns
+`task_state`), which feeds `chat_with_tools(task_state_scope_files=…)`
+(`services/orchestrator.py`) so a pending action's already-known
+target file seeds Part C's scope even when the confirming message
+itself ("yes, go ahead") names no file at all.
+
+**Part B — separate environment signals from intent (the F12 hijack,
+root cause).** Read `services/chat_helpers.py::classify_intent`
+closely: `if f12_payload and _f12_has_real_signal(...): return "D"` —
+a captured browser/console error, merely by EXISTING and being
+"real" (not noise), forced Mode D on **any** message, with zero check
+of whether the user's actual words referenced it at all. Traced the
+full data path (`worker.py`) and confirmed `f12_payload` is *only
+ever* threaded into a prompt when mode == "D" — so the hijack
+mechanism isn't leaked context inside an unrelated reply; it's the
+MODE ITSELF getting silently overridden, and Mode D's own debugging-
+flavored prompt then naturally answers the wrong thing. Fix: added
+`references_environment_signal()` — a new, deliberately more
+permissive classifier than the existing `is_debug_request` (which
+returns False for the ticket's own examples, "check that error" /
+"what's wrong" — it's tuned to avoid over-triggering Mode D on a bare
+mention, the wrong tradeoff for this gate) — and require it (or
+`is_debug_request`) to ALSO be true before an F12 signal can route to
+Mode D. This is a real classification step, not implicit, and fixes
+both the fresh-message and Retry-button variants at the shared root
+(the Retry-specific attach-suppression fixed earlier this engagement
+in `ChatPanel.jsx` is now defense-in-depth, not the only gate).
+
+**Part C — deterministic pre-write file-scope enforcement.**
+`services/local_tools.py::invoke_local_tool` is the single dispatch
+choke point every tool call already passes through (confirmed via
+its existing `ctx["tool_calls"]` tracking, used by CitationGuard).
+Added `_record_discovered_scope()` (populates `ctx["scope_files"]`
+from successful read/list/search calls' args + result paths, plus
+explicit file paths mentioned in the turn's prompt) and
+`_check_write_scope()` (blocks `write_repo_file`/`patch_repo_file`
+calls to a path outside that known scope, returning `ok:False,
+error_class:"scope_blocked"` **before the underlying tool function
+ever runs** — proven via mocks asserting the real write function was
+never awaited). Enforced only when scope is non-empty this turn, so
+no regression to any existing single-shot-write flow that never had
+a prior read. This is a pre-emptive boundary in front of (not a
+replacement for) the existing post-hoc scope-creep content scanner.
+
+**Part D — one auditable rendering-pipeline owner.** Found the exact
+same 3-stage sequence (`apply_output_guards` → `strip_machinery_leak`/
+`enforce_length_cap` → `apply_business_owner_guards`) hand-copied,
+byte-for-byte, into BOTH `routers/chat/turn.py` and
+`routers/chat/stream.py` — precisely the "two independently-
+maintained copies silently drift" risk that let the earlier
+`business_voice_filter.py` word-map collision bug go unnoticed for as
+long as it did. Extracted into ONE shared, traced function,
+`services/chat_helpers.py::run_rendering_pipeline()`, returning
+`(content, trace)` where `trace["passes"]` records per-pass
+before/after evidence — real input/output traceability, not a
+comment claiming an order. Both routers now call this one function.
+Added a presence-based regression (`test_2026_02_context_confusion_
+rendering_pipeline.py`) asserting `"that file"` actually appears
+(not merely that `"that page"` is absent) end-to-end through the new
+shared pipeline — extending the pre-existing presence-based tests for
+the underlying filter itself (`test_business_voice_nonpage_filename_
+2026_09_12.py`, `test_business_voice_file_page_label_protection_
+2026_02.py`) to cover the new consolidation layer too.
+
+**Testing.** 4 new dedicated backend test files (21 tests, all
+passing): `test_2026_02_context_confusion_{f12_signal_gate,
+task_state,scope_gate,rendering_pipeline}.py`. Broad regression sweep
+of ~500 pre-existing tests across every touched file; all failures
+confirmed pre-existing/environment-flaky via git-stash baseline
+diffing, except 4 tests legitimately updated to reflect the new
+single-owner architecture (`test_business_owner_voice_2026_08_31.py`,
+`test_iter2026_08_27_p5_engine_leak_cleanup.py` — both widened their
+static source-scan to also cover the new shared `chat_helpers.py`
+location instead of the old per-router duplicates;
+`test_session5_item2_orchestrator_silent_catch_lock.py` — a line-
+number lock re-baselined after `orchestrator.py` grew 17 lines).
+Called `testing_agent` for LIVE acceptance against the real preview
+backend (test@aurem.dev, real `chat/send` calls, a real captured F12
+payload with a `js:317` TypeError): Part B fresh-message hijack test
+passed (footer request answered as a footer request, zero mention of
+the injected error); Part D business-voice smoke passed (`package.json`
+question never says "that page"); Part A confirm-resolution passed
+("yes, go ahead" after a real edit proposal never asked a generic
+clarifying question). New live test file preserved for future
+regression: `backend/tests/live_2026_02_context_confusion_
+acceptance.py`. 0 critical/minor issues reported.
+`/app/test_reports/iteration_2026_02_context_confusion_live_acceptance.json`.

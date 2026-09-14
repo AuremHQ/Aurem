@@ -86,6 +86,7 @@ class PreLLMOutcome:
     mode: str
     forced_read_context: str = ""
     required_read_gate: Optional[dict] = None
+    task_state: Optional[dict] = None
 
 
 def _shape_short_circuit(
@@ -184,6 +185,24 @@ async def resolve_pre_llm(
             db, user=user, session_id=body.session_id, project_id=body.project_id,
             prompt=body.prompt or "", bin_ctx=bin_ctx,
         )
+
+    # 1.5) 2026-02 — Context-Confusion architecture fix, Part A.
+    # Explicit `current_task_state` object, written/read BEFORE any
+    # model call (this line runs before intent classification and
+    # every model call below it). Read-only projection over (1)'s
+    # existing pending_actions state machine — see
+    # services/task_state.py's module docstring for why this doesn't
+    # duplicate that machine, only names it explicitly for the rest
+    # of the turn (Part C's scope enforcement reads task_state.scope).
+    task_state = None
+    try:
+        from services.task_state import get_current_task_state
+        task_state = await get_current_task_state(
+            db, session_id=body.session_id, user_id=(user or {}).get("user_id"),
+            prompt=body.prompt or "",
+        )
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning("task_state projection failed (non-blocking): %r", e)
 
     # 2) Intent classification — always runs (even when (1) already
     # set `result`) so the caller always has a real `tier`/
@@ -348,4 +367,5 @@ async def resolve_pre_llm(
 
     return PreLLMOutcome(result=result, intent_result=intent_result, tier=tier, mode=mode,
                          forced_read_context=forced_read_context,
-                         required_read_gate=required_read_gate)
+                         required_read_gate=required_read_gate,
+                         task_state=task_state)

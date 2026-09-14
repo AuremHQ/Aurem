@@ -71,6 +71,14 @@ class StreamState:
     # which can undo it).
     required_read_gate: Optional[dict] = None
 
+    # 2026-02 — Context-Confusion fix Part A. Set alongside
+    # `_pre = await resolve_pre_llm(...)` in worker.py's tool-cascade
+    # entry function, read by `_run_tools_cascade`'s own downstream
+    # tool-orchestrator call further down in the same file so Part
+    # C's scope-gate is seeded even on the streaming path (not only
+    # turn.py's non-streaming /chat/send).
+    task_state: Optional[dict] = None
+
     # ── watchdog.py output, read by sse_stream.py after the queue-
     # consumption loop ends ──
     result: Any = None

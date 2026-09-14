@@ -26,15 +26,14 @@ from services.chat_helpers import (
     classify_intent,
     _maybe_set_title,
     _persist_turn,
-    retrieved_context_for_grounding, apply_output_guards,
+    retrieved_context_for_grounding, run_rendering_pipeline,
 )
-
-from . import router
 from .misc import (
     PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT,
     ORA_PANEL_TONE,
 )
 from .turn import ChatBody
+from . import router
 # Cohesion follow-up (2026-09-08) — moved into their own module; still
 # imported by NAME here so `routers.chat.stream._maybe_guard_shell_
 # handoff_followup` / `._handoff_brief_is_shell_command` patch targets
@@ -807,57 +806,27 @@ async def chat_stream(
         # 2026-08-28 · NEW P0 Task 2 — final defense-in-depth (see
         # chat_send's identical comment for the full rationale).
         # 2026-09-04 — consolidated into ONE shared helper.
-        content = apply_output_guards(
+        #
+        # 2026-02 — Context-Confusion fix Part D: this call plus the
+        # leak-strip/length-cap/business-voice passes that used to be
+        # hand-copied separately here AND in turn.py are now ONE
+        # shared, traced pipeline (`run_rendering_pipeline`,
+        # chat_helpers.py) — the exact same call turn.py makes, so
+        # the two call sites can never silently drift out of
+        # order/sync.
+        content, _render_trace = await run_rendering_pipeline(
             body.prompt or "", content, state.prior_fix_signal,
             retrieved_context_for_grounding(extra_sys, result),
             skip=bool(result.get("_skip_output_guards")),
             tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
             session_id=body.session_id, user_id=user_id,
+            plain_english_active=_plain_english_active,
+            ora_panel=getattr(body, "ora_panel", False),
         )
+        _leak_stripped = _render_trace["leak_stripped"]
+        _length_capped = _render_trace["length_capped"]
+        _output_guard_ref_id = _render_trace["output_guard_ref_id"]
 
-        # 2026-08-27 · Output Guard (Phase 1 net) — runs AFTER the
-        # mismatch/fallback resolution above (so it nets whatever text
-        # is actually about to stream to the user), BEFORE the token-
-        # streaming loop below. Never touches ship/confirm content.
-        # P5 — leak-stripping runs for EVERY user; length-capping stays
-        # flag-gated (see chat/send's identical comment above).
-        _leak_stripped = False
-        _length_capped = False
-        _output_guard_ref_id = None
-        if content and "aurem-handoff" not in content:
-            try:
-                from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
-                from core.errors import new_ref_id
-                # universal_only=True unless explain-mode is active this
-                # turn — see identical comment on chat/send above.
-                # M3 (2026-08-30): same user-named-file exemption.
-                content, _leak_stripped = strip_machinery_leak(
-                    content, universal_only=not _plain_english_active,
-                    user_named_files=extract_named_files(body.prompt),
-                )
-                if _plain_english_active:
-                    content, _length_capped = await enforce_length_cap(content)
-                if _leak_stripped or _length_capped:
-                    _output_guard_ref_id = new_ref_id()
-            except Exception as _og_exc:
-                logger.debug("output_guard skipped (chat/stream): %r", _og_exc)
-
-        # R1 (2026-08-31) — business-owner voice filter, applied LAST
-        # (after output_guard above) so nothing downstream can
-        # re-introduce a raw filename/dev term. Same "aurem-handoff"
-        # exemption as output_guard: that fence is structured
-        # ship-pipeline machinery (Approve/ShipDialog parses the real
-        # file path from it) — not prose. See chat_send's identical
-        # comment for the full reasoning (R5a K1 approve-button risk).
-        if content and "aurem-handoff" not in content:
-            try:
-                from services.business_voice_filter import apply_business_owner_guards
-                content = await apply_business_owner_guards(
-                    getattr(body, "ora_panel", False), content, body.prompt or "",
-                    session_id=body.session_id, user_id=user.get("user_id"),
-                )
-            except Exception as _bvf_e:
-                logger.debug("business_voice filter skipped (chat_stream): %r", _bvf_e)
 
         # Part B3 enforcement — deterministic override, placed as the
         # ABSOLUTE LAST content-mutating step (mirrors turn.py's

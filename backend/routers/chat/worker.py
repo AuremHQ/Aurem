@@ -695,6 +695,7 @@ async def _prep_pre_llm(state: StreamState) -> dict:
     _intent_result = _pre.intent_result
     _tier = _pre.tier
     req_mode_stream = _pre.mode
+    state.task_state = _pre.task_state
     # Emit an SSE `intent` frame so the chat UI can render the tier
     # dot + clarifying probe inline — same position (right after
     # classification, before any short-circuit result) as before
@@ -1122,6 +1123,7 @@ async def _run_orchestrator(state: StreamState, req_mode_stream: str, max_iters_
         task_type=body.task_type or _infer_task_type(body.prompt),
         is_founder=state.is_founder,
         bin_ctx=bin_ctx,
+        task_state_scope_files=((state.task_state or {}).get("scope") or {}).get("files"),
     )
     # Snapshot final invocations so a late timeout still has data.
     if isinstance(result, dict):

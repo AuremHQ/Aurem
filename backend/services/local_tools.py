@@ -2787,6 +2787,90 @@ LOCAL_TOOLS: dict[str, callable] = {
 }
 
 
+_WRITE_TOOLS = frozenset({"write_repo_file", "patch_repo_file"})
+_SCOPE_DISCOVERY_TOOLS = frozenset({
+    "read_repo_file", "read_repo_files", "list_repo_files",
+    "search_repo", "semantic_search_repo", "get_repo_structure",
+})
+_EXPLICIT_PATH_RE = re.compile(
+    r"(?:[\w./_-]+/)*[\w._-]+\.(?:jsx|tsx|yaml|toml|html|json|js|ts|py|"
+    r"yml|md|css|sh|env|sql|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|c|h)\b",
+)
+
+
+def _explicit_paths_in_prompt(prompt: str) -> set[str]:
+    """Part C — file paths the user's OWN message named explicitly.
+    Same shape of check as MessageBubble.jsx's FILE_RX on the frontend
+    (deliberately consistent — a path the user typed is always in
+    scope without needing a read first)."""
+    return set(_EXPLICIT_PATH_RE.findall(prompt or ""))
+
+
+def _current_scope(ctx: dict) -> set[str]:
+    scope = set(ctx.get("scope_files") or set())
+    scope |= _explicit_paths_in_prompt(ctx.get("user_prompt") or "")
+    return scope
+
+
+def _check_write_scope(name: str, args: dict, ctx: dict) -> Optional[dict]:
+    """Part C of the 2026-02 context-confusion architecture fix —
+    deterministic, pre-emptive scope boundary at the tool-call layer.
+    Returns a blocked `{"ok": False, ...}` result if this write falls
+    outside the turn's accumulated scope; None to let it proceed."""
+    path = (args or {}).get("path") or ""
+    if not path:
+        return None
+    scope = _current_scope(ctx)
+    if not scope:
+        # Nothing discovered/named yet this turn — no boundary to
+        # enforce against. Preserves every existing single-shot-write
+        # flow where the model already knew its target from the prompt
+        # alone and this same call would otherwise be the FIRST tool
+        # call of the turn.
+        return None
+    if path in scope:
+        return None
+    logger.warning(
+        "Part-C scope gate BLOCKED %s(path=%r) — outside this turn's "
+        "discovered/named scope %r", name, path, sorted(scope)[:10],
+    )
+    return {
+        "ok": False,
+        "error": (
+            f"Tool {name} blocked: `{path}` is outside this turn's "
+            "confirmed scope. Call read_repo_file, list_repo_files, "
+            "or search_repo on that exact path first — a write can "
+            "only target a file this turn has actually discovered or "
+            "that the user explicitly named."
+        ),
+        "error_class": "scope_blocked",
+        "system_signal": "scope_blocked",
+    }
+
+
+def _record_discovered_scope(name: str, args: dict, data, ctx: dict) -> None:
+    """Part C — accumulate every path a successful read/list/search
+    tool call touched this turn into ctx['scope_files']."""
+    scope = ctx.setdefault("scope_files", set())
+    p = (args or {}).get("path")
+    if p:
+        scope.add(p)
+    if not isinstance(data, dict):
+        return
+    for key in ("files", "paths", "results", "matches", "tree"):
+        val = data.get(key)
+        if not isinstance(val, list):
+            continue
+        for item in val:
+            if isinstance(item, str):
+                scope.add(item)
+            elif isinstance(item, dict):
+                for pk in ("path", "file", "filepath"):
+                    if item.get(pk):
+                        scope.add(item[pk])
+                        break
+
+
 async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
     """Run a local tool. Returns None if `name` isn't a local tool.
 
@@ -2805,10 +2889,33 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
 
     `ctx["tool_calls"]` is also tracked here so the CitationGuard can
     diff "what was claimed" vs "what was read" in this turn.
+
+    2026-02 — Context-confusion architecture fix, Part C (deterministic
+    scope enforcement). `ctx["scope_files"]` accumulates every path
+    this turn has actually discovered (explicit paths named in the
+    user's own prompt — `ctx["user_prompt"]` already existed for the
+    page-resolver hint, reused here — plus every path a read/list/
+    search tool call has successfully touched). A write tool
+    (`write_repo_file`/`patch_repo_file`) targeting a path OUTSIDE
+    that accumulated scope is blocked HERE, at the tool-call layer,
+    before `fn` ever runs — a pre-emptive boundary in front of the
+    existing post-hoc scope-creep/hallucination content-scanning gate
+    (`cto_projects_helpers.py`'s `_hallucination_reasons` etc, which
+    still runs afterward as a second safety net on the actual diff
+    content). Only enforced once scope is non-empty for this turn —
+    if the model hasn't named or discovered ANY file yet, there's
+    nothing to bound against, so writes proceed exactly as before
+    (this preserves all existing single-shot-write flows where the
+    model already knows the target from the prompt).
     """
     fn = LOCAL_TOOLS.get(name)
     if not fn:
         return None
+
+    if name in _WRITE_TOOLS:
+        _blocked = _check_write_scope(name, args, ctx)
+        if _blocked is not None:
+            return _blocked
 
     # Track every dispatch (used by CitationGuard + audit log)
     ctx.setdefault("tool_calls", []).append({
@@ -2823,6 +2930,8 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
 
     out = await _tx_execute(name, _runner)
     if out.get("ok"):
+        if name in _SCOPE_DISCOVERY_TOOLS:
+            _record_discovered_scope(name, args, out.get("data"), ctx)
         return out["data"]
 
     # Failed — capture typed signal for the frontend banner.

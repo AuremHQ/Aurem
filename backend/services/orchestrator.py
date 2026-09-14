@@ -1718,6 +1718,19 @@ async def chat_with_tools(
                                         # entry point; no component below this
                                         # boundary may re-fetch user/project/PAT
                                         # from the DB directly.
+    task_state_scope_files: Optional[list] = None,  # 2026-02 — Context-
+                                        # Confusion fix Part A/C: file(s)
+                                        # already known from the turn's
+                                        # explicit current_task_state (e.g.
+                                        # a pending action's own target
+                                        # file on a "yes go ahead" confirm,
+                                        # where the confirmation message
+                                        # itself names no path at all).
+                                        # Seeds local_ctx["scope_files"]
+                                        # so Part C's write-scope gate in
+                                        # local_tools.py has this BEFORE
+                                        # the model makes its first tool
+                                        # call, not only after a read.
 ) -> dict:
     """Run the LLM tool-call loop until final answer (no more tool calls)
     or `max_iters` cap is hit.  Every tool call goes through `tools_bridge`
@@ -1764,6 +1777,10 @@ async def chat_with_tools(
         ),
         "system_signals": [],
         "tool_calls":    [],
+        # 2026-02 — Context-Confusion fix Part A/C (see
+        # task_state_scope_files param doc above): seed scope BEFORE
+        # the first tool call, not only after a read this turn.
+        "scope_files":   set(task_state_scope_files or []),
     }
     history_lines: list[str] = []
     session_summary: str = ""

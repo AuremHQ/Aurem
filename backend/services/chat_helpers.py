@@ -167,6 +167,90 @@ def apply_output_guards(
     return content
 
 
+# 2026-02 — Context-Confusion fix Part D: single rendering-pipeline
+# owner. Root cause: `apply_output_guards` -> `strip_machinery_leak` /
+# `enforce_length_cap` -> `apply_business_owner_guards` was the exact
+# same 3-stage, strictly-ordered sequence hand-copied into BOTH
+# routers/chat/turn.py and routers/chat/stream.py — two independent
+# call sites that could silently drift out of order/sync (that's
+# precisely how the earlier business_voice_filter overwrite bugs
+# — ".that page", the generic "file"->"page" mapping stomping valid
+# filename humanization — went unnoticed for as long as they did: no
+# single place recorded what each pass actually changed). This
+# function is now the ONE place both routers call, and it returns a
+# `trace` list recording, per pass, whether it fired and the
+# before/after length — real input/output traceability, not just a
+# comment claiming an order.
+async def run_rendering_pipeline(
+    user_message: str, content: str, prior_fix_signal: bool,
+    retrieved_context: str, *, skip: bool, tool_calls_run: int,
+    session_id: str, user_id: str, plain_english_active: bool,
+    ora_panel: bool,
+) -> tuple[str, dict]:
+    """Runs the full post-model content-rendering sequence in the one
+    fixed order every response must go through, and returns
+    `(final_content, trace)` where `trace["passes"]` is an ordered
+    list of `{"pass": name, "changed": bool, "len_before": int,
+    "len_after": int}` — auditable per-pass evidence, independent of
+    what any individual pass's own internal logic decides to do."""
+    trace: list[dict] = []
+
+    def _record(name: str, before: str, after: str) -> None:
+        trace.append({
+            "pass": name, "changed": after != before,
+            "len_before": len(before or ""), "len_after": len(after or ""),
+        })
+
+    before = content
+    content = apply_output_guards(
+        user_message, content, prior_fix_signal, retrieved_context,
+        skip=skip, tool_calls_run=tool_calls_run,
+        session_id=session_id, user_id=user_id,
+    )
+    _record("apply_output_guards", before, content)
+
+    # The two guards below never touch `aurem-handoff` fences — that
+    # fence is structured ship-pipeline machinery the frontend parses
+    # for the real file path (Approve/ShipDialog), not prose.
+    leak_stripped = False
+    length_capped = False
+    output_guard_ref_id = None
+    if content and "aurem-handoff" not in content:
+        try:
+            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
+            from core.errors import new_ref_id
+            before = content
+            content, leak_stripped = strip_machinery_leak(
+                content, universal_only=not plain_english_active,
+                user_named_files=extract_named_files(user_message),
+            )
+            _record("output_guard_leak_strip", before, content)
+            before = content
+            if plain_english_active:
+                content, length_capped = await enforce_length_cap(content)
+                _record("output_guard_length_cap", before, content)
+            if leak_stripped or length_capped:
+                output_guard_ref_id = new_ref_id()
+        except Exception as _og_exc:                       # noqa: BLE001
+            logger.debug("output_guard skipped (rendering_pipeline): %r", _og_exc)
+
+        try:
+            from services.business_voice_filter import apply_business_owner_guards
+            before = content
+            content = await apply_business_owner_guards(
+                ora_panel, content, user_message,
+                session_id=session_id, user_id=user_id,
+            )
+            _record("apply_business_owner_guards", before, content)
+        except Exception as _bvf_e:                         # noqa: BLE001
+            logger.debug("business_voice filter skipped (rendering_pipeline): %r", _bvf_e)
+
+    return content, {
+        "passes": trace, "leak_stripped": leak_stripped,
+        "length_capped": length_capped, "output_guard_ref_id": output_guard_ref_id,
+    }
+
+
 async def _deduct_tokens(user_id: str, reply: str) -> int:
     """Deduct ~1 token per 3 words from the user's wallet. Returns new balance."""
     db = get_db()
@@ -384,6 +468,51 @@ def _is_transient_proxy_error(status: int, body) -> bool:
     return ("<!doctype html" in bl) or ("<html" in bl) or ("cloudflare" in bl)
 
 
+# 2026-02 — Context Confusion architectural fix (Part B). Root cause,
+# confirmed via 2 independently-reported live incidents this
+# engagement (a fresh message AND the Retry action both hijacked by
+# a captured browser/network error unrelated to what the user
+# actually asked): `classify_intent` used to force Mode D purely
+# because `_f12_has_real_signal(...)` was True — with ZERO check of
+# whether the user's ACTUAL message referenced that error at all.
+# `_f12_has_real_signal` filters NOISE (stale/proxy/wrong-project
+# errors) but was never a relevance-to-THIS-message check.
+#
+# `is_debug_request` (used a few lines below as the no-payload
+# fallback) is too STRICT to reuse here — it requires a soft term
+# ("error"/"broken"/...) paired with a specific action verb, and
+# deliberately returns False for exactly the phrasing this ticket's
+# own examples use ("check that error", "what's wrong") since it's
+# tuned to avoid over-triggering the expensive Mode D pipeline on a
+# bare passing mention. The RIGHT question here is different and
+# more permissive: "does this message reference the captured signal
+# AT ALL", not "is this unambiguously a debug request". A captured
+# F12 signal must stay purely informational (visible in the UI badge,
+# never forced into the model's reasoning) unless the user's own
+# words point at it.
+_ENV_SIGNAL_REFERENCE_TERMS = [
+    r"\berror\b", r"\bbug\b", r"\bbroken\b", r"\bbroke\b", r"\bcrash(ing|ed)?\b",
+    r"\bfailing\b", r"\bexception\b", r"\bnot working\b",
+    r"\bdoesn'?t work\b", r"\bwrong\b", r"\bissue\b", r"\bproblem\b",
+    r"\bwhat happened\b", r"\bwhy (is|did|does)\b", r"\bdiagnose\b",
+    r"\blook (at|into) (that|this|it)\b", r"\bcheck (that|this|it)\b",
+    r"\bfix (that|this|it)\b", r"\bconsole\b", r"\bnetwork tab\b",
+    r"\bthat error\b", r"\bthis error\b",
+]
+_ENV_SIGNAL_REFERENCE_RE = _re_mode.compile("|".join(_ENV_SIGNAL_REFERENCE_TERMS), _re_mode.IGNORECASE)
+
+
+def references_environment_signal(message: str) -> bool:
+    """True iff the user's own message plausibly points at a captured
+    browser/network error — the explicit classification step Part B
+    of the context-confusion architecture fix requires. Deliberately
+    broader than `is_debug_request` (see comment above) since the
+    cost of a false positive here is small (the signal was captured
+    for a reason, worth surfacing) while the cost of a false negative
+    is the exact hijack bug this fixes."""
+    return bool(_ENV_SIGNAL_REFERENCE_RE.search(message or ""))
+
+
 def classify_intent(message: str, f12_payload: Optional[dict], project_id: Optional[str] = None) -> str:
     """Returns one of: 'A','B','C','D','E','F'. Order matters."""
     from services.mode_d_debugger import is_debug_request
@@ -397,7 +526,15 @@ def classify_intent(message: str, f12_payload: Optional[dict], project_id: Optio
     if _GREETING.match(msg):
         return "A"
 
-    if f12_payload and _f12_has_real_signal(f12_payload, project_id):
+    # 2026-02 — the payload merely EXISTING and being "real" (not
+    # noise) is no longer sufficient on its own — the user's actual
+    # message must also reference it. See references_environment_signal
+    # docstring above for why this is a separate, more permissive
+    # check than is_debug_request.
+    if (
+        f12_payload and _f12_has_real_signal(f12_payload, project_id)
+        and (references_environment_signal(message) or is_debug_request(message))
+    ):
         return "D"
     if is_debug_request(message):
         return "D"

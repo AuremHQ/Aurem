@@ -86,11 +86,18 @@ def test_t_voice_aurem_handoff_exemption_guard_present_in_chat_py():
     # fence, or extractHandoffBrief()'s file-path gate breaks and the
     # Approve button silently stops rendering. Source-text lock so a
     # future edit can't remove the guard without this test failing.
+    #
+    # 2026-02 — Context-Confusion fix Part D: chat_send/chat_stream no
+    # longer hand-copy this guard each — both now call ONE shared
+    # `chat_helpers.run_rendering_pipeline`, which carries the ONE
+    # guard both call sites rely on. Lock now covers that shared file
+    # too, so the single-owner refactor can't accidentally regress it.
     src = "".join(open(f"/app/backend/routers/chat/{_f}.py", encoding="utf-8").read() for _f in ("__init__","misc","turn","stream","history"))
+    src += open("/app/backend/services/chat_helpers.py", encoding="utf-8").read()
     guarded_blocks = src.count('"aurem-handoff" not in content')
-    assert guarded_blocks >= 2, (
-        "expected the aurem-handoff exemption guard at both chat_send "
-        "and chat_stream business_voice_filter call sites"
+    assert guarded_blocks >= 1, (
+        "expected the aurem-handoff exemption guard protecting the "
+        "shared business_voice_filter call site"
     )
 
 

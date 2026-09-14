@@ -25,7 +25,7 @@ from services.chat_helpers import (
     _maybe_set_title,
     _regenerate_without_recall, _strip_council_block,
     _persist_turn,
-    retrieved_context_for_grounding, apply_output_guards,
+    retrieved_context_for_grounding, run_rendering_pipeline,
 )
 
 from . import router
@@ -445,6 +445,7 @@ async def chat_send(
                     task_type=body.task_type or _infer_task_type(body.prompt),
                     is_founder=_is_fnd,
                     bin_ctx=bin_ctx,
+                    task_state_scope_files=((_pre.task_state or {}).get("scope") or {}).get("files"),
                 ),
                 timeout=_hard_timeout_s,
             )
@@ -588,68 +589,26 @@ async def chat_send(
     # deterministic real-execution path (see that module's docstring
     # for why the false-success guard's premise no longer applies
     # there).
-    content = apply_output_guards(
+    #
+    # 2026-02 — Context-Confusion fix Part D: this call plus the
+    # leak-strip/length-cap/business-voice passes that used to be
+    # hand-copied separately here AND in stream.py are now ONE
+    # shared, traced pipeline (`run_rendering_pipeline`,
+    # chat_helpers.py) — the exact same call stream.py makes, so the
+    # two call sites can never silently drift out of order/sync.
+    content, _render_trace = await run_rendering_pipeline(
         body.prompt or "", content, _prior_fix_signal,
         retrieved_context_for_grounding(extra_sys, result),
         skip=bool(result.get("_skip_output_guards")),
         tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
         session_id=body.session_id, user_id=user["user_id"],
+        plain_english_active=_plain_english_active,
+        ora_panel=getattr(body, "ora_panel", False),
     )
+    _leak_stripped = _render_trace["leak_stripped"]
+    _length_capped = _render_trace["length_capped"]
+    _output_guard_ref_id = _render_trace["output_guard_ref_id"]
 
-    # 2026-08-27 · Output Guard (Phase 1 net, "Show the Outcome, Never
-    # the Engine"). Runs AFTER the mismatch/retry/fallback resolution
-    # above (nets whatever text is actually about to be returned).
-    # Never touches ship/confirm content.
-    #
-    # P5 (Journey/Intent-Grounding build round) — leak-STRIPPING now
-    # runs for EVERY user, not just the plain_english_contract_active
-    # allowlist (founder call: these are real bugs — raw booleans,
-    # internal jargon like "Iter 286"/"Mode D" — not part of the
-    # explain-mode verbosity/tone enhancement). Length-CAPPING (the
-    # re-summarize-if-too-long net) stays flag-gated — that's a real
-    # behavior/tone change, not a leak fix.
-    _leak_stripped = False
-    _length_capped = False
-    _output_guard_ref_id = None
-    if content and "aurem-handoff" not in content:
-        try:
-            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
-            from core.errors import new_ref_id
-            # universal_only=True unless the explain-mode contract is
-            # active this turn — otherwise the explain-only tier (file
-            # paths, DB collection names, framework jargon) would strip
-            # legitimate scan/dev content for every user (the P6 regression).
-            # M3 (2026-08-30) — a file the user named THIS turn (e.g. "ship
-            # a fix to README.md") is exempted from the bare-file-path
-            # redaction; every other path is still redacted, unchanged.
-            content, _leak_stripped = strip_machinery_leak(
-                content, universal_only=not _plain_english_active,
-                user_named_files=extract_named_files(body.prompt),
-            )
-            if _plain_english_active:
-                content, _length_capped = await enforce_length_cap(content)
-            if _leak_stripped or _length_capped:
-                _output_guard_ref_id = new_ref_id()
-        except Exception as _og_exc:
-            logger.debug("output_guard skipped (chat/send): %r", _og_exc)
-
-    # R1 (2026-08-31) — business-owner voice filter, applied LAST (after
-    # every other content-mutating guard, INCLUDING output_guard above)
-    # so nothing downstream can re-introduce a raw filename/dev term.
-    # Same "aurem-handoff" exemption as output_guard just above: that
-    # fence is structured ship-pipeline machinery the frontend parses
-    # for the real file path (Approve/ShipDialog) — NOT prose. Rewriting
-    # tokens inside it would risk breaking the exact ship flow this
-    # rework must not touch (see R5a — the K1 approve-button history).
-    if content and "aurem-handoff" not in content:
-        try:
-            from services.business_voice_filter import apply_business_owner_guards
-            content = await apply_business_owner_guards(
-                getattr(body, "ora_panel", False), content, body.prompt or "",
-                session_id=body.session_id, user_id=user["user_id"],
-            )
-        except Exception as _bvf_e:
-            logger.debug("business_voice filter skipped (chat_send): %r", _bvf_e)
 
     # Part B3 enforcement — deterministic override, placed as the
     # ABSOLUTE LAST content-mutating step (after response_confidence/

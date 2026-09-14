@@ -36,7 +36,7 @@ ORCHESTRATOR = BACKEND / "services" / "orchestrator.py"
 # all 7 sites verified still-hooks, only line numbers shifted). If a
 # real hygiene target ever slips into orchestrator.py, it will NOT be
 # in this set and the test below will fail.
-LEGIT_UI_HOOK_LINES = {2338, 2343, 2451, 2765, 2861, 2898, 2907}
+LEGIT_UI_HOOK_LINES = {2355, 2360, 2468, 2782, 2878, 2915, 2924}
 # 2026-02 · Part B1/B2 tool-observability fix (task_chain_logging.py's
 # `entry["status"]` reassignment + CitationGuard tool-claim block) added
 # lines earlier in chat_with_tools(). Re-derived via

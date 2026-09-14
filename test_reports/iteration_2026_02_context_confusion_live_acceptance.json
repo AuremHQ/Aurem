@@ -1,0 +1,39 @@
+{
+  "summary": "Live acceptance testing for the 2026-02 Context Confusion architectural fix (Parts A/B/C/D) against the preview backend. All 4 new unit-test files (test_2026_02_context_confusion_f12_signal_gate/rendering_pipeline/scope_gate/task_state) pass 21/21. NEW live acceptance test file live_2026_02_context_confusion_acceptance.py added and PASSES 3/3 against the preview URL with real login (test@aurem.dev) and real chat/send calls: (Part B fresh-message) sending 'update the footer text to say contact us today' with a REAL captured F12 payload containing a js:317 TypeError does NOT hijack — reply addresses footer/contact, never mentions the captured error/js:317/TypeError; (Part D) 'what does package.json do' response contains no 'that page' regression through the newly-shared run_rendering_pipeline; (Part A) 'yes, go ahead' after an edit proposal does NOT ask a generic clarifying 'what do you want to confirm' — the pending action's target file (index.js) is seeded into ctx via task_state as designed. Frontend smoke: landing page loads clean on preview, no console errors, window.__auremF12 is initialized (object).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/live_2026_02_context_confusion_acceptance.py",
+    "/app/backend/tests/test_2026_02_context_confusion_f12_signal_gate.py",
+    "/app/backend/tests/test_2026_02_context_confusion_rendering_pipeline.py",
+    "/app/backend/tests/test_2026_02_context_confusion_scope_gate.py",
+    "/app/backend/tests/test_2026_02_context_confusion_task_state.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Part B (services/chat_helpers.py: references_environment_signal + gated classify_intent) is a clean, surgical change: the intent D branch now requires BOTH _f12_has_real_signal AND (references_environment_signal|is_debug_request). The permissive term list is well-scoped and the docstring explicitly justifies why it's broader than is_debug_request. Verified live: fresh unrelated prompt with a real F12 payload no longer triggers D.",
+    "Part D (run_rendering_pipeline in chat_helpers.py, callsites in routers/chat/turn.py + stream.py) consolidates the previously-duplicated guard chain (apply_output_guards -> strip_machinery_leak -> enforce_length_cap -> apply_business_owner_guards) into a single shared function — verified live that business-voice ('that page' regression) still fires correctly through the new pipeline.",
+    "Part A (services/task_state.py + resolve_pre_llm wiring + chat_with_tools(task_state_scope_files=...)) — read-only projection over the pre-existing confirm-resolution state machine correctly seeds ctx['scope_files'] with the pending action's target file so 'yes, go ahead' does NOT need to re-name it. Verified live end-to-end.",
+    "Part C (services/local_tools.py: _check_write_scope/_record_discovered_scope) is the right shape — only enforces when scope is non-empty, so no regression on legitimate single-shot writes. Live edit-turn verification of block-before-diff-render was NOT force-repro'd (would require crafting an LLM into proposing an out-of-scope write, non-deterministic), but the 4 dedicated unit tests in test_2026_02_context_confusion_scope_gate.py cover the block/pass matrix and pass.",
+    "The live acceptance test file live_2026_02_context_confusion_acceptance.py runs in ~65s (3 real LLM turns) and is safe to run in future regression sweeps."
+  ],
+  "updated_files": [
+    "/app/backend/tests/live_2026_02_context_confusion_acceptance.py (NEW — created this round)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 unit + 3/3 live acceptance)",
+    "frontend": "100% smoke (page loads, no console errors, F12 global initialized)"
+  },
+  "test_credentials": "test@aurem.dev / AuremTest2026! (used for live acceptance)",
+  "seed_data_creation": "None — used ephemeral session_ids only",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The 3-test live acceptance file (backend/tests/live_2026_02_context_confusion_acceptance.py) is the fastest way to re-verify this architectural fix in the future — real login, real chat/send, real F12 payload injection, ~65s total. Part C's live block-before-diff-render is harder to force deterministically end-to-end; the 4 unit tests in test_2026_02_context_confusion_scope_gate.py cover it and the code path is minimal (_check_write_scope in local_tools.py). The Part B Retry button variant is a pure frontend gate (ChatPanel.jsx promptOverride != null → f12Payload = null) already verified in iteration_2026_02_f12_retry_and_console_log_autofix.json via source-contract test; not re-tested here because the backend fix in classify_intent is the authoritative gate and it passed live."
+}

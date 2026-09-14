@@ -57,12 +57,16 @@ def test_aurem_handoff_fence_never_touched_by_output_guard_at_all():
     raw = "Here's what I found.\n```aurem-handoff\nFix X.\n```\nDone."
     text, stripped = strip_machinery_leak(raw)
     # strip_machinery_leak itself has no opinion on this — the actual
-    # guarantee lives in routers/chat.py's `"aurem-handoff" not in
-    # content` gate, which skips calling this function entirely.
+    # guarantee lives in the shared rendering pipeline's `"aurem-handoff"
+    # not in content` gate (chat_helpers.run_rendering_pipeline, since
+    # the 2026-02 Part D single-owner refactor — previously hand-copied
+    # into routers/chat.py at each call site), which skips calling this
+    # function entirely.
     src = "".join(open(f"/app/backend/routers/chat/{_f}.py", encoding="utf-8").read() for _f in ("__init__","misc","turn","stream","history"))
+    src += open("/app/backend/services/chat_helpers.py", encoding="utf-8").read()
     assert '"aurem-handoff" not in content' in src, (
-        "chat.py must exempt any content carrying a real ship handoff "
-        "fence from the output guard entirely"
+        "the shared rendering pipeline must exempt any content carrying "
+        "a real ship handoff fence from the output guard entirely"
     )
 
 
@@ -198,6 +202,13 @@ def test_after_fix_universal_only_still_catches_real_leaks():
 def test_chat_py_call_sites_pass_universal_only_flag():
     """Both chat/send and chat/stream call sites must gate the
     explain-only tier behind _plain_english_active, never apply it
-    unconditionally to every user."""
-    src = "".join(open(f"/app/backend/routers/chat/{_f}.py", encoding="utf-8").read() for _f in ("__init__","misc","turn","stream","history"))
-    assert src.count("universal_only=not _plain_english_active") == 2
+    unconditionally to every user.
+
+    2026-02 — Context-Confusion fix Part D: this gating now lives in
+    ONE shared call (chat_helpers.run_rendering_pipeline) instead of
+    being hand-copied at each of turn.py/stream.py's call sites —
+    that's the whole point of the single-owner-pipeline fix, so both
+    "callers" pass through literally the same gate rather than two
+    independently-maintained copies of it."""
+    src = open("/app/backend/services/chat_helpers.py", encoding="utf-8").read()
+    assert src.count("universal_only=not plain_english_active") == 1
