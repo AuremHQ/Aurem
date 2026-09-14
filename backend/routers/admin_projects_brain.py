@@ -202,6 +202,77 @@ async def admin_project_brain(
     return brain or {"project_id": project_id, "empty": True}
 
 
+@router.get("/project-brain/{project_id}/trigger-audit")
+async def admin_project_brain_trigger_audit(
+    project_id: str,
+    limit: int = 2000,
+    authorization: Optional[str] = Header(None),
+):
+    """2026-02 — founder Gap-2 follow-up: 'show the actual count, out
+    of N real interactions, how many matched vs didn't, and why.'
+    Read-only, no writes. Re-runs the EXACT same pure detection logic
+    `update_brain_from_conversation` uses (via
+    `services.project_brain.detect_brain_triggers` — one shared
+    function, no risk of this audit drifting out of sync with what
+    actually writes) against every real logged conversational turn
+    for this project in `ora_council_logs`, without touching
+    `project_brains`. Answers "was this project's real conversation
+    history too narrow to ever trigger a write" with real numbers
+    instead of a guess.
+    """
+    await _require_admin(authorization)
+    from services.project_brain import detect_brain_triggers
+    db = require_db()
+    cursor = db.ora_council_logs.find(
+        {"project_id": project_id},
+        {"_id": 0, "user_message": 1, "final_output": 1, "timestamp": 1},
+    ).sort("timestamp", 1).limit(max(1, min(limit, 5000)))
+
+    total = 0
+    matched = 0
+    stack_hits: dict = {}
+    decision_count = 0
+    rejection_count = 0
+    sample_misses = []
+    async for row in cursor:
+        total += 1
+        triggers = detect_brain_triggers(
+            row.get("user_message") or "", row.get("final_output") or "",
+        )
+        did_match = bool(triggers["stack"] or triggers["decision"] or triggers["rejected"])
+        if did_match:
+            matched += 1
+            for kw in triggers["stack"]:
+                stack_hits[kw] = stack_hits.get(kw, 0) + 1
+            if triggers["decision"]:
+                decision_count += 1
+            if triggers["rejected"]:
+                rejection_count += 1
+        elif len(sample_misses) < 5:
+            sample_misses.append((row.get("user_message") or "")[:120])
+
+    return {
+        "project_id":        project_id,
+        "total_turns_found": total,
+        "matched_a_trigger": matched,
+        "no_trigger_matched": total - matched,
+        "match_rate_pct":    round(100 * matched / total, 1) if total else None,
+        "breakdown": {
+            "tech_stack_keyword_hits": stack_hits,
+            "decision_phrase_hits":    decision_count,
+            "rejection_phrase_hits":    rejection_count,
+        },
+        "sample_non_matching_messages": sample_misses,
+        "note": (
+            "Counted against ora_council_logs (every real chat turn is "
+            "logged there regardless of whether it triggered a brain "
+            "write). If total_turns_found is 0, this project's real "
+            "chat history isn't in THIS database (this endpoint reads "
+            "whichever DB the running server is connected to)."
+        ),
+    }
+
+
 class BrainDecisionBody(BaseModel):
     title: str
     reason: str
