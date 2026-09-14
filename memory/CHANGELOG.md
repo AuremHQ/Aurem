@@ -4950,3 +4950,85 @@ and model variance with no additional signal) — flagging this
 honestly rather than presenting it as "live-verified" when it wasn't
 this round. `/app/test_reports/iteration_2026_02_bug1_frontend_root_cause_and_trigger_audit.json`.
 
+
+
+---
+
+## 2026-02 — F12-payload Retry hijack (2nd confirmed instance of this bug class) + F42 console.log auto-fix root-caused
+
+Founder QA round with 3 reported findings. Finding 1 (a suspected
+Mode-C task hang, "Finalizing the answer…" frozen 75+s) was
+**self-retracted by the founder**: the task had actually already
+resolved with a clean, honest 48s timeout message + a working Retry
+button ("Model API was slow to respond — waited 48s and only got 0
+tool calls through... safe to retry now") — no bug, no fix needed.
+Worth noting for future reference: `useFriendlyStatusPhrase.js`
+deliberately FREEZES on its last phrase ("Finalizing the answer…")
+for any wait beyond ~22.5s instead of looping, specifically so it
+doesn't look like it restarted — this is correct, intentional design,
+but it does mean the frozen label alone can never distinguish "still
+genuinely working" from "about to time out" from a screenshot; the
+real signal is the eventual honest error message, which fired
+correctly here.
+
+**Finding 2 (CRITICAL, NEW) — clicking "Retry" on a genuinely-failed
+task returned a response about an unrelated stray browser error
+instead of retrying the original request.** Second independently-
+confirmed instance of a bug class first found earlier this engagement
+(a fresh compose picking up stray F12Capture noise) — this time via
+the Retry button specifically. Root cause: `ChatPanel.jsx`'s `send()`
+drained `window.__auremF12.flush()` **unconditionally** on every
+call, including `retryFailedTurn()`/`retryLastFix()`/`continueTurn()`
+— all 3 call `send(null, { promptOverride: <a specific known prompt>
+})` to mechanically resend/continue a PREVIOUS turn, never a fresh
+compose. `promptOverride` is already the established signal this
+exact function uses to skip several other fresh-compose-only side
+effects a few lines away (slash-command detection, ship-cancel
+detection, session-start, clearing the input box) — any stray browser
+noise that fired during a 48s+ wait got silently attached to the
+retry of an unrelated prior request, and the backend prioritized
+diagnosing it over the user's actual retry intent. Fix: gated the
+F12-payload computation the same way (`promptOverride != null ? null
+: (...)`) — a promptOverride-driven send now never attaches a payload;
+a real fresh compose (including the legitimate "Send to ORA" F12-
+confirm flow, which never sets promptOverride) is unaffected. 5 new
+source-contract tests (`frontend/src/components/__tests__/
+ChatPanel.f12_retry_hijack_2026_02.test.jsx`, matching this codebase's
+own established pattern for this class of fix, e.g.
+`Session7_Item3_rapid_send_lock.test.jsx`).
+
+**Finding 3 — F42 (console.log:45 repeat blocker) root-caused, not
+just re-flagged.** That line lives in the founder's own external repo
+(this app can't edit it directly) — but `services/design_linter.py`
+already has an `auto_fix_blocks()` step specifically designed to
+silently strip safe console.logs BEFORE the lint gate can block on
+them, run first by `cto_pipeline_steps.py::_run_lint_gate` for exactly
+this reason. The OLD auto-fix regex only matched a console.log call
+that was entirely alone on its line and ended in exactly `);` —
+confirmed directly that 3 of 4 common real-world shapes (no trailing
+semicolon, not alone on the line, nested parens in the call args)
+silently survive untouched, which is almost certainly why the
+founder's real line 45 kept surviving every auto-fix pass and
+re-blocking. Rewrote as `_strip_console_log_calls()` — paren-depth-
+counting removal that finds the real matching close paren for each
+call regardless of nesting, removes just that call (+ a following
+`;`), drops the line if it goes blank. 8 new unit tests
+(`tests/test_2026_02_design_linter_console_log_autofix.py`), all 4
+previously-failing shapes now pass, the 1 previously-working shape
+still works (no regression).
+
+"HEALTH: 0" in the header (noted by the founder as "not yet
+investigated") — spot-checked `Dashboard.jsx`'s health-score fetch
+logic; it looks correctly designed (null → loading skeleton, per-
+project cache) at a glance, so the founder's real repro is likely a
+DIFFERENT header component not yet located. Left uninvestigated this
+round per the founder's own "not yet investigated, flagging so it's
+not lost" framing — tracked as ROADMAP F43 for a future round with a
+live repro from the founder's real session.
+
+Verified via `testing_agent`: 5/5 + 8/8 new tests, 736/745 full
+frontend suite (9 pre-existing unrelated failures, confirmed
+unchanged), 40/47 across the 3 pre-existing design_linter-adjacent
+backend files (7 pre-existing unrelated failures, confirmed
+unchanged) — no new regressions from either fix.
+`/app/test_reports/iteration_2026_02_f12_retry_and_console_log_autofix.json`.

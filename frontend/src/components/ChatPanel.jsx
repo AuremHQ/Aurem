@@ -2443,10 +2443,30 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     // the console/network error data — exactly the "I can't see your
     // DevTools, paste the HAR manually" symptom. Prefer the staged payload
     // when one exists; only flush fresh for a normal (non-F12-confirm) send.
-    const f12Payload = lastF12PayloadRef.current
-      || ((typeof window !== "undefined" && window.__auremF12)
-          ? window.__auremF12.flush()
-          : null);
+    // 2026-02 — SECOND, independently-confirmed instance of the SAME bug
+    // class (founder QA, "Retry" button hijack): retryFailedTurn() /
+    // retryLastFix() / continueTurn() all call this exact send() with
+    // `promptOverride` set to re-submit a KNOWN, already-typed prompt —
+    // they are never a fresh interactive compose. But this drain used to
+    // run unconditionally, so ANY stray browser console/network noise
+    // that happened to fire during the wait (a stray 404 fetch, an
+    // unrelated console error elsewhere on the page — completely
+    // plausible across a 48s+ timeout window) got silently attached to
+    // the RETRY of an unrelated prior request, and the backend treated
+    // that incidental F12 payload as the higher-priority thing to
+    // address instead of the user's actual retry intent. `promptOverride`
+    // is already the established, reliable signal this exact function
+    // uses to skip every OTHER fresh-compose-only side-effect (see
+    // `promptOverride == null` guards a few lines below for slash
+    // commands, ship-cancel detection, session-start, input-clearing) —
+    // extending that same guard here for consistency, not inventing a
+    // new mechanism.
+    const f12Payload = promptOverride != null
+      ? null
+      : (lastF12PayloadRef.current
+          || ((typeof window !== "undefined" && window.__auremF12)
+              ? window.__auremF12.flush()
+              : null));
     lastF12PayloadRef.current = null;
 
     // Iter 212m-19 — fresh floating-card session: clear any leftover
