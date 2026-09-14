@@ -4763,3 +4763,97 @@ ROADMAP F39.
 Verified via `testing_agent`: 30/30 unit tests + 7/7 fresh live
 reproductions of the exact reported prompts = 37/37,
 `/app/test_reports/iteration_2026_02_ora_4bugs.json`.
+
+---
+
+## 2026-02 — Two confirmed gaps: self-repair TOOL_ERROR detection + Project Brain memory
+
+Founder ticket, grounded in a real, live inspection of `/admin/self-bugs`
+and the Intelligence Dashboard's Brain tab in production.
+
+**Part A — Gap 1: `/admin/self-bugs` TOOL_ERROR category always empty.**
+`dead_end_leak` genuinely worked (a real entry matched a real earlier
+conversation); `tool_error` returned "No self-bugs logged yet" despite
+4 real confirmed incidents in the same session. Root-cause (confirmed
+by exhaustive grep BEFORE any fix): `services/self_bug.py`'s `emit()`
+is the one shared write path into `ora_self_bugs`, and the read side
+(`routers/self_bugs_admin.py`) reads that exact same collection with a
+matching `type` filter — no read/write mismatch. The real gap:
+NOTHING in the codebase ever called `emit("tool_error", ...)` — not a
+matching-rules gap, not a silent write failure, the classifier simply
+never ran on tool-call-related content at all. (One pre-existing
+`source="tool"` row from 2026-08-31 turned out to be orphaned/seed
+data with zero corresponding live caller anywhere in the repo.)
+
+Fix: `services/chat_helpers.py::apply_output_guards` (the ONE shared
+output-guard function, both real production call sites — `routers/
+chat/turn.py`'s `/chat/send` and `routers/chat/stream.py`'s
+`/chat/stream`) now fires `self_bug.emit("tool_error", ...)` via a new
+fire-and-forget `_fire_self_bug()` helper whenever either of its two
+most-recent guards actually rewrites content: (1)
+`internal_directive_guard.strip_leaked_tool_directives` (the
+self-instruction-leak pattern), (2) `commit_boundary.
+strip_stray_code_blocks_near_handoff` (the destructive-diff-marked-
+clean pattern). New `session_id`/`user_id` kwargs thread real context
+from both call sites. `services/self_bug.py` gained a `_SOURCE_CAUSES`
+dict for precise, non-invented cause text per (type, source) —
+preserves the module's existing "no-invented-cause" discipline; any
+other source still falls back to the original generic cause.
+
+Live-verified (non-mocked, real DB): connected a script to the SAME
+Mongo the live server uses (`cto_services.db.set_db`, matching
+`main.py`'s own startup pattern) and called the real, unmodified
+`apply_output_guards()` with the exact real error text `local_tools.py`
+produces. A brand-new row appeared via the real `GET /admin/self-bugs/
+list?type=tool_error` — `source=internal_directive_guard`,
+`what_user_saw` containing the real leaked text, `confidence=confirmed`,
+`severity=high`. `testing_agent` independently reproduced this AND the
+`handoff_diff_safety_guard` source, confirmed the already-fixed
+`required_tool_gate.py` leak path stays clean, confirmed no
+cross-category interference with `dead_end_leak`, and confirmed zero
+false-positive rows on benign turns. 15 new unit tests
+(`tests/test_2026_02_self_bug_tool_error_wiring.py`) + 157 targeted
+regression tests pass.
+
+**Part B — Gap 2: "Project Brain" shows "No brain data yet" for a
+project with 608 real interactions.** Investigated both hypotheses the
+founder asked to rule out. (1) Read/write `project_id` format
+mismatch? NO — both sides key on the same plain string in the same
+`project_brains` collection, confirmed by direct inspection. (2) Is
+there a write attempt at all, gated behind a threshold? Write attempts
+DO fire on every `/chat/stream` turn classified mode A/B/chat with a
+real project_id (NOT gated by interaction count) — but
+`update_brain_from_conversation`'s own body (deliberately "lightweight,
+no LLM call, just pattern matching" per its own docstring) only
+persists anything if the message/reply contains 1 of ~18 hardcoded
+tech-stack keywords or 1 of 10 hardcoded decision/rejection phrases. A
+technical debugging/QA-heavy conversation history can genuinely never
+trip any of those ~28 triggers across hundreds of real turns — that is
+the confirmed, live-verified explanation, not a wiring bug. Separately
+noted (not the founder's live path — frontend only calls `/chat/
+stream`): `routers/chat/turn.py`'s `/chat/send` reads brain context but
+has zero call to `update_brain_from_conversation` anywhere in that
+file. Commit/task-completion-triggered brain updates (a separate, more
+substantive path feeding `recurring_bugs`/`event_log`/`hot_paths`) were
+confirmed correctly wired at 3 real call sites — not broken, not
+touched.
+
+**No code fix applied for Part B** — per the ticket's own explicit
+instruction not to manufacture a fix for a system that isn't actually
+broken. Live-verified on `p_r10_testbed_e2e`: a no-keyword-match
+`/chat/stream` turn left `project_brains.updated_at` completely
+unchanged; a turn with an explicit decision phrase immediately added a
+real `decisions` row + 2 new `tech_stack` entries with a bumped
+`updated_at`. `testing_agent` independently reproduced both outcomes
+with a different decision phrase (redis/django). 5 new documentation-
+locking unit tests (`tests/test_2026_02_project_brain_gap2_finding.py`).
+
+Verified via `testing_agent`: 11 new dedicated tests + 157 targeted
+regression tests, both live proofs independently reproduced,
+`/app/test_reports/iteration_2026_02_two_gaps_selfbug_and_brain.json`.
+Follow-up suggestion (not built, founder's call): a low-cost per-project
+"no-write turns" counter so the admin panel can distinguish "brain
+empty because conversation never matched triggers" from "brain empty
+because wiring broke" without needing to grep code — tracked as
+ROADMAP F40.
+

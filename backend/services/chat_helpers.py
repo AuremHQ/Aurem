@@ -57,6 +57,22 @@ def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) 
     return "\n".join(parts)
 
 
+# 2026-02 — Gap 1 fix (see apply_output_guards' own comment below for
+# full context): fire-and-forget self_bug.emit(), since
+# apply_output_guards is sync and must not force its 2 production
+# call sites (turn.py/stream.py) to start awaiting it just to log a
+# guard hit. self_bug.emit() already treats a logging failure as
+# non-fatal by design (see services/self_bug.py's own docstring); this
+# only adds "don't block the real turn on it either."
+def _fire_self_bug(event_type: str, evidence: str, ctx: dict, *, source: str) -> None:
+    try:
+        import asyncio
+        from services import self_bug
+        asyncio.create_task(self_bug.emit(event_type, evidence, ctx, source=source))
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("self_bug emit (tool_error/%s) skipped: %r", source, e)
+
+
 # 2026-09-04 · confirm-execution round — DRY: the 4 near-identical
 # output-guard blocks in routers/chat.py (chat_send + chat_stream,
 # each running the same 4 guards in the same order) are now ONE
@@ -72,6 +88,7 @@ def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) 
 def apply_output_guards(
     user_message: str, content: str, prior_fix_signal: bool,
     retrieved_context: str, *, skip: bool = False, tool_calls_run: int = 0,
+    session_id: str = "", user_id: str = "",
 ) -> str:
     # 2026-09-05 · Commit-Boundary — runs even when the rest of the
     # chain is skipped (a deterministic completion message never
@@ -79,12 +96,39 @@ def apply_output_guards(
     # it); the real target is a raw model reply that slipped a
     # "ready when you approve?" question in AFTER a real
     # ```aurem-handoff fence (see services/commit_boundary.py).
+    #
+    # 2026-02 — Gap 1 fix (founder-confirmed: /admin/self-bugs'
+    # TOOL_ERROR category had zero entries despite real incidents).
+    # Root cause: services/self_bug.emit() is the ONE shared write
+    # path into ora_self_bugs (confirmed dead_end_leak/truncated_reply
+    # work correctly via business_voice_filter.py's
+    # apply_business_owner_guards — that's the reference pattern this
+    # follows), but nothing ANYWHERE in the codebase ever called
+    # emit("tool_error", ...) — not a matching-rules gap, not a
+    # silent-write-failure, the classifier simply never ran on
+    # tool-call-related content at all. This function's two most
+    # recent guards (added same engagement) are exactly the two
+    # confirmed real tool_error incidents: an internal self-instruction
+    # leaking verbatim (internal_directive_guard), and a
+    # diff-scope-creep marked "clean" by the ship gate
+    # (handoff_diff_safety_guard/commit_boundary). Wired the SAME
+    # self_bug.emit call these two guards' sibling functions already
+    # use — one pipeline, two more real trigger sites, not a second
+    # pipeline. Fired via asyncio.create_task (fire-and-forget,
+    # matching self_bug.emit's own "never break the real turn"
+    # contract) since this function is sync and its two existing
+    # production call sites (turn.py/stream.py) must not have to
+    # start awaiting it.
+    ctx = {"session_id": session_id, "user_id": user_id}
     if content:
         from services.commit_boundary import strip_false_confirm_promise
         content = strip_false_confirm_promise(content)
     if content:
         from services.commit_boundary import strip_stray_code_blocks_near_handoff
+        before = content
         content = strip_stray_code_blocks_near_handoff(content)
+        if content != before:
+            _fire_self_bug("tool_error", before[:300], ctx, source="handoff_diff_safety_guard")
     if skip or not content:
         return content
     try:
@@ -114,7 +158,10 @@ def apply_output_guards(
         logger.debug("live_content_claim guard skipped: %r", e)
     try:
         from services.internal_directive_guard import strip_leaked_tool_directives
+        before = content
         content = strip_leaked_tool_directives(content)
+        if content != before:
+            _fire_self_bug("tool_error", before[:300], ctx, source="internal_directive_guard")
     except Exception as e:                                # noqa: BLE001
         logger.debug("internal_directive guard skipped: %r", e)
     return content

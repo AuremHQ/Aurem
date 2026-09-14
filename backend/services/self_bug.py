@@ -47,6 +47,28 @@ _KNOWN_CAUSES = {
 }
 _HIGH_SEVERITY_TYPES = frozenset({"missing_button", "tool_error", "user_reported"})
 
+# 2026-02 — Gap 1 fix: `tool_error`'s single generic cause above
+# ("a tool call ORA made returned an error") was TRUE but imprecise
+# for the two concrete patterns this round wires up detection for —
+# both originate from a tool call (read_repo_file's not-found path;
+# a repo-edit/handoff turn) but the user-visible fault isn't "the
+# tool errored", it's "the guard around that tool's output let
+# something unsafe through". Per the no-invented-cause rule, these
+# two extra causes are only used when `source` is EXACTLY one of the
+# two real guard modules that now call self_bug.emit() for
+# `tool_error` (services/chat_helpers.py:apply_output_guards) —
+# anything else still falls back to the generic cause above.
+_SOURCE_CAUSES = {
+    ("tool_error", "internal_directive_guard"):
+        "a tool call (read_repo_file) failed and its raw internal "
+        "retry instruction ('STOP guessing paths...') leaked into "
+        "the user-facing reply instead of being stripped",
+    ("tool_error", "handoff_diff_safety_guard"):
+        "a stray fenced code block next to an aurem-handoff brief "
+        "rendered as a live file diff before Approve was clicked, "
+        "instead of being stripped as scope creep",
+}
+
 
 @dataclass
 class SelfBugEvent:
@@ -83,7 +105,7 @@ def diagnose(event: SelfBugEvent) -> Diagnosis:
             evidence=event.evidence or "",
             confidence="uncertain",
         )
-    cause = _KNOWN_CAUSES[event.type]
+    cause = _SOURCE_CAUSES.get((event.type, event.source), _KNOWN_CAUSES[event.type])
     confidence = "confirmed" if event.evidence else "likely"
     severity = "high" if event.type in _HIGH_SEVERITY_TYPES else "low"
     return Diagnosis(

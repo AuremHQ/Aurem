@@ -949,3 +949,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 | `routers/architect.py` | `/architect` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-13T17:57:12.845822Z) | <!-- inv:router:routers/architect.py -->
 - `services/architect_agent.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-13T17:57:12.845869Z] <!-- inv:service:services/architect_agent.py -->
+
+### Iter 0 · 2026-09-14
+
+- `services/internal_directive_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-14T04:03:06.932964Z] <!-- inv:service:services/internal_directive_guard.py -->
