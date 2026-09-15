@@ -5147,3 +5147,13 @@ clarifying question). New live test file preserved for future
 regression: `backend/tests/live_2026_02_context_confusion_
 acceptance.py`. 0 critical/minor issues reported.
 `/app/test_reports/iteration_2026_02_context_confusion_live_acceptance.json`.
+
+**Closure (2026-02).** Founder independently re-confirmed the
+fresh-message F12-hijack fix live (induced a real browser error via
+a bad fetch to a nonexistent endpoint, sent an unrelated message,
+reply correctly addressed the actual request with zero reference to
+the induced error) — the highest-priority item of this thread.
+Accepted the testing_agent's live evidence for the Retry-button
+variant given the shared Part B root fix. Accepted Part B's
+keyword-based classifier as a known, disclosed tradeoff, tracked as
+a real follow-up (`ROADMAP.md` F45), not forgotten. Thread closed.
