@@ -472,7 +472,7 @@ export default function AdminGithubBulkRevoke() {
             No rows match this filter.
           </div>
         ) : rows.map((r) => (
-          <div key={r.installation_id ?? r.user_id}
+          <div key={`${r.installation_id ?? "no_install"}-${r.user_id}`}
                data-testid={"gbr-row-" + r.installation_id}
                style={{
                  display: "grid",

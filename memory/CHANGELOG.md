@@ -5256,3 +5256,75 @@ start_delay.py` (3 tests, locks the >=300s floor + jitter usage).
 Full boot/deployment regression set (8 files, 41 tests) passes.
 Backend restarts clean, reaches "Application startup complete" fast,
 `/health` responds in ~18ms locally. No Docker/infra changes.
+
+
+## 2026-09-15 — GitHub Bulk Revoke: 3rd tab "Stuck / Never Completed" — investigated + shipped, testing_agent-verified 5/5 backend + 100% frontend
+
+Founder feature request: users whose GitHub-connect flow never reached
+a working install (`app_install_denied` or `app_install_redirect` with
+nothing logged after it — e.g. rebecca@millingtonstudio.com,
+canndalf@gmail.com) were invisible to the existing 2-tab bulk-revoke
+tool (Revokable / Idle). Investigated first, per founder ask, before
+writing any code:
+
+  Q1 (partial state?) — Yes but inert: every `/github/app/install`
+    click inserts a single-use CSRF token row into `oauth_states`
+    that a denied/abandoned attempt never marks `used`. No TTL index
+    exists (`services/db_indexes.py` — only a uniqueness index on
+    `state`), so these rows persist forever, harmlessly.
+  Q2 (interferes with retries?) — No, confirmed by code trace:
+    `/callback` only ever looks up the EXACT token in the URL, never
+    "the user's latest attempt"; `/github/app/status` only reads
+    `github_installations`, never `oauth_states`. A stuck user and a
+    never-tried user are byte-for-byte identical to the app. Repeated
+    "still stuck" cases are most likely GitHub-side (denied again,
+    org-approval required), not an Aurem state bug.
+  Q4 (cross-ref the 2026-09-13 120s retry-window fix) — that fix
+    (`_REPO_ACCESS_RETRY_BUDGET_MS` in NewUserWizard.jsx) only runs
+    AFTER a successful `app_install_granted` — a different funnel
+    stage entirely from denied/abandoned-before-connecting. No
+    meaningful pre/post-fix split exists for this list; none was
+    fabricated.
+
+Founder decisions after reviewing findings: (1) ship "Clear stuck
+state" as pure hygiene (delete stale unused `oauth_states` rows) with
+copy that explicitly says it has NO effect on reconnect-ability: (2)
+classify by ONLY the single latest `github_funnel_events` doc per
+`user_id` — older history (e.g. denied 3x then later granted) does
+not count; (3) scope stays exactly `app_install_denied` /
+`app_install_redirect` — no broadening to pure CTA drop-off
+(`connect_repo_click` with nothing after) for v1, tracked as a
+separate future ticket.
+
+**Backend** (`routers/admin_bin.py`, Section 1c): `GET
+/admin/github/stuck-connections` — 2-stage aggregation on
+`github_funnel_events` (latest event per user_id via `$sort` +
+`$group $last`, then filtered to the 2 terminal stages), with a
+safety exclusion against `db.cto_projects` (auth_method=github_app +
+real installation_id) so a user with an ACTUAL working connection
+from an earlier attempt is never mislabeled stuck. `POST
+/admin/github/clear-stuck-state` — deletes matching unused
+`oauth_states` rows, writes an `admin_audit` doc
+(action=clear_github_stuck_state), returns a `note` field stating the
+no-effect-on-reconnect framing explicitly.
+
+**Frontend** (`pages/AdminGithubBulkRevoke.jsx`): 3rd tab button
+(`gbr-view-stuck`) + fully separate table/action-bar branch
+(`stuckRows` state, independent of the installation-shaped `rows`
+used by Revokable/Idle/All) — info banner, per-row stage badge
+(Denied / Redirected-no-follow-up), attempt count, first/last attempt
+dates, a "Clearable" column, and a "Clear stuck state (hygiene only)"
+button whose title/label/toast/result-summary all repeat the
+no-effect-on-reconnect framing end-to-end. Row checkbox disabled when
+a row has 0 clearable tokens.
+
+**Testing:** `testing_agent_v3_fork` — 5/5 new pytest cases (latest-
+event-wins classification, denied-then-later-granted correctly
+excluded, out-of-scope connect_repo_click correctly excluded, active-
+installation safety-exclusion, admin auth gate) +
+full frontend pass (banner/button/toast/result copy all verified to
+contain the hygiene framing; tab-switch regression across all 4 tabs
+clean). One pre-existing LOW/cosmetic React duplicate-key warning on
+the older Revokable/Idle/All row list (unrelated to this feature) was
+found and fixed (`installation_id` alone was not always unique as a
+key; now `${installation_id}-${user_id}`).

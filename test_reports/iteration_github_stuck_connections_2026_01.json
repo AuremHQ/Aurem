@@ -1,0 +1,38 @@
+{
+  "summary": "Comprehensive backend + frontend testing of new 'Stuck / Never completed' 3rd tab in Admin GitHub Bulk Revoke tool. Backend: 5/5 pytest tests passed — classification correctness (userA latest=redirect appears; userB denied→granted excluded; userC connect_repo_click excluded; userD with active github_app installation safety-excluded), auth gate enforced, clear-stuck-state hygiene action deletes oauth_states rows and writes admin_audit doc with reason and cleared_rows, response note contains 'no effect' framing, empty user_ids rejected with 422. Frontend: All 4 tab buttons (revokable/idle/stuck/all) present with correct data-testids. Stuck info banner text explicitly says 'no effect on the user' AND references '120s' retry-window fix as 'unrelated'. Clear button title attribute reads 'Deletes stale, never-consumed connect tokens only — no effect on the user's ability to reconnect'. Button label text contains 'hygiene only'. Live stuck row rendered for real preview user 'fresh-funnel-0824@aurem.dev' with 'Redirected, no follow-up' stage badge, attempt count 1, first-attempt date shown, Clearable=none (0 tokens) so checkbox correctly disabled. Tab switching regression check: switching stuck→revokable→idle→all→stuck all worked; banner correctly hidden on non-stuck tabs and restored on return; no stale rows briefly visible (rowsView staleness guard working).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminGithubBulkRevoke revokable/idle/all rows", "issue": "React warning 'Encountered two children with the same key 152797252' — pre-existing bug in the OTHER tabs (not the new stuck tab). Row key is `r.installation_id ?? r.user_id`; two rows in this DB share installation_id 152797252 (aurem-demo/frontend + funnel-repro fixture per test_credentials.md note). Not caused by this feature but surfaces during required tab-switch smoke test. Fix: use a composite key like `${r.installation_id}-${r.user_id}` or `${r.installation_id}-${r.repo}`.", "selector": "[data-testid^='gbr-row-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_github_stuck_connections_2026_01.py",
+    "/app/test_reports/pytest/stuck_conn_2026_01.xml",
+    "/app/test_reports/stuck_tab_2026_01.jpeg"
+  ],
+  "action_items": [
+    "(LOW/optional) Fix duplicate React key warning on gbr-row entries in revokable/idle/all tabs by using a composite key. Pre-existing, not caused by this feature."
+  ],
+  "critical_code_review_comments": [
+    "Backend classification logic is correct: $sort ascending + $group $last emits the truly latest event per user_id — verified by userB (denied→granted excluded) test case.",
+    "Safety exclusion query correctly checks db.cto_projects with auth_method='github_app' AND installation_id $exists+$ne null — userD test proves the exclusion.",
+    "Hygiene-only framing is consistent end-to-end: (1) info banner has 'no effect on the user', (2) button title has 'no effect', (3) button label has 'hygiene only', (4) backend response note has 'no effect', (5) frontend clearResult.note passes it through, (6) toast message includes 'no effect on reconnect-ability'. Founder decision #1 satisfied.",
+    "Founder decision #2 (only latest event counts): verified via userB test.",
+    "Founder decision #3 (scope strictly denied/redirect): verified via userC test.",
+    "admin_audit doc includes action='clear_github_stuck_state', reason, user_ids, cleared_rows, ts, actor — meets audit requirements.",
+    "MongoDB _id excluded from all responses (projections use _id: 0)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_github_stuck_connections_2026_01.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview admin) — worked as expected",
+  "seed_data_creation": "Created 4 synthetic users (prefix test_stuck_2026_01_userA/B/C/D_*) in github_funnel_events + dev_users + cto_projects + oauth_states. Fully cleaned up by module-scope pytest fixture teardown (verified: no test_stuck_2026_01_* rows remain).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Feature is production-ready. Only nit: pre-existing duplicate React key warning on gbr-row keys (installation_id 152797252 appears twice in preview DB) — cosmetic console warning on revokable/idle/all tabs, not on new stuck tab. Backend endpoints: GET /api/aurem-dev/admin/github/stuck-connections + POST /api/aurem-dev/admin/github/clear-stuck-state both work. Router prefix chain: /api/aurem-dev + /admin (admin_bin) + /github/... .",
+  "rca of the issue": "N/A — feature works as designed. Duplicate React key warning is unrelated pre-existing minor bug on the older revokable/idle/all render branch."
+}
