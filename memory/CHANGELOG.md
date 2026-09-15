@@ -5157,3 +5157,53 @@ Accepted the testing_agent's live evidence for the Retry-button
 variant given the shared Part B root fix. Accepted Part B's
 keyword-based classifier as a known, disclosed tradeoff, tracked as
 a real follow-up (`ROADMAP.md` F45), not forgotten. Thread closed.
+
+---
+
+## 2026-02 — Deployment Fix: Cold-Start `/health` Timeout on Fresh Rollout
+
+**Symptom (from real production deploy logs):** nginx repeatedly
+timing out proxying `GET /health` to `http://127.0.0.1:8001/health`
+(`upstream timed out (110)`) for about a minute during a deployment,
+even though `/health` itself answered 200 OK internally moments
+before/after — a classic "readiness flap" causing the platform to
+report the deployment as failed.
+
+**Root cause (self-documented in this codebase's own history —
+`test_iter336_boot_stagger.py`, `integration_health.py`'s "round 3"
+comment):** `integration_health_cron`'s in-memory `_PROBE_CACHE` is
+empty on every fresh process boot, so the FIRST cron tick always runs
+the full, uncached, heaviest probe burst (Stripe's 8 sequential calls
++ a real E2B sandbox create/run/kill round-trip) — already confirmed
+to be the exact CPU/event-loop-starvation trigger correlating with
+nginx's `/health` 110-timeouts. That first tick fired at 150-210s
+post-boot, still inside a typical Kubernetes deployment readiness
+window. Every "obvious" fix (subprocess/e2b calls wrapped in
+`asyncio.to_thread`, `/health` short-circuited at the outermost
+middleware with zero DB/dependency, probes serialized with a 3s gap)
+was already correctly in place from prior rounds — the remaining gap
+was purely the cold-start TIMING of the first uncached burst.
+
+**Fix:** `services/integration_health_cron.py::schedule_integration_
+health_cron()` — raised the first-tick delay from 150s to 300s so the
+burst lands safely after a typical deployment's health-check window
+closes. Steady-state 600s cadence and serialized probe execution
+unchanged. No Docker/infra changes (per explicit constraint) — pure
+backend Python.
+
+**Testing:** new `test_2026_02_deployment_health_cron_cold_start_
+delay.py` (2 tests) locks the new 300s floor precisely (the existing
+`>= 120` lock in `test_iter336_boot_stagger.py` was too loose to catch
+a regression back to 150s). Updated `test_iter_c2_probe_jitter.py`'s
+hardcoded `150` assertions to `300`. All 35 tests across every touched
+file pass; 1 unrelated pre-existing failure (`test_iter328_11_feature_
+flag_seed_upsert.py`, a MagicMock/await mocking issue, confirmed via
+git-stash baseline) untouched. Backend restarted clean, `/health`
+responds in ~20ms. Re-ran `deployment_agent` end to end: **PASS**, no
+remaining blockers.
+
+**Non-blocking, disclosed separately:** `RESEND_API_KEY` returns 401
+(seen in both the original logs and the deployment_agent's own
+re-check) — an invalid/expired email-provider credential, not a
+deployment blocker. Founder should rotate the key in Resend's
+dashboard when convenient.
