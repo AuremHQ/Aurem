@@ -953,3 +953,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-09-14
 
 - `services/internal_directive_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-14T04:03:06.932964Z] <!-- inv:service:services/internal_directive_guard.py -->
+
+### Iter 0 · 2026-09-15
+
+- `services/task_state.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-15T03:15:08.227916Z] <!-- inv:service:services/task_state.py -->

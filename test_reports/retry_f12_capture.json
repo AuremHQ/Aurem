@@ -1,0 +1,20 @@
+{
+  "call_count": 2,
+  "first_call_intercepted": true,
+  "all_stream_requests": [
+    {
+      "n": 1,
+      "url": "https://bin-context-pat.preview.emergentagent.com/api/aurem-dev/chat/stream",
+      "body": "{\"prompt\":\"update the footer text to say contact us today\",\"session_id\":\"TEST_bug2_ui_0d3851b9\",\"max_tool_iters\":2,\"maxx_mode\":false,\"agent\":\"auto\",\"mode\":\"swift\",\"execution_mode\":\"prompt\",\"project_id\":\"p_demo_a\",\"f12_payload\":{\"console_errors\":[{\"type\":\"error\",\"message\":\"Uncaught TypeError: Cannot read properties of undefined (reading 'map') at js:317\",\"source\":\"https://bin-context-pat.preview.emergentagent.com/src/utils/errorReporter.js:103:23\",\"timestamp\":\"2026-09-15T04:07:14.938Z\"}],\"network_errors\":[{\"url\":\"https://bin-context-pat.preview.emergentagent.com/api/aurem-dev/cto/projects/p_demo_a/warm-start\",\"method\":\"POST\",\"status\":403,\"response_body\":\"{\\\"detail\\\":\\\"GitHub App auth failed (github_rejected): GitHub returned HTTP 404 while minting the App installation token, but our own records show this installation is still active \u2014 likely transient. Retry shortly.\\\"}\",\"timestamp\":\"2026-09-15T04:07:12.371Z\"},{\"url\":\"https://bin-context-pat.preview.emergentagent.com/api/aurem-dev/cto/projects/p_demo_a/warm-start\",\"method\":\"POST\",\"status\":403,\"response_body\":\"{\\\"detail\\\":\\\"GitHub App auth failed (github_rejected): GitHub returned HTTP 404 while minting the App installation token, but our own records show this installation is still active \u2014 likely transient. Retry shortly.\\\"}\",\"timestamp\":\"2026-09-15T04:07:12.765Z\"}],\"stack_traces\":[],\"page_url\":\"https://bin-context-pat.preview.emergentagent.com/dashboard\",\"captured_at\":\"2026-09-15T04:07:15.667Z\",\"user_agent\":\"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.0 S\"},\"ora_panel\":false,\"screenshot_b64\":null}"
+    },
+    {
+      "n": 2,
+      "url": "https://bin-context-pat.preview.emergentagent.com/api/aurem-dev/chat/stream",
+      "body": "{\"prompt\":\"update the footer text to say contact us today\",\"session_id\":\"TEST_bug2_ui_0d3851b9\",\"max_tool_iters\":2,\"maxx_mode\":false,\"agent\":\"auto\",\"mode\":\"swift\",\"execution_mode\":\"prompt\",\"project_id\":\"p_demo_a\",\"f12_payload\":null,\"ora_panel\":false,\"screenshot_b64\":null}"
+    }
+  ],
+  "retry_request_body": "{\"prompt\":\"update the footer text to say contact us today\",\"session_id\":\"TEST_bug2_ui_0d3851b9\",\"max_tool_iters\":2,\"maxx_mode\":false,\"agent\":\"auto\",\"mode\":\"swift\",\"execution_mode\":\"prompt\",\"project_id\":\"p_demo_a\",\"f12_payload\":null,\"ora_panel\":false,\"screenshot_b64\":null}",
+  "retry_response_body": "{\"detail\":\"The connection to your website's code isn't available right now \u2014 it may have been disconnected or doesn't cover this project. Open Projects \u2192 APP to reconnect.\"}",
+  "dom_last_bubbles": "Here's the plan:\n6 lines\n===BUBBLE===\nupdate the footer text to say contact us today\n1 line\n===BUBBLE===\nSimulated provider failure.\n1 line\nThis failed \u2014 provider_5xx. The provider was busy \u2014 safe to retry now.\nRetry\n===BUBBLE===\nupdate the footer text to say contact us today\n1 line\nNot delivered\n===BUBBLE===\n\u26a0 The connection to your website's code isn't available right now \u2014 it may have been disconnected or doesn't cover this project. Open Projects \u2192 APP to reconnect.\n===BUBBLE===\n\u26a0 The connection to your website's code isn't available right now \u2014 it may have been disconnected or doesn't cover this project. Open Projects \u2192 APP to reconnect.",
+  "f12_hasErrors": "True"
+}
