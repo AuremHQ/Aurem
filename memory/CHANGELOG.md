@@ -5207,3 +5207,52 @@ remaining blockers.
 re-check) — an invalid/expired email-provider credential, not a
 deployment blocker. Founder should rotate the key in Resend's
 dashboard when convenient.
+
+---
+
+## 2026-02 — Deployment Fix #2: Chromium Self-Heal Cold-Start Burst
+
+**Symptom (real production deploy logs, second incident):** nginx
+`/health` proxy timeouts (110) again, this time correlating with the
+Chromium self-heal warning firing **twice**, ~13.8s apart, ~45-59s
+post-boot: `⚠️ Chromium binary missing/stale on BOTH resolution paths
+at boot ... attempting self-heal via playwright install chromium`.
+
+**Root cause:** `main.py::_probe_chromium` slept only `45s` (no
+jitter) before probing/reinstalling Chromium. With 2 uvicorn workers
+staggered ~13.8s apart at spawn, each independently woke at its own
+un-jittered 45s mark and — since the binary is evidently always
+missing on a fresh production image — each ran the full, heavy
+`playwright install chromium` (network download + extraction)
+**twice**, exactly the same class of cold-start-burst-inside-the-
+deploy-health-check-window bug already fixed once for
+`integration_health_cron` (150s → 300s, see the prior entry above).
+45s is far inside a typical deployment readiness window.
+
+**Fix:** raised `_probe_chromium`'s delay to `330s +
+_startup_jitter_s()` (imported from `services.integration_health_
+cron`, the same PID-seeded jitter already used there) — offset +30s
+from that cron's 300s base so the two heaviest boot tasks don't land
+in the same instant, and the jitter naturally de-duplicates the
+double-install across workers (a later-waking worker's own launch
+re-check now usually succeeds off the first worker's install on the
+shared filesystem, skipping its own `playwright install` entirely).
+
+**Also verified (not a real issue):** the `deployment_agent`'s
+re-scan flagged a "BLOCKER" claiming no `.gitignore`/`.dockerignore`
+exists and `test_credentials.md` isn't excluded from the deploy
+artifact. Checked directly — **false positive**: `.gitignore` line 79
+already excludes `memory/test_credentials.md` (confirmed via `git
+check-ignore -v`, exit 0), and `.dockerignore` already excludes the
+whole `memory/` and `test_reports/` dirs. No change made. Its two
+other WARN items (Redis URL set but unreachable — code already fails
+open to in-memory rate-limiting; unused `CORS_ORIGINS` env var — dead
+config, real CORS logic uses a hardcoded allow-list + regex that
+already covers Emergent's preview/prod domains) are both explicitly
+non-blocking and unrelated to this incident — left untouched.
+
+**Testing:** new `test_2026_02_deployment_chromium_selfheal_cold_
+start_delay.py` (3 tests, locks the >=300s floor + jitter usage).
+Full boot/deployment regression set (8 files, 41 tests) passes.
+Backend restarts clean, reaches "Application startup complete" fast,
+`/health` responds in ~18ms locally. No Docker/infra changes.

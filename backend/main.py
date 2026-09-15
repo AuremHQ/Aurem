@@ -115,7 +115,7 @@ from routers.feature_window import router as feature_window_router  # Iter 212m-
 from services.codebase_indexer import router as codebase_router
 from services.daily_digest import schedule_daily_digest
 # Iter 328 · #5 — periodic integration_health probe cron
-from services.integration_health_cron import schedule_integration_health_cron
+from services.integration_health_cron import schedule_integration_health_cron, _startup_jitter_s
 # 2026-08-26 — periodic SLO-breach founder-alert cron (approved
 # Stage-1 follow-up, reuses services/slo_metrics.py + founder_alerts.py)
 from services.slo_alert_cron import schedule_slo_alert_cron
@@ -1768,8 +1768,27 @@ async def lifespan(app: FastAPI):
         self-heals path #2 via `playwright install chromium` if
         BOTH resolution paths are broken. Mirrors the result onto
         `app.state.chromium_status` / `/api/health` so a future
-        staleness episode is visible on the dashboard immediately."""
-        await _asyncio.sleep(45)
+        staleness episode is visible on the dashboard immediately.
+
+        2026-02 — deployment-health fix. Production evidence: this
+        self-heal warning fired TWICE ~14s apart during a fresh
+        deploy (two uvicorn workers each independently hitting their
+        own 45s-delayed copy of this task, each downloading/
+        extracting the SAME ~150MB Chromium build), while nginx's
+        `/health` proxy (1s tolerance) timed out repeatedly in that
+        same window — the identical class of cold-start-burst-inside-
+        the-deploy-health-check-window bug already root-caused and
+        fixed for `integration_health_cron` (150s -> 300s, see that
+        module). 45s is far inside that window. Raised to 300s here
+        too, offset +30s from that cron's base so the two heaviest
+        boot tasks don't land in the same instant, PLUS the same
+        PID-seeded `_startup_jitter_s()` used there — which doubles
+        as install de-duplication: by the time a second worker wakes
+        from its (independently jittered) sleep, `_try_launch` above
+        will usually already succeed off the FIRST worker's install
+        (shared filesystem), skipping the second `playwright install`
+        entirely instead of running it twice."""
+        await _asyncio.sleep(330 + _startup_jitter_s())
         import subprocess
 
         def _try_launch(use_override: bool) -> Optional[str]:
