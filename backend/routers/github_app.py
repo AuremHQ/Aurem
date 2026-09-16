@@ -133,44 +133,14 @@ async def _upsert_installation(
     delivery_id: Optional[str] = None,
     repositories: Optional[list[dict]] = None,
 ) -> dict:
-    """Idempotent upsert into `github_installations`.
-
-    * `$setOnInsert`: `installed_at` (immutable install-time epoch)
-    * `$set`: everything mutable (auth data, active flag, updated_at,
-              optionally user_id / repositories / last_webhook_delivery)
-    """
-    now = _now_utc_epoch()
-    account = meta.get("account") or {}
-    set_doc: dict = {
-        "installation_id":       installation_id,
-        "github_login":          account.get("login") or "",
-        "github_account_type":   account.get("type") or "",
-        "github_account_id":     account.get("id"),
-        "target_type":           meta.get("target_type") or "",
-        "repository_selection":  meta.get("repository_selection") or "",
-        "permissions":           meta.get("permissions") or {},
-        "events":                meta.get("events") or [],
-        "active":                True,
-        "suspended_at":          None,
-        "deleted_at":            None,
-        "updated_at":            now,
-    }
-    if user_id:
-        set_doc["user_id"]   = user_id
-        set_doc["linked_at"] = now
-    if repositories is not None:
-        set_doc["repositories"] = repositories
-    if delivery_id:
-        set_doc["last_webhook_delivery"] = delivery_id
-
-    return await db.github_installations.find_one_and_update(
-        {"installation_id": installation_id},
-        {
-            "$set":         set_doc,
-            "$setOnInsert": {"installed_at": now},
-        },
-        upsert=True,
-        return_document=True,     # pymongo ReturnDocument.AFTER equivalent
+    """Thin pass-through — the real implementation moved to
+    `services/github_app.py::upsert_installation` (2026-09-16) so the
+    new admin reconciliation tooling can share it without a
+    router-to-router import. Kept as a local alias so every existing
+    call site in this file stays unchanged."""
+    return await _ga.upsert_installation(
+        db, installation_id, meta,
+        user_id=user_id, delivery_id=delivery_id, repositories=repositories,
     )
 
 
@@ -405,25 +375,50 @@ async def install_callback(
             # state string, no existing link. Enrich the log with
             # account/repo context (best-effort; installation_id alone
             # isn't enough to grep an incident against a specific
-            # founder report) before giving up. This is the ONLY case
-            # that stays unlinked — every other state failure
-            # self-heals via the recovery above.
+            # founder report) before giving up.
+            #
+            # 2026-09-16 — CONFIRMED FIX (founder-reported incident:
+            # rebecca@millingtonstudio.com's GitHub-side install/repo-
+            # selection succeeded — confirmed live against GitHub's own
+            # API — but Aurem's DB had zero record of it at all). Root
+            # cause: this exact branch used to fetch `meta`/repos ONLY
+            # to log them, then throw the data away and return without
+            # ever writing to `github_installations` — so if the
+            # webhook's OWN `installation.created` delivery also
+            # missed/failed (or this callback fires again on a later
+            # revisit — GitHub can drop `state` on that path per the
+            # 2026-09-04 fix above), NOTHING in Aurem ever recorded
+            # that this installation exists, on GitHub OR in our DB.
+            # Now persists exactly what the webhook path persists
+            # (unlinked ghost row, `user_id=None`) so the installation
+            # is at minimum visible + linkable via the admin "Unlinked
+            # GitHub Installations" tool instead of vanishing.
             try:
                 _orphan_meta = await _fetch_installation_meta(installation_id)
                 _orphan_login = (_orphan_meta.get("account") or {}).get("login")
             except Exception:                                     # noqa: BLE001
+                _orphan_meta = None
                 _orphan_login = None
             try:
                 _orphan_repos = await _ga.list_installation_repos(int(installation_id))
+                _orphan_repo_slim = [_slim_repo(r) for r in _orphan_repos]
                 _orphan_repo_names = [r.get("full_name") for r in _orphan_repos][:10]
             except Exception:                                      # noqa: BLE001
+                _orphan_repo_slim = None
                 _orphan_repo_names = None
+            if _orphan_meta is not None:
+                await _upsert_installation(
+                    db, int(installation_id), _orphan_meta,
+                    repositories=_orphan_repo_slim,
+                )
             logger.error(
                 "GH_CONNECT_ORPHANED_INSTALL installation_id=%s account=%s "
                 "repos=%s state_prefix=%s — no user_id could be recovered; "
-                "install landed unlinked, needs manual DB correlation "
-                "(db.github_installations updateOne by installation_id + user_id)",
-                installation_id, _orphan_login, _orphan_repo_names, state[:8] if state else None,
+                "ghost row %s in db.github_installations (needs manual "
+                "admin link — see /admin/github/installations/unlinked)",
+                installation_id, _orphan_login, _orphan_repo_names,
+                state[:8] if state else None,
+                "persisted" if _orphan_meta is not None else "COULD NOT BE PERSISTED (metadata fetch also failed)",
             )
             return RedirectResponse(
                 url=_dashboard_url(request, _DEEP_LINK_ERR_STATE),

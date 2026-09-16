@@ -191,10 +191,17 @@ def test_malformed_state_without_gha_prefix_still_fails_closed():
     """Security guard: recovery only trusts OUR OWN unforgeable token
     format (`gha:<user_id>:<random>`) — a string that doesn't match it
     (can't happen from a real /install kickoff) must still fail closed,
-    never silently attribute an install to an arbitrary string."""
+    NEVER attribute the install to an arbitrary/forged value.
+
+    2026-09-16 update: the ghost row IS now persisted (see
+    test_orphaned_install_logs_account_and_repos_for_grep below for
+    why) — the security property under test here is narrower and
+    still holds: the persisted row's `user_id` must be None, never
+    something derived from the untrusted `state` string."""
     fake_db = _FakeDB()
     client, ga_mod = _make_client(fake_db)
-    with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)):
+    with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)), \
+         patch.object(ga_mod._ga, "list_installation_repos", AsyncMock(return_value=[])):
         r = client.get(
             "/api/aurem-dev/github/app/callback",
             params={"installation_id": 557, "state": "not-our-format"},
@@ -202,7 +209,9 @@ def test_malformed_state_without_gha_prefix_still_fails_closed():
         )
     assert r.status_code in (302, 307)
     assert "err=invalid_state" in r.headers["location"]
-    assert fake_db.github_installations.rows == []
+    row = next((x for x in fake_db.github_installations.rows
+                if x["installation_id"] == 557), None)
+    assert row is not None and row.get("user_id") is None
 
 
 def test_valid_unexpired_state_row_still_takes_priority_over_recovery():
@@ -228,22 +237,29 @@ def test_valid_unexpired_state_row_still_takes_priority_over_recovery():
     assert row["user_id"] == "u_correct_from_row"
 
 
-def test_missing_state_param_entirely_now_soft_fails_no_orphan_row(caplog):
+def test_missing_state_param_entirely_now_ghost_row_persisted_admin_linkable(caplog):
     """No `state` query param at all (e.g. a forged direct hit on the
     callback URL, OR — confirmed live 2026-09-04 via founder screen
     recording — GitHub's documented behavior of dropping `state`
     entirely when a user who ALREADY has this App installed revisits
     the connect flow).
 
-    2026-09-04 update: this used to silently fall through to
-    `user_id_to_link=None` and write an ORPHANED `github_installations`
-    row (user_id=null) that could never surface for any user — a
-    permanent ghost record and a confusing "it looked like it worked
-    but the repo never shows up" bug. Now: when there's no EXISTING
-    link on this installation_id to reuse either, the callback fails
-    closed with `err=invalid_state` and writes NOTHING, so the next
-    attempt (or the client-side `/claim` safety net) has a clean slate
-    instead of a poisoned row to fight."""
+    2026-09-04: this used to soft-fail with NO db write at all,
+    reasoning that a "poisoned"/ghost row was worse than a clean
+    slate for the next attempt.
+
+    2026-09-16 REVERSED, with new evidence (founder-reported live
+    incident: rebecca@millingtonstudio.com's GitHub-side install +
+    7-repo selection genuinely succeeded, but was 100% invisible to
+    Aurem — no admin tool existed to find/fix an unlinked install,
+    confirmed by cross-checking the SAME App's real GitHub API data).
+    Verified this reversal does NOT reintroduce the 2026-09-04 bug:
+    the user-facing redirect is UNCHANGED (still `err=invalid_state`,
+    still no auto-link, still no false "success") — a ghost row now
+    just sits in `github_installations` (`user_id=None`) so
+    `GET /admin/github/installations/unlinked` can find + link it,
+    instead of the fetched account/repo data being fetched only to
+    be thrown away."""
     fake_db = _FakeDB()
     client, ga_mod = _make_client(fake_db)
     with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)), \
@@ -255,7 +271,12 @@ def test_missing_state_param_entirely_now_soft_fails_no_orphan_row(caplog):
         )
     assert r.status_code in (302, 307)
     assert "err=invalid_state" in r.headers["location"]
-    assert fake_db.github_installations.rows == []
+    row = next((x for x in fake_db.github_installations.rows
+                if x["installation_id"] == 559), None)
+    assert row is not None
+    assert row.get("user_id") is None
+    assert row["github_login"] == "drilltest"
+    assert row["active"] is True
 
 
 def test_missing_state_but_installation_already_linked_self_heals():
@@ -294,7 +315,14 @@ def test_orphaned_install_logs_account_and_repos_for_grep(caplog):
     ONLY path left where `/callback` can't self-heal (malformed/forged
     state, or state genuinely absent from a direct-callback hit) —
     every other failure mode recovers via the embedded-string fallback
-    above."""
+    above.
+
+    2026-09-16: "manual revoke+reinstall" was never a real fix a
+    stuck paying customer would know to do — see the ghost-row-
+    persistence reversal above. The log line now also confirms
+    whether the persist succeeded, and a ghost row must exist for
+    grep to have somewhere useful to point admins (the new
+    `/admin/github/installations/unlinked` tool)."""
     fake_db = _FakeDB()
     client, ga_mod = _make_client(fake_db)
     with patch.object(ga_mod, "_fetch_installation_meta", AsyncMock(return_value=FAKE_META)), \
@@ -310,9 +338,12 @@ def test_orphaned_install_logs_account_and_repos_for_grep(caplog):
             )
     assert r.status_code in (302, 307)
     assert "err=invalid_state" in r.headers["location"]
-    assert fake_db.github_installations.rows == []  # still unlinked — no auto-link for forged state
+    row = next((x for x in fake_db.github_installations.rows
+                if x["installation_id"] == 560), None)
+    assert row is not None and row.get("user_id") is None  # ghost row, still unlinked
     orphan_logs = [rec.message for rec in caplog.records if "GH_CONNECT_ORPHANED_INSTALL" in rec.message]
     assert len(orphan_logs) == 1
     assert "560" in orphan_logs[0]
     assert "drilltest" in orphan_logs[0]
     assert "SomeOrg/orphaned-repo" in orphan_logs[0]
+    assert "persisted" in orphan_logs[0]

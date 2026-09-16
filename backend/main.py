@@ -542,6 +542,22 @@ async def lifespan(app: FastAPI):
         long_lived=True,
     )
 
+    # 2026-09-16 · founder-reported incident (rebecca@millingtonstudio.com
+    # — GitHub-side App install + repo selection succeeded, confirmed
+    # live against GitHub's own API, but Aurem's DB had zero record of
+    # it, and GitHub's push-only webhook had no poll-based fallback).
+    # Every 30 min, cross-checks GitHub's own `GET /app/installations`
+    # (ground truth) against `github_installations` and backfills any
+    # installation the webhook + callback both missed as an unlinked
+    # ghost row — see services/github_app.py::reconcile_installations.
+    from services.github_app import schedule_github_installation_reconcile
+    app.state.github_reconcile_task = _supervise(
+        schedule_github_installation_reconcile(lambda: app.state.db),
+        name="github_installation_reconcile",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
     # Iter 309 · Phase 0.1 — Merged housekeeping loop.
     # Previously two independent `while True` background tasks:
     #   • _resume_stale_loops (rescues orphaned EXECUTING/VERIFYING/…)

@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I'm ORA, by Aurem. I can help you update your website — change text and images, fix broken pages, improve the design (colors, fonts, spacing), add new sections like a contact form or testimonials, connect it to services, and keep it running smoothly.\n\nTo get started, I need you to select your website's project from the sidebar on the left. Once it's connected, I can read everything about your site and start making changes right away.\n\nWhat's the first thing you'd like to do?",
+      "reply": "I can help fix bugs, improve performance, or add features directly to your website's content – just show me your website!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -14,7 +14,7 @@
         "no_dangling": true,
         "has_handoff_fence": false
       },
-      "provider": "glm-5.2",
+      "provider": "intent-gateway-casual",
       "tier": "casual",
       "bail_reason": null,
       "ship_suppressed": false
@@ -22,7 +22,7 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I'd love to put your opening hours right at the top of your main page — but I don't have a project connected yet.\n\nPlease select your website's project from the sidebar on the left, then send me two things:\n\n1. Your opening hours (e.g. \"Mon–Fri 9am–5pm, Sat 10am–2pm, Sun closed\")\n2. Whether you want them as a simple text line or in a small highlighted bar across the very top\n\nOnce your project is connected and I have those hours, I'll place them at the top of your main page right away.",
+      "reply": "I'd love to make that change for you, but I don't have your website connected right now — it looks like no project is selected.\n\nPlease pick your website's project from the sidebar on the left, then come back and tell me your opening hours (days and times). Once it's connected, I'll put them right at the top of your main page for you.\n\nWhat are the hours you'd like displayed?",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -33,14 +33,14 @@
         "has_handoff_fence": false
       },
       "provider": "glm-5.2",
-      "tier": "clarify",
+      "tier": "agentic",
       "bail_reason": null,
       "ship_suppressed": false
     },
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Thanks — 9am to 5pm every day, got it.\n\nBut I still don't have your website's project connected, so I can't make the change yet. Please select your website's project from the sidebar on the left, then just send me a quick \"go\" and I'll put those hours at the top of your main page right away. But I can update the text, images, or layout on your site instead — want me to do that?",
+      "reply": "Got it! As soon as you select your website project from the sidebar, I'll add \"Open daily 9am–5pm\" right at the top of your homepage for you.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -50,15 +50,15 @@
         "no_dangling": true,
         "has_handoff_fence": false
       },
-      "provider": "glm-5.2",
-      "tier": "clarify",
+      "provider": "intent-gateway-casual",
+      "tier": "casual",
       "bail_reason": null,
       "ship_suppressed": false
     },
     {
       "turn": 4,
       "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "Thanks for the number — 1-800-555-0199, got it.\n\nBut I still don't have your website's project connected, so I can't make the change yet. Please select your website's project from the sidebar on the left, then send me a quick \"go\" and I'll add that phone number to the bottom of your main page right away.\n\nOnce it's connected, I can also place those opening hours (9am–5pm every day) at the top if you'd like both done together.",
+      "reply": "I'd be happy to add your phone number to the bottom of your main page! But I still need you to select your website project from the sidebar on the left first.\n\nOnce it's connected, I'll add both:\n- Your opening hours (9am–5pm daily) at the top\n- Your phone number (1-800-555-0199) at the bottom\n\nJust click your project in the sidebar, then let me know when it's connected!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -87,7 +87,7 @@
         "has_scope_line": true,
         "question_count": 0
       },
-      "provider": "glm-5.2",
+      "provider": "intent-gateway-casual",
       "tier": "casual"
     },
     {
@@ -137,7 +137,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hi there! 👋 How can I help you today?",
+      "reply": "Hey there! Happy to help with your project—what's on your mind? 😊",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }

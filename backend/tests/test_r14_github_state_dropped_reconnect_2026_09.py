@@ -106,13 +106,18 @@ class TestCallbackStateDroppedReconnect:
         assert row["user_id"] == "user-a"        # unchanged, not dropped
         assert row["active"] is True
 
-    def test_state_absent_and_never_linked_stays_orphan_soft_fail(
+    def test_state_absent_and_never_linked_stays_orphan_but_now_persisted(
         self, configured, client, fake_db,
     ):
         """No prior link exists at all (webhook never landed, no row).
-        This is the ONE case that still can't self-heal from the
-        callback alone — must soft-fail to err=invalid_state, not
-        silently create an unlinked ghost row."""
+        Callback still soft-fails to `err=invalid_state` — no auto-link,
+        no false success — but (2026-09-16, founder-reported live
+        incident: an install genuinely succeeded on GitHub's side yet
+        was 100% invisible to Aurem, with no admin recourse) a ghost
+        row is now persisted (`user_id=None`) so
+        `GET /admin/github/installations/unlinked` can find + link it
+        later, instead of the fetched account/repo data being
+        discarded."""
         with patch.object(httpx, "AsyncClient",
                           _make_mock_client(_github_handler(iid=9002))):
             r = client.get(
@@ -122,8 +127,11 @@ class TestCallbackStateDroppedReconnect:
             )
         assert r.status_code == 302
         assert "err=invalid_state" in r.headers["location"]
-        assert all(x["installation_id"] != 9002
-                   for x in fake_db.github_installations.rows)
+        row = next((x for x in fake_db.github_installations.rows
+                    if x["installation_id"] == 9002), None)
+        assert row is not None
+        assert row.get("user_id") is None
+        assert row["github_login"] == "tejinder"
 
     def test_state_present_but_row_missing_still_recovers_via_string(
         self, configured, client, fake_db,
