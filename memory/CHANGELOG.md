@@ -1,4 +1,24 @@
 # AUREM CTO — Changelog (append-only)
+- **UI FIX — removed redundant "Chat" tab chip from dashboard top bar
+  (2026-09-17)**
+  - Founder screenshot request: the top tab row above the chat panel
+    showed 4 chips (Chat/Preview/Graph/Kit) — Chat was redundant since
+    the chat view is already the default/home content shown below.
+  - Removed the "Chat" entry from `TABS` in `TopBar.jsx`
+    (`/app/frontend/src/components/dashboard/v2/TopBar.jsx`); Preview/
+    Graph/Kit now render left-aligned starting where Chat used to be
+    (plain flex row, no fixed offsets — automatic). Simplified the
+    render filter (`TABS.filter(() => hasRepo)`, dropped the old
+    Chat-special-case), removed the dead Chat-only green-dot indicator
+    JSX, and removed the now-unused `MessagesSquare` icon import.
+  - `tab` state in `Dashboard.jsx` still defaults to/falls back to
+    "Chat" internally (closing Kit, repo disconnect, etc.) —
+    intentional, untouched; only the clickable chip was removed.
+  - Verified by testing agent (fresh browser session): only Preview/
+    Graph/Kit render, no `ds2-tab-chat` present, chat conversation
+    still shows as default view, Preview/Graph tab clicks work.
+    Report: `/app/test_reports/iteration_topbar_chat_removal_2026_01.json`.
+
 - **BUG FIX — Live task popup "What changed" falsely showed line
   insertions as delete+replace (2026-09-17)**
   - Founder-reported (real commit 36ecdee, genuinely +4/-2, safe):
