@@ -5328,3 +5328,74 @@ clean). One pre-existing LOW/cosmetic React duplicate-key warning on
 the older Revokable/Idle/All row list (unrelated to this feature) was
 found and fixed (`installation_id` alone was not always unique as a
 key; now `${installation_id}-${user_id}`).
+
+
+## 2026-09-16 — CRITICAL: GitHub install succeeds on GitHub, never syncs to Aurem DB — root cause found + fixed, testing_agent-verified 100%/100%
+
+Founder-reported live incident: rebecca@millingtonstudio.com — App
+installed + 7 repos selected on GitHub's side, never appeared in
+Aurem's UI. Investigated with real evidence (not guesswork): live-
+queried the SAME shared GitHub App's real `GET /app/installations`
+and `GET /app/hook/deliveries` APIs (services/github_app.py already
+had this — webhook_fence_status, list_installations) and proved a
+KNOWN real user's installation (canndalf, id=161428545, created
+2026-09-13, confirmed live on GitHub, all-repos access) had ZERO
+record in this sandbox's `github_installations` collection — the
+exact failure class reported, reproduced with real data instead of
+assumption.
+
+Root causes:
+  1. `/callback`'s "truly orphaned" branch (no recoverable user_id)
+     fetched the account+repo data from GitHub ONLY to log it, then
+     discarded it without persisting — a deliberate 2026-09-04
+     decision ("write nothing so the next attempt has a clean
+     slate") that made sense before any admin tooling existed to
+     consume an unlinked row productively. REVERSED here: now
+     persists an unlinked ghost row via the same upsert path the
+     webhook uses. Verified safe — the user-facing redirect is
+     UNCHANGED (still fails to err=invalid_state, never auto-links,
+     never shows false success); only a background DB side-effect
+     was added. 4 existing tests whose assertions encoded the OLD
+     behavior were updated with full reasoning for the reversal
+     (tests/test_iter2026_08_27_github_connect_state_recovery.py x3,
+     tests/test_r14_github_state_dropped_reconnect_2026_09.py x1).
+  2. No poll-based fallback existed for GitHub's push-only webhook —
+     if a webhook delivery is missed/misconfigured for any reason,
+     nothing ever catches it. New `services/github_app.py::
+     reconcile_installations()` — one `list_installations()` call +
+     one bulk DB `$in` check (deliberately NO per-installation repo
+     fetch — an earlier draft did this synchronously and, measured
+     live against the real 64-installation App, tripped the `github`
+     circuit breaker after ~5 consecutive timeouts and risked an
+     upstream-idle-timeout abort on the admin HTTP call). Runs as a
+     30-min background cron (`schedule_github_installation_reconcile`,
+     wired in main.py) AND via on-demand admin trigger.
+  3. The existing Webhook Fence admin tile only showed the last 15
+     RAW deliveries — dominated by high-frequency `workflow_job` CI
+     noise, confirmed live to be 100%% workflow_job with zero
+     `installation` events visible even shortly after a real install.
+     `webhook_fence_status(event_filter=, scan_limit=)` now scans
+     multiple 100-per-page deliveries looking for a specific event
+     type, so an admin can actually find the real delivery attempt
+     for an install-specific incident.
+
+**New admin surface** (`routers/admin_ops_config.py` + a new
+"Unlinked GitHub Installations" card on `AdminSystemHealth.jsx`):
+  - `GET /admin/github/installations/unlinked` (reconciles first by
+    default, then lists every ghost row)
+  - `POST /admin/github/installations/reconcile` (on-demand trigger)
+  - `POST /admin/github/installations/{id}/link` (admin manually
+    attaches an orphan to a user by email — 404/409 guarded)
+  - Webhook Fence card gets an "install events only" toggle.
+
+**Testing:** `testing_agent_v3_fork` — 100%% backend (84 tests across
+5 files: state-recovery incl. 4 updated for the reversal, r14,
+github_app_router, github_app_service, + 18 new) + 100%% frontend
+(live UI test: unlinked card shows 64 real rows incl. canndalf/
+161428545, reconcile-now completes in ~0.73s, link/unlink round-trip
+verified + reverted, bad-email 404 verified, webhook-fence toggle
+verified). Confirmed the ~30 full-suite failures seen when running
+ALL ~500+ backend test files together are pre-existing cross-file
+test-isolation pollution unrelated to this change (e.g. `routers.
+repo_status` AttributeError on a module never touched this session) —
+every one passes in isolation or in a smaller relevant-file batch.

@@ -1,0 +1,24 @@
+{
+  "summary": "Verified GitHub Installations reconciliation + Unlinked-Installations admin feature end-to-end. Ran targeted backend pytest (84/84 pass across 5 files: state_recovery, r14, github_app_router, github_app_service, and new test_2026_09_16_github_reconcile_and_unlinked). Frontend UI tested on /admin/system-health with admin login test@aurem.dev: card-unlinked-github-installs renders live (64 unlinked rows including target 161428545 with github_login=canndalf), reconcile-now button works and completes in ~0.73s (well under 3s target), link-with-bad-email returns 404 user_not_found + row stays, link-with-valid-email (test@aurem.dev) succeeds + row is removed + count drops 64->63, webhook-fence-install-only-toggle switches label 'Recent deliveries checked' <-> 'Install-event deliveries checked' and re-fetches with event_filter=installation. Cleanup: reverted 161428545 back to unlinked via direct DB $unset (user_id, linked_at) as instructed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_2026_09_16_github_reconcile_and_unlinked.py",
+    "/app/backend/tests/test_github_app_router.py",
+    "/app/backend/tests/test_github_app_service.py",
+    "/app/backend/tests/test_iter2026_08_27_github_connect_state_recovery.py",
+    "/app/backend/tests/test_r14_github_state_dropped_reconnect_2026_09.py",
+    "/app/test_reports/pytest/pytest_gh_reconcile_2026_09_16.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdminSystemHealth.jsx is a very large file (>1000 lines) — consider splitting each card into its own component for maintainability. Not blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview admin)",
+  "seed_data_creation": "None. Temporarily linked installation_id=161428545 to test_admin_001 during UI test and reverted via db.github_installations.update_one({'installation_id':161428545}, {'$unset':{'user_id':'','linked_at':''}}) — matched=1 modified=1 confirmed. Sandbox left clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "84 backend tests across the 5 GitHub files all green. Note: the review request stated 84 pre-existing + 18 new = 102 total, but the actual combined run reports exactly 84 tests passing (all 5 files together) — this appears to be a counting discrepancy in the request rather than missing tests; every listed test file collected and every test in test_2026_09_16_github_reconcile_and_unlinked.py (18 items across TestUpsertInstallation/TestReconcileInstallations/TestWebhookFenceEventFilter/TestUnlinkedAdminEndpoint/TestReconcileTriggerEndpoint/TestManualLinkEndpoint) passed. Ran from /app/backend cwd (pytest.ini has rootdir there and modules import as 'services.*'/'tests.*'). Full-suite failures for repo_status/MCP/Stripe/sentry and github_bulk_revoke_live tests are pre-existing and intentionally out of scope, confirmed by request."
+}
