@@ -3,10 +3,17 @@
  */
 import React, { useEffect, useState } from "react";
 import { cn } from "./cn";
-import { MessagesSquare, MonitorPlay, Workflow, ChevronRight, Plus, Sparkles } from "lucide-react";
+import { MonitorPlay, Workflow, ChevronRight, Plus, Sparkles } from "lucide-react";
 
+// 2026-09-17 — "Chat" toggle removed from this tab row per founder
+// request (screenshot review): chat is the default/home view of the
+// dashboard already — a redundant tab chip for it just added visual
+// noise next to Preview/Graph/Kit. `tab` state still defaults to and
+// falls back to "Chat" internally elsewhere in Dashboard.jsx (closing
+// Kit, repo disconnect, etc.) — only the clickable chip is gone.
+// Removing it from this array also naturally shifts Preview/Graph/Kit
+// left into the vacated slot (plain flex row, no fixed offsets).
 const TABS = [
-  { id: "Chat",    icon: MessagesSquare },
   { id: "Preview", icon: MonitorPlay },
   { id: "Graph",   icon: Workflow },
   { id: "Kit",     icon: Sparkles },
@@ -202,14 +209,13 @@ export function TopBar({
       </div>
 
       <div className="flex h-[38px] items-end px-5">
-        {TABS.filter(({ id }) => hasRepo || id === "Chat").map(({ id, icon: Icon }) => (
+        {TABS.filter(() => hasRepo).map(({ id, icon: Icon }) => (
           <button key={id} onClick={() => onTabChange(id)}
             data-testid={`ds2-tab-${id.toLowerCase()}`}
             className={cn("relative flex items-center gap-1.5 px-3 pb-[8px] text-[12px] font-medium transition-colors",
               tab === id ? "text-foreground" : "text-muted-foreground hover:text-foreground")}>
             <Icon className={cn("size-[13px] shrink-0", tab === id && "text-primary")} strokeWidth={2} />
             {id}
-            {id === "Chat" && tab === "Chat" && <span className="size-[5px] shrink-0 rounded-full bg-primary" />}
             {tab === id && <span className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-primary" />}
           </button>
         ))}
