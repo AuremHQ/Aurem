@@ -1,4 +1,37 @@
 # AUREM CTO — Changelog (append-only)
+- **BUG FIX — Live task popup "What changed" falsely showed line
+  insertions as delete+replace (2026-09-17)**
+  - Founder-reported (real commit 36ecdee, genuinely +4/-2, safe):
+    the in-app §2 "What changed" panel (`LiveTaskPopup.jsx`) showed
+    `- import React from "react";` / `+ // regression test round3`,
+    implying the React import was deleted and replaced by a comment —
+    false. It was two unrelated changes: a new comment inserted at
+    line 3, and the (byte-for-byte unchanged) import merely shifting
+    down to line 4.
+  - **Root cause**: `build_files_changed()` in
+    `services/task_diff.py` compared `before`/`after` line-by-line
+    using a NAIVE POSITIONAL (index-by-index) loop — no concept of a
+    line shift. Any insertion/deletion above the real change point
+    de-syncs every subsequent line index, so the old line at that now-
+    misaligned index gets compared against an unrelated new line and
+    reported as a false "replace". This is the data source for
+    `LiveTaskPopup.jsx`'s §2 "What changed" section (`old_value`/
+    `new_value` rendered with `-`/`+`) — separate from `PreviewPanel`
+    .jsx's "What changed" tab, which renders GitHub's own real patch
+    text unmodified (not affected by this bug).
+  - **Fix**: rewrote the line-diff to use `difflib.SequenceMatcher`
+    (proper LCS-based alignment — the same tool `build_unified_diff_
+    hunks` in the same file already used) so insert/delete/replace are
+    only ever reported when truly aligned; a pure insertion now reports
+    `new_value` only (`old_value: null`), a pure deletion reports
+    `old_value` only, never a fake cross-pair.
+  - Verified: all 11 pre-existing `test_iter114_live_popup_data.py`
+    tests + 4 dependent `test_overnight_t1_ship_meter.py` tests still
+    pass unchanged; added 2 new regression tests (pure-insertion,
+    pure-deletion) that lock in the exact reported scenario; live
+    repro script confirmed `old_value: None` / `new_value: "// ..."`
+    for the exact insert-above-import case.
+
 - **BUG FIX — GitHub Bulk Revoke "Stuck / Never Completed" tab stuck on
   "Loading…" forever (2026-09-17)**
   - User-reported: after deploy, `/admin/github-bulk-revoke`'s Stuck tab
