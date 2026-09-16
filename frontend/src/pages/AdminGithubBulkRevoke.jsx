@@ -19,7 +19,7 @@
  *          POST /admin/github/bulk-revoke   (dry_run + real)
  *          POST /admin/github/flag-idle
  */
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "../lib/api";
 import { toast } from "../components/Toast";
 import {
@@ -105,7 +105,24 @@ export default function AdminGithubBulkRevoke() {
   const [clearReason, setClearReason] = useState("");
   const [clearResult, setClearResult] = useState(null);
 
+  // 2026-09-17 bug fix — stale-response race. The default "Revokable"
+  // tab's fetch probes live GitHub/PAT status per installation and can
+  // take several seconds; if the admin switches to another tab (e.g.
+  // "Stuck") before it resolves, the fast tab's response used to land
+  // first and render correctly, then the SLOW, now-stale "Revokable"
+  // response would land afterward and unconditionally overwrite
+  // `rowsView` back to "revokable" — permanently mismatching
+  // `rowsView !== view` and leaving the current tab stuck on
+  // "Loading…" forever (confirmed: both requests return 200, no
+  // console errors — it's a client-side state race, not a backend or
+  // response-shape bug). `loadSeqRef` tags every `load()` call with an
+  // incrementing sequence number; only the MOST RECENTLY issued call
+  // is allowed to apply its result once it resolves — any call that
+  // finishes after a newer one has already started is discarded.
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async () => {
+    const mySeq = ++loadSeqRef.current;
     setLoading(true);
     setSelected(new Set());
     setSelectedStuck(new Set());
@@ -115,21 +132,24 @@ export default function AdminGithubBulkRevoke() {
     try {
       if (view === "stuck") {
         const r = await api.get("/admin/github/stuck-connections");
+        if (loadSeqRef.current !== mySeq) return; // superseded by a newer load() — discard
         setStuckRows(r.data.rows || []);
         setRowsView(view);
       } else {
         const r = await api.get("/admin/github/connections", { params: { view } });
+        if (loadSeqRef.current !== mySeq) return; // superseded by a newer load() — discard
         setRows(r.data.rows || []);
         setRowsView(view);
         setLiveVerified(!!r.data.live_verified);
       }
     } catch {
+      if (loadSeqRef.current !== mySeq) return; // superseded by a newer load() — discard
       if (view === "stuck") setStuckRows([]);
       else setRows([]);
       setRowsView(view);
       toast({ message: "Failed to load GitHub connections", kind: "error" });
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === mySeq) setLoading(false);
     }
   }, [view]);
 
