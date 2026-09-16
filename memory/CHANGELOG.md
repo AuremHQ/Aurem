@@ -5399,3 +5399,43 @@ ALL ~500+ backend test files together are pre-existing cross-file
 test-isolation pollution unrelated to this change (e.g. `routers.
 repo_status` AttributeError on a module never touched this session) —
 every one passes in isolation or in a smaller relevant-file batch.
+
+
+## 2026-09-16 — Bug fix: admin "Tokens remaining" field disagreed with the breakdown box, self-verified live
+
+Founder-reported (rebecca@millingtonstudio.com case): granted +50,000
+tokens via the admin panel — the detailed breakdown box correctly
+updated (Granted 0->50.0k, Remaining 100.0k->150.0k) but the separate
+top-level "Tokens remaining" field never moved.
+
+Root cause: two INDEPENDENT token-accounting systems on the same
+response. `routers/admin_users.py`'s `GET /admin/users/{id}` returned
+the raw `dev_users.tokens_remaining` field verbatim at the top level
+(a legacy counter some older features — chat_helpers.py,
+security_scan.py, codebase_health.py — still decrement directly and
+is untouched by "Grant tokens") right next to `usage.remaining`
+(services/usage.py's documented single source of truth, computed
+live from plan_limit + tokens_granted - used). The frontend's
+`submitGrant()` only patched `d.usage` into state after a grant, never
+`d.tokens_remaining` — so even a page that HAD fresh data on load
+would show the two numbers diverge the moment an admin granted tokens
+without a full page reload.
+
+Fix: backend now overwrites the top-level `tokens_remaining` with
+`usage["'remaining'"]` whenever the live usage lookup succeeds (falls
+back to the raw field only if the usage lookup itself fails).
+Frontend (`Admin.jsx`) now renders the top-level field from
+`d.usage.remaining` directly (falling back to `d.tokens_remaining` if
+no usage data), the same state slice the breakdown box already reads
+and that grants already correctly update — the two numbers are now
+physically bound to the same source, not just coincidentally equal.
+
+**Testing:** self-tested — curl before/after grant (1000/1000 ->
+51000/51000, MATCH: True), 2 new + 46 existing pytest
+(`test_phase2_admin_users_coverage.py`) all green, live UI screenshot
+of the exact reported scenario (granted 50k via the real admin panel,
+both "Tokens remaining: 51.0k" and "Remaining: 51.0k" updated
+together). Confirmed 5 unrelated pre-existing failures in a broader
+regression sweep (stale source-grep test pointing at a since-moved
+file, + known live-E2E/mocked-test cross-contamination) — verified
+unrelated, out of scope.

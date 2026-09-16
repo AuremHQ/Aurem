@@ -261,6 +261,20 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     except Exception as e:
         logger.warning(f"usage lookup failed for {user_id}: {e}")
         user["usage"] = None
+    # 2026-09-16 — founder-reported bug: the top-level `tokens_remaining`
+    # field above came straight from the raw `dev_users` document (a
+    # SEPARATE, legacy counter that a few older features — chat_helpers,
+    # security_scan, codebase_health — still decrement directly). It is
+    # NOT kept in sync with grants/usage, so after an admin "Grant
+    # tokens" action, this field silently kept its stale pre-grant value
+    # while `usage.remaining` (below) correctly reflected the grant —
+    # two numbers for "how many tokens does this user have left" on the
+    # same page, guaranteed to disagree. `usage.remaining` is the
+    # documented single source of truth (services/usage.py docstring)
+    # — overwrite the top-level field with it so nothing on this
+    # response can show a stale number next to the correct one.
+    if user["usage"] is not None:
+        user["tokens_remaining"] = user["usage"]["remaining"]
     # Recent admin grants for this user
     user["token_grants"] = await db.cto_token_grants.find(
         {"user_id": user_id}, {"_id": 0},

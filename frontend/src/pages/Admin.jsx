@@ -726,7 +726,7 @@ function UserDetail({ user, onBack }) {
             <div><b>User ID:</b> <code style={{ fontSize: 11 }}>{d.user_id}</code></div>
             <div><b>Tier:</b> {d.tier || "free"}</div>
             <div><b>Status:</b> <Badge color={STATUS_COLOR[d.status || "active"]}>{d.status || "active"}</Badge></div>
-            <div><b>Tokens remaining:</b> {fmt(d.tokens_remaining || 0)}</div>
+            <div><b>Tokens remaining:</b> {fmt((d.usage ? d.usage.remaining : d.tokens_remaining) || 0)}</div>
             {d.usage && (
               <div data-testid="admin-user-usage" style={{ marginTop: 6, padding: "6px 8px",
                 background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
