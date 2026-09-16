@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend-only verification of stale-response race fix in AdminGithubBulkRevoke.jsx (loadSeqRef sequence guard). All 3 race/regression tests PASS. Test 4 (route-loader hang) NOT reproducible in this run.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "tests_executed": {
+    "TEST_1_normal_tab_cycling": "PASS — Revokable, Idle, Stuck, All tabs each cleared 'Loading…' and rendered content under normal network conditions.",
+    "TEST_2_race_condition_repro": "PASS — With page.route() delaying GET /admin/github/connections* by 5s, navigated fresh to /admin/github-bulk-revoke, clicked Stuck tab immediately. Stuck tab rendered rows within ~0.25s. After waiting 7s past the delayed revokable response landing, Stuck tab still shows rows correctly (stuck_row present, loading NOT visible). loadSeqRef guard confirmed working — stale response discarded.",
+    "TEST_3_reverse_race_rapid_switching": "PASS — Rapid switching stuck→revokable→idle→all→stuck settled cleanly on final tab (stuck), loading cleared, correct data rendered.",
+    "TEST_4_route_loader_hang": "NOT REPRODUCIBLE — /login and /admin/github-bulk-revoke loaded normally in this fresh browser session; no >10s Suspense fallback observed. Likely a transient issue in the main agent's earlier session."
+  },
+  "note_route_path": "The actual route path is /admin/github-bulk-revoke (single hyphenated segment), not /admin/github/bulk-revoke as stated in the review request. Confirmed via App.jsx line 464 and adminNav.js. Tests were run against the correct path.",
+  "test_report_links": [],
+  "action_items": [
+    "MINOR: React console warning 'Encountered two children with the same key' fires when rendering Stuck tab and All tab tables on /admin/github-bulk-revoke. Non-blocking, but should be fixed — likely a duplicate key in the row .map(). Search for stuck-row / row list rendering and ensure unique keys (user_id / installation_id may collide across sections)."
+  ],
+  "critical_code_review_comments": [
+    "loadSeqRef fix is correctly implemented — mySeq captured before await, checked after await in both success & error paths, and finally-block setLoading(false) is also guarded. Cannot be bypassed.",
+    "Duplicate React key warning present on this page — consider auditing row .map() key props."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (3/3 race tests passed)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Race-condition fix verified live via network throttling. If revisiting, note: (a) correct route is /admin/github-bulk-revoke, (b) test creds test@aurem.dev / AuremTest2026!, (c) there is one 'Redirected, no follow-up' stuck row (fresh-funnel-0824@aurem.dev) present in the seeded env, (d) a duplicate React key warning was seen — separate minor issue.",
+  "rca of the issue": "Root cause was correctly diagnosed by main agent: shared load() in AdminGithubBulkRevoke.jsx did not guard against out-of-order async resolution. When the slow /admin/github/connections?view=revokable request resolved after a user-initiated tab switch, its trailing setRowsView('revokable') overwrote the fast Stuck response's state, causing showingStaleOrLoading (loading || rowsView !== view) to permanently mismatch. Fix — loadSeqRef useRef sequence number, incremented per call and re-checked after each await — ensures only the latest load()'s result is applied. Verified live: even with a 5s artificial delay on the revokable endpoint, the Stuck tab renders in <0.3s and remains rendered after the stale response lands."
+}

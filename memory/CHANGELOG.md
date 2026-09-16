@@ -1,4 +1,49 @@
 # AUREM CTO — Changelog (append-only)
+- **BUG FIX — GitHub Bulk Revoke "Stuck / Never Completed" tab stuck on
+  "Loading…" forever (2026-09-17)**
+  - User-reported: after deploy, `/admin/github-bulk-revoke`'s Stuck tab
+    called `GET /admin/github/stuck-connections` twice (both 200), yet
+    the table never rendered — stuck on "Loading…" 15+s, no console
+    errors.
+  - **Root cause**: stale-response race in `AdminGithubBulkRevoke.jsx`'s
+    shared `load()`. The default "Revokable" tab's fetch
+    (`/admin/github/connections?view=revokable`) is slow (live GitHub/
+    PAT probing per installation). If the admin switched to "Stuck"
+    before it resolved, the fast stuck-connections response landed
+    first and rendered correctly — but the slow, now-stale "revokable"
+    response then landed and its `setRowsView("revokable")` call
+    unconditionally overwrote the shared `rowsView` state even though
+    `view` was now "stuck". Since the render guard is
+    `showingStaleOrLoading = loading || rowsView !== view`, this
+    permanently mismatched and the tab reverted to (and stayed on)
+    "Loading…" forever.
+  - **Fix**: added a `loadSeqRef` (incrementing sequence number,
+    `useRef`) to `load()` — every call tags itself with `mySeq` at
+    start; after each `await` resolves (success/error/finally paths),
+    the code checks `loadSeqRef.current !== mySeq` and discards the
+    response if a newer `load()` call has since started. Only the most
+    recently issued request's result is ever applied to state.
+  - **Side finding (fixed too)**: testing agent flagged a React
+    "duplicate key" warning on the Stuck/All tabs. Root cause: a
+    genuine backend data-type inconsistency — one seeded fixture
+    project (`p_r10_testbed_e2e`) stored `installation_id` as a
+    **string** while every other row for the same real installation
+    (152797252) stored it as an **int**. `admin_bin.py`'s
+    `github_connections` groups rows by raw `installation_id` value as
+    a dict key, so the string/int variants never merged — two rows
+    rendered with an identical *displayed* installation_id. Fixed by
+    normalizing `installation_id` to `int` before grouping. Verified
+    via curl: 3 rows → correctly merged to 2, zero duplicate keys.
+  - Verified live by testing agent: 3/3 race + regression tests PASS
+    (normal tab cycling, artificial 5s-delay race repro, rapid tab
+    switching). Report: `/app/test_reports/iteration_gbr_stale_race_fix_2026_01.json`.
+  - Noted (not fixed, out of scope, pre-existing): one unrelated test
+    `test_hard_guard_blocked_400` fails expecting 400 but gets 403 —
+    confirmed via `git stash` to predate this session; it's the
+    standing `github_bulk_revoke_live_verified` feature-flag gate
+    (403 is the documented, intended current behavior until the flag
+    is flipped ON post drill-verify).
+
 - **CRITICAL — Chromium/Playwright Unavailable Fix (web_inspect tool)
   (2026-09-13)**
   - Founder-reported: ORA Chat's `web_inspect` tool failed with

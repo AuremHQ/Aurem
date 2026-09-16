@@ -328,6 +328,20 @@ async def github_connections(
     by_installation: dict[Any, dict] = {}
     for p, pat in zip(projs, pat_results):
         iid = p.get("installation_id")
+        # 2026-09-17 bug fix — normalize to int. At least one seeded
+        # fixture project has `installation_id` stored as a STRING
+        # ("152797252") while every other row for that same real
+        # installation stores it as an int (152797252). Using the raw
+        # value as the dict key below meant the string and int variant
+        # never merged — two separate rows rendered with an IDENTICAL
+        # displayed installation_id, which is both misleading for an
+        # admin bulk-revoke tool and triggered a React duplicate-key
+        # warning on the frontend list. Casting up front makes grouping
+        # correct regardless of how any given row happened to store it.
+        try:
+            iid = int(iid) if iid is not None else None
+        except (TypeError, ValueError):
+            iid = None
         uid = p.get("user_id")
         row_key = iid if iid else f"no_install:{p['project_id']}"
         row = by_installation.setdefault(row_key, {
