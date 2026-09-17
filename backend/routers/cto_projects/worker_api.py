@@ -1230,6 +1230,22 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                           edits=_frontend_subset(edits),
                           verified=True,
                           completed_at=time.time())
+        # 2026-09-17 bug fix — founder-reported: Codebase Graph stayed
+        # stale despite real same-day commits made via this (simple,
+        # one-shot) GitHub-API worker — the graph staleness-check-
+        # and-rebuild previously only lived inside the full multi-step
+        # PLANNING loop. Fire-and-forget (never blocks/affects the
+        # already-shipped "done" status above; swallows its own
+        # errors) — see services/graph_builder.refresh_graph_after_commit.
+        try:
+            from services.graph_builder import refresh_graph_after_commit
+            asyncio.create_task(refresh_graph_after_commit(
+                db=_pkg.get_db(), project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), gh_token=user_token,
+                gh_owner=owner, gh_repo=repo, branch=branch,
+            ))
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[cto-task %s] graph refresh scheduling skipped: %r", task_id, e)
         # iter 114 — rich diff + popup data
         try:
             from services.task_diff import (

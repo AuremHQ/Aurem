@@ -153,7 +153,19 @@ function splitFences(text) {
   return out;
 }
 
-// Inline single-backtick code spans inside a plain-text segment.
+// Inline single-backtick code spans, **bold**, and _italic_ inside a
+// plain-text segment.
+//
+// 2026-09-17 bug fix — founder-reported: `_..._` (single-underscore
+// italics, a common LLM output pattern for scan-summary lines like
+// `_0 pages scanned · 1 medium · 1 low_`) rendered as literal
+// underscores — this splitter only ever recognised backtick-code and
+// `**bold**`, nothing else. Added `_..._` → <em>. The underscore
+// delimiters require a non-word character (or string boundary) on
+// either OUTER side so `snake_case_identifiers` in prose/code text
+// are never mistaken for emphasis (CommonMark's intraword-emphasis
+// rule, simplified) — only a `_..._` span with word/punctuation
+// boundaries on both sides is treated as italics.
 function renderInline(text, keyPrefix) {
   if (!text) return null;
   // Iter 388t — Bug 21 follow-up.  Table-cell contents (and any other
@@ -161,7 +173,9 @@ function renderInline(text, keyPrefix) {
   // combined splitter captures either `code` or **bold** spans so we
   // don't recursively re-parse cells that mix both.  Everything else
   // falls through as a plain fragment.
-  const parts = text.split(/(`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*)/g);
+  const parts = text.split(
+    /(`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
+  );
   return parts.map((p, i) => {
     if (p.startsWith("`") && p.endsWith("`") && p.length > 2) {
       return (
@@ -182,6 +196,13 @@ function renderInline(text, keyPrefix) {
         <strong key={`${keyPrefix}-${i}`} style={{ fontWeight: 700 }}>
           {p.slice(2, -2)}
         </strong>
+      );
+    }
+    if (p.startsWith("_") && p.endsWith("_") && p.length > 2) {
+      return (
+        <em key={`${keyPrefix}-${i}`}>
+          {p.slice(1, -1)}
+        </em>
       );
     }
     return <React.Fragment key={`${keyPrefix}-${i}`}>{p}</React.Fragment>;

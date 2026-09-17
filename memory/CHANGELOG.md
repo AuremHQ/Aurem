@@ -1,4 +1,55 @@
 # AUREM CTO — Changelog (append-only)
+- **6-bug regression report — 5 of 6 fixed, #4 held pending repro
+  (2026-09-17)**
+  See test_credentials.md unchanged. Full detail per bug:
+
+  1. **Preview panel blank/white with no explanation** — added a REAL
+     server-side reachability probe: `GET /cto/projects/{id}/preview/
+     reachability` (`routers/cto_projects/preview.py`). Distinguishes
+     `no_deployment` (connection-level failure — nothing listening)
+     from `deployment_down` (a server responded, just 5xx/timeout);
+     any response <500 (even 404) counts as reachable — a real server
+     exists and answered. `PreviewPanel.jsx` now treats this as
+     authoritative over the iframe's `onLoad` event (which fires even
+     for a browser connection-error page — the actual root cause of
+     the silent blank). 6 backend + 4 frontend tests, all passing.
+     Live-curl-verified against a real reachable URL (0.3s), a real
+     DNS-dead URL (0.22s), and a project with no URL configured.
+
+  2. **"WHAT CHANGED" diff misattribution** — already fixed earlier
+     this same session in direct response to an identical standalone
+     report (`services/task_diff.py` — SequenceMatcher rewrite). Not
+     separate prior work; same bug, same fix, already in the
+     codebase, pending redeploy to reach production. 13/13 tests pass.
+
+  3. **`_italic_` markdown not rendering** — `RenderedMessage.jsx`'s
+     `renderInline` had zero italic support. Added `_..._` -> `<em>`,
+     guarded against `snake_case_identifiers`. 13/13 tests pass
+     (4 new + 9 existing).
+
+  4. **Chat input silently failed once after "View diff"** — held,
+     per explicit instruction, pending a reliable reproduction.
+
+  5. **"0 pages scanned" contradictory wording** — `mode_e_auditor.py`
+     reworded to "N file(s) deep-scanned" (scoped to content-analysis
+     count only, no longer conflated with repo-structure presence
+     checks). 2/2 tests pass.
+
+  6. **Codebase Graph 5.5 days stale despite same-day commits** — the
+     existing staleness-check-and-rebuild only lived inside the full
+     multi-step PLANNING loop (`loop_engine.py::_generate_plan`).
+     Extracted into a shared, reusable
+     `services.graph_builder.refresh_graph_after_commit()` and wired
+     it (fire-and-forget, never blocks/affects the task's own "done"
+     status) into both one-shot commit workers
+     (`worker_git.py`, `worker_api.py`) that previously never
+     triggered it at all. 8/8 tests pass. `loop_engine.py`'s existing
+     working implementation left untouched (no regression risk).
+
+  Consolidated: 76 backend + 35 frontend tests pass across every file
+  touched this session. All fixes are backend/frontend code changes
+  only, no schema/env changes.
+
 - **UI FIX — removed redundant "Chat" tab chip from dashboard top bar
   (2026-09-17)**
   - Founder screenshot request: the top tab row above the chat panel

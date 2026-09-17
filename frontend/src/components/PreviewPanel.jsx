@@ -239,6 +239,32 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
     }, 10000);
     return () => clearTimeout(t);
   }, [refreshKey]);
+  // 2026-09-17 bug fix — founder-reported: the live-preview iframe can
+  // render a permanently blank/white result with zero explanation.
+  // Root cause: `liveState` above only ever inferred up/down status
+  // from the iframe's own `onLoad` event — but a cross-origin
+  // iframe's `onLoad` fires even for a browser-level connection-error
+  // page, hiding the "slow"/offline overlay and leaving a genuinely
+  // blank result with no Aurem-provided context. `reachability` is a
+  // REAL server-side probe (no CORS/iframe blind spots) that takes
+  // priority over the (unreliable) `onLoad` signal whenever it comes
+  // back negative — see the render logic below.
+  //   null                      — check in flight / not yet run
+  //   { reachable: true, ... }  — a server answered; trust the iframe
+  //   { reachable: false, reason: "no_deployment" | "deployment_down", detail }
+  const [reachability, setReachability] = useState(null);
+  useEffect(() => {
+    if (!activeProject?.project_id) { setReachability(null); return; }
+    let alive = true;
+    setReachability(null);
+    api.get(`/cto/projects/${activeProject.project_id}/preview/reachability`)
+      .then((r) => { if (alive) setReachability(r.data); })
+      // Our own check failing (network hiccup to our backend, not the
+      // target site) must never block the existing onLoad/10s-timer
+      // fallback UX — leave `reachability` null so it's ignored below.
+      .catch(() => { if (alive) setReachability(null); });
+    return () => { alive = false; };
+  }, [activeProject?.project_id, refreshKey]);
   // Iter 170c — Codebase browse mode.
   //   `codebase`        — { files: [{path, size}], owner, repo, branch } once loaded
   //   `codebaseLoading` — true while the tree fetch is in flight
@@ -958,58 +984,112 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
                 background: "white",
               }}
             />
-            {liveState !== "loaded" && (
-              <div
-                data-testid="preview-live-state-overlay"
-                style={{
-                  position: "absolute", inset: 0, zIndex: 2,
-                  display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center", gap: 10,
-                  background: "var(--bg, #111)", color: "var(--text-dim, #bbb)",
-                  fontSize: 13, textAlign: "center", padding: 24,
-                }}
-              >
-                {liveState === "loading" ? (
-                  <>
-                    <span className="animate-spin" style={{
-                      width: 18, height: 18, borderRadius: "50%",
-                      border: "2px solid rgba(255,102,8,0.25)",
-                      borderTopColor: "#FF6608", display: "inline-block",
-                    }} />
-                    <span>Loading live preview…</span>
-                    <span style={{ fontSize: 11, color: "var(--text-faint, #777)", wordBreak: "break-all" }}>
-                      {String(block.code || "").trim()}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span style={{ fontWeight: 700, color: "#fbbf24" }}>
-                      Still loading after 10 seconds
-                    </span>
-                    <span style={{ maxWidth: 420 }}>
-                      The site may be slow, offline, or blocking embedded
-                      previews (X-Frame-Options). It is NOT necessarily broken.
-                    </span>
-                    <a
-                      data-testid="preview-live-open-newtab"
-                      href={String(block.code || "").trim()}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ color: "#60a5fa", fontWeight: 600 }}
-                    >
-                      Open in a new tab ↗
-                    </a>
-                    <button
-                      data-testid="preview-live-retry-btn"
-                      onClick={() => setRefreshKey((k) => k + 1)}
-                      className="btn-ghost"
-                      style={{ fontSize: 12, padding: "4px 12px" }}
-                    >
-                      Retry
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+            {/* `unreachable` (a definitive, server-verified negative)
+                takes priority over `liveState`, even after `onLoad`
+                already fired and set liveState="loaded" — that event
+                fires for a browser-level connection-error page too,
+                so it's not trustworthy evidence the site is actually
+                up once we KNOW otherwise. */}
+            {(() => {
+              const unreachable = reachability && reachability.reachable === false
+                ? reachability : null;
+              if (!unreachable && liveState === "loaded") return null;
+              return (
+                <div
+                  data-testid="preview-live-state-overlay"
+                  style={{
+                    position: "absolute", inset: 0, zIndex: 2,
+                    display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "center", gap: 10,
+                    background: "var(--bg, #111)", color: "var(--text-dim, #bbb)",
+                    fontSize: 13, textAlign: "center", padding: 24,
+                  }}
+                >
+                  {unreachable ? (
+                    <>
+                      <span
+                        data-testid="preview-live-unreachable-title"
+                        style={{ fontWeight: 700, color: "#f87171" }}
+                      >
+                        {unreachable.reason === "no_deployment"
+                          ? "No live deployment reachable"
+                          : "This deployment isn't responding"}
+                      </span>
+                      <span style={{ maxWidth: 420 }}>
+                        {unreachable.reason === "no_deployment"
+                          ? "Nothing appears to be listening at this URL right "
+                            + "now — it may never have been deployed, or the "
+                            + "deployment was taken down."
+                          : "A server responded at this URL before, but it's "
+                            + "currently erroring or timing out. The deployment "
+                            + "likely exists but is unhealthy right now."}
+                      </span>
+                      {unreachable.checked_url && (
+                        <span style={{ fontSize: 11, color: "var(--text-faint, #777)", wordBreak: "break-all" }}>
+                          {unreachable.checked_url}
+                        </span>
+                      )}
+                      {unreachable.checked_url && (
+                        <a
+                          data-testid="preview-live-open-newtab"
+                          href={unreachable.checked_url}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{ color: "#60a5fa", fontWeight: 600 }}
+                        >
+                          Open in a new tab ↗
+                        </a>
+                      )}
+                      <button
+                        data-testid="preview-live-retry-btn"
+                        onClick={() => setRefreshKey((k) => k + 1)}
+                        className="btn-ghost"
+                        style={{ fontSize: 12, padding: "4px 12px" }}
+                      >
+                        Retry
+                      </button>
+                    </>
+                  ) : liveState === "loading" ? (
+                    <>
+                      <span className="animate-spin" style={{
+                        width: 18, height: 18, borderRadius: "50%",
+                        border: "2px solid rgba(255,102,8,0.25)",
+                        borderTopColor: "#FF6608", display: "inline-block",
+                      }} />
+                      <span>Loading live preview…</span>
+                      <span style={{ fontSize: 11, color: "var(--text-faint, #777)", wordBreak: "break-all" }}>
+                        {String(block.code || "").trim()}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontWeight: 700, color: "#fbbf24" }}>
+                        Still loading after 10 seconds
+                      </span>
+                      <span style={{ maxWidth: 420 }}>
+                        The site may be slow, offline, or blocking embedded
+                        previews (X-Frame-Options). It is NOT necessarily broken.
+                      </span>
+                      <a
+                        data-testid="preview-live-open-newtab"
+                        href={String(block.code || "").trim()}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{ color: "#60a5fa", fontWeight: 600 }}
+                      >
+                        Open in a new tab ↗
+                      </a>
+                      <button
+                        data-testid="preview-live-retry-btn"
+                        onClick={() => setRefreshKey((k) => k + 1)}
+                        className="btn-ghost"
+                        style={{ fontSize: 12, padding: "4px 12px" }}
+                      >
+                        Retry
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           </div>
         ) : effectiveBlocks.length === 0 ? (

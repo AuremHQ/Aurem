@@ -336,7 +336,22 @@ def build_audit_report(
 
     lines = [
         f"**Audit report — {repo_ctx}**",
-        f"_{files_scanned} files scanned · {len(critical)} critical · {len(high)} high · {len(medium)} medium · {len(low)} low_",
+        # 2026-09-17 bug fix — founder-reported: this line read as
+        # self-contradictory ("0 files scanned" yet real findings
+        # listed below it) because `files_scanned` only counts files
+        # whose CONTENT was fetched for static/LLM deep analysis,
+        # while missing-file checks (.env.example, Dockerfile, etc.)
+        # are a SEPARATE repo-structure presence check against the
+        # file tree — those can surface real findings even when zero
+        # files were deep-scanned. Scoping the wording to "deep-
+        # scanned" (rather than the previous unqualified "scanned")
+        # removes the "scanned nothing, found things" contradiction
+        # without inventing a new, hard-to-define "checks run" count.
+        (
+            f"_{files_scanned} file(s) deep-scanned · {len(critical)} "
+            f"critical · {len(high)} high · {len(medium)} medium · "
+            f"{len(low)} low_"
+        ),
         "",
     ]
 

@@ -454,6 +454,65 @@ async def build_graph(
     return graph
 
 
+# 2026-09-17 bug fix — founder-reported: the Codebase Graph stayed 5.5
+# days stale despite several real same-day commits. Root cause: the
+# staleness-check-and-rebuild ("if the graph is >30 min old, rebuild
+# silently") only ever lived inline inside `_generate_plan` in
+# `services/loop_engine.py` — the full multi-step PLANNING loop. A
+# simple one-shot chat fix (the git-binary worker in `worker_git.py`
+# or the GitHub-API worker in `worker_api.py`) never goes through
+# `_generate_plan`, so its commits never triggered a graph rebuild at
+# all, no matter how stale the graph got. This extracts that exact
+# same check into one shared, reusable helper so EVERY commit-
+# completing code path can call it, not just full-plan tasks.
+STALE_GRAPH_AFTER_S = 30 * 60
+
+
+async def refresh_graph_after_commit(
+    db,
+    project_id: str,
+    user_id: str,
+    gh_token: str,
+    gh_owner: str,
+    gh_repo: str,
+    branch: str = "main",
+) -> None:
+    """Best-effort — checks graph staleness and rebuilds if needed.
+    Never raises: a graph-refresh failure must never affect a task
+    that has already shipped successfully. Callers should schedule
+    this via `asyncio.create_task(...)` right after a commit so it
+    never adds latency to the task's own "done" status.
+    """
+    if not (db is not None and project_id and user_id
+            and gh_token and gh_owner and gh_repo):
+        return
+    try:
+        prior = await db.project_graphs.find_one(
+            {"project_id": project_id, "user_id": user_id},
+            {"_id": 0, "built_at": 1},
+        )
+        age = (
+            time.time() - (prior or {}).get("built_at", 0)
+            if prior else float("inf")
+        )
+        if prior and age <= STALE_GRAPH_AFTER_S:
+            return
+        logger.info(
+            "[graph] stale (age=%.0fs) after commit — refreshing "
+            "project=%s",
+            age if age != float("inf") else -1, project_id,
+        )
+        await build_graph(
+            db=db, project_id=project_id, user_id=user_id,
+            gh_token=gh_token, gh_owner=gh_owner, gh_repo=gh_repo,
+            branch=branch or "main",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[graph] post-commit refresh failed for %s: %r", project_id, e,
+        )
+
+
 async def get_graph(db, project_id: str, user_id: str) -> dict:
     """Light read (excludes heavy `nodes` field). Used by the FE list view."""
     if db is None or not project_id or not user_id:
