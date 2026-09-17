@@ -170,9 +170,21 @@ function renderInline(text, keyPrefix) {
   if (!text) return null;
   // Iter 388t — Bug 21 follow-up.  Table-cell contents (and any other
   // inline text) need to parse **bold** in addition to `code`.  The
-  // combined splitter captures either `code` or **bold** spans so we
-  // don't recursively re-parse cells that mix both.  Everything else
-  // falls through as a plain fragment.
+  // combined splitter captures either `code`, **bold**, or _italic_
+  // spans in one pass. Everything else falls through as a plain
+  // fragment.
+  //
+  // 2026-09-17 bug fix — founder-reported: `**bold**` nested INSIDE
+  // an `_italic_` span (e.g. `_Say **"fix the critical issues"** to
+  // proceed._`) rendered the bold markers as literal asterisks. Root
+  // cause: `<strong>`/`<em>` rendered their inner text as a plain
+  // string, never re-parsed for the OTHER syntax nested inside it.
+  // Fixed by recursing `renderInline` on the stripped-delimiter inner
+  // content for bold/italic (code spans intentionally still render
+  // literally — standard convention, code content shouldn't have
+  // markdown re-interpreted inside it). Recursion always operates on
+  // a strictly shorter string (delimiters stripped each call), so it
+  // terminates naturally — no infinite-loop risk.
   const parts = text.split(
     /(`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
   );
@@ -194,14 +206,14 @@ function renderInline(text, keyPrefix) {
     if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
       return (
         <strong key={`${keyPrefix}-${i}`} style={{ fontWeight: 700 }}>
-          {p.slice(2, -2)}
+          {renderInline(p.slice(2, -2), `${keyPrefix}-${i}-b`)}
         </strong>
       );
     }
     if (p.startsWith("_") && p.endsWith("_") && p.length > 2) {
       return (
         <em key={`${keyPrefix}-${i}`}>
-          {p.slice(1, -1)}
+          {renderInline(p.slice(1, -1), `${keyPrefix}-${i}-i`)}
         </em>
       );
     }

@@ -400,6 +400,29 @@ async def apply_finding_fix(
         if full_sha else ""
     )
 
+    # 2026-09-17 (bug 6 round 2) — This is a THIRD real-commit path
+    # (auto-fix from a scan finding), separate from the one-shot
+    # workers (`_run_task_with_git` / `_run_task_via_api`) that already
+    # got the post-commit graph refresh. Founder-reported repro used
+    # this exact "fix the critical issues" flow right before checking
+    # graph staleness — this path never scheduled a refresh at all.
+    # Deliberately refresh against `branch` (the project's actual base
+    # branch the Graph tab displays), NOT `commit_target` — a
+    # branch-per-fix commit hasn't landed on `branch` yet, so
+    # refreshing there would just re-confirm no visible change; only
+    # refresh `commit_target` state once/if this lands on `branch`
+    # (covered by the `commit_target == branch` fallback case below).
+    try:
+        from services.graph_builder import refresh_graph_after_commit
+        import asyncio
+        asyncio.create_task(refresh_graph_after_commit(
+            db=db, project_id=project_id, user_id=user_id,
+            gh_token=token, gh_owner=owner, gh_repo=repo,
+            branch=branch,
+        ))
+    except Exception as e:                                # noqa: BLE001
+        logger.warning("post-fix graph refresh scheduling failed: %r", e)
+
     # Open a draft PR if we committed to a branch.
     if commit_target != branch:
         try:

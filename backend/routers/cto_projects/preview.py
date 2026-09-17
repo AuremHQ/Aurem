@@ -245,6 +245,14 @@ async def check_preview_reachability(
         ) as c:
             async with c.stream("GET", url) as r:
                 status_code = r.status_code
+                # Peek at just the first chunk (not the whole body —
+                # keeps this fast even for large pages) so we can
+                # sniff for known "no deployment" platform signatures
+                # below, regardless of status code.
+                body_snippet = b""
+                async for chunk in r.aiter_bytes(chunk_size=4096):
+                    body_snippet = chunk
+                    break
     except (httpx.ConnectError, httpx.ConnectTimeout):
         # No response at any level — the connection itself never
         # succeeded (DNS failure / refused / nothing listening). The
@@ -267,6 +275,30 @@ async def check_preview_reachability(
             "ok": True, "reachable": False, "reason": "deployment_down",
             "detail": f"Couldn't reach {url} ({type(e).__name__}).",
             "checked_url": url,
+        }
+
+    # 2026-09-17 bug fix (round 2) — founder-reported LIVE on the real
+    # target site (aurem.live): it responds with HTTP 400 and the
+    # literal body "Deployment not found" — a deterministic, well-
+    # documented "nothing is actually deployed here" signal used by
+    # several hosting platforms. Because 400 < 500, this was
+    # previously misclassified as `reachable: true`, so the panel
+    # correctly deferred to the iframe — which then rendered that
+    # provider's own blank/minimal error page with zero Aurem-side
+    # explanation (exactly the reported symptom). Sniffing the body
+    # for these known phrases, regardless of status code, catches
+    # this "technically responded, but nothing is deployed" class.
+    body_text = body_snippet.decode("utf-8", errors="ignore").lower()
+    NO_DEPLOYMENT_BODY_SIGNATURES = (
+        "deployment not found",
+        "this deployment cannot be found",
+    )
+    if any(sig in body_text for sig in NO_DEPLOYMENT_BODY_SIGNATURES):
+        return {
+            "ok": True, "reachable": False, "reason": "no_deployment",
+            "detail": f"{url} responded with HTTP {status_code}, but the "
+                       "response itself says no deployment exists there.",
+            "checked_url": url, "status_code": status_code,
         }
 
     if status_code < 500:

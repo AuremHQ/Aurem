@@ -118,3 +118,38 @@ async def test_4xx_response_still_counts_as_reachable():
         res = await preview_mod.check_preview_reachability("p_x", authorization="Bearer x")
     assert res["reachable"] is True
     assert res["status_code"] == 404
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_vercel_style_deployment_not_found_body_overrides_status_under_500():
+    # 2026-09-17 round 2 — founder-reported LIVE on the real target
+    # site (aurem.live): it responds with HTTP 400 and the literal
+    # body "Deployment not found". Because 400 < 500, this used to be
+    # misclassified as reachable:true (the exact reason the founder
+    # never saw a message — the panel correctly deferred to the
+    # iframe, which then rendered the provider's own blank error page
+    # with zero Aurem-side explanation). Must now be no_deployment
+    # regardless of the <500 status code.
+    respx.get("https://aurem-style-dead.example.com").respond(
+        400, text="Deployment not found",
+    )
+    p1, p2 = _patch_auth_and_db({"preview_url": "https://aurem-style-dead.example.com", "live_url": None})
+    with p1, p2:
+        res = await preview_mod.check_preview_reachability("p_x", authorization="Bearer x")
+    assert res["reachable"] is False
+    assert res["reason"] == "no_deployment"
+    assert res["status_code"] == 400
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_deployment_not_found_signature_is_case_insensitive():
+    respx.get("https://mixed-case.example.com").respond(
+        400, text="DEPLOYMENT NOT FOUND",
+    )
+    p1, p2 = _patch_auth_and_db({"preview_url": "https://mixed-case.example.com", "live_url": None})
+    with p1, p2:
+        res = await preview_mod.check_preview_reachability("p_x", authorization="Bearer x")
+    assert res["reachable"] is False
+    assert res["reason"] == "no_deployment"

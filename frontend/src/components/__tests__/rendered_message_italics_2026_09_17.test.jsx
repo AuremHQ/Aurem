@@ -47,4 +47,37 @@ describe("RenderedMessage — _italic_ emphasis", () => {
     expect(container.querySelector("code")?.textContent).toBe("code");
     expect(container.querySelector("em")?.textContent).toBe("italic");
   });
+
+  // 2026-09-17 — founder found this DURING live verification of the
+  // _italic_ fix above: `**bold**` NESTED inside an `_italic_` span
+  // rendered the bold markers as literal asterisks (the exact
+  // reported case: `_Say **"fix the critical issues"** to proceed._`
+  // in a scan-report follow-up). Root cause: <em> rendered its inner
+  // text as a plain string, never re-parsed for the bold syntax
+  // nested inside it. Fixed by recursing renderInline on the
+  // stripped-delimiter inner content.
+  it("renders **bold** nested inside an _italic_ span — the exact founder-reported case", () => {
+    const md = '2 of these can be auto-fixed. _Say **"fix the critical issues"** to proceed._';
+    const { container } = render(<RenderedMessage text={md} />);
+    const em = container.querySelector("em");
+    expect(em).toBeTruthy();
+    const strong = em.querySelector("strong");
+    expect(strong).toBeTruthy();
+    expect(strong.textContent).toBe('"fix the critical issues"');
+    // No literal markdown markers should leak through anywhere.
+    expect(container.textContent).not.toMatch(/\*/);
+    expect(container.textContent).not.toMatch(/_/);
+  });
+
+  it("renders _italic_ nested inside a **bold** span (the reverse nesting direction)", () => {
+    const md = "This is **bold with _italic_ inside it** here.";
+    const { container } = render(<RenderedMessage text={md} />);
+    const strong = container.querySelector("strong");
+    expect(strong).toBeTruthy();
+    const em = strong.querySelector("em");
+    expect(em).toBeTruthy();
+    expect(em.textContent).toBe("italic");
+    expect(container.textContent).not.toMatch(/\*/);
+    expect(container.textContent).not.toMatch(/_/);
+  });
 });
