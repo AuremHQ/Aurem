@@ -359,15 +359,81 @@ async def is_loop_circuit_open(
 
 # ─── Branch-per-fix utilities ────────────────────────────────────────
 def aurem_branch_name(kind: str, identifier: str) -> str:
-    """Deterministic branch name for fixes/loops.
+    """TRULY deterministic branch name — same (kind, identifier) in ⇒
+    same branch name out, every time, no exceptions.
+
+    2026-09-17 fix (Bug 1 — runaway duplicate PRs, 389 open on one
+    connected repo). This used to append `int(time.time())`, so the
+    docstring claimed "deterministic" but every run of the SAME fix
+    (same rule_id, same file) minted a BRAND NEW branch name, which
+    meant a brand new PR every time instead of updating the existing
+    one — with no reaper, they never stopped accumulating. Removing
+    the timestamp is the root fix: `create_or_reuse_branch()` already
+    handles "branch already exists" as a safe no-op (422 → ok), so a
+    second run of the identical fix now pushes a new commit onto the
+    SAME branch/PR instead of forking a new one. Callers that need
+    per-file uniqueness (e.g. `finding_fix_applier`) must fold the
+    file path into `identifier` themselves — this function only
+    guarantees "same identifier ⇒ same name", it doesn't invent
+    uniqueness on its own.
     Examples:
-      aurem_branch_name("fix", "secret_aws") → "aurem/fix-secret_aws-<unix>"
-      aurem_branch_name("loop", "abc12345")  → "aurem/loop-abc12345-<unix>"
+      aurem_branch_name("fix", "secret_aws") → "aurem/fix-secret_aws"
+      aurem_branch_name("loop", "abc12345")  → "aurem/loop-abc12345"
     """
     import re
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", identifier or "x")[:40].strip("-") or "x"
-    ts = int(time.time())
-    return f"aurem/{kind}-{safe}-{ts}"
+    return f"aurem/{kind}-{safe}"
+
+
+async def find_open_pr_for_branch(
+    *, owner: str, repo: str, head_branch: str, token: str,
+) -> Optional[dict]:
+    """Look up the open PR (if any) whose head is `head_branch`.
+    Returns the raw GitHub PR dict, or None if there isn't one (or
+    the lookup failed — a lookup failure must never be confused with
+    "confirmed no PR exists", so callers should treat None as "fall
+    back to creating one" either way, same as before this existed)."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-pr-helper",
+    }
+    try:
+        r = await github_request_with_retry(
+            "GET", f"https://api.github.com/repos/{owner}/{repo}/pulls",
+            headers=headers,
+            params={"state": "open", "head": f"{owner}:{head_branch}"},
+        )
+        if r.status_code == 200:
+            prs = r.json() or []
+            return prs[0] if prs else None
+        logger.warning(
+            "find_open_pr_for_branch(%s/%s head=%s) HTTP %s",
+            owner, repo, head_branch, r.status_code,
+        )
+    except Exception as e:                                   # noqa: BLE001
+        logger.warning("find_open_pr_for_branch failed: %r", e)
+    return None
+
+
+async def add_pr_comment(
+    *, owner: str, repo: str, pr_number: int, body: str, token: str,
+) -> tuple[bool, Optional[str]]:
+    """Post a comment on a PR/issue. Best-effort — a comment failure
+    must never block a fix that already landed a real commit."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-pr-helper",
+    }
+    r = await github_request_with_retry(
+        "POST",
+        f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments",
+        headers=headers, json={"body": body[:65000]},
+    )
+    if r.status_code in (200, 201):
+        return True, None
+    return False, f"comment_status_{r.status_code}"
 
 
 async def create_or_reuse_branch(

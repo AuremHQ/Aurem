@@ -29,6 +29,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { pageTitle } from "../lib/siteConfig";
 import FounderOfferPill from "../components/FounderOfferPill";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
@@ -737,8 +738,17 @@ export default function Landing() {
   };
 
   // SEO/AEO title + description sync (preserved from Iter 175).
+  // 2026-09-17 — Bug 7 fix: this used to hardcode a THIRD, different
+  // title string ("developers choice") and never restored it on
+  // unmount, so it stuck on every OTHER page you navigated to next
+  // that didn't set its own title — the exact "flips between two
+  // titles across navigations" bug report. Now uses the one shared
+  // `pageTitle()` (matching index.html's static default byte-for-
+  // byte) and restores whatever was there before, like every other
+  // page in the app already does.
   useEffect(() => {
-    document.title = "ORA by Aurem — developers choice";
+    const prevTitle = document.title;
+    document.title = pageTitle();
     const desc =
       "ORA by Aurem — AI engineer that reads your GitHub repo and " +
       "commits production code directly. No IDE. Flat $9/month.";
@@ -749,6 +759,7 @@ export default function Landing() {
       document.head.appendChild(tag);
     }
     tag.setAttribute("content", desc);
+    return () => { document.title = prevTitle; };
   }, []);
 
   return (

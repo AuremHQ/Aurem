@@ -301,6 +301,35 @@ async def scan(
         logger.debug("learning scan-run hook (health) soft-failed: %r", _e)
     # Iter 212m-75 — surface remaining quota per category in a header so
     # callers can render an inline counter without parsing the body.
+    # 2026-09-17 — Bug 6 fix (live QA report): slash-command scan
+    # results (`/security-scan` etc.) only ever reached the user as a
+    # transient toast — nothing landed in the durable chat transcript,
+    # unlike every other agent action. That's invisible to anyone who
+    # reopens the chat, and to the audit trail — which matters more
+    # here than almost anywhere else, since these are security-
+    # relevant results. Best-effort, same pattern as the two persist
+    # hooks above: a failure here must never break the scan response
+    # the user is waiting on.
+    session_id = (body or {}).get("session_id")
+    if session_id:
+        try:
+            from services.ora_chat.session import append_message
+            cats_label = ", ".join(categories)
+            lines = [f"**Scan complete — {cats_label}**", "", payload["summary"]]
+            for cat, b in breakdown.items():
+                if b["total"]:
+                    lines.append(
+                        f"- `{cat}`: {b['total']} finding(s) "
+                        f"(critical {b['counts']['critical']}, "
+                        f"high {b['counts']['high']})"
+                    )
+            await append_message(
+                session_id, user_id,
+                role="assistant", content="\n".join(lines),
+                route="scan-result",
+            )
+        except Exception as e:                              # noqa: BLE001
+            logger.debug("scan-result chat persist failed: %r", e)
     headers = {
         "X-Scan-Remaining": str(min(remaining.values()) if remaining else 0),
         "X-Scan-Remaining-Per-Category": ",".join(

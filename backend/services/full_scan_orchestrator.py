@@ -311,23 +311,26 @@ def _touches_web_or_dockerfile(files: list[dict]) -> bool:
 
 def should_run_full_scan(files: list[dict]) -> tuple[bool, str]:
     """Depth-gate decision. Returns (should_run, reason_str)."""
+    from services.plural_utils import pluralize
     n_files, n_lines = _diff_metrics(files)
+    files_label = pluralize(n_files, "file")
+    lines_label = pluralize(n_lines, "line")
 
     if _touches_web_or_dockerfile(files):
         return True, (
             f"diff touches an HTTP entrypoint or Dockerfile "
-            f"({n_files} files, {n_lines} lines) — Full Scan required"
+            f"({files_label}, {lines_label}) — Full Scan required"
         )
     if n_files > DEPTH_GATE_MAX_FILES:
         return True, (
-            f"{n_files} files changed > {DEPTH_GATE_MAX_FILES} — Full Scan required"
+            f"{files_label} changed > {DEPTH_GATE_MAX_FILES} — Full Scan required"
         )
     if n_lines > DEPTH_GATE_MAX_LINES:
         return True, (
-            f"{n_lines} lines changed > {DEPTH_GATE_MAX_LINES} — Full Scan required"
+            f"{lines_label} changed > {DEPTH_GATE_MAX_LINES} — Full Scan required"
         )
     return False, (
-        f"small diff ({n_files} files, {n_lines} lines) — "
+        f"small diff ({files_label}, {lines_label}) — "
         f"Verify + Vanguard only"
     )
 

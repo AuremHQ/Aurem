@@ -350,6 +350,43 @@ export default function Analytics() {
                     </span>
                   </div>
                 ))}
+                {/* 2026-09-17 — Bug 8 fix: "Failed: 35" alone isn't
+                    debuggable — "61% of failures are timeouts" is a
+                    sprint. Breaks the flat count above into WHY,
+                    same reason codes tagged at write-time in
+                    services/failure_taxonomy.py. */}
+                {data.tasks.failed > 0 && (
+                  <div data-testid="analytics-failed-by-reason" style={{ marginTop: 10 }}>
+                    <div
+                      style={{
+                        fontSize: 10, color: "var(--text-faint)",
+                        textTransform: "uppercase", letterSpacing: "0.1em",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Failed — by reason
+                    </div>
+                    {Object.entries(data.tasks.failed_by_reason || {})
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([reason, count]) => (
+                        <div
+                          key={reason}
+                          data-testid={`analytics-failed-reason-${reason}`}
+                          style={{
+                            display: "flex", justifyContent: "space-between",
+                            padding: "2px 0 2px 10px", fontSize: 11,
+                          }}
+                        >
+                          <span style={{ color: "var(--text-faint)" }}>
+                            {reason.replaceAll("_", " ").toLowerCase()}
+                          </span>
+                          <span style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--text-main)" }}>
+                            {count}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -320,6 +320,74 @@ class TestScan:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# POST /scan — Bug 6 fix (2026-09-17): session_id → persisted chat msg
+# ═════════════════════════════════════════════════════════════════════
+
+class TestScanSessionPersist:
+    def test_session_id_provided_persists_a_chat_message(self, client, fake_db):
+        _seed_project(fake_db, project_id="p5")
+        with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
+                  AsyncMock(return_value=([{"path": "app.py", "size": 10}], "sha1"))), \
+             patch("services.repo_text_cache._fetch_file",
+                  AsyncMock(return_value="import os\nprint('x')\n")), \
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.repo_text_cache.put_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.ora_chat.session.append_message",
+                  AsyncMock(return_value=True)) as append_mock:
+            r = client.post(
+                "/api/aurem-dev/codebase-health/scan",
+                headers={"Authorization": "Bearer admin-user"},
+                json={"project_id": "p5", "categories": ["security"],
+                      "session_id": "sess-123"},
+            )
+        assert r.status_code == 200, r.text
+        append_mock.assert_awaited_once()
+        call_args = append_mock.await_args
+        assert call_args.args[0] == "sess-123"
+        assert call_args.args[1] == "admin-user"
+        assert call_args.kwargs["role"] == "assistant"
+        assert call_args.kwargs["route"] == "scan-result"
+        assert "Scan complete" in call_args.kwargs["content"]
+
+    def test_no_session_id_never_calls_append_message(self, client, fake_db):
+        _seed_project(fake_db, project_id="p6")
+        with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
+                  AsyncMock(return_value=([], "sha0"))), \
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.repo_text_cache.put_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.ora_chat.session.append_message",
+                  AsyncMock(return_value=True)) as append_mock:
+            r = client.post(
+                "/api/aurem-dev/codebase-health/scan",
+                headers={"Authorization": "Bearer admin-user"},
+                json={"project_id": "p6", "categories": ["security"]},
+            )
+        assert r.status_code == 200, r.text
+        append_mock.assert_not_awaited()
+
+    def test_append_message_failure_never_breaks_the_scan_response(self, client, fake_db):
+        """Best-effort persist — a Mongo/append failure must not take
+        down the scan response the user is waiting on."""
+        _seed_project(fake_db, project_id="p7")
+        with patch("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token")), \
+             patch("services.repo_text_cache._list_repo_tree_with_sha",
+                  AsyncMock(return_value=([], "sha0"))), \
+             patch("services.repo_text_cache.get_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.repo_text_cache.put_cached_text_cache", AsyncMock(return_value=None)), \
+             patch("services.ora_chat.session.append_message",
+                  AsyncMock(side_effect=RuntimeError("mongo down"))):
+            r = client.post(
+                "/api/aurem-dev/codebase-health/scan",
+                headers={"Authorization": "Bearer admin-user"},
+                json={"project_id": "p7", "categories": ["security"],
+                      "session_id": "sess-456"},
+            )
+        assert r.status_code == 200, r.text
+
+
+# ═════════════════════════════════════════════════════════════════════
 # GET /last
 # ═════════════════════════════════════════════════════════════════════
 

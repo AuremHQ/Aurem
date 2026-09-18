@@ -27,7 +27,7 @@ from services.llm import call_llm
 from services.cto_projects_helpers import (
     _log, _emit, _retry, _hallucination_reasons,
     _verbatim_reasons, _extract_verbatim_literals,
-    _dropped_import_reasons,
+    _dropped_import_reasons, _dropped_statement_reasons,
     _symbol_scope_creep_reasons, _file_scope_creep_reasons,
 )
 
@@ -134,13 +134,22 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     `_file_scope_creep_reasons()` (a file touched that was never
     shown to the model and never named in the task) — same
     retry-then-abort path, same in-band nudge pattern.
+
+    2026-09-17 — Bug 2 fix (live incident, commit 36ecdee). Also runs
+    `_dropped_statement_reasons()`: a task that itself claims to be a
+    trivial "add a comment/marker" change must not also silently
+    delete real statements elsewhere in the file (confirmed live —
+    two unrelated `console.log(...)` calls vanished on exactly this
+    kind of task). Narrower trigger than the two checks above (see
+    its own docstring) so it never flags legitimate multi-line edits.
     Returns (possibly-updated edits, error_or_None)."""
     _verb = _verbatim_reasons(user_msg, edits)
     _dropped_imports = _dropped_import_reasons(edits, contents)
+    _dropped_stmts = _dropped_statement_reasons(user_msg, edits, contents)
     _symbol_creep = _symbol_scope_creep_reasons(user_msg, edits, contents)
     _file_creep = _file_scope_creep_reasons(user_msg, edits, contents)
     _hallu = (_hallucination_reasons(edits, contents) + _verb
-              + _dropped_imports + _symbol_creep + _file_creep)
+              + _dropped_imports + _dropped_stmts + _symbol_creep + _file_creep)
     if not _hallu:
         return edits, None
     await _log(task_id,
@@ -183,6 +192,16 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
             "real content below:\n  - "
             + "\n  - ".join(_symbol_creep + _file_creep)
         )
+    _stmt_reminder = ""
+    if _dropped_stmts:
+        _stmt_reminder = (
+            "\n\nCRITICAL: your last attempt SILENTLY DELETED real "
+            "statement(s) elsewhere in the file, even though this "
+            "task only asked you to add a comment/marker. Keep every "
+            "existing line exactly as-is and ONLY add the requested "
+            "comment/marker — do not touch, simplify, or remove "
+            "anything else:\n  - " + "\n  - ".join(_dropped_stmts)
+        )
     _h_nudge = (
         "Your previous edit did NOT match the real file — it "
         "invented code that does not exist. Below is the REAL, "
@@ -190,7 +209,7 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
         "change as a MINIMAL modification of this exact content. "
         "Preserve every existing line unless the task requires "
         "changing it." + _literal_reminder + _import_reminder
-        + _scope_reminder + "\n\n" + _real_blob
+        + _scope_reminder + _stmt_reminder + "\n\n" + _real_blob
     )
     reply3 = await _retry(
         lambda: call_llm(
@@ -207,6 +226,7 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     _hallu = (_hallucination_reasons(edits, contents)
               + _verbatim_reasons(user_msg, edits)
               + _dropped_import_reasons(edits, contents)
+              + _dropped_statement_reasons(user_msg, edits, contents)
               + _symbol_scope_creep_reasons(user_msg, edits, contents)
               + _file_scope_creep_reasons(user_msg, edits, contents))
     if _hallu:

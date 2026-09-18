@@ -57,6 +57,11 @@ const DIFFERENTIATORS = [
 
 function MetaTags({ c }) {
   useEffect(() => {
+    // 2026-09-17 — Bug 7 fix: restore the previous title on unmount,
+    // same as every other page — this one never did, so whichever
+    // competitor page you last viewed here stuck on the NEXT page
+    // you navigated to if that page didn't set its own title either.
+    const prevTitle = document.title;
     document.title = c.title;
 
     const ensure = (selector, create) => {
@@ -112,6 +117,7 @@ function MetaTags({ c }) {
     document.head.appendChild(ld);
 
     return () => {
+      document.title = prevTitle;
       if (prevDesc != null) desc.setAttribute("content", prevDesc);
       if (prevCanon != null) canon.setAttribute("href", prevCanon);
       document.getElementById(ldId)?.remove();

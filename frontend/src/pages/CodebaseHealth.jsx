@@ -383,6 +383,7 @@ function CodebaseHealthInner() {
   }
 
   useEffect(() => {
+    const prevTitle = document.title;  // 2026-09-17 Bug 7 fix — restore on unmount
     document.title = "Codebase Health — ORA by Aurem";
     (async () => {
       try {
@@ -391,6 +392,7 @@ function CodebaseHealthInner() {
         if (typeof t === "number") setTokens(t);
       } catch { /* no-op */ }
     })();
+    return () => { document.title = prevTitle; };
   }, []);
 
   // Iter 212m-176 — restore the last persisted scan on page load.

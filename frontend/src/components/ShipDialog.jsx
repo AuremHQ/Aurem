@@ -94,11 +94,32 @@ export default function ShipDialog({
             approveLabel="🚀 Approve the fix"
             approveTitle={`Ship to ${activeProject.github_owner}/${activeProject.github_repo}@${activeProject.branch}`}
           />
+          {/* 2026-09-17 — Bug 3 fix (live QA report): "Approve the fix"
+              used to render next to "plan clean ✓" / a "double-checked"
+              claim with literally nothing else on screen — the code
+              doesn't exist yet at this stage (it's generated AFTER
+              you click Approve, then independently gated by the
+              hallucination/import/syntax/security checks before any
+              push). Rather than disable the button (that would break
+              this entire approve-then-generate flow, which has no
+              diff to show by design at this point), say so plainly —
+              same "honest disclosure over a hidden gap" standard as
+              the "plan clean ✓" relabel below. The real diff renders
+              in TaskProgressCard once shipping starts, and is
+              persisted to the task (survives a reload) — see
+              services/task_diff.py + cto_tasks.files_changed. */}
+          <div
+            data-testid={`ship-no-diff-yet-${idx}`}
+            style={{ fontSize: 11, color: "var(--text-faint)", fontStyle: "italic" }}
+          >
+            No diff to review yet — the code is written after you approve,
+            then checked and shown here before it's pushed.
+          </div>
           {/* Iter 47 — Maxx mode chip + brief lint preview */}
           {msg.maxxMode && (
             <span
               data-testid={`ship-maxx-chip-${idx}`}
-              title="Maxx mode — a second AI double-checks this fix before it ships"
+              title="Maxx mode — the strongest single model writes this fix directly (security-scanned; no separate second-reviewer pass — see services/agents.py review_tail)"
               style={{
                 padding: "3px 8px", borderRadius: 4,
                 fontSize: 10, fontWeight: 700,

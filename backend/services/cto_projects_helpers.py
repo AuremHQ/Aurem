@@ -224,6 +224,19 @@ async def _set_status(task_id: str, **fields):
         # the translator when the new status is `failed` AND a
         # raw error string is being set.
         if fields.get("status") == "failed" and fields.get("error"):
+            # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+            # breakdown of WHY. Gate-rejected failures (hallucination/
+            # syntax/design-lint checks) return an error STRING with no
+            # exception at all, so they never get an `error_code` from
+            # the exception-classifier call sites (worker_git.py /
+            # worker_api.py's `except Exception` blocks). Fill the gap
+            # here, at the one shared write choke point, so EVERY
+            # failure gets tagged — never overwrite an `error_code` a
+            # caller already set (the exception-classifier path is more
+            # precise than this best-effort text match).
+            if not fields.get("error_code"):
+                from services.failure_taxonomy import classify_failure_reason_from_text
+                fields["error_code"] = classify_failure_reason_from_text(fields["error"])
             try:
                 # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
                 # in AUREM's own calling code, e.g. a missing-argument
@@ -495,6 +508,81 @@ def _dropped_import_reasons(blocks: dict, originals: dict) -> list[str]:
                 f"statement(s) present in the real file: "
                 + "; ".join(_missing[:4])
                 + (f" (+{len(_missing) - 4} more)" if len(_missing) > 4 else "")
+            )
+    return out
+
+
+# 2026-09-17 — Bug 2 fix (live incident, commit 36ecdee): a task
+# asking ONLY to "add a regression test comment" also silently
+# deleted two unrelated `console.log(...)` statements elsewhere in
+# the same file — verified against the real commit. Neither
+# `_dropped_import_reasons` above (imports only) nor
+# `_symbol_scope_creep_reasons` below (named top-level function/class/
+# const bodies only) catches a bare statement — not an import, not
+# inside a rewritten named symbol — silently vanishing.
+#
+# Deliberately scoped NARROW to avoid false-positiving on legitimate
+# multi-line edits (a real "fix computeTotal()'s rounding" task
+# naturally removes some call lines as part of the fix — flagging
+# that would be noise, not safety). This only activates when the
+# task's OWN language claims to be a trivial, purely-additive change
+# ("add a comment/marker/note/flag") — the exact shape of the
+# incident. For every other kind of task this check stays off
+# entirely; `_symbol_scope_creep_reasons` already covers deletions
+# inside named symbols for the general case.
+_INSERT_ONLY_INTENT_RX = re.compile(
+    r"\b(add|insert|leave|plant|drop|write|place)\b"
+    r"(?:(?!\.).){0,40}\b"
+    r"(comment|marker|note|flag)\b", re.I,
+)
+_REMOVAL_INTENT_RX = re.compile(
+    r"\b(remove|delete|drop|clean\s*up|refactor|simplify|consolidate|"
+    r"strip\s+out|get\s+rid\s+of)\b", re.I,
+)
+# A "notable" statement is real code — a call expression or a return
+# — not punctuation/braces/blank/comment noise, so cosmetic
+# reformatting (a brace moving to its own line) never trips this.
+_NOTABLE_STATEMENT_RX = re.compile(
+    r"[A-Za-z_$][\w.$]*\s*\([^)]*\)\s*;?\s*$"     # call expression: foo(...);
+    r"|^return\b.+;?\s*$"                          # a return statement
+)
+
+
+def _dropped_statement_reasons(task: str, blocks: dict, originals: dict) -> list[str]:
+    """Return a human reason per file where a real, notable statement
+    present in the original silently disappeared in the rewrite, on
+    a task that itself claims to be a trivial add-a-comment/marker
+    change (see module comment above for why the trigger is scoped
+    this narrow). Language-agnostic (line-based, like
+    `_dropped_import_reasons`) — same retry-then-abort path."""
+    if not _INSERT_ONLY_INTENT_RX.search(task or ""):
+        return []                       # not an "add a marker"-shaped task
+    if _REMOVAL_INTENT_RX.search(task or ""):
+        return []                       # explicit removal intent — allowed
+    out: list[str] = []
+    for _p, _new in blocks.items():
+        _orig = originals.get(_p) or originals.get(_p.lstrip("./"))
+        if not _orig:
+            continue                    # brand-new file — nothing to drop
+        _new_norm = re.sub(r"\s+", " ", _new or "")
+        _dropped = []
+        for _line in _orig.splitlines():
+            _stripped = _line.strip()
+            if len(_stripped) < 8:      # too short to be meaningful
+                continue
+            if _stripped.startswith(("//", "#", "*", "/*")):
+                continue                 # comments — not our concern here
+            if not _NOTABLE_STATEMENT_RX.search(_stripped):
+                continue
+            _norm_line = re.sub(r"\s+", " ", _stripped)
+            if _norm_line not in _new_norm:
+                _dropped.append(_stripped[:120])
+        if _dropped:
+            out.append(
+                f"{_p} — {len(_dropped)} existing statement(s) silently "
+                f"removed on a task that only asked to add a comment/"
+                f"marker: " + "; ".join(_dropped[:3])
+                + (f" (+{len(_dropped) - 3} more)" if len(_dropped) > 3 else "")
             )
     return out
 

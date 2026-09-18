@@ -6,8 +6,12 @@
  * to / don't see stale tab titles.
  */
 import { useEffect } from "react";
+import { pageTitle } from "./siteConfig";
 
-const DEFAULT_TITLE = "ORA by Aurem — Your Autonomous CTO. Ships code to GitHub in minutes.";
+// 2026-09-17 — Bug 7 fix: this used to hardcode its OWN third
+// variant of the title ("...Your Autonomous CTO. Ships code to
+// GitHub in minutes.") instead of the shared one — see siteConfig.js.
+const DEFAULT_TITLE = pageTitle();
 const DEFAULT_DESC =
   "AUREM is an autonomous AI engineer that plans, writes, tests and ships features to your GitHub repo. 1,000 tokens free, no card required.";
 

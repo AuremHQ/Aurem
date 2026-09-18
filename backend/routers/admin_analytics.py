@@ -1203,6 +1203,24 @@ async def product_analytics(
         round((tasks_done / tasks_total * 100), 1) if tasks_total else 0
     )
 
+    # 2026-09-17 — Bug 8 fix: "Task Health" showed a flat `Failed: 35`
+    # with no breakdown of WHY — "33.9% success" isn't debuggable,
+    # "61% of failures are timeouts" is a sprint. `cto_tasks` now gets
+    # `error_code` filled in at the `_set_status()` choke point for
+    # every failure (see services/failure_taxonomy.py); group by it
+    # here. Docs written before this fix landed have no `error_code`
+    # at all — bucket those (and any loop_sessions failure, not yet
+    # wired to the same classifier) as UNKNOWN rather than dropping
+    # them, so the totals below always sum to `tasks_failed`.
+    failure_by_reason: dict = {}
+    async for r in db.cto_tasks.aggregate([
+        {"$match": {"created_at": {"$gte": window_start}, "status": "failed"}},
+        {"$group": {"_id": "$error_code", "n": {"$sum": 1}}},
+    ]):
+        failure_by_reason[r["_id"] or "UNKNOWN"] = r["n"]
+    if loop_failed:
+        failure_by_reason["UNKNOWN"] = failure_by_reason.get("UNKNOWN", 0) + loop_failed
+
     # Mode distribution (A/B/C/D/E/F) from ora_council_logs
     mode_dist: dict = {}
     async for r in db.ora_council_logs.aggregate(
@@ -1283,6 +1301,7 @@ async def product_analytics(
             "total": tasks_total,
             "done": tasks_done,
             "failed": tasks_failed,
+            "failed_by_reason": failure_by_reason,
             "success_rate_pct": success_rate,
             "maxx_mode": maxx_tasks,
             "tokens_burned": tokens_burned,

@@ -558,6 +558,20 @@ async def lifespan(app: FastAPI):
         long_lived=True,
     )
 
+    # 2026-09-17 · Bug 1 fix — runaway duplicate bot PRs (389 open on
+    # one connected repo). Safety-net reaper: closes superseded
+    # Aurem-fix PRs hourly and tracks `bot_open_prs_count` with a
+    # founder alert above 10. The root fix (deterministic branch
+    # names + check-before-create) stops NEW duplicates; this catches
+    # the existing backlog and anything that slips through a race.
+    from services.bot_pr_reaper import schedule_bot_pr_reaper_cron
+    app.state.bot_pr_reaper_task = _supervise(
+        schedule_bot_pr_reaper_cron(lambda: app.state.db),
+        name="bot_pr_reaper",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
     # Iter 309 · Phase 0.1 — Merged housekeeping loop.
     # Previously two independent `while True` background tasks:
     #   • _resume_stale_loops (rescues orphaned EXECUTING/VERIFYING/…)
@@ -666,58 +680,78 @@ async def lifespan(app: FastAPI):
     # housekeeping task's first tick run first and stamp a FRESH
     # heartbeat, making the "gap" always read ~0s regardless of the
     # real downtime — outages were silently never detected.
-    try:
-        from services.maintenance import (
-            load_maintenance_state as _maint_load,
-            read_last_heartbeat as _maint_last_beat,
-            record_boot_gap_incident as _maint_record_gap,
-            write_heartbeat as _maint_beat_now,
+    #
+    # 2026-09-17 fix — this whole chain (maintenance gap-detect →
+    # loop_housekeeping task creation → G19 record → G6 dedup indexes)
+    # used to run AWAITED directly here, before `yield`. It's the
+    # FIRST real Mongo touch in the entire lifespan (everything above
+    # it is `_supervise(...)`-scheduled, non-blocking). Motor connects
+    # lazily, so on a genuinely cold Atlas connection (a fresh prod
+    # deploy pod) `_maint_load()` pays the full first-connection cost —
+    # exactly the class of bug the Iter 127 fix above exists to
+    # prevent for every OTHER Mongo-dependent boot step. Reproduced the
+    # reported "nginx upstream timed out reading response header for
+    # /health" readiness-probe failure this way. Wrapped in ONE
+    # `create_task` (no artificial delay) so it starts running the
+    # instant it's scheduled, preserving every internal ordering
+    # guarantee described above exactly (still runs sequentially,
+    # still finishes its heartbeat write before the housekeeping
+    # task's first tick) — it just no longer blocks Uvicorn's port
+    # bind while doing so.
+    async def _boot_maintenance_g19_g6():
+        try:
+            from services.maintenance import (
+                load_maintenance_state as _maint_load,
+                read_last_heartbeat as _maint_last_beat,
+                record_boot_gap_incident as _maint_record_gap,
+                write_heartbeat as _maint_beat_now,
+            )
+            _maint_state = await _maint_load(app.state.db)
+            _last_beat_ts = await _maint_last_beat(app.state.db)
+            _boot_ts = time.time()
+            if _last_beat_ts:
+                _gap_s = _boot_ts - _last_beat_ts
+                _threshold = _maint_state.get("outage_threshold_s", 30)
+                if _gap_s > _threshold:
+                    from datetime import datetime as _dt, timezone as _tz
+                    await _maint_record_gap(
+                        app.state.db,
+                        gap_s=_gap_s,
+                        last_beat_iso=_dt.fromtimestamp(_last_beat_ts, tz=_tz.utc).isoformat(),
+                        boot_iso=_dt.fromtimestamp(_boot_ts, tz=_tz.utc).isoformat(),
+                    )
+            await _maint_beat_now(app.state.db)
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[maintenance] boot-gap detection failed: %r", _e)
+
+        app.state.loop_housekeeping_task = _supervise(
+            _loop_housekeeping(),
+            name="loop_housekeeping",
+            db_getter=lambda: app.state.db,
+            long_lived=True,
         )
-        _maint_state = await _maint_load(app.state.db)
-        _last_beat_ts = await _maint_last_beat(app.state.db)
-        _boot_ts = time.time()
-        if _last_beat_ts:
-            _gap_s = _boot_ts - _last_beat_ts
-            _threshold = _maint_state.get("outage_threshold_s", 30)
-            if _gap_s > _threshold:
-                from datetime import datetime as _dt, timezone as _tz
-                await _maint_record_gap(
-                    app.state.db,
-                    gap_s=_gap_s,
-                    last_beat_iso=_dt.fromtimestamp(_last_beat_ts, tz=_tz.utc).isoformat(),
-                    boot_iso=_dt.fromtimestamp(_boot_ts, tz=_tz.utc).isoformat(),
-                )
-        await _maint_beat_now(app.state.db)
-    except Exception as _e:                                  # noqa: BLE001
-        logger.warning("[maintenance] boot-gap detection failed: %r", _e)
 
-    app.state.loop_housekeeping_task = _supervise(
-        _loop_housekeeping(),
-        name="loop_housekeeping",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+        # Iter 362 · Guard 19 — record this boot + detect restart loops.
+        try:
+            from services.process_recovery import record_boot as _g19_record
+            _g19_boot = await _g19_record(app.state.db)
+            if _g19_boot.get("loop_detected"):
+                logger.error("[G19] boot recorded INSIDE a restart loop: %s", _g19_boot)
+            else:
+                logger.info("[G19] boot recorded: %s", _g19_boot)
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[G19] record_boot failed: %r", _e)
 
-    # Iter 362 · Guard 19 — record this boot + detect restart loops.
-    try:
-        from services.process_recovery import record_boot as _g19_record
-        _g19_boot = await _g19_record(app.state.db)
-        if _g19_boot.get("loop_detected"):
-            logger.error("[G19] boot recorded INSIDE a restart loop: %s", _g19_boot)
-        else:
-            logger.info("[G19] boot recorded: %s", _g19_boot)
-    except Exception as _e:                                  # noqa: BLE001
-        logger.warning("[G19] record_boot failed: %r", _e)
-
-    # G6 · Iter 366 — DB dedup unique indexes. Central + idempotent.
-    try:
-        from services.db_indexes import ensure_dedup_indexes
-        _g6_res = await ensure_dedup_indexes(app.state.db)
-        ok = sum(1 for r in _g6_res if r.get("ok"))
-        logger.info("[G6] dedup indexes ensured: %d ok / %d total",
-                    ok, len(_g6_res))
-    except Exception as _e:                                  # noqa: BLE001
-        logger.warning("[G6] ensure_dedup_indexes failed: %r", _e)
+        # G6 · Iter 366 — DB dedup unique indexes. Central + idempotent.
+        try:
+            from services.db_indexes import ensure_dedup_indexes
+            _g6_res = await ensure_dedup_indexes(app.state.db)
+            ok = sum(1 for r in _g6_res if r.get("ok"))
+            logger.info("[G6] dedup indexes ensured: %d ok / %d total",
+                        ok, len(_g6_res))
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[G6] ensure_dedup_indexes failed: %r", _e)
+    _asyncio.create_task(_boot_maintenance_g19_g6())
 
     # Iter 212m-115 safety — Create the unique index for the
     # concurrent-loop lock collection so we can never have two active
@@ -1561,32 +1595,49 @@ async def lifespan(app: FastAPI):
     # 403 even though valid credentials sit in Mongo (confirmed via
     # live repro: boot log showed "Application startup complete" at
     # T, "GitHub App config hydrated" at T+9.3s to T+11.7s across 4
-    # consecutive restarts). This is a single fast Mongo find_one — no
-    # reason to defer it. Runs awaited, BEFORE the staggered background
-    # task, so the cache is warm the instant the app accepts traffic.
-    try:
-        from services.github_app_config import (
-            set_runtime_github_app_config, REQUIRED_FIELDS,
-        )
-        gh_row = await app.state.db.admin_settings.find_one(
-            {"_id": "github_app_config"},
-        )
-        if gh_row and all(gh_row.get(f) for f in REQUIRED_FIELDS):
-            set_runtime_github_app_config({
-                f: gh_row.get(f) for f in REQUIRED_FIELDS
-            })
-            logger.info(
-                "🐙 GitHub App config hydrated from admin_settings "
-                "(app_id=%s slug=%s, updated_by=%s)",
-                gh_row.get("app_id"),
-                gh_row.get("app_slug"),
-                gh_row.get("updated_by", "?"),
+    # consecutive restarts).
+    #
+    # 2026-09-17 fix — this got moved to run AWAITED directly in
+    # `lifespan()`, BEFORE the `yield` — on the (correct, locally) idea
+    # that "a single fast Mongo find_one" can't hurt. It can: Motor's
+    # client (created just above) connects LAZILY, so on a genuinely
+    # COLD Atlas connection (exactly what a fresh prod deploy pod has)
+    # this find_one() pays the FULL first-connection cost — TLS
+    # handshake + SRV DNS + replica-set discovery, up to
+    # `serverSelectionTimeoutMS`. Uvicorn does not bind port 8001 (and
+    # therefore cannot answer ANY request, including /health) until
+    # everything before `yield` returns — reproducing the exact
+    # "nginx upstream timed out reading response header for /health"
+    # readiness-probe failure the Iter 127 fix above was written to
+    # prevent for every OTHER Mongo-dependent boot step. Fire-and-forget
+    # via `create_task` (no artificial delay, unlike the other deferred
+    # tasks below) keeps the "warm within ~1s on a normal boot" intent
+    # while never blocking the port bind on a slow/cold one.
+    async def _hydrate_github_app_config():
+        try:
+            from services.github_app_config import (
+                set_runtime_github_app_config, REQUIRED_FIELDS,
             )
-    except Exception as _e:                                # noqa: BLE001
-        logger.warning(
-            "github_app boot hydration failed (integration will report "
-            "not configured until admin re-pastes): %r", _e,
-        )
+            gh_row = await app.state.db.admin_settings.find_one(
+                {"_id": "github_app_config"},
+            )
+            if gh_row and all(gh_row.get(f) for f in REQUIRED_FIELDS):
+                set_runtime_github_app_config({
+                    f: gh_row.get(f) for f in REQUIRED_FIELDS
+                })
+                logger.info(
+                    "🐙 GitHub App config hydrated from admin_settings "
+                    "(app_id=%s slug=%s, updated_by=%s)",
+                    gh_row.get("app_id"),
+                    gh_row.get("app_slug"),
+                    gh_row.get("updated_by", "?"),
+                )
+        except Exception as _e:                                # noqa: BLE001
+            logger.warning(
+                "github_app boot hydration failed (integration will report "
+                "not configured until admin re-pastes): %r", _e,
+            )
+    _asyncio.create_task(_hydrate_github_app_config())
 
     app.state.bootstrap_task = _asyncio.create_task(_bg_bootstrap())
 

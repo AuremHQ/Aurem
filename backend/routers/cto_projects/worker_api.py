@@ -469,9 +469,10 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                                 ok=ok,
                             )
                     if parallelized and edits:
-                        summary = f"Parallel codegen ({agents_count} agents) — {task[:120]}"
+                        from services.plural_utils import pluralize
+                        summary = f"Parallel codegen ({pluralize(agents_count, 'agent')}) — {task[:120]}"
                         await _pkg._log(task_id,
-                                   f"✅ {agents_count} agents merged {len(edits)} file edits",
+                                   f"✅ {pluralize(agents_count, 'agent')} merged {len(edits)} file edits",
                                    "success")
             except Exception as _pe:
                 from services.error_classifier import classify_error

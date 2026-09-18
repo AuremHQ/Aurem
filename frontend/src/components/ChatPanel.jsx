@@ -3280,22 +3280,54 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       const r = await api.post("/codebase-health/scan", {
         project_id: projectId,
         categories: cmd.categories || null,
+        session_id: sessionId,
       });
       // Success — clear any lingering rate-limit toast from the retry
       // path and record the summary for the strip.
       if (opts.retryToastId != null) {
         try { dismissToast(opts.retryToastId); } catch { /* ignore */ }
       }
-      const summary = r.data?.summary || {};
-      const bySev   = summary.by_severity || {};
-      const crit    = bySev.critical || 0;
-      const high    = bySev.high || 0;
+      // 2026-09-17 fix — this used to read `r.data.summary.by_severity`,
+      // but `summary` is a plain string on this endpoint (e.g. "3
+      // issues found across 1 categories — 1 critical."); `bySev`
+      // always fell back to `{}`, so `crit`/`high` were silently 0
+      // on every scan regardless of real findings, and the "clean"
+      // toast below could fire even when the scan wasn't clean. The
+      // real counts are per-category in `breakdown[cat].counts`.
+      const breakdown = r.data?.breakdown || {};
+      let crit = 0, high = 0;
+      for (const cat of Object.keys(breakdown)) {
+        crit += breakdown[cat]?.counts?.critical || 0;
+        high += breakdown[cat]?.counts?.high || 0;
+      }
       markScanJustCompleted({
         critical:    crit,
         high:        high,
         projectId,
         projectName: activeProject?.github_repo || projectId,
       });
+      // 2026-09-17 — Bug 6 fix (live QA report): a scan result used to
+      // ONLY ever reach the user as this toast — invisible to anyone
+      // who reopens the chat, and to the audit trail. The backend now
+      // ALSO persists it as a real chat message when `session_id` is
+      // passed (see routers/codebase_health.py); mirror that into the
+      // visible transcript immediately here so the user doesn't have
+      // to reload to see it. The toast still fires too — it's a
+      // notification ON TOP of the durable record, never instead of it.
+      if (r.data?.summary) {
+        const lines = [`**Scan complete — ${cmd.label}**`, "", r.data.summary];
+        for (const [cat, b] of Object.entries(breakdown)) {
+          if (b?.total) {
+            lines.push(
+              `- \`${cat}\`: ${b.total} finding(s) (critical ${b.counts?.critical || 0}, high ${b.counts?.high || 0})`,
+            );
+          }
+        }
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: lines.join("\n"), provider: "scan-result" },
+        ]);
+      }
       // 2026-08-20 — a clean scan previously showed NOTHING at all,
       // identical to a silent failure. Confirm success explicitly so
       // "clean" and "broken" are never visually indistinguishable.

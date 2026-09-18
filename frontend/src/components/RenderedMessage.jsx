@@ -166,6 +166,36 @@ function splitFences(text) {
 // are never mistaken for emphasis (CommonMark's intraword-emphasis
 // rule, simplified) — only a `_..._` span with word/punctuation
 // boundaries on both sides is treated as italics.
+// 2026-09-17 — Bug 4 fix (live QA report): nested markdown link
+// syntax (an image-in-a-link badge, `[![alt](src)](href)`) truncated
+// mid-render. Root cause: no link/image handling existed in
+// `renderInline` at all — the combined splitter below only knew
+// about `` `code` ``, `**bold**`, `_italic_`. Plain single-level
+// `[text](href)` matching alone would ALSO reproduce this exact bug
+// on the nested case: its `[^\]]*` text-group greedily consumes
+// `![alt` up to the FIRST `]` (the image's own closing bracket), then
+// happily matches `(src)` as if it were the outer href, leaving the
+// real `](href)` dangling as unmatched literal text — which is
+// exactly the "cuts off mid-render" symptom. Fixed by matching the
+// image-in-link shape FIRST (regex alternation tries left-to-right,
+// so ordering here is the actual bug fix, not cosmetic) before
+// falling back to bare image / bare link.
+//
+// Deliberately still hand-written (not routed through `marked`) —
+// `marked` is already a dependency (see PolicyPage.jsx) but this
+// component's fenced-code/table/ISSUE-FIX-OK pill rendering are all
+// bespoke React elements, not an HTML string; swapping the whole
+// renderer for a general-purpose parser here would be a much larger,
+// riskier rewrite than this bug needs. This literal-bracket-matching
+// approach IS correct for CommonMark's actual grammar here, since a
+// link's text may contain an image but never another link — exactly
+// one level of nesting, which a precise (not naive) pattern handles
+// correctly, same spirit as the `**bold**`-in-`_italic_` fix above.
+const _SAFE_URL_RE = /^(https?:|mailto:|\/|#)/i;
+function _safeHref(url) {
+  return _SAFE_URL_RE.test((url || "").trim()) ? url : undefined;
+}
+
 function renderInline(text, keyPrefix) {
   if (!text) return null;
   // Iter 388t — Bug 21 follow-up.  Table-cell contents (and any other
@@ -186,9 +216,45 @@ function renderInline(text, keyPrefix) {
   // a strictly shorter string (delimiters stripped each call), so it
   // terminates naturally — no infinite-loop risk.
   const parts = text.split(
-    /(`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
+    /(\[!\[[^\]]*\]\([^)\s]+\)\]\([^)\s]+\)|!\[[^\]]*\]\([^)\s]+\)|\[[^\]]*\]\([^)\s]+\)|`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
   );
   return parts.map((p, i) => {
+    // Image-in-link badge: [![alt](src)](href)
+    const badgeM = /^\[!\[([^\]]*)\]\(([^)\s]+)\)\]\(([^)\s]+)\)$/.exec(p);
+    if (badgeM) {
+      const [, alt, src, href] = badgeM;
+      const safeHref = _safeHref(href);
+      const img = (
+        <img key={`${keyPrefix}-${i}-img`} src={src} alt={alt}
+             style={{ maxWidth: "100%", verticalAlign: "middle" }} />
+      );
+      return safeHref ? (
+        <a key={`${keyPrefix}-${i}`} href={safeHref} target="_blank" rel="noopener noreferrer">
+          {img}
+        </a>
+      ) : <React.Fragment key={`${keyPrefix}-${i}`}>{img}</React.Fragment>;
+    }
+    // Bare image: ![alt](src)
+    const imgM = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(p);
+    if (imgM) {
+      const [, alt, src] = imgM;
+      return (
+        <img key={`${keyPrefix}-${i}`} src={src} alt={alt}
+             style={{ maxWidth: "100%", verticalAlign: "middle" }} />
+      );
+    }
+    // Bare link: [text](href) — link text may itself contain
+    // **bold**/`code`/_italic_, so it's recursively re-parsed too.
+    const linkM = /^\[([^\]]*)\]\(([^)\s]+)\)$/.exec(p);
+    if (linkM) {
+      const [, linkText, href] = linkM;
+      const safeHref = _safeHref(href);
+      return safeHref ? (
+        <a key={`${keyPrefix}-${i}`} href={safeHref} target="_blank" rel="noopener noreferrer">
+          {renderInline(linkText, `${keyPrefix}-${i}-l`)}
+        </a>
+      ) : <React.Fragment key={`${keyPrefix}-${i}`}>{p}</React.Fragment>;
+    }
     if (p.startsWith("`") && p.endsWith("`") && p.length > 2) {
       return (
         <code key={`${keyPrefix}-${i}`} style={{

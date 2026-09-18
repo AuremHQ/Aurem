@@ -342,6 +342,7 @@ export default function BugHunt() {
   // we redirect).
   useEffect(() => {
     if (!adminOrAnon) return undefined;  // about to redirect, skip SEO write
+    const prevTitle = document.title;    // 2026-09-17 Bug 7 fix — restore on unmount
     document.title = "Bug Hunt — Detect 50+ vulnerabilities in your codebase | ORA by Aurem";
     let meta = document.querySelector('meta[name="description"]');
     const prev = meta ? meta.getAttribute("content") : null;
@@ -362,6 +363,7 @@ export default function BugHunt() {
     return () => {
       try { document.head.removeChild(ld); } catch { /* no-op */ }
       if (prev !== null && meta) meta.setAttribute("content", prev);
+      document.title = prevTitle;
     };
   }, [adminOrAnon]);
 
