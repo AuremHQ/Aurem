@@ -1,0 +1,36 @@
+{
+  "summary": "Bug 1 (duplicate PRs) round-2 fix VERIFIED end-to-end. Independently grepped backend/services + backend/routers for `open_draft_pr(` — the only remaining PRODUCTION call is inside `services/loop_safety.py::open_or_reuse_pr` itself (line 548), i.e. the single centralized hop every other call site now goes through. Confirmed all 4 previously-independent PR-opening call sites (finding_fix_applier.py:443, loop_engine.py:3832, visibility/apply.py:189, visual_bugfix_pr.py:80) now route through `open_or_reuse_pr`. NO 5th call site missed. Verified `ship_branch_name(slug)` is now purely deterministic (no `int(time.time())` anymore — same slug in ⇒ same branch out), and `open_or_reuse_pr` (a) calls `find_open_pr_for_branch` first, (b) reuses existing PR with reused=True and skips `open_draft_pr`, (c) wraps the lookup in try/except so it never raises. `loop_engine.py` ship-via-PR block now keys `pr_ship_branch = ship_branch_name(self.project_id or self.loop_id)` (project-scoped, stable across re-runs of the same 'fix the critical issues' loop). `visibility/apply.py` branch is `ship_branch_name(f'visibility-kit-{project_id}')` — no more date-stamped/timestamped slug. `bot_pr_reaper.py` AUREM_BOT_MARKERS tuple widened to 4 markers ('AUREM auto-fix', 'Visibility Kit (', 'Opened by ORA (Loop ', \"AUREM's Visual Bug-Fix pipeline\") so the safety-net reaper now sees all 4 body variants. All 8 round-2 regression tests PASS, plus 4 round-1 tests still pass (proves finding_fix_applier.py externally-observed dedup unchanged by the refactor), plus 14 overnight-t7 ship-via-PR tests, plus 8 test_visibility_kit + 30 test_visibility_kit_v2 tests all pass. 65 passed / 1 skipped / 0 failed on the targeted regression set (`test_billing_gate_free_plan_returns_402` is an unrelated pre-existing SKIP for a stripe-billing gate). Confirmed the 2 pre-existing unrelated failures (TestMcpWarmGraphAgent::test_graph_status and test_confirm_ship_typeerror_produces_friendly_message_with_ref_id/loop_execution_log fixture gap) still fail identically as documented — unrelated to this fix. One additional pre-existing SSE-stream live-server timeout in test_2026_02_ora_b3_round4_final.py::test_stream_gate_5x[1] observed — also unrelated (SSE network timeout, no PR-dedup code touched).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bug1_duplicate_prs_round2_2026_09_18.py",
+    "/app/backend/tests/test_bug1_duplicate_prs_2026_09_17.py",
+    "/app/backend/tests/test_overnight_t7_ship_via_pr.py",
+    "/app/backend/tests/test_visibility_kit.py",
+    "/app/backend/tests/test_visibility_kit_v2_2026_08_30.py",
+    "/app/test_reports/pytest/bug1_round2_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Centralization at `services/loop_safety.py::open_or_reuse_pr` is the right architectural fix — it turns 'every future call site must remember to add a reuse-check' into 'every future call site must call the same helper', which is enforceable via grep in CI (recommend adding a CI grep guard: `grep -rn 'open_draft_pr(' backend/services backend/routers --include=*.py | grep -v 'loop_safety.py\\|test_'` must return zero lines — this would prevent Bug-1-round-3 from ever happening).",
+    "`ship_branch_name` docstring is honest about the past bug and the new contract that callers must pass a slug stable across re-runs. Good defense-in-depth.",
+    "`open_or_reuse_pr` correctly derives pr_number from URL by parsing `/pull/{n}` — safe fallback to None if malformed. Good.",
+    "`bot_pr_reaper.py` AUREM_BOT_MARKERS uses substring match on PR body — reasonable, but a future PR whose body happens to include e.g. the string 'Visibility Kit (' as user-authored text could be mis-classified as bot. Low risk (would need a real human to type that exact phrase), but worth a comment noting the substring-not-regex tradeoff.",
+    "Consider adding a `pr_number` extraction unit test for the edge case where the URL doesn't contain `/pull/` — current code returns None and callers appear to tolerate it, but explicit test would guard against regressions."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "N/A — pure backend service-layer tests using respx/monkeypatch, no live GitHub or auth.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug 1 (duplicate PRs) is now fully fixed across all 4 PR-opening call sites. The independent grep check (`grep -rn 'open_draft_pr(' backend/services backend/routers --include=*.py | grep -v test_`) returns only 3 lines and all 3 are inside `services/loop_safety.py` itself (the primitive definition + its docstring + the single call inside `open_or_reuse_pr`). If a future change adds a new PR-opening spot, that grep will catch it. Recommend main agent add this grep as a CI guard to prevent Bug 1 round 3.",
+  "rca of the issue": "Round 1 fix (2026-09-17) added reuse-check ONLY inside finding_fix_applier.py. The 3 other independent call sites (loop_engine.py ship-via-PR, visibility/apply.py, visual_bugfix_pr.py) called `open_draft_pr` directly with zero reuse-check. Compounding this, `ship_branch_name()` claimed to be 'deterministic' but internally appended `int(time.time())`, so even if a caller passed a stable slug, the branch name still changed every second. Add to that, `loop_engine.py` passed `self.loop_id` (a fresh UUID every run) and `visibility/apply.py` passed a date-stamped string — so no two runs ever produced the same branch name, and `create_or_reuse_branch`'s 'already exists → no-op' safety never fired. Round 2 fix: (1) remove timestamp from `ship_branch_name`, (2) add `open_or_reuse_pr` as the single centralized dedup primitive, (3) migrate all 4 call sites, (4) key branch slugs on project_id (stable) instead of loop/run id (per-run), (5) widen reaper markers so the safety net now sees the other 3 body wordings. All verified by 8 new tests + 4 round-1 tests still passing."
+}

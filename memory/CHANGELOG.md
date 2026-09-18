@@ -1,4 +1,60 @@
 # AUREM CTO — Changelog (append-only)
+- **Bug 1 ROUND 2 — duplicate PRs, real root cause + centralized fix
+  (2026-09-18)**
+  Founder reported (2nd time): manually closed 371 duplicate PRs
+  (Visibility Kit x5, fix(fix):large_function x many) that piled up
+  even AFTER the 2026-09-17 round-1 fix shipped. Investigated and
+  confirmed round 1 only fixed 1 of 4 independent PR-opening call
+  sites in this codebase. Root causes found:
+  1. `services/loop_safety.py::ship_branch_name()` claimed to be
+     "deterministic" but still appended `int(time.time())` — every
+     call, even with an identical slug, minted a brand-new branch.
+  2. `services/loop_engine.py`'s ship-via-PR block (the main "fix the
+     critical issues" → ship pathway) keyed its branch on
+     `self.loop_id` — a fresh UUID every single loop run — and called
+     `open_draft_pr()` directly with zero existing-PR check.
+  3. `services/visibility/apply.py` (Visibility Kit — exact
+     "Visibility Kit x5" repro) keyed its branch on a date-stamped
+     slug + `ship_branch_name`'s own timestamp, same zero-check gap.
+  4. `services/visual_bugfix_pr.py` had a deterministic branch but
+     still no reuse-check (caused a confusing 422 on retry instead of
+     a clean duplicate — same underlying gap, different symptom).
+  5. `services/bot_pr_reaper.py`'s own safety net only matched
+     `finding_fix_applier.py`'s body marker — it silently never even
+     SAW the other 3 call sites' PRs.
+
+  Fix: (1) removed the timestamp from `ship_branch_name()` — now
+  purely deterministic; (2) added ONE centralized
+  `open_or_reuse_pr()` in `loop_safety.py` (looks up an existing open
+  PR on the head branch, reuses+comments if found, only creates if
+  not) that ALL 4 call sites now route through, instead of each
+  hand-rolling (or omitting) its own check; (3) `loop_engine.py` now
+  keys the ship branch on `self.project_id` (stable across re-runs)
+  instead of `self.loop_id`; (4) `visibility/apply.py` keys on
+  `project_id` alone (dropped the date-stamp); (5) widened
+  `bot_pr_reaper.py`'s `AUREM_BOT_MARKERS` to recognize all 4 PR body
+  variants. Added a CI-guard test asserting `open_draft_pr(` is never
+  called directly outside `loop_safety.py` anywhere in
+  `backend/services`/`backend/routers` — a future 5th call site that
+  repeats this mistake now fails a test immediately instead of
+  silently accumulating duplicates for months.
+
+  **Testing:** 9 new tests
+  (`test_bug1_duplicate_prs_round2_2026_09_18.py`, including an
+  http-call-count assertion proving create-PR fires exactly once
+  across 2 runs against the same branch) + 4 round-1 tests still pass
+  unmodified (proves the refactor didn't change
+  `finding_fix_applier.py`'s externally-observed behavior) + 14
+  overnight-t7 + 38 visibility-kit tests (2 files needed updating —
+  they patched the now-renamed `open_draft_pr` import) all pass.
+  Independently re-verified by `testing_agent`
+  (`/app/test_reports/iteration_2026_09_18_bug1_duplicate_prs_round2.json`)
+  including its own independent grep confirming no 5th call site was
+  missed. 2 pre-existing/unrelated failures (documented previously)
+  confirmed still unrelated. Commit `f3a56aa7` (parent `e0d0acce`) —
+  full diff available via `git diff e0d0acce f3a56aa7 -- backend/`.
+
+
 - **8-bug regression spec — all 8 fixed and E2E-verified (2026-09-18)**
   Full "Aurem / ORA — Regression Bugs & Fix Spec" (reported 2026-09-17
   by @Tejinder sandhu). All 8 fixed, unit-tested, and verified live
