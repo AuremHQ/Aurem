@@ -13,6 +13,7 @@ Idempotency:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import logging
 import subprocess
@@ -102,7 +103,23 @@ async def log_deploy_event(db, *, trigger: str = "boot", extra: Optional[dict] =
     """
     if db is None:
         return None
-    info = get_current_commit()
+    # 2026-09-20 — deploy-health fix. `get_current_commit()` makes up
+    # to 5 SEQUENTIAL `subprocess.check_output(["git", ...])` calls
+    # (rev-parse HEAD, rev-parse --abbrev-ref HEAD, log -1 x3) — each
+    # ran synchronously, directly inside this coroutine, with NO
+    # `asyncio.to_thread` wrapping. This is called unconditionally on
+    # EVERY boot from `main.py`'s staggered `_bg_bootstrap()` — the
+    # exact same bug CLASS already diagnosed and fixed for its sibling
+    # `_backup_tools_snapshot()` (see that function's 2026-08-23
+    # docstring: unguarded subprocess calls inside an async function
+    # "blocked the whole event loop... causing the exact production
+    # deploy-log symptom reported: repeated nginx upstream timed out
+    # ... /health"). Even when `.git` is stripped (git fails fast) the
+    # fork+exec syscall itself still costs real wall time under a
+    # CPU-limited container — offloading to a thread keeps the event
+    # loop (and any concurrent /health request sharing it) free
+    # regardless of how long the underlying git calls actually take.
+    info = await asyncio.to_thread(get_current_commit)
     if not info.get("commit_sha"):
         logger.info("[deploy-log] no commit sha resolvable — skip")
         return None

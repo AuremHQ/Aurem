@@ -3328,7 +3328,17 @@ async def health():
     # to the legacy resolvers if the deploy_event row hasn't hydrated
     # yet (first-boot race or migration lag).
     _dep = getattr(app.state, "deploy_event", None)
-    build_hash_val = (_dep or {}).get("commit_sha") or _resolve_build_hash()
+    # 2026-09-20 — deploy-health fix. `_resolve_build_hash()` falls
+    # through to an UNGUARDED `subprocess.check_output(["git", ...],
+    # timeout=2)` when neither the env var nor `.build_info` resolve
+    # it (was called synchronously, no `to_thread`) — same bug class
+    # as the already-fixed `_backup_tools_snapshot()` below, and this
+    # is `/api/health` itself, one of the two endpoints probes hit
+    # repeatedly. Offloading keeps this request from ever blocking
+    # the loop for other concurrent requests, regardless of whether
+    # the git call resolves fast or slow in a given container.
+    build_hash_val = (_dep or {}).get("commit_sha") \
+        or await asyncio.to_thread(_resolve_build_hash)
     built_at_val   = (_dep or {}).get("boot_ts_iso") or _resolve_built_at()
 
     return {

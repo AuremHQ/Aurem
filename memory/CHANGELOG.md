@@ -5936,3 +5936,50 @@ end-to-end, both artifacts independently verified:
     returned `state: open`, `head.sha:
     8717c65faff3e63f4f9a7dbc367c0ead7799c59b` — exact match. PR left
     open on GitHub as the live evidence artifact this test points at.
+
+## 2026-09-20 — Deploy-health fix, round 3: unguarded git-subprocess
+calls inside async coroutines (nginx `/health` upstream timeout)
+
+Live prod boot log showed the recurring symptom class from prior
+rounds: one nginx sidecar timeout (`upstream timed out (110) ...
+GET /health`) amid otherwise-healthy boot. Ran `deployment_agent` per
+user instruction (findings: missing-gitignore claim was a FALSE
+POSITIVE — `/app/.gitignore` already excludes `memory/test_
+credentials.md`, verified via `git check-ignore -v`; Dockerfile port
+mismatch (8002/3001 vs expected 8001/3000) flagged only WARN and is
+explicitly out of scope per user's no-Docker-changes instruction, and
+contradicted by the log itself showing many successful `/health` 200s
+at the platform's actual 8001 target — not touched).
+
+Manual root-cause audit (confirmed `/health` — the exact probed path
+— is short-circuited by `_global_rate_limit_guard` with a hardcoded
+`{"ok": true}` before touching Mongo/subprocess/business logic; ruled
+out `_warm_codebase_index` and SYSTEM_INVENTORY's git scan, both
+already correctly offloaded via `asyncio.to_thread`) found TWO
+unfixed siblings of the ALREADY-diagnosed-and-fixed
+`_backup_tools_snapshot()` bug class (2026-08-23, same file/root
+cause writeup):
+  - `services/deploy_logger.py::log_deploy_event()` — called
+    unconditionally on EVERY boot from `main.py`'s staggered
+    `_bg_bootstrap()` (~T+10s) — called the sync `get_current_
+    commit()` (up to 5 sequential `subprocess.check_output(["git",
+    ...])` calls) directly, no `to_thread`.
+  - `main.py::health()` (`/api/health`) — called the sync
+    `_resolve_build_hash()` (also an unguarded git subprocess
+    fallback) directly, no `to_thread`.
+
+Fix: both call sites now go through `asyncio.to_thread(...)` so the
+event loop stays free for concurrent requests (incl. `/health` on the
+same worker) regardless of how long the underlying git call takes —
+same fix pattern as the already-fixed sibling.
+
+**Testing:** 4 new pytest
+(`test_deploy_health_subprocess_offload_2026_09_20.py`, incl. a real
+concurrency proof — a slow mocked commit-resolver no longer starves a
+concurrent ticker coroutine), 54 passed in the broader deploy/health/
+boot/evidence-pointer/bug1 regression sweep. Live: restarted backend,
+polled `/health` 10x at 1s intervals (13-16ms each, all 200) spanning
+the exact moment `log_deploy_event` fired (`📌 deploy recorded:
+97ff8db main`) — no stall. `/api/health` returns the correct real
+`build_hash: 97ff8db2bb97`. No Docker/K8s/nginx files touched, per
+user instruction.
