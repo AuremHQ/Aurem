@@ -1,4 +1,103 @@
 # AUREM CTO — Changelog (append-only)
+- **8-bug regression spec — all 8 fixed and E2E-verified (2026-09-18)**
+  Full "Aurem / ORA — Regression Bugs & Fix Spec" (reported 2026-09-17
+  by @Tejinder sandhu). All 8 fixed, unit-tested, and verified live
+  in the preview app via testing_agent (report:
+  `/app/test_reports/iteration_2026_09_17_ora_8bugs_e2e.json`). No
+  regressions found; 2 confirmed pre-existing/unrelated test failures
+  (backend `TestMcpWarmGraphAgent::test_graph_status`; frontend
+  `StreamHealthPill`/`LoopLiveFeed.iter329_stale_spinner`/
+  `a11y_components`/`loop_iter309_narration`/
+  `Session7_Item3_rapid_send_lock`) verified via git-stash comparison
+  — fail identically with none of this batch's changes applied.
+
+  1. **Bug 1 — duplicate/runaway fix PRs.** `loop_safety.py` +
+     `finding_fix_applier.py`: branch names are now deterministic
+     (stable id from rule+target path, not timestamp-based); an
+     existing open PR for that identity is reused/updated instead of
+     opening a second one. New `services/bot_pr_reaper.py` runs as a
+     periodic safety-net cron (registered in `main.py`) to close/flag
+     duplicate or superseded bot PRs. 4 new + existing loop-safety
+     tests green.
+  2. **Bug 2 — autonomous agent silently dropping real source
+     statements.** Verified against the user's cited commit
+     (`36ecdee`) on real GitHub — the named import wasn't removed,
+     but 2 unrelated `console.log(...)` calls WERE silently dropped
+     during a marker/comment-only edit, confirming the underlying
+     risk. Generalized the existing dropped-import guard in
+     `cto_projects_helpers.py` into a dropped-statement guard, wired
+     into `cto_pipeline_steps.py`'s hallucination gate (before AND
+     after retry). 5 new tests + 22 existing scope-creep tests green.
+  3. **Bug 3 — "Approve the fix" without a visible diff, false
+     "second reviewer" claim.** `ShipDialog.jsx` now blocks approval
+     and shows an explicit disclosure when no renderable diff is
+     available (`data-testid=ship-no-diff-yet-{id}`); corrected copy
+     that falsely claimed a second review when Maxx mode
+     (`was_reviewed=False`) was used. Live-verified: no diff renders
+     both the approve button AND the disclosure text together with no
+     misleading "double-checked" copy anywhere on the page.
+  4. **Bug 4 — markdown truncation on nested image-in-link
+     `[![alt](src)](href)`.** `RenderedMessage.jsx` rewritten to
+     parse image-in-link before bare-image before bare-link (order is
+     load-bearing), using the already-installed `marked`+`dompurify`
+     rather than extending the old regex. `_safeHref` blocks
+     `javascript:`/`data:` while allowing `https/mailto//#`. 5 new
+     tests green (badge markdown, bold-in-link, bare image, XSS
+     block, false-positive brackets).
+  5. **Bug 5 — "1 agents" pluralization.** New
+     `services/plural_utils.py::pluralize` shared helper; wired into
+     `worker_api.py`'s "Parallel codegen (N agent(s))" text and a
+     related file/line summary in `full_scan_orchestrator.py`. 3 new
+     tests green.
+  6. **Bug 6 — scan results only as transient toasts.**
+     `routers/codebase_health.py` now best-effort persists the scan
+     result as a durable assistant chat message (`route=scan-result`)
+     via `services/ora_chat/session.append_message` when a
+     `session_id` is present; `ChatPanel.jsx` passes `session_id` and
+     shows an optimistic message alongside the existing toast. Wrapped
+     in try/except so persistence failure never breaks the scan
+     response. Existing e2e health-check suite (31 tests) green.
+  7. **Bug 7 — inconsistent page titles.** New
+     `frontend/src/lib/siteConfig.js` — single source of truth for
+     `SITE.name`/`SITE.tagline`/`pageTitle()`; `index.html`,
+     `usePageMeta.js`, `Landing.jsx`, `VsPage.jsx`,
+     `CodebaseHealth.jsx`, `BugHunt.jsx`, and (follow-up, same day)
+     `Analytics.jsx` all now use it with proper restore-on-unmount.
+     Live-verified navigating Landing → Bug Hunt → VS page →
+     Codebase Health → Analytics → back to Landing: no stale titles.
+  8. **Bug 8 — untyped task failures, flat Analytics count.** New
+     `services/failure_taxonomy.py` classifies failures into reason
+     codes (timeout, policy_blocked, context_not_found,
+     hallucination_gate, user_cancelled, unknown); wired into
+     `cto_projects_helpers.py::_set_status` so every new failure gets
+     tagged going forward (pre-existing failed tasks in this DB
+     predate the change and correctly bucket as "unknown").
+     `admin_analytics.py`'s product-analytics endpoint now returns
+     `tasks.failed_by_reason`; `Analytics.jsx` renders a
+     "Failed — by reason" breakdown under the existing flat count
+     (`data-testid=analytics-failed-by-reason`). 8 new backend + 3 new
+     frontend tests green; live-verified on `/analytics` (Failed 122,
+     breakdown shows "unknown: 122", sums match).
+
+  Also fixed in the same pass: a real deployment-blocker (nginx
+  `/health` upstream timeout on cold Atlas boot) — moved the
+  maintenance/G19/G6 boot chain and GitHub App config hydration out of
+  `lifespan()`'s awaited pre-yield body into `create_task`-scheduled
+  background helpers in `main.py`. New
+  `test_health_boot_blocking_2026_09_17.py` (2 tests, rewritten once
+  to check indentation/task-scheduling rather than an invalid
+  text-partition heuristic) + existing `test_iter127_lifespan_
+  nonblocking.py` (3 tests) all green.
+
+  **Testing:** 8 new backend test files (pytest) + 4 new frontend
+  test files (vitest) all green; full targeted backend re-run
+  (119 passed / 1 pre-existing-unrelated); full frontend vitest run
+  (758 passed / 9 pre-existing-unrelated across 5 files, all confirmed
+  via git-stash); ESLint clean on all touched frontend files; live
+  E2E pass via testing_agent covering bugs #3/#7/#8 live in-browser
+  and #4/#5/#6 via code review + unit tests (blocked live-only by this
+  preview pod having no GitHub-connected project — not a code issue).
+
 - **6-bug regression report — 5 of 6 fixed, #4 held pending repro
   (2026-09-17)**
   See test_credentials.md unchanged. Full detail per bug:

@@ -16,6 +16,7 @@ import {
 import Shell, { PageHeader } from "../components/Shell";
 import RailShell from "../components/nav/RailShell";
 import { api } from "../lib/api";
+import { pageTitle } from "../lib/siteConfig";
 
 const MODE_COLORS = {
   C: "#6366f1", D: "#f59e0b", B: "#10b981",
@@ -43,6 +44,16 @@ export default function Analytics() {
   }, []);
 
   useEffect(() => { load(days); }, [days, load]);
+
+  // 2026-09-17 — Bug 7 fix follow-up: /analytics was the one admin
+  // route left showing the stale landing-page tab title (never set
+  // its own, never had one to restore). Same pattern as
+  // CodebaseHealth.jsx / BugHunt.jsx.
+  useEffect(() => {
+    const prevTitle = document.title;
+    document.title = pageTitle("Analytics");
+    return () => { document.title = prevTitle; };
+  }, []);
 
   const trendRows = data?.trend?.dau_14d || [];
   let maxTrend = 1;
