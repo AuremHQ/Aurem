@@ -79,7 +79,16 @@ function ApplyConfirmModal({ item, projectId, onClose, onApplied }) {
     llms_txt: ["llms.txt", "llms-full.txt"],
     sitemap_auto: ["sitemap.xml"],
   };
-  const branch = `auremcto/visibility-kit-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
+  // 2026-09-20 — this preview text used to show a made-up branch name
+  // (`auremcto/visibility-kit-{today's date}`) that never matched
+  // what the backend actually creates — services/visibility/apply.py
+  // calls the CENTRALIZED `ship_branch_name(f"visibility-kit-
+  // {project_id}")` (services/loop_safety.py), which always resolves
+  // to `auremcto/ship-visibility-kit-{project_id}`. Harmless-looking,
+  // but it's exactly the kind of "does the UI even reflect the real
+  // backend" mismatch that erodes trust once someone checks GitHub
+  // and the branch name doesn't match what this modal told them.
+  const branch = `auremcto/ship-visibility-kit-${projectId}`;
   const files = item ? filesByItem[item.key] || [] : Object.values(filesByItem).flat();
 
   const confirm = useCallback(async () => {
@@ -202,6 +211,37 @@ export default function VisibilityKitPanel({ projectId, siteDomain, onClose }) {
   const [loading, setLoading] = useState(true);
   const [confirmItem, setConfirmItem] = useState(null); // item object, or "ALL"
   const [reportItem, setReportItem] = useState(null);
+  // 2026-09-20 — real bug repro (TJSNDHU/Aurem live testing): a
+  // project whose GitHub App auth is actually revoked/unreachable
+  // still showed every "auto" item as a green "Ready" chip with an
+  // enabled "Apply" CTA, because `apply_enabled` from GET .../state
+  // only ever reflected the R9 kill-switch — never this specific
+  // project's own connection health. Clicking Apply then hit a
+  // 403 from get_repo_token_or_error() (services/pat_vault.py) that
+  // surfaced as a toast easy to miss, with the panel's own score/
+  // chips staying at 0/100 with no explanation — reads exactly like
+  // "the Kit is broken" when it's actually a disconnected repo.
+  // Reuses the SAME `GET /cto/projects/connection-status` endpoint
+  // ProjectSwitcher already polls (services/repo_status_cache.py) —
+  // no new backend endpoint. Only "disconnected" (a real, confirmed
+  // revocation) blocks Apply here — "unreachable" (a transient
+  // network blip) does NOT, matching ProjectSwitcher's own hard-won
+  // fix for over-reacting to transient status (see that file's H1
+  // comment) — this panel would otherwise nag on every brief GitHub
+  // hiccup even though a retry would likely succeed.
+  const [githubDisconnected, setGithubDisconnected] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/cto/projects/connection-status")
+      .then((r) => {
+        if (cancelled) return;
+        const entry = (r.data?.statuses || []).find((s) => s.project_id === projectId);
+        setGithubDisconnected(entry?.status === "disconnected");
+      })
+      .catch(() => { /* keep assuming connected on a transient blip fetching status itself */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -239,6 +279,15 @@ export default function VisibilityKitPanel({ projectId, siteDomain, onClose }) {
 
   const readyCount = state.items.filter((i) => i.mode === "auto" && chipForItem(i) === "Ready").length;
   const badgeItem = state.items.find((i) => i.key === "preferred_sources");
+  // Combine BOTH gates: the R9 server kill-switch, and this specific
+  // project's own GitHub connection health. Either one blocking is
+  // enough to disable Apply — the connection message takes priority
+  // since it's the more actionable one for the user right now (the
+  // R9 gate is a platform-wide state they can't do anything about).
+  const applyEnabled = state.apply_enabled && !githubDisconnected;
+  const applyDisabledReason = githubDisconnected
+    ? "This project looks disconnected from GitHub — reconnect it in Settings before applying."
+    : state.apply_disabled_reason;
   const badgePreview =
     `<script async src="https://news.google.com/swg/js/v1/publisher.js"></script>\n` +
     `<div google-add-preferred-source-btn data-theme="light" data-lang="en"></div>\n` +
@@ -287,29 +336,29 @@ export default function VisibilityKitPanel({ projectId, siteDomain, onClose }) {
                 {state.pricing_note}
               </p>
             )}
-            {!state.apply_enabled && (
+            {!applyEnabled && (
               <div data-testid="kit-apply-disabled-banner" style={{
                 marginTop: 10, fontSize: 12, color: "#FB923C",
                 display: "flex", alignItems: "center", gap: 6,
               }}>
                 <ShieldCheck size={13} />
-                {state.apply_disabled_reason}
+                {applyDisabledReason}
               </div>
             )}
           </div>
         </div>
 
         <button data-testid="kit-apply-all-cta"
-          onClick={() => state.apply_enabled && readyCount > 0 && setConfirmItem("ALL")}
-          disabled={!state.apply_enabled || readyCount === 0}
-          title={!state.apply_enabled ? state.apply_disabled_reason : ""}
+          onClick={() => applyEnabled && readyCount > 0 && setConfirmItem("ALL")}
+          disabled={!applyEnabled || readyCount === 0}
+          title={!applyEnabled ? applyDisabledReason : ""}
           style={{
-            width: "100%", background: state.apply_enabled && readyCount > 0 ? "#4ADE80" : "transparent",
-            color: state.apply_enabled && readyCount > 0 ? "#0A0A0A" : MUTED,
-            border: state.apply_enabled && readyCount > 0 ? "none" : "1px solid #333",
+            width: "100%", background: applyEnabled && readyCount > 0 ? "#4ADE80" : "transparent",
+            color: applyEnabled && readyCount > 0 ? "#0A0A0A" : MUTED,
+            border: applyEnabled && readyCount > 0 ? "none" : "1px solid #333",
             borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 600,
-            cursor: state.apply_enabled && readyCount > 0 ? "pointer" : "not-allowed",
-            marginBottom: 8, opacity: state.apply_enabled ? 1 : 0.7,
+            cursor: applyEnabled && readyCount > 0 ? "pointer" : "not-allowed",
+            marginBottom: 8, opacity: applyEnabled ? 1 : 0.7,
           }}>
           Apply Visibility Kit{readyCount > 0 ? ` (${readyCount})` : ""}
         </button>
@@ -317,7 +366,7 @@ export default function VisibilityKitPanel({ projectId, siteDomain, onClose }) {
         <div style={{ marginTop: 8 }}>
           {state.items.map((item) => (
             <FeatureRow key={item.key} item={item}
-              applyEnabled={state.apply_enabled} disabledReason={state.apply_disabled_reason}
+              applyEnabled={applyEnabled} disabledReason={applyDisabledReason}
               onApplyClick={setConfirmItem} onViewReport={setReportItem} />
           ))}
         </div>
