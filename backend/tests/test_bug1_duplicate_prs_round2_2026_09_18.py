@@ -236,6 +236,33 @@ def test_loop_engine_ship_via_pr_uses_centralized_reuse_helper():
     assert "open_or_reuse_pr" in block
 
 
+# ─── 6b. CI guard — prevent Bug 1 round 3 ───────────────────────────
+def test_no_new_direct_open_draft_pr_call_sites_outside_loop_safety():
+    """Testing-agent-suggested guard (round 2 review): the whole
+    reason this bug came back is that a 2nd/3rd/4th call site called
+    `open_draft_pr()` directly instead of going through the
+    centralized `open_or_reuse_pr()`. Enforce it structurally — any
+    FUTURE call site that does this again fails this test immediately
+    instead of silently accumulating duplicates for months before
+    anyone notices."""
+    import subprocess
+    out = subprocess.run(
+        ["grep", "-rn", "open_draft_pr(",
+         "/app/backend/services", "/app/backend/routers",
+         "--include=*.py"],
+        capture_output=True, text=True,
+    ).stdout
+    offenders = [
+        line for line in out.splitlines()
+        if "loop_safety.py" not in line
+    ]
+    assert not offenders, (
+        "found a call site calling open_draft_pr() directly outside "
+        "services/loop_safety.py — it must call open_or_reuse_pr() "
+        f"instead so re-runs don't open a duplicate PR:\n" + "\n".join(offenders)
+    )
+
+
 # ─── 6. bot_pr_reaper — widened marker detection ────────────────────
 @pytest.mark.asyncio
 async def test_reaper_now_sees_visibility_kit_and_ship_via_pr_bodies(respx_mock):
