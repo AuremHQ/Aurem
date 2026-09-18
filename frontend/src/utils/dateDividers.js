@@ -65,6 +65,53 @@ export function computeDateDividers(messages) {
 }
 
 /**
+ * 2026-09-20 — root-fix: extracted from ChatPanel's `GET /chat/history`
+ * hydration so it's testable as real behaviour, not just source text.
+ *
+ * Maps one raw backend turn (`chat_sessions.turns[i]`, as returned by
+ * `GET /chat/history`) into the shape ChatPanel keeps in `messages`
+ * state. MUST preserve every field some other part of the app reads
+ * back off a message object — this list has grown by bug report
+ * every time one was silently dropped (see the low_confidence/
+ * ship_suppressed/interrupted comments below, all the same lesson).
+ *
+ * `kind` + `task_id` are the fields at the center of this fix: Iter 53
+ * (POST /chat/task-followup) persists them on a task-completion turn
+ * SPECIFICALLY so ChatPanel's own client-side dedupe check
+ * (`msgs.some(mm => mm.kind === "task_followup" && mm.task_id ===
+ * taskId)`) can recognise "this wrap-up is already in view" after a
+ * reload and skip re-appending it. This mapper never carried those
+ * two fields over, so after ANY reload the dedupe check silently
+ * always failed: the old task's MessageBubble remounts, its terminal-
+ * status poll refires onTaskCompleted, the (idempotent-on-the-
+ * backend, but client-blind) followup call returns the same cached
+ * text, and — finding no match — a duplicate with no `ts` gets pushed
+ * onto the end of the array, landing after whatever is currently the
+ * last message regardless of when it really happened. Not a fix that
+ * regressed — the dedupe check has depended on these two fields since
+ * the day it was written; this mapper just never supplied them.
+ */
+export function mapHistoryTurn(t) {
+  return {
+    role: t.role,
+    content: t.content,
+    provider: t.provider,
+    ts: typeof t.ts === "number" ? t.ts : undefined,
+    reviewMode: t.review_mode || null,
+    watchdog: t.watchdog,
+    feedback: t.feedback,
+    shipped_task_id: t.shipped_task_id,
+    ship_cancelled: t.ship_cancelled || false,
+    steps: Array.isArray(t.steps) && t.steps.length > 0 ? t.steps : undefined,
+    low_confidence: t.low_confidence || false,
+    ship_suppressed: t.ship_suppressed || false,
+    interrupted: t.interrupted || false,
+    kind: t.kind,
+    task_id: t.task_id,
+  };
+}
+
+/**
  * 2026-09-11 — real bug repro: a Loop task paused for human approval
  * (plan/ship gate) can be resumed hours/days after it was submitted.
  * Its chat-turn pair only gets persisted (services/loop_engine.py

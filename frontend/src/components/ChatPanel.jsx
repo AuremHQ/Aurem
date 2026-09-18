@@ -79,7 +79,7 @@ import {
   confirmShip, getLoopStatus,
 } from "../lib/loopApi";
 import { getChatBgTint } from "../utils/chatBgTint";        // Iter 212m-30 PR-2
-import { computeDateDividers, sortMessagesByTimestamp } from "../utils/dateDividers"; // 2026-09 — chat date dividers
+import { computeDateDividers, sortMessagesByTimestamp, mapHistoryTurn } from "../utils/dateDividers"; // 2026-09 — chat date dividers
 import { DateDivider } from "./chat/DateDivider";             // 2026-09 — chat date dividers
 // Iter 140 — extracted chat hooks. ChatPanel.jsx grew past 1500 lines;
 // the hooks below ring-fence message-list mutations, session network
@@ -430,6 +430,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             provider: "ora",
             kind: "task_followup",
             task_id: taskId,
+            // 2026-09-20 — defense-in-depth alongside the history-map
+            // fix above: give this a real timestamp so IF the dedupe
+            // check above is ever bypassed for some other reason, the
+            // message sorts into its true chronological slot instead
+            // of unconditionally landing at the end of the array.
+            ts: Date.now() / 1000,
           },
         ];
       });
@@ -1637,45 +1643,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           // chronological order. Sort by `ts` (stable — ties/missing
           // values keep their original relative position) so reload
           // always renders in the same order the live session did.
-          setMessages(sortMessagesByTimestamp(turns.map((t) => ({
-            role: t.role,
-            content: t.content,
-            provider: t.provider,
-            // 2026-09 — chat date dividers need each message's real
-            // timestamp (Unix epoch seconds, matches backend's
-            // chat_helpers.py `"ts": time.time()`). Previously dropped
-            // here entirely.
-            ts: typeof t.ts === "number" ? t.ts : undefined,
-            // Iter 161 — preserve review_mode across reload so the
-            // agent chip stays accurate after a page refresh.
-            reviewMode: t.review_mode || null,
-            watchdog: t.watchdog,
-            feedback: t.feedback,
-            shipped_task_id: t.shipped_task_id,
-            // 2026-09-12 — Bug 2 fix (critical-diff cancel bug):
-            // hydrate the persisted cancel flag so a rejected
-            // "Approve the fix" button stays dismissed after a page
-            // refresh/rejoin instead of silently coming back.
-            ship_cancelled: t.ship_cancelled || false,
-            // Chat UX #4 (Tier 1) — hydrate the persisted "📖 Reading
-            // repo… ✍️ Writing files…" step trail so it survives a
-            // page refresh instead of vanishing (MessageBubble already
-            // renders `m.steps` via <StepCards/> when non-empty).
-            steps: Array.isArray(t.steps) && t.steps.length > 0 ? t.steps : undefined,
-            // 2026-08-22 — these were missing from the reload map, so
-            // the low-confidence badge / ship-suppressed note (both
-            // rendered off these two flags) silently disappeared on a
-            // page refresh even though they were persisted server-side.
-            low_confidence: t.low_confidence || false,
-            ship_suppressed: t.ship_suppressed || false,
-            // 2026-09-08 — Turn-Completion Contract, Section 5: same
-            // convention as low_confidence/ship_suppressed just above
-            // (learned from that exact prior bug — "missing from the
-            // reload map, so the badge silently disappeared on a page
-            // refresh") — `interrupted` must round-trip through
-            // reload or a mid-stream-drop turn renders as if complete.
-            interrupted: t.interrupted || false,
-          }))));
+          // 2026-09-20 — the per-field mapping used to be inlined here.
+          // Extracted to utils/dateDividers.js::mapHistoryTurn so it's
+          // unit-testable as real behaviour (see that function's
+          // docstring for the "old task-followup re-appended at the
+          // bottom" bug this fixes) instead of only checkable by
+          // reading source text.
+          setMessages(sortMessagesByTimestamp(turns.map(mapHistoryTurn)));
           // Iter 212m-44 — the user has prior turns in this session
           // (reloaded mid-conversation), so the chrome (top tabs +
           // sidebar) should be auto-hidden as if they had just sent
