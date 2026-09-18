@@ -212,10 +212,23 @@ async def run_rendering_pipeline(
     # The two guards below never touch `aurem-handoff` fences — that
     # fence is structured ship-pipeline machinery the frontend parses
     # for the real file path (Approve/ShipDialog), not prose.
+    #
+    # 2026-09-21 — `skip` now ALSO gates this block, not just
+    # apply_output_guards() above. Previously a caller setting
+    # `_skip_output_guards: True` (confirm-executor, pending_action —
+    # both explicitly deterministic, already-correct completion text)
+    # still had that text run through strip_machinery_leak/business_
+    # voice_filter, which the file docstring above already documents
+    # as having stomped valid filenames before ("the generic
+    # 'file'->'page' mapping"). Real repro: a scan-followup reply
+    # listing exact `file:line` findings came back as "a project
+    # page/a project page" — the SAME documented failure mode, hit by
+    # a new deterministic-content caller. `skip=True` now means what
+    # its name says for the whole pipeline, not just the first stage.
     leak_stripped = False
     length_capped = False
     output_guard_ref_id = None
-    if content and "aurem-handoff" not in content:
+    if content and not skip and "aurem-handoff" not in content:
         try:
             from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
             from core.errors import new_ref_id

@@ -19,12 +19,12 @@
  *   • Empty state (pre-scan) with 5 category buttons + Full Scan CTA
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   Shield, Zap, Code2, Package, Database, RefreshCw, Loader2,
   ChevronDown, ChevronRight, Sparkles, ExternalLink, Bug, Container,
 } from "lucide-react";
-import { api, isAdminOrFounder } from "../lib/api";
+import { api } from "../lib/api";
 import useFixQuota from "../lib/useFixQuota";
 import BulkFixConfirmModal from "../components/BulkFixConfirmModal";
 
@@ -339,20 +339,32 @@ function UnlockBtn({ label, tokens, onClick }) {
 }
 
 export default function CodebaseHealth() {
-  // Iter 212m-157 — Admin-only guard wrapper.  Splitting the check
-  // into a parent wrapper keeps the inner component's hook order
-  // unconditional (Rules of Hooks compliance).  Non-admins are
-  // bounced to /dashboard; admins/founders fall through to the
-  // full Health Scanner experience.
-  if (!isAdminOrFounder()) {
-    return <Navigate to="/dashboard" replace data-testid="health-nonadmin-redirect" />;
-  }
+  // 2026-09-21 — Bug B fix (live QA report): this page used to bounce
+  // ANY non-admin/non-founder account straight back to /dashboard
+  // with zero explanation — a leftover from before routers/
+  // codebase_health.py's own admin-only gate was removed (see that
+  // file's 2026-08-22 comment: "silently 403'd every real paying
+  // customer"). The backend has served every logged-in user for a
+  // while; this frontend route never caught up, so a real customer
+  // clicking "Review findings →" landed on a silent redirect that
+  // looked exactly like "the chat wiped itself". Any logged-in user
+  // can view their own findings now — ownership is still enforced
+  // server-side by (project_id, user_id) on every /codebase-health/*
+  // call, same as the rest of the dashboard.
   return <CodebaseHealthInner />;
 }
 
 function CodebaseHealthInner() {
   const navigate = useNavigate();
-  const [projectId, setProjectId] = useState(localStorage.getItem("aurem_active_project") || "");
+  // 2026-09-21 — Bug B fix: read `?project_id=` from the URL first so
+  // a deep link from the chat's "Review findings →" CTA (which now
+  // passes the project that was ACTUALLY just scanned) always lands
+  // on the right project, instead of trusting the possibly-stale
+  // `aurem_active_project` value in localStorage.
+  const [projectId, setProjectId] = useState(
+    new URLSearchParams(window.location.search).get("project_id")
+    || localStorage.getItem("aurem_active_project") || "",
+  );
   const [scanning, setScanning] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);

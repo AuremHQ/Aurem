@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Optional
 
 from services.orchestrator import chat_with_tools
@@ -158,6 +159,77 @@ async def _mode_broadcast(state: StreamState) -> str:
     except Exception:
         pass
     return _mode
+
+
+async def _scan_followup_check(state: StreamState) -> Optional[dict]:
+    """2026-09-21 — Bug C fix (live QA report). Runs BEFORE mode
+    classification, independent of it. Founder repro: "list the bug
+    hunt findings from the scan you just ran" doesn't match Mode D's
+    is_debug_request() at all (that classifier requires a soft error
+    term PAIRED with a debug-action verb like "fix the"/"debug" — a
+    bare "list …" ask matches neither), so it fell through to the
+    general orchestrator with zero awareness a scan had just run and
+    answered with a generic templated response. This fires whenever
+    the message references scan/findings AND a real scan for this
+    project ran recently (services.mode_d_debugger.
+    try_scan_followup_reply — same recency + real-data contract
+    regardless of which mode the message would otherwise classify
+    as). No-op (returns None, nothing else changes) when either
+    condition is false."""
+    body, user_id, q = state.body, state.user_id, state.q
+    if not body.project_id or body.project_id == "home":
+        return None
+    from services.mode_d_debugger import (
+        has_scan_followup_signal, try_scan_followup_reply,
+    )
+    if not has_scan_followup_signal(body.prompt or ""):
+        return None
+    d_result = await try_scan_followup_reply(
+        get_db(), user_id=user_id, project_id=body.project_id,
+        user_message=body.prompt or "",
+        # Heartbeat so the SSE watchdog (soft_timeout_s=48s, fires
+        # when zero tool invocations are recorded) doesn't preempt a
+        # real multi-fix turn with its own generic "slow to respond"
+        # message before this function gets a chance to finish —
+        # confirmed live repro fixing 2 real findings took >48s.
+        on_fix_progress=lambda n: state.activity["invocations"].extend(
+            [{"tool": "apply_finding_fix", "ts": time.time()}] * max(n, 2),
+        ),
+    )
+    if d_result is None:
+        return None
+    await q.put({"type": "mode", "mode": "D"})
+    # Real citations, not a guessed claim: mark each file this reply
+    # names as "read" this turn so CitationGuard (routers/chat/
+    # stream.py) doesn't flag them as unsourced and trigger an
+    # unrelated re-read + LLM rewrite pass on top of already-grounded
+    # text (confirmed live repro: it does, and the rewrite's own
+    # narration replaced the clean findings list with unrelated file
+    # summaries).
+    synthetic_tool_calls = [
+        {"tool": "read_repo_file", "args": {"path": p}}
+        for p in (d_result.get("files_referenced") or [])
+    ]
+    return {
+        "ok": True,
+        "content":  d_result.get("ora_reply", ""),
+        "provider": "scan-followup",
+        "fallback_chain": ["scan_followup"],
+        "iterations": 1, "tool_calls_run": len(synthetic_tool_calls),
+        "tool_invocations": [], "tool_calls": synthetic_tool_calls,
+        "mode": "D",
+        "can_auto_fix": False,
+        "severity": d_result.get("severity", "medium"),
+        "fast_path_used": True,
+        # This is deterministic text built straight from real DB
+        # rows (exact file:line findings, real commit shas) — the
+        # SAME class of "already-correct, must not be rewritten"
+        # content confirm-executor/pending_action mark this way; see
+        # run_rendering_pipeline's updated comment for the real repro
+        # this fixes (business_voice_filter turning `file:line` into
+        # "a project page").
+        "_skip_output_guards": True,
+    }
 
 
 async def _mode_d_e(state: StreamState, _mode: str) -> Optional[dict]:
@@ -1202,6 +1274,11 @@ async def run_worker(state: StreamState) -> None:
             state.required_read_gate = None
 
         r = await _mode_d_fast_path(state)
+        if r is not None:
+            await q.put({"type": "result", "result": r})
+            return
+
+        r = await _scan_followup_check(state)
         if r is not None:
             await q.put({"type": "result", "result": r})
             return

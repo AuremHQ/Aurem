@@ -231,6 +231,24 @@ async def scan(
     overall_score = _score_for_findings(all_findings)
     label, tone = _category_label(overall_score)
     total = sum(b["total"] for b in breakdown.values())
+    # 2026-09-21 — Bug D fix (live QA report): this manual scan path
+    # (chat slash-commands + the /codebase-health page) never wrote
+    # into `cto_open_findings`, so the Advisor sidebar's "N open
+    # findings" counter (routers/advisor_context.py, reads ONLY that
+    # collection) stayed frozen across every /bug-hunt or /health-scan
+    # run — it only ever moved from Loop's full-scan or the one-time
+    # onboarding scan. Reuse the SAME writer those two paths already
+    # use (upsert keyed on user+project+finding_id, critical/high
+    # only, exposure-count capped) so a manual scan's real findings
+    # actually reach the real backlog the counter reads from.
+    try:
+        from services.loop_full_scan import persist_findings_to_backlog
+        await persist_findings_to_backlog(
+            db, user_id=user_id, project_id=project_id,
+            findings=all_findings, scan_source="codebase_health_manual",
+        )
+    except Exception as e:                                 # noqa: BLE001
+        logger.debug("open-findings backlog persist failed: %r", e)
     payload = {
         "ok":            True,
         "score":         overall_score,
@@ -319,17 +337,28 @@ async def scan(
     session_id = (body or {}).get("session_id")
     if session_id:
         try:
-            from services.ora_chat.session import append_message
             cats_label = ", ".join(categories)
             headline = f"**Scan complete — {cats_label}**"
             body_lines = [payload["summary"]]
-            for cat, b in breakdown.items():
-                if b["total"]:
-                    body_lines.append(
-                        f"- `{cat}`: {b['total']} finding(s) "
-                        f"(critical {b['counts']['critical']}, "
-                        f"high {b['counts']['high']})"
-                    )
+            # 2026-09-21 — Bug E fix (live QA report): list EVERY
+            # scanned category, including 0-finding ones. The old
+            # code skipped a category here whenever `b["total"]` was
+            # falsy, but the header above always counts
+            # `len(categories)` (categories RUN, not categories WITH
+            # findings) — so a 4-category health-scan where one
+            # category came back clean showed "...across 4
+            # categories" with only 3 lines underneath, looking like
+            # a miscount. Header and body now always agree.
+            for cat in categories:
+                b = breakdown.get(cat) or {
+                    "total": 0, "counts": {"critical": 0, "high": 0},
+                }
+                body_lines.append(
+                    f"- `{cat}`: {b['total']} finding(s) "
+                    f"(critical {b['counts']['critical']}, "
+                    f"high {b['counts']['high']})"
+                )
+            evidence_ref = None
             if scan_record_id:
                 # 2026-09-20 — pointer + preview (services/evidence_
                 # pointer.py). Preview items are REAL findings pulled
@@ -355,18 +384,54 @@ async def scan(
                     headline=headline, body_lines=body_lines,
                     preview_items=preview_items, preview_total=total,
                 )
-                await append_message(
-                    session_id, user_id,
-                    role="assistant", content=msg["text"],
-                    route="scan-result", evidence_ref=msg["evidence_ref"],
-                )
+                content = msg["text"]
+                evidence_ref = msg["evidence_ref"]
             else:
-                lines = [headline, ""] + body_lines
-                await append_message(
-                    session_id, user_id,
-                    role="assistant", content="\n".join(lines),
-                    route="scan-result",
-                )
+                content = "\n".join([headline, ""] + body_lines)
+            # 2026-09-21 — Bug A root-cause fix (live QA report, real
+            # repro against p_64987820ec/Aurem-1): this used to call
+            # services.ora_chat.session.append_message(), which
+            # writes into `ora_chat_sessions` — a completely separate
+            # collection the REAL product chat never reads. The live
+            # UI's GET /chat/history reads db.chat_sessions ONLY
+            # (written by services/chat_helpers.py::_persist_turn and
+            # routers/chat/misc.py's task-followup writer). Confirmed
+            # live: append_message() also has no upsert, so for every
+            # real session_id the UI actually uses (which never
+            # exists as an ora_chat_sessions doc) the write was a
+            # silent no-op — matched_count stayed 0. Net effect: the
+            # scan-complete bubble the frontend adds to LOCAL state
+            # (ChatPanel.jsx _executeSlashScan) was NEVER durably
+            # saved anywhere the real UI could re-fetch it from, so
+            # the next GET /chat/history (reload, tab remount, the
+            # "Review findings" full-page nav) always came back
+            # without it — it visually "vanished" / the chat
+            # "reverted". Fix: push directly into db.chat_sessions.
+            # turns with the SAME shape + upsert the durable regular-
+            # turn writer (_persist_turn) uses, so it is actually
+            # there on every future read, same as any other message.
+            now = time.time()
+            new_turn = {
+                "role":     "assistant",
+                "content":  content,
+                "ts":       now,
+                "provider": "scan-result",
+                "kind":     "scan_result",
+            }
+            if evidence_ref:
+                new_turn["evidence_ref"] = evidence_ref
+            await db.chat_sessions.update_one(
+                {"session_id": session_id, "user_id": user_id},
+                {
+                    "$setOnInsert": {
+                        "session_id": session_id, "user_id": user_id,
+                        "created_at": now, "project_id": project_id,
+                    },
+                    "$set": {"updated_at": now, "last_message": content[:120]},
+                    "$push": {"turns": {"$each": [new_turn], "$slice": -200}},
+                },
+                upsert=True,
+            )
         except Exception as e:                              # noqa: BLE001
             logger.debug("scan-result chat persist failed: %r", e)
     headers = {

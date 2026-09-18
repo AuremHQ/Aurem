@@ -16,6 +16,7 @@ import {
   Send, Loader2, Square, Paperclip, Github, Zap,
   Eye, EyeOff, Trash2, ShieldCheck, History, X,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api, streamChat, API_BASE, getToken, getUser, isAdminOrFounder } from "../lib/api";
 import { toast, dismissToast } from "./Toast";
 import PreviewPanel from "./PreviewPanel";
@@ -210,6 +211,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   const chatMsgs = useChatMessages();
   const chatSession = useChatSession({ sessionId, onTurnSaved });
   const chatStream = useChatStream();
+  // 2026-09-21 — Bug B fix (live QA report): "Review findings →" used
+  // to hard-navigate via window.location.assign, a full page reload
+  // that (a) destroyed all in-memory chat state and (b) never told
+  // /codebase-health WHICH project was just scanned. SPA navigation
+  // preserves the app shell and lets us pass project_id explicitly.
+  const navigate = useNavigate();
   const [messages, setMessages] = useState([WELCOME]);
   const [input, setInput] = useState("");
   // 2026-09-09 — founder ticket Part 0 (round 2): the removed
@@ -3290,16 +3297,35 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       // notification ON TOP of the durable record, never instead of it.
       if (r.data?.summary) {
         const lines = [`**Scan complete — ${cmd.label}**`, "", r.data.summary];
-        for (const [cat, b] of Object.entries(breakdown)) {
-          if (b?.total) {
-            lines.push(
-              `- \`${cat}\`: ${b.total} finding(s) (critical ${b.counts?.critical || 0}, high ${b.counts?.high || 0})`,
-            );
-          }
+        // 2026-09-21 — Bug E fix (live QA report): list EVERY category
+        // that was actually scanned (cmd.categories, falling back to
+        // whatever keys the response has), not just the ones with a
+        // non-zero total — the header above always counts categories
+        // RUN, so skipping 0-finding ones here made the header and
+        // body disagree (e.g. "...across 4 categories" with only 3
+        // lines under it).
+        const ranCats = cmd.categories || Object.keys(breakdown);
+        for (const cat of ranCats) {
+          const b = breakdown[cat] || { total: 0, counts: {} };
+          lines.push(
+            `- \`${cat}\`: ${b.total || 0} finding(s) (critical ${b.counts?.critical || 0}, high ${b.counts?.high || 0})`,
+          );
         }
+        // 2026-09-21 — Bug A fix (live QA report): the backend now
+        // durably persists this exact message into db.chat_sessions
+        // (see routers/codebase_health.py) instead of a disconnected
+        // collection the real chat never reads, so a later GET
+        // /chat/history reload will return it verbatim. Give the
+        // optimistic local copy the same `ts`/`kind`/`provider` shape
+        // the server turn has so a hydration replace never looks like
+        // a jump or a duplicate.
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: lines.join("\n"), provider: "scan-result" },
+          {
+            role: "assistant", content: lines.join("\n"),
+            provider: "scan-result", kind: "scan_result",
+            ts: Date.now() / 1000,
+          },
         ]);
       }
       // 2026-08-20 — a clean scan previously showed NOTHING at all,
@@ -5752,7 +5778,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         projectId={activeProject?.project_id}
         scanState={scanState}
         projectName={activeProject?.github_repo || ""}
-        onReviewFindings={() => window.location.assign("/codebase-health")}
+        onReviewFindings={() => navigate(
+          `/codebase-health?project_id=${encodeURIComponent(activeProject?.project_id || "")}`,
+        )}
       />
 
       {/* 2026-08-21 — founder request: hide the "Agent is running…"
