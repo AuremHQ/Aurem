@@ -627,6 +627,7 @@ async def request_fix(
         "finding_line":    line,
         "commit_sha":      res["full_sha"],
         "html_url":        res["html_url"],
+        "pr_url":          res.get("pr_url"),
         "created_at":      _time.time(),
         "completed_at":    _time.time(),
         "tokens_charged":  tokens_cost,
@@ -637,6 +638,14 @@ async def request_fix(
         "commit_sha":      res["commit_sha"],
         "full_sha":        res["full_sha"],
         "html_url":        res["html_url"],
+        # 2026-09-18 fix — found while live-verifying the Bug 1
+        # duplicate-PR fix against a real connected repo
+        # (polarisbuiltinc-wq/Aurem-1): `apply_finding_fix()` has
+        # always returned `pr_url`, but this endpoint's response
+        # silently dropped it — a caller had no way to know a PR was
+        # even opened, let alone link to it, unless they went digging
+        # in server logs.
+        "pr_url":          res.get("pr_url"),
         "tokens_charged":  tokens_cost,
         "new_balance":     new_balance,
         "message":         res["message"],

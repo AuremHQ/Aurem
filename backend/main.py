@@ -700,6 +700,24 @@ async def lifespan(app: FastAPI):
     # bind while doing so.
     async def _boot_maintenance_g19_g6():
         try:
+            # 2026-09-18 fix — nginx /health STILL timed out intermittently
+            # (4x across ~20s on a real prod boot) even after this chain
+            # was moved off the blocking pre-yield path. Root cause this
+            # round: ~8 background boot tasks (this one + loop_safety
+            # indexes + fix_jobs orphan sweep + github_app indexes + ora
+            # learning indexes + visual_bugfix_storage warm-up + 3 bare
+            # health-score index creates) ALL fired with ZERO delay,
+            # piling every one of their Mongo round-trips + one real
+            # outbound HTTP call into the SAME instant — under this
+            # deploy's documented "prod 500m CPU cap" (see the codebase
+            # index warm-up comment below), that's enough concurrent
+            # CPU/IO demand to starve the event loop long enough for
+            # nginx's upstream read to time out, even though uvicorn
+            # already has the port bound and /health itself is a
+            # microsecond handler. A small stagger (this file already
+            # uses 30/45/60/75s staggers for the lower-priority ones)
+            # spreads the burst instead of leaving it all at T+0.
+            await _asyncio.sleep(2)
             from services.maintenance import (
                 load_maintenance_state as _maint_load,
                 read_last_heartbeat as _maint_last_beat,
@@ -758,6 +776,9 @@ async def lifespan(app: FastAPI):
     # loops on the same {project_id, user_id}.
     async def _ensure_loop_safety_indexes():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(4)
             if app.state.db is None:
                 return
             from services.loop_safety import ensure_loop_lock_index
@@ -782,6 +803,9 @@ async def lifespan(app: FastAPI):
     # the user stare at a hung "Fix in progress" forever.
     async def _orphan_running_fix_jobs():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(6)
             if app.state.db is None:
                 return
             from services.fix_job_manager import mark_running_orphaned
@@ -810,6 +834,9 @@ async def lifespan(app: FastAPI):
     # downstream falls back to full-scan behaviour without breaking.
     async def _github_app_indexes():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(8)
             if app.state.db is None:
                 return
             # github_installations — source of truth for App installs.
@@ -941,6 +968,9 @@ async def lifespan(app: FastAPI):
     # pipelines now write to (`ora_fix_learning`, `ora_scan_learning`).
     async def _ensure_ora_learning_indexes():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(11)
             if app.state.db is None:
                 return
             from services.ora_fix_learning import ensure_indexes
@@ -1018,6 +1048,11 @@ async def lifespan(app: FastAPI):
     # already lazy-init + retry on their own if this hasn't finished
     # (or failed) yet.
     async def _warm_visual_bugfix_storage():
+        # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+        # above for the full root-cause writeup) — this one makes a
+        # REAL outbound HTTP call (objstore /init), so it's the
+        # highest-value one to keep out of the T+0 burst.
+        await _asyncio.sleep(14)
         from services.visual_bugfix_storage import warm_up as _storage_warm_up
         await _storage_warm_up()
     _asyncio.create_task(_warm_visual_bugfix_storage())
@@ -1225,18 +1260,23 @@ async def lifespan(app: FastAPI):
     # so the Performance-category sampler (added above) never grows
     # unbounded; plain indexes on the other two new collections so
     # services/health_score.py's "latest doc" lookups stay cheap.
-    try:
-        _asyncio.create_task(app.state.db.health_endpoint_latency.create_index(
-            "ts", expireAfterSeconds=14 * 86400,
-        ))
-        _asyncio.create_task(app.state.db.health_test_coverage_runs.create_index(
-            "generated_at",
-        ))
-        _asyncio.create_task(app.state.db.architecture_review_log.create_index(
-            "date",
-        ))
-    except Exception as e:
-        logger.warning("health-score index creation not started: %r", e)
+    async def _ensure_health_score_indexes():
+        try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(9)
+            await app.state.db.health_endpoint_latency.create_index(
+                "ts", expireAfterSeconds=14 * 86400,
+            )
+            await app.state.db.health_test_coverage_runs.create_index(
+                "generated_at",
+            )
+            await app.state.db.architecture_review_log.create_index(
+                "date",
+            )
+        except Exception as e:
+            logger.warning("health-score index creation failed: %r", e)
+    _asyncio.create_task(_ensure_health_score_indexes())
 
 
     # Iter 264 Fix D — nightly ORA grounding canary (default OFF).

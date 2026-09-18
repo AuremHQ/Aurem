@@ -1,4 +1,81 @@
 # AUREM CTO — Changelog (append-only)
+- **Bug 1 idempotency — REAL double-run proof against a live connected
+  repo + a real bug found along the way (2026-09-18)**
+  Ran the actual `/codebase-health/fix` endpoint 3x (not a mock) for
+  the identical `large_function` finding against
+  `polarisbuiltinc-wq/Aurem-1` (real GitHub-App-connected project
+  `p_64987820ec` — no `cto_projects` row exists for the bare `Aurem`
+  repo name; `Aurem-1` and the explicit `aurem-rollback-testbed` were
+  the two real candidates, and `Aurem-1` had actual scannable content
+  the testbed didn't). Result, independently verified against the
+  real GitHub API (not just this app's own logs):
+  `https://github.com/polarisbuiltinc-wq/Aurem-1/pull/1` — ONE PR,
+  containing all 3 runs' commits (`e7de471`, `f367144`, `ec9927d`),
+  with the reuse-comment posted on run 2+3 exactly as designed.
+  Repo-wide open-PR check: 1. Run 2 hit a real transient
+  `httpx.ConnectTimeout` reaching GitHub (environmental, not a logic
+  bug) — retried once and it succeeded; reported as-is, not hidden.
+
+  **Bonus bug found + fixed during this live test:**
+  `routers/codebase_health.py`'s `/fix` response never surfaced
+  `pr_url` even though `apply_finding_fix()` has always returned it —
+  a caller had no way to know a PR was opened/reused without reading
+  server logs. Added to both the response dict and the `cto_tasks`
+  persisted record. New test:
+  `test_codebase_health_fix_endpoint_surfaces_pr_url` in
+  `tests/test_iter212m114_real_finding_fix.py` (passes; 1 pre-existing
+  unrelated `_decrypt_pat` failure in the same file confirmed via
+  git-stash, unrelated to this change).
+
+
+- **Deployment fix — nginx `/health` timeout, round 2: boot-task
+  burst under CPU cap (2026-09-18)**
+  User shared fresh production boot logs still showing 4 nginx
+  "upstream timed out ... GET /health" errors in the first ~20s after
+  boot, even though the round-1 fix (create_task-wrapping the
+  maintenance/G19/G6 chain + GitHub App config hydration so neither
+  blocks uvicorn's port bind) was already live. Root cause round 2:
+  create_task-wrapping only solves "does this block the port bind" —
+  it does NOT solve "does this compete for CPU during the
+  readiness-probe window". ~8 separate background boot tasks in
+  `main.py`'s `lifespan()` (maintenance/G19/G6, loop_safety indexes,
+  fix_jobs orphan sweep, github_app indexes, ora_learning indexes,
+  visual_bugfix_storage warm-up — a REAL outbound HTTP call — and 3
+  bare health-score index creates) all fired with literally ZERO
+  delay, piling every Mongo round-trip + the one HTTP call onto the
+  exact same instant. Under this deploy's documented "prod 500m CPU
+  cap", that's enough concurrent demand to starve the event loop long
+  enough for individual `/health` probe reads to time out.
+
+  Fix: staggered these 7 boot tasks (2s/4s/6s/8s/9s/11s/14s delays),
+  following this file's own pre-existing "Iter 336 boot stagger"
+  pattern already used successfully for lower-priority tasks
+  (30s/45s/60s/75s elsewhere). `_hydrate_github_app_config` was
+  deliberately left un-staggered per its own documented "warm within
+  ~1s" requirement for real user-facing chat requests. Wrapped the 3
+  bare `create_index` calls (previously fired unwrapped, uncaught) in
+  a new `_ensure_health_score_indexes` helper alongside the stagger.
+  No Docker changes — 100% Python, `backend/main.py` only, per user's
+  explicit constraint.
+
+  **Testing:** new `test_deploy_health_boot_stagger_round2_2026_09_18.py`
+  (8 tests) + existing `test_health_boot_blocking_2026_09_17.py` (2) +
+  `test_iter127_lifespan_nonblocking.py` (3) + `test_bug1_duplicate_prs*`
+  (13, unrelated files touched same session) all pass — 26/26.
+  Live-restarted the backend and confirmed the stagger fires on
+  schedule (G19/G6 at +2s, ora_learning at +11s,
+  visual_bugfix_storage at +14s) with zero errors, and `/health`
+  responds in <150ms throughout. `deployment_agent` audit run:
+  flagged a Dockerfile port mismatch (8002/3001 vs required 8001/3000)
+  and a "missing .gitignore" — both false positives/out of scope
+  (`.gitignore` already excludes `memory/test_credentials.md`
+  twice-over; the Dockerfile ports are very likely a stale/unused
+  artifact since the shared logs show `/health` succeeding
+  repeatedly, which a truly-wrong container port could never do) —
+  left untouched per the user's explicit "no Docker changes"
+  instruction.
+
+
 - **Bug 1 ROUND 2 — duplicate PRs, real root cause + centralized fix
   (2026-09-18)**
   Founder reported (2nd time): manually closed 371 duplicate PRs
