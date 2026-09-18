@@ -1,4 +1,65 @@
 # AUREM CTO — Changelog (append-only)
+- **TypeSafe Jev added (typesafe/jev-1.13, via OpenRouter Decisions
+  API) — opt-in classifier, real benchmark attached (2026-09-19)**
+  Verified `typesafe/jev-1.13` is a real, live model on OpenRouter
+  (crawled the actual page — not trusting search-summary text alone)
+  with its own distinct endpoint (`POST /api/alpha/decisions`, NOT
+  the standard `/api/v1/chat/completions` all other models here use)
+  and request shape (`state` + typed `questions`: noul/choice/score
+  → typed answers + probabilities, no free-text/JSON-parsing layer).
+  Got the integration playbook via `integration_playbook_expert_v2`
+  before writing any code, per policy.
+
+  New `services/llm/jev_client.py` — low-level `ask_decisions()` +
+  a convenience `ask_choice()` wrapper. Wired into
+  `services/ora_chat/intent_router.py` as `classify_intent_jev()` — a
+  new **opt-in** Layer-2b alternative to the existing
+  `classify_intent_llm()` (google/gemini-2.5-flash). Default behavior
+  is 100% unchanged (`classify_intent(classifier="llm")` by default);
+  `classifier="jev"` is explicit opt-in, also exposed on the admin
+  `/ora-chat/intent-classify` test endpoint. Kept opt-in rather than a
+  hard cutover — Jev is in beta and this is a brand-new external
+  dependency; a rollback lever matters more than shaving the last
+  bit of latency on day one.
+
+  **Real before/after benchmark** (5 messages that fall through the
+  regex pre-filter to Layer 2, hitting REAL APIs both sides, not
+  mocked):
+  - google/gemini-2.5-flash (current default): avg **761.1ms**
+    latency, avg **$0.00012568**/call (391 in / 3.4 out tokens ×
+    OpenRouter's published list price $0.30/$2.50 per M)
+  - typesafe/jev-1.13: avg **302.6ms** latency (**2.52x faster**),
+    avg **$0.00001863**/call (API's own exact `usage.cost` field,
+    **6.75x cheaper**)
+  - Label agreement with the current model on all 5 messages: **5/5**
+  Then additionally live-verified through the actual running app
+  (not just the benchmark script) via
+  `POST /ora-chat/intent-classify {"text":"do it","classifier":"jev"}`
+  → real `source:"jev"`, `CODE_CHANGE` @ probability 1.0, real
+  `usage.cost` returned end-to-end.
+
+  **Other real classification/routing call sites identified as
+  candidates for a later Jev migration** (proposed, not implemented
+  this round — user asked for "at least one" validated first):
+  - `services/mcp_scoped_tools.py::classify_tool_groups` — multi-label
+    tool-group routing (read/write/security/project); would map to 4
+    parallel `noul` questions in one Decisions call instead of 1
+    multi-label chat completion.
+  - No existing "review comment triage: fix/dismiss/ask" call site
+    was found in this codebase today — noted as a good fit for Jev
+    IF/when that flow gets built, not a migration target now.
+  - Bug 8's `services/failure_taxonomy.py` is already regex-based
+    (zero LLM cost today) — not a candidate.
+  Do-not-migrate list respected: nothing that generates code, PR
+  descriptions, or written explanations was touched.
+
+  **Testing:** 11 new tests (`test_jev_intent_classifier_2026_09_19.py`,
+  fully mocked, no real network calls in CI) + 37/39 existing
+  intent-router tests pass (2 pre-existing/unrelated
+  `TestRouterWiring` source-inspection failures, confirmed via
+  git-stash — a stale extraction bug unrelated to this change).
+
+
 - **Bug 1 idempotency — REAL double-run proof against a live connected
   repo + a real bug found along the way (2026-09-18)**
   Ran the actual `/codebase-health/fix` endpoint 3x (not a mock) for

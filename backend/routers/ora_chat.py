@@ -909,13 +909,18 @@ async def preview_scan(body: PreviewScanBody,
 # response.  Admin-only.
 class IntentClassifyBody(BaseModel):
     text: str = Field(..., min_length=0, max_length=8000)
+    # 2026-09-19 — opt-in Jev benchmarking. "llm" (default, unchanged)
+    # or "jev" (services.llm.jev_client, TypeSafe Jev via OpenRouter's
+    # Decisions API). See intent_router.py's classify_intent_jev() for
+    # the real before/after numbers this shipped with.
+    classifier: str = Field("llm", pattern="^(llm|jev)$")
 
 
 @router.post("/intent-classify")
 async def intent_classify(body: IntentClassifyBody,
                           request: Request,
                           authorization: Optional[str] = Header(None)):
-    """Two-layer intent classify (regex pre-filter → LLM fallback).
+    """Two-layer intent classify (regex pre-filter → LLM/Jev fallback).
 
     Returns `{intent, source, matches, meta}`. `intent` is one of
     `PREVIEW_ONLY`, `CODE_CHANGE`, or `UNKNOWN`.  See
@@ -929,7 +934,7 @@ async def intent_classify(body: IntentClassifyBody,
     if not await check_rate_limit_async(f"ora_chat:intent:{user['user_id']}:{ip}", 60):
         raise HTTPException(429, "Rate limit — slow down for a minute.")
     verdict = await ora_intent.classify_intent(
-        body.text or "", one_shot_fn=one_shot,
+        body.text or "", one_shot_fn=one_shot, classifier=body.classifier,
     )
     return {"ok": True, **verdict}
 
