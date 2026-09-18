@@ -18,7 +18,7 @@ import time
 
 from services.github_api_writer import commit_files, fetch_file, find_html_entry_path
 from services.git_identity import resolve_git_identity
-from services.loop_safety import create_or_reuse_branch, open_draft_pr, ship_branch_name
+from services.loop_safety import create_or_reuse_branch, open_or_reuse_pr, ship_branch_name
 from services.visibility import robots as robots_gen
 from services.visibility import schema as schema_gen
 from services.visibility import sitemap as sitemap_gen
@@ -163,7 +163,14 @@ async def apply_visibility_kit(
         return {"ok": False, "error": "all_conflicted", "conflicts": conflicts,
                 "advisory_skipped": advisory_skipped, "not_implemented": not_implemented}
 
-    branch = ship_branch_name(f"visibility-kit-{scan_date.replace('-', '')}")
+    # 2026-09-18 fix (Bug 1 round 2 — confirmed source of the reported
+    # "Visibility Kit x5" duplicates). This used to key on a
+    # date-stamped slug AND `ship_branch_name` itself appended a live
+    # timestamp internally — so literally every apply call, even
+    # back-to-back same-day re-runs, minted a brand-new branch. Keying
+    # on `project_id` alone means repeated Kit applies for the SAME
+    # project land as new commits on the SAME open PR until merged.
+    branch = ship_branch_name(f"visibility-kit-{project_id}")
     ok, err = await create_or_reuse_branch(
         owner=owner, repo=repo, base_branch=base_branch, new_branch=branch, token=token,
     )
@@ -179,17 +186,22 @@ async def apply_visibility_kit(
     )
 
     body = _render_pr_body(applied_names, advisory_skipped, list(files.keys()), branch)
-    pr_url, pr_err = await open_draft_pr(
+    pr_result = await open_or_reuse_pr(
         owner=owner, repo=repo, head_branch=branch, base_branch=base_branch,
         title=f"Visibility Kit ({', '.join(applied_names)}) — by AUREM",
         body=body, token=token,
+        update_comment=(
+            f"**AUREM Visibility Kit — updated.** New commit re-applies "
+            f"{', '.join(applied_names)}.\n\n"
+            f"_Reusing this PR instead of opening a duplicate — same "
+            f"project, still open._"
+        ),
     )
+    pr_url = pr_result.get("pr_url")
     if not pr_url:
-        return {"ok": False, "error": f"pr_open_failed_{pr_err}", "branch": branch}
+        return {"ok": False, "error": f"pr_open_failed_{pr_result.get('error')}", "branch": branch}
 
-    pr_number = None
-    if pr_url and "/pull/" in pr_url:
-        pr_number = int(pr_url.rsplit("/", 1)[-1])
+    pr_number = pr_result.get("pr_number")
 
     now = time.time()
     for item_key in applied_names:

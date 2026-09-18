@@ -34,6 +34,21 @@ from services.loop_safety import close_pr, add_pr_comment, github_request_with_r
 logger = logging.getLogger("bot_pr_reaper")
 
 AUREM_FIX_MARKER = "AUREM auto-fix"
+# 2026-09-18 fix (Bug 1 round 2) — the reaper's OWN safety net had the
+# same "only covers one call site" gap as the primary fix: it only
+# ever matched `finding_fix_applier.py`'s "**AUREM auto-fix**" body
+# marker, so it silently never even SAW the reported Visibility Kit /
+# ship-via-PR / visual-bugfix duplicates in `_list_open_bot_prs` —
+# those 3 call sites use their own body wording. Now matches any of
+# the 4 known Aurem-bot PR markers, so a legacy backlog from ANY of
+# them gets swept, not just the one this reaper was originally built
+# to clean up.
+AUREM_BOT_MARKERS = (
+    AUREM_FIX_MARKER,                          # finding_fix_applier.py
+    "Visibility Kit (",                        # services/visibility/apply.py
+    "Opened by ORA (Loop ",                    # loop_engine.py ship-via-PR
+    "AUREM's Visual Bug-Fix pipeline",          # services/visual_bugfix_pr.py
+)
 # Strip a trailing "-<digits>" segment (the old per-run timestamp) so
 # legacy duplicates collapse into one dedup group.
 _TRAILING_TS_RE = re.compile(r"-\d{9,}$")
@@ -57,7 +72,7 @@ async def _list_open_bot_prs(*, owner: str, repo: str, token: str) -> list[dict]
         )
         if r.status_code == 200:
             for pr in (r.json() or []):
-                if AUREM_FIX_MARKER in (pr.get("body") or ""):
+                if any(m in (pr.get("body") or "") for m in AUREM_BOT_MARKERS):
                     out.append(pr)
         else:
             logger.warning("_list_open_bot_prs(%s/%s) HTTP %s", owner, repo, r.status_code)

@@ -491,6 +491,78 @@ async def open_draft_pr(
     return None, f"pr_status_{r.status_code}"
 
 
+async def open_or_reuse_pr(
+    *, owner: str, repo: str, head_branch: str, base_branch: str,
+    title: str, body: str, token: str,
+    update_comment: Optional[str] = None,
+) -> dict:
+    """2026-09-18 fix (Bug 1 round 2) — THE one place every PR-opening
+    call site in this codebase must go through from now on. The
+    original round-1 fix (deterministic `aurem_branch_name` +
+    "look before you create") only landed inside
+    `finding_fix_applier.py` itself — nothing stopped a 2nd, 3rd, 4th
+    call site (`loop_engine.py` ship-via-PR, `services/visibility/
+    apply.py`, `services/visual_bugfix_pr.py`) from independently
+    calling `open_draft_pr()` with no reuse check at all, which is
+    exactly how the 371 real duplicate PRs (confirmed: "Visibility
+    Kit x5" traced to `visibility/apply.py`'s branch name including a
+    live timestamp) kept accumulating even after round 1 shipped.
+    Centralizing here means a FUTURE 5th call site gets the dedup
+    behaviour for free instead of needing its own copy-pasted guard
+    that's one missed review away from being forgotten again.
+
+    Looks for an existing OPEN PR on `head_branch` first; if found,
+    reuses it as-is (never re-titles/re-bodies someone's existing PR)
+    and optionally posts `update_comment` so the new commit doesn't
+    land silently. Only calls `open_draft_pr` when no open PR exists.
+
+    Returns {"ok", "pr_url", "pr_number", "reused", "error"}. Never
+    raises — a PR-open/reuse failure must never lose an
+    already-landed commit, callers should treat `ok=False` as
+    "commit succeeded, PR step soft-failed" same as before this
+    existed.
+    """
+    try:
+        existing = await find_open_pr_for_branch(
+            owner=owner, repo=repo, head_branch=head_branch, token=token,
+        )
+    except Exception as e:                                # noqa: BLE001
+        logger.warning("open_or_reuse_pr: existing-PR lookup failed: %r", e)
+        existing = None
+    if existing:
+        pr_number = existing.get("number")
+        if update_comment:
+            ok_comment, comment_err = await add_pr_comment(
+                owner=owner, repo=repo, pr_number=pr_number,
+                body=update_comment, token=token,
+            )
+            if not ok_comment:
+                logger.warning(
+                    "open_or_reuse_pr: update comment soft-failed on "
+                    "existing PR #%s: %s", pr_number, comment_err,
+                )
+        return {
+            "ok": True, "pr_url": existing.get("html_url"),
+            "pr_number": pr_number, "reused": True, "error": None,
+        }
+    pr_url, pr_err = await open_draft_pr(
+        owner=owner, repo=repo, head_branch=head_branch,
+        base_branch=base_branch, title=title, body=body, token=token,
+    )
+    if not pr_url:
+        return {
+            "ok": False, "pr_url": None, "pr_number": None,
+            "reused": False, "error": pr_err,
+        }
+    pr_number = (
+        int(pr_url.rsplit("/", 1)[-1]) if "/pull/" in pr_url else None
+    )
+    return {
+        "ok": True, "pr_url": pr_url, "pr_number": pr_number,
+        "reused": False, "error": None,
+    }
+
+
 # ─── Overnight T7 (Wave 2 · ship-via-PR) — additional primitives ───
 # Everything below is NEW (2026-08-28), additive only. Existing
 # `aurem/fix-*` branches (finding_fix_applier) and the `aurem_branch_name()`
@@ -501,12 +573,29 @@ SHIP_BRANCH_PREFIX = "auremcto/"
 
 
 def ship_branch_name(slug: str) -> str:
-    """Deterministic ship-PR branch name. Always under the
-    `auremcto/` namespace so delete_ship_branch()'s guard applies."""
+    """TRULY deterministic ship-PR branch name — same `slug` in ⇒
+    same branch name out, every time. Always under the `auremcto/`
+    namespace so delete_ship_branch()'s guard applies.
+
+    2026-09-18 fix (Bug 1 round 2 — 371 duplicate PRs, real repo).
+    This used to append `int(time.time())`, so the docstring claimed
+    "deterministic" while every call — even with the IDENTICAL
+    `slug` — minted a brand-new branch name. Combined with the two
+    call sites that keyed `slug` on something that's ALSO always
+    unique per call (`loop_engine.py` passed `self.loop_id`;
+    `visibility/apply.py` passed a date-stamped string), this is the
+    confirmed root cause of the reported "Visibility Kit x5" and
+    Loop-Mode ship-via-PR duplicate PRs — `create_or_reuse_branch`'s
+    existing "branch already exists → ok, no-op" behaviour never got
+    a chance to fire, because no two calls ever produced the same
+    branch name to begin with. Callers must now pass a slug that's
+    STABLE across repeated runs of "the same ongoing piece of work"
+    (e.g. `project_id`, not a fresh loop/run id) — see
+    `open_or_reuse_pr()` below, which is the other half of this fix.
+    """
     import re
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", slug or "x")[:40].strip("-") or "x"
-    ts = int(time.time())
-    return f"{SHIP_BRANCH_PREFIX}ship-{safe}-{ts}"
+    return f"{SHIP_BRANCH_PREFIX}ship-{safe}"
 
 
 async def add_pr_label(

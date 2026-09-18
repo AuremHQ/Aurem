@@ -3698,7 +3698,18 @@ class LoopEngine:
         pr_ship_branch = None
         if ship_via_pr:
             from services.loop_safety import ship_branch_name, create_or_reuse_branch
-            pr_ship_branch = ship_branch_name(self.loop_id)
+            # 2026-09-18 fix (Bug 1 round 2 — 371 duplicate PRs).
+            # This used to key on `self.loop_id`, which is a fresh
+            # UUID every single loop run — so every "fix the critical
+            # issues" re-run (even for the exact same project, same
+            # findings) minted a brand-new branch + brand-new PR,
+            # with `ship_branch_name`'s OWN internal timestamp
+            # compounding the problem. Keying on `project_id` instead
+            # means repeated ship-via-PR runs for the SAME project
+            # land as new commits on the SAME open "staging" PR until
+            # it's merged/closed — one ongoing PR per project, not
+            # one per run.
+            pr_ship_branch = ship_branch_name(self.project_id or self.loop_id)
             _br_ok, _br_err = await create_or_reuse_branch(
                 owner=owner, repo=repo, base_branch=branch,
                 new_branch=pr_ship_branch, token=token,
@@ -3817,8 +3828,8 @@ class LoopEngine:
         pr_number = None
         if ship_via_pr and pr_ship_branch:
             try:
-                from services.loop_safety import open_draft_pr, add_pr_label
-                pr_url, pr_err = await open_draft_pr(
+                from services.loop_safety import open_or_reuse_pr, add_pr_label
+                result = await open_or_reuse_pr(
                     owner=owner, repo=repo,
                     head_branch=pr_ship_branch, base_branch=branch,
                     title=f"ship: {commit_message.splitlines()[0][:200]}",
@@ -3826,18 +3837,28 @@ class LoopEngine:
                           f"Commit: {full_sha}\n\nAUREM CTO ship-via-PR "
                           f"(Overnight T7, Preview only)."),
                     token=token,
+                    update_comment=(
+                        f"**New commit from Loop {self.loop_id}:** "
+                        f"`{short_sha}` — {commit_message.splitlines()[0][:200]}\n\n"
+                        f"_Reusing this PR instead of opening a "
+                        f"duplicate — same project, still open._"
+                    ),
                 )
+                pr_url = result.get("pr_url")
+                pr_err = result.get("error")
                 if pr_err:
-                    logger.warning("[loop %s] ship-via-PR open_draft_pr failed: %s",
+                    logger.warning("[loop %s] ship-via-PR open_or_reuse_pr failed: %s",
                                    self.loop_id, pr_err)
                 elif pr_url:
-                    pr_number = int(pr_url.rsplit("/", 1)[-1])
-                    await add_pr_label(owner=owner, repo=repo,
-                                        pr_number=pr_number, label="aura:ship",
-                                        token=token)
+                    pr_number = result.get("pr_number")
+                    if not result.get("reused") and pr_number:
+                        await add_pr_label(owner=owner, repo=repo,
+                                            pr_number=pr_number, label="aura:ship",
+                                            token=token)
                     try:
                         await self.db.ship_pr_events.insert_one({
-                            "event": "ship_pr_opened", "user_id": self.user_id,
+                            "event": "ship_pr_opened" if not result.get("reused") else "ship_pr_reused",
+                            "user_id": self.user_id,
                             "loop_id": self.loop_id, "pr_url": pr_url,
                             "pr_number": pr_number, "ts": _now(),
                         })

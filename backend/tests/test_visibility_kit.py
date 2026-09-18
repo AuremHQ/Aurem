@@ -138,7 +138,9 @@ async def test_apply_no_copy_edit_only_writes_managed_paths():
          patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
          patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
          patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
-         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+             "ok": True, "pr_url": "https://github.com/o/r/pull/1",
+             "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["ai_crawler_policy", "sitemap_auto", "answer_blocks"],
             token="t", scan_urls=[{"loc": "https://x.com/"}],

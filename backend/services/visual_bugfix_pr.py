@@ -28,7 +28,7 @@ async def approve_and_create_pr(*, owner: str, repo: str, base_branch: str,
                                  db, user_id: str) -> dict:
     """Returns {ok, pr_url, branch, error?}. Never raises."""
     from services.loop_safety import (
-        aurem_branch_name, create_or_reuse_branch, open_draft_pr,
+        aurem_branch_name, create_or_reuse_branch, open_or_reuse_pr,
     )
     from services.github_api_writer import commit_files
     from services.git_identity import resolve_git_identity
@@ -73,13 +73,23 @@ async def approve_and_create_pr(*, owner: str, repo: str, base_branch: str,
         )
     body_lines.append("\n_Opened automatically by AUREM's Visual Bug-Fix pipeline._")
 
-    pr_url, err = await open_draft_pr(
+    # 2026-09-18 fix (Bug 1 round 2) — this branch is already
+    # deterministic (`report_id`-keyed), but a retry with no reuse
+    # check hit GitHub's own 422 "a pull request already exists" and
+    # surfaced as a confusing failure instead of just reusing it.
+    pr_result = await open_or_reuse_pr(
         owner=owner, repo=repo, head_branch=branch, base_branch=base_branch,
         title=(commit_message or "Visual bug fix")[:255],
         body="\n".join(body_lines), token=token,
+        update_comment=(
+            "**AUREM Visual Bug-Fix — updated.** New commit re-applies "
+            "this fix.\n\n_Reusing this PR instead of opening a "
+            "duplicate — same report, still open._"
+        ),
     )
+    pr_url = pr_result.get("pr_url")
     if not pr_url:
-        return {"ok": False, "error": f"Branch pushed but PR creation failed: {err}",
+        return {"ok": False, "error": f"Branch pushed but PR creation failed: {pr_result.get('error')}",
                 "branch": branch}
 
     return {"ok": True, "pr_url": pr_url, "branch": branch}

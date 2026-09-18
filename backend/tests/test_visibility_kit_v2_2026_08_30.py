@@ -125,7 +125,9 @@ async def test_t_kit_html_entry_path_falls_back_to_nested_index_html():
          patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
          patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
          patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+             "ok": True, "pr_url": "https://github.com/o/r/pull/1",
+             "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["structured_data"],
             token="t", scan_urls=[],
@@ -154,7 +156,9 @@ async def test_t_kit_html_entry_path_genuinely_missing_still_conflicts():
          patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
          patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
          patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+             "ok": True, "pr_url": "https://github.com/o/r/pull/1",
+             "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["structured_data"],
             token="t", scan_urls=[],
@@ -183,7 +187,9 @@ async def test_t_kit_apply_preserves_existing_files_llms_txt():
          patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
          patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
          patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+             "ok": True, "pr_url": "https://github.com/o/r/pull/1",
+             "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["llms_txt"],
             token="t", scan_urls=[{"loc": "https://x.com/"}],
@@ -213,7 +219,9 @@ async def test_t_kit_apply_force_overwrites_existing_llms_txt():
          patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
          patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
          patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
-         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+             "ok": True, "pr_url": "https://github.com/o/r/pull/1",
+             "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["llms_txt"], force=True,
             token="t", scan_urls=[{"loc": "https://x.com/"}],
