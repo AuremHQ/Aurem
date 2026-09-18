@@ -95,6 +95,7 @@ from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 
 from routers.fix_pipeline import router as fix_pipeline_router      # Iter 212m-121 bulk + SSE fix pipeline
 from routers.repo_status import router as repo_status_router        # Iter 212m-125 live repo connection ping
 from routers.codebase_health import router as codebase_health_router # Iter 212m-72 5-category health scanner
+from routers.evidence import router as evidence_router  # 2026-09-20 — pointer+preview resolver (scan / loop_run)
 from routers.scaffold import router as scaffold_router                # Iter 212m-231 Personal Track blank-slate
 from routers.visual_bugfix import router as visual_bugfix_router      # 2026-09-12 Multimodal Visual Bug-Fix Phase 1+2
 from routers.managed_db import router as managed_db_router            # Iter 212m-233 Personal Track shared DB
@@ -3778,6 +3779,7 @@ app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline
 app.include_router(repo_status_router,    prefix="/api/aurem-dev")  # Iter 212m-125 live repo connection ping
 app.include_router(codebase_health_router, prefix="/api/aurem-dev")  # Iter 212m-72 5-cat health
+app.include_router(evidence_router, prefix="/api/aurem-dev")  # 2026-09-20 — evidence pointer resolver
 app.include_router(findings_router,        prefix="/api/aurem-dev")  # Iter 212m-190 backlog + dismiss
 app.include_router(suggestions_router,     prefix="/api/aurem-dev")  # Iter 212m-193 founder suggestions
 app.include_router(self_bugs_admin_router, prefix="/api/aurem-dev")  # Item 3 (2026-08-31) self-repair dashboard

@@ -5881,3 +5881,58 @@ together). Confirmed 5 unrelated pre-existing failures in a broader
 regression sweep (stale source-grep test pointing at a since-moved
 file, + known live-E2E/mocked-test cross-contamination) — verified
 unrelated, out of scope.
+
+## 2026-09-20 — Evidence Pointer: shared "pointer + preview" pattern
+(Bug 6 scan message + Loop Mode end-of-run summary)
+
+User directive (Option 3): don't build the pointer+preview format
+twice — one shared component, used by both the codebase-health
+scan-result chat message (Bug 6) and Loop Mode's post-ship chat turn,
+so the two can't drift out of sync.
+
+New: `services/evidence_pointer.py` — `evidence_ref(kind, record_id)`
+builds a stable pointer (`kind`, `collection`, `record_id`,
+`retrieve_path`); `build_evidence_message(...)` builds the short
+chat-facing markdown (headline + real, capped-at-5 preview items +
+pointer footer) + returns the `evidence_ref` alongside it. New
+`routers/evidence.py` — `GET /api/aurem-dev/evidence/{kind}/{record_id}`
+resolves a pointer back to the exact stored document, scoped to the
+requesting user_id (401 with no auth, 404 on unknown kind/record).
+
+Wired into both call sites:
+  - `routers/codebase_health.py` — `/scan` now captures the inserted
+    scan doc's real `_id`, builds a preview from the actual top
+    findings (never invented), and persists `evidence_ref` alongside
+    the `scan-result` chat message via `append_message(...,
+    evidence_ref=...)` (new optional kwarg on
+    `services/ora_chat/session.py::append_message`).
+  - `services/loop_engine.py::_persist_chat_turns` — same pattern for
+    Loop Mode's terminal chat turn (`evidence_ref` -> `loop_run` ->
+    `loop_sessions/{loop_id}`), preview = real changed files, body =
+    real scan/verify counts pulled from `self.context`.
+
+Bonus real bug found+fixed while wiring the Loop side: the terminal
+chat message said "Loop run complete — shipped `{sha}`" on ANY commit
+sha, even when the commit only landed on an unmerged PR branch
+(`pr_url` set) — overclaiming something not yet live. Now mirrors the
+SSE narration's own PR-vs-direct-commit distinction: "PR opened for
+`{sha}` — not live yet, merge it on GitHub."
+
+**Testing:** 12 new pytest (`test_evidence_pointer_2026_09_20.py`),
+146 passed in the broader codebase_health/ora_chat_session/
+loop_engine/bug1_duplicate/bug6 regression sweep, 0 failures. Live
+end-to-end, both artifacts independently verified:
+  - Real scan (project `p_757c110d66`,
+    `polarisbuiltinc-wq/ora-grounding`) -> persisted message carried
+    `evidence_ref` -> `GET /evidence/scan/6aad6b2bd1c864599af1b515`
+    resolved to the exact stored finding
+    (`src/ora_grounding/grounding.py:184`, `large_function`).
+  - Real Loop Mode run (`loop_de2f3b81ac0e49`) shipped via PR ->
+    persisted turn correctly said "PR opened for `8717c65`" (not
+    "shipped") -> `GET /evidence/loop_run/loop_de2f3b81ac0e49`
+    resolved to the full loop record -> independently cross-checked
+    against the public (unauthenticated) GitHub API:
+    `api.github.com/repos/polarisbuiltinc-wq/ora-grounding/pulls/6`
+    returned `state: open`, `head.sha:
+    8717c65faff3e63f4f9a7dbc367c0ead7799c59b` — exact match. PR left
+    open on GitHub as the live evidence artifact this test points at.

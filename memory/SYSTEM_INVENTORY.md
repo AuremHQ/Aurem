@@ -957,3 +957,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-09-15
 
 - `services/task_state.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-15T03:15:08.227916Z] <!-- inv:service:services/task_state.py -->
+
+### Iter 0 · 2026-09-18
+
+- `OPENROUTER_API_KEY` — auto-detected in backend/services/llm/jev_client.py (verify) (default: unset) [Iter 0, 2026-09-18T16:45:13.625503Z] <!-- inv:envvar:OPENROUTER_API_KEY -->

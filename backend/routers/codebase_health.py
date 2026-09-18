@@ -251,12 +251,13 @@ async def scan(
     # ring can read the most-recent score via GET /last without paying
     # the full scan cost on every page mount.  Best-effort: a Mongo
     # failure must NEVER block the user-visible scan response.
+    scan_record_id: Optional[str] = None
     try:
         # Iter 212m-177 — P1-5: a scan that read ZERO files scores 100
         # trivially and later contradicts real scans (PROD showed
         # 100-HEALTHY vs 0-CRITICAL for the same repo). Never persist it.
         if len(text_cache) > 0:
-            await db.codebase_health_scans.insert_one({
+            _ins = await db.codebase_health_scans.insert_one({
                 "user_id":       user_id,
                 "project_id":    project_id,
                 "score":         overall_score,
@@ -269,6 +270,11 @@ async def scan(
                 "breakdown":     breakdown,
                 "created_at":    time.time(),
             })
+            # 2026-09-20 — evidence pointer: capture the record's OWN
+            # primary key at insert time so the scan-result chat
+            # message below can point back at THIS exact document
+            # instead of only carrying aggregate prose.
+            scan_record_id = str(_ins.inserted_id)
     except Exception as e:
         logger.debug("codebase_health_scans persist failed: %r", e)
     # Iter 212m-129 — Learning hook: persist a per-rule histogram of
@@ -315,19 +321,52 @@ async def scan(
         try:
             from services.ora_chat.session import append_message
             cats_label = ", ".join(categories)
-            lines = [f"**Scan complete — {cats_label}**", "", payload["summary"]]
+            headline = f"**Scan complete — {cats_label}**"
+            body_lines = [payload["summary"]]
             for cat, b in breakdown.items():
                 if b["total"]:
-                    lines.append(
+                    body_lines.append(
                         f"- `{cat}`: {b['total']} finding(s) "
                         f"(critical {b['counts']['critical']}, "
                         f"high {b['counts']['high']})"
                     )
-            await append_message(
-                session_id, user_id,
-                role="assistant", content="\n".join(lines),
-                route="scan-result",
-            )
+            if scan_record_id:
+                # 2026-09-20 — pointer + preview (services/evidence_
+                # pointer.py). Preview items are REAL findings pulled
+                # straight from `all_findings` — never invented —
+                # capped to 5 so the message stays a preview, with a
+                # stable pointer back to the full scan document for
+                # anyone who reopens this chat later.
+                from services.evidence_pointer import build_evidence_message
+                sev_rank = {"critical": 0, "high": 1, "medium": 2,
+                            "low": 3, "info": 4}
+                ordered = sorted(
+                    all_findings,
+                    key=lambda f: (sev_rank.get(f.get("severity"), 9),
+                                   f.get("file", ""), f.get("line", 0)),
+                )
+                preview_items = [
+                    f"`{f.get('file', '?')}:{f.get('line', '?')}` — "
+                    f"{f.get('title') or f.get('message', '')[:80]}"
+                    for f in ordered[:5]
+                ]
+                msg = build_evidence_message(
+                    kind="scan", record_id=scan_record_id,
+                    headline=headline, body_lines=body_lines,
+                    preview_items=preview_items, preview_total=total,
+                )
+                await append_message(
+                    session_id, user_id,
+                    role="assistant", content=msg["text"],
+                    route="scan-result", evidence_ref=msg["evidence_ref"],
+                )
+            else:
+                lines = [headline, ""] + body_lines
+                await append_message(
+                    session_id, user_id,
+                    role="assistant", content="\n".join(lines),
+                    route="scan-result",
+                )
         except Exception as e:                              # noqa: BLE001
             logger.debug("scan-result chat persist failed: %r", e)
     headers = {

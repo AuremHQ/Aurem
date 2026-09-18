@@ -4241,11 +4241,58 @@ class LoopEngine:
         user_turn_ts = self._started_at
         commit = (self.context or {}).get("commit") or {}
         sha7 = (commit.get("sha") or commit.get("full_sha") or "")[:7]
+        pr_url = commit.get("pr_url")
         msg = (ev.get("message") or "").strip()
+        evidence_ref: Optional[dict] = None
         if state == LoopState.COMPLETED and sha7:
-            reply = f"🚀 **Loop run complete — shipped `{sha7}`.**"
-            if commit.get("html_url"):
-                reply += f"\n\n[View commit]({commit['html_url']})"
+            # 2026-09-20 — pointer + preview (services/evidence_
+            # pointer.py, shared with Bug 6's scan message). Two real
+            # gaps fixed together here:
+            #  1) this used to say "shipped" unconditionally whenever
+            #     sha7 was set — even when the commit only landed on
+            #     a throwaway PR branch (pr_url set, not merged),
+            #     which is NOT live. Narration already made this
+            #     distinction (~line 4063); this durable chat message
+            #     didn't. It does now.
+            #  2) the persisted message carried totals only, with no
+            #     way back to the loop's own full record — same
+            #     failure class as Bug 6's scan message. Now carries
+            #     an evidence_ref resolvable via GET /api/aurem-dev/
+            #     evidence/loop_run/{loop_id} → db.loop_sessions.
+            from services.evidence_pointer import build_evidence_message
+            files_changed = list(commit.get("files") or [])
+            scan_results = (self.context or {}).get("scan_results") or {}
+            sev = (scan_results.get("summary", {}) or {}).get("by_severity", {}) \
+                if isinstance(scan_results, dict) else {}
+            verify_failed = (self.context or {}).get("verify_failed_files") or []
+            body_lines = []
+            if pr_url:
+                headline = f"🚀 **Loop run complete — PR opened for `{sha7}`.**"
+                body_lines.append(
+                    "_Not live yet — merge the PR on GitHub to ship it._"
+                )
+            else:
+                headline = f"🚀 **Loop run complete — shipped `{sha7}`.**"
+            body_lines.append(f"- {len(files_changed)} file(s) changed")
+            if sev:
+                body_lines.append(
+                    f"- Security scan: {sev.get('critical', 0)} critical, "
+                    f"{sev.get('high', 0)} high"
+                )
+            if verify_failed:
+                body_lines.append(
+                    f"- Verify: {len(verify_failed)} file(s) still failing"
+                )
+            built = build_evidence_message(
+                kind="loop_run", record_id=self.loop_id,
+                headline=headline, body_lines=body_lines,
+                preview_items=[f"`{p}`" for p in files_changed],
+                preview_total=len(files_changed),
+                link_label="View PR" if pr_url else "View commit",
+                link_url=(pr_url or commit.get("html_url")),
+            )
+            reply = built["text"]
+            evidence_ref = built["evidence_ref"]
         elif state == LoopState.COMPLETED:
             reply = f"✅ **Loop run complete.** {msg}".strip()
         elif state == LoopState.ABORTED:
@@ -4253,6 +4300,11 @@ class LoopEngine:
         else:
             reply = (f"❌ **Loop failed** at {self.phase or '?'} phase — "
                      f"{msg[:300]}")
+        assistant_turn: dict = {"role": "assistant", "content": reply,
+                                 "ts": now, "provider": "loop",
+                                 "loop_id": self.loop_id}
+        if evidence_ref:
+            assistant_turn["evidence_ref"] = evidence_ref
         try:
             await self.db.chat_sessions.update_one(
                 {"session_id": self.session_id, "user_id": self.user_id},
@@ -4268,8 +4320,7 @@ class LoopEngine:
                     "$push": {"turns": {"$each": [
                         {"role": "user", "content": self.user_message,
                          "ts": user_turn_ts, "loop_id": self.loop_id},
-                        {"role": "assistant", "content": reply, "ts": now,
-                         "provider": "loop", "loop_id": self.loop_id},
+                        assistant_turn,
                     ], "$slice": -200}},
                 },
                 upsert=True,

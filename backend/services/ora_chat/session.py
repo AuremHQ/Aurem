@@ -121,7 +121,8 @@ async def append_message(session_id: str, user_id: str, *,
                          ungrounded: Optional[list] = None,
                          prompt_sha256: str = "",
                          component_sizes: Optional[dict] = None,
-                         review: Optional[dict] = None) -> bool:
+                         review: Optional[dict] = None,
+                         evidence_ref: Optional[dict] = None) -> bool:
     """Append a message + bump counters. Returns True on success."""
     db = get_db()
     if db is None:
@@ -144,6 +145,10 @@ async def append_message(session_id: str, user_id: str, *,
     if component_sizes:    entry["component_sizes"]   = component_sizes
     # Iter 268 — adversarial review outcome (flags/regen/caveats).
     if review:             entry["review"]            = review
+    # 2026-09-20 — evidence pointer (services/evidence_pointer.py).
+    # Stored alongside the short preview text so a resolver can fetch
+    # the exact underlying record without re-parsing the message body.
+    if evidence_ref:       entry["evidence_ref"]       = evidence_ref
     r = await db.ora_chat_sessions.update_one(
         {"session_id": session_id, "user_id": user_id},
         {"$push": {"messages": entry},
