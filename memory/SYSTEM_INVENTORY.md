@@ -964,3 +964,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 | `routers/evidence.py` | `/evidence` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-18T17:24:18.740301Z) | <!-- inv:router:routers/evidence.py -->
 - `services/evidence_pointer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-18T17:24:18.740342Z] <!-- inv:service:services/evidence_pointer.py -->
 - `loop_run_log kind='scan'` — auto-detected in backend/tests/test_evidence_pointer_2026_09_20.py (verify) [Iter 0, 2026-09-18T17:24:18.740367Z] <!-- inv:loop_run_log_kind:scan -->
+- `loop_run_log kind='scan_result'` — auto-detected in backend/routers/codebase_health.py (verify) [Iter 0, 2026-09-18T22:25:47.854804Z] <!-- inv:loop_run_log_kind:scan_result -->

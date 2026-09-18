@@ -1,0 +1,29 @@
+{
+  "summary": "Independent verification of Aurem/ORA bugs A-E (chat_sessions persistence, Review-findings navigation, chat scan-followup wiring, advisor findings counter, scan summary category count). 9 backend regression tests written (test_aurem_bugs_a_e_2026_01.py) — all 9 PASS against live preview backend + real project p_64987820ec. Frontend Bug B verified live in browser: /codebase-health?project_id=p_64987820ec loads real data (109 issues, code_quality + database breakdown) WITHOUT redirecting to /dashboard.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_aurem_bugs_a_e_2026_01.py",
+    "/app/test_reports/pytest/aurem_bugs_a_e.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bug A fix (routers/codebase_health.py L423): correct — direct $push into db.chat_sessions.turns with upsert:true, same shape as _persist_turn, so GET /chat/history durably returns it on reload.",
+    "Bug D fix (routers/codebase_health.py L245): persist_findings_to_backlog is invoked BEFORE the JSONResponse return; wrapped in try/except so a mongo hiccup can't fail the scan.",
+    "Bug E fix (routers/codebase_health.py L352): `for cat in categories` iterates the request's requested categories (not `breakdown.keys()` which would drop 0-finding cats). Header and body now provably match.",
+    "Bug C wiring (routers/chat/worker.py L1281 vs L1286): _scan_followup_check dispatched BEFORE _mode_broadcast inside run_worker — early exit works before mode classifier can mis-route.",
+    "Bug B (frontend/src/pages/CodebaseHealth.jsx): reads project_id via useSearchParams, gate removed — verified live in browser: /codebase-health?project_id=p_64987820ec renders real breakdown (109 code_quality issues, 0 database) as non-founder-scoped user, no /dashboard redirect.",
+    "Minor: the /scan endpoint's chat-persist block does `time.time()` for ts and manually writes updated_at/last_message/turns — duplicates _persist_turn logic. Consider extracting to a shared helper to keep future writers in sync.",
+    "Minor: has_scan_followup_signal is purely regex-based (_SCAN_REFERENCE_RX). Semantic false positives possible for messages like 'scan through the code and tell me...'. Acceptable given the recency+existence gate in _recent_project_scan short-circuits when there's no fresh scan."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_aurem_bugs_a_e_2026_01.py (created)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% (Bug B live-verified)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "Each test session_id uses fresh uuid (TEST_sess_<hex>) to avoid cross-test contamination; chat_sessions upserts create fresh docs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run tests from /app/backend with env: `cd /app/backend && export REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env|cut -d= -f2) && export $(grep -E '^(MONGO_URL|DB_NAME)=' .env|sed 's/\"//g'|xargs) && python -m pytest tests/test_aurem_bugs_a_e_2026_01.py -v`. Bug C fix-action path (real GitHub PR creation) was deliberately NOT invoked to avoid PR spam; main agent already independently proved it with real commit shas c73c89f/4eb440f and open PRs #3/#4 on polarisbuiltinc-wq/Aurem-1.",
+  "rca_of_the_issue": "N/A — verification pass only. All 5 fixes hold under regression tests."
+}
