@@ -114,18 +114,42 @@ async def apply_visibility_kit(
                 html_path = found
                 html_probe = await fetch_file(owner, repo, html_path, base_branch, token)
 
+    # 2026-09-20 — real bug fix (KeyError crash — both a solo
+    # structured_data apply AND bulk apply, since bulk runs all 5
+    # items through this SAME function call before anything commits).
+    # Nothing anywhere in this codebase ever writes
+    # `site_meta["schema"]` — no scan/detect step populates it — so
+    # it was ALWAYS `{}` for every real project. `structured_data`
+    # used UNSAFE `site_meta["schema"]` access (unlike
+    # `preferred_sources`/`llms_txt` just below, which already used
+    # the safe `.get()` + project-field-fallback pattern) and crashed
+    # with `KeyError('schema')` before a single file was written —
+    # which is exactly why bulk apply failed too: one unhandled
+    # exception here aborts the whole call before commit_files() /
+    # open_or_reuse_pr() ever run for the other 4 items.
+    # Resolve a real schema dict from what we already know about this
+    # project (name, preview_url/live_url) instead of trusting a
+    # field nothing ever writes.
+    schema = dict(site_meta.get("schema") or {})
+    schema.setdefault("name", project.get("name") or repo or "this site")
+    resolved_url = (schema.get("url") or site_meta.get("domain")
+                    or project.get("preview_url") or project.get("live_url"))
+
     if "structured_data" in to_apply:
         existing_html = html_probe
         if existing_html is None:
             item_conflicts["structured_data"] = f"{html_path} not found in this repo"
+        elif not resolved_url:
+            item_conflicts["structured_data"] = "no site URL/domain on file — cannot build valid JSON-LD"
         elif schema_gen._START not in existing_html and "</head>" not in existing_html and not force:
             item_conflicts["structured_data"] = f"{html_path} has no </head> to inject into"
         else:
+            schema["url"] = resolved_url
             if "</head>" in existing_html and schema_gen._START not in existing_html:
-                block = schema_gen.render_json_ld(site_meta["schema"])
+                block = schema_gen.render_json_ld(schema)
                 new_html = existing_html.replace("</head>", block + "</head>", 1)
             else:
-                new_html = schema_gen.apply_managed_block(existing_html, site_meta["schema"])
+                new_html = schema_gen.apply_managed_block(existing_html, schema)
             files[html_path] = new_html
 
     if "sitemap_auto" in to_apply:
@@ -134,8 +158,8 @@ async def apply_visibility_kit(
 
     if "preferred_sources" in to_apply:
         existing_html_ps = files.get(html_path) or html_probe
-        domain = site_meta.get("domain") or _domain_from_url((site_meta.get("schema") or {}).get("url"))
-        site_name = (site_meta.get("schema") or {}).get("name")
+        domain = site_meta.get("domain") or _domain_from_url(resolved_url)
+        site_name = schema.get("name")
         if existing_html_ps is None:
             item_conflicts["preferred_sources"] = f"{html_path} not found in this repo"
         elif not domain:
@@ -147,8 +171,8 @@ async def apply_visibility_kit(
 
     if "llms_txt" in to_apply:
         existing_llms = await fetch_file(owner, repo, "llms.txt", base_branch, token)
-        site_name = (site_meta.get("schema") or {}).get("name") or (site_meta.get("domain") or "this site")
-        site_url = (site_meta.get("schema") or {}).get("url") or site_meta.get("domain") or ""
+        site_name = schema.get("name") or "this site"
+        site_url = resolved_url or ""
         llms_content, llms_full_content, conflict = llms_gen.apply_llms_files(
             existing_llms, site_name, site_url, scan_urls,
         )
