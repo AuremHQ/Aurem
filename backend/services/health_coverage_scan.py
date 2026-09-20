@@ -152,7 +152,17 @@ async def run_coverage_scan(db) -> dict:
     commit_sha = None
     try:
         from services.deploy_logger import get_current_commit
-        commit_sha = get_current_commit().get("commit_sha")
+        # 2026-09-20 — deploy-health fix, round 4. `get_current_commit()`
+        # runs up to 5 sequential blocking `subprocess.check_output`
+        # git calls. This was the one remaining unwrapped call site
+        # after `main.py`'s `/api/health` and `deploy_logger.log_
+        # deploy_event()` were fixed for the same class of bug
+        # (nginx "upstream timed out ... /health" caused by a
+        # blocking subprocess call stalling the shared event loop).
+        # `run_coverage_scan` is admin-triggered (on-demand, no cron)
+        # but still shares the loop with every other concurrent
+        # request, including health probes, while it runs.
+        commit_sha = (await asyncio.to_thread(get_current_commit)).get("commit_sha")
     except Exception:
         pass
 

@@ -1,4 +1,61 @@
 # AUREM CTO — Changelog (append-only)
+- **Deploy-health fix, rounds 4 & 5 — remaining event-loop-blocking
+  subprocess call + CPU-contention health-check flap (2026-09-20)**
+  User shared live production deploy logs showing recurring nginx
+  `upstream timed out ... GET /health` errors and a
+  `[G19] RESTART LOOP DETECTED — 5 boots in 600s` line. Ran
+  `deployment_agent`, then did independent manual verification:
+  - Confirmed two `deployment_agent`-flagged items were **false
+    positives / non-issues**: (1) `/app/.gitignore` already exists
+    and correctly excludes `backend/.env` and
+    `memory/test_credentials.md` (neither is tracked in git —
+    verified via `git ls-files` + `git log`); (2) `backend/Dockerfile`
+    (port 8002) / `frontend/Dockerfile` (port 3001) port mismatches
+    are pre-existing, Docker-related, and — per the user's explicit
+    standing instruction — intentionally left untouched; confirmed
+    via `main.py`'s own Iter 212m-172 comment that Emergent's
+    supervisor-based prod flow uses a pre-baked base image and
+    ignores Dockerfile edits entirely, so these are not the cause.
+  - **Round 4 (real fix)**: found a third, previously-missed instance
+    of the exact bug class fixed in round 3 (commit `7480be50`,
+    2026-09-18) — `services/health_coverage_scan.py`'s
+    `run_coverage_scan()` called `deploy_logger.get_current_commit()`
+    directly (unwrapped blocking `subprocess.check_output` git
+    calls) instead of via `asyncio.to_thread(...)`, which can stall
+    the shared event loop and starve concurrent requests including
+    `/health`. Fixed + added
+    `backend/tests/test_health_coverage_scan_subprocess_offload_2026_09_20.py`
+    (3 tests: AST source-guard against reintroduction, functional
+    passthrough proof, non-blocking proof) — all passing.
+  - **Round 5 (real fix)**: re-ran `deployment_agent` after the round
+    4 fix; it traced the *actual* live-log root cause of the health
+    flaps to genuine CPU contention — the admin-triggered
+    `POST /admin/health-score/test-coverage/run` action launches a
+    real pytest+coverage subprocess that competes for the pod's own
+    CPU cgroup quota with the FastAPI process serving `/health` on
+    the same pod (no separate worker pod exists to relocate it onto).
+    Fixed by gating the action to refuse (409) when the environment
+    resolves to production (reusing the existing `AUREM_ENV` /
+    Atlas-MONGO_URL detection already in
+    `routers/version._env_from_host`), so this on-demand diagnostic
+    tool can never again flap live health checks; it remains fully
+    usable in preview/dev. Added
+    `backend/tests/test_admin_health_score_prod_gate_2026_09_20.py`
+    (2 tests: blocked in prod, allowed in preview) — passing.
+  - Verified: backend restarts cleanly, `/health` and `/api/health`
+    respond 200 in 150-280ms via the live external preview URL after
+    both fixes; full regression run (22 tests across all 5 related
+    test files) passes.
+  - Repo-wide grep of all remaining `subprocess.run/check_output/
+    Popen` call sites confirmed the rest are either (a) already
+    offloaded via `asyncio.to_thread` at their call site (e.g.
+    `services/deploy_readiness.py`, 2026-09-02 fix), (b) plain `def`
+    helpers used by CLI/admin-tooling paths not on the boot or
+    health-check hot path, or (c) build-time-only scripts
+    (`scripts/*.py`) never imported by the running server.
+
+
+# AUREM CTO — Changelog (append-only)
 - **TypeSafe Jev added (typesafe/jev-1.13, via OpenRouter Decisions
   API) — opt-in classifier, real benchmark attached (2026-09-19)**
   Verified `typesafe/jev-1.13` is a real, live model on OpenRouter
