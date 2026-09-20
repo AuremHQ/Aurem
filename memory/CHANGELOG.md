@@ -1,4 +1,27 @@
 # AUREM CTO — Changelog (append-only)
+- **Admin: per-user "Notify" button on Users (Legacy) detail page
+  (2026-09-20)**
+  Founder screenshot flagged a gap: the in-app notification feature
+  (built in an earlier round) only had two entry points, both from
+  the bulk `UsersList` view ("Notify (N selected)" / "Notify all
+  users"). There was no way to notify ONE specific user directly
+  from their own detail page, next to Suspend / Grant tokens / Email
+  user.
+  - Added a 4th button (`admin-user-notify-open`, bell icon, purple
+    accent) in `UserDetail`'s action row in `frontend/src/pages/
+    Admin.jsx`. Opens the existing `NotificationComposer` modal
+    scoped to just that one user (`userIds={[user.user_id]}`,
+    `recipientCount={1}`) — no new backend endpoint needed, reuses
+    the same `POST /admin/users/notify` path the bulk flow already
+    uses.
+  - Verified via `testing_agent`: button renders correctly, opens
+    the composer scoped to 1 recipient, confirm dialog fires, POST
+    succeeds (`{ok:true, sent:1}`), modal closes, no regression on
+    the bulk-notify entry points or the other three UserDetail
+    buttons. 100% frontend success rate, zero bugs found.
+
+
+# AUREM CTO — Changelog (append-only)
 - **Deploy-health fix, round 6 — live-reproduced "timeout of 40000ms
   exceeded" on Admin Cockpit's Codebase Health Score widget
   (2026-09-20)**
