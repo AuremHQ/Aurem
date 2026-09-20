@@ -763,6 +763,13 @@ function UserDetail({ user, onBack }) {
   const [grantTokens, setGrantTokens] = useState("");
   const [grantReason, setGrantReason] = useState("");
   const [granting, setGranting] = useState(false);
+  // 2026-09-20 — per-user "Notify" button. The in-app notification
+  // composer (NotificationComposer, above) previously only had two
+  // entry points, both from the bulk UsersList view: "Notify (N
+  // selected)" and "Notify all users". There was no way to notify a
+  // single user from THEIR OWN detail page next to Suspend/Grant
+  // tokens/Email user — founder screenshot flagged the visible gap.
+  const [notifyOpen, setNotifyOpen] = useState(false);
 
   useEffect(() => {
     api.get(`/admin/users/${user.user_id}`).then((r) => setD(r.data)).catch(() => {});
@@ -931,6 +938,16 @@ function UserDetail({ user, onBack }) {
               onClick={emailUser}
               title={`Compose email to ${d.email}`}>
               Email user
+            </button>
+            <button
+              data-testid="admin-user-notify-open"
+              className="btn-ghost"
+              style={{ padding: "6px 12px", fontSize: 11,
+                       borderColor: "rgba(168,85,247,0.35)", color: "#a855f7",
+                       display: "inline-flex", alignItems: "center", gap: 5 }}
+              onClick={() => setNotifyOpen(true)}
+              title={`Send an in-app notification to ${d.email}`}>
+              <Bell size={11} /> Notify
             </button>
           </div>
           {grantOpen && (
@@ -1316,6 +1333,16 @@ function UserDetail({ user, onBack }) {
           ])}
         />
       </Card>
+
+      {notifyOpen && (
+        <NotificationComposer
+          all={false}
+          userIds={[user.user_id]}
+          recipientCount={1}
+          onClose={() => setNotifyOpen(false)}
+          onSent={() => setNotifyOpen(false)}
+        />
+      )}
     </div>
   );
 }
