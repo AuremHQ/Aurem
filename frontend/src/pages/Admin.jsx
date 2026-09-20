@@ -10,7 +10,7 @@ import {
   Cpu, CreditCard, Network as SitemapIcon, Settings as SettingsIcon,
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
-  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown,
+  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell,
 } from "lucide-react";
 import { api } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -233,6 +233,12 @@ function UsersList({ onSelect }) {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(() => new Set());
   const [composerOpen, setComposerOpen] = useState(false);
+  // 2026-09-21 — in-app notification composer (distinct from the
+  // email-offer composer above): shows up live in the target user's
+  // dashboard bell instead of their inbox. `notifyTargetAll` picks
+  // between "just the selected users" and "every user".
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyTargetAll, setNotifyTargetAll] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
   const load = useCallback(async (s, w) => {
@@ -301,16 +307,36 @@ function UsersList({ onSelect }) {
         </h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {selected.size > 0 && (
-            <button
-              data-testid="admin-users-send-offer"
-              className="btn-primary"
-              style={{ fontSize: 12, padding: "6px 14px" }}
-              onClick={() => setComposerOpen(true)}
-            >
-              <Mail size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
-              Send offer email ({selected.size})
-            </button>
+            <>
+              <button
+                data-testid="admin-users-send-offer"
+                className="btn-primary"
+                style={{ fontSize: 12, padding: "6px 14px" }}
+                onClick={() => setComposerOpen(true)}
+              >
+                <Mail size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                Send offer email ({selected.size})
+              </button>
+              <button
+                data-testid="admin-users-notify-selected"
+                className="btn-secondary"
+                style={{ fontSize: 12, padding: "6px 14px" }}
+                onClick={() => { setNotifyTargetAll(false); setNotifyOpen(true); }}
+              >
+                <Bell size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                Notify ({selected.size})
+              </button>
+            </>
           )}
+          <button
+            data-testid="admin-users-notify-all"
+            className="btn-secondary"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={() => { setNotifyTargetAll(true); setNotifyOpen(true); }}
+          >
+            <Bell size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+            Notify all users
+          </button>
           <input
             data-testid="admin-users-search"
             value={search}
@@ -450,6 +476,18 @@ function UsersList({ onSelect }) {
           onSent={() => {
             setComposerOpen(false);
             setSelected(new Set());
+          }}
+        />
+      )}
+      {notifyOpen && (
+        <NotificationComposer
+          all={notifyTargetAll}
+          userIds={Array.from(selected)}
+          recipientCount={notifyTargetAll ? users.length : selected.size}
+          onClose={() => setNotifyOpen(false)}
+          onSent={() => {
+            setNotifyOpen(false);
+            if (!notifyTargetAll) setSelected(new Set());
           }}
         />
       )}
@@ -599,6 +637,118 @@ function EmailOfferComposer({ userIds, recipients, onClose, onSent }) {
             className="btn-primary"
             style={{ fontSize: 12 }}>
             {sending ? "Sending…" : `Send to ${recipients.length}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 2026-09-21 — In-app notification composer. Same modal shell as
+// EmailOfferComposer above, but posts to /admin/users/notify
+// (services/notifications.py → db.notifications), so the message
+// shows up live in the target user's dashboard bell (UserNotification
+// Bell.jsx) instead of their inbox. Confirm-before-send guard mirrors
+// the email composer's — an "all users" broadcast can't be fat-
+// fingered either.
+function NotificationComposer({ all, userIds, recipientCount, onClose, onSent }) {
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+
+  async function send() {
+    if (!message.trim()) return;
+    const target = all ? "ALL users" : `${recipientCount} user(s)`;
+    if (!window.confirm(`Send this notification to ${target}? This cannot be undone.`)) {
+      return;
+    }
+    setSending(true);
+    try {
+      const r = await api.post("/admin/users/notify", {
+        ...(all ? { all: true } : { user_ids: userIds }),
+        message: message.trim(),
+      });
+      toast({ message: `Sent to ${r.data?.sent ?? 0} user(s)`, kind: "success" });
+      onSent();
+    } catch (e) {
+      toast({
+        message: e?.response?.data?.detail || "Send failed",
+        kind: "error",
+      });
+    } finally { setSending(false); }
+  }
+
+  return (
+    <div
+      data-testid="admin-notify-composer"
+      style={{
+        position: "fixed", inset: 0,
+        background: "rgba(0,0,0,0.65)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9000,
+        padding: 24,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1, #0a0e1a)",
+          border: "1px solid var(--line, rgba(255,255,255,0.08))",
+          borderRadius: 12,
+          width: "min(560px, 100%)",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          padding: 22,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between",
+                       alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontSize: 14, margin: 0 }}>Send in-app notification</h3>
+          <button onClick={onClose}
+                  style={{ background: "none", border: "none",
+                           color: "var(--text-faint)", cursor: "pointer", fontSize: 18 }}>
+            ×
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 14,
+                       fontFamily: "'JetBrains Mono', monospace" }}>
+          Recipients: {all ? "ALL users" : `${recipientCount} selected`} · Shows up live in their notification bell
+        </div>
+
+        <label style={{ fontSize: 11, color: "var(--text-faint)", display: "block",
+                         marginBottom: 4, fontFamily: "'JetBrains Mono', monospace",
+                         textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          Message
+        </label>
+        <textarea
+          data-testid="admin-notify-message"
+          className="input"
+          value={message}
+          onChange={(e) => setMessage(e.target.value.slice(0, 2000))}
+          rows={5}
+          placeholder="Heads up: we're doing scheduled maintenance tonight…"
+          style={{ width: "100%", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
+        />
+        <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-faint)", textAlign: "right" }}>
+          {message.length}/2000
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            className="btn-secondary"
+            disabled={sending}
+            style={{ fontSize: 12 }}>
+            Cancel
+          </button>
+          <button
+            data-testid="admin-notify-send"
+            onClick={send}
+            disabled={sending || !message.trim()}
+            className="btn-primary"
+            style={{ fontSize: 12 }}>
+            {sending ? "Sending…" : `Send to ${all ? "all" : recipientCount}`}
           </button>
         </div>
       </div>

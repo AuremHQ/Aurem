@@ -30,6 +30,7 @@ import { shouldHide } from "./GlobalHelpFAB";
 import { useActiveProject } from "./TabBar";
 import { Z_FLOATING_GUIDE } from "../lib/zIndex";
 import { toast } from "./Toast";
+import { SLASH_COMMANDS } from "./SlashCommandMenu";
 
 // 2026-08-23 — founder direction: the "ORA GUIDE" suggestions card that
 // used to live pinned in the Ask Advisor sidebar now lives HERE instead.
@@ -293,7 +294,7 @@ export default function OraGuideMascot() {
     if (secondaryNudge.variant === "post_skip") {
       window.dispatchEvent(new Event("aurem:open-connect-wizard"));
     } else if (secondaryNudge.kind === "first_scan") {
-      window.dispatchEvent(new CustomEvent("ora:prefill", { detail: { message: "/scan" } }));
+      window.dispatchEvent(new CustomEvent("aurem:run-scan", { detail: { commandId: "scan" } }));
     } else if (secondaryNudge.prefillTask) {
       window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt: secondaryNudge.prefillTask } }));
     }
@@ -311,6 +312,19 @@ export default function OraGuideMascot() {
   function pickSuggestion(example) {
     try {
       window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt: example } }));
+    } catch { /* noop */ }
+    dismiss();
+  }
+
+  // 2026-09-21 — one-click real scan trigger for the chips below.
+  // Unlike pickSuggestion above (which only prefills text the user
+  // still has to send), this dispatches straight to ChatPanel's
+  // aurem:run-scan listener, which calls the SAME runSlashCommand()
+  // a real "/bug-hunt" dropdown pick uses — the scan actually runs
+  // and the user sees real issues, not just a prefilled prompt.
+  function runScan(commandId) {
+    try {
+      window.dispatchEvent(new CustomEvent("aurem:run-scan", { detail: { commandId } }));
     } catch { /* noop */ }
     dismiss();
   }
@@ -363,6 +377,12 @@ export default function OraGuideMascot() {
             borderRadius: 12, padding: "14px 16px",
             boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
             animation: "oraGuideBubbleIn 180ms ease-out",
+            // 2026-09-21 — the "suggestions" panel now also lists the
+            // 5 scan commands below the project suggestions; cap the
+            // height so it scrolls instead of overflowing the
+            // viewport on shorter screens.
+            maxHeight: panelMode === "suggestions" ? "min(70vh, 560px)" : undefined,
+            overflowY: panelMode === "suggestions" ? "auto" : undefined,
           }}
         >
           <div style={{
@@ -473,6 +493,32 @@ export default function OraGuideMascot() {
                     </button>
                   );
                 })}
+              </div>
+              <div data-testid="ora-guide-scan-intro"
+                   style={{ fontSize: 11, color: "#9aa0aa", marginBottom: 6,
+                            textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+                Or scan for real issues
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {SLASH_COMMANDS.map(({ id, label, description, icon: Icon, trigger }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    data-testid={`ora-guide-scan-${id}`}
+                    onClick={() => runScan(id)}
+                    title={`Run ${trigger} now`}
+                    style={suggestionBtnStyle}
+                  >
+                    <Icon size={12} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 2, color: "#ffb37a" }} />
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#f8fafc" }}>{label}</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#9aa0aa", fontStyle: "italic",
+                                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {description}
+                      </span>
+                    </span>
+                  </button>
+                ))}
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <button data-testid="ora-guide-open-advisor" type="button" onClick={openAdvisor} style={linkBtnStyle}>

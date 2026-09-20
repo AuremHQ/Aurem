@@ -999,6 +999,65 @@ async def admin_send_user_offer(
     }
 
 
+@router.post("/users/notify")
+async def admin_send_user_notification(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+):
+    """Send a custom message straight into a user's in-app notification
+    bell (GET /notifications → services/notifications.py, db.notifications
+    collection) — shows up live in their dashboard, same read/unread
+    lifecycle as system events (scan_done, ship_done, etc). Distinct
+    from /users/email-offer above, which sends to the inbox instead.
+
+      Request body:
+        {
+          "user_ids": ["uid_..", "uid_.."],  # required unless all=true, max 500
+          "all": false,                        # broadcast to every user instead
+          "message": "Heads up: we're doing scheduled maintenance…",
+        }
+
+    Returns: {sent, all, recipients[]}
+    """
+    actor = await _require_admin(authorization)
+    db = require_db()
+
+    user_ids = (body or {}).get("user_ids") or []
+    send_all = bool((body or {}).get("all"))
+    message = ((body or {}).get("message") or "").strip()
+
+    if not message:
+        raise HTTPException(400, "message required")
+    if len(message) > 2000:
+        raise HTTPException(400, "message too long (max 2000 chars)")
+
+    if send_all:
+        cursor = db.dev_users.find({}, {"_id": 0, "user_id": 1})
+        target_ids = [u["user_id"] async for u in cursor if u.get("user_id")]
+    else:
+        if not isinstance(user_ids, list) or not user_ids:
+            raise HTTPException(400, "user_ids[] required (non-empty) unless all=true")
+        if len(user_ids) > 500:
+            raise HTTPException(400, "Too many recipients (max 500 per batch)")
+        target_ids = user_ids
+
+    from services.notifications import emit_notification
+    for uid in target_ids:
+        await emit_notification(db, user_id=uid, type="admin_message", text=message)
+
+    logger.info(
+        "admin notification sent by=%s recipients=%d all=%s",
+        actor.get("email"), len(target_ids), send_all,
+    )
+    # Bulk broadcasts can be thousands of user_ids — no value in
+    # echoing the full list back to the admin's browser for those;
+    # cap what we return regardless of how many were actually sent.
+    return {
+        "ok": True, "sent": len(target_ids), "all": send_all,
+        "recipients": target_ids[:50],
+    }
+
+
 @router.get("/insights/dora")
 async def dora_metrics_endpoint(
     period_days: int = 30, env: str = "production",

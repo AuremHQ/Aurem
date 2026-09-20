@@ -103,7 +103,7 @@ import StreamHealthPill  from "./chat/StreamHealthPill";
 import RepoHelpDialog    from "./chat/RepoHelpDialog";
 import ScanStatusStrip, { markScanJustCompleted } from "./ScanStatusStrip";        // Iter 212m-190 · Session 3
 import FindingsTeaserStrip from "./FindingsTeaserStrip";                            // 2026-08-23 · Findings-to-fix bridge
-import SlashCommandMenu, { matchSlashCommands } from "./SlashCommandMenu";         // Iter 212m-190 · Session 3
+import SlashCommandMenu, { matchSlashCommands, SLASH_COMMANDS } from "./SlashCommandMenu";         // Iter 212m-190 · Session 3
 import CharCounter from "./CharCounter";                                             // Iter 388f — live char counter for 20k cap
 import { sanitizeErrorMessage } from "../lib/sanitizeError";                          // R3 P1-3 — no raw backend error ever reaches a toast
 import {
@@ -480,6 +480,26 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     window.addEventListener("ora:prefill", handler);
     return () => window.removeEventListener("ora:prefill", handler);
   }, []);
+
+  // 2026-09-21 — aurem:run-scan: fired by OraGuideMascot's scan
+  // suggestion chips (and the existing first-scan nudge, which used
+  // to just PREFILL the literal text "/scan" via ora:prefill above —
+  // that never actually ran a scan, since slash-command detection
+  // only fires from real typing (onChange), not a programmatic
+  // setInput; sending "/scan" as a plain message has no backend
+  // interception at all, per SlashCommandMenu.jsx's own docstring).
+  // This calls the SAME runSlashCommand() a real dropdown pick uses,
+  // so a click here ACTUALLY runs the scan and shows real findings.
+  useEffect(() => {
+    const handler = (e) => {
+      const id = e?.detail?.commandId;
+      const cmd = SLASH_COMMANDS.find((c) => c.id === id);
+      if (cmd) runSlashCommand(cmd);
+    };
+    window.addEventListener("aurem:run-scan", handler);
+    return () => window.removeEventListener("aurem:run-scan", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.project_id]);
 
   // Iter 42 — F12 error capture + mode classifier
   const f12 = useF12Errors();

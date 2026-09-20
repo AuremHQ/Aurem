@@ -22,6 +22,7 @@ const TYPE_LABEL = {
   repo_revoked:   "Repo access",
   kit_live:       "Kit",
   upgrade_eligible: "Upgrade",
+  admin_message:  "From Aurem",
 };
 
 function timeAgo(ts) {
