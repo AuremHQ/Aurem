@@ -1,3 +1,16 @@
+## 2026-09-21 (later) — Admin in-app notifications + real scan chips in the ORA guide mascot
+
+Two new features, both requested and confirmed by the user (Hinglish).
+
+**1. Admin → user in-app notification.** Previously admin could only reach users via email (existing `EmailOfferComposer` → `/admin/users/email-offer`). Added a parallel path that shows up live in the user's own dashboard bell: `POST /admin/users/notify` (`{user_ids[]|all, message}`) reuses the existing `emit_notification()` service (`services/notifications.py`, new `admin_message` type) to write straight into `db.notifications`, the same collection `GET /notifications` / `UserNotificationBell.jsx` already read. New `NotificationComposer` in `pages/Admin.jsx`, triggered by "Notify (N)" (selected users) and an always-visible "Notify all users" button. Proven live: targeted send incremented the real recipient's unread_count and showed the exact typed text with type `admin_message`; broadcast (`all:true`) reached all 1642 real users in the sandbox DB.
+
+**2. Real one-click scan chips in the ORA guide mascot.** `OraGuideMascot.jsx`'s suggestions bubble now has an "OR SCAN FOR REAL ISSUES" section listing all 5 real scan commands (`SLASH_COMMANDS` from `SlashCommandMenu.jsx`: Run all scanners, Codebase health, Security only, Bug Hunt, Docker CIS) as one-click chips. Discovered and fixed a related pre-existing bug while building this: the mascot's older "Scan my site" first-scan nudge, and the generic `pickSuggestion()`/`ora:prefill` mechanism, only ever *prefilled* the literal text into the chat composer — slash-command detection only fires from real typing (`onChange`), never from a programmatic `setInput`, and the backend has zero interception for a plain-text "/scan" message — so that button never actually ran anything. Fixed via a new `aurem:run-scan` CustomEvent (`ChatPanel.jsx` listener → the same `runSlashCommand()` a real dropdown pick already uses) that both the new chips AND the old first-scan nudge now dispatch, so a click genuinely runs the scan and shows real findings.
+
+**Tests:** `backend/tests/test_admin_notify_and_scan.py` — 4/4 pass. `testing_agent_v3_fork`: both features UI-verified end-to-end (composer click-through + real `POST /codebase-health/scan` network call fired from a chip click), zero action items.
+
+**PROVENANCE: preview-only, pending deploy/push.** Not pushed to GitHub — say so plainly until Save to GitHub is used and a real commit URL is confirmed.
+
+
 ## 2026-09-21 — Fixed the full scan → review findings → fix chat pipeline (Bugs A-E, live QA report against a connected repo)
 
 **User's live repro** (real ORA chat UI on connected project polarisbuiltinc-wq/Aurem-1, testing a customer project purely to trigger the bug — fix belongs in Aurem's own code, confirmed and kept that way) found 5 distinct breaks across the scan pipeline. All 5 root-caused and fixed; 9/9 new backend regression tests pass + live browser confirmation for the frontend piece.

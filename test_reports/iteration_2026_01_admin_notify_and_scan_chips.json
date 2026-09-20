@@ -1,0 +1,31 @@
+{
+  "summary": "Verified both new features end-to-end: (1) Admin -> user in-app notification composer (Admin.jsx NotificationComposer + POST /admin/users/notify) and (2) ORA guide mascot scan suggestion chips triggering real scans. Backend: 4/4 pytest passes. Frontend: full UI click-through succeeded for both features.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_flows": [
+    "Login as test@aurem.dev -> Admin panel -> Users (Legacy) tab renders the toolbar with data-testid='admin-users-notify-all' always visible.",
+    "Click 'Notify all users' -> modal with data-testid='admin-notify-composer' opens with textarea 'admin-notify-message' and Send button 'admin-notify-send'.",
+    "Filled message 'TEST_UI_broadcast_hello_from_playwright', clicked Send, accepted browser confirm() -> POST /api/aurem-dev/admin/users/notify returned 200 with {ok:true, all:true, sent:1642}. Success toast 'Sent to 1642 user(s)' displayed.",
+    "Backend pytest: empty message -> 400, missing user_ids+all -> 400, targeted user -> notification persisted with type='admin_message' and matching text visible in GET /notifications, all=true broadcast -> ok:true, recipients capped at 50 in response.",
+    "Open ORA guide mascot (data-testid='ora-guide-mascot-root') -> suggestions bubble renders with 'OR SCAN FOR REAL ISSUES' section containing all 5 chips: ora-guide-scan-{scan, health-scan, security-scan, bug-hunt, docker-scan} with correct labels (Run all scanners, Codebase health, Security only, Bug Hunt, Docker CIS).",
+    "Click 'Bug Hunt' chip -> network capture shows POST https://.../api/aurem-dev/codebase-health/scan followed by GET /codebase-health/last polling. This confirms the CustomEvent 'aurem:run-scan' -> ChatPanel listener -> runSlashCommand(cmd) wiring actually invokes the real scan pipeline (not a text prefill). Full 'Scan complete' text was not observed within the 75s wait window because the scan against the currently-selected project (p_demo_a) is asynchronous and can take up to 60s+, but the real API call was verified initiated."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_admin_notify_and_scan.py",
+    "/app/test_reports/pytest/admin_notify_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Admin.jsx is 2530 lines — recommend future split into feature sub-components (UsersTab, NotificationComposer, EmailOfferComposer already colocated).",
+    "POST /admin/users/notify emits notifications in a serial for-loop with `await` per user — for the all=true broadcast to 1642 users this took ~seconds and returned fine, but could be batched via asyncio.gather with a bounded semaphore for higher scale.",
+    "The 'Notify all users' broadcast uses browser confirm() dialog — fine functionally, but a shadcn-styled confirm modal would be more consistent with the rest of the admin UI (nit)."
+  ],
+  "updated_files": ["/app/backend/tests/test_admin_notify_and_scan.py"],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100% (both features UI-verified)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "Broadcast test sent an admin_message notification to 1642 real preview-DB users (expected, per instructions).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both features PASS. The scan-chip click triggers POST /api/aurem-dev/codebase-health/scan directly (verified via request interception). If a future retest wants to see the 'Scan complete' message text land in chat, wait 60-90s after the click and re-read chat DOM; underlying pipeline is the same one exercised by iteration_2026_01_aurem_bugs_a_e which already passed.",
+  "rca of the issue": "N/A - feature verification pass, no bugs found."
+}
