@@ -57,8 +57,24 @@ async def trigger_coverage_run(authorization: Optional[str] = Header(None)) -> d
                    "from a preview environment instead.",
         )
     import asyncio
-    from services.health_coverage_scan import run_coverage_scan
+    from services.health_coverage_scan import is_scan_in_progress, run_coverage_scan
     db = get_db()
+    # 2026-09-20 — round 6, live-reproduced bug: a live "timeout of
+    # 40000ms exceeded" report on the Admin Cockpit health-score
+    # widget traced to two overlapping pytest+coverage subprocesses
+    # running at once (no server-side guard existed — the widget's
+    # client-side `disabled={running}` resets on a page reload / a
+    # second tab). `run_coverage_scan` now has an atomic Mongo lock
+    # that makes a second overlapping call a no-op; this pre-check
+    # just gives the caller an immediate, honest 409 instead of a
+    # silent "started" that quietly does nothing.
+    if await is_scan_in_progress(db):
+        raise HTTPException(
+            status_code=409,
+            detail="A coverage scan is already running — poll GET "
+                   "/health-score for the run already under way instead "
+                   "of retriggering.",
+        )
     asyncio.create_task(run_coverage_scan(db))
     return {"status": "started", "note": "runs in background — poll GET /health-score, "
                                           "expect a fresh test_coverage.last_verified in a few minutes"}

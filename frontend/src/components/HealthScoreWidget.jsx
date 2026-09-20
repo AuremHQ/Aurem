@@ -151,7 +151,16 @@ export default function HealthScoreWidget() {
         if (lv && new Date(lv).getTime() >= triggeredAt) break;
       }
     } catch (e) {
-      setErr(e?.message || "coverage run failed");
+      // 2026-09-20 — backend now returns 409 when a scan is already
+      // in progress (server-side concurrency guard, root-caused from
+      // a live "timeout of 40000ms exceeded" report: two overlapping
+      // pytest+coverage subprocesses starved the pod's CPU). Surface
+      // that as a clear, actionable message instead of a raw error.
+      if (e?.response?.status === 409) {
+        setErr(e?.response?.data?.detail || "a scan is already running — try again shortly");
+      } else {
+        setErr(e?.message || "coverage run failed");
+      }
     } finally {
       setRunning(false);
     }

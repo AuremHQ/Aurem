@@ -51,6 +51,71 @@ CRITICAL_MODULES = [
 _SCOPE_KEYWORD_EXPR = "auth or chat or findings or fix_pipeline or payment"
 
 
+# 2026-09-20 — concurrency guard (real root cause of a live "timeout
+# of 40000ms exceeded" report on the Admin Cockpit health-score
+# widget). `POST /admin/health-score/test-coverage/run` had NO
+# server-side check at all — every call unconditionally launched a
+# brand-new pytest+coverage subprocess via `asyncio.create_task`,
+# with only a client-side `disabled={running}` button guard that
+# resets on page reload / a second tab. Confirmed live: two overlapping
+# pytest+coverage subprocesses (each real fork/exec CPU work, not
+# just an asyncio await) ended up running simultaneously on this pod,
+# and GET /admin/health-score latency degraded from a normal
+# sub-second response to 4-6.5s per poll under that load — with the
+# widget's own 15s-interval poller (`timeout: 40000` in
+# HealthScoreWidget.jsx) eventually tripping the 40s ceiling. A Mongo-
+# backed lock (atomic via a duplicate-key upsert, with a stale-lock
+# self-heal window) makes a second concurrent run a fast no-op
+# instead of a second heavy subprocess.
+_LOCK_COLLECTION = "health_coverage_scan_lock"
+_LOCK_ID = "singleton"
+
+
+async def is_scan_in_progress(db) -> bool:
+    """Cheap, non-atomic read for UX purposes (e.g. the trigger
+    endpoint returning an immediate 409). NOT the actual concurrency
+    guard — see `_try_acquire_lock` for the atomic one."""
+    if db is None:
+        return False
+    doc = await db[_LOCK_COLLECTION].find_one({"_id": _LOCK_ID})
+    if not doc:
+        return False
+    return (time.time() - doc.get("locked_at_ts", 0)) < SUBPROCESS_TIMEOUT_S + 60
+
+
+async def _try_acquire_lock(db) -> bool:
+    """Atomic acquire: succeeds if no lock doc exists, or the existing
+    one is stale (older than the subprocess timeout + a safety
+    margin — self-heals if a prior run died without releasing it).
+    Relies on `_id` uniqueness: the upsert's implicit insert attempt
+    raises DuplicateKeyError when a fresh lock already holds `_id`,
+    which is exactly the "someone else is already running" signal."""
+    if db is None:
+        return True  # no db to coordinate through — don't block the run
+    from pymongo.errors import DuplicateKeyError
+    now_ts = time.time()
+    stale_before = now_ts - (SUBPROCESS_TIMEOUT_S + 60)
+    try:
+        await db[_LOCK_COLLECTION].find_one_and_update(
+            {"_id": _LOCK_ID, "locked_at_ts": {"$lt": stale_before}},
+            {"$set": {"locked_at_ts": now_ts,
+                      "locked_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+        return True
+    except DuplicateKeyError:
+        return False
+
+
+async def _release_lock(db) -> None:
+    if db is None:
+        return
+    try:
+        await db[_LOCK_COLLECTION].delete_one({"_id": _LOCK_ID})
+    except Exception:
+        pass
+
+
 def _parse_pytest_summary(text: str) -> dict:
     counts = {"passed": 0, "failed": 0, "errors": 0}
     # Only read pytest's FINAL summary line ("=== 855 passed, 32 failed ...
@@ -72,6 +137,25 @@ def _parse_pytest_summary(text: str) -> dict:
 
 
 async def run_coverage_scan(db) -> dict:
+    """Public entrypoint — wraps `_do_run_coverage_scan` with the
+    concurrency guard so a second overlapping trigger is a fast
+    no-op instead of a second real pytest+coverage subprocess."""
+    if not await _try_acquire_lock(db):
+        logger.info("health_coverage_scan: skipped — a run is already in progress")
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "ok": False,
+            "error": "a coverage scan is already in progress — poll GET "
+                     "/health-score for the run already under way instead "
+                     "of retriggering",
+        }
+    try:
+        return await _do_run_coverage_scan(db)
+    finally:
+        await _release_lock(db)
+
+
+async def _do_run_coverage_scan(db) -> dict:
     started = time.time()
     cmd = [
         sys.executable, "-m", "pytest", "-q", "--timeout=30",

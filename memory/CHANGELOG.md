@@ -1,4 +1,57 @@
 # AUREM CTO — Changelog (append-only)
+- **Deploy-health fix, round 6 — live-reproduced "timeout of 40000ms
+  exceeded" on Admin Cockpit's Codebase Health Score widget
+  (2026-09-20)**
+  User reported the exact error from the "run coverage scan" button
+  in the cockpit. Reproduced directly against the running app (not
+  guessed): `POST /admin/health-score/test-coverage/run` had **no
+  server-side guard at all** — every call unconditionally launched a
+  brand-new pytest+coverage subprocess via `asyncio.create_task`, and
+  the only protection was the frontend's client-side
+  `disabled={running}` button state, which resets on a page reload
+  or a second browser tab/session. Caught **two overlapping
+  pytest+coverage subprocesses running simultaneously** on the pod
+  via `ps aux` (each ~40% CPU), and confirmed `GET /admin/health-
+  score` latency degraded from its normal ~4s baseline under that
+  compounded load — the widget polls this endpoint every 15s with a
+  40s timeout, so sustained contention (e.g. from a real double-
+  click, or the round-5 production gate's fix not existing yet in a
+  worker still running old code) eventually trips it.
+  - **Fix**: added an atomic Mongo-backed lock
+    (`health_coverage_scan_lock`, duplicate-key-upsert pattern with a
+    stale-lock self-heal window) in `services/health_coverage_scan.py`
+    — `run_coverage_scan()` now acquires the lock before running and
+    releases it in a `finally`; a second overlapping call is a fast
+    no-op instead of a second heavy subprocess. `routers/
+    admin_health_score.py`'s `trigger_coverage_run` also does a quick
+    pre-check (`is_scan_in_progress`) so a blocked caller gets an
+    immediate, honest `409` instead of a silent "started" that
+    quietly does nothing.
+  - `frontend/src/components/HealthScoreWidget.jsx`'s `runCoverageScan`
+    now surfaces a clear "a scan is already running" message for a
+    409 response instead of a raw error string.
+  - **Live-verified the exact fix**: triggered the scan twice back to
+    back — 1st call `200 started`, 2nd call immediately after
+    `409 already running` (0.14s) — and confirmed via `ps aux` only
+    ONE subprocess was running afterward (previously two). Re-polled
+    `GET /admin/health-score` during the single run: stable ~4s
+    (matches normal baseline, no compounding), `/health` stayed at
+    ~0.14s throughout.
+  - Added `backend/tests/test_health_coverage_scan_concurrency_guard_2026_09_20.py`
+    (5 tests: second-trigger rejected without running a second
+    subprocess, lock released after every run, `is_scan_in_progress`
+    reflects fresh/stale/absent lock states) and updated
+    `backend/tests/test_admin_health_score_prod_gate_2026_09_20.py`
+    with a new `test_coverage_run_rejected_when_already_in_progress`
+    case — all passing (15/15 across the 4 related test files).
+  - Unrelated pre-existing flake noted, not touched: `tests/
+    test_codebase_health_score.py::test_devops_infra_live_github`
+    fails independently of this change (queries live GitHub Actions
+    CI run counts over the network — reproduced failing identically
+    with this fix stashed out).
+
+
+# AUREM CTO — Changelog (append-only)
 - **Deploy-health fix, rounds 4 & 5 — remaining event-loop-blocking
   subprocess call + CPU-contention health-check flap (2026-09-20)**
   User shared live production deploy logs showing recurring nginx
