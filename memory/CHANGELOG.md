@@ -6342,3 +6342,39 @@ import error (`routers.codebase_health` no longer exports
 `_SKIP_DIRS`) that already prevented it from running before this
 change — confirmed via `git stash`, left untouched as out of scope.
 
+
+## 2026-09-21 (later still) — Part 2.2 fix completion: 3rd emit call site was missed
+
+Live QA on the deployed Self-Repair fix caught a real gap the original
+audit missed: `services/self_bug.emit("dead_end_leak", ...)` has
+THREE call sites in `services/business_voice_filter.py`
+(`apply_business_owner_guards()`), not two — `bail_reason`,
+`no_dead_end_guard`, **and `design_refusal_guard`**. Only the first
+two got the `is_legitimate_refusal()` exemption in the earlier fix;
+the third (design-ask replies) never did.
+
+Confirmed via live ledger data (2 real post-fix entries, timestamped
+minutes after that deploy): a reply asking "Mind if I take a quick
+look at your current site pages first?" and one saying "for brand
+work, you'd want a design specialist" both got logged as
+`dead_end_leak` self-bugs — genuinely benign, not stuck/wrong.
+
+Fix: wired `is_legitimate_refusal()` into the design-guard emit gate
+in `business_voice_filter.py` (import + condition only — the
+`strip_design_refusal()` template-correction behavior is UNCHANGED,
+since that's an unrelated business rule about always giving the
+owner 3 concrete directions, not a bug-classification concern).
+Extended `services/legitimate_refusal.py`'s regex with two more
+well-justified patterns matching the same principle as the original
+3: `"mind if i"` (a deliberate precondition check before acting) and
+`"you'd want/need a X specialist"` (an honest scope/redirect
+statement) — verified these don't loosen the guard for a genuinely
+stuck reply (`test_genuinely_stuck_reply_still_flagged` still green).
+
+**Testing:** 6 new tests in `tests/test_self_repair_design_guard_
+followup_2026_09_21.py` (the 2 live false positives now recognized;
+template-correction still fires regardless; the exact
+business_voice_filter emit-site integration confirmed skip vs.
+still-fires). 97 total tests re-run clean across all Self-Repair /
+Failure-Patterns test files. Backend redeployed.
+

@@ -969,3 +969,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-09-21
 
 - `services/legitimate_refusal.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T13:35:28.981469Z] <!-- inv:service:services/legitimate_refusal.py -->
+- `services/health_reporter.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T14:40:35.902512Z] <!-- inv:service:services/health_reporter.py -->

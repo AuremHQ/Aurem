@@ -36,7 +36,15 @@ _LEGITIMATE_REFUSAL_RE = re.compile(
     r"that'?s\s+not\s+(actually\s+)?true|"
     r"let\s+me\s+correct\s+that|"
     r"for\s+security\s+reasons|"
-    r"without\s+your\s+(explicit\s+)?approval",
+    r"without\s+your\s+(explicit\s+)?approval|"
+    # 2026-09-21 (follow-up) — a deliberate, sensible check before
+    # acting ("mind if I look first?") or an honest scope/redirect
+    # statement ("you'd want a specialist") are the SAME principle as
+    # the permission/scope markers above, just phrased differently —
+    # confirmed live false positives from services/design_refusal_
+    # guard.py's 3rd, previously-unaudited emit call site.
+    r"mind if i\b|"
+    r"you'?d (want|need) a \w+ (specialist|expert|professional)",
     re.IGNORECASE,
 )
 

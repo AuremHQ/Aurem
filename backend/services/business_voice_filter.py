@@ -308,6 +308,18 @@ async def apply_business_owner_guards(
     if is_design_ask(user_prompt):
         from services.design_refusal_guard import is_compliant_design_reply, strip_design_refusal
         if not is_compliant_design_reply(content):
-            await self_bug.emit("dead_end_leak", content[:300], ctx, source="design_refusal_guard")
+            # 2026-09-21 — Self-Repair audit Part 2.2 follow-up: this
+            # 3rd emit call site was missed in the original fix. A
+            # reply that's non-compliant with the strict "always
+            # commit to 3 concrete directions right now" design
+            # template still gets template-corrected below (P8-B's
+            # "never refuse" contract is unchanged) — but a reply
+            # that's ALSO a legitimate, deliberate refusal (a
+            # permission/scope gate, or an honest "you'd want a
+            # specialist" redirect) must not be double-counted as a
+            # self-repair bug on top of that correction.
+            from services.legitimate_refusal import is_legitimate_refusal
+            if not is_legitimate_refusal(content):
+                await self_bug.emit("dead_end_leak", content[:300], ctx, source="design_refusal_guard")
             content = strip_design_refusal(content)
     return content
