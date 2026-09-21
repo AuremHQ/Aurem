@@ -9515,3 +9515,17 @@ clean by `testing_agent`
 Not yet done: directive #2 of the founder's 4-directive batch
 (confirmation-only messages must look up pending state before
 responding) — tracked as ROADMAP F38.
+## 2026-09 — OpenAI (ChatGPT) Ads Measurement Pixel live
+
+Wired the verified OpenAI Ads pixel (Pixel ID NgbBMUb16VNBMyxu1kJ7Rn)
+into `index.html` + `src/lib/analytics.js`, exactly mirroring the
+existing Google Ads/Meta Pixel pattern. Three conversion events fire
+at real backend-confirmed success points: signup, GitHub repo
+connect (custom event `github_repo_connected`), paid Stripe upgrade.
+CSP updated to allow `bzrcdn.openai.com`/`bzr.openai.com`. 23/23 unit
+tests pass, live smoke-verified on `/signup` (no console/CSP errors).
+Full detail in CHANGELOG.md's matching 2026-09 entry — not duplicated
+here.
+
+Outstanding (external, not code): Ads Manager business-verification
+warning — founder must complete this in the Ads Manager account.

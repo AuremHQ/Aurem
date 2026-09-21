@@ -2446,11 +2446,12 @@ async def _security_headers(request, call_next):
     # later iteration once the chat preview pane is on its own iframe.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://auremcto.com; "
+        "script-src 'self' 'unsafe-inline' https://auremcto.com https://bzrcdn.openai.com; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
         "connect-src 'self' https://auremcto.com wss://auremcto.com "
-        "https://openrouter.ai https://api.github.com; "
+        "https://openrouter.ai https://api.github.com "
+        "https://bzrcdn.openai.com https://bzr.openai.com; "
         "frame-src 'self' blob:; "
         "font-src 'self' data:;"
     )

@@ -16,7 +16,7 @@ import {
   ArrowLeft, User, KeyRound, Receipt, Plug, ShieldCheck, Coins,
 } from "lucide-react";
 import { api, getUser } from "../lib/api";
-import { trackPurchase, metaPurchase } from "../lib/analytics";
+import { trackPurchase, metaPurchase, openaiSubscriptionCreated } from "../lib/analytics";
 import GitHubCard from "../components/GitHubCard";
 import VercelCard from "../components/VercelCard";
 import PricingCards from "../components/PricingCards";
@@ -88,6 +88,9 @@ export default function Settings() {
               // when we have a real plan value; unknown tier => skip
               // (avoid polluting Meta with $0/unknown-value events).
               metaPurchase(PLAN_VALUE_USD[tier], "USD", sid);
+              // 2026-09 — OpenAI Ads subscription_created conversion.
+              // Same guardrail: skip on unknown tier.
+              openaiSubscriptionCreated(PLAN_VALUE_USD[tier], "USD", sid);
             } else {
               trackPurchase();
               // metaPurchase intentionally NOT fired — tier unknown.

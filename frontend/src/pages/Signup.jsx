@@ -7,7 +7,7 @@ import { Rocket, Github } from "lucide-react";
 import AuthShell from "../components/AuthShell";
 import usePageMeta from "../lib/usePageMeta";
 import { api, setToken, setUser } from "../lib/api";
-import { trackSignup, metaCompleteRegistration } from "../lib/analytics";
+import { trackSignup, metaCompleteRegistration, openaiRegistrationCompleted } from "../lib/analytics";
 import RobotGuide, { RobotGuideKeyframes, escapeHtml } from "../components/RobotGuide";
 import GoogleIcon from "../components/GoogleIcon";
 import { scorePassword, MIN_ACCEPTABLE_SCORE } from "../lib/passwordStrength";
@@ -123,6 +123,8 @@ export default function Signup() {
       trackSignup();
       // Iter 389 — Meta Pixel CompleteRegistration (email/password).
       metaCompleteRegistration("email");
+      // 2026-09 — OpenAI Ads registration_completed conversion.
+      openaiRegistrationCompleted(r.data?.user_id);
       try { localStorage.setItem("aurem_just_logged_in", "1"); } catch { /* ignore */ }
       // Iter 390 — Developer-only rollout. Backend defaults every new
       // signup to track="developer" at insert time, so /choose-track

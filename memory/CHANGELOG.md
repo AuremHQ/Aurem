@@ -6378,3 +6378,59 @@ business_voice_filter emit-site integration confirmed skip vs.
 still-fires). 97 total tests re-run clean across all Self-Repair /
 Failure-Patterns test files. Backend redeployed.
 
+
+## 2026-09 — OpenAI (ChatGPT) Ads Measurement Pixel wired end-to-end
+
+Founder verified the integration is legitimate via official OpenAI
+Ads conversion-tracking docs, then supplied the real Pixel ID
+(NgbBMUb16VNBMyxu1kJ7Rn). Implemented following the EXACT same
+pattern already proven in production for Google Ads gtag + Meta
+Pixel (`frontend/index.html` + `src/lib/analytics.js`):
+
+- `frontend/index.html` — added the `oaiq()` queue-stub bootstrap,
+  deferred via the existing `__auremDeferThirdParty` helper
+  (interaction-or-idle, 4.5s fallback) so it costs nothing on first
+  paint. `oaiq("init", { pixelId, debug })` — debug is OFF by
+  default for real visitors, opt-in only via `?oaiq_debug=1` on the
+  URL while the founder verifies events in Ads Manager.
+- `backend/main.py` CSP header — added `https://bzrcdn.openai.com`
+  to `script-src` and `https://bzrcdn.openai.com` +
+  `https://bzr.openai.com` to `connect-src`.
+- `src/lib/analytics.js` — three new silent-fail-safe helpers
+  mirroring `metaCompleteRegistration`/`metaLead`/`metaPurchase`:
+  - `openaiRegistrationCompleted(userId)`
+  - `openaiGithubRepoConnected(projectId)` — fires the CUSTOM event
+    name `github_repo_connected` (corrected from the founder's
+    pasted `github_connected`, which does not match what needs to
+    be configured as the conversion action in Ads Manager)
+  - `openaiSubscriptionCreated(value, currency, sid)` — same
+    guardrail as `metaPurchase` (skips on null/NaN/<=0 value or
+    non-string currency), reports `amount` in cents per OpenAI's
+    measurement API
+- Wired at the three real backend-confirmed success points (not
+  button clicks):
+  - `pages/Signup.jsx` — right after `trackSignup()` /
+    `metaCompleteRegistration()`, same line block, post-account-row.
+  - `components/AddProjectWizard.jsx` — right after `metaLead()`,
+    post `/cto/projects/add` success (this IS the GitHub-repo-connect
+    moment in AUREM's flow).
+  - `pages/Settings.jsx` — right after `metaPurchase()`, inside the
+    `payment_status === "paid"` Stripe-poll branch, guarded by the
+    same known-tier check.
+
+Tested: 11 new unit tests in
+`src/lib/__tests__/openaiPixel.2026_09.conversions.test.js` (no-op
+safety, correct event names/payloads, cents conversion, guardrails,
+exception-swallowing) — all pass alongside the existing 12 Meta Pixel
+tests (23/23). ESLint clean on all 4 touched files. Live smoke check
+on `/signup`: `window.oaiq` resolves to a function after the deferred
+boot fires, zero CSP/console errors referencing `oaiq`/`openai`/
+`bzrcdn`.
+
+Not done (explicitly out of scope / external): Ads Manager business
+verification warning — that's an account-level action in Ads
+Manager, not a code change. Server-side Conversions API (CAPI) was
+not implemented — browser pixel only, per what was actually
+requested; `event_id` values are already threaded through so a
+future CAPI hop can dedupe against these browser events without
+rework.
