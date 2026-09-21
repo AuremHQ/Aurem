@@ -1027,6 +1027,7 @@ export default function Landing() {
             {[
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/3nop2ow4_ora%20compariso%20video.mp4",
+                webmSrc: "/videos/ora-comparison.webm",
                 tint:  "tinted-amber",
                 badge: "featured",
                 badgeText: "vs Copilot",
@@ -1035,6 +1036,7 @@ export default function Landing() {
               },
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/yp58fz0r_prectical%20workflow%20tool%20ora%20.mp4",
+                webmSrc: "/videos/ora-workflow.webm",
                 tint:  "tinted-orange",
                 badge: "",
                 badgeText: "Workflow",
@@ -1047,6 +1049,7 @@ export default function Landing() {
               // "plain English → code" beat via the workflow tile above.
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/rhq9ed86_reliable%20ORA%20video.mp4",
+                webmSrc: "/videos/ora-reliable.webm",
                 tint:  "tinted-blue",
                 badge: "",
                 badgeText: "Reliable",
@@ -1055,6 +1058,7 @@ export default function Landing() {
               },
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/52yyaahf_ora%20video%202%20.mp4",
+                webmSrc: "/videos/ora-overview.webm",
                 tint:  "tinted-purple",
                 badge: "",
                 badgeText: "Overview",
@@ -1067,14 +1071,18 @@ export default function Landing() {
                     until the card scrolls into view (rootMargin 200px)
                     with preload="none" so the ~10 MB file is only
                     fetched on tap. On Slow 4G mobile this reclaims
-                    ~5 s of LCP time. */}
+                    ~5 s of LCP time.
+                    2026-09-22 · webmSrc is a locally-hosted VP9
+                    fallback (frontend/public/videos/) for the browsers
+                    that reject the H.264 MP4 outright — see
+                    LazyVideo.jsx for the full root-cause writeup. */}
                 {v.badge && (
                   <span className={`video-badge ${v.badge}`} style={{ position: "absolute", zIndex: 2 }}>{v.badgeText}</span>
                 )}
                 {!v.badge && (
                   <span className="video-badge" style={{ position: "absolute", zIndex: 2 }}>{v.badgeText}</span>
                 )}
-                <LazyVideo src={v.src} tint={v.tint} />
+                <LazyVideo src={v.src} webmSrc={v.webmSrc} tint={v.tint} />
                 <div className="video-info">
                   <div className="video-title">{v.title}</div>
                   <div className="video-desc">{v.desc}</div>
