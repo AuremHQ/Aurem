@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db
+from services.casl_consent import casl_screen
 from services.funnel_nudge_cron import STAGES, SUBJECTS, classify_users, render_html, render_text
 
 SNAPSHOT_COLLECTION = "onboarding_funnel_snapshots"
@@ -211,6 +212,31 @@ async def onboarding_funnel_trend(
             "stages": stage_counts, "total_stuck": sum(stage_counts.values()),
         })
     return {"days_requested": days, "points": docs}
+
+
+@router.get("/casl-screen")
+async def onboarding_funnel_casl_screen(
+    stage: Optional[str] = Query(
+        None, description="Limit to one stage, or omit for the full stuck segment"),
+):
+    """Read-only CASL implied-consent expiry gate (2026-09-22 · Revenue
+    Recovery audit). Runs the hard-coded date-based check from
+    services/casl_consent.py against the current stuck-user segment —
+    the same segment any future win-back/re-engagement list would be
+    built from. MUST be run (and the excluded count reviewed) before
+    that list is ever built; nobody past the CASL window is silently
+    dropped, they're returned here with the reason and reference date.
+    No email is sent by this endpoint."""
+    db = require_db()
+    buckets = await classify_users(db)
+    if stage:
+        if stage not in STAGES:
+            raise HTTPException(400, f"unknown stage: {stage}")
+        candidates = buckets.get(stage, [])
+    else:
+        candidates = [u for users in buckets.values() for u in users]
+    result = await casl_screen(db, candidates)
+    return {"stage_filter": stage or "all_stuck_stages", **result}
 
 
 @router.get("/users")

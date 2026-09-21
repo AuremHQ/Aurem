@@ -375,9 +375,18 @@ async def classify_users(db) -> dict[str, list[dict]]:
          "first_ship_at": 1, "is_admin": 1, "is_unlimited": 1, "tier": 1,
          "github": 1},
     ).to_list(length=10_000)
+    # 2026-09-22 · Revenue Recovery audit — this classifier feeds BOTH
+    # the nudge-email send pipeline and the /admin/onboarding-funnel
+    # dashboard. It excluded internal accounts (is_admin/is_unlimited/
+    # founder) but never QA/e2e synthetic accounts, so every dashboard
+    # count and the eligible-for-nudge cohort were inflated by test
+    # traffic (services/synthetic_filter.py already exists and is used
+    # elsewhere, e.g. admin_analytics.py, but was never wired in here).
+    from services.synthetic_filter import is_synthetic
     candidates = [
         u for u in candidates
         if not (u.get("is_admin") or u.get("is_unlimited") or u.get("tier") == "founder")
+        and not is_synthetic(u.get("email"))
     ]
     ids = [u["user_id"] for u in candidates if u.get("user_id")]
     if not ids:

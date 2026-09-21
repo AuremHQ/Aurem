@@ -287,6 +287,17 @@ async def callback(
         )
 
     if not state or ":" not in state:
+        # 2026-09-22 · Revenue Recovery audit — this branch and the two
+        # below it (unknown state, expired state) previously raised with
+        # ZERO funnel telemetry, making every one of these failures
+        # invisible to /funnel/github/stats. That blind spot is exactly
+        # what made "is OAuth actually the activation blocker?" unanswerable
+        # from the dashboard — the funnel showed oauth_redirect counts but
+        # no matching callback_received failures to explain the drop-off.
+        await _funnel_track(
+            "callback_received", source="unknown", session_id=None,
+            meta={"outcome": "error", "reason": "invalid_state"},
+        )
         raise HTTPException(400, "Invalid state")
     mode_or_user, _, _ = state.partition(":")
 
@@ -297,6 +308,10 @@ async def callback(
     # Verify state was actually issued by us
     s = await db.oauth_states.find_one({"state": state})
     if not s:
+        await _funnel_track(
+            "callback_received", source="unknown", session_id=None,
+            meta={"outcome": "error", "reason": "unknown_state"},
+        )
         raise HTTPException(400, "Unknown OAuth state")
     # Iter 212j — 5-minute TTL on OAuth state. Without this, a user
     # who opens the OAuth tab and finishes auth hours later could
@@ -311,6 +326,12 @@ async def callback(
             created_at = created_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) - created_at > timedelta(minutes=5):
             await db.oauth_states.delete_one({"state": state})
+            await _funnel_track(
+                "callback_received",
+                source=s.get("funnel_source") or "unknown",
+                session_id=s.get("funnel_session"),
+                meta={"outcome": "error", "reason": "state_expired"},
+            )
             raise HTTPException(400, "OAuth state expired")
     flow = s.get("mode") or (
         "signup" if mode_or_user in ("signup", "login") else "connect"
