@@ -201,6 +201,26 @@ def _advance_candidate(state_row: dict, last_known: Optional[str],
     return None, {"candidate_status": candidate_status, "candidate_count": candidate_count}
 
 
+async def _decide_should_notify(acked_active: bool, last_known: Optional[str],
+                                 confirmed_status: str, state_row: dict) -> bool:
+    """2026-09-21 — decision-point audit (Part 2 lock-in). Extracted
+    from the inline if/elif block that used to live directly in
+    `_tick_once()` — same truth table, now a named, independently-
+    testable function: locked by tests/unit/notifier_fsm_test.py.
+    See the module docstring above for the full non-firing rules."""
+    if acked_active:
+        return False    # acked, stay silent
+    if last_known == "green" and confirmed_status == "red":
+        return True      # primary case
+    if last_known == "red" and confirmed_status == "green":
+        return True      # recovery
+    if last_known == "red" and confirmed_status == "red":
+        # Cooldown-gated re-alert while staying red.
+        return await _should_fire(state_row, confirmed_status)
+    # green↔gray, gray↔green, gray↔red, red↔gray → NO fire
+    return False
+
+
 async def _tick_once() -> None:
     """One diff-and-fire cycle. Runs every _INTERVAL_S."""
     from services.health_registry import all_checks, run_check_safely
@@ -243,17 +263,9 @@ async def _tick_once() -> None:
             continue
 
         # Fire logic. See module docstring for the truth table.
-        should_notify = False
-        if _ack_active(acked_until):
-            should_notify = False    # acked, stay silent
-        elif last_known == "green" and confirmed_status == "red":
-            should_notify = True     # primary case
-        elif last_known == "red" and confirmed_status == "green":
-            should_notify = True     # recovery
-        elif last_known == "red" and confirmed_status == "red":
-            # Cooldown-gated re-alert while staying red.
-            should_notify = await _should_fire(state_row, confirmed_status)
-        # green↔gray, gray↔green, gray↔red, red↔gray → NO fire
+        should_notify = await _decide_should_notify(
+            _ack_active(acked_until), last_known, confirmed_status, state_row,
+        )
 
         if should_notify:
             await _fire_notification(

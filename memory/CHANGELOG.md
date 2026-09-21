@@ -6285,3 +6285,60 @@ executed, 1 skipped by design — Part 4's Approve/Reject UI has no
 current row with times_seen>=5 to render against; covered at the unit
 level instead). Live curl + Playwright confirmed the full mark-fixed
 round-trip on both pages against real DB data.
+
+## 2026-09-21 (later) — Decision-point audit: lock-in tests + report-identity fix
+
+Follow-up to the earlier same-day audit confirming the health gate,
+coverage-scan classification, notifier routing, and repo-identity
+validation are all already deterministic (no LLM needed). Two items:
+
+**1. Regression tests, wired into CI.** Added `backend/tests/unit/`
+(new dir — 40 tests): `health_gate_test.py`, `coverage_scan_test.py`,
+`notifier_fsm_test.py`, `repo_identity_test.py`,
+`report_identity_header_test.py`. To make 3 of the 4 decision points
+independently testable, extracted 3 tiny, behavior-preserving pure
+functions from inline logic that already existed (no semantic
+change): `classify_pytest_summary()` (health_coverage_scan.py),
+`_decide_should_notify()` (health_notifier.py),
+`_snapshot_cache_key()` (local_tools.py). Wired a new dedicated
+`Guard — Decision-point audit lock` CI step (`.github/workflows/
+ci.yml`, same isolated-signal convention as the existing
+source-of-truth guard step) running `pytest tests/unit/` on every PR.
+
+**2. Report-identity header — the actual root cause fix.** The
+mis-attributed-report incident wasn't a code bug (confirmed above) —
+it was a human reading a pasted report with no identity marker and
+assuming it described AUREM's own code. Added `services/
+health_reporter.py` (`format_identity_header()` — locked format:
+`Repo: {owner}/{repo}@{branch} | SHA: {sha8} | Scan: customer|self |
+Generated: {iso}`; `self_repo_identity()` — reads AUREM's own git
+state). Wired into all 3 real report-rendering surfaces:
+`services/health_score.py::get_health_score()` (AUREM's own score,
+`scan_kind="self"` — verified live via `/admin/health-score`),
+`routers/codebase_health.py::scan()` (a connected customer repo,
+`scan_kind="customer"`, SHA fetched via the existing `_repo_head_sha`
+helper), and `scripts/self_scan.py`'s markdown report (`scan_kind=
+"self"`, header is now literally line 1 of the file).
+
+**Testing:** 40/40 new unit tests pass; 89+49 previously-passing
+tests re-run clean after the 3 extractions; live curl confirmed the
+real `/admin/health-score` response now leads with `identity_header:
+"Repo: polarisbuiltinc-wq/auremdev@main | SHA: 0e016a05 | Scan: self |
+..."`. Ran the wider suite too — found 3 unrelated pre-existing/live-
+state failures (`test_devops_infra_live_github`: sandbox has zero CI
+run history; `test_coverage_run_trigger_returns_started`: blocked by
+a REAL coverage-scan lock that an earlier test invocation in this
+same session legitimately triggered — proves the concurrency guard
+works, not a bug; `test_cli_fail_on_new_against_baseline_is_clean`:
+pre-existing architecture-baseline drift from earlier, unrelated
+session work on `HealthScoreWidget.jsx`/`PWAInstallPrompt.jsx` etc —
+confirmed zero files from this fix appear in the new-findings list).
+None caused by this fix — root-caused via `git stash` A/B comparison
+before ruling them out of scope, per the "skip anything beyond these
+two" instruction.
+
+`scripts/self_scan.py` also has a separate, pre-existing, unrelated
+import error (`routers.codebase_health` no longer exports
+`_SKIP_DIRS`) that already prevented it from running before this
+change — confirmed via `git stash`, left untouched as out of scope.
+

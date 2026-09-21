@@ -367,6 +367,20 @@ jobs:
         working-directory: backend
         run: python -m pytest -m source_of_truth -v --tb=short --timeout=30
 
+      - name: Guard — Decision-point audit lock (health/coverage/notifier/repo-identity)
+        # 2026-09-21 — audit confirmed the deployment health gate,
+        # coverage-scan classification, notifier alert routing, and
+        # repo-identity/stale-cache validation are all already
+        # deterministic (no LLM) — see tests/unit/*_test.py. Same
+        # "own loud, isolated CI signal" rationale as the guard above:
+        # a future refactor that silently breaks one of these 4
+        # already-correct decision points must never get lost inside
+        # the wider "Run tests" pass/fail count. if: always() for the
+        # same reason.
+        if: always()
+        working-directory: backend
+        run: python -m pytest tests/unit/ -v --tb=short --timeout=30
+
       - name: Legacy lane (deferred failures — non-blocking)
         # Iter 345 — founder ruling: 259 pre-existing failures
         # (iter36–iter267 era) are quarantined via @pytest.mark.legacy

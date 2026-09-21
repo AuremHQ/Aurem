@@ -170,6 +170,15 @@ def main() -> None:
 
     # ── Render markdown ──────────────────────────────────────────
     lines: list[str] = []
+    # 2026-09-21 — report-identity fix (see services/health_reporter.py
+    # module docstring): this exact report was the shape of the
+    # original mis-attribution incident — pasted with no identity
+    # header, misread as describing a different repo. Now the very
+    # first line states unambiguously which repo/branch/commit this is.
+    from services.health_reporter import format_identity_header, self_repo_identity
+    _owner, _repo, _branch, _sha = self_repo_identity(str(REPO_ROOT))
+    lines.append(format_identity_header(_owner, _repo, _branch, _sha, "self"))
+    lines.append("")
     lines.append("# AUREM — Self-Scan Report (Dogfood run)")
     lines.append("")
     lines.append(f"**Scan date:** `{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}`")

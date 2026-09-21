@@ -136,6 +136,24 @@ def _parse_pytest_summary(text: str) -> dict:
     return counts
 
 
+def classify_pytest_summary(summary: dict) -> str:
+    """2026-09-21 — decision-point audit (Part 2, repo-identity/
+    coverage-scan lock-in). Extracted from the inline check that used
+    to live directly in `_do_run_coverage_scan` — same rule, now a
+    named, independently-testable function: locked by
+    tests/unit/coverage_scan_test.py.
+
+    "0 tests observed" (0 passed, 0 failed, 0 errors) means the
+    subprocess output couldn't be trusted — treat as `"fail"` rather
+    than silently trusting a possibly-stale coverage.json on disk. Any
+    real test count, however small, is a trustable `"pass"` (the
+    caller still separately checks coverage_pct before persisting a
+    score — this function only classifies the pytest-summary parse
+    itself)."""
+    total = summary.get("passed", 0) + summary.get("failed", 0) + summary.get("errors", 0)
+    return "fail" if total == 0 else "pass"
+
+
 async def run_coverage_scan(db) -> dict:
     """Public entrypoint — wraps `_do_run_coverage_scan` with the
     concurrency guard so a second overlapping trigger is a fast
@@ -191,7 +209,7 @@ async def _do_run_coverage_scan(db) -> dict:
 
     summary = _parse_pytest_summary(out_text)
     total_tests_seen = summary["passed"] + summary["failed"] + summary["errors"]
-    if total_tests_seen == 0:
+    if classify_pytest_summary(summary) == "fail":
         logger.warning("health_coverage_scan: 0 tests observed in output — not trusting "
                         "any coverage.json on disk (could be stale). tail=%r", out_text[-800:])
         return {

@@ -680,7 +680,15 @@ async def get_health_score(db) -> dict:
         ) / scored_weight
         overall = round(overall)
     unscored = [k for k, v in categories.items() if v["status"] == "unscored"]
+    # 2026-09-21 — report-identity fix (see services/health_reporter.py
+    # module docstring): this IS a report that gets pasted elsewhere —
+    # the original mis-attribution incident this follows up on was a
+    # human reading a pasted report with no repo identity and assuming
+    # it was AUREM's own code. Never ambiguous again.
+    from services.health_reporter import format_identity_header, self_repo_identity
+    owner, repo, branch, head_sha = self_repo_identity()
     return {
+        "identity_header": format_identity_header(owner, repo, branch, head_sha, "self"),
         "generated_at": _iso_now(),
         "weights": WEIGHTS,
         "categories": categories,

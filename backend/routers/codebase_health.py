@@ -149,12 +149,13 @@ async def scan(
     proj = await db.cto_projects.find_one(
         {"project_id": project_id, "user_id": user_id},
         {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,
-         "auth_method": 1, "installation_id": 1, "user_id": 1},
+         "github_branch": 1, "auth_method": 1, "installation_id": 1, "user_id": 1},
     )
     if not proj:
         raise HTTPException(404, "Project not found")
     owner = proj.get("github_owner") or ""
     repo  = proj.get("github_repo") or ""
+    branch = proj.get("github_branch") or "main"
     # 2026-02-11 · Phase 3b (Bug 2 fix) — dual-auth token resolver.
     from services.pat_vault import get_repo_token, GithubAppAuthError
     # 2026-09-09 fix — this call had ZERO exception handling: any
@@ -231,6 +232,19 @@ async def scan(
     overall_score = _score_for_findings(all_findings)
     label, tone = _category_label(overall_score)
     total = sum(b["total"] for b in breakdown.values())
+    # 2026-09-21 — report-identity fix (see services/health_reporter.py
+    # module docstring): the original mis-attribution incident this
+    # follows up on was a human reading a pasted report with no repo
+    # identity and assuming it was AUREM's own code, when it was really
+    # a connected customer repo. Best-effort — a failed SHA lookup must
+    # never block the scan response.
+    from services.local_tools import _repo_head_sha
+    from services.health_reporter import format_identity_header
+    try:
+        head_sha = await _repo_head_sha(owner, repo, branch, pat)
+    except Exception:                                       # noqa: BLE001
+        head_sha = None
+    identity_header = format_identity_header(owner, repo, branch, head_sha, "customer")
     # 2026-09-21 — Bug D fix (live QA report): this manual scan path
     # (chat slash-commands + the /codebase-health page) never wrote
     # into `cto_open_findings`, so the Advisor sidebar's "N open
@@ -251,6 +265,7 @@ async def scan(
         logger.debug("open-findings backlog persist failed: %r", e)
     payload = {
         "ok":            True,
+        "identity_header": identity_header,
         "score":         overall_score,
         "label":         label,
         "tone":          tone,

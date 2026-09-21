@@ -1503,6 +1503,17 @@ async def _repo_head_sha(owner: str, repo: str, branch: str,
         return None
 
 
+def _snapshot_cache_key(owner: str, repo: str, branch: str) -> str:
+    """2026-09-21 — decision-point audit (Part 2 lock-in). Extracted
+    from the inline `key = ...` line in `_ensure_repo_snapshot` — same
+    sanitization rule, now a named, independently-testable function:
+    locked by tests/unit/repo_identity_test.py. Non-alnum/underscore/
+    dot/dash characters become `_` so an owner/repo/branch name with
+    slashes or spaces can't collide with the on-disk cache-dir naming
+    scheme or escape `_SNAPSHOT_ROOT`."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", f"{owner}__{repo}__{branch}")
+
+
 async def _ensure_repo_snapshot(
     owner: str, repo: str, branch: str, token: str,
 ) -> tuple[Optional[str], Optional[str]]:
@@ -1514,7 +1525,7 @@ async def _ensure_repo_snapshot(
     import tempfile
     import httpx
 
-    key = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{owner}__{repo}__{branch}")
+    key = _snapshot_cache_key(owner, repo, branch)
     dest = os.path.join(_SNAPSHOT_ROOT, key)
     marker = os.path.join(dest, ".aurem_head_sha")
 
