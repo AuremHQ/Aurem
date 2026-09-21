@@ -27,6 +27,7 @@ import { FixJobProvider } from "./components/FixJobContext";
 import PersistentFixBar from "./components/PersistentFixBar";
 import CookieConsentBanner from "./components/CookieConsentBanner";
 import OraGuideMascot from "./components/OraGuideMascot";
+import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import MaintenanceGate from "./components/MaintenanceGate";  // 2026-08
 import { PrivateRoute, AdminRoute } from "./components/PrivateRoute";
 
@@ -346,6 +347,12 @@ export default function App() {
       <SessionExpiredListener />
       <Toaster />
       <OraGuideMascot />
+      {/* 2026-09-21 — global mount (was previously inside Shell, gated
+          behind an auth token) so a first-time anonymous visitor on
+          Landing/Signup can also be prompted to install the PWA, not
+          just a user right after logging in. See PWAInstallPrompt.jsx
+          for the exact trigger rules. */}
+      <PWAInstallPrompt />
       {/* Iter 212m-148 — Global FixJob provider owns the SSE so the
           job survives panel toggles, route changes, and backdrop
           clicks.  PersistentFixBar is the always-visible 44px chrome;

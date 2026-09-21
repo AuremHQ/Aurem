@@ -30,3 +30,13 @@ export const Z_ADVISOR_TOGGLE = 10002;
 // transient system feedback and must always be the topmost layer,
 // above any modal that might still be open when they fire.
 export const Z_TOAST = 10003;
+// 2026-09-21 — the PWA install prompt (PWAInstallPrompt.jsx) is now
+// mounted globally (also for logged-out first-time visitors, not
+// just post-login), sharing the bottom-right corner with the cookie
+// consent banner for that same audience. The real fix is temporal
+// (never reveal the prompt while consent is still pending — see
+// `waitForOpenSlot` in that file), but it still needs a tracked
+// z-index like every other floating layer here rather than a
+// hardcoded number, so a future consumer can reason about stacking
+// order without re-deriving it from scratch.
+export const Z_PWA_INSTALL_PROMPT = 9995;
