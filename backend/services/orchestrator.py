@@ -469,6 +469,33 @@ def _is_same_tool_call(a: dict, b: dict) -> bool:
         return False
 
 
+# 2026-09-21 — Failure-patterns audit fix (Part 1.2). `_is_same_tool_call`
+# above only catches BYTE-IDENTICAL repeats (same tool + same args). It
+# does NOT catch the live pattern reported from /admin/failure-patterns
+# tool-sequence data: `search_repo` called 6 times in a row with
+# DIFFERENT queries each time, 0% success — same tool, genuinely no
+# progress, just varying args so the exact-match guard never trips.
+_MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS = 4
+
+
+def _consecutive_same_tool_no_progress(invocations: list[dict], tool_name: str) -> int:
+    """Walking backward from the end of `invocations`, count how many
+    in a row are calls to `tool_name` that did NOT succeed (`ok`
+    is not True). Stops at the first invocation that is either a
+    different tool, or a successful call to this same tool (success
+    means it DID make progress that time, so the streak resets)."""
+    if not tool_name:
+        return 0
+    streak = 0
+    for inv in reversed(invocations or []):
+        if inv.get("tool") != tool_name:
+            break
+        if inv.get("ok") is True:
+            break
+        streak += 1
+    return streak
+
+
 # ──────────────────────────────────────────────────────────────────
 # Iter 212m — Post-Edit Build Hooks
 #
@@ -2528,15 +2555,28 @@ async def chat_with_tools(
         # This prevents the 90s wall-clock timeout that fires when the
         # LLM keeps re-requesting `read_repo_files` with overlapping
         # paths instead of producing a final answer.
+        #
+        # 2026-09-21 — Part 1.2 fix: also trip on a broader "same tool,
+        # varying args, no success" streak (see
+        # _consecutive_same_tool_no_progress docstring) — the
+        # exact-args check alone misses e.g. `search_repo` called 6x
+        # with 6 different queries, all failing.
         if calls and invocations:
             recent = invocations[-len(calls):] if len(invocations) >= len(calls) else invocations
-            if all(
+            exact_repeat = all(
                 any(_is_same_tool_call(c, prior) for prior in recent)
                 for c in calls
-            ):
+            )
+            same_tool_stuck = any(
+                _consecutive_same_tool_no_progress(invocations, c.get("tool"))
+                >= _MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS
+                for c in calls
+            )
+            if exact_repeat or same_tool_stuck:
                 logger.info(
-                    "tool-loop guard tripped at iter %d/%d — synthesising summary",
-                    iters, max_iters,
+                    "tool-loop guard tripped at iter %d/%d "
+                    "(exact_repeat=%s same_tool_stuck=%s) — synthesising summary",
+                    iters, max_iters, exact_repeat, same_tool_stuck,
                 )
                 clean = _synthesise_max_iters_summary(prompt, invocations)
                 return {

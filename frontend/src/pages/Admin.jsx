@@ -1634,6 +1634,48 @@ function McpUsagePage() {
 // collection, see services/task_chain_logging.py). Click a failed
 // task-type row to load its recent failure samples + the truncated
 // reasoning text (only ever persisted on failure).
+//
+// 2026-09-21 — Failure-Patterns audit (Part 1.1/1.3/3):
+//   - infra failures (rate-limit/5xx) now reported separately, never
+//     blended into "top failed" buckets — see infra_failures below.
+//   - patterns below the confidence threshold show an explicit "not
+//     enough data yet" note instead of a silent drop.
+//   - every pattern row now carries first/last seen + an open/fixed
+//     status with a manual mark-fixed action (no auto deploy-link
+//     exists yet — see backend mark_failure_pattern_fixed()).
+function _fmtWhen(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+function StatusCell({ row, kind, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const fixed = row.status === "fixed";
+  const act = (next) => {
+    setBusy(true);
+    api.post("/admin/failure-patterns/mark-fixed", { kind, value: row.value ?? row.tool_sequence, status: next })
+      .then(() => { toast({ message: next === "fixed" ? "Marked fixed" : "Re-opened", kind: "success" }); onChanged(); })
+      .catch(() => toast({ message: "Failed to update status", kind: "error" }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {fixed ? (
+        <Badge color="var(--ok)">fixed on {_fmtWhen(row.fixed_on).split(",")[0]}</Badge>
+      ) : (
+        <Badge color="var(--text-faint)">open</Badge>
+      )}
+      <button
+        data-testid={`failure-pattern-mark-${fixed ? "open" : "fixed"}-${(row.value ?? row.tool_sequence ?? "").toString().slice(0, 24)}`}
+        className="btn btn-ghost" disabled={busy}
+        style={{ fontSize: 10, padding: "2px 8px" }}
+        onClick={(e) => { e.stopPropagation(); act(fixed ? "open" : "fixed"); }}>
+        {fixed ? "Re-open" : "Mark fixed"}
+      </button>
+    </div>
+  );
+}
+
 function FailurePatternsPage() {
   const [d, setD] = useState(null);
   const [days, setDays] = useState(14);
@@ -1652,6 +1694,7 @@ function FailurePatternsPage() {
   }, []);
 
   useEffect(() => { load(days, null); }, [days, load]);
+  const refresh = useCallback(() => load(days, selectedType), [load, days, selectedType]);
 
   if (loading && !d) {
     return <div style={{ padding: 24, color: "var(--text-faint)" }}><Loader2 size={14} className="spin" /> Loading…</div>;
@@ -1663,6 +1706,8 @@ function FailurePatternsPage() {
   const successPatterns = data.top_success_prompt_patterns || [];
   const toolSeqRates = data.tool_sequence_rates || [];
   const suggestions = data.suggestions || [];
+  const lowConfidence = data.low_confidence_patterns || [];
+  const infra = data.infra_failures || { total: 0, by_reason: [] };
   const samples = data.sample_failures || [];
 
   return (
@@ -1691,8 +1736,25 @@ function FailurePatternsPage() {
         tool sequence, success/fail) to <code>task_chains</code>. On failure only, the
         model's reasoning text is also attached (truncated, secrets redacted) so you can
         see WHY it failed, not just that it revised. Use this to spot which prompts need
-        rewording.
+        rewording. Infra failures (rate limits / provider 5xx) are excluded from every
+        "failed" bucket below — they're a provider problem, not a bad-prompt one.
       </div>
+
+      {infra.total > 0 && (
+        <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(148,163,184,0.35)" }}
+              data-testid="admin-failure-patterns-infra">
+          <h4 style={{ fontSize: 12, margin: "0 0 8px", color: "var(--text-faint)" }}>
+            Infra failures (excluded above) — {infra.total} in this window
+          </h4>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 6 }}>{infra.note}</div>
+          {(infra.by_reason || []).map((r) => (
+            <div key={r.reason} style={{ fontSize: 12, color: "var(--text-dim)", padding: "3px 0" }}>
+              <Badge color="var(--text-faint)">{r.reason}</Badge> × {r.count}
+              {" · "}first {_fmtWhen(r.first_seen)} · last {_fmtWhen(r.last_seen)}
+            </div>
+          ))}
+        </Card>
+      )}
 
       {suggestions.length > 0 && (
         <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(234,179,8,0.35)" }}
@@ -1708,11 +1770,25 @@ function FailurePatternsPage() {
         </Card>
       )}
 
+      {lowConfidence.length > 0 && (
+        <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(148,163,184,0.25)" }}
+              data-testid="admin-failure-patterns-low-confidence">
+          <h4 style={{ fontSize: 12, margin: "0 0 8px", color: "var(--text-faint)" }}>
+            Watching, not enough data yet
+          </h4>
+          {lowConfidence.map((r, i) => (
+            <div key={i} style={{ fontSize: 12, color: "var(--text-faint)", padding: "4px 0" }}>
+              "{r.pattern}" — {r.fail}/{r.total} failed · {r.note}
+            </div>
+          ))}
+        </Card>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
         <div>
           <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
                         color: "var(--text-faint)", margin: "0 0 8px" }}>
-            Top failed task types
+            Top failed task types (reasoning failures only)
           </h4>
           <Card>
             {failedTypes.length === 0 ? (
@@ -1724,11 +1800,16 @@ function FailurePatternsPage() {
                 onClick={() => load(days, row.value)}
                 style={{
                   padding: "8px 14px", display: "flex", justifyContent: "space-between",
+                  alignItems: "center", gap: 10, flexWrap: "wrap",
                   borderBottom: "1px solid var(--border)", cursor: "pointer", fontSize: 12,
                   background: selectedType === row.value ? "var(--bg-elev)" : "transparent",
                 }}>
                 <span>{row.value}</span>
+                <div style={{ fontSize: 10, color: "var(--text-faint)" }}>
+                  first {_fmtWhen(row.first_seen)} · last {_fmtWhen(row.last_seen)}
+                </div>
                 <Badge color="var(--danger)">{row.count}</Badge>
+                <StatusCell row={row} kind="task_type" onChanged={refresh} />
               </div>
             ))}
           </Card>
@@ -1758,12 +1839,19 @@ function FailurePatternsPage() {
         <div>
           <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
                         color: "var(--text-faint)", margin: "0 0 8px" }}>
-            Top failed prompt patterns
+            Top failed prompt patterns (reasoning failures only)
           </h4>
           <Card>
             <Table
-              cols={["Pattern (first word)", "Fails"]}
-              rows={failedPatterns.map((row) => [row.value, row.count])}
+              cols={["Pattern (first word)", "Fails", "First / last seen", "Status"]}
+              rows={failedPatterns.map((row) => [
+                row.value,
+                row.count,
+                <span key="w" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+                  {_fmtWhen(row.first_seen)} → {_fmtWhen(row.last_seen)}
+                </span>,
+                <StatusCell key="s" row={row} kind="prompt_pattern" onChanged={refresh} />,
+              ])}
             />
           </Card>
         </div>
@@ -1787,7 +1875,7 @@ function FailurePatternsPage() {
       </h4>
       <Card style={{ marginBottom: 16 }}>
         <Table
-          cols={["Tool sequence", "Attempts", "Success rate"]}
+          cols={["Tool sequence", "Attempts", "Success rate", "First / last seen", "Status"]}
           rows={toolSeqRates.map((row) => [
             <span key="seq" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
               {row.tool_sequence || "(no tools)"}
@@ -1796,6 +1884,10 @@ function FailurePatternsPage() {
             <Badge key="rate" color={row.success_rate >= 0.7 ? "var(--ok)" : row.success_rate >= 0.4 ? "var(--warn)" : "var(--danger)"}>
               {Math.round(row.success_rate * 100)}%
             </Badge>,
+            <span key="w" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+              {_fmtWhen(row.first_seen)} → {_fmtWhen(row.last_seen)}
+            </span>,
+            <StatusCell key="s" row={row} kind="tool_sequence" onChanged={refresh} />,
           ])}
         />
       </Card>

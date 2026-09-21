@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can help fix bugs, improve performance, or add features directly to your website's content – just show me your website!",
+      "reply": "I can help improve your website by fixing bugs, optimizing performance, or adding features—just point me to your website and let me know what needs work!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -22,7 +22,7 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I'd love to make that change for you, but I don't have your website connected right now — it looks like no project is selected.\n\nPlease pick your website's project from the sidebar on the left, then come back and tell me your opening hours (days and times). Once it's connected, I'll put them right at the top of your main page for you.\n\nWhat are the hours you'd like displayed?",
+      "reply": "Got it! I'll add your opening hours prominently at the top of your main page. Let me know if you'd like any specific styling or formatting.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -32,15 +32,15 @@
         "no_dangling": true,
         "has_handoff_fence": false
       },
-      "provider": "glm-5.2",
-      "tier": "agentic",
+      "provider": "intent-gateway-casual",
+      "tier": "clarify",
       "bail_reason": null,
       "ship_suppressed": false
     },
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Got it! As soon as you select your website project from the sidebar, I'll add \"Open daily 9am–5pm\" right at the top of your homepage for you.",
+      "reply": "Perfect! I’ll add \"9am to 5pm every day\" prominently at the top of your main page. Let me know if you want any adjustments!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -58,7 +58,7 @@
     {
       "turn": 4,
       "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I'd be happy to add your phone number to the bottom of your main page! But I still need you to select your website project from the sidebar on the left first.\n\nOnce it's connected, I'll add both:\n- Your opening hours (9am–5pm daily) at the top\n- Your phone number (1-800-555-0199) at the bottom\n\nJust click your project in the sidebar, then let me know when it's connected!",
+      "reply": "I can't see your website right now — you'll need to connect it first so I can make the change. \n\nHere's how: look for a \"Connect Website\" or \"Select Project\" option in the sidebar, then choose your website. Once that's done, I can add your phone number (1-800-555-0199) to the bottom of your main page right away.\n\nWant help finding where to connect it? But I can update the text, images, or layout on your site instead — want me to do that?",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -137,7 +137,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey there! Happy to help with your project—what's on your mind? 😊",
+      "reply": "Hey! Ready to content? 🚀",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }

@@ -102,7 +102,17 @@ def classify_bail(user_message: str) -> dict:
 
 
 def contains_banned_fallback_phrase(text: str) -> bool:
-    return bool(_BANNED_FALLBACK_RE.search(text or ""))
+    """2026-09-21 — Self-Repair audit Part 2.2 fix: same
+    correct-refusal exemption as no_dead_end_guard.has_dead_end() —
+    a reply correctly refuting a hallucinated claim or declining for a
+    permission/scope reason should never be treated as a banned vague
+    non-answer, even if it happens to share a word with the ban list."""
+    if not _BANNED_FALLBACK_RE.search(text or ""):
+        return False
+    from services.legitimate_refusal import is_legitimate_refusal
+    if is_legitimate_refusal(text or ""):
+        return False
+    return True
 
 
 def strip_banned_fallback_phrases(text: str, user_message: str) -> str:

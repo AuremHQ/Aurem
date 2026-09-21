@@ -1411,6 +1411,27 @@ async def skills_usage(
 # ─── 2026-09-08 — "Failure Patterns" admin tab (self-improving loop) ──
 # Simple group-by stats over `task_chains` (services/task_chain_logging.py)
 # — deliberately NOT an ML pipeline (DO-NOT: over-engineer the analysis).
+#
+# 2026-09-21 — Failure-Patterns audit fix (see memory/PRD.md):
+#   Part 1.1 — `failure_reason=provider_rate_or_5xx` (rate limit / 5xx —
+#     an INFRA failure, not a bad-prompt/bad-reasoning one) was counted
+#     in the SAME bucket as genuine reasoning failures, inflating
+#     "top failed prompt patterns" with noise the prompt itself didn't
+#     cause. Now excluded from every reasoning-failure bucket below and
+#     reported separately under `infra_failures`.
+#   Part 1.3 — the old MIN_SAMPLE_SIZE was 3, low enough that a pattern
+#     with 1 fail / 2 total could get a confident "fails 33% of the
+#     time" headline. Raised to 20; anything below that now surfaces as
+#     an explicit "not enough data yet" note instead of a percentage.
+_MIN_SAMPLE_SIZE_FOR_CONFIDENT_SUGGESTION = 20
+_MIN_FAIL_RATE_FOR_SUGGESTION = 0.3
+
+
+def _is_infra_failure_match(extra: Optional[dict] = None) -> dict:
+    from services.task_chain_logging import INFRA_FAILURE_REASONS
+    return {"failure_reason": {"$nin": list(INFRA_FAILURE_REASONS)}, **(extra or {})}
+
+
 @router.get("/failure-patterns")
 async def failure_patterns(
     days: int = 14,
@@ -1422,7 +1443,13 @@ async def failure_patterns(
     with a click-through to the truncated failure reasoning text (only
     ever persisted on failure — see task_chain_logging.py's module
     docstring). This is the analysis half of the self-improving loop —
-    prompts get better over time by looking at what's here."""
+    prompts get better over time by looking at what's here.
+
+    Reasoning failures (bad prompt / bad model plan) and infra failures
+    (rate-limited, provider 5xx) are reported SEPARATELY — see the
+    2026-09-21 audit fix note above. `top_failed_*` below is
+    reasoning-failures-only; `infra_failures` carries the infra count."""
+    from services.task_chain_logging import INFRA_FAILURE_REASONS
     await _require_admin(authorization)
     db = require_db()
 
@@ -1431,33 +1458,47 @@ async def failure_patterns(
     from datetime import datetime, timedelta, timezone
     cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
     match = {"ts": {"$gte": cutoff_ts}}
+    # Reasoning-failure-only match — infra failures never enter this bucket.
+    reasoning_fail_match = {**match, "success": False, **_is_infra_failure_match()}
 
     async def _group_by(field: str, success: bool):
+        base = reasoning_fail_match if not success else {**match, "success": True}
         pipeline = [
-            {"$match": {**match, "success": success}},
-            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+            {"$match": base},
+            {"$group": {
+                "_id": f"${field}", "count": {"$sum": 1},
+                "first_seen": {"$min": "$ts"}, "last_seen": {"$max": "$ts"},
+            }},
             {"$sort": {"count": -1}},
             {"$limit": limit},
         ]
         return [
-            {"value": r["_id"], "count": r["count"]}
+            {"value": r["_id"], "count": r["count"],
+             "first_seen": _iso_ts(r.get("first_seen")),
+             "last_seen": _iso_ts(r.get("last_seen"))}
             async for r in db.task_chains.aggregate(pipeline)
         ]
 
     async def _group_by_prompt_pattern(success: bool):
         # Crude, cheap "pattern" bucket — first word of the (already
         # truncated) prompt, lowercased. Not NLP — a group-by key.
+        base = reasoning_fail_match if not success else {**match, "success": True}
         pipeline = [
-            {"$match": {**match, "success": success}},
+            {"$match": base},
             {"$project": {"pattern": {"$toLower": {
                 "$arrayElemAt": [{"$split": ["$user_prompt", " "]}, 0],
-            }}}},
-            {"$group": {"_id": "$pattern", "count": {"$sum": 1}}},
+            }}, "ts": 1}},
+            {"$group": {
+                "_id": "$pattern", "count": {"$sum": 1},
+                "first_seen": {"$min": "$ts"}, "last_seen": {"$max": "$ts"},
+            }},
             {"$sort": {"count": -1}},
             {"$limit": limit},
         ]
         return [
-            {"value": r["_id"], "count": r["count"]}
+            {"value": r["_id"], "count": r["count"],
+             "first_seen": _iso_ts(r.get("first_seen")),
+             "last_seen": _iso_ts(r.get("last_seen"))}
             async for r in db.task_chains.aggregate(pipeline)
         ]
 
@@ -1466,7 +1507,34 @@ async def failure_patterns(
     top_failed_patterns      = await _group_by_prompt_pattern(False)
     top_success_patterns     = await _group_by_prompt_pattern(True)
 
-    # Tool-sequence success/fail rates.
+    # Infra failures — counted, timestamped, but NEVER folded into the
+    # "bad prompt" buckets above (Part 1.1 fix).
+    infra_pipeline = [
+        {"$match": {**match, "success": False,
+                     "failure_reason": {"$in": list(INFRA_FAILURE_REASONS)}}},
+        {"$group": {
+            "_id": "$failure_reason", "count": {"$sum": 1},
+            "first_seen": {"$min": "$ts"}, "last_seen": {"$max": "$ts"},
+        }},
+        {"$sort": {"count": -1}},
+    ]
+    infra_by_reason = [
+        {"reason": r["_id"], "count": r["count"],
+         "first_seen": _iso_ts(r.get("first_seen")),
+         "last_seen": _iso_ts(r.get("last_seen"))}
+        async for r in db.task_chains.aggregate(infra_pipeline)
+    ]
+    infra_failures = {
+        "total": sum(r["count"] for r in infra_by_reason),
+        "by_reason": infra_by_reason,
+        "note": "Provider rate-limit / 5xx errors. Excluded from "
+                "top_failed_task_types / top_failed_prompt_patterns — "
+                "these are infra noise, not evidence the prompt was bad.",
+    }
+
+    # Tool-sequence success/fail rates. Includes infra-failed turns in
+    # the denominator (a tool sequence that only ever hits a rate limit
+    # is still worth knowing about) but reports first/last seen too.
     pipeline_tool_seq = [
         {"$match": match},
         {"$project": {
@@ -1484,12 +1552,14 @@ async def failure_patterns(
                     "(no tools)",
                 ],
             },
-            "success": 1,
+            "success": 1, "ts": 1,
         }},
         {"$group": {
             "_id":           "$seq_key",
             "count":         {"$sum": 1},
             "success_count": {"$sum": {"$cond": ["$success", 1, 0]}},
+            "first_seen":    {"$min": "$ts"},
+            "last_seen":     {"$max": "$ts"},
         }},
         {"$sort": {"count": -1}},
         {"$limit": limit},
@@ -1501,6 +1571,8 @@ async def failure_patterns(
             "tool_sequence": r["_id"],
             "count":         c,
             "success_rate":  round(r["success_count"] / c, 3) if c else 0,
+            "first_seen":    _iso_ts(r.get("first_seen")),
+            "last_seen":     _iso_ts(r.get("last_seen")),
         })
 
     # Click-through: recent failures for the requested task type (or,
@@ -1510,7 +1582,7 @@ async def failure_patterns(
     _sample_type = task_type or (top_failed_task_types[0]["value"] if top_failed_task_types else None)
     if _sample_type:
         cur = db.task_chains.find(
-            {**match, "success": False, "task_type": _sample_type},
+            {**reasoning_fail_match, "task_type": _sample_type},
             {"_id": 0, "user_prompt": 1, "task_type": 1, "failure_reason": 1,
              "tool_sequence": 1, "failure_thoughts_truncated": 1, "ts": 1},
         ).sort("ts", -1).limit(5)
@@ -1526,15 +1598,55 @@ async def failure_patterns(
         counts_by_pattern.setdefault(row["value"], {"fail": 0, "success": 0})
         counts_by_pattern[row["value"]]["success"] = row["count"]
     suggestions = []
+    low_confidence_patterns = []
     for pattern, c in sorted(counts_by_pattern.items(), key=lambda kv: -kv[1]["fail"]):
         total = c["fail"] + c["success"]
-        if total >= 3 and pattern and (c["fail"] / total) >= 0.3:
-            rate = round(c["fail"] / total * 100)
+        if not pattern or total == 0:
+            continue
+        fail_rate = c["fail"] / total
+        if fail_rate < _MIN_FAIL_RATE_FOR_SUGGESTION:
+            continue
+        if total >= _MIN_SAMPLE_SIZE_FOR_CONFIDENT_SUGGESTION:
+            rate = round(fail_rate * 100)
             suggestions.append(
                 f"Prompts starting with \"{pattern}\" fail {rate}% of the "
                 f"time ({c['fail']}/{total}) — try naming the exact file "
                 f"or behavior instead of a bare \"{pattern}\"."
             )
+        else:
+            # Part 1.3 fix — looks concerning but not enough volume yet
+            # to state a confident percentage. Surfaced separately so
+            # it isn't silently dropped, but also isn't overstated.
+            low_confidence_patterns.append({
+                "pattern": pattern, "fail": c["fail"], "total": total,
+                "note": f"not enough data yet ({total} occurrence"
+                        f"{'s' if total != 1 else ''}, need "
+                        f"{_MIN_SAMPLE_SIZE_FOR_CONFIDENT_SUGGESTION}+ "
+                        f"before this is a confident pattern)",
+            })
+
+    # Part 3 — fix-status join. `failure_pattern_fixes` is a small,
+    # manually-curated collection (see mark_failure_pattern_fixed()
+    # below) keyed on (kind, value). Default is "open" for anything
+    # never marked.
+    fix_docs = await db.failure_pattern_fixes.find({}, {"_id": 0}).to_list(2000)
+    fix_by_key = {(d["kind"], d["value"]): d for d in fix_docs}
+
+    def _attach_status(rows: list, kind: str) -> list:
+        for r in rows:
+            fix = fix_by_key.get((kind, r["value"]))
+            r["status"] = (fix or {}).get("status", "open")
+            r["fixed_on"] = (fix or {}).get("fixed_on")
+            r["fixed_by"] = (fix or {}).get("fixed_by")
+        return rows
+
+    _attach_status(top_failed_task_types, "task_type")
+    _attach_status(top_failed_patterns, "prompt_pattern")
+    for r in tool_sequence_rates:
+        fix = fix_by_key.get(("tool_sequence", r["tool_sequence"]))
+        r["status"] = (fix or {}).get("status", "open")
+        r["fixed_on"] = (fix or {}).get("fixed_on")
+        r["fixed_by"] = (fix or {}).get("fixed_by")
 
     return {
         "window_days":               days,
@@ -1546,7 +1658,58 @@ async def failure_patterns(
         "sample_task_type":          _sample_type,
         "sample_failures":           sample_failures,
         "suggestions":               suggestions,
+        "low_confidence_patterns":   low_confidence_patterns,
+        "infra_failures":            infra_failures,
     }
+
+
+def _iso_ts(ts: Optional[float]) -> Optional[str]:
+    if ts is None:
+        return None
+    from datetime import datetime, timezone
+    try:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+class _MarkFailurePatternFixedBody(BaseModel):
+    kind: str          # "task_type" | "prompt_pattern" | "tool_sequence"
+    value: str
+    status: str = "fixed"   # "fixed" | "open" (open = manual re-open)
+
+
+@router.post("/failure-patterns/mark-fixed")
+async def mark_failure_pattern_fixed(
+    body: _MarkFailurePatternFixedBody,
+    authorization: Optional[str] = Header(None),
+):
+    """Part 3 — manual fix-status action. No automatic deploy/commit
+    linkage exists yet (would need a deploy-webhook -> pattern-key
+    mapping that isn't built), so this is the documented manual
+    fallback: an admin marks a pattern fixed/open by hand and it's
+    timestamped with today's date."""
+    admin = await _require_admin(authorization)
+    db = require_db()
+    if body.kind not in ("task_type", "prompt_pattern", "tool_sequence"):
+        raise HTTPException(400, "kind must be task_type|prompt_pattern|tool_sequence")
+    if body.status not in ("fixed", "open"):
+        raise HTTPException(400, "status must be fixed|open")
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+    update = {"status": body.status}
+    if body.status == "fixed":
+        update["fixed_on"] = now_iso
+        update["fixed_by"] = admin.get("email") or admin.get("user_id")
+    else:
+        update["fixed_on"] = None
+        update["fixed_by"] = None
+    await db.failure_pattern_fixes.update_one(
+        {"kind": body.kind, "value": body.value},
+        {"$set": update, "$setOnInsert": {"kind": body.kind, "value": body.value}},
+        upsert=True,
+    )
+    return {"ok": True, "kind": body.kind, "value": body.value, **update}
 
 
 def _pct(arr, p):

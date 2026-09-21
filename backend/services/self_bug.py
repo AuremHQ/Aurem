@@ -14,10 +14,23 @@ Same determinism discipline as the other new guard modules in this
 rework — no LLM in detection/classification; `diagnose()` only ever
 states a cause that is actually IN `_KNOWN_CAUSES`, never invents one
 to sound confident (no-false-claims).
+
+2026-09-21 — Self-Repair audit (Part 2.1/3/4):
+  * Part 2.1 fix — `signature()` used to collapse to `f"{type}:{type}"`
+    for every caller (none ever passed `context["subject"]`), so every
+    row of the same bug TYPE shared one identical `times_seen`/
+    `last_seen` in the admin dashboard regardless of what the actual
+    reply said. Now derives a subject from the evidence text when the
+    caller doesn't supply one.
+  * Part 3 — `self_bug_learned` now tracks `first_seen`/`status`/
+    `fixed_on`/`fixed_by`; see `mark_fixed()`.
+  * Part 4 — `propose_fix()` is PROPOSE-ONLY (see its own docstring).
+    No auto-apply path exists anywhere in this codebase.
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -118,11 +131,25 @@ def diagnose(event: SelfBugEvent) -> Diagnosis:
     )
 
 
-def signature(event_type: str, context: dict | None = None) -> str:
+def signature(event_type: str, context: dict | None = None, evidence: str = "") -> str:
     """Deterministic recurrence key — the SAME kind of self-bug always
     maps to the same signature regardless of exact wording, so the
-    team sees 'this bug, 7 times' instead of 7 fresh diagnoses."""
-    subject = (context or {}).get("subject") or event_type
+    team sees 'this bug, 7 times' instead of 7 fresh diagnoses.
+
+    2026-09-21 fix (Part 2.1): no caller ever populated
+    `context["subject"]`, so this collapsed to `f"{type}:{type}"` for
+    EVERY event of a given type — which is why the admin dashboard
+    showed the identical times_seen/last_seen on every row regardless
+    of the actual reply content. When no explicit subject is given,
+    derive one from a normalized snippet of `evidence` instead, so
+    genuinely-different occurrences of the same bug type get distinct
+    signatures, while truly-repeated identical phrasing still
+    correctly collapses onto one (that collapsing IS the intended
+    recurrence signal — just at the right granularity now)."""
+    subject = (context or {}).get("subject")
+    if not subject:
+        norm = re.sub(r"\s+", " ", (evidence or "").strip().lower())
+        subject = norm[:80] if norm else event_type
     return f"{event_type}:{subject}"
 
 
@@ -140,6 +167,7 @@ async def emit(event_type: str, evidence: str = "", context: dict | None = None,
     if db is None:
         return event
     try:
+        sig = signature(event.type, event.context, event.evidence)
         await db.ora_self_bugs.insert_one({
             "type": event.type,
             "source": event.source,
@@ -151,9 +179,24 @@ async def emit(event_type: str, evidence: str = "", context: dict | None = None,
             "confidence": diagnosis.confidence,
             "severity": diagnosis.severity,
             "proposed_fix": diagnosis.proposed_fix,
+            "signature": sig,
             "ts": event.ts,
         })
-        await _record_recurrence(db, signature(event.type, event.context))
+        times_seen = await _record_recurrence(db, sig)
+        # Part 4 — PROPOSE-ONLY fix suggestion once recurrence crosses
+        # the threshold. See propose_fix()'s docstring: this only ever
+        # writes a text field for a human to read on the admin
+        # dashboard — nothing consumes it automatically.
+        proposal = propose_fix(event.type, times_seen, "open")
+        if proposal:
+            await db.self_bug_learned.update_one(
+                {"signature": sig},
+                {"$set": {
+                    "proposed_fix_text": proposal,
+                    "proposed_fix_generated_at": time.time(),
+                    "proposed_fix_review_status": "pending",
+                }},
+            )
     except Exception as e:  # pragma: no cover
         logger.warning("self_bug.emit insert failed: %r", e)
     return event
@@ -163,13 +206,94 @@ async def _record_recurrence(db, sig: str) -> int:
     """Upserts the learned-pattern store. Returns the new times_seen.
     Real learning here = pattern-recognition + a recurrence counter,
     NOT model weight updates — matches the honest scope in the
-    module docstring."""
+    module docstring.
+
+    2026-09-21 Part 3 — also tracks `first_seen` (set once, on
+    insert) and a `status` field (open/fixed) so the admin dashboard
+    can show first-seen/last-seen/open-vs-fixed instead of just a
+    raw count."""
     doc = await db.self_bug_learned.find_one_and_update(
         {"signature": sig},
-        {"$inc": {"times_seen": 1}, "$set": {"last_seen": time.time()}},
+        {
+            "$inc": {"times_seen": 1},
+            "$set": {"last_seen": time.time()},
+            "$setOnInsert": {
+                "first_seen": time.time(), "status": "open",
+                "fixed_on": None, "fixed_by": None,
+            },
+        },
         upsert=True, return_document=ReturnDocument.AFTER,
     )
     return (doc or {}).get("times_seen", 1)
+
+
+async def mark_fixed(sig: str, status: str = "fixed",
+                      fixed_by: Optional[str] = None) -> bool:
+    """Part 3 — manual fix-status action. No automatic deploy/commit
+    linkage exists yet (would need a deploy-webhook -> signature
+    mapping that isn't built), so this is the documented manual
+    fallback: an admin marks a signature fixed/re-opened by hand,
+    timestamped with today's date. Returns True if a matching
+    learned-pattern row existed to update."""
+    if status not in ("fixed", "open"):
+        raise ValueError("status must be fixed|open")
+    db = get_db()
+    if db is None:
+        return False
+    update = {"status": status}
+    if status == "fixed":
+        update["fixed_on"] = time.time()
+        update["fixed_by"] = fixed_by
+    else:
+        update["fixed_on"] = None
+        update["fixed_by"] = None
+    r = await db.self_bug_learned.update_one({"signature": sig}, {"$set": update})
+    return r.matched_count > 0
+
+
+# ── Part 4 — PROPOSE-ONLY fix suggestions (2026-09-21) ────────────────
+# Deterministic, template-based — same no-LLM-in-detection discipline
+# as the rest of this module. ONE template per bug type; anything not
+# in this dict returns None (no invented suggestion).
+_PROPOSED_FIX_RECURRENCE_THRESHOLD = 5
+
+_FIX_TEMPLATES = {
+    "missing_button": "Check extractHandoffBrief's fence-detection regex against the exact reply shape in `evidence` — it isn't recognizing a valid ```aurem-handoff fence here.",
+    "truncated_reply": "Review incomplete_reply_guard's completeness heuristic against the exact cut-off point in `evidence` — it may need a new terminal-punctuation/length exception for this shape.",
+    "dead_end_leak": "This reply is a genuine dead end (already passed the correct-refusal check), not a false positive — review the system prompt for this task type and consider adding an explicit 'always offer a concrete alternative' reminder for it.",
+    "jargon_leak": "Extend business_voice_filter's jargon term list with the specific term(s) visible in `evidence`.",
+    "tool_error": "Check the tool named in `evidence`/`context` for a recurring failure mode (bad args shape, auth, timeout) rather than a one-off.",
+    "stalled_silence": "Check whether the tool sequence in `context` is missing a progress/activity_hook call during a long-running step.",
+    "blank_ui": "Check the UI panel referenced in `evidence` for a render-gate that's failing closed.",
+    "user_reported": "No generic template applies to a free-text user report — read `evidence` directly.",
+}
+
+
+def propose_fix(event_type: str, times_seen: int, status: str) -> Optional[str]:
+    """Part 4 — PROPOSE-ONLY. Returns a deterministic, template-based
+    fix suggestion string once a bug has recurred
+    `_PROPOSED_FIX_RECURRENCE_THRESHOLD`+ times while still
+    `status == "open"`. Returns None otherwise — including anything
+    already marked fixed, so a stale proposal never lingers on a
+    resolved row, and anything below the recurrence threshold.
+
+    Because `emit()` (the only writer of `ora_self_bugs`) now only
+    fires `dead_end_leak` for replies that already passed the
+    Part 2.2 correct-refusal check (see services/legitimate_refusal.py
+    and no_dead_end_guard.has_dead_end()), anything reaching this
+    function is, by construction, not a correct-refusal false
+    positive.
+
+    CRITICAL — this function ONLY returns text for a human to read on
+    the admin dashboard. Nothing in this codebase applies this text
+    automatically. Auto-apply is explicitly OUT OF SCOPE here: per
+    spec, it would require a SEPARATE, later, per-bug-type opt-in
+    after a human has manually approved a handful of proposals for
+    that exact type first — no such opt-in switch or auto-apply
+    mechanism is built anywhere in this codebase."""
+    if status != "open" or times_seen < _PROPOSED_FIX_RECURRENCE_THRESHOLD:
+        return None
+    return _FIX_TEMPLATES.get(event_type)
 
 
 async def known_handling(sig: str) -> Optional[dict]:

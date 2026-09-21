@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 TASK_TYPES = ("bug-fix", "feature", "refactor", "scan", "other")
 
+# 2026-09 — Failure-patterns audit fix (Part 1.1). `failure_reason` values
+# that mean "the provider/network misbehaved", NOT "the model reasoned
+# badly about this prompt". These must never count toward "top failed
+# prompt patterns" / "top failed task types" — a rate-limited or 5xx'd
+# request tells you nothing about whether the PROMPT was bad. See
+# routers/chat/stream.py + routers/chat/watchdog.py for where this exact
+# string gets set as failure_mode -> failure_reason.
+INFRA_FAILURE_REASONS = frozenset({"provider_rate_or_5xx"})
+
 _BUG_FIX_KEYWORDS = (
     "fix", "bug", "error", "broken", "crash", "doesn't work",
     "not working", "isn't working", "issue", "failing",
@@ -292,7 +301,8 @@ async def log_unverified_tool_claims(
 
 
 __all__ = [
-    "TASK_TYPES", "classify_task_type", "redact_secrets", "log_task_chain",
+    "TASK_TYPES", "INFRA_FAILURE_REASONS", "classify_task_type",
+    "redact_secrets", "log_task_chain",
     "detect_output_repetition_degeneration", "get_turn_tool_records",
     "log_unverified_tool_claims",
 ]

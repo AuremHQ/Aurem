@@ -46,11 +46,21 @@ DEFAULT_ALTERNATIVE = (
 def has_dead_end(text: str) -> bool:
     """True when the reply says it can't do something with no
     accompanying alternative — real ("but I can...") or a positive
-    path-forward statement — anywhere in the same reply."""
+    path-forward statement — anywhere in the same reply.
+
+    2026-09-21 — Self-Repair audit Part 2.2 fix: a CORRECT, deliberate
+    refusal (declining without the owner's permission, catching a
+    hallucinated claim, refusing a risky out-of-scope edit) is NOT a
+    dead end even if it happens to say "can't" with no "but I can" —
+    see services/legitimate_refusal.py for the marker list. Only a
+    genuinely stuck/vague reply should trip this guard."""
     text = text or ""
     if not _CANT_RE.search(text):
         return False
     if _BUT_I_CAN_RE.search(text) or _POSITIVE_PATH_FORWARD_RE.search(text):
+        return False
+    from services.legitimate_refusal import is_legitimate_refusal
+    if is_legitimate_refusal(text):
         return False
     return True
 

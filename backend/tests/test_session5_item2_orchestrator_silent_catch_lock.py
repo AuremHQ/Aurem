@@ -36,7 +36,14 @@ ORCHESTRATOR = BACKEND / "services" / "orchestrator.py"
 # all 7 sites verified still-hooks, only line numbers shifted). If a
 # real hygiene target ever slips into orchestrator.py, it will NOT be
 # in this set and the test below will fail.
-LEGIT_UI_HOOK_LINES = {2355, 2360, 2468, 2782, 2878, 2915, 2924}
+# 2026-09-21 · Failure-Patterns/Self-Repair audit — Part 1.2 broadened
+# the tool-loop guard (~+30 lines: new _consecutive_same_tool_no_progress
+# helper + its constant, added right next to _is_same_tool_call, plus a
+# few extra lines in the guard-trip block itself). Re-derived via
+# _collect_silent_catches() against the current file: same 7 sites,
+# same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
+LEGIT_UI_HOOK_LINES = {2382, 2387, 2495, 2822, 2918, 2955, 2964}
 # 2026-02 · Part B1/B2 tool-observability fix (task_chain_logging.py's
 # `entry["status"]` reassignment + CitationGuard tool-claim block) added
 # lines earlier in chat_with_tools(). Re-derived via
