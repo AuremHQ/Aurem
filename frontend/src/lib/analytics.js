@@ -219,7 +219,7 @@ export function trackShipRenderFailed({ message_id, model, has_fence } = {}) {
 // (ad-blocker, SSR, pre-init).
 //
 //   openaiRegistrationCompleted()      — after /auth/signup success
-//   openaiGithubConnected(id)          — after /cto/projects/add success
+//   openaiGithubRepoConnected(id)      — after /cto/projects/add success
 //   openaiSubscriptionCreated(v,c,sid,t) — after /payments/status = "paid"
 //
 // `event_id` mirrors the Meta `eventID` dedup convention so a future
@@ -250,14 +250,16 @@ export function openaiRegistrationCompleted(userId = null) {
 }
 
 /**
- * Fire the custom "github_connected" event once per confirmed repo
- * connection (successful `/cto/projects/add`). Custom events go
+ * Fire the custom "github_repo_connected" event once per confirmed
+ * repo connection (successful `/cto/projects/add`). Custom events go
  * through the base event "custom" with `custom_event_name` in the
- * options object — this is the exact shape Ads Manager generated
- * when the conversion action was created there.
+ * options object. CONFIRMED live/active in Ads Manager (2026-09,
+ * screenshot-verified by the founder) — "github_connected" is an
+ * ARCHIVED/inactive event and must NOT be used; firing it sends
+ * events into a void with no error surfaced anywhere.
  */
-export function openaiGithubConnected(projectId = null) {
-  const opts = { custom_event_name: "github_connected" };
+export function openaiGithubRepoConnected(projectId = null) {
+  const opts = { custom_event_name: "github_repo_connected" };
   if (projectId) opts.event_id = String(projectId);
   return _oaiq("custom", { type: "custom" }, opts);
 }

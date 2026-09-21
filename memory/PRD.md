@@ -9529,3 +9529,10 @@ here.
 
 Outstanding (external, not code): Ads Manager business-verification
 warning — founder must complete this in the Ads Manager account.
+
+### 2026-09 correction — GitHub-connect event name
+Reverted back to the ACTIVE Ads Manager event `github_repo_connected`
+(founder screenshot-verified live) after a stale/conflicting report
+from a separate Ads Manager browser session briefly flipped it to the
+archived `github_connected`. 24/24 tests pass. Full detail in
+CHANGELOG.md's matching 2026-09 entry.

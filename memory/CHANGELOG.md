@@ -6463,3 +6463,31 @@ Rewrote all 12 unit tests in
 `openaiPixel.2026_09.conversions.test.js` to lock in these
 Ads-Manager-confirmed shapes — 12/12 pass. Lint clean on all touched
 files. No stray `github_repo_connected` references remain anywhere.
+
+## 2026-09 — GitHub-connect event name reverted back to `github_repo_connected` (founder screenshot-verified)
+
+Founder re-checked Ads Manager live (screenshot-verified) and
+corrected the record: the ACTIVE custom conversion event is
+`github_repo_connected`; `github_connected` was archived/inactive by
+the founder earlier in the same session. My previous edit (based on
+the other session's Ads-Manager report) had reverted this to
+`github_connected`, which would have silently broken tracking again
+— same failure mode as before (wrong name = empty Event Stream,
+zero errors anywhere).
+
+Reverted `src/lib/analytics.js`: `openaiGithubConnected` renamed back
+to `openaiGithubRepoConnected`, `custom_event_name` back to
+`"github_repo_connected"`. Updated the call site in
+`AddProjectWizard.jsx` and all 12 unit tests in
+`openaiPixel.2026_09.conversions.test.js` to match. Added an inline
+comment flagging `github_connected` as the known-archived/inactive
+trap so this doesn't flip a third time. 24/24 tests pass (12 OpenAI +
+12 Meta), lint clean, no stray references.
+
+Process note acknowledged: this task involved two independent
+sessions (this codebase session + a separate live Ads Manager
+browser session) reporting conflicting "confirmed" event names
+without a shared source of truth, causing two reverts. Going
+forward for this integration, the founder's direct, timestamped
+Ads Manager screenshot/observation is the authority — not either
+session's inference.
