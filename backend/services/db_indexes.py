@@ -194,6 +194,16 @@ async def ensure_dedup_indexes(db) -> List[dict]:
               "uniq_token", unique=True,
               partial={"token": {"$exists": True, "$type": "string"}})
 
+    # 11) Win-back campaign send claim (2026-09-22, Revenue Recovery) —
+    # services/winback_campaign.py::send_batch() claims a row here
+    # BEFORE calling Resend, same claim-then-send shape as
+    # onboarding_emails' uniq_user_campaign_stage above. Without this
+    # unique index the claim insert always succeeds and a retried/
+    # concurrent call could email the same user twice.
+    await _mk("winback_campaign_state", [("user_id", ASCENDING), ("campaign", ASCENDING)],
+              "uniq_user_campaign", unique=True,
+              partial={"campaign": {"$exists": True, "$type": "string"}})
+
     return results
 
 
@@ -219,6 +229,7 @@ async def get_dedup_index_report(db) -> dict:
         "oauth_codes":   ["uniq_code"],
         "onboarding_emails": ["uniq_user_campaign_stage"],
         "magic_login_tokens": ["uniq_token"],
+        "winback_campaign_state": ["uniq_user_campaign"],
     }
     present: dict[str, bool] = {}
     dup_counts: dict[str, int] = {}

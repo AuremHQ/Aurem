@@ -60,7 +60,7 @@ export default function AuthShell({ children, secondaryCta }) {
           fontFamily: "'JetBrains Mono', monospace",
           fontWeight: 600, fontSize: 14, letterSpacing: "0.08em",
         }}>
-          AUREM DEV
+          ORA by Aurem
         </Link>
         <div style={{ display: "flex", gap: 10 }}>
           <Link to="/" data-testid="auth-back-home" className="btn-ghost"

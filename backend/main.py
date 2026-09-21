@@ -530,6 +530,18 @@ async def lifespan(app: FastAPI):
         long_lived=True,
     )
 
+    # 2026-09-22 · Revenue Recovery — weekly CASL consent-expiry digest.
+    # Same weekday/hour scheduler shape as funnel_digest_cron above;
+    # makes the excluded-count visible every week without anyone having
+    # to remember to hit the read-only casl-screen admin endpoint first.
+    from services.casl_consent import schedule_casl_weekly_digest
+    app.state.casl_digest_task = _supervise(
+        schedule_casl_weekly_digest(),
+        name="casl_weekly_digest",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
     # 2026-08-19 · G22 — idle-window LLM spend guard. Founder-requested
     # standing safety net after the LongCat/integration-health cost-leak
     # investigation: alerts if LLM spend is logged during an hour with

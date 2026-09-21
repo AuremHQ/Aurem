@@ -20,6 +20,7 @@ path.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -149,3 +150,159 @@ async def casl_screen(db, users: list[dict]) -> dict:
         "inquiry_window_days":  CASL_INQUIRY_WINDOW_DAYS,
         "purchase_window_days": CASL_PURCHASE_WINDOW_DAYS,
     }
+
+
+# ── Weekly digest (2026-09-22) ────────────────────────────────────────
+# Founder's ask: "CASL-screen ko weekly digest banao" — turn the
+# read-only casl-screen endpoint into a standing weekly email so the
+# excluded count is visible WITHOUT anyone having to remember to hit
+# the admin endpoint before building a win-back list. Follows the
+# exact same weekday/hour scheduler + Resend-to-ADMIN_EMAIL pattern as
+# services/journey_watch.py::schedule_funnel_digest_cron (funnel
+# digest) and services/daily_digest.py — same _send_via_resend helper,
+# same ADMIN_EMAIL env var, no new delivery mechanism invented.
+import logging as _logging
+
+logger = _logging.getLogger("aurem.casl_consent")
+
+DIGEST_COLLECTION = "casl_digest_sends"
+
+
+def _digest_enabled() -> bool:
+    v = (os.environ.get("ENABLE_CASL_DIGEST_CRON") or "1").strip().lower()
+    return v not in ("0", "false", "off", "no")
+
+
+async def build_casl_digest(db) -> dict:
+    """Screen the CURRENT stuck-user segment (same segment any future
+    win-back list would be built from) and summarize eligible/excluded
+    per funnel stage plus a grand total."""
+    from services.funnel_nudge_cron import STAGES, classify_users
+    buckets = await classify_users(db)
+    per_stage: dict[str, dict] = {}
+    total_eligible = 0
+    total_excluded = 0
+    total_screened = 0
+    reason_counts: dict[str, int] = {}
+    for stage in STAGES:
+        result = await casl_screen(db, buckets.get(stage, []))
+        per_stage[stage] = {
+            "eligible_count": result["eligible_count"],
+            "excluded_count": result["excluded_count"],
+            "total_screened": result["total_screened"],
+        }
+        total_eligible += result["eligible_count"]
+        total_excluded += result["excluded_count"]
+        total_screened += result["total_screened"]
+        for row in result["excluded"]:
+            reason_counts[row["reason"]] = reason_counts.get(row["reason"], 0) + 1
+    return {
+        "generated_at":   _now().isoformat(),
+        "per_stage":      per_stage,
+        "total_eligible": total_eligible,
+        "total_excluded": total_excluded,
+        "total_screened": total_screened,
+        "excluded_by_reason": reason_counts,
+    }
+
+
+def _render_casl_digest_text(digest: dict) -> str:
+    lines = [
+        f"AUREM — Weekly CASL Consent Digest ({digest['generated_at'][:10]})",
+        "",
+        f"Total stuck-user segment screened: {digest['total_screened']}",
+        f"  CASL-eligible (safe to include in a win-back send): {digest['total_eligible']}",
+        f"  CASL-excluded (consent window expired — DO NOT email): {digest['total_excluded']}",
+        "",
+        "Excluded by reason:",
+    ]
+    if digest["excluded_by_reason"]:
+        for reason, n in digest["excluded_by_reason"].items():
+            lines.append(f"  - {reason}: {n}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append("Per funnel stage:")
+    for stage, s in digest["per_stage"].items():
+        lines.append(
+            f"  {stage}: {s['eligible_count']} eligible / "
+            f"{s['excluded_count']} excluded / {s['total_screened']} total"
+        )
+    lines.append("")
+    lines.append(
+        "This is a read-only screen — nothing was sent or written. "
+        "Run GET /admin/onboarding-funnel/casl-screen for the full "
+        "per-user list before building any send."
+    )
+    return "\n".join(lines)
+
+
+async def _already_sent_this_week(db, week_key: str) -> bool:
+    try:
+        row = await db[DIGEST_COLLECTION].find_one({"week": week_key})
+        return row is not None
+    except Exception:
+        return False
+
+
+async def run_casl_digest_once(db) -> dict:
+    """One digest tick — idempotent per ISO week (dedup collection),
+    logs always, emails ADMIN_EMAIL if Resend is configured."""
+    now = _now()
+    week_key = now.strftime("%G-W%V")
+    if await _already_sent_this_week(db, week_key):
+        return {"sent": False, "reason": "already_sent_this_week", "week": week_key}
+    digest = await build_casl_digest(db)
+    body = _render_casl_digest_text(digest)
+    logger.info("📋 CASL WEEKLY DIGEST\n%s", body)
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip()
+    delivered = False
+    if admin_email:
+        from services.daily_digest import _send_via_resend
+        delivered = await _send_via_resend(
+            admin_email, "AUREM — Weekly CASL Consent Digest", body,
+        )
+        if not delivered:
+            logger.info("RESEND_API_KEY not set — CASL digest only logged.")
+    try:
+        await db[DIGEST_COLLECTION].insert_one({
+            "week": week_key, "sent_at": now, "delivered": delivered,
+            **digest,
+        })
+    except Exception:
+        pass
+    return {"sent": True, "delivered": delivered, "week": week_key, **digest}
+
+
+async def schedule_casl_weekly_digest() -> None:
+    """Weekly loop — same weekday/hour scheduling shape as
+    schedule_funnel_digest_cron, offset by 1h so the two digests don't
+    fire in the same tick."""
+    import asyncio
+    from datetime import timedelta as _td
+    from cto_services.db import get_db
+
+    if not _digest_enabled():
+        logger.info("casl_digest_cron disabled (ENABLE_CASL_DIGEST_CRON=0)")
+        return
+    target_weekday = int(os.environ.get("CASL_DIGEST_WEEKDAY_UTC", "0"))  # Monday
+    target_hour = int(os.environ.get("CASL_DIGEST_HOUR_UTC", "9"))  # 1h after funnel digest
+    while True:
+        now = _now()
+        days_ahead = (target_weekday - now.weekday()) % 7
+        next_run = (now + _td(days=days_ahead)).replace(
+            hour=target_hour, minute=0, second=0, microsecond=0,
+        )
+        if next_run <= now:
+            next_run += _td(days=7)
+        wait_s = (next_run - now).total_seconds()
+        try:
+            await asyncio.sleep(wait_s)
+            db = get_db()
+            if db is not None:
+                await run_casl_digest_once(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("casl digest scheduler crash")
+            await asyncio.sleep(3600)

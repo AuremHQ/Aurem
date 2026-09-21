@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db
@@ -298,3 +298,43 @@ async def onboarding_funnel_users(
         "count": len(rows),
         "users": rows,
     }
+
+
+# ── Win-back campaign (2026-09-22 · Revenue Recovery) ─────────────────
+# Founder-approved with hard constraints: 50-150/day batches, a FULL
+# preview (subject/body/recipient count + CASL-excluded count) before
+# any send, and no bulk send without explicit go-ahead EACH TIME — no
+# cron ever calls send_batch(), only this admin-authenticated route.
+@router.get("/winback/preview")
+async def winback_preview(
+    min_stuck_days: int = Query(30, ge=1, le=3650),
+    batch_size: Optional[int] = Query(None, ge=1, le=10_000),
+):
+    """READ-ONLY. Never sends, never writes. Shows exactly what the
+    next send_batch() call would do."""
+    from services.winback_campaign import preview as _preview
+    db = require_db()
+    return await _preview(db, min_stuck_days=min_stuck_days, batch_size=batch_size)
+
+
+@router.post("/winback/send-batch")
+async def winback_send_batch(
+    payload: dict = Body(...),
+):
+    """Admin-triggered ONLY — requires `confirm: true` in the body on
+    EVERY call. Even with `confirm: true`, `dry_run` defaults to True,
+    so a REAL send additionally requires `dry_run: false` explicitly.
+    Body: {confirm: bool, dry_run?: bool (default true),
+           min_stuck_days?: int (default 30), batch_size?: int (50-150)}"""
+    from services.winback_campaign import send_batch as _send_batch
+    db = require_db()
+    confirm = bool(payload.get("confirm"))
+    if not confirm:
+        raise HTTPException(400, "confirm:true is required in the request body to run this endpoint")
+    dry_run = payload.get("dry_run", True)
+    min_stuck_days = int(payload.get("min_stuck_days", 30))
+    batch_size = payload.get("batch_size")
+    return await _send_batch(
+        db, confirm=confirm, dry_run=bool(dry_run),
+        min_stuck_days=min_stuck_days, batch_size=batch_size,
+    )
