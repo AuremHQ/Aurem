@@ -210,27 +210,29 @@ export function trackShipRenderFailed({ message_id, model, has_fence } = {}) {
 // ----------------------------------------------------------------
 // The oaiq() queue stub + oaiq("init", {pixelId}) call is injected
 // in index.html (deferred, same pattern as the gtag/fbq stubs
-// above). These helpers fire the three verified conversion events
-// tied to concrete backend confirmations — never a click alone —
-// matching the Meta Pixel discipline: silent no-op when
-// window.oaiq is unavailable (ad-blocker, SSR, pre-init).
+// above). These helpers fire the three conversion events, using the
+// EXACT event names + payload shapes confirmed live in Ads Manager
+// when the three conversion actions were created there (base event
+// dropdown + generated snippet), tied to concrete backend
+// confirmations — never a click alone — matching the Meta Pixel
+// discipline: silent no-op when window.oaiq is unavailable
+// (ad-blocker, SSR, pre-init).
 //
 //   openaiRegistrationCompleted()      — after /auth/signup success
-//   openaiGithubRepoConnected(id)      — after /cto/projects/add success
-//   openaiSubscriptionCreated(v,c,sid) — after /payments/status = "paid"
+//   openaiGithubConnected(id)          — after /cto/projects/add success
+//   openaiSubscriptionCreated(v,c,sid,t) — after /payments/status = "paid"
 //
 // `event_id` mirrors the Meta `eventID` dedup convention so a future
 // server-side Conversions API hop can dedupe against this browser
 // event without double-counting.
 // ================================================================
 
-function _oaiq(eventName, params = {}, eventId = undefined) {
+function _oaiq(eventName, params = {}, options = undefined) {
   try {
     if (typeof window === "undefined" || typeof window.oaiq !== "function") {
       return false;
     }
-    const opts = eventId ? { event_id: String(eventId) } : undefined;
-    window.oaiq("measure", eventName, params, opts);
+    window.oaiq("measure", eventName, params, options);
     return true;
   } catch (_) {
     return false;
@@ -243,17 +245,21 @@ function _oaiq(eventName, params = {}, eventId = undefined) {
  * dedup key for a future server-side Conversions API hop.
  */
 export function openaiRegistrationCompleted(userId = null) {
-  return _oaiq("registration_completed", {}, userId);
+  const opts = userId ? { event_id: String(userId) } : undefined;
+  return _oaiq("registration_completed", { type: "customer_action" }, opts);
 }
 
 /**
- * Fire the custom "github_repo_connected" event once per confirmed
- * repo connection (successful `/cto/projects/add`). Uses the custom
- * event name expected by the conversion action set up in Ads
- * Manager — NOT the generic "github_connected" name.
+ * Fire the custom "github_connected" event once per confirmed repo
+ * connection (successful `/cto/projects/add`). Custom events go
+ * through the base event "custom" with `custom_event_name` in the
+ * options object — this is the exact shape Ads Manager generated
+ * when the conversion action was created there.
  */
-export function openaiGithubRepoConnected(projectId = null) {
-  return _oaiq("github_repo_connected", {}, projectId);
+export function openaiGithubConnected(projectId = null) {
+  const opts = { custom_event_name: "github_connected" };
+  if (projectId) opts.event_id = String(projectId);
+  return _oaiq("custom", { type: "custom" }, opts);
 }
 
 /**
@@ -261,19 +267,23 @@ export function openaiGithubRepoConnected(projectId = null) {
  * paid Stripe checkout (`payment_status === "paid"`), mirroring the
  * metaPurchase guardrail above: skip entirely on unknown/zero value
  * rather than send a $0/unknown conversion. `amount` is reported in
- * minor currency units (cents) per OpenAI's measurement API.
- * `sid` (Stripe checkout session id) doubles as the dedup key.
+ * minor currency units (cents); `tier` becomes `plan_id` (e.g.
+ * "starter_monthly") per the Ads Manager-generated shape. `sid`
+ * (Stripe checkout session id) doubles as the dedup key.
  */
-export function openaiSubscriptionCreated(value, currency, sid = null) {
+export function openaiSubscriptionCreated(value, currency, sid = null, tier = null) {
   if (value == null || Number.isNaN(Number(value)) || Number(value) <= 0) {
     return false;
   }
   if (!currency || typeof currency !== "string") {
     return false;
   }
-  return _oaiq(
-    "subscription_created",
-    { type: "contents", amount: Math.round(Number(value) * 100), currency },
-    sid
-  );
+  const params = {
+    type: "plan_enrollment",
+    amount: Math.round(Number(value) * 100),
+    currency,
+  };
+  if (tier) params.plan_id = `${tier}_monthly`;
+  const opts = sid ? { event_id: String(sid) } : undefined;
+  return _oaiq("subscription_created", params, opts);
 }

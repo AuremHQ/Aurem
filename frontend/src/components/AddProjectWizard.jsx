@@ -31,7 +31,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
 import { setActiveProjectId } from "./TabBar";
-import { metaLead, openaiGithubRepoConnected } from "../lib/analytics";
+import { metaLead, openaiGithubConnected } from "../lib/analytics";
 import useGitHubConnectStatus from "../hooks/useGitHubConnectStatus";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -208,8 +208,8 @@ export default function AddProjectWizard({ onClose, onAdded }) {
       // Iter 389 — Meta Pixel Lead. Fires only after backend confirms
       // the project was created (real intent signal, not a click).
       metaLead("project_added");
-      // 2026-09 — OpenAI Ads github_repo_connected conversion.
-      openaiGithubRepoConnected(newProjectId);
+      // 2026-09 — OpenAI Ads github_connected conversion (custom event).
+      openaiGithubConnected(newProjectId);
       toast({
         message: `Connected ${repo.full_name} — opening chat…`,
         kind:    "success",

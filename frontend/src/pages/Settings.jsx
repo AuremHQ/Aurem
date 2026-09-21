@@ -90,7 +90,7 @@ export default function Settings() {
               metaPurchase(PLAN_VALUE_USD[tier], "USD", sid);
               // 2026-09 — OpenAI Ads subscription_created conversion.
               // Same guardrail: skip on unknown tier.
-              openaiSubscriptionCreated(PLAN_VALUE_USD[tier], "USD", sid);
+              openaiSubscriptionCreated(PLAN_VALUE_USD[tier], "USD", sid, tier);
             } else {
               trackPurchase();
               // metaPurchase intentionally NOT fired — tier unknown.

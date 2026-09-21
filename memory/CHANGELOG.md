@@ -6434,3 +6434,32 @@ not implemented — browser pixel only, per what was actually
 requested; `event_id` values are already threaded through so a
 future CAPI hop can dedupe against these browser events without
 rework.
+
+## 2026-09 — OpenAI Ads Pixel payload correction (Ads-Manager-confirmed shapes)
+
+Founder set up all three conversion actions directly in Ads Manager
+and reported back the EXACT generated code for each — which differed
+from my earlier assumption. Corrected `src/lib/analytics.js` to match
+Ads Manager exactly (source of truth, not my earlier guess):
+
+- **Registration**: `registration_completed` now sends
+  `{ type: "customer_action" }` as params (was `{}`).
+- **GitHub connect**: reverted my earlier "correction" — Ads Manager
+  actually created this as a CUSTOM event named `github_connected`
+  (not `github_repo_connected`), fired via base event `"custom"` with
+  `custom_event_name: "github_connected"` in the options object, i.e.
+  `oaiq("measure", "custom", { type: "custom" }, { custom_event_name:
+  "github_connected" })`. Renamed the helper
+  `openaiGithubRepoConnected` → `openaiGithubConnected` and fixed the
+  call shape in `analytics.js`; updated the call site in
+  `AddProjectWizard.jsx` accordingly.
+- **Subscription**: `subscription_created` now sends
+  `{ type: "plan_enrollment", amount, currency, plan_id }` (was
+  `{ type: "contents", amount, currency }`, no `plan_id`). `plan_id`
+  is derived as `${tier}_monthly` (e.g. `starter_monthly`) and
+  threaded through from `Settings.jsx`'s existing `tier` variable.
+
+Rewrote all 12 unit tests in
+`openaiPixel.2026_09.conversions.test.js` to lock in these
+Ads-Manager-confirmed shapes — 12/12 pass. Lint clean on all touched
+files. No stray `github_repo_connected` references remain anywhere.
