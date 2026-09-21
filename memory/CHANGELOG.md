@@ -1,4 +1,50 @@
 # AUREM CTO — Changelog (append-only)
+- **PWA install prompt now triggers for first-time visitors, not just
+  post-login (2026-09-21)**
+  User asked "is our PWA working?" and wanted a first-time-visitor
+  install popup. Investigation found the foundation (manifest at
+  `/site.webmanifest`, service worker at `/sw.js`, both correctly
+  linked/registered — confirmed via direct HTTP checks) was already
+  solid, but `PWAInstallPrompt.jsx` only rendered for LOGGED-IN users
+  right after a fresh login (`{token && !chromeless}` gate inside
+  `Shell.jsx`) — a brand-new anonymous visitor on the landing page
+  would never see it.
+  - Moved the component's mount point from `Shell.jsx` (gated,
+    authenticated-only) to `App.jsx` (global, unconditional, alongside
+    `Toaster`/`OraGuideMascot`).
+  - Added a "first-ever visit" trigger (`aurem_pwa_first_visit_seen`)
+    alongside the existing "fresh login" trigger — either now shows
+    the prompt, ~6s after load (courtesy delay).
+  - Added an iOS Safari fallback: since iOS never fires the native
+    `beforeinstallprompt` event, detect iOS UA and show manual
+    "Tap Share → Add to Home Screen" instructions instead of a
+    functionless "install" button.
+  - **Found + fixed a real bug during self-testing**: React
+    `StrictMode`'s dev-mode double-invoked effect caused the "first
+    visit" flag (written synchronously inside the effect) to already
+    be set by the time the second (surviving) effect invocation ran,
+    making the trigger silently never fire. Fixed by computing
+    `_wasFirstVisit` once at module load instead of inside the effect.
+  - **Found + fixed a second real bug**: the cookie-consent banner
+    occupies the exact same bottom-right corner as this prompt for
+    the exact same audience (logged-out visitors) — reproduced live,
+    the banner's "Accept all" button was painting on top of the
+    prompt's "not now" button and silently swallowing every click.
+    Fixed by gating the reveal (`waitForOpenSlot()`) on BOTH the
+    courtesy delay AND `loadConsent()` resolving first — same
+    "remove the collision at its source" philosophy this codebase
+    already used once for the ORA GUIDE tooltip vs. the same banner.
+    Added `Z_PWA_INSTALL_PROMPT` to the shared `lib/zIndex.js`
+    constants file per house convention.
+  - Verified via `testing_agent` (`iteration_2026_09_pwa_install_prompt.json`):
+    100% (5/5) scenarios pass — fresh visitor + consent + prompt +
+    no overlap + dismiss persistence, returning-visitor suppression,
+    logged-in regression (login → /dashboard, FloatingORAButton
+    unaffected, no console errors), and iOS Safari fallback variant.
+    Zero bugs found.
+
+
+# AUREM CTO — Changelog (append-only)
 - **Admin: per-user "Notify" button on Users (Legacy) detail page
   (2026-09-20)**
   Founder screenshot flagged a gap: the in-app notification feature
