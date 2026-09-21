@@ -1,3 +1,14 @@
+## 2026-09-22 (later still) — Homepage demo video playback bug fixed
+
+Founder-reported: "Watch it ship" section's 4 video cards showed native controls but stayed a grey box stuck at 0:00 after clicking play — "product looks broken" trust-damage risk right below the hero.
+
+Root-cause investigation (not the "likely cause" originally suspected — no 404, no CORS, files not corrupt): reproduced via Playwright `video.play()` → rejected with `MEDIA_ERR_SRC_NOT_SUPPORTED` / Chromium `DEMUXER_ERROR_NO_SUPPORTED_STREAMS`. Verified with `ffprobe` the MP4s are completely standard H.264/AAC. The actual cause: the browser hitting this has ZERO licensed H.264 decoder (`canPlayType('video/mp4;codecs="avc1..."')` returns `""`) — the default for open-source Chromium builds (common on Linux, not just headless test runners), since Google Chrome bundles a licensed H.264 codec pack that plain Chromium doesn't. A single `<video src>` gives the browser no fallback, so it fails silently into the stuck state.
+
+**Fix:** `frontend/src/components/LazyVideo.jsx` now renders `<source>` children — MP4/H.264 first (best quality, universal on real Chrome/Safari/Firefox/Edge), VP9/WebM fallback second — instead of a single `src=`. Added 4 locally re-encoded WebM fallbacks (`frontend/public/videos/ora-{comparison,workflow,reliable,overview}.webm`, ~2-2.5MB each, verified VP9+Opus via ffprobe, matching original durations). `pages/Landing.jsx` passes `webmSrc` per real video card (the 5th "Vanguard 2.0" tile is a pure CSS mock, untouched). Verified end-to-end: browsers lacking H.264 now correctly fall through to WebM and actually render frames; real-codec browsers are unaffected (still get the original MP4 first).
+
+Tested via `testing_agent` (report: `/app/test_reports/iteration_landing_video_playback_fix_2026_09_22.json`) — all 7 steps PASS, 0 action items. Added regression `backend/tests/test_landing_video_playback_bug_2026_09_22.py` (3/3 passing).
+
+
 ## 2026-09-22 (later) — Founder bug batch: SEO-fix banner repeat, "AUREM DEV" branding, signup heading + phone country-code selector
 
 Four founder-reported bugs, all reproduced first then fixed, tested via `testing_agent` (report: `/app/test_reports/iteration_2026_09_22_founder_bug_batch.json`, all 3 code bugs PASS, 0 action items):
