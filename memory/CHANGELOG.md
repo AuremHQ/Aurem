@@ -6491,3 +6491,39 @@ without a shared source of truth, causing two reverts. Going
 forward for this integration, the founder's direct, timestamped
 Ads Manager screenshot/observation is the authority — not either
 session's inference.
+
+## 2026-09 — Investigated reported 503 on bzr.openai.com/v1/sdk/events (NOT reproducible — no code issue found)
+
+Founder reported 503s on the pixel's collection endpoint in their
+browser's Network tab (both the automatic init beacon and a manual
+`oaiq("measure", ...)` console call). Investigated systematically:
+
+1. CSP re-verified: `https://bzr.openai.com` IS present in
+   `connect-src` in `backend/main.py` (line ~2454), alongside
+   `https://bzrcdn.openai.com`.
+2. Searched the entire codebase for anything that could intercept or
+   rewrite cross-origin requests: `sw.js`'s fetch handler explicitly
+   bails on cross-origin requests (`if (url.origin !==
+   self.location.origin) return;`); the only fetch/XHR monkey-patch
+   in the repo (`ShippedRowHarness.jsx`) only activates when that
+   specific diagnostic-only page component mounts, and only touches
+   `/loop/{id}/rollback` URLs — confirmed it never runs on the
+   homepage/signup/settings pages where the pixel fires. No
+   reverse-proxy/edge config exists that could intercept third-party
+   domains.
+3. Direct `curl` from server-side network to
+   `bzr.openai.com/v1/sdk/events` got a clean structured **400**
+   (missing required query params) — proves the endpoint is up and
+   responding normally, ruling out a full OpenAI-side outage.
+4. Reproduced the exact flow in a clean, extension-free Playwright
+   browser (real page load + manual `oaiq("measure",
+   "registration_completed", ...)` call): **both requests returned
+   202 Accepted**, not 503.
+
+Conclusion: AUREM's implementation is confirmed correct end-to-end
+(CSP, init, event dispatch, transport). The 503 is not reproducible
+from a clean environment and is most likely caused by a browser
+extension (ad-blocker/privacy tool) in the founder's browser
+returning a synthetic blocked-response, or a transient Cloudflare-
+side rate-limit specific to that session. Recommended founder retest
+in an incognito window with all extensions disabled.
