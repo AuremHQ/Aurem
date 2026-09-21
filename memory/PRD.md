@@ -1,3 +1,13 @@
+## 2026-09-22 (later still, again) — Homepage promo dedup + new /vs/vibe-coders comparison page
+
+Two founder requests:
+
+1. **Dual-promo confusion fixed** — Landing hero showed "First-50 · X/50 free Pro trials" AND `FounderOfferPill` ("X/500 free SEO fixes") stacked together, diluting both. Removed `FounderOfferPill` entirely from `pages/Landing.jsx` (its real audience — signed-up, repo-not-connected users — is already served by `ConnectRepoBanner.jsx` and this same pill on `Projects.jsx`'s header, both untouched). First-50 is now the single, clear hero offer.
+2. **New `/vs/vibe-coders` comparison page** — extended the existing `/vs/:slug` template (`VsPage.jsx` + `data/competitors.mjs`) with a generic "group mode" (`isGroup: true` + `competitors: [...]` array + `pickThemGroups`) so ONE page can compare ORA against 3 competitors (Lovable, Replit, Emergent — replacing Copilot/Cursor/Devin/Claude Code for this vibe-coder-specific audience per founder's choice) in a single N-column table, instead of forking a whole new page template. `seo-prerender.mjs`'s static SEO snapshot kept symmetric with the same group-mode branching. Pricing/feature facts for Lovable and Emergent researched from public sources (lovable.dev/pricing, docs.lovable.dev, emergent.sh/pricing, help.emergent.sh) same June-2026-verified convention as existing entries; Replit figures reuse the already-verified `replit-agent` entry. Auto-integrates into `/compare` hub and every other `/vs/:slug` page's "More comparisons" links (shared `COMPETITORS` object, no extra wiring needed).
+
+Tested via `testing_agent` (report: `/app/test_reports/iteration_2026_09_22_vibe_coders_and_homepage_pill.json`) — all lettered checks + regression on `/vs/replit-agent`, `/vs/devin`, `/compare` PASS, 0 action items. Added regression `backend/tests/test_founder_promo_and_vibe_coders_2026_09_22.py` (4/4) + updated the stale `test_iter212m34_...::test_homepage_renders_founder_offer_pill` to lock in the new (correct) contract.
+
+
 ## 2026-09-22 (later still) — Homepage demo video playback bug fixed
 
 Founder-reported: "Watch it ship" section's 4 video cards showed native controls but stayed a grey box stuck at 0:00 after clicking play — "product looks broken" trust-damage risk right below the hero.
