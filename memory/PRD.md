@@ -1,3 +1,17 @@
+## 2026-09-22 (later) — Founder bug batch: SEO-fix banner repeat, "AUREM DEV" branding, signup heading + phone country-code selector
+
+Four founder-reported bugs, all reproduced first then fixed, tested via `testing_agent` (report: `/app/test_reports/iteration_2026_09_22_founder_bug_batch.json`, all 3 code bugs PASS, 0 action items):
+
+1. **"Free SEO fix" banner kept nagging already-claimed users** — root cause found in `frontend/src/components/FounderOfferPill.jsx` (mounted in `Projects.jsx` header + `Landing.jsx` hero): it only ever read the GLOBAL `/founder-offer/status` counter with zero per-user awareness. `FounderOfferCard.jsx` (the in-chat version) was already correctly gated per-project — this pill was the actual bug. Fix: now also calls `/founder-offer/user-status` (skipped entirely for anonymous Landing visitors via `getToken()` check) and hides once `repos_claimed > 0`. Bonus verified: the "X spots remaining" counter is a REAL atomic Mongo `$inc`/`$dec` (`routers/founder_offer.py`), confirmed by live-incrementing/decrementing it during testing — NOT a static/fake number, no trust-damage risk there.
+2. **Header showed "AUREM DEV" instead of "ORA by Aurem"** on `/signup`, `/login` — `components/AuthShell.jsx`'s nav logo text. Confirmed via full-repo grep this was the ONLY occurrence of that string in `frontend/src` (page `<title>` tags were already correct).
+3. **Signup heading copy** — `pages/Signup.jsx` `<h1>`: "Create your developer account" → "Start building, production-ready from day one". Also applied to the matching demo-tour mockup (`components/demo/demoSteps.jsx`) for consistency.
+4. **Signup phone field: added country-code selector** — new `components/CountryCodeSelect.jsx` (36 common countries, flag + dial code `<select>`, default "+1"). Phone stays fully optional (no `required`); dropdown supplies the "+XX" prefix, combined with the typed national number and validated with libphonenumber-js before submit. Verified end-to-end: blank phone still signs up fine; a real "+91" + national number combo correctly stored as E.164 in Mongo.
+
+Added regression: `backend/tests/test_founder_bug_batch_2026_09_22.py` (5 source-pin tests, all passing) covering all 4 fixes so none can silently regress.
+
+**Note:** confirmed `/app/.aurem_cache/` contains a cached CUSTOMER repo snapshot with an unrelated, superficially similar string — correctly left untouched (repo separation rule).
+
+
 ## 2026-09-22 — Activation & Revenue Recovery blueprint: audit-first, Phase 0 fixes across all 3 roles (Growth, OAuth, Billing)
 
 **Context:** Founder supplied a 90-day "Activation & Revenue Recovery" team blueprint (Growth/Activation engineer, GitHub OAuth engineer, Payments/Billing engineer — all 3 executed solo, best-effort in parallel per founder's explicit choice). Before building anything new, audited existing infra first per founder's standing "audit before changing" rule, and found substantial pre-existing systems for all 3 roles (`services/funnel_nudge_cron.py` + `routers/admin_onboarding_funnel.py` for activation, `routers/github_oauth.py` + `routers/github_funnel.py` for OAuth, `services/payment_reconciliation.py` + `services/stripe_client.py` for billing) — none of that was rebuilt, only gaps were fixed.
@@ -17,6 +31,11 @@
 **PROVENANCE: preview-only, pending deploy/push.** Not pushed to GitHub — say so plainly until Save to GitHub is used and a real commit URL is confirmed. All 6 fixes are ready to deploy but unverified against real production numbers (see environment finding above).
 
 **Not started (future work, per blueprint):** funnel forensics/segmentation analysis on real users, behavior-triggered nudge content beyond what exists, win-back sequence content + A/B testing, recovered-MRR attribution, invoice spot-checks, webhook-state validation — all blocked on founder confirming real production DB access for this environment, or founder running the now-fixed dashboards directly against auremcto.com.
+
+**Follow-up same session (still 2026-09-22):**
+- **Weekly CASL digest shipped** — `services/casl_consent.py::schedule_casl_weekly_digest()` (Mondays 9am UTC, `ENABLE_CASL_DIGEST_CRON` env-gated, dedup via `casl_digest_sends` collection keyed by ISO week) emails `ADMIN_EMAIL` a summary of the stuck-user segment's CASL eligible/excluded counts by reason, via the existing `services/daily_digest.py::_send_via_resend` helper. Registered in `main.py` alongside other supervised crons.
+- **Win-Back List Builder shipped** — new `services/winback_campaign.py` + two admin endpoints on `admin_onboarding_funnel.py`: `GET /winback/preview` (read-only — candidate count, CASL eligible/excluded, sample rendered email) and `POST /winback/send-batch` (requires `confirm:true` AND `dry_run:false` explicitly on every call — no cron ever triggers a send; batch size clamped 50-150/day per founder's warm-up requirement). Atomic per-user dedup via new unique index `winback_campaign_state.uniq_user_campaign` (claim-before-send, same pattern as `onboarding_emails`). Verified end-to-end via curl: preview → confirm-required rejection → dry-run → real send with correct claim-before-send dedup, then cleaned up test artifacts.
+- Billing Reconciliation Review and OAuth Root-Cause Confirm (both approved by founder) are BLOCKED pending the founder providing the current production admin password for teji.ss1986@gmail.com — asked, awaiting response.
 
 
 ## 2026-09-21 (later) — Admin in-app notifications + real scan chips in the ORA guide mascot
