@@ -492,6 +492,172 @@ export const COMPETITORS = {
 
 export const ALL_SLUGS = ["devin", "cursor", "github-copilot", "replit-agent", "windsurf"];
 
+/* ═══════════════════ VIBE-CODERS (group comparison) ═══════════════════
+ * 2026-09-22 — a "vibe coder" (describe an app, watch a tool build +
+ * host it) compares against Lovable / Replit Agent / Emergent, not
+ * IDE-autocomplete tools like Copilot/Cursor. `isGroup: true` + the
+ * `competitors` array tell VsPage.jsx and seo-prerender.mjs to render
+ * an N-competitor table instead of the usual 2-column one — see
+ * VsPage.jsx's "group mode" branches for the generic column logic.
+ * Replit figures reuse the SAME verified facts as the existing
+ * `replit-agent` entry above. Lovable + Emergent figures verified
+ * June 2026 from lovable.dev/pricing, docs.lovable.dev,
+ * emergent.sh/pricing and help.emergent.sh/plans-and-credits.
+ */
+export const VIBE_CODER_NAMES = ["Lovable", "Replit", "Emergent"];
+
+COMPETITORS["vibe-coders"] = {
+  slug: "vibe-coders",
+  isGroup: true,
+  name: "Lovable, Replit & Emergent",
+  competitors: [
+    { slug: "lovable", name: "Lovable" },
+    { slug: "replit", name: "Replit" },
+    { slug: "emergent", name: "Emergent" },
+  ],
+  title: "ORA vs Lovable, Replit & Emergent (2026) — honest comparison for vibe coders",
+  description:
+    "ORA vs Lovable, Replit Agent and Emergent, compared honestly for vibe " +
+    "coders: flat $9–$49/mo vs credit-based billing, direct commit to YOUR " +
+    "GitHub repo vs a hosted workspace, pre-commit security scan. June 2026 data.",
+  canonical: "https://auremcto.com/vs/vibe-coders",
+  intro:
+    "Lovable, Replit Agent and Emergent are the three tools most \u2018vibe " +
+    "coders\u2019 reach for first: describe an app, watch it get built and " +
+    "hosted inside the vendor's own workspace. ORA does a different job — " +
+    "it ships verified, security-scanned commits into the GitHub repo you " +
+    "already run in production. If you're prototyping something brand new, " +
+    "any of the three vibe-coding tools is a great start. If the " +
+    "destination is a real, existing codebase, that's the job ORA is built for.",
+  pickAurem: [
+    "Work on your existing GitHub repos, not a locked-in workspace",
+    "Flat task pricing — no credit ladders or effort-based billing",
+    "A pre-commit security scan (Vanguard 2.0) before anything lands",
+    "Direct commit or a Pull Request into your own branch protection flow",
+    "Deploy anywhere — Vercel, your CI, your own infra, your call",
+    "A free tier that doesn't burn down in one busy afternoon",
+  ],
+  pickThemGroups: [
+    { name: "Lovable", items: [
+      "Zero-setup full-stack UI generation with an instant live preview",
+      "Built-in Lovable Cloud hosting + database, one click",
+      "Best-in-class for fast, visual prototype iteration",
+      "A large template/community remix gallery to start from",
+    ] },
+    { name: "Replit", items: [
+      "Zero-setup full-stack prototyping with instant hosting",
+      "One place for code, database, deployments and domains",
+      "Building from the Replit mobile app",
+      "Education / teaching environments",
+    ] },
+    { name: "Emergent", items: [
+      "Building and hosting an app end-to-end without your own infra",
+      "A guided, credit-based workflow aimed at non-technical builders",
+      "System-prompt / custom-agent editing on the Pro plan",
+      "One workspace for chat-to-app plus deployment",
+    ] },
+  ],
+  pricingProse: [
+    "All three vibe-coding tools price around consumption, not a flat fee. " +
+    "Lovable runs a credit ladder: Free gives 5 daily / 30 monthly build " +
+    "credits plus small Cloud/AI grants, Pro starts at $25/month for 100 " +
+    "credits (scaling to 10,000), Business starts at $50/month with the " +
+    "same credit range plus SSO/governance. Replit Core is $25/month ($20 " +
+    "billed annually) plus effort-based Agent billing that scales with how " +
+    "complex a task turns out to be. Emergent is Free (10 credits/month), " +
+    "Standard $20/month (100 credits) or Pro $200/month (750 credits), with " +
+    "credits spent on prompts, app generation, and hosting — 50 " +
+    "credits/month per deployed app.",
+    "AUREM stays a flat fee no matter how a task turns out: Free is 10 " +
+    "tasks/month (no card), Starter is $9 for 50 tasks, Pro is $19 for 300 " +
+    "tasks, Team is $49 per user. A task that takes 20 minutes costs the " +
+    "same as one that takes two.",
+  ],
+  pricingFootnote:
+    "Lovable figures last verified June 2026 from lovable.dev/pricing and " +
+    "docs.lovable.dev. Replit figures last verified June 2026 from " +
+    "replit.com/pricing and docs.replit.com/billing. Emergent figures last " +
+    "verified June 2026 from emergent.sh/pricing and " +
+    "help.emergent.sh/plans-and-credits. Always check each vendor's page — " +
+    "prices change.",
+  rows: [
+    ["Where your code lives", "Your GitHub repos — ORA commits to them",
+     "Lovable's own project workspace (GitHub sync available, can't import existing repos)",
+     "Replit cloud workspace (GitHub import/export available)",
+     "Emergent's own project workspace (manual \u201cSave to GitHub\u201d push)"],
+    ["GitHub delivery", AUREM.delivery,
+     "Auto-commits every change via the Lovable GitHub App (one synced branch)",
+     "Edits the workspace app; GitHub import/export, not per-task commits",
+     "Manual \u201cSave to GitHub\u201d push — you decide when to sync"],
+    ["Pricing model", AUREM.pricing,
+     "Credit ladder — Free 5 daily/30 monthly credits; Pro from $25/mo (100 credits, scales to 10,000); Business from $50/mo",
+     "Core $25/mo ($20 annual) + effort-based Agent billing per task",
+     "Free 10 credits/mo; Standard $20/mo (100 credits); Pro $200/mo (750 credits) — credits spent per prompt + hosting"],
+    ["Free tier", AUREM.freeTier,
+     "Yes — 5 daily build credits (30/month cap), no card",
+     "Starter — limited Agent access",
+     "Yes — 10 credits/month, no card"],
+    ["Cost predictability", "Flat — task difficulty never changes the bill",
+     "Variable — credits consumed per build/AI action",
+     "Variable — effort-based billing scales with task complexity",
+     "Variable — credits per prompt/task, plus per-deployed-app hosting credits"],
+    ["Pre-commit security scan", AUREM.security,
+     "Not advertised",
+     "Not advertised as a pre-commit gate",
+     "Not built-in — relies on GitHub Advanced Security or third-party tools"],
+    ["Hosting included", "No — your infra, your choice",
+     "Yes — Lovable Cloud hosting",
+     "Yes — Replit deployments, DBs, domains",
+     "Yes — Emergent hosting (credit-metered per deployed app)"],
+    ["Two-model review", AUREM.review,
+     "Not advertised", "Single agent", "Single agent"],
+    ["Per-repo memory", AUREM.memory,
+     "Project-level context", "Workspace context", "Project-level chat history/context"],
+    ["Mobile access", "Yes — full web UI works on mobile",
+     "Web app, mobile-responsive",
+     "Yes — Replit mobile app",
+     "Web app, mobile-responsive"],
+  ],
+  faq: [
+    {
+      q: "Is AUREM an alternative to Lovable, Replit or Emergent?",
+      a: "For a brand-new app you want live today inside a hosted " +
+         "workspace, no — Lovable, Replit Agent and Emergent are built " +
+         "for exactly that, and are great at it. For an existing " +
+         "GitHub repo you already run in production, yes: ORA reads " +
+         "the codebase you already have, writes the change, runs a " +
+         "25+ pattern security scan, and ships a commit or PR to your branch.",
+    },
+    {
+      q: "How does AUREM's pricing compare to credit-based vibe-coding tools?",
+      a: "Lovable, Replit and Emergent all price around consumption — " +
+         "credit ladders or effort-based billing that scale with how " +
+         "complex a task turns out to be, plus (for Replit and " +
+         "Emergent) credits spent on hosting the deployed app itself. " +
+         "AUREM is a flat fee regardless of task difficulty: $9 Starter " +
+         "(50 tasks), $19 Pro (300 tasks), $49 Team.",
+    },
+    {
+      q: "Do Lovable, Replit or Emergent run a pre-commit security scan?",
+      a: "None of the three advertise an equivalent to Vanguard 2.0. " +
+         "Emergent relies on GitHub's own Advanced Security or " +
+         "third-party tools connected after the fact; Lovable and " +
+         "Replit don't publish a pre-commit security gate. AUREM scans " +
+         "every change — secrets, dangerous code patterns, AST/esbuild " +
+         "syntax gates — before it ever reaches your repository.",
+    },
+    {
+      q: "When is a vibe-coding tool the better choice?",
+      a: "When the goal is a brand-new idea, live at a URL, today, with " +
+         "zero setup — Lovable and Emergent are strong for guided " +
+         "chat-to-app building, Replit adds a full mobile app and " +
+         "teaching-friendly workspace. If the destination is an " +
+         "existing production codebase rather than a fresh hosted " +
+         "prototype, choose AUREM.",
+    },
+  ],
+};
+
 export const COMPARE_HUB = {
   title: "ORA vs Devin, Cursor, Copilot, Replit & Windsurf (2026) — honest comparisons",
   description:

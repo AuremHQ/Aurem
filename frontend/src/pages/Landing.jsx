@@ -30,7 +30,6 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { pageTitle } from "../lib/siteConfig";
-import FounderOfferPill from "../components/FounderOfferPill";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
 // Iter 212m-200 — Interactive animated walkthrough embed. Same
@@ -884,17 +883,23 @@ export default function Landing() {
               <span className="live-dot"></span>
               <span><b>10 free tasks</b> — no credit card required · 30-second signup</span>
             </div>
-            {/* Iter 212m-34 — Founder offer pill on the homepage. Lives
-                directly under the "10 free tasks" indicator so it's
-                visible above the fold without breaking the existing
-                hero rhythm. Auto-hides when the offer sells out. */}
-            <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
-              <FounderOfferPill />
-            </div>
+            {/* 2026-09-22 · Founder-reported bug — the FounderOfferPill
+                ("X/500 free SEO fixes") used to render right here too,
+                stacked directly under the First-50 promo chip above the
+                headline AND the "10 free tasks" pill. Two competing
+                offers in the same hero diluted both messages. Removed
+                from here: the SEO-fix offer's real audience is signed-up
+                users who haven't connected a repo yet, and it already
+                correctly targets exactly that audience via
+                ConnectRepoBanner.jsx (Dashboard, 0 projects) and this
+                same FounderOfferPill on Projects.jsx's header (logged-in,
+                not yet claimed) — an anonymous visitor here can't act on
+                a repo-connect offer anyway. First-50 (a pre-signup
+                incentive) stays the single, clear hero offer. */}
             {/* Trust badge — Canadian entity + SOC 2 signal. Links to
                 /security so enterprise buyers can drill in without
                 asking us. Kept minimal so it doesn't compete with
-                the FounderOfferPill for attention. */}
+                the First-50 promo chip for attention. */}
             <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
               <Link
                 to="/security"

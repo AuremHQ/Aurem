@@ -109,8 +109,16 @@ function injectRoot(html, inner) {
 }
 
 function vsBody(c) {
-  const rows = c.rows.map(([l, a, t]) =>
-    `<tr><td>${esc(l)}</td><td>${esc(a)}</td><td>${esc(t)}</td></tr>`).join("");
+  // 2026-09-22 · group mode ("vibe-coders" style entries have
+  // `c.competitors` + `c.pickThemGroups` instead of a single
+  // `c.name`/`c.pickThem`) — kept symmetric with VsPage.jsx's
+  // generic rendering so the static SEO snapshot never drifts from
+  // what a real visitor/crawler with JS sees.
+  const rows = c.rows.map((row) => {
+    const [l, a, ...them] = row;
+    return `<tr><td>${esc(l)}</td><td>${esc(a)}</td>` +
+      them.map((t) => `<td>${esc(t)}</td>`).join("") + `</tr>`;
+  }).join("");
   const faq = c.faq.map(({ q, a }) =>
     `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("");
   const pick = (h, items) =>
@@ -119,17 +127,23 @@ function vsBody(c) {
     .filter((o) => o.slug !== c.slug)
     .map((o) => `<a href="/vs/${o.slug}">ORA vs ${esc(o.name)}</a>`)
     .join(" · ");
+  const themHeader = c.isGroup
+    ? c.competitors.map((comp) => `<th>${esc(comp.name)}</th>`).join("")
+    : `<th>${esc(c.name)}</th>`;
+  const pickThemBlocks = c.isGroup
+    ? c.pickThemGroups.map((g) => pick(`Choose ${g.name} if you want…`, g.items)).join("")
+    : pick(`Choose ${c.name} if you want…`, c.pickThem);
   return `<main>
 <h1>ORA vs ${esc(c.name)}</h1>
 <p>Honest comparison · data verified ${esc(LAST_VERIFIED)}.</p>
 <p>${esc(c.intro)}</p>
 ${pick("Choose ORA if you want…", c.pickAurem)}
-${pick(`Choose ${c.name} if you want…`, c.pickThem)}
+${pickThemBlocks}
 <h2>The pricing difference, in real numbers</h2>
 ${c.pricingProse.map((p) => `<p>${esc(p)}</p>`).join("")}
 <p><small>${esc(c.pricingFootnote)}</small></p>
 <h2>Feature by feature</h2>
-<table><thead><tr><th></th><th>ORA</th><th>${esc(c.name)}</th></tr></thead>
+<table><thead><tr><th></th><th>ORA</th>${themHeader}</tr></thead>
 <tbody>${rows}</tbody></table>
 <h2>Frequently asked</h2>
 ${faq}

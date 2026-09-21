@@ -151,7 +151,11 @@ export default function VsPage({ forcedSlug }) {
           </p>
         </header>
 
-        {/* 2 ── Verdict cards */}
+        {/* 2 ── Verdict cards
+            2026-09-22 · group mode — a "vibe-coders" style entry has
+            `c.competitors` (array) + `c.pickThemGroups` instead of a
+            single `c.name`/`c.pickThem`. Render one "Choose X" card
+            per competitor instead of exactly one. */}
         <section style={{ display: "grid", gap: 16, marginTop: 40,
                           gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
           <div style={{ ...S.card, borderColor: "var(--border-strong)" }}
@@ -163,14 +167,27 @@ export default function VsPage({ forcedSlug }) {
               {c.pickAurem.map((li) => <li key={li}>{li}</li>)}
             </ul>
           </div>
-          <div style={S.card} data-testid={`vs-${c.slug}-pick-them`}>
-            <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 10px" }}>
-              Choose {c.name} if you want…
-            </h2>
-            <ul style={{ ...S.dim, margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
-              {c.pickThem.map((li) => <li key={li}>{li}</li>)}
-            </ul>
-          </div>
+          {c.isGroup
+            ? c.pickThemGroups.map((g) => (
+                <div style={S.card} key={g.name} data-testid={`vs-${c.slug}-pick-${g.name.toLowerCase()}`}>
+                  <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 10px" }}>
+                    Choose {g.name} if you want…
+                  </h2>
+                  <ul style={{ ...S.dim, margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
+                    {g.items.map((li) => <li key={li}>{li}</li>)}
+                  </ul>
+                </div>
+              ))
+            : (
+              <div style={S.card} data-testid={`vs-${c.slug}-pick-them`}>
+                <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 10px" }}>
+                  Choose {c.name} if you want…
+                </h2>
+                <ul style={{ ...S.dim, margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
+                  {c.pickThem.map((li) => <li key={li}>{li}</li>)}
+                </ul>
+              </div>
+            )}
         </section>
 
         {/* 3 ── Pricing reality */}
@@ -199,20 +216,33 @@ export default function VsPage({ forcedSlug }) {
                   <th style={{ padding: "12px 16px", fontWeight: 600 }}> </th>
                   <th style={{ padding: "12px 16px", fontWeight: 600,
                                color: "var(--accent-2)" }}>AUREM</th>
-                  <th style={{ padding: "12px 16px", fontWeight: 600 }}>{c.name}</th>
+                  {/* 2026-09-22 · group mode — one <th> per competitor
+                      instead of the fixed single {c.name} column. */}
+                  {c.isGroup
+                    ? c.competitors.map((comp) => (
+                        <th key={comp.slug} style={{ padding: "12px 16px", fontWeight: 600 }}>
+                          {comp.name}
+                        </th>
+                      ))
+                    : <th style={{ padding: "12px 16px", fontWeight: 600 }}>{c.name}</th>}
                 </tr>
               </thead>
               <tbody>
-                {c.rows.map(([label, aurem, them]) => (
-                  <tr key={label}
-                      style={{ borderTop: "1px solid var(--border)" }}>
-                    <td style={{ padding: "12px 16px", color: "var(--text-dim)",
-                                 whiteSpace: "nowrap" }}>{label}</td>
-                    <td style={{ padding: "12px 16px" }}>{aurem}</td>
-                    <td style={{ padding: "12px 16px",
-                                 color: "var(--text-dim)" }}>{them}</td>
-                  </tr>
-                ))}
+                {c.rows.map((row) => {
+                  const [label, aurem, ...them] = row;
+                  return (
+                    <tr key={label}
+                        style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{ padding: "12px 16px", color: "var(--text-dim)",
+                                   whiteSpace: "nowrap" }}>{label}</td>
+                      <td style={{ padding: "12px 16px" }}>{aurem}</td>
+                      {them.map((val, i) => (
+                        <td key={i} style={{ padding: "12px 16px",
+                                     color: "var(--text-dim)" }}>{val}</td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
