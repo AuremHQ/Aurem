@@ -1,0 +1,34 @@
+{
+  "summary": "Full audit of Parts 1.1, 1.3, 2.1, 3, 4 for /admin/failure-patterns and /admin/self-bugs. Ran 20 pre-existing backend unit tests (all pass) + 5 new live API/E2E tests (4 pass, 1 skipped by design). Ran Playwright E2E on both admin pages covering shape checks, mark-fixed round trips, filters, and days-window regression. Everything requested is working correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_failure_patterns_self_bugs_audit_2026_09_21.py (20/20 pass — pre-existing)",
+    "/app/backend/tests/test_admin_failure_patterns_selfbugs_live_2026_09_21.py (4 pass, 1 skipped — new, live API against preview URL)",
+    "/app/test_reports/pytest/pytest_failure_patterns_self_bugs_2026_09_21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Part 4 (Approve/Reject proposed-fix): no rows in current DB have times_seen>=5 with an unfixed proposal, so Approve/Reject buttons never render right now. Endpoint POST /admin/self-bugs/review-proposal exists but was not exercised end-to-end via UI. Per the review request this is explicitly acceptable ('not-yet-triggerable with current data volume, not a bug'). Consider adding a seed row for future retesting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_failure_patterns_selfbugs_live_2026_09_21.py (new — live API regression suite)"
+  ],
+  "success_rate": {"backend": "100% (24/24 executed, 1 skip by design)", "frontend": "100% (all interactive elements verified)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview) — verified working",
+  "seed_data_creation": "None; used existing DB data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login endpoint is POST /api/aurem-dev/auth/login (NOT /api/auth/login — auth router is mounted under /aurem-dev prefix). Cookie consent banner may block clicks on first load — dismiss with 'Accept all' before interacting. Failure-patterns page renders first_seen/last_seen inline in the row as 'first <date> · last <date>' rather than in separate labeled columns (so body-text scan for the exact string 'First seen' returns False but the data IS visible — screenshot confirms). Self-bugs page uses separate 'First seen' / 'Last seen' columns.",
+  "verification_evidence": {
+    "part_1_1_infra_failures": "PASS — response contains infra_failures{total,by_reason[{reason,count,first_seen,last_seen}]}; UI renders 'Infra failures (excluded above) — 4 in this window' with provider_rate_or_5xx x 4 and first/last timestamps. Provider-rate/5xx counts excluded from top_failed_task_types (test_failure_patterns_shape).",
+    "part_1_3_low_confidence": "PASS — API returns low_confidence_patterns[] with 'note' field; suggestions[] gated to samples>=20 (asserted in test_failure_patterns_shape).",
+    "part_3_failure_patterns_ui": "PASS — first_seen/last_seen/status present on top_failed_task_types, top_failed_prompt_patterns, tool_sequence_rates rows. Mark fixed button clicked → POST /admin/failure-patterns/mark-fixed 200, row shows 'fixed on' + Re-open. Re-open → back to 'open' with Mark fixed. Days selector (1/7/14/30/90) reloads data.",
+    "part_2_1_self_bugs_shape": "PASS — every row has first_seen/status/fixed_on/fixed_by. Distinct dead_end_leak evidence collapses vs distinct times_seen validated (asserts non-identical counts when evidences differ).",
+    "part_3_self_bugs_ui": "PASS — First seen/Last seen columns render, Status column shows open badge + Mark fixed. Click → POST /admin/self-bugs/mark-fixed 200 → 'fixed on <date>' + Re-open. Reopen reverts to open.",
+    "part_4_review_proposal": "SKIPPED (by design) — no current row has times_seen>=5 with an open proposed fix, so 'Proposed fix (review only, not applied)' box does not render; Approve/Reject not exercised. Endpoint reachable per admin router registration. Not a bug per review-request note.",
+    "regression_filters": "PASS — All / blank_ui / dead_end_leak filter chips clickable and days-window selector reloads data.",
+    "sidebar_nav": "PASS — 'Self-Repair Log' visible under USERS group; failure-patterns route accessible.",
+    "console_errors": "Only pre-existing React Router v7 future-flag warnings and 3rd-party pixel 403; no app errors."
+  }
+}

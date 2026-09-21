@@ -6206,3 +6206,82 @@ the exact moment `log_deploy_event` fired (`📌 deploy recorded:
 97ff8db main`) — no stall. `/api/health` returns the correct real
 `build_hash: 97ff8db2bb97`. No Docker/K8s/nginx files touched, per
 user instruction.
+
+
+## 2026-09-21 — Failure-Patterns / Self-Repair audit (Parts 1-4)
+
+Audit-first, then fix, per explicit user spec. Findings + fixes:
+
+**Part 1.1 — infra vs reasoning failures were blended.** `failure_reason:
+provider_rate_or_5xx` (rate-limit/5xx, an infra problem) was counted in
+the same bucket as genuine bad-prompt/bad-reasoning failures on
+`/admin/failure-patterns`. Added `INFRA_FAILURE_REASONS` (services/
+task_chain_logging.py) and excluded it from every reasoning-failure
+group-by in `admin_analytics.py::failure_patterns()`; infra failures
+now reported separately under a new `infra_failures` block (total +
+by-reason + first/last seen). Live proof: 4 real `provider_rate_or_5xx`
+events now shown separately, no longer inflating `top_failed_*`.
+
+**Part 1.2 — repeat-tool-call guard was too narrow.** orchestrator.py's
+existing tool-loop guard only caught byte-identical repeats (same tool
++ same args). Added `_consecutive_same_tool_no_progress()` — trips when
+the SAME tool name fails 4x in a row regardless of varying args (the
+reported live pattern: `search_repo` x6, 0% success). A success resets
+the streak. Wired into the existing break/synthesize fallback path (no
+new fallback mechanism needed).
+
+**Part 1.3 — suggestion sample-size threshold was too low (3).** Raised
+to 20. Patterns with a high fail rate but <20 samples now surface
+explicitly as `low_confidence_patterns` with a "not enough data yet"
+note instead of a confident percentage or a silent drop.
+
+**Part 2.1 — self-bug recurrence-count bug (real, confirmed).**
+`signature()` collapsed to `f"{type}:{type}"` for every caller (no
+caller ever passed `context["subject"]`), so EVERY row of the same bug
+type shared one identical `times_seen`/`last_seen` (reported as "every
+row shows 17"). Fixed by deriving a subject from a normalized snippet
+of `evidence` when no explicit subject is given — distinct occurrences
+now get distinct signatures; truly-identical phrasing still correctly
+collapses. Verified live: previously-identical rows now show correct
+per-content counts.
+
+**Part 2.2 — dead_end_leak classifier flagged correct refusals as
+bugs.** `has_dead_end()` / `contains_banned_fallback_phrase()` were
+pure phrase-matchers with no concept of a CORRECT, deliberate refusal
+(permission/consent gate, scope-safety guard, self-caught hallucination
+correction). Added `services/legitimate_refusal.py` (shared, no LLM) —
+both guards now exempt legitimate refusals while still flagging
+genuinely stuck/vague replies. Confirmed no auto-repair/prompt-tuning
+consumer exists yet, so this fix landed before any such consumer could
+be built on the polluted signal.
+
+**Part 3 — timestamps + fix-status added to both pages.** `self_bug_
+learned` and a new `failure_pattern_fixes` collection now track
+first_seen/status(open|fixed)/fixed_on/fixed_by. New endpoints: `POST
+/admin/failure-patterns/mark-fixed` and `POST /admin/self-bugs/mark-
+fixed` (manual action — no automatic deploy/commit linkage exists yet,
+documented as the deliberate manual fallback). Both admin pages
+(Admin.jsx's FailurePatternsPage, AdminSelfBugs.jsx) render first/last
+seen + an open/fixed badge + a Mark-fixed/Re-open button per row.
+
+**Part 4 — propose-only auto-repair scaffold.** `services/self_bug.py::
+propose_fix()` returns a deterministic, template-based fix suggestion
+once a bug recurs 5+ times while still open; `emit()` writes it to the
+learned-pattern row as `proposed_fix_text` (`review_status: pending`).
+New endpoint `POST /admin/self-bugs/review-proposal` lets an admin
+approve/reject — this ONLY records the human decision. No auto-apply
+mechanism exists anywhere in the codebase (guarded by a regression test
+that greps self_bug.py for banned auto-apply patterns); a per-category
+opt-in switch was explicitly NOT built since zero approvals exist yet
+to justify one.
+
+**Testing:** 20 new unit tests (`test_failure_patterns_self_bugs_audit_
+2026_09_21.py`), 2 pre-existing tests updated to match the new (still
+narrow) mutate surface and a line-drift re-snapshot
+(`test_self_bugs_admin_dashboard_2026_08_31.py`,
+`test_session5_item2_orchestrator_silent_catch_lock.py`) — both still
+pass their original invariants. Testing-agent pass: 100% (24/24
+executed, 1 skipped by design — Part 4's Approve/Reject UI has no
+current row with times_seen>=5 to render against; covered at the unit
+level instead). Live curl + Playwright confirmed the full mark-fixed
+round-trip on both pages against real DB data.
