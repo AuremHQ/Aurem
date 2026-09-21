@@ -1038,7 +1038,25 @@ async def lifespan(app: FastAPI):
             # timeout + middleware "No response returned").
             await _asyncio.sleep(45)
             from services.ora_chat import codebase_index as _cb
-            r = await _cb.build_index(force=True)
+            # 2026-09-21 — live-reproduced regression: a real user's
+            # first ORA chat message right after boot ALSO triggers
+            # this exact walk via `_ensure_fresh()` (there's no boot-
+            # stagger protection on that path — it can't know when a
+            # human will type). When that happens, THIS deferred task
+            # was still unconditionally force-rebuilding 15-min-TTL-
+            # fresh data ~25s later — a second, fully redundant
+            # CPU-heavy walk stacked right on top of the first one.
+            # Confirmed via /var/log/supervisor/backend.err.log: this
+            # exact boot showed the walk running TWICE (+7s from a
+            # real request, +32s from this task) where every other
+            # recent boot only ran it once — and the second run's
+            # ~1.1s window lines up exactly with a burst of nginx
+            # "/health upstream timed out" + "client disconnected
+            # `build_index()` (default `force=False`) already has the
+            # same TTL check internally — calling it here instead of
+            # `build_index(force=True)` makes this task a no-op
+            # whenever a real request already warmed the cache first.
+            r = await _cb.build_index()
             logger.info("📁 ORA codebase index warm: %s", r)
         except Exception as e:                              # noqa: BLE001
             logger.warning("ORA codebase index warm failed: %r", e)

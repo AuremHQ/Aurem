@@ -1,4 +1,48 @@
 # AUREM CTO — Changelog (append-only)
+- **Deploy-health fix, round 7 — redundant double codebase-index walk
+  causing a mid-operation /health flap (2026-09-21)**
+  User shared NEW production logs: nginx "upstream timed out ...
+  GET /health" bursts + "client disconnected mid-response ... No
+  response returned" errors ~30s after a fresh boot — this time
+  during otherwise-normal request serving (only ONE boot recorded,
+  not a restart loop).
+  - Root-caused via `/var/log/supervisor/backend.err.log` history
+    (not guessed): `main.py`'s deferred boot warm-up task
+    (`_warm_codebase_index`, staggered 45s specifically to protect
+    the post-deploy readiness window — Iter 336) unconditionally
+    called `codebase_index.build_index(force=True)` — a CPU-heavy
+    walk of 500-1500 files. On THIS boot, a real user's first ORA
+    chat message ALSO triggered the identical walk via
+    `_ensure_fresh()` just 7s after boot (no equivalent stagger
+    exists on that path — it can't know when a human will type).
+    Since `force=True` always ignores the 15-min TTL cache, the
+    deferred task then redundantly re-walked the SAME already-fresh
+    data ~25s later — confirmed by comparing this boot's log against
+    every other recent boot (which only ever show ONE walk, not two)
+    — and that second walk's ~1.1s window lines up exactly with the
+    observed nginx timeout + disconnect burst.
+  - Fix: `main.py`'s deferred warm-up now calls `build_index()` with
+    its default `force=False` (same internal TTL check
+    `_ensure_fresh()` already relies on) instead of `force=True`,
+    making it a fast no-op whenever a real request already warmed
+    the cache — eliminating the redundant second CPU-heavy walk.
+  - Verified: live-reproduced the exact before/after behavior
+    (`build_index(force=True)` → `build_index()` immediately after →
+    now returns `cached: True` instantly instead of re-walking).
+    Added `backend/tests/test_codebase_index_warmup_dedupe_2026_09_21.py`
+    (3 tests: default force=False skips when warm, force=True still
+    always re-walks for legitimate "refresh index" callers, TTL
+    expiry still correctly triggers a rebuild) — all passing, 18/18
+    across all 5 related deploy-health test files. Backend restarts
+    clean, `/health` responds 150-330ms live.
+  - Also re-confirmed (again) via `deployment_agent` that the
+    "missing .gitignore" finding is a false positive — `/app/
+    .gitignore` correctly excludes `.env`/`test_credentials.md`,
+    neither is tracked in git. Docker port-mismatch findings remain
+    untouched per standing user instruction.
+
+
+# AUREM CTO — Changelog (append-only)
 - **PWA install prompt now triggers for first-time visitors, not just
   post-login (2026-09-21)**
   User asked "is our PWA working?" and wanted a first-time-visitor
