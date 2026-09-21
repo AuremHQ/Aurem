@@ -50,6 +50,15 @@ _RELIABILITY_BUG_DENSITY_CAVEAT = (
     "production (which restarts far less) gives a meaningfully "
     "different number is a plausible but UNVERIFIED theory."
 )
+# 2026-09-21 — founder review: the long caveat above sits BELOW the
+# headline score in small italic text and is easy to miss entirely —
+# "log headline dekhte hain, disclaimer nahi padhte" (people read the
+# headline number, not the disclaimer). A short phrase paired directly
+# with the score number itself, not buried below it, is what actually
+# gets seen. `caveat_short` renders as an inline badge next to the
+# score; `caveat` (above) still renders as the fuller note below it.
+_BUG_DENSITY_CAVEAT_SHORT = "PROXY — infra incidents, not code bugs"
+_RELIABILITY_CAVEAT_SHORT = "guard-history proxy, dev-pod noise unverified"
 
 _TEST_COVERAGE_STALE_DAYS = 7
 _ARCH_REVIEW_STALE_DAYS   = 30
@@ -174,6 +183,7 @@ async def score_bug_density(db) -> dict:
             evidence,
         )
         result["caveat"] = _RELIABILITY_BUG_DENSITY_CAVEAT
+        result["caveat_short"] = _BUG_DENSITY_CAVEAT_SHORT
         return result
     open_ = stats.get("open") or 0
     resolved_30d = stats.get("resolved_30d") or 0
@@ -181,9 +191,26 @@ async def score_bug_density(db) -> dict:
     # near-neutral (capped), only OPEN incidents drive the score down.
     # Old coefficients floored a healthy production (0 open, 50 resolved)
     # at 0. Reference healthy profile scores 90.
-    score = max(0, 100 - open_ * 10 - min(20, resolved_30d * 0.2))
+    open_penalty = open_ * 10
+    resolved_penalty = min(20, resolved_30d * 0.2)
+    score = max(0, 100 - open_penalty - resolved_penalty)
+    # 2026-09-21 — founder review: "score 70 kyun hai pata nahi" — the
+    # raw evidence numbers (open:1, total:684, 99.85% resolved) look
+    # healthy, but the formula that turns them into 70/100 was
+    # invisible. Expose the exact arithmetic so the widget can render
+    # a plain-English "why is this number what it is" breakdown
+    # instead of a black box.
+    evidence["formula_breakdown"] = [
+        {"label": "Base score", "value": 100},
+        {"label": f"Open-incident penalty ({open_} open × 10)",
+         "value": -open_penalty},
+        {"label": f"Resolved-volume penalty (resolved_30d={resolved_30d} × 0.2, "
+                   f"capped at 20)", "value": -round(resolved_penalty, 1)},
+        {"label": "Final score", "value": round(score, 1)},
+    ]
     result = _scored(score, evidence, _iso_now(), live=True)
     result["caveat"] = _RELIABILITY_BUG_DENSITY_CAVEAT
+    result["caveat_short"] = _BUG_DENSITY_CAVEAT_SHORT
     return result
 
 
@@ -248,6 +275,7 @@ async def score_reliability(db) -> dict:
     }
     result = _scored(score, evidence, _iso_now(), live=True)
     result["caveat"] = _RELIABILITY_BUG_DENSITY_CAVEAT
+    result["caveat_short"] = _RELIABILITY_CAVEAT_SHORT
     return result
 
 
