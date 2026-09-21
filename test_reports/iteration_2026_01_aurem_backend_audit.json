@@ -1,0 +1,44 @@
+{
+  "summary": "Backend-only audit for AUREM. All 6 review items (A-F) PASS. Executed 8 new pytest cases covering admin funnel summary (synthetic exclusion), new CASL-screen endpoint (shape + idempotency), github funnel stats (new callback_outcomes/callback_failure_rate_pct/excluded_synthetic_sessions fields), and github OAuth callback telemetry increments on the two newly-instrumented failure paths (invalid_state, unknown_state). Plus regression: iter113 (4/4), iter369 (11/11), iter106 (4/6 with the 2 documented pre-existing failures unrelated to OAuth). /api/health = 200 with db:true.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_aurem_backend_audit_2026_01.py",
+    "/app/test_reports/pytest/aurem_audit_2026_01.xml"
+  ],
+  "detailed_results": {
+    "A_onboarding_funnel_summary": "PASS - GET /api/aurem-dev/admin/onboarding-funnel/summary returns 200; total_stuck=3 (single-digit as expected after synthetic exclusion).",
+    "B_casl_screen": "PASS - GET /api/aurem-dev/admin/onboarding-funnel/casl-screen returns 200 with correct shape (stage_filter, eligible, excluded, eligible_count, excluded_count, total_screened, checked_at, inquiry_window_days=182, purchase_window_days=730). eligible_count + excluded_count == total_screened. Idempotent across two calls (identical counts). Every excluded user carries a reason in {casl_expired_inquiry, casl_expired_purchase}. Also tested with stage=stage1_github_started.",
+    "C_github_funnel_stats": "PASS - GET /api/aurem-dev/funnel/github/stats?days=90 returns 200 with new fields callback_outcomes (dict), callback_failure_rate_pct (float 0-100), excluded_synthetic_sessions (int=38). Existing stages/conversions/by_source/total_events (255) all present. Note: conversions is a LIST of {from,to,conv_pct,...} objects, not a dict — matches existing shape, not a bug.",
+    "D_oauth_callback_telemetry": "PASS - GET /api/aurem-dev/github/oauth/callback?code=anything&state=malformed-no-colon returned HTTP 400 and callback_outcomes.invalid_state incremented (observed 2 after test). Same for state=signup:some-totally-fake-nonce-12345 → HTTP 400 and callback_outcomes.unknown_state incremented (observed 3 after test).",
+    "E_regressions": "PASS - test_iter113_oauth_login_cancel.py: 4/4 pass. test_iter369_restore_drill_and_ad_attribution.py: 11/11 pass. test_iter106_external_url_tools.py: 4/6 pass — the 2 failures are the documented pre-existing ones (test_section_calls_out_github_raw_strategy about 'Parallelise' wording, test_section_forbids_oauth_gating_for_public_repos about system-prompt wording); both are unrelated to OAuth callback code and were flagged as pre-existing in the review request.",
+    "F_health": "PASS - GET /api/health returns 200 with ok:true, db:true, env:production, build_hash present. .env APP_URL change to https://auremcto.com did not break startup."
+  },
+  "observations": {
+    "callback_outcomes_sample": {"invalid_state": 2, "unknown_state": 3},
+    "callback_failure_rate_pct_observed": 100.0,
+    "excluded_synthetic_sessions_observed": 38,
+    "total_funnel_events_90d": 255,
+    "total_stuck_users_after_synthetic_filter": 3
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "callback_failure_rate_pct=100.0 in preview reflects the tiny sample (only 5 callback_received events, all now failures). Not a bug — just noting for anyone reading the dashboard that with n=5 the percentage is dominated by manual test hits.",
+    "GET /api/aurem-dev/github/oauth/callback with bad state returns HTTP 400 as expected — good. Consider adding a lightweight rate-limit on the callback path if abuse becomes a concern (many 400s would spam github_funnel_events)."
+  ],
+  "updated_files": ["/app/backend/tests/test_aurem_backend_audit_2026_01.py"],
+  "success_rate": {"backend": "100% (8/8 new tests, plus regressions per spec)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None — tests only wrote 2 rows into github_funnel_events collection via the public OAuth callback endpoint (stage=callback_received, meta.reason=invalid_state and unknown_state). No user/DB data created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New pytest file /app/backend/tests/test_aurem_backend_audit_2026_01.py exercises the AUREM audit endpoints (funnel summary, casl-screen, github stats, oauth callback telemetry). Safe to rerun — writes only to github_funnel_events. Preview base URL and admin creds pulled from env/memory.",
+  "rca of the issue": "N/A — this was a verification pass, no bugs found. All 6 review items pass with expected shapes/behaviors."
+}
