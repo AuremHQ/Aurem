@@ -15,55 +15,37 @@ A coding-agent SaaS for explaining, inspecting and changing connected repositori
 - Tool telemetry: `local_tools.py`, `tool_executor.py`, `task_chain_logging.py`; recurrence: `regression_backlog_cron.py`.
 - Existing credentials/configuration remain in their designated environment and credential documentation. Never print secret values. Preserve semantic-router canary **10%**.
 
-## Current user request and constraints
+## Latest completed round (2026-09-22) — Admin Overview audit vs codebase
 
-Deep UI/interaction reliability audit across eight shared failure mechanisms, structural rather than one-instance fixes; file:line and reproducible evidence; fail-before/pass-after regressions in actual release gates; risky behavior OFF by default; no unrelated changes or Docker changes; no production claims without production evidence.
+User request (Hindi/English): audit `https://auremcto.com/admin/overview` against the actual codebase, fix any issues found so every feature on the page works, and update PRD/markdown docs. No production credentials are available to this agent, so verification was done against preview (`frontend/src/pages/AdminOverview.jsx` + its ~27 backend endpoints), which is the same codebase that ships to production.
 
-Subsequent request: read supplied **Coding-Agent-SaaS-Blueprint.pdf** completely, refine it using real engineering standards, compare the existing system read-only, provide concise copy-paste wording. Explicit additions: reference/access inventory, read-only safety boundaries, no secret access/deployment, and sandbox/staging/production verification distinction.
+**Method:** curl'd every one of the ~27 endpoints `AdminOverview.jsx` calls with a real admin JWT (preview), diffed response shapes against what the component reads, then live-loaded the page with Playwright.
 
-## This round: implemented, NOT activated in production
+**Two real bugs found and fixed (frontend-only, no backend/data changes):**
+1. **GitHub Connect Funnel conversion % could exceed 100%.** `GhFunnelStrip.convPct()` computed `curr/prev*100` unbounded; live preview data (`oauth_redirect=16 → callback_received=26`, because GitHub's OAuth callback can be hit directly/by bots without our own click event firing) rendered a founder-facing `→ 162.5%`. Fixed by capping at 100%, same rationale the backend's own `pct_num()` already uses for the (separate, not-rendered) activation-funnel legacy field. Also capped the sibling "overall conv" footer stat.
+2. **Static "System mapping" architecture card was badly stale.** Hand-maintained since Iter 152, it claimed "24 pages · 5 hooks · 30+ components" and "26 routers · 47 services" with an LLM list of just "DeepSeek V3 · Claude Sonnet 4.5" — the repo actually has 71 pages, 14 hooks, 102 router modules, 280 services, and the live LLM Council (visible one card above in the real LLM Provider Status widget) is LongCat (primary) → GLM-5.2 (fallback), with DeepSeek/Claude Sonnet/Groq in other roles. Rewrote the card's counts and integration list to match the verified current repo.
 
-- New opt-in `INTERACTION_CONTRACT_V1=1`: bounded factual/conflict boundary, response fidelity, typed completion envelope persisted/transmitted, metadata-backed UI, neutral bails instead of fabricated tasks.
-- Real tool outcomes normalized; loop/normal trace names reconciled; failed-tool signatures beyond ten calls feed recurrence even when final task succeeds. Repeated retries in one turn are not counted as multiple turns.
-- New blocking `scripts/interaction_gate.sh`, reusable workflow, explicit needs in two tracked deploy workflows, and common predeploy invocation.
-- Frontend malformed-action crash and bounded `Never modify files` conflict variation found during testing were corrected.
-- Flag remains absent/OFF; semantic canary unchanged. `review_evidence` is deliberately null and suggested actions empty in v1 until evidence producers exist. Do not describe their omission as full provenance implementation.
+**Everything else checked, confirmed correct — not touched:** all ~27 GET/POST endpoints return 200 with matching field shapes; the activation-funnel legacy `conversion_rates` dict *can* also show >100% (e.g. `project_to_message: 900.0%`) but that field is never rendered by the frontend (only the already-capped `funnel_steps[].pct_of_prev` is), so no fix was needed there. "GitHub sync 401", "Resend 400", "NOT DEPLOY-READY (54 uncommitted)" banners are real, correctly-surfaced operational states, not bugs.
 
-## Testing and exact limitations
+**Testing:** `testing_agent_v3_fork` full regression pass on `/admin/overview` (all ~24 sub-sections, drill-down modal open/close, refresh-all, ESLint) — 0 action items, both fixes live-verified. Report: `test_reports/iteration_admin_overview_regression_2026_01.json`.
 
-- Final contract gate: **38 backend + 8 frontend tests passed**. Initial existing-path baseline: backend 11 failures / 7 passes, frontend 3 failures.
-- Real ASGI conflict-boundary tests use MOCKED auth resolution/provider spies; tool tests use MOCKED callbacks; Mongo tests are isolated and real. No paid-model replay.
-- Full frontend: **11 failed / 795 passed**; the same 11 failure cases occur in an archived baseline run (which has one additional failure). Full backend regression started but stopped around 10%, with failures; no clean full-suite claim.
-- Full frontend ESLint and new Python-module/test pyflakes pass; existing ten Python warnings verified unchanged versus baseline.
-- Completion checker again reported a JavaScript linter ENGINE error. Independently reran actual `yarn eslint src --max-warnings=9999` after that message: exit 0 (`test_reports/interaction_frontend_lint_final.txt`). This is not a source-lint failure; do not claim the full regression suite is green because lint passed.
-- Preview load/health200 verified. No production behavior verified. Remote GitHub workflow run and bypassing release paths not verified; local dependency assertions and real gate failure injection pass.
+**Not done (flagged by testing agent as maintainability debt, not a bug):** `AdminOverview.jsx` is ~2650 lines, well over the 700-line guideline — splitting each card into its own file under `frontend/src/pages/admin_overview/` is a future refactor, not requested by the user this round.
 
-## Deliverables / source of truth for this round
+## Prior round (2026-09-22) — Interaction reliability audit (implemented, NOT activated)
 
-- `memory/INTERACTION_RELIABILITY_AUDIT_2026_09_22.md`: eight sections, references, reproducible cases, gate coverage, limitations, updated mapping.
-- `memory/CODING_AGENT_BLUEPRINT_V2.md`: refined architecture and copy-paste read-only audit assignment.
-- Public copies under `frontend/public/audits/`.
-- `test_reports/interaction_audit_verified_gate.txt`, `test_reports/interaction/{backend,frontend}.xml`.
-- `test_reports/iteration_interaction_audit_baseline.json`, `iteration_interaction_audit_final.json` (latter describes an intermediate failure; final gate log supersedes it).
-- `scripts/probe_blueprint_gaps.py` / `test_reports/blueprint_read_only_probes.json`: read-only evidence, NOT acceptance tests.
+Deep UI/interaction reliability audit across eight shared failure mechanisms; new opt-in `INTERACTION_CONTRACT_V1=1` (flag OFF by default, semantic canary unchanged); 38 backend + 8 frontend gate tests passed; full frontend regression had 11 pre-existing unrelated failures (795 passing); no production behavior verified. Full detail preserved in `CHANGELOG.md` and `memory/INTERACTION_RELIABILITY_AUDIT_2026_09_22.md` / `memory/CODING_AGENT_BLUEPRINT_V2.md` — read those before touching `INTERACTION_CONTRACT_V1`, `input_normalizer.py`, or `semantic_mode_router.py` again.
 
-## Confirmed new read-only design gaps — NOT fixed
+## Known open items (not fixed by any round above)
 
-- `input_normalizer.py` changes a code-fenced JS string `a—b` into `a--b` without flagging it. Request hashes currently bind normalized, not original raw input.
-- Semantic classifier timeout with prior mode E returns E for a status query. Current-mode fallback is not inherently safe; capability restrictions must be independent.
-- Three-call tool-NAME limit can block legitimate distinct-file work; not equivalent to signature dedup/no-progress analysis.
-- Separate advisor engine and legacy messages do not share full main-chat v1 contract. Full typed plan, evidence-bound receipts/actions, universal capability enforcement, durable events, CLI validation and four-clock/idempotency remain incomplete.
-
-## Prior fixes preserved / pending production work
-
-Earlier fixes: deterministic canned substitution, selected Council/status boundary, severity-aware suggestions, intention-only text marker, G21 success cache, G18 four fetch timeout signals. These are NOT promoted to production-fixed by this audit.
-
-Production/external blockers remain: G10 Resend configuration, valid G20 incident remediation, G15 ingestion evidence, Visibility Day14 actual citation check, E2B configuration, jscpd runtime tooling and churn git-history/CI-ingestion architecture. Follow original constraints; do not suppress guards or fabricate checks.
+- `input_normalizer.py` silently changes a code-fenced JS string `a—b` into `a--b`.
+- Semantic classifier timeout with prior mode E returns E for a status query.
+- Separate advisor engine (`ora_chat_v2`) does not share the main chat's v1 contract.
+- Production/external blockers: G10 Resend account/domain config (HTTP 400, visible live on `/admin/overview`), G8 GitHub sync 401 (expired `GITHUB_ACTIONS_TOKEN`, visible live on `/admin/overview`), G15 ingestion evidence, Visibility Day14 actual citation check, E2B configuration, jscpd/churn runtime tooling.
 
 ## Next priorities
 
-- **P0:** full regression completion, staging/browser parity and authorized production/revision verification before activation; approve a separate raw-input fidelity fix; universal read-only capability boundary.
-- **P1:** typed plan/completion evidence, alternate-engine adoption, content-bound review/action receipts, durable tool events, stale SSE reconciliation, free-form CLI validation, real long-history replay, search_repo failure/root-cause work.
-- **P2:** calibrated router/model benchmarks and canary expansion only with approval; proof-details drawer showing environment/revision/evidence.
+- **P0:** Rotate/renew `GITHUB_ACTIONS_TOKEN` (fixes the live "GitHub sync (Guard 8)" critical alert) and fix Resend sender/domain config (fixes the live "Resend Email" critical alert) — both are founder/ops actions, not code fixes.
+- **P1:** Interaction-reliability round's P0/P1 items (full regression completion, staging/production verification before `INTERACTION_CONTRACT_V1` activation, raw-input fidelity fix).
+- **P2:** `AdminOverview.jsx` file split into per-card components; calibrated router/model benchmarks; proof-details drawer.
 
 See ROADMAP.md for historical backlog; CHANGELOG.md for prior dated work.
