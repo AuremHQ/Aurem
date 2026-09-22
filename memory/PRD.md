@@ -9582,3 +9582,14 @@ Reverted back to the ACTIVE Ads Manager event `github_repo_connected`
 from a separate Ads Manager browser session briefly flipped it to the
 archived `github_connected`. 24/24 tests pass. Full detail in
 CHANGELOG.md's matching 2026-09 entry.
+
+## 2026-09-22 — GitHub onboarding: chat_opened timing fix + gate-stuck nudge
+
+Fixed the misleading `chat_opened` funnel event (fired on every
+ChatPanel mount even while the mandatory repo-connect gate overlay was
+blocking the user) and shipped a new hourly nudge for users genuinely
+stuck at that gate (started GitHub connect, after ~4h neither finished
+nor explicitly skipped) — separate from the pre-existing daily/broader
+`funnel_nudge_cron.py`, which is untouched. Both `testing_agent_v3_fork`-
+verified live (100%/100%, 0 action items) + 8/8 new pytest. Full detail
+in CHANGELOG.md's matching 2026-09-22 entry.

@@ -1,0 +1,22 @@
+{
+  "summary": "Verified both fixes end-to-end. Fix 1 (chat_opened timing): confirmed that a zero-project, not-yet-skipped user (fresh-p2-empty-0903@aurem.dev, after resetting first_chat_opened_at) loads /dashboard with the repo-connect gate overlay visible and NO POST /api/aurem-dev/chat/opened is fired while the gate is up — dev_users.first_chat_opened_at stays unset and funnel_events has zero chat_opened rows. After clicking 'Skip for now', the network log shows POST /repo-connect-gate/skip immediately followed by POST /chat/opened; dev_users.first_chat_opened_at is now populated and one funnel_events chat_opened row is written. Fix 2 (gate-stuck nudge): pytest tests/test_gate_stuck_nudge_2026_09_22.py = 8/8 PASSED (cohort inclusion, all four exclusion cases, dedup, per-run cap). Live admin endpoint POST /api/aurem-dev/admin/onboarding/send-gate-stuck-nudge with {\"dry_run\":true} returns HTTP 200 with {ok, dry_run, recipients:[...], count:1} — one real stuck user detected (dry-run only, no email actually sent). Backend supervisor log confirms '🪧 gate-stuck nudge cron enabled (hourly)'. Regression: GET /onboarding/repo-connect-gate/state still returns {skipped, has_project, post_skip_nudge_count} normally.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_gate_stuck_nudge_2026_09_22.py",
+    "/app/test_reports/pytest/gate_stuck_nudge_2026_09_22.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "gate_stuck_nudge.py looks well isolated from the pre-existing funnel_nudge_cron; both crons remain enabled per handoff — worth a follow-up check that they don't email the same user in the same hour (dedup key differs; if a user is both 'stage-nudge eligible' and 'gate-stuck eligible' they could theoretically get two distinct emails in one day). Not blocking.",
+    "Fix 1 uses `chatOpenedFiredRef` in ChatPanel to guarantee single-fire per mount — good. Default `readyToTrackOpen=true` preserves back-compat if any future caller mounts ChatPanel without Dashboard.jsx wrapping. No regression seen."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (founder); fresh-p2-empty-0903@aurem.dev / FreshEmpty2026! (zero-project). NOTE: I reset this user's first_chat_opened_at + deleted their prior chat_opened funnel row before UI test, and the skip click has now re-set both. Next tester wanting a clean gate-showing state on this account must un-skip AND unset first_chat_opened_at again (or use a fresh signup).",
+  "seed_data_creation": "Unset dev_users.first_chat_opened_at and removed 1 funnel_events chat_opened row for user_id 612673b71f2e424d9bc711f26eec195e to reproduce Fix 1 baseline. State was then legitimately re-created by the frontend after Skip click, matching Fix 1 spec.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both fixes shipped and verified. Live admin dry-run endpoint currently detects 1 stuck user (maya.fresh.1787961094@auremtest.dev). Do NOT flip dry_run=false without explicit approval — Resend is live in this env. If retesting Fix 1, use a fresh signup or reset the target user's first_chat_opened_at + gate_skipped_at + delete their funnel_events chat_opened rows first.",
+  "rca of the issue": "Before Fix 1, ChatPanel unconditionally POSTed /chat/opened on mount (idempotency lived server-side via first_chat_opened_at), so users blocked behind the gate overlay looked 'activated' in the funnel even though they never actually used chat. Dashboard.jsx now derives chatOpenReady = (projectCount>0 || gateSkipped) && !showGate and passes it to ChatPanel as readyToTrackOpen; ChatPanel's chat_opened useEffect gates on that flag + a single-fire ref. Result: chat_opened now only records when the gate is truly resolved (connected or explicit skip)."
+}

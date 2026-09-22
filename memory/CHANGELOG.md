@@ -6855,3 +6855,50 @@ canary was untouched throughout — still live.
 
 Moving to the 14-item combined FIX REQUEST / FIX REQUEST v2 backlog
 next, in the priority order communicated to the founder.
+
+## 2026-09-22 — GitHub onboarding: chat_opened timing fix + gate-stuck-user nudge
+
+Real activity-log review found two user traces that looked identical
+in the funnel (both ended with `chat_opened`) but were actually
+different: User 1 started GitHub connect and never finished (no skip,
+no project — genuinely stuck); User 2 explicitly clicked "Skip for
+now" (resolved on purpose). Root cause: `ChatPanel.jsx` fired
+`chat_opened` unconditionally on mount, but `Dashboard.jsx` renders
+`ChatPanel` UNDER the mandatory repo-connect gate overlay, not gated
+by it — so a user still blocked on the gate looked "activated" in the
+funnel.
+
+**Fix 1 — chat_opened timing** (`frontend/src/pages/Dashboard.jsx`,
+`frontend/src/components/ChatPanel.jsx`): Dashboard now derives
+`chatOpenReady = projectCount !== null && (projectCount > 0 ||
+gateSkipped !== null) && !showGate` (mirrors `showGate`'s own two-fact
+wait so it doesn't fire during the brief loading window either) and
+passes it to ChatPanel as `readyToTrackOpen` (default `true` for
+back-compat with any other caller). ChatPanel's `chat_opened` POST now
+only fires once, guarded by a ref, the first time that flag flips
+true — i.e. once the gate is truly resolved (real project connected OR
+explicit skip).
+
+**Fix 2 — fast gate-stuck nudge** (`backend/services/gate_stuck_nudge.py`,
+new file): hourly cron (opt-out via existing `ENABLE_ONBOARDING_NUDGE`
+flag, same as the pre-existing daily `funnel_nudge_cron.py`, which
+stays untouched and independent). Classifies users who started the
+GitHub connect flow (`github_auth_started` / `connect_repo_click` /
+`app_install_redirect` / `repo_connect_gate_shown`) but, after
+`GATE_STUCK_NUDGE_HOURS` (default 4h, env-configurable), have neither
+a real project NOR an explicit skip. Sends one one-time email (Resend,
+magic-login CTA link, same pattern as `funnel_nudge_cron.py`) via the
+`onboarding_emails` collection's existing `uniq_user_campaign_stage`
+unique index for atomic dedup. New admin trigger + dry-run preview:
+`POST /api/aurem-dev/admin/onboarding/send-gate-stuck-nudge`.
+
+**Testing:** New suite `backend/tests/test_gate_stuck_nudge_2026_09_22.py`
+— 8/8 passed (cohort inclusion, 4 exclusion cases — skipped/connected/
+too-fresh/never-started, dedup, per-run cap). Live dry-run admin
+endpoint call against real prod-shaped data found 1 real stuck user
+end-to-end. `testing_agent_v3_fork` verified both fixes live: a fresh
+zero-project/not-skipped user shows the gate with NO `chat_opened`
+recorded, then clicking Skip immediately fires it; an
+already-connected user still fires it immediately (no regression).
+100%/100% pass, 0 action items
+(`/app/test_reports/iteration_gate_stuck_nudge_and_chat_opened_timing_2026_09_22.json`).
