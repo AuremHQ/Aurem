@@ -1966,6 +1966,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       if (activeProject?.project_id) form.append("project_id", activeProject.project_id);
       const uploadRes = await fetch(`${API_BASE}/visual-bugfix/upload`, {
         method: "POST",
+        signal: AbortSignal.timeout(60000),
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: form,
       });
@@ -1978,6 +1979,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       setVisualBugAnalysis({ status: "analyzing", name: fileName, imageId: uploaded.id });
       const analyzeRes = await fetch(`${API_BASE}/visual-bugfix/${uploaded.id}/analyze`, {
         method: "POST",
+        signal: AbortSignal.timeout(120000),
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -5997,6 +5999,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               const t = getToken();
               fetch(`${API_BASE}/visual-bugfix/${workbenchReportId}/discard`, {
                 method: "POST",
+                signal: AbortSignal.timeout(30000),
                 headers: t ? { Authorization: `Bearer ${t}` } : {},
               }).catch(() => { /* best-effort — closing the card matters more than the API call succeeding */ });
               setWorkbenchReportId(null);

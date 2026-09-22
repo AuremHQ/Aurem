@@ -17,6 +17,7 @@ import { BeforeAfterViewer } from "./BeforeAfterViewer";
 import { CodeDiffViewer } from "./CodeDiffViewer";
 
 const authedFetch = (url, token, opts = {}) => fetch(url, {
+  signal: AbortSignal.timeout(120000),
   ...opts,
   headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
 });

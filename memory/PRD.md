@@ -1,3 +1,23 @@
+## 2026-09-22 (cockpit 9-item round) — real reason per item + fixes
+
+Reproduced each in this preview pod (with the app DB connected — a standalone script falsely shows "database unavailable"). Key finding: **the founder's cockpit is production**; several items are green/working in this pod and only fail in prod (different secrets/toolchain), so those are honestly prod-config/infra-blocked, not code bugs.
+
+**FIXED (code, proven fail-before/pass-after):**
+- **G18 · Timeout Audit** (was RED "4 unbounded I/O sites"): the 4 sites are frontend `fetch()` calls with no abort/timeout signal — `VisualDiffWorkbench.jsx:19` (authedFetch wrapper) and `ChatPanel.jsx:1967/1979/5998` (visual-bugfix upload/analyze/discard; none are SSE streams). Added `signal: AbortSignal.timeout(ms)` (60s/120s/30s + 120s wrapper, opts.signal overridable). `scripts.timeout_audit.run_audit()` now `pass:True`, 0 violations. Test `tests/test_g18_timeout_audit_fetch_sites_2026_09_22.py` FAILS pre-fix (4 violations) / PASSES after; eslint clean on both files + full `src`.
+- **G21 · Security Scan** (was flapping): fixed prior round (5-min success-cache, matching G18). Now green in this pod.
+
+**DIAGNOSED — real reason, NOT a code bug / blocked:**
+- **G10 · Founder Alerts** (RED): guard correctly surfaces a real failed Resend delivery (`founder_alert_sends` latest row `delivered:False` @ 20:48). Root cause = Resend returned **HTTP 400** on the last send because the `from` domain `alerts@auremcto.com` (default `FOUNDER_ALERT_FROM`) isn't verified for this env's `RESEND_API_KEY` — a Resend account/domain-verification config issue, not code. Greens on next successful send.
+- **G20 · Open Incidents** (RED): guard correctly reports 2 genuinely-open incidents — (a) "Resend Email: HTTP 400" (same root cause as G10), (b) "Emergent LLM Key: Probe timed out after 20.0s" (transient/slow LLM probe). Not a code bug; clearing it = resolving those incidents. Resolving prod incidents needs prod DB access.
+- **G15 · Dependency CVE**: GREEN in this pod (clean, 7 findings, 0 high/critical). Prod failure = documented gap: `AUREM_CI_INGEST_TOKEN` not set in prod → no `g15_dep_scan` runs ingested → gray. Config-blocked (founder action in test_credentials.md).
+- **Vanguard · E2B Sandbox** (GRAY): `E2B_API_KEY` not configured → sandbox layer unavailable. Secret-gated by design (guard says set key or ack). Not a code bug.
+- **Visibility Kit · Day-14 Recheck** (RED): by design — the 2026-09-11 date passed and `marketing/kit-citations-day14.md` lacks real recheck numbers. Ops/content reminder; can't fabricate ChatGPT/Perplexity/Gemini citation data. Greens once "Day-14 results" appears in that file.
+
+**INFRA/ARCHITECTURE-blocked (2 tools) — work in dev, can't in prod runtime:**
+- **Code Duplication (jscpd)**: works in this pod (proven `ok:True`, 1.51% dup, 772 files). Prod `FileNotFoundError` = `npx`/Node not on PATH in the prod backend runtime image (`services/duplication_scanner.py` already catches it → returns reason, doesn't crash). Correct fix (not suppression) = run in CI + ingest to DB (the existing G15/trufflehog pattern), OR add Node to the runtime image (Docker — outside constraints). Flagged, not hacked.
+- **Churn Risk**: works in this pod (proven: 2008 files from `git log`). Prod "git log unavailable or empty window" = prod runtime pod has no `git`/`.git` checkout (deployed images ship without history). Same architectural fix as jscpd (CI + ingest) — a runtime pod fundamentally can't `git log` its own source.
+
+
 ## 2026-09-22 (#13) — FIXED: G21 · Security Scan flapping on a fixed poll schedule
 
 **Confirmed root cause (identical to G18's already-fixed flap):** the health-notifier polls every registry check every 45s (`HEALTH_NOTIFIER_INTERVAL_S`) with an 8s per-check hard timeout (`health_registry.run_check_safely`). `_check_g21_security_scan()` calls `scripts.g21_security_scan.run_scan()`, which walks EVERY backend `.py` file synchronously — under transient CPU/thread-pool load it occasionally crosses 8s → red → finishes fine on the next tick → green, firing two founder alerts. This is scheduler-driven, so it flaps at a fixed cadence with zero correlation to user signups/project activity, exactly as reported. G18 got a 5-minute success-cache for this in 2026-08-21; **G21 never did**.
