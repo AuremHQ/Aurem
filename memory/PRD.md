@@ -1,3 +1,12 @@
+## 2026-09-22 (#13) — FIXED: G21 · Security Scan flapping on a fixed poll schedule
+
+**Confirmed root cause (identical to G18's already-fixed flap):** the health-notifier polls every registry check every 45s (`HEALTH_NOTIFIER_INTERVAL_S`) with an 8s per-check hard timeout (`health_registry.run_check_safely`). `_check_g21_security_scan()` calls `scripts.g21_security_scan.run_scan()`, which walks EVERY backend `.py` file synchronously — under transient CPU/thread-pool load it occasionally crosses 8s → red → finishes fine on the next tick → green, firing two founder alerts. This is scheduler-driven, so it flaps at a fixed cadence with zero correlation to user signups/project activity, exactly as reported. G18 got a 5-minute success-cache for this in 2026-08-21; **G21 never did**.
+
+**Fix (`services/health_checks.py`):** gave G21 the same proven pattern — `_G21_CACHE` + `_G21_CACHE_TTL_S=300`. `_check_g21_security_scan()` now serves a COMPLETED verdict (green or red) from cache for 5 minutes, so repeated 45s polls no longer re-run the walk-every-file scan and re-risk the timeout. A timed-out/cancelled attempt never reaches the cache-write; the gray "failed to run" path is deliberately NOT cached. No timeout value or schedule changed (that would mask other checks); the flap is removed at its true source (redundant re-execution of an expensive scan under a tight per-check budget).
+
+**Verified:** new `tests/test_g21_security_scan_flap_cache_2026_09_22.py` (2 tests) — FAIL pre-fix (scan re-runs every poll / `_G21_CACHE` absent), PASS after (run_scan called once per TTL window; verdict stable across polls → cannot flap). Added `_G21_CACHE` resets to the two existing G21 adapter tests for isolation of the new shared state. `test_health_registry_adapters.py` + `test_iter361_guard21_owasp.py` + the new test = 50 passed; pyflakes clean; backend 200. (Two unrelated `test_codebase_health_score.py` devops/coverage tests are SKIPPED pre-fix — untouched by this change.)
+
+
 ## 2026-09-22 (#9 revised) — FIXED: turn closing silently on a bare stated intention
 
 **Live repro (post-#1-fix):** "implement Jev-based intent detection" → reply was exactly "Let me find the real intent-classification page with narrower searches." then the turn closed as done, zero output, no incomplete/continue signal.

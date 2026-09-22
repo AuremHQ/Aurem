@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 # 2026-08-21 — see _check_g18_timeout_audit() below for rationale.
 _G18_CACHE: dict = {"result": None, "computed_at": 0.0}
 _G18_CACHE_TTL_S = 300
+# 2026-09-22 — G21 (security scan) flaps for the SAME reason G18 did:
+# run_scan() walks every backend .py file and occasionally crosses the
+# 8s per-check timeout on a 45s poll → red → recovers next tick → two
+# founder alerts, on a fixed schedule independent of user activity.
+# Same fix: cache a COMPLETED verdict for 5 min so repeated polls serve
+# it instead of re-running the scan and re-risking the timeout.
+_G21_CACHE: dict = {"result": None, "computed_at": 0.0}
+_G21_CACHE_TTL_S = 300
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -371,7 +379,22 @@ async def _check_g21_security_scan() -> dict:
     is `vanguard_ci_findings`, and it's scoped to CUSTOMER repos, not
     AUREM's own — unrelated to G21 entirely). G21's real, working
     signal is the live static scan already exposed at
-    /admin/qa/guard21-security-scan — call the same function here."""
+    /admin/qa/guard21-security-scan — call the same function here.
+
+    2026-09-22 · flapping fix — identical mechanism to G18 (see its
+    rationale above). run_scan() walks every backend .py file and can
+    occasionally cross the 8s per-check timeout under transient load →
+    red → recover next 45s tick → two founder alerts on a fixed
+    schedule, uncorrelated with user/project activity. Cache a COMPLETED
+    verdict for 5 min so repeated polls serve it instead of re-running
+    the scan and re-risking the timeout. A timed-out/cancelled attempt
+    never reaches the cache-write below, and the gray 'failed to run'
+    path is deliberately NOT cached."""
+    import time as _time
+    now = _time.time()
+    cached = _G21_CACHE.get("result")
+    if cached and (now - _G21_CACHE.get("computed_at", 0)) < _G21_CACHE_TTL_S:
+        return cached
     try:
         import asyncio
         from scripts.g21_security_scan import run_scan
@@ -383,10 +406,14 @@ async def _check_g21_security_scan() -> dict:
         return result_gray(f"g21 scan failed to run: {e}")
     if result.get("pass"):
         unpinned = result["supply_chain"]["unpinned_count"]
-        return result_green(f"clean · 0 misconfig findings, {unpinned} unpinned deps")
-    findings = result["misconfig"]["finding_count"]
-    unpinned = result["supply_chain"]["unpinned_count"]
-    return result_red(f"{findings} misconfig finding(s), {unpinned} unpinned dep(s)")
+        out = result_green(f"clean · 0 misconfig findings, {unpinned} unpinned deps")
+    else:
+        findings = result["misconfig"]["finding_count"]
+        unpinned = result["supply_chain"]["unpinned_count"]
+        out = result_red(f"{findings} misconfig finding(s), {unpinned} unpinned dep(s)")
+    _G21_CACHE["result"] = out
+    _G21_CACHE["computed_at"] = now
+    return out
 
 
 def g16_auth_hardening_raw() -> dict:
