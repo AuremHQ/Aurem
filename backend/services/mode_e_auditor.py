@@ -400,9 +400,27 @@ def build_audit_report(
     else:
         fixable = [i for i in all_issues if i.get("fix") and i.get("filepath")]
         if fixable:
+            # 2026-09-22 — the suggestion (and the frontend button, which
+            # parses this exact string via extractSuggestions) must
+            # reflect the REAL top severity present, not a hardcoded
+            # "critical". A scan with 0 critical / 0 high but medium/low
+            # fixable items used to still say "fix the critical issues".
+            # Build the phrase from the highest severity that actually
+            # has a fixable item. (No fixable items -> no button at all,
+            # already handled by the `if fixable` gate.)
+            def _has_fixable(bucket):
+                return any(i.get("fix") and i.get("filepath") for i in bucket)
+            if _has_fixable(critical):
+                _label = "critical issues"
+            elif _has_fixable(high):
+                _label = "high-priority issues"
+            elif _has_fixable(medium):
+                _label = "medium-priority issues"
+            else:
+                _label = "low-priority items"
             lines.append(
                 f"\n_{len(fixable)} of these can be auto-fixed. "
-                f"Say **\"fix the critical issues\"** and I'll ship them via Mode C._"
+                f"Say **\"fix the {_label}\"** and I'll ship them via Mode C._"
             )
 
     return "\n".join(lines)

@@ -37,6 +37,23 @@ _POSITIVE_PATH_FORWARD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 2026-09-22 — the DEFAULT_ALTERNATIVE below is a WEBSITE-CONTENT line
+# ("update the text, images, or layout"). It leaked verbatim onto
+# replies that have nothing to do with editing site content — a
+# secrets/permissions/approval answer and a Decision-Council refusal.
+# A "can't" in one of those governance/technical/meta contexts is not
+# a website-content dead end, so the website-editing alternative must
+# not be appended. This only ever SUPPRESSES the append (never adds a
+# wrong one), so a genuine site-content dead end is unaffected.
+_NON_WEBSITE_CONTEXT_RE = re.compile(
+    r"\bsecret(s)?\b|\bapi[\s\-]?keys?\b|\bcredential(s)?\b|"
+    r"\bpermission(s)?\b|\bapprov(e|ed|al)\b|\bpublish(ing)?\s+to\b|"
+    r"\bpush(ing)?\s+to\s+(the\s+)?main\b|\bmerge\b|"
+    r"\bprompt\s+injection\b|\binjection\b|\bcouncil\b|"
+    r"\benvironment\s+variable(s)?\b|\bproduction\b",
+    re.IGNORECASE,
+)
+
 DEFAULT_ALTERNATIVE = (
     "but I can update the text, images, or layout on your site instead "
     "— want me to do that?"
@@ -58,6 +75,8 @@ def has_dead_end(text: str) -> bool:
     if not _CANT_RE.search(text):
         return False
     if _BUT_I_CAN_RE.search(text) or _POSITIVE_PATH_FORWARD_RE.search(text):
+        return False
+    if _NON_WEBSITE_CONTEXT_RE.search(text):
         return False
     from services.legitimate_refusal import is_legitimate_refusal
     if is_legitimate_refusal(text):

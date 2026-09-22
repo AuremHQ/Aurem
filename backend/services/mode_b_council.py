@@ -50,6 +50,24 @@ _COUNCIL_SIGNALS = [
 ]
 _COUNCIL_RE = re.compile("|".join(_COUNCIL_SIGNALS), re.IGNORECASE)
 
+# 2026-09-22 — a batch of factual questions (a numbered status/fact
+# lookup, or several questions in one message) is NEVER a single
+# either/or decision, so it must never convene the Decision Council.
+_NUMBERED_ITEM_RE = re.compile(r"(?m)^\s*\d{1,2}[.)]\s+\S")
+_NUMBERED_QUESTION_RE = re.compile(r"(?m)^\s*\d{1,2}[.)]\s+.*\?\s*$")
+
+
+def _is_status_or_multi_question(text: str) -> bool:
+    """True when the message is a multi-part factual lookup rather than
+    a single decision. Only ever used to PREVENT the council — never to
+    trigger it — so a genuine single either/or decision is unaffected."""
+    if text.count("?") >= 3:
+        return True
+    if len(_NUMBERED_ITEM_RE.findall(text)) >= 3 \
+            and len(_NUMBERED_QUESTION_RE.findall(text)) >= 2:
+        return True
+    return False
+
 
 def is_council_request(message: str, mode: str) -> bool:
     """True when (1) classifier already picked Mode B AND (2) the
@@ -67,6 +85,14 @@ def is_council_request(message: str, mode: str) -> bool:
         return False
     text = _strip_attachment_blocks(message).strip()
     if not text:
+        return False
+    # 2026-09-22 — HARD boundary (live bug: 5 numbered factual status
+    # questions convened a full 5-persona council, then refused and
+    # accused the user of prompt injection). The Decision Council is for
+    # ONE genuine either/or decision — never a status/fact lookup,
+    # however it's phrased or numbered. This only ever PREVENTS the
+    # council, so a genuine single-decision request is unaffected.
+    if _is_status_or_multi_question(text):
         return False
     return bool(_COUNCIL_RE.search(text))
 
