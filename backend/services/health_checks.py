@@ -555,9 +555,14 @@ async def _check_github_webhook_fence() -> dict:
     if status.get("error"):
         return result_gray(f"fence check errored: {status['error']}")
     if status.get("ok"):
+        # 2026-09-22 — fix: `ok=True` can now have UP TO
+        # FENCE_FAILURE_RATE_THRESHOLD failing (see webhook_fence_status),
+        # not necessarily zero. This must report the real count, not a
+        # hardcoded 0, or the green detail text would itself be
+        # misleading about how many deliveries actually failed.
         return result_green(
             f"subscribed to {', '.join(status['subscribed_events']) or 'no'} events · "
-            f"0/{len(status['recent_deliveries'])} recent deliveries failing")
+            f"{status.get('failing_count', 0)}/{len(status['recent_deliveries'])} recent deliveries failing")
     missing = ", ".join(status.get("missing_subscriptions") or []) or "none"
     return result_red(
         f"missing subscriptions: {missing} · "

@@ -616,6 +616,30 @@ HANDLED_WEBHOOK_EVENTS = ("installation", "installation_repositories", "meta", "
 SUBSCRIBABLE_WEBHOOK_EVENTS = ("pull_request",)
 
 
+# 2026-09-22 — founder-reported alert-flap fix. `ok` used to be
+# `(not missing) and (not failing)` — ANY single failing delivery
+# in the last `recent_limit` window flipped this to False. Since
+# GitHub's delivery list is a live, continuously-shifting window (not
+# a fixed snapshot), one stale/transient failure can sit "in the last
+# 15" for many minutes as newer deliveries slowly push it toward the
+# edge, then age back out — flipping this boolean red→green→red on
+# its own even though nothing about webhook health actually changed.
+# health_notifier.py's existing 2-consecutive-tick confirm (see
+# `_advance_candidate`) does NOT fix this, because the same single
+# failure can easily persist across 2+ ticks before it ages out —
+# that debounce catches transient POLLING noise, not this window-
+# content churn.
+#
+# Fix: require the FAILURE RATE over the window to exceed a real
+# threshold, not just be non-zero — same "don't flip on a single
+# borderline reading" principle as the mode-router hysteresis
+# (services/semantic_mode_router.py). A single 1/15 (6.7%) blip no
+# longer trips red; a real degradation (>20%) still does, in either
+# direction (recovery uses the identical threshold/computation, so
+# there's no separate "easier to go red than to recover" asymmetry).
+FENCE_FAILURE_RATE_THRESHOLD = 0.20
+
+
 async def webhook_fence_status(
     recent_limit: int = 15,
     *,
@@ -702,13 +726,15 @@ async def webhook_fence_status(
         for d in deliveries
     ]
     failing = [d for d in recent if not d["success"]]
+    failing_rate = (len(failing) / len(recent)) if recent else 0.0
     return {
-        "ok":                   (not missing) and (not failing),
+        "ok":                   (not missing) and (failing_rate <= FENCE_FAILURE_RATE_THRESHOLD),
         "configured":           True,
         "subscribed_events":    subscribed_events,
         "missing_subscriptions": missing,
         "recent_deliveries":    recent,
         "failing_count":        len(failing),
+        "failing_rate":         round(failing_rate, 4),
         "event_filter":         event_filter,
         "checked_at":           time.time(),
     }
