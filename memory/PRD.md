@@ -1,3 +1,16 @@
+## 2026-09-22 (#9 revised) — FIXED: turn closing silently on a bare stated intention
+
+**Live repro (post-#1-fix):** "implement Jev-based intent detection" → reply was exactly "Let me find the real intent-classification page with narrower searches." then the turn closed as done, zero output, no incomplete/continue signal.
+
+**Root cause:** the orchestrator's Turn-Completion Contract (`services/orchestrator.py`, `_is_intent_only_announcement` + `_wrap_as_explicit_partial`, lines 284/2954/3277) DOES catch this phrase — but only inside `chat_with_tools`. That turn returned via an executor path that bypassed line 2954, so no wrapping was applied.
+
+**Fix (`services/chat_helpers.py`):** added `enforce_turn_completion_signal()` as a FINAL safety net at `run_rendering_pipeline` — the ONE render pipeline every reply passes through (called from `routers/chat/turn.py:607` and `routers/chat/stream.py:817`), regardless of which executor produced the content. A reply that is only a stated intention ("let me find X") now always gets a visible "_That was my next planned step, not a finished result — want me to continue?_" marker appended. Idempotent (won't double-wrap an already-wrapped reply; reuses the orchestrator's `_is_intent_only_announcement` so detection is single-sourced) and records its own `turn_completion_signal` trace pass.
+
+**Verified:** new `tests/test_turn_completion_signal_2026_09_22.py` (5 tests) — FAIL pre-fix (helper absent / pipeline no-op), PASS post-fix; exercises both the helper and the REAL async `run_rendering_pipeline`. Locked suites green: `test_turn_completion_contract_2026_09_08.py` + orchestrator/rendering suites (74 passed; the 1 failure `test_ci_env_var_contract` is PRE-EXISTING and unrelated — fails identically pre-fix). pyflakes clean; backend 200; helper confirmed firing in-process.
+
+**Honest note:** this delivers the "surface a visible incomplete/continue state" half of the founder's requirement (a guaranteed signal on every path). The "actually continue automatically to completion" half already exists as the orchestrator mid-loop nudge (line 2765) but only on the `chat_with_tools` path; making the bypassing executor path auto-continue is a larger change not done here. Also NOT reproduced: the exact executor path that bypassed line 2954 for the "implement Jev" turn — the safety net makes the outcome correct regardless, but identifying/closing that specific bypass at source is follow-up.
+
+
 ## 2026-09-22 (12-issue round) — FIXED the "text disconnected from real state" family: #1 Council misfire, #2 stock-line leak, #12 hardcoded "critical"
 
 All three were deterministic template/state-disconnect bugs (exactly the family the founder grouped). Each fixed with a fail-without/pass-with test (`tests/test_response_text_state_disconnect_2026_09_22.py`, 10 tests; #2 + #12 git-stash-proven to FAIL pre-fix); locked suites green (74 passed across council/business-voice/failure-patterns/mode-e/self-repair — the one failure `test_chat_router_wires_council_before_mode_f` is PRE-EXISTING, fails identically pre-fix, asserts source patterns from the old monolithic `routers/chat.py` that were refactored into `routers/chat/worker.py`); pyflakes clean; backend 200.

@@ -181,6 +181,39 @@ def apply_output_guards(
 # `trace` list recording, per pass, whether it fired and the
 # before/after length — real input/output traceability, not just a
 # comment claiming an order.
+_TURN_PARTIAL_MARKER = "That was my next planned step"
+
+
+def enforce_turn_completion_signal(content: str) -> str:
+    """Final safety net for the Turn-Completion Contract, applied at the
+    ONE render pipeline every reply goes through.
+
+    2026-09-22 — live repro (post-#1-fix): "implement Jev-based intent
+    detection" closed the turn on exactly "Let me find the real
+    intent-classification page with narrower searches." — a bare stated
+    intention, no result, no visible incomplete signal. The
+    orchestrator (chat_with_tools) enforces this internally, but some
+    executor paths return the raw model reply without that wrapping.
+    A reply that is ONLY a stated intention must never render as a
+    finished answer: append a visible not-finished/continue marker so
+    the user is never left thinking a stated-but-unexecuted intention
+    was a completed result. Idempotent (won't re-wrap an already-wrapped
+    reply)."""
+    if not content or _TURN_PARTIAL_MARKER in content:
+        return content
+    try:
+        from services.orchestrator import _is_intent_only_announcement
+    except Exception:                                       # noqa: BLE001
+        return content
+    if _is_intent_only_announcement(content):
+        return (
+            content.rstrip()
+            + "\n\n_That was my next planned step, not a finished result — "
+            "want me to continue?_"
+        )
+    return content
+
+
 async def run_rendering_pipeline(
     user_message: str, content: str, prior_fix_signal: bool,
     retrieved_context: str, *, skip: bool, tool_calls_run: int,
@@ -257,6 +290,14 @@ async def run_rendering_pipeline(
             _record("apply_business_owner_guards", before, content)
         except Exception as _bvf_e:                         # noqa: BLE001
             logger.debug("business_voice filter skipped (rendering_pipeline): %r", _bvf_e)
+
+    # 2026-09-22 — Turn-Completion Contract, final safety net (every
+    # reply passes through here regardless of which executor produced
+    # it). A bare stated intention must never render as a finished
+    # answer with no continue signal. Idempotent + records its own pass.
+    before = content
+    content = enforce_turn_completion_signal(content)
+    _record("turn_completion_signal", before, content)
 
     return content, {
         "passes": trace, "leak_stripped": leak_stripped,
