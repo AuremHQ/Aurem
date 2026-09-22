@@ -144,3 +144,21 @@ export function estimateTokenCount(text) {
   if (!text) return 0;
   return Math.ceil(text.split(/\s+/).filter(Boolean).length * 1.3);
 }
+
+
+// ── Smart-punctuation guard — 2026-09 founder bug report ─────────────
+// Safari (macOS/iOS) silently substitutes literal "--" -> en-dash and
+// straight quotes -> curly quotes as the user types, even inside a
+// plain <textarea>. This corrupts CLI flags ("--force"), code, and
+// SQL pasted/typed into chat before it ever reaches the backend.
+// `spellCheck={false}` + `autoCorrect="off"` on the element (WebKit
+// gates smart punctuation behind the same internal flag as spell
+// checking) handles most cases, but Safari can still fire a native
+// `beforeinput` event with `inputType: "insertReplacementText"` for
+// the substitution — this handler blocks that specific event so the
+// literal character the user typed lands instead of the swap.
+export function preventSmartPunctuation(e) {
+  if (e.inputType === "insertReplacementText") {
+    e.preventDefault();
+  }
+}

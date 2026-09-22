@@ -112,6 +112,7 @@ import {
   extractCodeBlocks,
   estimateTokenCount,
   detectsLoopOptIn,
+  preventSmartPunctuation,
 } from "../utils/chatTextUtils";
 
 const WELCOME = {
@@ -6113,6 +6114,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           className="composer-input-bare"
           maxLength={20000}
           value={input}
+          spellCheck={false}
+          autoCorrect="off"
+          onBeforeInput={preventSmartPunctuation}
           onChange={(e) => {
             const v = e.target.value;
             setInput(v);

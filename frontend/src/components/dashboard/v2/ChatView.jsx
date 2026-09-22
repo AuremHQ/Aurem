@@ -15,6 +15,7 @@ import ScanStatusStrip, { markScanJustCompleted } from "../../ScanStatusStrip";
 import SlashCommandMenu, { matchSlashCommands, SLASH_COMMANDS } from "../../SlashCommandMenu";
 import { getActiveProjectId, useActiveProject } from "../../TabBar";
 import { api } from "../../../lib/api";
+import { preventSmartPunctuation } from "../../../utils/chatTextUtils";
 
 const LOOP_STEPS = [
   { label: "PLAN",    status: "done" },
@@ -222,6 +223,9 @@ function Composer({ onSend, loopOn, onLoopToggle, onScanTrigger }) {
       )}
       <textarea value={input} onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
+        spellCheck={false}
+        autoCorrect="off"
+        onBeforeInput={preventSmartPunctuation}
         rows={2} placeholder="Ask ORA to build, fix, or scan… (type / for scan commands)"
         data-testid="ds2-composer-input"
         className="w-full resize-none bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none" />

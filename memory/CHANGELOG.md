@@ -6527,3 +6527,39 @@ extension (ad-blocker/privacy tool) in the founder's browser
 returning a synthetic blocked-response, or a transient Cloudflare-
 side rate-limit specific to that session. Recommended founder retest
 in an incognito window with all extensions disabled.
+
+## 2026-09 — Fixed: chat composer silently substituting smart punctuation (Safari)
+
+Founder-reported bug: typing a literal `--` in the chat textarea
+(placeholder "Ask ORA to build, fix, or scan...") silently became an
+en-dash, and straight quotes became curly quotes — corrupting CLI
+flags, code, and SQL before the message ever reached the backend.
+Root cause: Safari (macOS/iOS) applies OS-level smart-punctuation
+substitution to `<textarea>`/`<input>` elements; WebKit gates this
+behind the same internal flag as spell-checking, and can fire it
+either silently or via a native `beforeinput` event with
+`inputType: "insertReplacementText"`.
+
+Fix (two-layer, standard WebKit approach):
+- `utils/chatTextUtils.js` — added `preventSmartPunctuation(e)`, a
+  pure `beforeinput` handler that calls `e.preventDefault()` only
+  when `e.inputType === "insertReplacementText"`; no-op for every
+  other input type (normal typing, paste, IME composition,
+  deletion), so nothing else about the composer's behavior changes.
+- Wired `spellCheck={false}` + `autoCorrect="off"` +
+  `onBeforeInput={preventSmartPunctuation}` onto both chat textareas
+  that share this placeholder: `components/ChatPanel.jsx` (main
+  composer, `data-testid="chat-input"`) and
+  `components/dashboard/v2/ChatView.jsx` (`data-testid=
+  "ds2-composer-input"`).
+
+Tested: 3 new unit tests in
+`chatTextUtils.preventSmartPunctuation.2026_09.test.js` (fires only
+on `insertReplacementText`, no-ops on `insertText`/paste/
+deletion/composition) — all pass. Lint clean. Live-verified by
+logging into the preview app and typing `--force` + `it's` directly
+into the real composer: DOM value returned exactly `"--force it's"`
+byte-for-byte, `spellcheck`/`autocorrect` attributes confirmed
+present. (Safari's specific substitution couldn't be reproduced in
+the Chromium-based test browser, but the fix targets the documented
+WebKit mechanism directly and doesn't regress normal typing.)
