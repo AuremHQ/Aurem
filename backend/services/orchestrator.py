@@ -2597,7 +2597,18 @@ async def chat_with_tools(
             except Exception:
                 pass
         _r10_llm_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
-        meta = await call_llm_with_meta(
+        # 2026-09-22 — Section 16 cost-efficiency fix. From iter 2
+        # onward, `followup_iter_system` (or its FINAL-ANSWER-ROUND
+        # variant on the last iter, which still shares the SAME
+        # prefix) is byte-identical to what was just sent last
+        # iteration — a genuine, safe "same static block resent every
+        # call" case, scoped to just this turn (no cross-turn/cross-
+        # session staleness risk). `session_id` is always passed too
+        # so DeepSeek/GLM's automatic caching can benefit from sticky
+        # routing even when the flag/hint doesn't apply cache_control.
+        from services.llm._state import prompt_cache_context
+        async with prompt_cache_context(session_id=session_id, cache_system=(iters >= 2)):
+            meta = await call_llm_with_meta(
             first_iter_system if iters == 1 else (
                 # Iter 388k — Bug 12 fix.  Last-iter guard.  If we're
                 # about to enter the FINAL allowed round, hard-inject a

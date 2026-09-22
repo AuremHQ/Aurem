@@ -194,9 +194,19 @@ async def _ceo_judge_call_with_rescue(
     # 2026-08 hardening (F3) — CEO calls (primary + rescue) get their
     # own "ceo" agent label, separable from the 3 council-member votes.
     from services.loop_token_ledger import agent_call_context
+    # 2026-09-22 — Section 16 cost-efficiency fix. `system` here is
+    # ALWAYS the fixed judge-instruction string built by the one real
+    # caller (`_pick_best_via_ceo`, a few lines up) — never candidate-
+    # dependent content, which lives in `user` instead. Scoping the
+    # WHOLE function (not each call site individually) since all 3
+    # `_llm_call_protected` calls below share this same static system.
+    from services.llm._state import prompt_cache_context
+    _cache_ctx = prompt_cache_context(
+        session_id=trace_metadata.get("trace_id"), cache_system=True,
+    )
 
     if not CEO_RESCUE_ENABLED:
-        async with agent_call_context("ceo"):
+        async with agent_call_context("ceo"), _cache_ctx:
             return await _llm_call_mod._llm_call_protected(
                 system=system, user=user, max_tokens=max_tokens,
                 mode="chat", review_mode="swift",
@@ -207,7 +217,9 @@ async def _ceo_judge_call_with_rescue(
 
     # V2 — primary with hard timeout
     async def _primary_call():
-        async with agent_call_context("ceo"):
+        async with agent_call_context("ceo"), prompt_cache_context(
+            session_id=trace_metadata.get("trace_id"), cache_system=True,
+        ):
             return await _llm_call_mod._llm_call_protected(
                 system=system, user=user, max_tokens=max_tokens,
                 mode="chat", review_mode="swift",
@@ -246,7 +258,9 @@ async def _ceo_judge_call_with_rescue(
         "primary_latency_ms": primary_latency,
     }
     # DeepSeek rescue via mode="chat" (no review_mode → bypasses GLM, uses DeepSeek)
-    async with agent_call_context("ceo"):
+    async with agent_call_context("ceo"), prompt_cache_context(
+        session_id=trace_metadata.get("trace_id"), cache_system=True,
+    ):
         rescue_content, rescue_latency, rescue_err = await _llm_call_mod._llm_call_protected(
             system=system, user=user, max_tokens=max_tokens,
             mode="chat", review_mode="",

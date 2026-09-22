@@ -70,28 +70,38 @@ class _CouncilMember:
         from services.loop_token_ledger import agent_call_context
         _agent_label = f"council-{self.name.split('-')[0].lower()}"
         async with agent_call_context(_agent_label):
-            content, latency_ms, err = await _llm_call_mod._llm_call_protected(
-                system=self.persona, user=task,
-                max_tokens=_effective_max, mode=self.mode,
-                review_mode=self.review_mode,
-                user_id=context.get("user_id"),
-                temperature=self.temperature,
-                trace_name=f"parliament.council.{council_id or '?'}.{self.name}",
-                trace_metadata={
-                    "trace_id":         context.get("parliament_trace_id"),
-                    "council":          council_id,
-                    "member":           self.name,
-                    "task_type":        context.get("task_type"),
-                    "user_id":          context.get("user_id"),
-                    "file_path":        context.get("file_path"),
-                    "primary_model":    primary_model,
-                    "v2_longcat":       LONGCAT_ENABLED,
-                    "v2_council_b_glm": COUNCIL_B_GLM_ENABLED,
-                    "v2_ceo_rescue":    CEO_RESCUE_ENABLED,
-                    "max_tokens":       _effective_max,
-                    "max_tokens_default": self.max_tokens,
-                },
-            )
+            # 2026-09-22 — Section 16 cost-efficiency fix. `self.persona`
+            # is a FIXED module-level constant (see _COUNCIL_A_PERSONA /
+            # _COUNCIL_B_PERSONAS / _COUNCIL_C_PERSONAS below) — every
+            # vote cast by this member, forever, sends the exact same
+            # system text. This is the clearest "same static block
+            # resent every call" case in the whole stack.
+            from services.llm._state import prompt_cache_context
+            async with prompt_cache_context(
+                session_id=context.get("parliament_trace_id"), cache_system=True,
+            ):
+                content, latency_ms, err = await _llm_call_mod._llm_call_protected(
+                    system=self.persona, user=task,
+                    max_tokens=_effective_max, mode=self.mode,
+                    review_mode=self.review_mode,
+                    user_id=context.get("user_id"),
+                    temperature=self.temperature,
+                    trace_name=f"parliament.council.{council_id or '?'}.{self.name}",
+                    trace_metadata={
+                        "trace_id":         context.get("parliament_trace_id"),
+                        "council":          council_id,
+                        "member":           self.name,
+                        "task_type":        context.get("task_type"),
+                        "user_id":          context.get("user_id"),
+                        "file_path":        context.get("file_path"),
+                        "primary_model":    primary_model,
+                        "v2_longcat":       LONGCAT_ENABLED,
+                        "v2_council_b_glm": COUNCIL_B_GLM_ENABLED,
+                        "v2_ceo_rescue":    CEO_RESCUE_ENABLED,
+                        "max_tokens":       _effective_max,
+                        "max_tokens_default": self.max_tokens,
+                    },
+                )
         if err:
             return {
                 "member":     self.name,

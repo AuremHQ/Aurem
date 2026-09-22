@@ -43,7 +43,14 @@ ORCHESTRATOR = BACKEND / "services" / "orchestrator.py"
 # _collect_silent_catches() against the current file: same 7 sites,
 # same activity_hook/step_hook try-bodies, purely a line-drift
 # re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
-LEGIT_UI_HOOK_LINES = {2382, 2387, 2495, 2822, 2918, 2955, 2964}
+# 2026-09-22 · Section 16 cost-efficiency fix (prompt caching) wrapped
+# the `call_llm_with_meta` call in `prompt_cache_context(...)` — a
+# comment block + one `async with` line added right before it (net
+# +9 lines), shifting everything below that point. Re-derived via
+# _collect_silent_catches() against the current file: same 7 sites,
+# same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
+LEGIT_UI_HOOK_LINES = {2485, 2490, 2598, 2945, 3041, 3078, 3087}
 # 2026-02 · Part B1/B2 tool-observability fix (task_chain_logging.py's
 # `entry["status"]` reassignment + CitationGuard tool-claim block) added
 # lines earlier in chat_with_tools(). Re-derived via

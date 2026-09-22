@@ -395,7 +395,7 @@ async def _call_deepseek(messages: list, system: str = "",
     # the parent `services/llm/__init__.py` imports THIS module at
     # load time (see the D-2d re-export block there).
     from services.llm import _openrouter_key
-    from ._state import _set_last_provider
+    from ._state import _set_last_provider, get_prompt_cache_context
     from ._probes import _deepseek_model
     from ._routing import _DEEPSEEK_HOSTS
     from .openrouter_client import (
@@ -436,6 +436,17 @@ async def _call_deepseek(messages: list, system: str = "",
             # alone wasn't enough per the founder's fresh prod repro).
             "repetition_penalty": float(os.getenv("LLM_REPETITION_PENALTY", "1.1")),
         }
+        # 2026-09-22 — Section 16 cost-efficiency fix. DeepSeek caches
+        # its context automatically server-side (no cache_control
+        # marker exists for it) — the ONLY lever available here is a
+        # sticky-routing hint so repeat calls land on the same backend
+        # replica that already holds the warm cache. Flag-gated + only
+        # present when a caller opted in via prompt_cache_context();
+        # every other call keeps today's exact payload shape.
+        if os.getenv("LLM_PROMPT_CACHING_ENABLED", "0") == "1":
+            _sid = get_prompt_cache_context().get("session_id")
+            if _sid:
+                p["session_id"] = _sid
         if with_provider_block:
             # The host-routing block is OpenRouter-paid-tier specific; the
             # `:free` models live on different infra and 400-out on unknown
