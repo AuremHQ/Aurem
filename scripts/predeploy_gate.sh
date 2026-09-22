@@ -30,6 +30,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+bash scripts/interaction_gate.sh
 echo "══════════ PRE-DEPLOY QA GATE ══════════"
 
 echo "── Lane 1/3: backend pytest (blocking lane) ──"

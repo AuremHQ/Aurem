@@ -129,6 +129,10 @@ def classify_bail(user_message: str) -> dict:
     """Deterministic — same input always gives the same output.
     Returns {"reason": ..., "message": <plain-language next step>}."""
     msg = user_message or ""
+    from services.interaction_contract import enabled
+    if enabled():
+        from services.interaction_rendering import BLOCKED_REPLY
+        return {"reason": "low_confidence", "message": BLOCKED_REPLY}
     if _OUT_OF_SCOPE_RE.search(msg):
         return {"reason": "out_of_scope", "message": _OUT_OF_SCOPE_MESSAGE}
     # Only treat this as a "missing contact-info value" bail when the

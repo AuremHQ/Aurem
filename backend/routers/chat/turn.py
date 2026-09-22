@@ -160,6 +160,9 @@ async def chat_send(
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
     user = await current_dev(authorization)
+    from services.interaction_contract import request_conflict, finalize, new_request_id
+    request_conflict(body.prompt)
+    interaction_request_id = new_request_id()
     # Engagement Nudge (2026-09-09), Part 2 — fire-and-forget signal
     # for "did the user try to ask ORA for something", independent of
     # mock mode / budget / whatever the orchestrator ends up doing
@@ -679,19 +682,25 @@ async def chat_send(
         except Exception as _mce:
             logger.debug("maxx_cost_log write failed (chat_send): %r", _mce)
 
+    interaction = finalize(result, content, prompt=body.prompt,
+                           session_id=body.session_id or "", request_id=interaction_request_id,
+                           low_confidence=_low_confidence)
+    if interaction:
+        result["turn_state"] = interaction["turn_state"]
     await _persist_turn(user["user_id"], body.session_id or "",
                         body.prompt, content, provider, watchdog=watchdog,
                         project_id=body.project_id,
                         low_confidence=_low_confidence,
                         ship_suppressed=_ship_suppressed,
-                        bin_ctx=bin_ctx)
+                        bin_ctx=bin_ctx, interaction=interaction)
     # 2026-09-08 — task-chain logging (structured, not raw CoT).
     try:
         from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
+        from services.tool_failure_evidence import turn_tool_calls
         asyncio.create_task(log_task_chain(
             _db, user_id=user["user_id"], session_id=body.session_id or "",
             project_id=body.project_id, user_prompt=body.prompt or "",
-            tool_calls=result.get("tool_calls") or [], final_response=content,
+            tool_calls=turn_tool_calls(result), final_response=content,
             turn_state=result.get("turn_state") or "success",
             failure_mode=result.get("failure_mode") or result.get("error"),
             sequential_thoughts=result.get("sequential_thoughts") or [],
@@ -762,6 +771,8 @@ async def chat_send(
         pass
     return {
         "ok": result.get("ok", True),
+        **({"interaction": interaction, "turn_state": interaction["turn_state"],
+            "continue_available": interaction["continue_available"]} if interaction else {}),
         "content": content,
         "provider": provider,
         "watchdog": watchdog,

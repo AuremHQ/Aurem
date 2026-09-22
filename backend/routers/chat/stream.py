@@ -125,6 +125,9 @@ async def chat_stream(
     logger.info("R10_TIMING turn_start prompt=%r session=%s project=%s",
                 (body.prompt or "")[:40], body.session_id, body.project_id)
     user = await current_dev(authorization)
+    from services.interaction_contract import request_conflict, finalize, new_request_id
+    request_conflict(body.prompt)
+    interaction_request_id = new_request_id()
     # Engagement Nudge (2026-09-09), Part 2 — see routers/chat/turn.py
     # for the full rationale; identical fire-and-forget hook here so
     # the SSE streaming chat path (ChatPanel's primary send path) is
@@ -430,7 +433,10 @@ async def chat_stream(
             }
             yield f"data: {_j.dumps(meta)}\n\n"
             yield f"data: {_j.dumps({'delta': _clarify_text})}\n\n"
-            yield f"data: {_j.dumps({'done': True, 'content': _clarify_text})}\n\n"
+            clarification_contract = finalize(
+                {"turn_state": "blocked"}, _clarify_text, prompt=body.prompt,
+                session_id=body.session_id or "", request_id=interaction_request_id,
+            )
             await _persist_turn(
                 user_id=user_id,
                 session_id=body.session_id or "",
@@ -438,7 +444,9 @@ async def chat_stream(
                 assistant_reply=_clarify_text,
                 provider="aurem-clarify-fix",
                 project_id=body.project_id,
+                interaction=clarification_contract,
             )
+            yield f"data: {_j.dumps({'done': True, 'content': _clarify_text, **({'interaction': clarification_contract} if clarification_contract else {})})}\n\n"
         return StreamingResponse(
             _clarify_stream(), media_type="text/event-stream",
         )
@@ -897,6 +905,11 @@ async def chat_stream(
                         low_confidence=state.low_confidence,
                         ship_suppressed=state.ship_suppressed,
                         bin_ctx=bin_ctx, interrupted=True,
+                        interaction=finalize(
+                            {"turn_state": "partial", "failure_mode": "network_drop_mid_stream"},
+                            _emitted_so_far, prompt=body.prompt, session_id=body.session_id or "",
+                            request_id=interaction_request_id,
+                        ),
                     )
                 except Exception:
                     logger.exception("mid-stream-drop persist_turn failed")
@@ -906,10 +919,11 @@ async def chat_stream(
                 # detached task would race the event loop shutdown.
                 try:
                     from services.task_chain_logging import log_task_chain
+                    from services.tool_failure_evidence import turn_tool_calls
                     await log_task_chain(
                         get_db(), user_id=user_id, session_id=body.session_id or "",
                         project_id=body.project_id, user_prompt=body.prompt or "",
-                        tool_calls=(result.get("tool_calls") if isinstance(result, dict) else None) or [],
+                        tool_calls=turn_tool_calls(result),
                         final_response=_emitted_so_far, turn_state="partial",
                         failure_mode="network_drop_mid_stream",
                         sequential_thoughts=(result.get("sequential_thoughts") if isinstance(result, dict) else None) or [],
@@ -1151,6 +1165,12 @@ async def chat_stream(
         # above); a page refresh (GET /chat/history) showed the
         # ORIGINAL, uncorrected draft. Persisting `content` here
         # (post-guard) closes that gap.
+        interaction = finalize(result, content, prompt=body.prompt,
+                               session_id=body.session_id or "", request_id=interaction_request_id,
+                               low_confidence=state.low_confidence)
+        if interaction:
+            result["turn_state"] = interaction["turn_state"]
+            result["continue_available"] = interaction["continue_available"]
         await _persist_turn(user_id, body.session_id or "",
                             body.prompt, content, provider, watchdog=watchdog,
                             project_id=body.project_id,
@@ -1158,7 +1178,7 @@ async def chat_stream(
                             steps=collected_steps,
                             low_confidence=state.low_confidence,
                             ship_suppressed=state.ship_suppressed,
-                            bin_ctx=bin_ctx)
+                            bin_ctx=bin_ctx, interaction=interaction)
 
         # 2026-09-08 — Chain-of-thought pattern analysis (structured,
         # not raw). Fire-and-forget, same convention as the audit_log/
@@ -1166,11 +1186,12 @@ async def chat_stream(
         # blocks the user's response.
         try:
             from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
+            from services.tool_failure_evidence import turn_tool_calls
             _tc_turn_state = "error" if _hard_error else (result.get("turn_state") or "success")
             asyncio.create_task(log_task_chain(
                 get_db(), user_id=user_id, session_id=body.session_id or "",
                 project_id=body.project_id, user_prompt=body.prompt or "",
-                tool_calls=result.get("tool_calls") or [], final_response=content,
+                tool_calls=turn_tool_calls(result), final_response=content,
                 turn_state=_tc_turn_state, failure_mode=_failure_mode,
                 sequential_thoughts=result.get("sequential_thoughts") or [],
             ))
@@ -1219,6 +1240,7 @@ async def chat_stream(
 
         done_payload = {
             "done": True,
+            **({"interaction": interaction} if interaction else {}),
             "provider": provider,
             "session_id": body.session_id,
             "tokens_remaining": tokens_remaining,

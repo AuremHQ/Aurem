@@ -117,7 +117,17 @@ export const SUGGESTION_RX = new RegExp(
   "gi",
 );
 
-export function extractSuggestions(content) {
+export function extractSuggestions(content, interaction) {
+  if (interaction?.version === 1) {
+    // No fallback to quoted prose: a quote is neither an action nor evidence.
+    if (interaction.turn_state !== "success") return [];
+    const actions = Array.isArray(interaction.suggested_actions) ? interaction.suggested_actions : [];
+    return actions
+      .filter((action) => action && typeof action === "object" && action.type === "reply" &&
+        action.request_id === interaction.request_id && action.evidence_count > 0 &&
+        typeof action.label === "string" && action.label.trim().length > 0 && action.label.length <= 80)
+      .map((action) => action.label).slice(0, 4);
+  }
   if (!content || typeof content !== "string") return [];
   const seen = new Set();
   const out = [];

@@ -1,4 +1,10 @@
 # AUREM CTO — Changelog (append-only)
+
+## 2026-09-22 — interaction reliability contract and blueprint audit
+- Added opt-in response/state boundaries, UI evidence gating, tool-failure recurrence coverage and blocking contract release workflow dependencies. OFF by default; no production activation or verification.
+- Final sandbox contract suite 38 backend + 8 frontend passed; real gate failure injection blocks next lane. Full frontend remains 11 failed/795 passed; full backend bounded/incomplete. Source baseline reproduces the 11 frontend failures; existing Python warnings unchanged.
+- Refined supplied Blueprint PDF after full reading. New normalizer literal-corruption and prior-mode fallback findings are read-only, not fixed. Detailed eight-pattern report and updated architecture diagram in `INTERACTION_RELIABILITY_AUDIT_2026_09_22.md`.
+- Split oversized PRD: exact prior text archived in `PRD_ARCHIVE_2026_09_22.md`; current PRD is concise.
 - **Deploy-health fix, round 7 — redundant double codebase-index walk
   causing a mid-operation /health flap (2026-09-21)**
   User shared NEW production logs: nginx "upstream timed out ...

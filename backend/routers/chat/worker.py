@@ -133,6 +133,9 @@ async def _mode_broadcast(state: StreamState) -> str:
         _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload, body.project_id)
         _sem_confidence = None
         _sem_source = "keyword"
+    from services.interaction_contract import enabled, factual_lookup
+    if enabled() and factual_lookup(body.prompt):
+        _mode, _sem_source = "A", "interaction-factual-boundary"
     # Confidence scoring — surfaces a `mode_confirm` event when the
     # message is ambiguous so the UI can ask the user before burning
     # an LLM call on the wrong mode. Honoured only when the user has

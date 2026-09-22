@@ -250,6 +250,10 @@ async def log_task_chain(
             "success_pattern": _derive_success_pattern(tool_calls, final_response) if success else None,
             "ts": time.time(),
         }
+        from services.interaction_contract import enabled
+        if enabled():
+            from services.tool_failure_evidence import failure_signatures
+            record["tool_failure_signatures"] = failure_signatures(tool_calls)
         # COH persistence (failure-only) — see module docstring. Metadata
         # for EVERY sequential_thinking call already lands unconditionally
         # in `sequential_thinking_calls` via log_sequential_thinking_call;

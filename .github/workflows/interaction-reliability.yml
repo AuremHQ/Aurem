@@ -1,0 +1,52 @@
+name: Interaction reliability contract
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  interaction-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017/tcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          corepack enable
+          cd frontend
+          yarn install --frozen-lockfile
+      - name: Configure isolated CI database
+        env:
+          MONGO_SERVICE_PORT: ${{ job.services.mongo.ports[27017] }}
+        run: |
+          python - <<'PY'
+          import os
+          import secrets
+          from pathlib import Path
+          port = os.environ['MONGO_SERVICE_PORT']
+          with Path(os.environ['GITHUB_ENV']).open('a') as env:
+              env.write(f'MONGO_URL=mongodb://127.0.0.1:{port}\nDB_NAME=interaction_ci\n')
+              env.write(f'JWT_SECRET={secrets.token_urlsafe(48)}\n')
+          PY
+      - name: Blocking interaction contract gate
+        run: bash scripts/interaction_gate.sh
+      - name: Upload evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interaction-reliability-${{ github.run_id }}-${{ github.job }}
+          path: test_reports/interaction/

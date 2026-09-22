@@ -14,6 +14,7 @@
  * a crash.
  */
 import dayjs from "dayjs";
+import { interactionFields } from "./interactionState";
 
 /**
  * Returns a stable "YYYY-MM-DD" key for the LOCAL calendar day of a
@@ -108,6 +109,7 @@ export function mapHistoryTurn(t) {
     interrupted: t.interrupted || false,
     kind: t.kind,
     task_id: t.task_id,
+    ...interactionFields(t),
   };
 }
 

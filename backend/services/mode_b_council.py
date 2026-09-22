@@ -86,6 +86,9 @@ def is_council_request(message: str, mode: str) -> bool:
     text = _strip_attachment_blocks(message).strip()
     if not text:
         return False
+    from services.interaction_contract import enabled, factual_lookup
+    if enabled() and factual_lookup(text):
+        return False
     # 2026-09-22 — HARD boundary (live bug: 5 numbered factual status
     # questions convened a full 5-persona council, then refused and
     # accused the user of prompt injection). The Decision Council is for

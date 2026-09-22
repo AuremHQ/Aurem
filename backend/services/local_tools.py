@@ -2924,15 +2924,23 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
         return None
 
     if name in _WRITE_TOOLS:
+        from services.interaction_contract import enabled, read_only_request
+        if enabled() and read_only_request(ctx.get("user_prompt") or ""):
+            blocked = {"ok": False, "error_class": "read_only_request",
+                       "error": "Write blocked: the current request permits read-only work."}
+            ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
+            return blocked
         _blocked = _check_write_scope(name, args, ctx)
         if _blocked is not None:
             return _blocked
 
     # Track every dispatch (used by CitationGuard + audit log)
-    ctx.setdefault("tool_calls", []).append({
+    dispatch_started = time.monotonic()
+    dispatch_record = {
         "tool": name,
         "args": args or {},
-    })
+    }
+    ctx.setdefault("tool_calls", []).append(dispatch_record)
 
     from .tool_executor import execute as _tx_execute
 
@@ -2940,6 +2948,24 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
         return await fn(ctx, args or {})
 
     out = await _tx_execute(name, _runner)
+    from services.interaction_contract import enabled as interaction_enabled
+    if interaction_enabled():
+        from services.task_chain_logging import redact_secrets
+        data = out.get("data") if isinstance(out.get("data"), dict) else {}
+        failed = out.get("ok") is False or data.get("ok") is False
+        # This dispatch, not the list tail: parallel calls finish out of order.
+        dispatch_record.update({
+            "ok": not failed,
+            "error": redact_secrets(str(data.get("error") or out.get("error_message") or ""))[:200] if failed else None,
+            "error_class": data.get("error_class") or out.get("error_class"),
+            "elapsed_ms": int((time.monotonic() - dispatch_started) * 1000),
+            "timestamp": time.time(),
+        })
+        if failed and out.get("ok"):
+            ctx.setdefault("system_signals", []).append({
+                "signal": data.get("system_signal") or "unknown_error",
+                "severity": "error", "tool": name,
+            })
     if out.get("ok"):
         if name in _SCOPE_DISCOVERY_TOOLS:
             _record_discovered_scope(name, args, out.get("data"), ctx)

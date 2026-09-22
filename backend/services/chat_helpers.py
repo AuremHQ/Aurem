@@ -228,6 +228,22 @@ async def run_rendering_pipeline(
     what any individual pass's own internal logic decides to do."""
     trace: list[dict] = []
 
+    from services.interaction_contract import enabled as interaction_enabled
+    if interaction_enabled():
+        from services.interaction_rendering import render_safe_content
+        rendered, blocked = render_safe_content(content, lambda text: apply_output_guards(
+            user_message, text, prior_fix_signal, retrieved_context,
+            skip=skip, tool_calls_run=tool_calls_run,
+            session_id=session_id, user_id=user_id,
+        ))
+        rendered = enforce_turn_completion_signal(rendered)
+        return rendered, {
+            "passes": [{"pass": "interaction_contract", "changed": rendered != content,
+                        "len_before": len(content), "len_after": len(rendered)}],
+            "leak_stripped": rendered != content, "length_capped": False,
+            "output_guard_ref_id": None, "interaction_blocked": blocked,
+        }
+
     def _record(name: str, before: str, after: str) -> None:
         trace.append({
             "pass": name, "changed": after != before,
@@ -573,6 +589,10 @@ def classify_intent(message: str, f12_payload: Optional[dict], project_id: Optio
     from services.mode_e_auditor  import is_audit_request
     from services.mode_f_engage   import is_engage_request
 
+    from services.interaction_contract import enabled, factual_lookup
+    if enabled() and factual_lookup(message):
+        return "A"
+
     # Iter 50 — greeting wins over stale F12 noise. We still SHOW the
     # captured errors to the user via the F12 badge; we just don't
     # fire a hallucination-prone Mode D LLM call on a casual hello.
@@ -762,7 +782,8 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         low_confidence: bool = False,
                         ship_suppressed: bool = False,
                         bin_ctx=None,
-                        interrupted: bool = False) -> None:
+                        interrupted: bool = False,
+                        interaction: Optional[dict] = None) -> None:
     """Append user+assistant turns to db.chat_sessions, capped at 40 turns.
     Tags the session with the project it belongs to (None == Home/global).
     Iter 51 — when `shipped_task_id` is set (e.g. Mode D→C auto-handoff),
@@ -785,10 +806,19 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
         return
     now = time.time()
     preview = (assistant_reply or "").strip()[:120] or (user_prompt or "")[:120]
+    if interaction is None:
+        from services.interaction_contract import finalize, new_request_id
+        interaction = finalize(
+            {"turn_state": "partial" if interrupted else "success"}, assistant_reply or "",
+            prompt=user_prompt or "", session_id=session_id,
+            request_id=new_request_id(), low_confidence=low_confidence,
+        )
     assistant_turn = {
         "role": "assistant", "content": assistant_reply,
         "ts": now, "provider": provider,
     }
+    if interaction is not None:
+        assistant_turn["interaction"] = interaction
     if watchdog:
         assistant_turn["watchdog"] = watchdog
     if shipped_task_id:

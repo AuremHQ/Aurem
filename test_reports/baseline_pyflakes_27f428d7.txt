@@ -1,0 +1,10 @@
+/tmp/base_local_tools.py:710:5: local variable 'user_id' is assigned to but never used
+/tmp/base_local_tools.py:711:5: local variable 'project_id' is assigned to but never used
+/tmp/base_local_tools.py:1340:5: local variable 'user_id' is assigned to but never used
+/tmp/base_local_tools.py:1341:5: local variable 'project_id' is assigned to but never used
+/tmp/base_local_tools.py:2110:5: local variable 'user_id' is assigned to but never used
+/tmp/base_local_tools.py:2111:5: local variable 'project_id' is assigned to but never used
+/tmp/base_stream.py:19:1: 'services.orchestrator.chat_with_tools' imported but unused
+/tmp/base_stream.py:20:1: 'services.llm.call_llm_with_meta' imported but unused
+/tmp/base_stream.py:213:5: local variable '_is_fnd_stream' is assigned to but never used
+/tmp/base_worker.py:273:20: local variable 'q' is assigned to but never used

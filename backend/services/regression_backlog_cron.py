@@ -64,6 +64,17 @@ async def scan_and_flag_recurring_failure_reasons(db, lookback_days: int = LOOKB
             {"$group": {"_id": "$failure_reason", "count": {"$sum": 1}}},
         ]
         rows = await db.task_chains.aggregate(pipeline).to_list(None)
+        from services.interaction_contract import enabled
+        if enabled():
+            # Count distinct turns, not retries within a turn; never infer failure
+            # from the final prose. Includes recovered turns and calls after #10.
+            tool_rows = await db.task_chains.aggregate([
+                {"$match": {"ts": {"$gte": cutoff}, "tool_failure_signatures.0": {"$exists": True}}},
+                {"$unwind": "$tool_failure_signatures"},
+                {"$group": {"_id": {"signature": "$tool_failure_signatures", "turn_id": "$turn_id"}}},
+                {"$group": {"_id": "$_id.signature", "count": {"$sum": 1}}},
+            ]).to_list(None)
+            rows.extend(tool_rows)
     except Exception as e:
         logger.warning("regression_backlog scan: task_chains aggregate failed: %r", e)
         return {"scanned": 0, "flagged": 0, "error": str(e)}
@@ -100,7 +111,7 @@ async def _reconcile_one(db, failure_reason: str, real_count: int) -> bool:
                 "fixed_on": None, "fixed_by": None,
             },
         },
-        upsert=True, return_document=ReturnDocument.AFTER,
+        upsert=True, return_document=ReturnDocument.AFTER, projection={"_id": 0},
     )
     times_seen = (doc or {}).get("times_seen", real_count)
     status = (doc or {}).get("status", "open")

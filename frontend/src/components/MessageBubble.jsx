@@ -13,6 +13,8 @@
  * Iter 62: extracted from ChatPanel.jsx as part of the P1 split.
  */
 import React, { useState, useEffect, useRef } from "react";
+import { hasVerifiedReview } from "../utils/interactionState";
+import { InteractionStatus } from "./InteractionStatus";
 import {
   User, Bot, Loader2, ShieldCheck, AlertTriangle, RefreshCw,
   Copy as CopyIcon, ThumbsUp, ThumbsDown, Zap, X,
@@ -1386,6 +1388,11 @@ export default function MessageBubble({
               } else if (prov.includes("deepseek")) {
                 writer = "DeepSeek";
               }
+              if (m.interaction?.version === 1) {
+                reviewer = hasVerifiedReview(m.interaction) ? m.interaction.review_evidence.reviewer : null;
+                // Tier is a request preference, not execution provenance.
+                writer = prov.includes("claude") ? "Claude" : prov.includes("deepseek") ? "DeepSeek" : null;
+              }
               if (!writer) return null;
               return (
                 <div
@@ -1415,7 +1422,9 @@ export default function MessageBubble({
               );
             })()
           )}
-          {!m.streaming && m.content && (m.council || m.provider === "mode-b-council") && (
+          {!m.streaming && <InteractionStatus interaction={m.interaction} index={idx} />}
+          {!m.streaming && m.content && (m.interaction?.version === 1 ? hasVerifiedReview(m.interaction) :
+            (m.council || m.provider === "mode-b-council")) && (
             <div data-testid={`council-badge-${idx}`} style={{
               marginTop: 8, fontSize: 10,
               fontFamily: "'JetBrains Mono', monospace",
@@ -1685,7 +1694,8 @@ export default function MessageBubble({
         )}
 
         {/* Watchdog result */}
-        {m.role === "assistant" && m.watchdog && m.watchdog.ok && (
+        {m.role === "assistant" && m.watchdog && m.watchdog.ok &&
+          (m.interaction?.version !== 1 || hasVerifiedReview(m.interaction)) && (
           <WatchdogPanel idx={idx} wd={m.watchdog} onRegenerate={onRegenerate} />
         )}
         {m.role === "assistant" && m.watchdog && !m.watchdog.ok && (

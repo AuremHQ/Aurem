@@ -1,5 +1,12 @@
 # ROADMAP — prioritized backlog (post 2026-08-27 ORA Chat v2 P1-P5 checkpoint)
 
+## 2026-09-22 — interaction audit priority overlay
+- P0: Keep INTERACTION_CONTRACT_V1 OFF pending full regression completion and actual staging/browser/revision verification. No production closure claimed.
+- P0: Separately authorize raw-input/code-literal preservation fix; extend server-owned read-only capabilities across every mutation surface.
+- P1: Typed plan/evidence completion, review/action receipt producers, advisor v2 contract adoption, durable failure events, full long-history/production replay, CLI validation and four-clock/idempotency.
+- P2: Calibrated routing/model comparisons; user-facing verification details. Semantic canary remains 10%.
+- Details/evidence: `INTERACTION_RELIABILITY_AUDIT_2026_09_22.md`, refined reference `CODING_AGENT_BLUEPRINT_V2.md`.
+
 See PRD.md for original requirements/architecture, CHANGELOG.md for what's shipped.
 
 ## P0 — Multimodal Visual Bug-Fix Pipeline — ALL 4 PHASES SHIPPED (2026-09-12)

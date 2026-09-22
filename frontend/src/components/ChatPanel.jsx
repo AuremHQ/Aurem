@@ -114,6 +114,7 @@ import {
   detectsLoopOptIn,
   preventSmartPunctuation,
 } from "../utils/chatTextUtils";
+import { interactionFields } from "../utils/interactionState";
 
 const WELCOME = {
   role: "assistant",
@@ -3041,6 +3042,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               failureMode: d.failure_mode || null,
               recoveryAction: d.recovery_action || null,
               turnError: d.error || null,
+              ...interactionFields(d),
             };
           }
           return copy;
@@ -5257,7 +5259,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             i === messages.length - 1
           );
           const suggestions = isLastAssistant
-            ? extractSuggestions(m.content)
+            ? extractSuggestions(m.content, m.interaction)
             : [];
           return (
             <React.Fragment key={i}>
