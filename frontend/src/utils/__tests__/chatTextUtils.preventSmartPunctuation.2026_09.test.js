@@ -45,4 +45,30 @@ describe("2026-09 — preventSmartPunctuation (Safari smart-punctuation guard)",
       expect(e.preventDefault).not.toHaveBeenCalled();
     }
   });
+
+  // 2026-09 bug brief — exact reproduction string: "npm run build --
+  // --force and git commit -m 'x'". Every position where the browser
+  // MIGHT attempt a smart-punctuation swap (the "--" runs, the two
+  // straight quotes) must be blocked; every normal character must
+  // pass through completely untouched.
+  it("test_chat_input_preserves_literal_dashes_and_quotes — brief repro string", () => {
+    const literal = "npm run build -- --force and git commit -m 'x'";
+
+    // Simulate the browser attempting its smart-punctuation swap at
+    // every character position — the guard must block ALL of them,
+    // regardless of position, so the literal char always wins.
+    for (let i = 0; i < literal.length; i++) {
+      const e = { inputType: "insertReplacementText", preventDefault: vi.fn() };
+      preventSmartPunctuation(e);
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    }
+
+    // And confirm ordinary typing of this exact string is never
+    // touched — no false positives on normal characters.
+    for (let i = 0; i < literal.length; i++) {
+      const e = { inputType: "insertText", data: literal[i], preventDefault: vi.fn() };
+      preventSmartPunctuation(e);
+      expect(e.preventDefault).not.toHaveBeenCalled();
+    }
+  });
 });

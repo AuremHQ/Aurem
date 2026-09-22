@@ -309,6 +309,62 @@ def _is_intent_only_announcement(content: str) -> bool:
     return len(text) < 220
 
 
+# 2026-09 — P0 bug-brief Bug 3: "Multi-step instructions silently
+# truncated." Founder repro: a message with 4 explicit numbered steps
+# got step 1 done, then the turn closed on the generic max_iters
+# fallback ("Want me to continue?") without even attempting steps
+# 2-4, despite being told explicitly to complete all steps without
+# stopping to ask. Root cause: `max_iters` (default 4) is sized for
+# INVENTORY/EXECUTE-mode single-asks; an explicitly enumerated
+# multi-step request needs proportionally more tool-call budget, and
+# the fallback message when budget IS exhausted didn't re-state which
+# of the ORIGINAL requested steps were even attempted.
+#
+# Fix is intentionally NOT a fabricated per-step done/not-done verdict
+# — this codebase's whole culture (CitationGuard, verify_llm_findings,
+# business_voice_filter, etc.) is "never claim something without real
+# evidence", and algorithmically guessing "step 2: done" without
+# grounding would be exactly that kind of fabrication. Instead:
+#   1. Detect the explicit step list and give the turn MORE iteration
+#      budget up front, proportional to step count (capped), so a
+#      modest 3-4 step ask actually gets the room to finish instead
+#      of hitting a budget sized for a single-ask turn.
+#   2. If budget is STILL exhausted (a genuinely large task), the
+#      fallback message explicitly RESTATES the full original step
+#      list (grounded — it's the user's own text) so the user can see
+#      exactly what's outstanding, instead of a generic "I did some
+#      things, want me to continue?" that silently drops the scope.
+_STEP_LIST_RE = re.compile(
+    r"(?m)^\s*(?:(\d{1,2})[.)]\s+|(?:step\s*\d{1,2}\s*[:.)]\s*))(\S.+)$"
+)
+# Inline enumeration on one line: "1) X 2) Y 3) Z" (the brief's own
+# example). Matches each `N) ...` or `N. ...` segment up to the next
+# one or end of string.
+_INLINE_STEP_RE = re.compile(r"\d{1,2}[.)]\s*([^0-9]+?)(?=\s*\d{1,2}[.)]|$)")
+
+
+def _detect_explicit_multistep(prompt: str) -> Optional[list[str]]:
+    """Returns the list of step descriptions when `prompt` contains an
+    explicit ENUMERATED multi-step request (2+ numbered/"step N"
+    items) — either one per line, or inline on a single line (the
+    brief's exact test shape: "1) X 2) Y 3) Z"). Returns None
+    otherwise. Deliberately simple/regex-only — this only needs to
+    detect "the user explicitly enumerated steps", not understand
+    them; correctness of what each step MEANS is left entirely to the
+    LLM, same as today."""
+    text = (prompt or "").strip()
+    if not text:
+        return None
+    line_matches = _STEP_LIST_RE.findall(text)
+    if len(line_matches) >= 2:
+        return [desc.strip() for _, desc in line_matches if desc.strip()][:12]
+    inline_matches = _INLINE_STEP_RE.findall(text)
+    cleaned = [m.strip(" .,:;") for m in inline_matches if m.strip(" .,:;")]
+    if len(cleaned) >= 2:
+        return cleaned[:12]
+    return None
+
+
 class TurnCompletionViolation(Exception):
     """Raised when a turn would close in a state outside the three
     allowed states (SUCCESS / EXPLICIT FAILURE / EXPLICIT PARTIAL).
@@ -333,11 +389,12 @@ def assert_turn_completion_contract(content: str, result: dict) -> None:
         )
 
 
-def _wrap_as_explicit_partial(content: str, invocations: list[dict], prompt: str) -> str:
+def _wrap_as_explicit_partial(content: str, invocations: list[dict], prompt: str,
+                               explicit_steps: Optional[list[str]] = None) -> str:
     """Wraps a bare intent announcement into an EXPLICIT-PARTIAL reply:
     what's been done so far (from tool history, if any) + a direct
     continue question — never a silent "idle" ending."""
-    summary = _synthesise_max_iters_summary(prompt, invocations) if invocations else ""
+    summary = _synthesise_max_iters_summary(prompt, invocations, explicit_steps) if invocations else ""
     return (
         content.rstrip()
         + "\n\n_That was my next planned step, not a finished result."
@@ -346,7 +403,8 @@ def _wrap_as_explicit_partial(content: str, invocations: list[dict], prompt: str
     )
 
 
-def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
+def _synthesise_max_iters_summary(prompt: str, invocations: list[dict],
+                                   explicit_steps: Optional[list[str]] = None) -> str:
     """Fallback closing message when the orchestrator hits its iter
     or per-turn time budget.
 
@@ -362,7 +420,24 @@ def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
     founder gets a real answer instead of "rephrase".  Trimmed to
     stay within a reasonable size budget so a huge search result
     doesn't blow up the reply.
+
+    2026-09 — P0 bug-brief Bug 3: `explicit_steps`, when the caller
+    detected an explicitly enumerated multi-step request (see
+    `_detect_explicit_multistep`), is RESTATED verbatim at the top —
+    grounded in the user's own text, never a fabricated per-step
+    done/not-done verdict — so a partial turn never silently drops
+    the original scope.
     """
+    lines: list[str] = []
+    step_preamble: list[str] = []
+    if explicit_steps:
+        step_preamble.append(
+            f"You asked for {len(explicit_steps)} steps — restating so "
+            "nothing gets silently dropped:"
+        )
+        for i, step in enumerate(explicit_steps, 1):
+            step_preamble.append(f"{i}. {step[:200]}")
+        step_preamble.append("")
     seen_paths: list[str] = []
     seen_tools: list[str] = []
     web_search_content: list[str] = []
@@ -448,7 +523,7 @@ def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
             )
     if seen_tools:
         lines.append(f"_Context loaded via: {', '.join(seen_tools)}._")
-    return "\n\n".join(lines)
+    return "\n\n".join(step_preamble + lines)
 
 
 def _is_same_tool_call(a: dict, b: dict) -> bool:
@@ -1768,6 +1843,18 @@ async def chat_with_tools(
     context. After answering, the new prompt + reply are persisted back
     into `chat_sessions` by the chat router (see `_persist_turn`).
     """
+    # 2026-09 — P0 bug-brief Bug 3 fix. `max_iters=4` is sized for a
+    # single-ask turn (see the comment on the param above); an
+    # explicitly enumerated multi-step request ("1) X 2) Y 3) Z", or
+    # one "N." per line) needs proportionally more tool-call budget
+    # or it hits the cap partway through and falls back to a generic
+    # "want me to continue?" without even attempting the later steps.
+    # Bumped proportional to step count, capped at 12 so a huge/fake
+    # step list can't blow the per-turn wall-clock budget instead
+    # (that separate guard, `ORCH_PER_TURN_BUDGET_S`, is untouched).
+    explicit_steps = _detect_explicit_multistep(prompt)
+    if explicit_steps and len(explicit_steps) >= 2:
+        max_iters = max(max_iters, min(len(explicit_steps) * 2 + 2, 12))
     # iter 322fk-4 (fix 14B): load prior conversation from `chat_sessions`
     # (where chat.py:_persist_turn writes turns). The legacy code looked
     # at `aurem_cto_sessions` and required an explicit `mongo_client` arg
@@ -2456,7 +2543,7 @@ async def chat_with_tools(
                 "(%.1fs elapsed of %ds budget) — synthesising summary",
                 iters, _elapsed, int(_ORCH_BUDGET_S),
             )
-            clean = _synthesise_max_iters_summary(prompt, invocations) or (
+            clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps) or (
                 "I started on this and gathered some context but couldn't "
                 "wrap the answer in one turn.  Rephrase with the specific "
                 "file, function, or line range you want and I'll reply "
@@ -2578,7 +2665,7 @@ async def chat_with_tools(
                     "(exact_repeat=%s same_tool_stuck=%s) — synthesising summary",
                     iters, max_iters, exact_repeat, same_tool_stuck,
                 )
-                clean = _synthesise_max_iters_summary(prompt, invocations)
+                clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps)
                 return {
                     "ok": True,
                     "content": clean,
@@ -2829,7 +2916,7 @@ async def chat_with_tools(
             # partial with a real continue action instead of silence.
             _turn_state = "success"
             if _is_intent_only_announcement(content):
-                content = _wrap_as_explicit_partial(content, invocations, prompt)
+                content = _wrap_as_explicit_partial(content, invocations, prompt, explicit_steps)
                 _turn_state = "partial"
             assert_turn_completion_contract(content, {
                 "turn_state": _turn_state, "continue_available": _turn_state == "partial",
@@ -3141,7 +3228,7 @@ async def chat_with_tools(
     #     I ran out of iterations" answer.
     clean = strip_tool_calls(content)
     if not clean.strip():
-        clean = _synthesise_max_iters_summary(prompt, invocations)
+        clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps)
 
     # 2026-09-08 — Turn-Completion Contract. This exit is reached when
     # the model was STILL queuing tool calls right up to max_iters, so
@@ -3152,7 +3239,7 @@ async def chat_with_tools(
     # silently.
     _turn_state_mx = "success"
     if _is_intent_only_announcement(clean):
-        clean = _wrap_as_explicit_partial(clean, invocations, prompt)
+        clean = _wrap_as_explicit_partial(clean, invocations, prompt, explicit_steps)
         _turn_state_mx = "partial"
     assert_turn_completion_contract(clean, {
         "turn_state": _turn_state_mx, "continue_available": _turn_state_mx == "partial",

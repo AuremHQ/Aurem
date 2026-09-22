@@ -106,9 +106,33 @@ async def _mode_broadcast(state: StreamState) -> str:
     the mode already computed for the council-recall call above
     (`_recall_mode`) instead of classifying the same prompt twice;
     recompute only if that block was skipped (ora_panel=true) or
-    didn't run."""
+    didn't run.
+
+    2026-09 · P0 bug-brief Bug 2 — `_mode` now goes through
+    `services.semantic_mode_router.classify_mode_semantic()`, which
+    is feature-flagged OFF by default (SEMANTIC_MODE_ROUTER_ENABLED).
+    OFF = byte-identical to the old `classify_intent()` call this
+    replaced. ON = Jev-based semantic classification with a
+    confidence threshold + hysteresis, actually GATING dispatch
+    instead of only decorating the UI with a `needs_confirm` badge
+    nothing downstream enforced (the confirmed root cause of the
+    keyword-hijack bug — see semantic_mode_router.py's docstring)."""
     body, q = state.body, state.q
-    _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload, body.project_id)
+    from services.semantic_mode_router import is_enabled as _sem_router_enabled
+    if _sem_router_enabled():
+        from services.semantic_mode_router import classify_mode_semantic
+        _sem = await classify_mode_semantic(
+            body.prompt or "", body.f12_payload, body.project_id, body.session_id,
+        )
+        _mode = _sem["mode"]
+        _sem_confidence = _sem["confidence"]
+        _sem_source = _sem["source"]
+    else:
+        # Flag off — EXACT original behaviour, including the "don't
+        # classify twice" reuse of the council-recall call's result.
+        _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload, body.project_id)
+        _sem_confidence = None
+        _sem_source = "keyword"
     # Confidence scoring — surfaces a `mode_confirm` event when the
     # message is ambiguous so the UI can ask the user before burning
     # an LLM call on the wrong mode. Honoured only when the user has
@@ -123,10 +147,14 @@ async def _mode_broadcast(state: StreamState) -> str:
         await q.put({
             "type": "mode",
             "mode": _mode,
-            "confidence": _conf["confidence"],
+            "confidence": _sem_confidence if _sem_confidence is not None else _conf["confidence"],
             "scores": _conf["scores"],
             "needs_confirm": _conf["needs_confirm"]
                 and not getattr(body, "mode_override", None),
+            # 2026-09 — surfaces which router actually decided, so the
+            # admin Cockpit / eval suite can verify the flag's live
+            # behaviour without grepping logs.
+            "router_source": _sem_source,
         })
         # Fire-and-forget telemetry — keeps a rolling window of the
         # last 100 classifications so we can tune the vocabulary

@@ -6563,3 +6563,218 @@ byte-for-byte, `spellcheck`/`autocorrect` attributes confirmed
 present. (Safari's specific substitution couldn't be reproduced in
 the Chromium-based test browser, but the fix targets the documented
 WebKit mechanism directly and doesn't regress normal typing.)
+
+## 2026-09 — Bug 1 (P0 brief) complete: smart-punctuation fix extended to Advisor panel + exact brief test added
+
+Extended the earlier smart-punctuation fix (main composer) to the
+Advisor panel's secondary textarea (`AskAdvisorReal.jsx`,
+`data-testid="ds2-advisor-input"`) — same `spellCheck={false}` +
+`autoCorrect="off"` + `onBeforeInput={preventSmartPunctuation}`.
+Confirmed this doesn't touch the file's founder-protected D1 ruling
+(no consent-gate/behavior change to screen capture) — purely an
+additive textarea attribute fix.
+
+Added the brief's exact-specified test
+(`test_chat_input_preserves_literal_dashes_and_quotes`) reproducing
+`"npm run build -- --force and git commit -m 'x'"` — verifies the
+guard blocks substitution at every character position while never
+touching normal typing. 4/4 tests pass in
+`chatTextUtils.preventSmartPunctuation.2026_09.test.js`, lint clean.
+
+Live-verified in the real preview app: typed the exact brief string
+into BOTH `data-testid="chat-input"` (main composer) and
+`data-testid="ds2-advisor-input"` (Advisor panel) — both returned
+the literal string byte-for-byte, confirmed via screenshot + DOM
+value read.
+
+Bug 1 (of 4, P0 brief) — DONE. Proceeding to Bug 2 (mode router)
+next per agreed sequential phasing with test gates.
+
+## 2026-09 — Bug 2 (P0 brief) complete: semantic mode router + audit-focus fix
+
+**Root cause, live-reproduced (not assumed):** `routers/chat/worker.py`'s
+`_mode_broadcast()` used `chat_helpers.classify_intent()` — pure
+regex/substring — as the SOLE dispatch decision for Mode D/E.
+`services.mode_classifier`'s confidence score existed but never
+actually gated anything (only decorated the SSE `needs_confirm`
+field). Confirmed directly:
+`classify_intent("...Cloudflare origin error...please audit the
+repo...", f12_payload=<real console error>, ...) == "D"` — a message
+whose actual ask is audit+recommend gets hijacked into the expensive
+debug pipeline purely because of a co-occurring captured error.
+
+**Fix — `services/semantic_mode_router.py` (new, feature-flagged OFF
+by default via `SEMANTIC_MODE_ROUTER_ENABLED`):**
+- Uses the Jev classifier (verified live this session — real
+  OpenRouter Decisions API call, real cost, git commit `f7081fea`)
+  to classify the FULL message intent against all 6 modes.
+- Confidence threshold 0.72 (`MODE_ROUTER_CONFIDENCE_THRESHOLD`) —
+  below it, never switches off the session's current mode.
+- Hysteresis — a high-confidence new-mode signal must repeat on 2
+  consecutive turns before actually switching.
+- Any Jev failure degrades to the existing keyword classifier for
+  that turn only, never corrupts session state, never blocks a turn.
+- Wired into `worker.py::_mode_broadcast()`; flag OFF = byte-identical
+  to pre-existing behaviour (same call reused from `state.recall_mode`,
+  zero extra network calls — verified via respx with no mocked route
+  registered).
+
+**Second half of Bug 2 — `mode_e_auditor.py`:** confirmed
+`run_audit()` accepted `user_message` but only used it for logging;
+the LLM prompt never saw it, so every audit ran the identical generic
+security/quality/performance checklist regardless of the specific
+ask. Added `user_focus` param to `llm_deep_audit()`, threaded through
+from `run_audit(user_message=...)` — the LLM prompt now includes the
+user's actual request and is instructed to prioritize findings that
+address it, on top of (not instead of) the standard checklist.
+Backward compatible: omitting `user_focus` produces byte-identical
+prompts to before.
+
+**Tests:** 8 new tests in `test_p0_bug2_mode_router_2026_09.py`,
+including the brief's exact two named tests
+(`test_error_keyword_does_not_force_debug_mode`,
+`test_audit_keyword_does_not_force_canned_healthscan`) — all pass.
+Regression sweep: 59 tests referencing orchestrator/worker/
+mode_e_auditor/chat_helpers — 0 new failures vs. a git-stash baseline
+(13 pre-existing failures unrelated to this change, confirmed
+identical before/after). Lint clean.
+
+## 2026-09 — Bug 3 (P0 brief) complete: multi-step truncation
+
+**Root cause, traced exactly:** `services/orchestrator.py`'s
+`chat_with_tools()` iteration loop hits `max_iters` (default 4,
+sized for a single-ask turn) partway through an explicitly enumerated
+multi-step request, then falls back to a generic
+`_synthesise_max_iters_summary()` message ending in "Want me to
+continue?" — which never re-stated which of the ORIGINAL requested
+steps were even attempted, so 3 of 4 steps got silently dropped from
+the user's view of what happened.
+
+**Fix:**
+- `_detect_explicit_multistep(prompt)` — detects an enumerated step
+  list (one per line, or inline "1) X 2) Y 3) Z" — the brief's exact
+  shape) and returns the step descriptions.
+- `chat_with_tools()` bumps `max_iters` proportional to detected step
+  count (`len(steps)*2+2`, capped at 12) BEFORE the tool-call loop
+  starts — a modest 3-4 step ask now actually gets room to finish
+  instead of hitting a single-ask-sized budget. The separate
+  wall-clock safety net (`ORCH_PER_TURN_BUDGET_S`, 150s) is untouched.
+- `_synthesise_max_iters_summary()` / `_wrap_as_explicit_partial()`
+  now accept an optional `explicit_steps` param and RESTATE the full
+  original step list verbatim at the top of any fallback/partial
+  message — grounded in the user's own text, deliberately NOT a
+  fabricated per-step done/not-done verdict (this codebase's
+  CitationGuard/verify_llm_findings culture treats unearned
+  completion claims as a real hallucination risk).
+
+**Tests:** 9 new tests in
+`test_p0_bug3_multistep_truncation_2026_09.py` covering the detector,
+the max_iters bump (source-verified, matching this file's existing
+convention for testing `chat_with_tools` structurally rather than via
+a fragile full LLM mock), and the step-restatement in both fallback
+paths — all pass, with explicit backward-compat tests proving
+omitting `explicit_steps` is byte-identical to pre-fix output.
+
+**Regression note:** fixed one brittle pre-existing test
+(`test_iter55_tool_call_leak_and_timeout.py::test_orchestrator_max_iters_no_longer_falls_back_to_raw_content`)
+that asserted an exact-arity source string match; updated to match
+the new backward-compatible call shape while preserving its original
+regression-catching intent (still asserts the old raw-content-leak
+bug pattern is absent). One other apparent "new" failure
+(`test_grandchild_survives_plain_popen_kill_baseline`, an unrelated
+subprocess-kill timing test) was confirmed flaky at baseline too
+(2/3 runs fail with or without this change) — not caused by this fix.
+
+Bugs 1, 2, 3 of 4 (P0 brief) — DONE, tested, zero net regressions.
+Checking in with founder before Bug 4 (timeout/retry) + the new eval
+category per sequential phasing agreement.
+
+## 2026-09-22 — SYSTEM AUDIT v2 (read-only) + founder-directed reorder: Bug 2 canary + Section 7 deploy-gate wiring
+
+**Audit:** Full 14-section read-only audit delivered against founder's
+blueprint doc, saved to `memory/SYSTEM_AUDIT_2026_09_22.md` (pasted in
+full to founder in chat, including the Section 14 Mermaid as-built
+diagram). No code changed during the audit itself.
+
+**Founder's reorder after reading it** (effort-vs-impact, not bug
+discovery order): flip the already-built semantic router on behind a
+canary (closest-to-done, most real-user telemetry) + wire the
+existing `evals/runner.py` into `predeploy_gate.sh` (protects every
+future fix, not just one bug) — BEFORE Bug 4.
+
+**1. Bug 2 — canary rollout, not full flip.** Investigated why
+`SEMANTIC_MODE_ROUTER_ENABLED` was off before touching anything (per
+founder's explicit ask): `git status`/`git log` confirmed it was
+**never turned on** — brand-new, still-uncommitted code from this
+same session, not disabled after a bad prior test. No landmine.
+Added `SEMANTIC_MODE_ROUTER_CANARY_PCT` (default 100 = today's
+pre-canary test assumptions hold unmodified) — deterministic
+sha256(session_id)-based sampling, so a session never straddles the
+canary boundary mid-conversation. Set live: `ENABLED=1`,
+`CANARY_PCT=10`. Rollback is one env var, no deploy needed.
+`worker.py`'s existing `router_source` SSE field + `mode_classifications`
+Mongo telemetry (already wired pre-canary) give real-traffic
+visibility without new infra. 8 new tests in
+`test_p0_bug2_mode_router_2026_09.py` (canary sampling determinism,
+0%/100%/10% boundaries); 4 pre-existing Bug 2 tests fixed to pin
+`CANARY_PCT=100` for their fixed session_ids (they never accounted
+for a real partial-canary env value existing).
+
+**2. Section 7 — evals/runner.py wired into predeploy_gate.sh (Lane 11,
+BLOCKING).** Confirmed via direct read: `runner.py`'s own docstring
+already said "exits 0/1 to gate the deploy" but nothing ever called
+it — it only fed the admin Persona Quality tile. Added as Lane 11,
+no `|| echo` fallback (a HARD fail actually stops the deploy).
+Also fixed Lane 2's vitest glob — it covered `src/components/__tests__`
++ `src/lib` but NEVER `src/utils/__tests__`, meaning **Bug 1's own
+punctuation regression test was never running in the gate**. Added
+it (targeted — NOT widened to the full `src/` tree, which has 10
+pre-existing unrelated baseline failures; that's separate work).
+
+**3. New "agent behavior" eval category** (P0 brief item 5, folded
+into the same effort): `evals/prompts_agent_behavior.py` — 3
+multi-step prompts scored by a new `multistep_scorer` (harness.py) —
++ `_routing_misclassification_test()` in runner.py (offline-style,
+same pattern as the existing `_project_scoping_isolation_test`) —
+reproduces the exact transport-error/audit hijack message, HARD-gates
+on the semantic router's real answer (forces that one call into
+100% canary regardless of live pct), SOFT-logs the known keyword
+baseline. Bug 4's timeout/retry category deliberately NOT added yet
+— no fault-injection hook exists until Bug 4 ships; a shallow prompt
+would be theatre. `GET /admin/skills/status` now surfaces
+`agent_behavior_eval: {last_run_ok, hard_fails, last_run_ts}` from
+the latest `ora_eval_runs` doc (founder's ask: existing surface, not
+a new one).
+
+**Real finding from the live dry-run (not hypothetical):** my first
+`multistep_scorer` design was wrong — it required literal fact VALUES
+(version numbers) in the final reply, but Bug 3's actual honest
+partial-disclosure path (correctly) restates step DESCRIPTIONS rather
+than guessing at values it never confirmed. Fixed to require step
+SUBJECT NOUNS instead — passes for both "answered" and "honestly
+disclosed as pending," only fails on true silent vanishing. Verified
+via a real end-to-end `python -m evals.runner --quick` run (not just
+unit tests): 15 LLM calls, all 3 new multistep prompts + the routing
+regression PASS.
+
+**Known consequence, disclosed, not hidden:** the SAME live dry-run
+surfaced 2 genuine, PRE-EXISTING hard fails — `D1_fake_file` /
+`D2_fake_dependency` (both already in `prompts_quality.py`, unrelated
+to this brief) — the model fabricated content for a nonexistent file/
+dependency instead of saying "not found." Lane 11 being real now
+means **the next deploy attempt will be blocked by this**, exactly as
+intended by making the gate real — flagged to founder as a separate,
+pre-existing issue to fix or explicitly accept before the next deploy.
+
+**Tests:** 53 pass across `test_p0_bug2_mode_router_2026_09.py`,
+`test_p0_bug2_routing_eval_2026_09.py` (new), `test_iter124f_eval_harness.py`
+(extended), `test_iter124f_project_scoping_isolation.py`. Ruff clean
+on every touched/new file. Backend restarted cleanly post-.env change,
+`/api/health` 200. Broader `-k "mode or router or worker or
+orchestrator or eval or skills"` sweep: 52 pre-existing failures,
+individually spot-checked (Stripe override, GLM/watchdog SSE, MCP
+graph agent, OAuth provider tag, admin house rules, etc.) — all
+confirmed unrelated to today's files, several proven pass-in-isolation
+(test-ordering flakiness, not a regression from this change).
+
+Bug 4 (timeout/retry model) is next, per founder's reorder.

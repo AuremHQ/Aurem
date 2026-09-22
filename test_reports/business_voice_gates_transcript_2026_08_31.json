@@ -1,95 +1,7 @@
 {
   "base_url": "https://bin-context-pat.preview.emergentagent.com",
-  "gate1": [
-    {
-      "turn": 1,
-      "prompt": "hi, what can you do for my website?",
-      "reply": "I can help fix bugs, improve features, or add new functionality—just share your website and what you need.",
-      "checks": {
-        "no_jargon": true,
-        "jargon_hits": [],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "intent-gateway-casual",
-      "tier": "casual",
-      "bail_reason": null,
-      "ship_suppressed": false
-    },
-    {
-      "turn": 2,
-      "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I'd love to make that change live for you — but I don't see your website project connected right now. Once you select it from the sidebar, I can open your main page and put your opening hours right at the top.\n\nOne thing I need from you: **what are the opening hours you want displayed?** Give me the days and times (e.g. \"Mon–Fri 9am–5pm, Sat 10am–2pm\"), and I'll handle the rest.",
-      "checks": {
-        "no_jargon": true,
-        "jargon_hits": [],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "glm-5.2",
-      "tier": "agentic",
-      "bail_reason": null,
-      "ship_suppressed": false
-    },
-    {
-      "turn": 3,
-      "prompt": "9am to 5pm every day",
-      "reply": "Got it! I'll update your site to show \"Open daily 9am–5pm\" at the top — give me one moment to implement this live.",
-      "checks": {
-        "no_jargon": true,
-        "jargon_hits": [],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "intent-gateway-casual",
-      "tier": "casual",
-      "bail_reason": null,
-      "ship_suppressed": false
-    },
-    {
-      "turn": 4,
-      "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "```html\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n <meta charset=\"UTF-8\">\n <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n <title>Main Page</title>\n</head>\n<body>\n\n<!-- Main content here -->\n\n<footer style=\"text-align: center; padding: 20px;\">\n Open daily 9am–5pm<br>\n 1-800-555-0199\n</footer>\n\n</body>\n</html>\n```",
-      "checks": {
-        "no_jargon": true,
-        "jargon_hits": [],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": false,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "longcat-2.0",
-      "tier": "agentic",
-      "bail_reason": null,
-      "ship_suppressed": false
-    }
-  ],
+  "gate1": [],
   "gate2": [
-    {
-      "prompt": "can you redesign our brand identity?",
-      "reply": "Got it — you want a fresher look for your brand and site. I can do a real visual refresh on your site right now: colors, fonts, spacing, and layout — and show you a before/after before anything goes live.\n\nA few directions that could fit: Clean & minimal (lots of white space, one accent color, a big clear headline), Bold & confident (strong color, bold type, sharp contrast), or Warm & friendly (soft colors, relaxed spacing). My top pick would be Clean & minimal to start.\n\nTell me one word for the feel you want — calm, bold, or premium — or just say go and I'll start with my top pick. A brand-new logo or a full brand-strategy book is a bigger project — I can help you start that too, but the site's look I can do right now.",
-      "checks": {
-        "no_refusal": true,
-        "no_session_jargon": true,
-        "has_can_do_now": true,
-        "has_concrete_directions": true,
-        "at_most_one_question": true,
-        "has_scope_line": true,
-        "question_count": 0
-      },
-      "provider": "intent-gateway-casual",
-      "tier": "casual"
-    },
     {
       "prompt": "our site looks dated — can you modernize it?",
       "reply": "Got it — you want a fresher look for your brand and site. I can do a real visual refresh on your site right now: colors, fonts, spacing, and layout — and show you a before/after before anything goes live.\n\nA few directions that could fit: Clean & minimal (lots of white space, one accent color, a big clear headline), Bold & confident (strong color, bold type, sharp contrast), or Warm & friendly (soft colors, relaxed spacing). My top pick would be Clean & minimal to start.\n\nTell me one word for the feel you want — calm, bold, or premium — or just say go and I'll start with my top pick. A brand-new logo or a full brand-strategy book is a bigger project — I can help you start that too, but the site's look I can do right now.",
@@ -106,40 +18,6 @@
       "tier": "casual"
     }
   ],
-  "gate3": [
-    {
-      "prompt": "the approve button isn't showing",
-      "reply": "You're right, and I'm sorry — that's on me, not your website. Let me try that again, and I've flagged it so we fix it properly.",
-      "checks": {
-        "has_ownership_early": true,
-        "no_user_blame": true,
-        "has_path_forward": true,
-        "no_error_code_or_stack": true,
-        "compliant": true
-      },
-      "provider": "self-bug-reply",
-      "fallback_chain": null
-    },
-    {
-      "prompt": "I clicked it and nothing happened, and you keep saying try again — what do I even try?",
-      "reply": "You're right, and I'm sorry — that's on me, not your website. Let me try that again, and I've flagged it so we fix it properly.",
-      "checks": {
-        "has_ownership_early": true,
-        "no_user_blame": true,
-        "has_path_forward": true,
-        "no_error_code_or_stack": true,
-        "compliant": true
-      },
-      "provider": "self-bug-reply",
-      "fallback_chain": null
-    }
-  ],
-  "regression": [
-    {
-      "prompt": "hello!",
-      "reply": "Hey there! 👋 Happy to help with your content—what's on your mind?",
-      "provider": "intent-gateway-casual",
-      "tier": "casual"
-    }
-  ]
+  "gate3": [],
+  "regression": []
 }

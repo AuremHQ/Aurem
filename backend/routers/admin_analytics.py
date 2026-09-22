@@ -1002,9 +1002,21 @@ async def skill_firecrawl_crawl(body: _SkillBody,
 
 @router.get("/skills/status")
 async def skill_status(authorization: Optional[str] = Header(None)):
-    """Reveal which web skills are wired (key present). No secrets returned."""
+    """Reveal which web skills are wired (key present). No secrets returned.
+
+    2026-09-22 — System Audit v2 (Section 7/8) asked for the deploy-
+    time agent-behavior eval's pass/fail to surface on this existing
+    admin health surface rather than a new one. `agent_behavior_eval`
+    below reflects the LATEST `ora_eval_runs` doc (written by
+    `backend/evals/runner.py`, now wired into predeploy_gate.sh)."""
     await _require_admin(authorization)
     import os
+    db = get_db()
+    latest_eval = None
+    if db is not None:
+        latest_eval = await db.ora_eval_runs.find_one(
+            {"quick": {"$ne": True}}, {"_id": 0}, sort=[("ts", -1)],
+        )
     return {
         "ok": True,
         "skills": {
@@ -1013,6 +1025,11 @@ async def skill_status(authorization: Optional[str] = Header(None)):
             "web_search_and_summarize": bool(os.environ.get("TAVILY_API_KEY")),
             "firecrawl_scrape":         bool(os.environ.get("FIRECRAWL_API_KEY")),
             "firecrawl_crawl_site":     bool(os.environ.get("FIRECRAWL_API_KEY")),
+        },
+        "agent_behavior_eval": {
+            "last_run_ok":  latest_eval.get("ok") if latest_eval else None,
+            "hard_fails":   latest_eval.get("hard_fails") if latest_eval else None,
+            "last_run_ts":  latest_eval.get("ts") if latest_eval else None,
         },
     }
 

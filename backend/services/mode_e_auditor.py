@@ -160,7 +160,11 @@ def static_scan_all(file_blocks: dict) -> list[dict]:
 
 AUDIT_SYSTEM = """You are a senior code auditor reviewing a production codebase.
 
-Identify issues that STATIC ANALYSIS CANNOT FIND:
+If the user's request below asks about something SPECIFIC (a
+particular system, file, or piece of logic), your findings MUST
+prioritize and directly address that specific ask FIRST — never
+substitute the generic checklist below for what they actually asked
+about. Then also cover the standard checklist as additional findings:
 - Business logic bugs
 - Missing authentication on routes that need it  
 - Race conditions in async code
@@ -177,12 +181,28 @@ FIX: <one-sentence fix>
 (repeat for each issue, max 8 issues)"""
 
 
-async def llm_deep_audit(file_summaries: str, repo_ctx: str) -> list[dict]:
-    """LLM audit for logic-level issues. Returns list of issue dicts."""
+async def llm_deep_audit(file_summaries: str, repo_ctx: str, user_focus: str = "") -> list[dict]:
+    """LLM audit for logic-level issues. Returns list of issue dicts.
+
+    `user_focus` — 2026-09 P0 bug-brief Bug 2 fix. The caller's raw
+    audit request (e.g. "audit this repo for existing classification/
+    routing logic and recommend whether to add X"). Previously
+    `run_audit()` accepted `user_message` but only used it for
+    logging — the LLM prompt never saw it, so every audit ran the
+    SAME generic security/quality/performance checklist regardless
+    of what was actually asked (confirmed root cause of the "canned
+    health-scan ignoring the actual request" bug). Passing it through
+    here lets the LLM prioritize findings that address the specific
+    ask, on top of the standard checklist — additive, not a
+    replacement for the baseline scan."""
     try:
+        user_prompt = f"Repo: {repo_ctx}\n\n"
+        if user_focus and user_focus.strip():
+            user_prompt += f"The user's actual request: {user_focus.strip()[:500]!r}\n\n"
+        user_prompt += f"Code summaries:\n{file_summaries[:3000]}"
         resp = await call_llm_with_meta(
             system=AUDIT_SYSTEM,
-            user=f"Repo: {repo_ctx}\n\nCode summaries:\n{file_summaries[:3000]}",
+            user=user_prompt,
             mode="chat",
             max_tokens=800,
         )
@@ -438,7 +458,7 @@ async def run_audit(
 
     static_findings, llm_findings, quick_wins = await asyncio.gather(
         _async_static(),
-        llm_deep_audit(file_summaries, repo_ctx),
+        llm_deep_audit(file_summaries, repo_ctx, user_focus=user_message),
         _async_wins(),
     )
     # Part C — verify LLM-authored findings against the real scanned

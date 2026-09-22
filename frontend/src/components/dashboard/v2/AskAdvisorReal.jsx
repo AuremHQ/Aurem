@@ -28,6 +28,7 @@ import { streamChat, api } from "../../../lib/api";
 import { getActiveProjectId } from "../../TabBar";
 import { Z_ADVISOR_TOGGLE } from "../../../lib/zIndex";
 import { CharCounter, formatTooLongError } from "../../CharCounter";
+import { preventSmartPunctuation } from "../../../utils/chatTextUtils";
 import {
   Lightbulb, ArrowUp, ChevronRight, Square,
   AlertTriangle, GitPullRequest, BarChart2, Sparkles,
@@ -470,6 +471,9 @@ export default function AskAdvisorReal({ collapsed = false, onCollapse, projectI
               maxLength={20000}
               placeholder={thinking ? "ORA is thinking…" : "Ask about runs, repos, or usage..."}
               disabled={thinking}
+              spellCheck={false}
+              autoCorrect="off"
+              onBeforeInput={preventSmartPunctuation}
               data-testid="ds2-advisor-input"
               className="w-full resize-none bg-transparent text-[12px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-60" />
             <div className="flex justify-between items-center pt-1">

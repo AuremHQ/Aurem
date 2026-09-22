@@ -310,6 +310,32 @@ def refusal_scorer(reply: str, name: str = "refusal") -> ScoreResult:
     )
 
 
+def multistep_scorer(
+    reply: str,
+    required_keywords: Iterable[str],
+    name: str = "multistep",
+) -> ScoreResult:
+    """2026-09 P0 Bug 3 regression guard. `required_keywords` is one
+    distinctive token per step in an enumerated multi-step ask. FAILs
+    HARD if any step's keyword is completely absent from the final
+    reply — that's the exact silent-truncation failure mode (task
+    quietly narrows to "do step 1" with steps 2+ never mentioned again,
+    not even as an explicit pending item)."""
+    low = _lower(reply)
+    missing = [kw for kw in required_keywords if kw.lower() not in low]
+    if missing:
+        return ScoreResult(
+            scorer=name, status=FAIL, severity=HARD,
+            evidence=f"step keyword(s) never mentioned in final reply: {missing}",
+            details={"missing": missing, "required": list(required_keywords)},
+        )
+    return ScoreResult(
+        scorer=name, status=PASS, severity=HARD,
+        evidence="every step keyword appears in the final reply "
+                 "(done or explicitly acknowledged as pending)",
+    )
+
+
 def scope_scorer(
     intended_repo: str,
     visible_repo: str | None,
