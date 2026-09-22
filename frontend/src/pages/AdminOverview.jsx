@@ -1206,7 +1206,17 @@ function GhFunnelStrip({ funnel }) {
   const convPct = (i) => {
     const prev = stages[STAGES[i - 1]] || 0;
     const curr = stages[STAGES[i]] || 0;
-    return prev > 0 ? ((curr / prev) * 100).toFixed(1) : "0.0";
+    if (prev <= 0) return "0.0";
+    // 2026-09-22 — real bug found live on /admin/overview: raw stage
+    // counts aren't a strict per-user sequential funnel (e.g. GitHub's
+    // OAuth callback can receive far more hits than our own
+    // oauth_redirect click event — see callback_outcomes.invalid_state/
+    // unknown_state on GET /funnel/github/stats, which showed 26
+    // callbacks vs 16 redirects). Dividing curr/prev unclamped rendered
+    // a founder-facing "→ 162.5%" conversion tile, which is never a
+    // meaningful rate. Cap at 100%, same rationale already applied
+    // server-side for the activation funnel's `pct_num()`.
+    return Math.min((curr / prev) * 100, 100).toFixed(1);
   };
 
   // Empty-state — first 3-5 days of no data. Show a friendly placeholder
@@ -1291,7 +1301,7 @@ function GhFunnelStrip({ funnel }) {
                     final stage (repo picked) sat at 0. Overall conversion
                     is END of funnel over START, nothing else. */}
                 overall conv {totalClicks > 0
-                  ? `${((stages.repo_selected || 0) / totalClicks * 100).toFixed(1)}%`
+                  ? `${Math.min((stages.repo_selected || 0) / totalClicks * 100, 100).toFixed(1)}%`
                   : "—"}
               </span>
             </div>
@@ -1716,25 +1726,36 @@ function BackupHealthCard({ backupStatus, drillHistory }) {
  * editor-controlled diagram, not telemetry.
  */
 function SystemMappingCard() {
+  // 2026-09-22 — audit pass: this card is a hand-maintained snapshot
+  // (not live telemetry), and it had drifted badly from the real
+  // codebase since its Iter 152 baseline — e.g. claimed "24 pages · 5
+  // hooks" and "26 routers" while the repo now has 71 pages, 14
+  // hooks, and 102 router modules, and the "External integrations ·
+  // LLM" row still said "DeepSeek V3 · Claude Sonnet 4.5" with no
+  // mention of LongCat/GLM-5.2/Groq — all of which are live and
+  // visible one card above in the real LLM Provider Status widget.
+  // Counts below re-verified against the actual repo on that date;
+  // re-count (`ls frontend/src/pages/*.jsx | wc -l`, etc.) next time
+  // this drifts noticeably rather than trusting the old numbers.
   const layers = [
     {
       key: "frontend",
       title: "Frontend · React 19 + Vite",
-      tag: "24 pages · 5 hooks · 30+ components",
+      tag: "71 pages · 14 hooks · 144+ components",
       items: [
-        ["Pages", "Landing · Dashboard · Projects · Deploy · Database · Domain · Tokens · Analytics · Wrapped · ShipWall · Admin (×5) · Settings"],
-        ["Hooks", "useChatSession · useChatStream · useChatMessages · useORAPanel · useTextToVoice"],
+        ["Pages", "Landing/marketing (About, Pricing, WhyOra, VsDevin…) · Dashboard · Projects · Deploy · Domain · Tokens · Analytics · Wrapped · ShipWall · Admin (×26) · Settings/account"],
+        ["Hooks", "useChatSession · useChatStream · useChatMessages · useORAPanel · useTextToVoice · useWarmStart · useGitHubConnectStatus · useGuideSpotlight · useModalA11y · useDropdownA11y · useExpiryCountdown · useFriendlyStatusPhrase · useAsyncState"],
         ["Surfaces", "ChatPanel composer-card · ORASidePanel split-screen · MessageBubble · TaskLiveTape · Shell auto-hide sidebar"],
       ],
     },
     {
       key: "backend",
       title: "Backend · FastAPI 0.115 (Motor async)",
-      tag: "26 routers · 47 services",
+      tag: "102 router modules · 280 services",
       items: [
-        ["Routers", "chat · cto_projects · github_deploy · hosted_deploy · payments · auth · admin · vault · usage · automations · domain · stacks · trust · wrapped · shipwall · github_oauth · harden · lint_preview · engagement"],
-        ["LLM core", "orchestrator · llm · tools_bridge · ora_client · ora_learning (new) · ora_council_logger"],
-        ["Modes", "mode_b_council · mode_d_debugger · mode_e_auditor · mode_f_engage · mode_classifier"],
+        ["Routers", "chat · cto_projects · github_deploy · hosted_deploy · payments · auth · admin(+11 admin_* splits) · vault · usage · automations · domain · stacks · wrapped · shipwall · github_oauth · github_app · harden · lint_preview · engagement · notifications_bell"],
+        ["LLM core", "orchestrator · llm_circuit_breaker · tools_bridge · ora_client · ora_learning · ora_council_logger · semantic_mode_router"],
+        ["Modes", "mode_b_council · mode_d_debugger · mode_e_auditor · mode_f_engage · mode_classifier · mode_routing"],
         ["Code path", "project_brain · codebase_indexer · repo_context · parallel_agents · github_api_writer · sandbox_runner"],
         ["Security", "vanguard_audit · vanguard_scanner · vanguard_verify_agent · vault · rate_limiter"],
       ],
@@ -1742,25 +1763,26 @@ function SystemMappingCard() {
     {
       key: "data",
       title: "Persistence · MongoDB",
-      tag: "Motor async · sharded by user_id",
+      tag: "Motor async · 41/41 collections live (see DB health card)",
       items: [
         ["Identity", "dev_users · subscriptions · usage_events"],
         ["Conversation", "chat_sessions · cto_tasks · cto_projects · vanguard_audit"],
-        ["Learning", "ora_council_logs · ora_learning_logs (Iter 145)"],
+        ["Learning", "ora_council_logs · ora_learning_logs · ora_patterns"],
         ["Engagement", "ship_wall · wrapped_stats · feature_flags · vault_secrets"],
       ],
     },
     {
       key: "external",
       title: "External integrations",
-      tag: "5 LLM/services · 1 payments · 1 deploy",
+      tag: "10 breaker-tracked deps · 1 payments · 1 deploy",
       items: [
-        ["LLM", "DeepSeek V3 · Claude Sonnet 4.5 (Maxx review) · Emergent LLM key"],
-        ["Code", "GitHub REST API — trees · blobs · commits · refs (atomic)"],
+        ["LLM · Council A (chat)", "LongCat (primary, anthropic/claude-sonnet-4.5 via OpenRouter) → GLM-5.2 fallback on outage"],
+        ["LLM · other roles", "DeepSeek (Council C) · GLM-5.2 (Council B + Advisor) · Claude Sonnet 4.5 (CEO judge) · Groq Llama-3.3-70B (free-tier rescue) · Emergent LLM key"],
+        ["Code", "GitHub REST API — trees · blobs · commits · refs (atomic) · GitHub App installs"],
         ["Deploy", "Vercel webhooks · Emergent hosted MongoDB provisioner"],
         ["Payments", "Stripe (flat-fee subscriptions, no token meters)"],
         ["Search", "Tavily web search · Firecrawl JS-heavy scrape"],
-        ["Observe", "Sentry crash · F12 browser-error custom capture"],
+        ["Observe", "Sentry crash · F12 browser-error custom capture · G17 circuit breakers (dependency strip above)"],
       ],
     },
   ];
@@ -1841,10 +1863,11 @@ function SystemMappingCard() {
         <strong style={{ color: "var(--accent-2)", letterSpacing: "0.04em" }}>
           One-turn flow:
         </strong>{" "}
-        User prompt → layered persona (5/13/2k) → DeepSeek V3 with 23 local
-        tools → optional Claude Sonnet watchdog (Maxx) → Vanguard 25+ pattern
-        scan → atomic GitHub commit → ORA shadow-learner detects low-confidence
-        replies and logs both sides into <code>ora_learning_logs</code>.
+        User prompt → layered persona (5/13/2k) → Council A (LongCat primary,
+        GLM-5.2 fallback) with local tool catalog → optional Claude Sonnet
+        CEO-judge review (Maxx) → Vanguard pattern scan → atomic GitHub commit
+        → ORA shadow-learner detects low-confidence replies and logs both
+        sides into <code>ora_learning_logs</code>.
       </div>
     </Section>
   );
