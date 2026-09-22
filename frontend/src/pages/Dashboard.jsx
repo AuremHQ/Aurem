@@ -314,6 +314,24 @@ function DashboardV2Body() {
   }, []);
   const showGate = projectCount === 0 && gateSkipped === false;
 
+  // 2026-09-22 — chat_opened funnel-event timing fix. ChatPanel below
+  // mounts unconditionally (the gate is an overlay ON TOP of it, not a
+  // render gate — see `{showGate && <NewUserWizard asGate .../>}`), so
+  // `chat_opened` used to fire the instant a brand-new user landed on
+  // /dashboard, even while the mandatory repo-connect gate was actively
+  // blocking them. That made "stuck at the gate" users indistinguishable
+  // from users who'd actually reached usable chat in the activity log.
+  // `chatOpenReady` mirrors `showGate`'s own two-fact wait (don't decide
+  // before both `projectCount` and `gateSkipped` have resolved), then
+  // only reports "ready" once the gate is truly resolved — either a real
+  // project exists, or the user explicitly clicked Skip. Flips to true
+  // live (no reload needed) the moment either happens, since it derives
+  // from the same state `showGate` already reacts to.
+  const chatOpenReady =
+    projectCount !== null &&
+    (projectCount > 0 || gateSkipped !== null) &&
+    !showGate;
+
   // Iter 145 — celebratory ship milestone toast (carried over from
   // the old Dashboard verbatim — no functional change).
   useEffect(() => {
@@ -716,6 +734,7 @@ function DashboardV2Body() {
                 sessionId={sessionId}
                 onTurnSaved={refreshSessions}
                 activeProject={activeProject}
+                readyToTrackOpen={chatOpenReady}
               />
             </div>
           </div>

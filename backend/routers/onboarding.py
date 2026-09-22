@@ -96,6 +96,62 @@ async def send_connect_nudge(
     return result
 
 
+class _GateStuckNudgeBody(BaseModel):
+    dry_run:  bool = False
+    user_ids: Optional[list[str]] = None
+
+
+@router.post("/admin/onboarding/send-gate-stuck-nudge")
+async def send_gate_stuck_nudge_admin(
+    body: _GateStuckNudgeBody,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Manual trigger for the fast gate-stuck nudge (services/
+    gate_stuck_nudge.py) — same runs automatically on an hourly cron,
+    this lets an admin preview the cohort or force a run immediately
+    instead of waiting for the next tick. Admin/founder only."""
+    me = await current_dev(authorization)
+    if not (me.get("is_admin") or me.get("tier") == "founder"):
+        raise HTTPException(403, "Admin access required")
+
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "database unavailable")
+
+    from services.gate_stuck_nudge import stuck_gate_users, run_gate_stuck_nudge_batch, send_gate_stuck_nudge
+
+    if body.dry_run:
+        cohort = await stuck_gate_users(db)
+        if body.user_ids:
+            keep = set(body.user_ids)
+            cohort = [u for u in cohort if u.get("user_id") in keep]
+        recipients = []
+        for u in cohort:
+            preview = await send_gate_stuck_nudge(u, dry_run=True)
+            recipients.append({
+                "user_id": u.get("user_id"), "email": u.get("email"),
+                "name": u.get("name"), "preview": preview.get("preview"),
+            })
+        return {"ok": True, "dry_run": True, "recipients": recipients, "count": len(recipients)}
+
+    if body.user_ids:
+        cohort = [u for u in await stuck_gate_users(db) if u.get("user_id") in set(body.user_ids)]
+        summary = {"ok": True, "dry_run": False, "sent": 0, "skipped": 0, "failed": 0,
+                   "recipients": [], "errors": []}
+        for u in cohort:
+            res = await send_gate_stuck_nudge(u, dry_run=False)
+            summary["recipients"].append(res)
+            if res.get("skipped"):
+                summary["skipped"] += 1
+            elif res.get("ok"):
+                summary["sent"] += 1
+            else:
+                summary["failed"] += 1
+        return summary
+
+    return await run_gate_stuck_nudge_batch(db, dry_run=False)
+
+
 # ── Public click tracker ─────────────────────────────────────────────
 @router.get("/onboarding/click")
 async def onboarding_click(

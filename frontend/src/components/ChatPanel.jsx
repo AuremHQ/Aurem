@@ -196,7 +196,7 @@ function _markTaskPopupSeen(taskId) {
   } catch { /* private mode / quota — silent */ }
 }
 
-export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
+export default function ChatPanel({ sessionId, onTurnSaved, activeProject, readyToTrackOpen = true }) {
   // Iter 140 — Phase-1 hook wiring. Each hook is REAL and live:
   //   • useChatMessages — exposes a setMessages-equivalent updater
   //     and the WELCOME constant; we use its updater wherever the
@@ -466,9 +466,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // composer actually mounts, closing the "connected repo but no
   // signal at all past repo_selected" blind spot for the activation
   // funnel. Best-effort — a failed call here must never block chat.
+  //
+  // 2026-09-22 — gated on `readyToTrackOpen` (defaults to true for any
+  // caller that doesn't pass it, so behavior is unchanged everywhere
+  // except Dashboard.jsx, which now waits until the mandatory
+  // repo-connect gate is actually resolved — connected OR explicitly
+  // skipped — before this fires. Previously ChatPanel mounted UNDER the
+  // gate overlay and fired this immediately, making a user still stuck
+  // on the gate look identical to one who'd reached real, usable chat.
+  // Guarded with a ref so a flip from false->true only fires once, not
+  // on every re-render while true.
+  const chatOpenedFiredRef = useRef(false);
   useEffect(() => {
+    if (!readyToTrackOpen || chatOpenedFiredRef.current) return;
+    chatOpenedFiredRef.current = true;
     api.post("/chat/opened", { project_id: activeProject?.project_id || null }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readyToTrackOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ora:prefill — fired by BrainDump's "Show diff →" buttons and any
   // other surface that wants to drop the user into chat with a primed

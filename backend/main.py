@@ -1123,6 +1123,27 @@ async def lifespan(app: FastAPI):
             logger.warning("funnel_snapshot_cron not started: %r", e)
     else:
         app.state.funnel_snapshot_task = None
+    # 2026-09-22 — fast "stuck at the repo-connect gate" nudge (hourly,
+    # hours-scale window). Separate from the daily funnel_stage_nudge
+    # above: this targets ONE narrow case (started GitHub connect,
+    # neither finished nor explicitly skipped) surfaced by real
+    # activity-log review. Same opt-out flag as the other onboarding
+    # nudges — set ENABLE_ONBOARDING_NUDGE=0 to disable all of them.
+    if os.environ.get("ENABLE_ONBOARDING_NUDGE", "1").lower() in ("1", "true", "yes"):
+        try:
+            from services.gate_stuck_nudge import gate_stuck_nudge_cron as _gate_stuck_nudge_cron
+            app.state.gate_stuck_nudge_task = _supervise(
+                _gate_stuck_nudge_cron(3600),
+                name="gate_stuck_nudge",
+                db_getter=lambda: app.state.db,
+                long_lived=True,
+            )
+            logger.info("🪧 gate-stuck nudge cron enabled (hourly)")
+        except Exception as e:
+            app.state.gate_stuck_nudge_task = None
+            logger.warning("gate_stuck_nudge_cron not started: %r", e)
+    else:
+        app.state.gate_stuck_nudge_task = None
     # Track 3 (item #31) — hourly cron to auto-downgrade First-50 promo
     # users whose 30-day Pro grant has expired. Idempotent, safe to
     # skip cycles. Same env-flag opt-out as the nudge cron.
