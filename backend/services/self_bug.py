@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 SELF_BUG_TYPES = frozenset({
     "missing_button", "truncated_reply", "dead_end_leak", "jargon_leak",
     "tool_error", "stalled_silence", "blank_ui", "user_reported",
+    # 2026-09-22 — Section 15.7 spec: aggregate task_chains
+    # failure_reason recurrence, fed by services/regression_backlog_cron.py
+    # rather than a single-turn guard. Same review pipeline as every
+    # other type above (ora_self_bugs / self_bug_learned / admin
+    # /self-bugs/list) — no parallel system.
+    "task_chain_recurrence",
 })
 
 # type -> the ONLY cause we ever state for it. Anything not backed by
@@ -57,6 +63,7 @@ _KNOWN_CAUSES = {
     "stalled_silence": "no visible progress was emitted for an extended period during tool work",
     "blank_ui": "a UI panel rendered with no content",
     "user_reported": "the user described ORA's own behavior (not their website) as broken",
+    "task_chain_recurrence": "a specific failure_reason recurred repeatedly in task_chains telemetry — see the Failure Patterns admin page for the exact pattern; this only flags recurrence, it does not claim to know the root cause",
 }
 _HIGH_SEVERITY_TYPES = frozenset({"missing_button", "tool_error", "user_reported"})
 
@@ -266,7 +273,18 @@ _FIX_TEMPLATES = {
     "stalled_silence": "Check whether the tool sequence in `context` is missing a progress/activity_hook call during a long-running step.",
     "blank_ui": "Check the UI panel referenced in `evidence` for a render-gate that's failing closed.",
     "user_reported": "No generic template applies to a free-text user report — read `evidence` directly.",
+    "task_chain_recurrence": "Open the Failure Patterns admin page, filter to this failure_reason, and read its tool-call-sequence samples — this recurrence flag only says WHAT keeps happening, not why.",
 }
+
+# 2026-09-22 — Section 15.7 spec ("Rule of Three"): the aggregate
+# task_chains-recurrence category is fed by a periodic SCAN of real
+# historical counts (services/regression_backlog_cron.py), not an
+# increment-by-1-per-turn emit() call like every other type above —
+# so its threshold is genuinely "the 3rd occurrence", not tuned
+# noise-reduction like the existing types' threshold of 5. Per-type
+# override, defaulting to the existing global constant unchanged for
+# every other (already-tuned) type.
+_RECURRENCE_THRESHOLD_OVERRIDES = {"task_chain_recurrence": 3}
 
 
 def propose_fix(event_type: str, times_seen: int, status: str) -> Optional[str]:
@@ -291,7 +309,8 @@ def propose_fix(event_type: str, times_seen: int, status: str) -> Optional[str]:
     after a human has manually approved a handful of proposals for
     that exact type first — no such opt-in switch or auto-apply
     mechanism is built anywhere in this codebase."""
-    if status != "open" or times_seen < _PROPOSED_FIX_RECURRENCE_THRESHOLD:
+    threshold = _RECURRENCE_THRESHOLD_OVERRIDES.get(event_type, _PROPOSED_FIX_RECURRENCE_THRESHOLD)
+    if status != "open" or times_seen < threshold:
         return None
     return _FIX_TEMPLATES.get(event_type)
 

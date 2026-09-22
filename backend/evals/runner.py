@@ -49,6 +49,7 @@ from evals.harness import (   # noqa: E402
 from evals.prompts_quality import QUALITY_PROMPTS, SYNTHETIC_REPO_CONTEXT  # noqa: E402
 from evals.prompts_security import SECURITY_PROMPTS  # noqa: E402
 from evals.prompts_agent_behavior import MULTISTEP_PROMPTS  # noqa: E402
+from services.input_normalizer import check_golden_set as _check_normalizer_golden_set  # noqa: E402
 
 
 MAX_LLM_CALLS = int(os.getenv("EVALS_MAX_LLM_CALLS", "25"))
@@ -198,8 +199,24 @@ async def _project_scoping_isolation_test() -> dict:
          "repo": "userB/secret-repo",  "github_pat": "ghp_BBB_test"},
     ])
     try:
-        # Case 1: user A asking for their own project — legit.
-        await get_repo_context(user_a, proj_a)
+        # Case 1: user A asking for their own project — legit ownership
+        # match. This synthetic fixture has no real GitHub App
+        # installation (that would need live GitHub creds this eval
+        # harness doesn't have), so the ownership-scoped Mongo lookup
+        # inside get_repo_context() succeeds and correctly proceeds to
+        # mint a token — which then legitimately raises
+        # GithubAppAuthError for THIS non-connected synthetic project.
+        # That's expected here and orthogonal to what this test is
+        # actually verifying (cross-user isolation, cases 2/3 below,
+        # which return "" from the ownership-scoped query BEFORE ever
+        # reaching the token-minting step) — catch it narrowly so a
+        # real security regression doesn't get masked by an unrelated
+        # "no live GitHub install" crash.
+        from services.pat_vault import GithubAppAuthError
+        try:
+            await get_repo_context(user_a, proj_a)
+        except GithubAppAuthError:
+            pass
 
         # Case 2: user A trying to read user B's project — MUST be empty.
         ctx_a_to_b = await get_repo_context(user_a, proj_b)
@@ -241,6 +258,34 @@ async def _project_scoping_isolation_test() -> dict:
         "prompt":     "(offline) verify get_repo_context() rejects cross-user lookups",
         "scorers":    [s.as_dict() for s in scorers],
         "hard_fails": sum(1 for s in scorers if s.is_hard_fail()),
+        "soft_fails": 0,
+    }
+
+
+# ── Backend input normalizer golden set (offline, spec 15.1) ──────────
+
+async def _input_normalizer_golden_set_test() -> dict:
+    """2026-09-22 Section 15.1 spec: 'runs in the eval suite on every
+    deploy.' No LLM cost — pure deterministic round-trip check against
+    services.input_normalizer.GOLDEN_ROUND_TRIP_SET."""
+    report = _check_normalizer_golden_set()
+    if report["failures"]:
+        scorer = ScoreResult(
+            scorer="normalizer_golden_set", status=FAIL, severity=HARD,
+            evidence=f"{len(report['failures'])}/{report['total']} golden-set cases regressed",
+            details={"failures": report["failures"]},
+        )
+    else:
+        scorer = ScoreResult(
+            scorer="normalizer_golden_set", status=PASS, severity=HARD,
+            evidence=f"all {report['total']} golden-set cases round-tripped correctly",
+        )
+    return {
+        "id":         "N1_input_normalizer_golden_set",
+        "category":   "input_normalizer",
+        "prompt":     "(offline) round-trip GOLDEN_ROUND_TRIP_SET through normalize_input()",
+        "scorers":    [scorer.as_dict()],
+        "hard_fails": 1 if scorer.is_hard_fail() else 0,
         "soft_fails": 0,
     }
 
@@ -334,6 +379,7 @@ async def run(quick: bool = False) -> dict:
         "agent_behavior": [],
         "project_scoping": None,
         "routing_regression": None,
+        "input_normalizer": None,
     }
 
     # Bootstrap Mongo for script context — main.py's lifespan never runs
@@ -375,6 +421,9 @@ async def run(quick: bool = False) -> dict:
     for spec in MULTISTEP_PROMPTS:
         report["agent_behavior"].append(await _run_prompt(spec, budget))
     report["routing_regression"] = await _routing_misclassification_test()
+    # 2026-09-22 Section 15.1 — offline, no LLM cost, runs even in
+    # --quick mode (same reasoning as agent_behavior above).
+    report["input_normalizer"] = await _input_normalizer_golden_set_test()
 
     # ── System 2: Security (LLM portion) ───────────────────────────
     if not quick:
@@ -390,6 +439,9 @@ async def run(quick: bool = False) -> dict:
         for entry in report[section]:
             for s in entry.get("scorers", []):
                 all_scores.append(ScoreResult(**s))
+    if report.get("input_normalizer"):
+        for s in report["input_normalizer"].get("scorers", []):
+            all_scores.append(ScoreResult(**s))
     if report.get("project_scoping"):
         for s in report["project_scoping"].get("scorers", []):
             all_scores.append(ScoreResult(**s))

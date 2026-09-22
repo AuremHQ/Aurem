@@ -971,3 +971,8 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `services/legitimate_refusal.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T13:35:28.981469Z] <!-- inv:service:services/legitimate_refusal.py -->
 - `services/health_reporter.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T14:40:35.902512Z] <!-- inv:service:services/health_reporter.py -->
 - `services/casl_consent.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T16:25:55.149789Z] <!-- inv:service:services/casl_consent.py -->
+
+### Iter 0 · 2026-09-22
+
+- `SEMANTIC_MODE_ROUTER_CANARY_PCT` — auto-detected in backend/evals/runner.py (verify) (default: unset) [Iter 0, 2026-09-22T02:12:36.826133Z] <!-- inv:envvar:SEMANTIC_MODE_ROUTER_CANARY_PCT -->
+- `services/semantic_mode_router.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T02:12:36.826169Z] <!-- inv:service:services/semantic_mode_router.py -->

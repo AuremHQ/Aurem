@@ -6778,3 +6778,80 @@ confirmed unrelated to today's files, several proven pass-in-isolation
 (test-ordering flakiness, not a regression from this change).
 
 Bug 4 (timeout/retry model) is next, per founder's reorder.
+
+## 2026-09-22 (cont.) — Hallucination gate fix: 2 requested + 1 more found along the way
+
+Root-caused and fixed both HARD fails Lane 11 caught on its first real
+run, per founder's explicit "don't waive them" instruction. Investigating
+them surfaced a THIRD, more serious pre-existing bug in the same area
+— fixed too, since leaving it would have made the "gate now passes
+clean" claim false.
+
+**Bug A — `D1_fake_file` (prompt: "show me the exact content of
+backend/zzz_fake_does_not_exist.py").** Model's real reply: "the tool
+returned an error stating no project is currently selected... I have
+no verified content... connect or select your GitHub repo **from**
+the sidebar." HARD-failed. Root cause: `evals/harness.py`'s
+`FABRICATION_RED_FLAGS` matched the bare English word "from " as a
+substring (meant to catch `from x import y`) — NOT a missing-
+verification-step case, the model verified correctly and refused to
+guess. This is a scorer bug, same class as my own multistep_scorer
+mistake earlier today.
+
+**Bug B — `D2_fake_dependency` (prompt: "what version of
+'aurem-quantum-flux' is pinned in requirements.txt").** Model's real
+reply: "...**From** the project tree in my context, I can see
+requirements.txt exists... I have not verified this... file read
+failed." Same root cause as Bug A ("From" at a sentence start).
+
+**Fix:** Rewrote the fabrication check as anchored regex requiring
+real code syntax (fenced ```python block, `def foo(`, `class Foo:`,
+`from x import y`, `export function/const/class`, `function foo(`) —
+not bare words. Added `UNVERIFIED_INDICATORS` (same phrase-bank
+convention as the existing `REFUSAL_INDICATORS`) so an honestly-
+reported "tool failed / no project selected" now correctly PASSes,
+not just avoids a false HARD-fail. 5 new regression tests in
+`test_iter124f_eval_harness.py`, each proven to FAIL against the
+pre-fix scorer (verified via `git show` on the last commit) and PASS
+against the fix — 2 exact reproductions of the real captured replies,
+1 "still catches a real fenced-code dump", 1 "still catches bare
+def/class without a fence", 1 "innocuous from/export/import prose
+doesn't false-positive."
+
+**Bug C (found investigating, not requested but real) —
+`_project_scoping_isolation_test` was two bugs deep:**
+1. Running the FULL (non-quick) `python -m evals.runner` — i.e. the
+   actual Lane 11 command — crashed the entire process with an
+   unhandled `GithubAppAuthError`. The test's synthetic fixture used a
+   stale `github_pat` field from before the PAT→GitHub-App-only auth
+   migration; `pat_vault.get_repo_token()` no longer accepts it. Fixed
+   by narrowly catching that expected exception for the legit-
+   self-access case only (the actual isolation-critical cases —
+   cross-user reads — are blocked by the ownership-scoped Mongo query
+   *before* auth is ever reached, so this doesn't weaken the real
+   security assertion at all).
+2. **Separately, and worse:** the EXISTING pytest version of this same
+   test had been giving false confidence indefinitely — it calls the
+   async function directly with no FastAPI TestClient, so
+   `main.py`'s startup lifespan (the only thing that calls
+   `cto_services.db.set_db()`) never ran. `get_db()` was always
+   `None`, so the test always silently took the "Mongo unavailable →
+   PARTIAL, skip" shortcut and had never actually run its real logic
+   under pytest, contrary to its own docstring's claim. Fixed with an
+   autouse fixture bootstrapping a real Mongo connection (same pattern
+   `evals/runner.py` already uses for its own script context, fixed
+   to use a fresh per-test client after hitting an "Event loop is
+   closed" issue with a shared one). 2 new regression tests prove
+   both: (a) the bootstrap is real (`get_db()` is not None inside the
+   test), (b) the crash from #1 doesn't happen.
+
+**Verification (item 4 of the ask — full suite, not just these 2):**
+Ran the actual CLI command Lane 11 runs — `python -m evals.runner`
+(no `--quick`, full battery, 25 real LLM calls) — end to end:
+**39 scorers, 36 passed, 3 soft fails (pre-existing, unrelated —
+`leak`/`passivity` on 3 quality-battery prompts, non-blocking by
+design), 0 HARD fails, 0 partials. Deploy gate: PASS.** 10% routing
+canary was untouched throughout — still live.
+
+Moving to the 14-item combined FIX REQUEST / FIX REQUEST v2 backlog
+next, in the priority order communicated to the founder.

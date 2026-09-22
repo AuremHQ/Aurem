@@ -552,6 +552,22 @@ def _is_same_tool_call(a: dict, b: dict) -> bool:
 # progress, just varying args so the exact-match guard never trips.
 _MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS = 4
 
+# 2026-09-22 — Section 15.4 spec (P0 blueprint): a HARD per-tool call
+# cap, independent of the shared max_iters budget AND independent of
+# the "no progress" streak logic above. `_consecutive_same_tool_no_progress`
+# only counts a CONSECUTIVE FAILURE streak — one incidental success
+# resets it to 0, so a tool that succeeds trivially once every few
+# calls (success != useful) could still loop far past any reasonable
+# count. This is the unconditional backstop: no more than
+# `_MAX_CALLS_PER_TOOL_PER_TURN` calls to the exact same tool NAME in
+# one turn, success or failure, full stop.
+_MAX_CALLS_PER_TOOL_PER_TURN = 3
+
+
+def _tool_call_counts(invocations: list[dict]) -> dict:
+    from collections import Counter
+    return Counter(inv.get("tool") for inv in (invocations or []) if inv.get("tool"))
+
 
 def _consecutive_same_tool_no_progress(invocations: list[dict], tool_name: str) -> int:
     """Walking backward from the end of `invocations`, count how many
@@ -2659,11 +2675,19 @@ async def chat_with_tools(
                 >= _MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS
                 for c in calls
             )
-            if exact_repeat or same_tool_stuck:
+            # 2026-09-22 — hard per-tool cap (Section 15.4), unconditional
+            # on success/failure — see _MAX_CALLS_PER_TOOL_PER_TURN above.
+            _tool_counts = _tool_call_counts(invocations)
+            hard_capped_tool = next(
+                (c.get("tool") for c in calls
+                 if _tool_counts.get(c.get("tool"), 0) >= _MAX_CALLS_PER_TOOL_PER_TURN),
+                None,
+            )
+            if exact_repeat or same_tool_stuck or hard_capped_tool:
                 logger.info(
                     "tool-loop guard tripped at iter %d/%d "
-                    "(exact_repeat=%s same_tool_stuck=%s) — synthesising summary",
-                    iters, max_iters, exact_repeat, same_tool_stuck,
+                    "(exact_repeat=%s same_tool_stuck=%s hard_capped_tool=%s) — synthesising summary",
+                    iters, max_iters, exact_repeat, same_tool_stuck, hard_capped_tool,
                 )
                 clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps)
                 return {
@@ -2678,6 +2702,7 @@ async def chat_with_tools(
                     "council":   council_letter,
                     "task_type": task_type,
                     "tool_loop_break": True,
+                    "hard_tool_cap_tripped": hard_capped_tool,
                     "web_sources": _dedupe_sources(
                         [s for inv in invocations for s in (inv.get("web_sources") or [])]
                     ),

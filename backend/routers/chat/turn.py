@@ -103,7 +103,15 @@ class ChatBody(BaseModel):
 
     @validator("prompt")
     def _strip_prompt(cls, v: str) -> str:
-        return (v or "").strip()
+        # 2026-09-22 — Section 15.1 spec: the REAL backend guarantee,
+        # since the frontend punctuation guard (chatTextUtils.js) can
+        # always be bypassed by a different client (direct API
+        # access, curl, a future mobile app). Runs on every request
+        # that constructs a ChatBody, regardless of which endpoint
+        # (/chat/send, /chat/stream) or client hits it.
+        from services.input_normalizer import normalize_input
+        result = normalize_input((v or "").strip())
+        return result["text"]
 
     @validator("task_type")
     def _validate_task_type(cls, v):

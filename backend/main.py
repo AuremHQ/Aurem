@@ -1265,6 +1265,30 @@ async def lifespan(app: FastAPI):
     else:
         app.state.rollback_drill_task = None
 
+    # 2026-09-22 — Section 15.7 spec (Feedback Loop): Failure Patterns
+    # was aggregate-only with no automatic feedback into a regression
+    # backlog. Daily scan, flags any task_chains failure_reason that's
+    # crossed the "Rule of Three" into the SAME self-repair review
+    # pipeline every other self-bug type already uses.
+    if os.environ.get("ENABLE_REGRESSION_BACKLOG_SCAN", "1").lower() in ("1", "true", "yes"):
+        try:
+            from services.regression_backlog_cron import regression_backlog_cron, SCAN_INTERVAL_SECONDS as _RBL_INT
+            app.state.regression_backlog_task = _supervise(
+                regression_backlog_cron(db_getter=lambda: app.state.db),
+                name="regression_backlog_scan",
+                db_getter=lambda: app.state.db,
+                long_lived=True,
+            )
+            logger.info(
+                "🔁 regression-backlog scan cron enabled (every %ds ≈ %.1f days)",
+                _RBL_INT, _RBL_INT / 86400,
+            )
+        except Exception as e:
+            app.state.regression_backlog_task = None
+            logger.warning("regression backlog scan cron not started: %r", e)
+    else:
+        app.state.regression_backlog_task = None
+
     # 2026-08-24 — CI ingest heartbeat (Pillar 3, Production-Readiness).
     # G1/G15's registry checks only ever looked at the CONTENT of the
     # last synthetic_checks row, never its age — a silently-stopped
