@@ -976,3 +976,9 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 - `SEMANTIC_MODE_ROUTER_CANARY_PCT` — auto-detected in backend/evals/runner.py (verify) (default: unset) [Iter 0, 2026-09-22T02:12:36.826133Z] <!-- inv:envvar:SEMANTIC_MODE_ROUTER_CANARY_PCT -->
 - `services/semantic_mode_router.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T02:12:36.826169Z] <!-- inv:service:services/semantic_mode_router.py -->
+- `ENABLE_REGRESSION_BACKLOG_SCAN` — auto-detected in backend/main.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808030Z] <!-- inv:envvar:ENABLE_REGRESSION_BACKLOG_SCAN -->
+- `services/input_normalizer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T03:09:57.808062Z] <!-- inv:service:services/input_normalizer.py -->
+- `services/regression_backlog_cron.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T03:09:57.808089Z] <!-- inv:service:services/regression_backlog_cron.py -->
+- `REGRESSION_BACKLOG_SCAN_INTERVAL_SECONDS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808109Z] <!-- inv:envvar:REGRESSION_BACKLOG_SCAN_INTERVAL_SECONDS -->
+- `REGRESSION_BACKLOG_STARTUP_DELAY_SECONDS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808123Z] <!-- inv:envvar:REGRESSION_BACKLOG_STARTUP_DELAY_SECONDS -->
+- `REGRESSION_BACKLOG_LOOKBACK_DAYS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808136Z] <!-- inv:envvar:REGRESSION_BACKLOG_LOOKBACK_DAYS -->
