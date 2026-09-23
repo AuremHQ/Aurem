@@ -207,3 +207,43 @@ async def test_missing_retry_of_request_id_is_a_noop(db):
     rec = await cr.lookup_retry(
         db, retry_of_request_id="", session_id="sess-1", user_id="user-1")
     assert rec is None
+
+
+async def test_unknown_status_row_is_never_replayed(db, rid):
+    """The reconciler (chat_ledger_reconciler_loop, wired into
+    main.py's lifespan startup) marks long-stuck `started` rows
+    `unknown` rather than guessing `completed`/`cancelled` — a live
+    repro during this implementation found real rows stuck at
+    `started` for 240s+ (client disconnected while the platform was
+    still waiting on the worker; see the module docstring above
+    `chat_ledger_reconciler_loop`). `lookup_retry()` must treat
+    `unknown` exactly like `cancelled`/`failed` — never replay it."""
+    await cr.record_started(
+        db, request_id=rid, session_id="sess-1", user_id="user-1",
+        project_id=None, prompt="hello", route="chat_stream",
+    )
+    # Simulate the reconciler's own $set (mirrors chat_ledger_
+    # reconciler_loop's exact update shape, without waiting 240s+ in
+    # a test).
+    await db.chat_request_ledger.update_one(
+        {"request_id": rid},
+        {"$set": {"status": "unknown", "stream_state": "unknown",
+                   "reason": "stale_started_reconciled_by_sweeper"}},
+    )
+    rec = await cr.lookup_retry(
+        db, retry_of_request_id=rid, session_id="sess-1", user_id="user-1")
+    assert rec is None
+
+
+async def test_reconciler_marks_only_rows_past_the_staleness_window(db, rid):
+    """find_stale_started() (the reconciler's own query) must NOT
+    pick up a row that is still genuinely fresh/in-flight — only
+    marking rows the reconciler is confident have been abandoned."""
+    await cr.record_started(
+        db, request_id=rid, session_id="sess-1", user_id="user-1",
+        project_id=None, prompt="hello", route="chat_stream",
+    )
+    fresh = await cr.find_stale_started(db, older_than_s=240)
+    assert not any(r["request_id"] == rid for r in fresh), (
+        "a just-created `started` row must never be swept as stale"
+    )

@@ -58,6 +58,7 @@ Design (deliberately small — this is NOT a general job queue):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -210,6 +211,60 @@ async def find_stale_started(db, *, older_than_s: int = STALE_STARTED_S, limit: 
     except Exception as e:  # noqa: BLE001
         logger.debug("chat_reliability.find_stale_started skipped: %r", e)
         return []
+
+
+# 2026-09-22 — reconciler cron (testing_agent-flagged gap: a real client
+# TCP disconnect while a turn is still waiting on the worker does NOT
+# reliably raise CancelledError/GeneratorExit into `gen()` in this
+# environment's uvicorn/ASGI stack — verified via live repro: killed
+# curl mid-request, `record_cancelled()`'s except-clause never ran,
+# row stayed at `started` indefinitely even past the 180s hard
+# deadline). Section 3 of the reliability blueprint: "reconcile
+# interrupted jobs after restart" — this is that reconciliation, run
+# continuously rather than only at restart, since the failure mode
+# here is a live-but-abandoned request, not just a crashed process.
+# Deliberately marks `unknown`, NEVER `cancelled` or `completed` —
+# we truly do not know whether the worker is still running server-
+# side or already died; only that it has been silent for too long to
+# still trust as a normal in-flight request. `lookup_retry()` already
+# refuses to replay anything but a `completed` record, so this is
+# safe regardless of which is actually true.
+RECONCILER_INTERVAL_S = 60
+
+
+async def chat_ledger_reconciler_loop() -> None:
+    """Long-lived background loop (registered via `_supervise(...,
+    long_lived=True)` in main.py, same convention as
+    services/health_notifier.py / services/journey_watch.py)."""
+    from cto_services.db import get_db
+    while True:
+        try:
+            await asyncio.sleep(RECONCILER_INTERVAL_S)
+            db = get_db()
+            stale = await find_stale_started(db, older_than_s=STALE_STARTED_S)
+            for row in stale:
+                try:
+                    await db.chat_request_ledger.update_one(
+                        {"request_id": row["request_id"], "status": "started"},
+                        {"$set": {
+                            "status": "unknown", "stream_state": "unknown",
+                            "reason": "stale_started_reconciled_by_sweeper",
+                            "completed_at": _now_iso(),
+                        }},
+                    )
+                    logger.warning(
+                        "chat_reliability reconciler: request_id=%s stuck at "
+                        "'started' for >%ss — marked 'unknown' (client almost "
+                        "certainly disconnected without the server ever "
+                        "detecting it; see stream.py's CancelledError handler)",
+                        row.get("request_id"), STALE_STARTED_S,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("reconciler row update skipped: %r", e)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.debug("chat_ledger_reconciler_loop tick skipped: %r", e)
 
 
 def _hash(text: str) -> str:

@@ -1,9 +1,16 @@
 # ROADMAP — prioritized backlog (post 2026-08-27 ORA Chat v2 P1-P5 checkpoint)
 
+## 2026-09-23 — reliability blueprint round: INTERACTION_CONTRACT_V1 activated + 3 P1 sub-gaps CLOSED
+- `INTERACTION_CONTRACT_V1` is now **ON** in `backend/.env` (was OFF pending the items below — all 3 are now done, see CHANGELOG.md 2026-09-23 entry for full detail + live E2E proof).
+- ~~4 *distinct* timeout clocks (connect/first-token/stream-idle/hard-deadline)~~ → DONE, `services/timeout_clocks.py`.
+- ~~Provider-retry idempotency-key layer~~ → DONE, `services/chat_reliability.py` (`chat_request_ledger` + `lookup_retry()` + self-healing reconciler cron).
+- ~~Full started/streaming/complete/cancelled/unknown stream-state enum~~ → DONE, additive `stream_state` param on `_persist_turn()`.
+- Still NOT done (deferred, see "Next priorities" in PRD.md): `/chat/send` (non-streaming) parity with the ledger/clocks above; production-live verification (no production access available to this agent); founder's exact named test IDs `t_stream_idle_timeout_fires`/`t_stream_distinguish_done_from_error`/`t_partial_preserved_on_drop` (equivalent coverage exists under different names, not verbatim).
+
 ## 2026-09-22 — interaction audit priority overlay
-- P0: Keep INTERACTION_CONTRACT_V1 OFF pending full regression completion and actual staging/browser/revision verification. No production closure claimed.
+- P0: Keep INTERACTION_CONTRACT_V1 OFF pending full regression completion and actual staging/browser/revision verification. No production closure claimed. **UPDATE 2026-09-23: activated in preview/sandbox with full regression + live E2E proof — see entry above. Still not production-verified.**
 - P0: Separately authorize raw-input/code-literal preservation fix; extend server-owned read-only capabilities across every mutation surface.
-- P1: Typed plan/evidence completion, review/action receipt producers, advisor v2 contract adoption, durable failure events, full long-history/production replay, CLI validation and four-clock/idempotency.
+- P1: Typed plan/evidence completion, review/action receipt producers, advisor v2 contract adoption, durable failure events, full long-history/production replay, CLI validation and four-clock/idempotency. **UPDATE 2026-09-23: four-clock/idempotency closed, see entry above; remainder still open.**
 - P2: Calibrated routing/model comparisons; user-facing verification details. Semantic canary remains 10%.
 - Details/evidence: `INTERACTION_RELIABILITY_AUDIT_2026_09_22.md`, refined reference `CODING_AGENT_BLUEPRINT_V2.md`.
 
@@ -19,11 +26,11 @@ See PRD.md for original requirements/architecture, CHANGELOG.md for what's shipp
 ## P0 — in-flight / founder-blocking (updated 2026-08-27, post-checkpoint decisions)
 - **Chain-of-thought pattern analysis / self-improving loop (2026-09-08) \u2014 SHIPPED + TESTED.** `task_chains` structured logging on every real chat turn + failure-only COT text persistence + "Failure Patterns" admin tab, all testing_agent-verified 100%/0 issues with real live data (46 records). See CHANGELOG.md 2026-09-08 entry. Sandbox-only \u2014 not yet deployed to production. No remaining scope from the founder's spec; this item is closed pending a production deploy.
 - **ROOT FIX \u2014 Turn-Completion Contract (2026-09-08) \u2014 CORE SLICE SHIPPED + TESTED, remainder tracked below.** See CHANGELOG.md 2026-09-08 entry for full detail + evidence. Core contract (turn_state/continue_available/failure_mode/recovery_action never-silent-idle, Continue/Retry UI, useActiveProject retry) is live in sandbox, 19+2 new tests passing, testing_agent-verified 100%/0 issues. **Remaining from founder's original spec, not yet built:**
-  - 4 *distinct* timeout clocks (connect / first-token / stream-idle / hard end-to-end deadline) \u2014 today only the pre-existing ~48s soft-timeout + slow-notice ticker exist, not 4 separately-enforced clocks.
-  - Provider-retry idempotency-key + capped-exponential-backoff layer for transient provider errors \u2014 today "Retry" resends a fresh user turn, not an idempotent retry of the same provider call.
-  - Full `started/streaming/complete/cancelled/unknown` stream-state enum persisted to Mongo \u2014 today only a boolean `interrupted` flag is persisted.
-  - Founder's exact named tests `t_stream_idle_timeout_fires`, `t_stream_distinguish_done_from_error`, `t_partial_preserved_on_drop` (equivalent coverage exists under different names in the new suite, not verbatim).
-  - **Production deploy + founder live re-verification of all 3 original bugs** \u2014 this work is sandbox-only; do not claim production-fixed until the founder deploys and re-checks.
+  - ~~4 *distinct* timeout clocks (connect / first-token / stream-idle / hard end-to-end deadline)~~ — **DONE 2026-09-23**, see CHANGELOG.md entry + `services/timeout_clocks.py`.
+  - ~~Provider-retry idempotency-key + capped-exponential-backoff layer for transient provider errors~~ — **DONE 2026-09-23**, see CHANGELOG.md entry + `services/chat_reliability.py`.
+  - ~~Full `started/streaming/complete/cancelled/unknown` stream-state enum persisted to Mongo~~ — **DONE 2026-09-23** (additive `stream_state` param on `_persist_turn()`).
+  - Founder's exact named tests `t_stream_idle_timeout_fires`, `t_stream_distinguish_done_from_error`, `t_partial_preserved_on_drop` (equivalent coverage exists under different names in the new suite, not verbatim) — still not verbatim, low priority.
+  - **Production deploy + founder live re-verification of all 3 original bugs, AND the 2026-09-23 reliability round** — this work is sandbox/preview-only; do not claim production-fixed until the founder deploys and re-checks.
   - Trigger to resume: founder go-ahead (this is a large, already-partially-delivered item \u2014 do not silently keep expanding it further without a checkpoint).
 - **GUARDRAIL REMEDIATION (2026-08-28, master build plan approved by founder)** — Wave 0 (read-only re-verify) + Wave 1 (#2 path guard) DONE, see CHANGELOG.md for full detail. Current state:
   - `guard_config.path_guard.mode` = **warn** (default, Preview) — no writes are blocked yet, only logged + alerted. Founder reviews 48h of `GW_WARN_PATH` events (via `GET /admin/guardrails`), then flips to `block` via `POST /admin/guardrails/path_guard/mode`.

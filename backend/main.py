@@ -518,6 +518,21 @@ async def lifespan(app: FastAPI):
         long_lived=True,
     )
 
+    # 2026-09-22 · INTERACTION_CONTRACT_V1 P1 — chat_request_ledger
+    # stale-`started`-row reconciler (see services/chat_reliability.py's
+    # module comment above chat_ledger_reconciler_loop for why this
+    # exists: a real client TCP disconnect while a turn is still
+    # waiting on the worker does not reliably raise CancelledError
+    # into the SSE generator in every ASGI/uvicorn environment, which
+    # would otherwise leave a `started` ledger row unresolved forever).
+    from services.chat_reliability import chat_ledger_reconciler_loop
+    app.state.chat_ledger_reconciler_task = _supervise(
+        chat_ledger_reconciler_loop(),
+        name="chat_ledger_reconciler",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
     # 2026-08-19 · G7 guards-audit fix — `run_reconciliation()` existed
     # since it was written but was never actually scheduled anywhere,
     # so the Stripe-vs-local payment guard sat gray forever. Wired in

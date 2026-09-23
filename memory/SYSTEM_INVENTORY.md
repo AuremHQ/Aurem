@@ -982,3 +982,12 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `REGRESSION_BACKLOG_SCAN_INTERVAL_SECONDS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808109Z] <!-- inv:envvar:REGRESSION_BACKLOG_SCAN_INTERVAL_SECONDS -->
 - `REGRESSION_BACKLOG_STARTUP_DELAY_SECONDS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808123Z] <!-- inv:envvar:REGRESSION_BACKLOG_STARTUP_DELAY_SECONDS -->
 - `REGRESSION_BACKLOG_LOOKBACK_DAYS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808136Z] <!-- inv:envvar:REGRESSION_BACKLOG_LOOKBACK_DAYS -->
+
+### Iter 0 · 2026-09-23
+
+- `services/chat_reliability.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T00:24:34.349645Z] <!-- inv:service:services/chat_reliability.py -->
+- `services/timeout_clocks.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T00:24:34.349681Z] <!-- inv:service:services/timeout_clocks.py -->
+- `CHAT_CONNECT_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349705Z] <!-- inv:envvar:CHAT_CONNECT_TIMEOUT_S -->
+- `CHAT_FIRST_TOKEN_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349723Z] <!-- inv:envvar:CHAT_FIRST_TOKEN_TIMEOUT_S -->
+- `CHAT_STREAM_IDLE_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349740Z] <!-- inv:envvar:CHAT_STREAM_IDLE_TIMEOUT_S -->
+- `CHAT_HARD_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349757Z] <!-- inv:envvar:CHAT_HARD_TIMEOUT_S -->
