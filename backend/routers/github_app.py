@@ -808,8 +808,7 @@ _BRIDGE_HTML = """<!doctype html>
   } else if (status === 'pending') {
     msg.innerHTML = 'Installation is pending your org admin\\'s approval.';
   } else {
-    msg.innerHTML = '<span class="err">Install did not complete</span>' +
-      (err ? '<div class="hint">Reason: ' + err + '</div>' : '');
+    msg.textContent = 'Install did not complete' + (err ? ': ' + err : '');
   }
 
   var payload = { type: 'aurem-app-installed', status: status,
@@ -827,13 +826,13 @@ _BRIDGE_HTML = """<!doctype html>
   // page — not as a delay on this popup. So this window can close on
   // the standard short "acknowledged" beat instead of blocking for 12s.
   if (window.opener && !window.opener.closed) {
-    try { window.opener.postMessage(payload, '*'); } catch (e) {}
+    try { window.opener.postMessage(payload, window.location.origin); } catch (e) {}
     setTimeout(function(){ try { window.close(); } catch (e) {} }, 1200);
     return;
   }
 
-  // 2. Non-popup fallback — meta-refresh to /dashboard so the user
-  //    still lands somewhere sensible.
+  // 2. Existing users do not have the onboarding wizard mounted on
+  // /dashboard. Return to Projects, which resumes repository selection.
   var tail = '';
   if (status === 'success' && installId) {
     tail = '?flow=connect-repo&install=success&install_id=' + installId;
@@ -842,7 +841,7 @@ _BRIDGE_HTML = """<!doctype html>
   } else {
     tail = '?flow=connect-repo&err=' + (err || 'unknown');
   }
-  setTimeout(function(){ window.location.replace('/dashboard' + tail); }, 1200);
+  setTimeout(function(){ window.location.replace('/projects' + tail); }, 1200);
 })();
 </script>
 </body></html>"""
@@ -859,8 +858,8 @@ async def install_bridge(
     Detects `window.opener` — if the browser is a popup opened by the
     wizard, it posts an `aurem-app-installed` message back to the
     parent and closes itself. Otherwise it meta-refreshes to
-    `/dashboard?flow=connect-repo&…` so the user still lands on the
-    right screen.
+    `/projects?flow=connect-repo&…` to resume explicit project creation,
+    including accounts that already have projects.
 
     Query params (all optional):
       status      — "success" | "pending" | "err"

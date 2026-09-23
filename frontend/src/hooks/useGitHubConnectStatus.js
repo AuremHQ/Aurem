@@ -1,338 +1,237 @@
-/**
- * useGitHubConnectStatus.js — 2026-08 hardening (GitHub Connect: PERMANENT fix).
- *
- * ONE shared hook, used by BOTH AddProjectWizard.jsx and NewUserWizard.jsx,
- * so the connect flow is a PURE FUNCTION of one authoritative endpoint
- * (`GET /github/app/status`) instead of each wizard guessing from its own
- * copy of a postMessage listener + an "installation count went up" poll.
- *
- * That old count-based poll could never detect "user added a repo to an
- * EXISTING installation" (the common case after the first connect) — this
- * hook reads `state` (pending|connected|error) from the live-verified
- * endpoint instead, so it can't miss that case, and it can't get stuck:
- * a real ~60s timeout flips to a designed "didn't finish, try again" state
- * instead of hanging forever.
- */
+/** GitHub grants access; the project wizard separately persists the selected repo. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, API_BASE, getToken } from "../lib/api";
 import { trackFunnel } from "../lib/githubFunnel";
 
 const POLL_INTERVAL_MS = 2500;
 const MAX_WAIT_MS = 60_000;
-// 2026-09-01 — CONFIRMED FIX (connect-flow investigation, Bug-2/Bug-3
-// shared root): once GitHub confirms the install itself
-// (`installation_active`), keep a slow background refresh going for
-// up to this long so a repo list that's still propagating on GitHub's
-// side (confirmed in real production data to lag well past 60s) fills
-// in on its own instead of leaving the picker looking permanently
-// empty/broken.
-const BACKGROUND_SYNC_INTERVAL_MS = 5_000;
-const BACKGROUND_SYNC_MAX_MS = 2 * 60_000;
-
+const SYNC_INTERVAL_MS = 5000;
+const SYNC_MAX_MS = 120_000;
 const IDLE_STATUS = {
-  installation_active: false,
-  installations: [],
-  repos: [],
-  connected_repo: null,
-  state: "idle",
-  error: null,
+  installation_active: false, installations: [], repos: [],
+  connected_repo: null, state: "idle", error: null,
 };
+const grantSignature = (i) => (i.repositories || [])
+  .map((r) => String(r.full_name || r.id).toLowerCase()).sort().join("\n");
+const snapshot = (data) => new Map((data.installations || [])
+  .map((i) => [String(i.installation_id), grantSignature(i)]));
 
 export default function useGitHubConnectStatus() {
   const [status, setStatus] = useState(IDLE_STATUS);
   const [connecting, setConnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [denied, setDenied] = useState(false);
-  // 2026-09-09 — "full isolation" fix (founder-reported: a brand new
-  // project's connect wizard was showing/auto-picking repos from
-  // OLD, unrelated installations e.g. `polaris.butler.org`/`AuronHQ`
-  // installed for a completely different earlier project). `status`
-  // is authoritative but GLOBAL — every installation this GitHub
-  // account has EVER granted, forever. `freshInstallIds` narrows that
-  // down to ONLY the installation(s) actually touched during THIS
-  // startConnect() session, so a new-project wizard can show nothing
-  // at all until the user has freshly gone through GitHub's own
-  // picker in the current attempt — never silently reusing history.
+  const [pending, setPending] = useState(false);
+  const [connectionError, setConnectionError] = useState(null);
   const [freshInstallIds, setFreshInstallIds] = useState([]);
   const popupRef = useRef(null);
   const pollRef = useRef(null);
-  const bgSyncRef = useRef(null);
-  const startRef = useRef(0);
-  const preConnectIdsRef = useRef(new Map());
-  // Kept in sync with `status` via the effect below so
-  // `startConnect` (a stable useCallback, deliberately NOT
-  // re-created on every status change) can read the CURRENT status
-  // without a stale-closure bug.
-  const statusRef = useRef(status);
-  useEffect(() => { statusRef.current = status; }, [status]);
+  const syncRef = useRef(null);
+  const statusRef = useRef(null);
+  const requestRef = useRef(null);
+  const attemptRef = useRef(0);
+  const baselineRef = useRef(null);
+  const confirmedRef = useRef([]);
+  const mountedRef = useRef(true);
 
+  // One in-flight request per hook. Slow GitHub responses must not overlap,
+  // arrive out of order, or overwrite state after this wizard has unmounted.
   const fetchStatus = useCallback(async () => {
-    try {
-      const r = await api.get("/github/app/status");
-      setStatus(r.data);
-      return r.data;
-    } catch {
-      return null;
+    if (!requestRef.current) {
+      requestRef.current = api.get("/github/app/status").then((r) => {
+        if (mountedRef.current) { statusRef.current = r.data; setStatus(r.data); }
+        return r.data;
+      }).catch(() => null).finally(() => { requestRef.current = null; });
     }
+    return requestRef.current;
   }, []);
-
-  const stopBackgroundSync = useCallback(() => {
-    if (bgSyncRef.current) { clearInterval(bgSyncRef.current); bgSyncRef.current = null; }
-  }, []);
-
-  // 2026-09-01 — Bug-2/Bug-3 fix, part 2: `installation_active` means
-  // GitHub confirmed the grant — the connect flow itself is DONE.
-  // `state !== "connected"` at that point means only the repo LIST is
-  // still propagating on GitHub's side (real-world lag observed well
-  // past 60s), not that anything failed. Keep quietly re-checking so
-  // the picker fills in without the user having to do anything.
-  const startBackgroundRepoSync = useCallback(() => {
-    if (bgSyncRef.current) return;
-    const startedAt = Date.now();
-    bgSyncRef.current = setInterval(async () => {
-      const data = await fetchStatus();
-      if ((data && data.state === "connected") || Date.now() - startedAt > BACKGROUND_SYNC_MAX_MS) {
-        stopBackgroundSync();
-      }
-    }, BACKGROUND_SYNC_INTERVAL_MS);
-  }, [fetchStatus, stopBackgroundSync]);
-
-  // Initial check on mount — so a wizard that opens for a user who is
-  // ALREADY connected (e.g. adding a 2nd project) sees that immediately,
-  // no popup needed.
-  useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
   const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    clearInterval(pollRef.current); pollRef.current = null;
+  }, []);
+  const stopSync = useCallback(() => {
+    clearInterval(syncRef.current); syncRef.current = null;
   }, []);
 
-  useEffect(() => () => { stopPolling(); stopBackgroundSync(); }, [stopPolling, stopBackgroundSync]);
+  // Readiness is per attempted installation, never the global `connected`
+  // flag: an unrelated old project's repos cannot finish this synchronization.
+  const applyConfirmed = useCallback((data, ids) => {
+    const matches = (data?.installations || [])
+      .filter((i) => ids.includes(String(i.installation_id)));
+    if (matches.length) {
+      setFreshInstallIds(matches.map((i) => String(i.installation_id)));
+      setConnecting(false); setDenied(false); setTimedOut(false);
+    }
+    return matches.length === ids.length && ids.length > 0
+      && matches.every((i) => (i.repositories || []).length > 0);
+  }, []);
+
+  const startRepoSync = useCallback((ids) => {
+    stopSync(); setSyncing(true);
+    const started = Date.now();
+    const attempt = attemptRef.current;
+    let busy = false;
+    syncRef.current = setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const data = await fetchStatus();
+        if (!mountedRef.current || attempt !== attemptRef.current) return;
+        if (applyConfirmed(data, ids)) {
+          stopSync(); setSyncing(false); setConnectionError(null);
+        } else if (Date.now() - started >= SYNC_MAX_MS) {
+          stopSync(); setSyncing(false); setConnecting(false);
+          setConnectionError("GitHub access was reported, but this account's repository list is not ready. Retry the refresh or check the selected GitHub account.");
+        }
+      } finally { busy = false; }
+    }, SYNC_INTERVAL_MS);
+  }, [fetchStatus, applyConfirmed, stopSync]);
+
+  const finishGrant = useCallback((data, ids) => {
+    stopPolling(); setConnecting(false); setDenied(false); setTimedOut(false);
+    setPending(false); setConnectionError(null);
+    confirmedRef.current = ids;
+    if (applyConfirmed(data, ids)) { stopSync(); setSyncing(false); }
+    else startRepoSync(ids);
+    trackFunnel("app_install_granted", "wizard");
+    try { popupRef.current?.close?.(); } catch { /* cross-origin window */ }
+  }, [applyConfirmed, startRepoSync, stopPolling, stopSync]);
+
+  const checkGrant = useCallback((data) => {
+    if (!data?.installation_active) return false;
+    if (baselineRef.current === null) {
+      // Connect may be clicked before the initial status request resolves.
+      // Establish a baseline first rather than treating old installs as new.
+      baselineRef.current = snapshot(data);
+      return false;
+    }
+    const ids = (data.installations || []).filter((i) => {
+      const before = baselineRef.current.get(String(i.installation_id));
+      return before === undefined || before !== grantSignature(i);
+    }).map((i) => String(i.installation_id));
+    if (!ids.length) return false;
+    finishGrant(data, ids);
+    return true;
+  }, [finishGrant]);
 
   const startConnect = useCallback(() => {
     const token = getToken();
     if (!token) return { ok: false, reason: "no_session" };
     const url = `${API_BASE}/github/app/install?auth=${encodeURIComponent(token)}`;
-    const w = 720, h = 800;
-    const left = Math.max(0, window.screenX + (window.outerWidth - w) / 2);
-    const top = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
-    popupRef.current = window.open(
-      url, "aurem_github_app_install",
-      `width=${w},height=${h},left=${left},top=${top}`,
-    );
-    // 2026-08-27 · Journey Watch Phase 0 — this is the #2 dark click
-    // from the signup drop-off investigation: this button previously
-    // fired ZERO client-side tracking. Fire connect_repo_click here,
-    // AFTER attempting window.open, so `popup_blocked` is captured as
-    // real evidence instead of looking identical to "never clicked".
-    trackFunnel("connect_repo_click", "wizard", {
-      popup_blocked: !popupRef.current,
-    });
-    if (!popupRef.current) return { ok: false, reason: "popup_blocked" };
-
-    // 2026-08-27 · Journey Watch Phase 0 — popup actually opened, so
-    // GitHub's own auth/install screen is showing. Distinct from
-    // connect_repo_click (fired above even on popup_blocked) so
-    // Journey Watch can tell "clicked" apart from "reached GitHub".
+    const popup = window.open(url, "aurem_github_app_install", "width=720,height=800");
+    trackFunnel("connect_repo_click", "wizard", { popup_blocked: !popup });
+    if (!popup) return { ok: false, reason: "popup_blocked" };
+    popupRef.current = popup;
+    stopPolling(); stopSync();
+    const attempt = ++attemptRef.current;
+    const started = Date.now();
+    baselineRef.current = statusRef.current ? snapshot(statusRef.current) : null;
+    confirmedRef.current = [];
+    setFreshInstallIds([]); setConnecting(true); setSyncing(false);
+    setTimedOut(false); setDenied(false); setPending(false); setConnectionError(null);
     trackFunnel("github_auth_started", "wizard");
-
-    setTimedOut(false);
-    setDenied(false);
-    setConnecting(true);
-    startRef.current = Date.now();
-    // 2026-09-09 — snapshot BEFORE this attempt so the poll-success
-    // branch below can tell "brand new installation" apart from
-    // "pre-existing installation from a past session" by set-diff.
-    // Snapshots repo COUNT per id too (not just the id set) — see the
-    // 2026-09-09-b fix below for why.
-    preConnectIdsRef.current = new Map(
-      (statusRef.current.installations || []).map(
-        (i) => [String(i.installation_id), (i.repositories || []).length],
-      ),
-    );
-    stopPolling();
-    stopBackgroundSync();
-    // 2026-09-12 — founder-reported (3 users, plausible independent
-    // friction point flagged alongside the gate bug: hitting
-    // app_install_denied once or twice before eventually succeeding
-    // on a later attempt). Root cause found: on a REAL successful
-    // grant, GitHub's own flow can auto-close this popup the instant
-    // the user finishes — but our backend's webhook can take a beat
-    // longer than one `POLL_INTERVAL_MS` (2.5s) tick to actually
-    // persist `installation_active`. A closed popup caught in that
-    // exact window falsely reads as "user backed out". Factored the
-    // success check out so the popup-closed branch below can spend a
-    // short grace period re-checking with it before ever declaring a
-    // real denial, instead of duplicating this logic twice.
-    const checkGrantSuccess = (data) => {
-      if (!data || !data.installation_active) return false;
-      const currentIds = (data.installations || []).map((i) => String(i.installation_id));
-      const newOrChangedIds = currentIds.filter((id) => {
-        const before = preConnectIdsRef.current.get(id);
-        if (before === undefined) return true; // brand new installation
-        const inst = (data.installations || []).find((i) => String(i.installation_id) === id);
-        return (inst?.repositories || []).length !== before; // repo grant changed
-      });
-      if (newOrChangedIds.length === 0 && preConnectIdsRef.current.size > 0) {
-        return false; // nothing this session has done yet — keep waiting
-      }
-      setConnecting(false);
-      try { popupRef.current?.close?.(); } catch { /* cross-origin */ }
-      trackFunnel("app_install_granted", "wizard");
-      setFreshInstallIds((prev) => {
-        const merged = new Set(prev);
-        for (const id of newOrChangedIds) merged.add(id);
-        return Array.from(merged);
-      });
-      if (data.state !== "connected") startBackgroundRepoSync();
-      return true;
-    };
+    let busy = false;
+    const current = () => mountedRef.current && attempt === attemptRef.current;
     pollRef.current = setInterval(async () => {
-      const data = await fetchStatus();
-      // 2026-09-01 — CONFIRMED FIX (connect-flow investigation,
-      // Bug-2 Mike Froedge / Bug-3 Michael Pelletier — one shared
-      // root, confirmed from real production state pulls): exit on
-      // `installation_active`, NOT `state === "connected"`.
-      // `installation_active` is GitHub confirming the grant itself;
-      // `state === "connected"` ADDITIONALLY requires the repo-list
-      // API to have returned a non-empty list, which real production
-      // data showed can lag for well over an hour after a genuinely
-      // successful install. The old code only checked `state`, so a
-      // real success + a closed popup (the bridge auto-closes in
-      // 400ms) during that lag fired a FALSE app_install_denied and
-      // stranded the user on an empty repo picker with nothing to
-      // click — indistinguishable from "nothing happened".
-      //
-      // 2026-09-09-c — CRITICAL fix (3rd founder recording, real
-      // production repro): `installation_active` is true the
-      // MOMENT any installation exists for this account, globally
-      // — including ones from a completely unrelated past session.
-      // The code below used to stop polling + force-close the
-      // popup + declare success the INSTANT this went true, even
-      // if the user was still mid-flow (e.g. still inside GitHub's
-      // own "Sign in with Google" sub-flow, picking a Google
-      // account, clearing a Windows Hello PIN prompt) authorizing
-      // something entirely different. For ANY returning user with
-      // an existing installation (this test account has 12+), that
-      // condition is true on literally the FIRST poll tick — often
-      // while they're still on GitHub/Google's own pages — silently
-      // killing their in-progress popup out from under them and
-      // declaring "connected" against stale data (matches the
-      // recording exactly: popup dies at "about:blank" right after
-      // Google account selection, main UI is left showing a stale
-      // "Connected to: RepoReady" from an unrelated old install).
-      // Fix: compute the SAME new-or-changed diff used for
-      // freshInstallIds FIRST, and only treat this as success once
-      // something genuinely new/changed is found. A brand-new user
-      // (nothing pre-existing at all) still succeeds immediately —
-      // there's nothing stale to wait out.
-      if (checkGrantSuccess(data)) {
-        stopPolling();
-        return;
-      }
-      // GitHub Apps have no real "deny" callback (unlike OAuth Apps) —
-      // the popup just closing without ever reaching an active
-      // installation is the only observable signal that the user
-      // backed out (a real success is caught above BEFORE this runs).
-      if (popupRef.current?.closed) {
-        stopPolling();
-        // 2026-09-12 — grace window (see checkGrantSuccess comment
-        // above): re-check twice, 1s apart, before declaring denial.
-        for (let i = 0; i < 2; i++) {
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          // eslint-disable-next-line no-await-in-loop
-          const graceData = await fetchStatus();
-          if (checkGrantSuccess(graceData)) return;
+      if (busy || !current()) return;
+      busy = true;
+      try {
+        const data = await fetchStatus();
+        if (!current() || checkGrant(data)) return;
+        if (popup.closed) {
+          stopPolling();
+          // A callback can complete during this grace window. Its generation
+          // invalidates this continuation, so success cannot become denial.
+          for (let i = 0; i < 2; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!current()) return;
+            const next = await fetchStatus();
+            if (!current() || checkGrant(next)) return;
+          }
+          setConnecting(false); setDenied(true);
+          trackFunnel("app_install_denied", "wizard", { reason: "popup_closed" });
+        } else if (Date.now() - started >= MAX_WAIT_MS) {
+          stopPolling(); setConnecting(false); setTimedOut(true);
+          trackFunnel("app_install_denied", "wizard", { reason: "client_timeout" });
         }
-        setConnecting(false);
-        setDenied(true);
-        trackFunnel("app_install_denied", "wizard", { reason: "popup_closed" });
-        return;
-      }
-      if (Date.now() - startRef.current > MAX_WAIT_MS) {
-        stopPolling();
-        setConnecting(false);
-        setTimedOut(true);
-        trackFunnel("app_install_denied", "wizard", { reason: "client_timeout" });
-      }
+      } finally { busy = false; }
     }, POLL_INTERVAL_MS);
     return { ok: true };
-  }, [fetchStatus, stopPolling, stopBackgroundSync, startBackgroundRepoSync]);
+  }, [fetchStatus, checkGrant, stopPolling, stopSync]);
 
-  const retry = useCallback(() => startConnect(), [startConnect]);
-
-  // 2026-09-05 — founder-reported (with console/network evidence):
-  // on some real-world browser/extension combinations, `window.open()`
-  // returns a non-null window handle (so we never even hit the
-  // `popup_blocked` check) yet no visible tab ever appears — some ad-
-  // blockers/privacy extensions neutralize the call silently instead
-  // of rejecting it outright. A programmatic `window.open()` call can
-  // ALWAYS be intercepted like this; a real user click on a real
-  // `<a href target="_blank">` link CANNOT be blocked by any browser
-  // or extension (that's the literal distinction browsers use to tell
-  // "the user meant to navigate" from "a script is spawning a popup").
-  // Expose the exact same install URL so callers can render one as a
-  // guaranteed-working fallback, always visible while `connecting`.
-  const installUrl = getToken()
-    ? `${API_BASE}/github/app/install?auth=${encodeURIComponent(getToken())}`
-    : null;
-
-  // 2026-09-04 — claim fallback, part of the GitHub-drops-`state`-on-
-  // reconnect fix. `/callback` now self-heals by reusing an already-
-  // linked installation, but a row that has NEVER been linked (webhook
-  // landed first, before any authenticated browser callback) has
-  // nothing to reuse. This tab IS authenticated and DOES know the
-  // installation_id GitHub just handed back — claim it directly
-  // instead of depending on the state round-trip at all. Best-effort:
-  // swallow failures (already-linked / too-old / not-found yet are
-  // all fine — the poll below is still authoritative either way).
-  const claimInstallation = useCallback(async (installId) => {
-    if (!installId) return;
-    // 2026-09-09 — precise source: postMessage/redirect hand us the
-    // EXACT installation_id GitHub just granted, no diffing needed.
-    setFreshInstallIds((prev) => (prev.includes(String(installId)) ? prev : [...prev, String(installId)]));
-    try { await api.post("/github/app/claim", { installation_id: Number(installId) }); }
-    catch { /* best-effort — polling below remains authoritative */ }
-  }, []);
-
-  // Fast-path — if the bridge page's postMessage arrives, poll right
-  // away instead of waiting for the next interval tick. Not required
-  // for correctness (the interval poll is authoritative either way).
-  useEffect(() => {
-    async function onMessage(e) {
-      const d = e.data;
-      if (!d || d.type !== "aurem-app-installed") return;
-      if (d.status === "success" && d.install_id) {
-        await claimInstallation(d.install_id);
-      }
-      fetchStatus();
+  const completeCallback = useCallback(async (data) => {
+    const attempt = ++attemptRef.current;
+    stopPolling(); stopSync(); setSyncing(false); setConnecting(false);
+    setDenied(false); setTimedOut(false);
+    if (data.status !== "success") {
+      setPending(data.status === "pending");
+      setConnectionError(data.status === "pending"
+        ? "Waiting for your GitHub organization admin to approve access."
+        : "GitHub connection could not be confirmed. Please try again.");
+      return;
     }
+    const id = Number(data.install_id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      setConnectionError("GitHub returned an invalid installation. Please try again.");
+      return;
+    }
+    // Callback IDs are hints, not authorization. Only the authenticated
+    // status result can expose repos, and /projects/add verifies them again.
+    try { await api.post("/github/app/claim", { installation_id: id }); }
+    catch (error) {
+      if ([401, 403, 409].includes(error?.response?.status)) {
+        setConnectionError(error.response.status === 403
+          ? "This installation is linked to a different Aurem account. Use the matching account or contact your admin."
+          : "This installation could not be linked. Sign in with the matching Aurem account and retry.");
+        return;
+      }
+      // Delayed webhook / transient request: user-scoped status remains truth.
+    }
+    const latest = await fetchStatus();
+    if (!mountedRef.current || attempt !== attemptRef.current) return;
+    finishGrant(latest, [String(id)]);
+  }, [fetchStatus, finishGrant, stopPolling, stopSync]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchStatus();
+    return () => {
+      mountedRef.current = false; attemptRef.current += 1;
+      stopPolling(); stopSync();
+    };
+  }, [fetchStatus, stopPolling, stopSync]);
+
+  useEffect(() => {
+    const onMessage = (event) => {
+      const origin = new URL(API_BASE, window.location.origin).origin;
+      if (event.origin !== origin || !popupRef.current || event.source !== popupRef.current) return;
+      if (event.data?.type === "aurem-app-installed") completeCallback(event.data);
+    };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [fetchStatus, claimInstallation]);
+  }, [completeCallback]);
 
-  // 2026-09-04 — non-popup fallback landing: when the guaranteed-
-  // working `<a target="_blank" rel="noopener">` link is used instead
-  // of `window.open()`, the bridge page has no `opener` to postMessage
-  // (that's the whole point of `noopener`) — it meta-refreshes the new
-  // tab to `/dashboard?flow=connect-repo&install=success&install_id=`
-  // instead. Catch that landing here too, claim, then strip the params
-  // so a refresh doesn't re-fire it.
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("flow") !== "connect-repo") return;
-    const installId = qs.get("install_id");
-    const isSuccess = qs.get("install") === "success";
-    (async () => {
-      if (isSuccess && installId) await claimInstallation(installId);
-      await fetchStatus();
-    })();
-    qs.delete("flow"); qs.delete("install"); qs.delete("install_id"); qs.delete("app_pending"); qs.delete("err");
-    const rest = qs.toString();
-    window.history.replaceState({}, "", window.location.pathname + (rest ? `?${rest}` : ""));
-    // Intentionally mount-only — this reads the URL exactly once on
-    // load; claimInstallation/fetchStatus are stable useCallback refs.
-  }, []);
+    completeCallback({
+      status: qs.get("install") === "success" ? "success" : qs.has("app_pending") ? "pending" : "err",
+      install_id: qs.get("install_id"), err: qs.get("err"),
+    });
+    ["flow", "install", "install_id", "app_pending", "err"].forEach((key) => qs.delete(key));
+    window.history.replaceState({}, "", window.location.pathname + (qs.size ? `?${qs}` : ""));
+  }, [completeCallback]);
 
-  return { status, connecting, timedOut, denied, startConnect, retry, refresh: fetchStatus, installUrl, freshInstallIds };
+  const refresh = useCallback(async () => {
+    const latest = await fetchStatus();
+    if (confirmedRef.current.length) finishGrant(latest, confirmedRef.current);
+    return latest;
+  }, [fetchStatus, finishGrant]);
+  const token = getToken();
+  const installUrl = token ? `${API_BASE}/github/app/install?auth=${encodeURIComponent(token)}` : null;
+  return {
+    status, connecting, syncing, timedOut, denied, pending, connectionError,
+    startConnect, retry: startConnect, refresh, installUrl, freshInstallIds,
+  };
 }

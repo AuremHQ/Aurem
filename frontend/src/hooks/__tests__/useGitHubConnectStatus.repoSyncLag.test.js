@@ -110,10 +110,11 @@ describe("Bug-2/Bug-3 shared root — installation_active vs state===connected",
     let call = 0;
     api.get.mockImplementation(async () => {
       call += 1;
-      if (call <= 2) {
-        return { data: { installation_active: true, state: "pending", installations: [] } };
-      }
-      return { data: { installation_active: true, state: "connected", installations: [] } };
+      if (call === 1) return { data: { installation_active: false, state: "pending", installations: [] } };
+      return { data: {
+        installation_active: true, state: call === 2 ? "pending" : "connected",
+        installations: [{ installation_id: 1, repositories: call === 2 ? [] : [{ full_name: "org/repo" }] }],
+      } };
     });
 
     const { result } = renderHook(() => useGitHubConnectStatus());

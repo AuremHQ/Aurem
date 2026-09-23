@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-23. The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`. Historical claims there are not fresh production verification.
 
+## Latest task — GitHub connect to Projects handoff (2026-09-23)
+
+User reported: successful GitHub repository authorization from `/projects` > Add Project never appears in the left project list, including after reload. Approved targeted diagnosis/fix with existing permissions preserved; no production/GitHub settings changes.
+
+- **Reproduced before fixing:** callback confirmation did not finish popup polling; equal-count repository replacement was invisible; background sync stopped on an unrelated installation's global connected state; no-opener bridge returned to Dashboard where existing users lack an onboarding wizard. Refreshed AddProject wizard also had no explicit recovery for previously authorized repositories. GitHub authorization is an access grant, NOT automatic project creation; no import-all behavior added.
+- **Implemented:** per-installation repo signatures and bounded synchronization; origin/source-validated popup completion with stale-attempt guards; `/github/app/installed` returns to `/projects?flow=connect-repo…`; Projects mounts the wizard for this return and awaits the saved project's list refresh/selection. Explicit already-authorized repo recovery, actual default branch, inline creation/refresh errors, existing-project (409) recovery, and duplicate-save guard. Mobile wizard uses a body portal, shared modal layer and focus trap above the floating guide.
+- **Architecture unchanged:** React/Vite + FastAPI + MongoDB; existing installation ownership and repository checks retained. Existing `/cto/projects/add` and `/cto/projects/list` persist/list records; no new database/auth/provider introduced. No live credentials/settings were changed and no runtime APIs mocked.
+- **Verification:** 38 frontend + 57 backend targeted tests pass (95 total); backend includes REAL temporary Mongo callback → explicit create → list persistence, duplicate prevention and foreign-owner rejection. Temporary DBs cleaned. GitHub provider/scans and integration-test identity resolver are **MOCKED**. Independent report `test_reports/iteration_391.json`; follow-up `test_reports/iteration_391_followup.json`. Actual preview login and modal handoff/browser checks pass at 320/390/768/1024/1440px. Vite production build and focused frontend lint pass; new Python test files lint clean. Existing GitHub router has 27 unchanged Ruff findings, verified against HEAD (zero introduced).
+- **Limit:** no user-controlled REAL GitHub consent/install/save E2E or production validation. No claim this patch has reached or repaired production. Earlier production health/export issues remain unresolved by this task.
+- **RCA/reference:** `GITHUB_PROJECT_CONNECT_RCA_2026_09_23.md`. Core files: `frontend/src/hooks/useGitHubConnectStatus.js`, `frontend/src/components/AddProjectWizard.jsx`, `frontend/src/pages/Projects.jsx`, `frontend/src/lib/zIndex.js`, `backend/routers/github_app.py`.
+
 ## Product and original goals
 
 A coding-agent SaaS for explaining, inspecting and changing connected repositories through conversational requests, with scoped permissions, visible diffs/approval, reliable completion states, evidence-grounded responses, telemetry and operational Cockpit diagnostics. Primary audience: founders and developers using existing GitHub projects.
@@ -74,6 +85,8 @@ Tested: 14 new unit tests (`test_trust_verification_2026_09.py`) + 6 new live-en
 
 ## Next priorities
 
+- **P0 — current bug verification:** complete one live GitHub authorization → selected repo → explicit Add project → selected list entry → reload flow with the correct Aurem/GitHub account. Provider consent is not proven by mocked fixtures. Previously granted repos can be recovered via Add Project → Choose an already-authorized repository.
+- **P2 — connect flow:** split oversized project/connect UI modules in a separate change; consider a concise access-granted / repository-selected / project-saved status indicator.
 - **P0:** Rotate/renew `GITHUB_ACTIONS_TOKEN` and fix Resend sender/domain config — both founder/ops actions, not code fixes.
 - **P0:** Live-verify the Trust & Verification round's Enh.1/2/3 lifecycle against a REAL GitHub-App-installed project (preview account only has demo fixtures) — run a real chat-driven edit task and confirm verification_status/level persist + render correctly end-to-end.
 - **P1:** Wire `retry_of_request_id`/ledger into `/chat/send` for parity if that path becomes production-relevant again; production-live verification of the reliability round above once founder has production access available to this agent.

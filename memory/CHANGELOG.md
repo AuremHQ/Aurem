@@ -1,5 +1,12 @@
 # AUREM CTO — Changelog (append-only)
 
+## 2026-09-23 — GitHub connect → Projects handoff regression fix
+- Reproduced and repaired popup completion/denial race, equal-count repo replacement detection, per-installation repo synchronization and no-opener bridge routing to Projects. Existing-user callback returns now mount AddProjectWizard.
+- Added explicit authorized-repo recovery after reload, awaited list refresh/selection, default-branch preservation, inline create errors, duplicate-project recovery and duplicate-submit guard. Mobile modal now uses a body portal above floating guide.
+- Verification: 38 frontend + 57 backend targeted tests pass; 2 backend tests exercise real temporary Mongo callback/create/list persistence and ownership. Build/focused frontend lint/new Python test lint pass. Existing router Ruff baseline remains 27 unchanged findings. Independent report iteration_391 plus follow-up; real preview login/modal responsiveness confirmed.
+- **MOCKED in tests:** GitHub provider responses, costly scans, ASGI test identity resolver and deterministic browser API fixtures. No runtime API mocks. Real user GitHub consent and production behavior NOT verified; no settings/credentials changed.
+- See `GITHUB_PROJECT_CONNECT_RCA_2026_09_23.md` and current PRD for detailed RCA and remaining live-check gate.
+
 ## 2026-09-22 — interaction reliability contract and blueprint audit
 - Added opt-in response/state boundaries, UI evidence gating, tool-failure recurrence coverage and blocking contract release workflow dependencies. OFF by default; no production activation or verification.
 - Final sandbox contract suite 38 backend + 8 frontend passed; real gate failure injection blocks next lane. Full frontend remains 11 failed/795 passed; full backend bounded/incomplete. Source baseline reproduces the 11 frontend failures; existing Python warnings unchanged.

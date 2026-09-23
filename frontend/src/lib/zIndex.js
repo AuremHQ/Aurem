@@ -29,7 +29,8 @@ export const Z_ADVISOR_TOGGLE = 10002;
 // backdrop — invisible to the user despite existing. Toasts are
 // transient system feedback and must always be the topmost layer,
 // above any modal that might still be open when they fire.
-export const Z_TOAST = 10003;
+export const Z_ACTIVE_MODAL = 10003; // explicit task dialogs cover floating guides
+export const Z_TOAST = 10004;
 // 2026-09-21 — the PWA install prompt (PWAInstallPrompt.jsx) is now
 // mounted globally (also for logged-out first-time visitors, not
 // just post-login), sharing the bottom-right corner with the cookie

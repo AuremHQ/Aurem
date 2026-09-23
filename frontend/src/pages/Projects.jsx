@@ -44,7 +44,9 @@ export default function Projects() {
 
 function Body() {
   const [projects, setProjects] = useState([]);
-  const [showAdd, setShowAdd] = useState(false);
+  const [showAdd, setShowAdd] = useState(() =>
+    new URLSearchParams(window.location.search).get("flow") === "connect-repo"
+  );
   const [active, setActive] = useState(null);
   // Iter 206 — per-project quick actions
   const [editingProject, setEditingProject] = useState(null);
@@ -57,17 +59,20 @@ function Body() {
     setShowAdd(true);
   }
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (selectedId) => {
     try {
       const r = await api.get("/cto/projects/list");
       const list = r.data?.projects || [];
       setProjects(list);
       // Keep `active` in sync with the latest server copy of the selected project
       setActive((cur) =>
-        cur ? list.find((p) => p.project_id === cur.project_id) || null : cur
+        selectedId ? list.find((p) => p.project_id === selectedId) || null
+          : cur ? list.find((p) => p.project_id === cur.project_id) || null : cur
       );
+      return list;
     } catch (e) {
       toast({ message: "Couldn't load projects", kind: "error" });
+      return null;
     }
   }, []);
 
@@ -328,8 +333,15 @@ function Body() {
 
       {showAdd && (
         <AddProjectWizard
+          stayOnProjects
           onClose={() => setShowAdd(false)}
-          onAdded={() => { setShowAdd(false); refresh(); }}
+          onAdded={async (projectId) => {
+            const list = await refresh(projectId);
+            if (!list?.some((p) => p.project_id === projectId)) {
+              throw new Error("Project saved, but the list could not refresh. Try opening it again.");
+            }
+            setShowAdd(false);
+          }}
         />
       )}
       {editingProject && (

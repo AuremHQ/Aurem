@@ -37,19 +37,26 @@ beforeEach(() => {
   api.post.mockResolvedValue({ data: { ok: true } });
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
 });
 
 describe("2026-09-04 — claim fallback for GitHub's dropped `state`", () => {
   it("t_postMessage_success_claims_installation_before_refreshing_status", async () => {
+    const popup = { closed: false, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
     const { result } = renderHook(() => useGitHubConnectStatus());
     await act(async () => { await Promise.resolve(); }); // initial mount fetch
+    act(() => { result.current.startConnect(); });
 
     api.get.mockClear();
     await act(async () => {
-      window.dispatchEvent(new MessageEvent("message", {
+      const event = new MessageEvent("message", {
+        origin: "https://api.test",
         data: { type: "aurem-app-installed", status: "success", install_id: 9001 },
-      }));
+      });
+      Object.defineProperty(event, "source", { value: popup });
+      window.dispatchEvent(event);
       await Promise.resolve();
       await Promise.resolve();
     });

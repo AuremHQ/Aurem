@@ -737,7 +737,7 @@ class TestInstalledBridge:
         # install_id echoed into the client script
         assert "install_id" in body
         # Non-popup fallback path present
-        assert "/dashboard" in body
+        assert "window.location.replace('/projects' + tail)" in body
 
     def test_err_bridge_still_returns_200(self, configured, client):
         # Errors from callback (invalid_state, github_probe_failed) all

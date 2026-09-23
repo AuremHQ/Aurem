@@ -15,9 +15,10 @@
  * After successful save:
  *   - localStorage active project is set to the new project_id
  *   - parent's onAdded(projectId) is called (refreshes list / closes modal)
- *   - user is navigated to /dashboard so they can start chatting immediately
+ *   - Projects caller stays on its refreshed list; other callers open chat
  */
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Github,
   Loader2,
@@ -33,6 +34,8 @@ import { toast } from "./Toast";
 import { setActiveProjectId } from "./TabBar";
 import { metaLead, openaiGithubRepoConnected } from "../lib/analytics";
 import useGitHubConnectStatus from "../hooks/useGitHubConnectStatus";
+import useModalA11y from "../hooks/useModalA11y";
+import { Z_ACTIVE_MODAL } from "../lib/zIndex";
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -56,7 +59,7 @@ export function parseRepoInput(raw) {
 
 // ── Component ─────────────────────────────────────────────────────────
 
-export default function AddProjectWizard({ onClose, onAdded }) {
+export default function AddProjectWizard({ onClose, onAdded, stayOnProjects = false }) {
   const navigate = useNavigate();
   // 2026-09-04 — founder-reported: this wizard made users TYPE the exact
   // owner/repo BEFORE they could even connect — backwards from GitHub's
@@ -78,12 +81,24 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   // Step-2 state
   const [projectName, setProjectName] = useState("");
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const modalRef = useRef(null);
+  const closeWizard = useCallback(() => {
+    if (!savingRef.current) onClose();
+  }, [onClose]);
+  useModalA11y({ ref: modalRef, isOpen: true, onClose: closeWizard });
+  const [saveError, setSaveError] = useState(null);
+  const [savedProjectId, setSavedProjectId] = useState(null);
+  const [useExistingAccess, setUseExistingAccess] = useState(false);
 
   // ─── 2026-08 hardening (GitHub Connect: PERMANENT fix) ───────────
   // ONE shared hook (also used by NewUserWizard.jsx) — the wizard is a
   // pure function of the authoritative /github/app/status endpoint,
   // not a local postMessage/count-poll guess.
-  const { status, connecting, timedOut, denied, startConnect, installUrl, freshInstallIds } = useGitHubConnectStatus();
+  const {
+    status, connecting, syncing, timedOut, denied, pending, connectionError,
+    startConnect, refresh, installUrl, freshInstallIds,
+  } = useGitHubConnectStatus();
   // 2026-09-09 — "full isolation" fix (founder-reported): this used
   // to flatMap `status.installations` — EVERY installation this
   // GitHub account has ever granted, across every past project. A
@@ -93,9 +108,9 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   // from an unrelated earlier project.
   const freshInstallations = React.useMemo(
     () => (status.installations || []).filter(
-      (inst) => freshInstallIds.includes(String(inst.installation_id)),
+      (inst) => useExistingAccess || freshInstallIds.includes(String(inst.installation_id)),
     ),
-    [status.installations, freshInstallIds],
+    [status.installations, freshInstallIds, useExistingAccess],
   );
   // 2026-08-27 — founder-confirmed workaround: some accounts get stuck
   // with an orphaned/already-installed App that never links (retrying
@@ -105,11 +120,15 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   const [connectAttempts, setConnectAttempts] = useState(0);
 
   const allGrantedRepos = React.useMemo(() => {
-    const out = [];
+    const out = new Map();
     for (const inst of freshInstallations) {
-      for (const r of (inst.repositories || [])) out.push({ ...r, installation_id: inst.installation_id, github_login: inst.github_login });
+      for (const r of (inst.repositories || [])) {
+        if (r.full_name) out.set(r.full_name.toLowerCase(), {
+          ...r, installation_id: inst.installation_id, github_login: inst.github_login,
+        });
+      }
     }
-    return out;
+    return [...out.values()];
   }, [freshInstallations]);
 
   // The specific installation (if any) that covers the current `repo`.
@@ -119,6 +138,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   const installationForRepo = React.useMemo(() => {
     if (!repo) return null;
     for (const inst of freshInstallations) {
+      if (repo.installation_id && String(repo.installation_id) !== String(inst.installation_id)) continue;
       const has = (inst.repositories || []).some(
         (r) => (r.full_name || "").toLowerCase() === repo.full_name.toLowerCase(),
       );
@@ -128,6 +148,9 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   }, [repo, freshInstallations]);
 
   function openAppInstallPopup() {
+    setUseExistingAccess(false);
+    setPickedRepo(null); setProjectName(""); setSaveError(null); setSavedProjectId(null);
+    setStep(1);
     setConnectAttempts((n) => n + 1);
     const r = startConnect();
     if (!r.ok) {
@@ -147,36 +170,18 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   // and Emergent's own Save-to-GitHub. Multiple granted repos still
   // show a real picker (there's an actual choice to make there).
   useEffect(() => {
-    if (step === 1 && !manualEntry && !pickedRepo && allGrantedRepos.length === 1) {
+    if (step === 1 && !manualEntry && !pickedRepo && !useExistingAccess && allGrantedRepos.length === 1) {
       const r = allGrantedRepos[0];
-      setPickedRepo(parseRepoInput(r.full_name));
+      setPickedRepo({ ...parseRepoInput(r.full_name), ...r });
       setStep(2);
     }
-  }, [step, manualEntry, pickedRepo, allGrantedRepos]);
+  }, [step, manualEntry, pickedRepo, allGrantedRepos, useExistingAccess]);
 
   function pickRepo(r) {
-    setPickedRepo(parseRepoInput(r.full_name));
+    setPickedRepo({ ...parseRepoInput(r.full_name), ...r });
+    setProjectName(""); setSaveError(null); setSavedProjectId(null);
     setStep(2);
   }
-
-  useEffect(() => {
-    function onMessage(e) {
-      const d = e.data;
-      if (!d || d.type !== "aurem-app-installed") return;
-      if (d.status === "err") {
-        toast({
-          message: d.err === "invalid_state"
-            ? "Session expired during install — please try again."
-            : d.err === "github_probe_failed"
-              ? "GitHub couldn't verify the install. Try again."
-              : "Install did not complete — please try again.",
-          kind: "warn",
-        });
-      }
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
 
   // ── Auto-fill project name from repo name when entering step 2 ───
   useEffect(() => {
@@ -186,7 +191,19 @@ export default function AddProjectWizard({ onClose, onAdded }) {
   }, [step, repo, projectName]);
 
   // ── Step-2 save ──────────────────────────────────────────────────
+  async function finishProject(projectId) {
+    setActiveProjectId(projectId);
+    try {
+      await onAdded?.(projectId);
+      if (!stayOnProjects) navigate("/dashboard");
+    } catch {
+      setSavedProjectId(projectId);
+      setSaveError("Project saved, but the list could not refresh. Try opening it again.");
+    }
+  }
+
   async function handleSave() {
+    if (savingRef.current) return;
     if (!repo || !projectName.trim()) {
       toast({ message: "Fill in the project name.", kind: "warn" });
       return;
@@ -195,16 +212,20 @@ export default function AddProjectWizard({ onClose, onAdded }) {
       toast({ message: "Install the GitHub App and grant access to this repo above first.", kind: "warn" });
       return;
     }
-    setSaving(true);
+    savingRef.current = true;
+    setSaving(true); setSaveError(null);
     try {
       const payload = {
         name:            projectName.trim(),
         github_url:      repo.url,
-        branch:          "main",
+        branch:          repo.default_branch || installationForRepo.repositories?.find(
+          (r) => r.full_name?.toLowerCase() === repo.full_name.toLowerCase(),
+        )?.default_branch || "main",
         installation_id: installationForRepo.installation_id,
       };
       const r = await api.post("/cto/projects/add", payload);
       const newProjectId = r.data?.project?.project_id || r.data?.project_id;
+      if (!newProjectId) throw new Error("Project creation was not confirmed. Please retry.");
       // Iter 389 — Meta Pixel Lead. Fires only after backend confirms
       // the project was created (real intent signal, not a click).
       metaLead("project_added");
@@ -213,40 +234,46 @@ export default function AddProjectWizard({ onClose, onAdded }) {
       // that event is archived/inactive).
       openaiGithubRepoConnected(newProjectId);
       toast({
-        message: `Connected ${repo.full_name} — opening chat…`,
+        message: `Added ${repo.full_name} to Projects`,
         kind:    "success",
       });
-      if (newProjectId) {
-        setActiveProjectId(newProjectId);
-      }
-      try { onAdded?.(newProjectId); } catch { /* noop */ }
-      // Land directly in chat with this project active.
-      navigate("/dashboard");
+      await finishProject(newProjectId);
     } catch (e) {
       const d = e?.response?.data?.detail;
+      if (d?.error === "already_connected" && d.project_id) {
+        setSavedProjectId(d.project_id);
+        setSaveError(d.message);
+        return;
+      }
       const msg = typeof d === "object" && d?.message
         ? d.message
-        : (typeof d === "string" ? d : "Connect failed");
+        : (typeof d === "string" ? d : e.message || "Connect failed");
+      setSaveError(msg);
       toast({ message: msg, kind: "error" });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   // ── Render ───────────────────────────────────────────────────────
 
-  return (
+  return createPortal(
     <div
-      onClick={onClose}
+      onClick={closeWizard}
       data-testid="add-project-wizard-backdrop"
       style={{
-        position: "fixed", inset: 0, zIndex: 9000,
+        position: "fixed", inset: 0, zIndex: Z_ACTIVE_MODAL,
         background: "rgba(0,0,0,0.68)",
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: 24,
       }}
     >
       <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-wizard-title"
         onClick={(e) => e.stopPropagation()}
         data-testid="add-project-wizard"
         style={{
@@ -255,6 +282,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
           border: "1px solid var(--border-strong)",
           borderRadius: 12,
           padding: 24,
+          maxHeight: "calc(100dvh - 48px)", overflowY: "auto", overflowWrap: "anywhere",
         }}
       >
         {/* ── Header + step indicator ── */}
@@ -270,7 +298,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
             }}>
               Add Project · Step {step} of 2
             </div>
-            <h3 style={{ margin: 0, fontSize: 19, color: "var(--text)" }}>
+            <h3 id="add-wizard-title" data-testid="add-wizard-title" style={{ margin: 0, fontSize: 19, color: "var(--text)" }}>
               {step === 1 && "Connect a GitHub repo"}
               {step === 2 && "Confirm and start"}
             </h3>
@@ -278,6 +306,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
           <button
             type="button"
             onClick={onClose}
+            disabled={saving}
             data-testid="add-project-close"
             aria-label="Close"
             style={{
@@ -288,6 +317,12 @@ export default function AddProjectWizard({ onClose, onAdded }) {
             <XIcon size={16} />
           </button>
         </div>
+
+        {connectionError && (
+          <div role="alert" data-testid="add-wizard-connection-error" style={{ color: pending ? "#f59e0b" : "#ef4444", marginBottom: 12, fontSize: 13 }}>
+            {connectionError}
+          </div>
+        )}
 
         {/* ── Stepper dots ── */}
         <div style={{
@@ -325,7 +360,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                 <div style={{ fontSize: 13, lineHeight: 1.4 }}>
                   Waiting for you to finish in the GitHub popup…
                   <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 3 }}>
-                    This picks up automatically — no need to click anything else.
+                    Repository selection opens after GitHub completes.
                   </div>
                   {/* 2026-09-05 — founder-reported: some browser/extension
                       combos let window.open() return a handle that never
@@ -392,7 +427,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                       style={{ color: "#FF8A2A", textDecoration: "underline" }}>
                       open the GitHub connect page directly
                     </a>{" "}
-                    — this always works even if popups are blocked.
+                    if the popup isn't opening.
                   </div>
                 )}
                 {connectAttempts >= 2 && (
@@ -405,10 +440,9 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                       rel="noreferrer"
                       style={{ color: "#FF8A2A", textDecoration: "underline" }}
                     >
-                      Remove AUREM CTO on GitHub
+                      Check Aurem's repository access on GitHub
                     </a>{" "}
-                    then click Try again — this clears a stuck install
-                    that sometimes can't self-heal.
+                    and confirm the intended repository is selected before retrying.
                   </div>
                 )}
               </div>
@@ -451,6 +485,10 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                   + Grant access to another repo
                 </button>
               </div>
+            ) : syncing ? (
+              <div data-testid="add-wizard-repo-syncing" role="status" style={{ padding: 14, marginBottom: 14 }}>
+                <Loader2 size={16} className="spin" /> GitHub access received. Syncing your repositories…
+              </div>
             ) : (
               <div
                 data-testid="add-wizard-app-cta"
@@ -481,8 +519,8 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                   fontSize: 12, color: "var(--text-faint)",
                   margin: "0 0 10px", lineHeight: 1.5,
                 }}>
-                  One click — no token to manage or rotate. Pick the repo
-                  in GitHub's own screen; this wizard picks it up automatically.
+                  Grant repository access on GitHub, then select and add your
+                  project here. GitHub authorization alone does not create a project.
                 </p>
                 <button
                   type="button"
@@ -521,6 +559,20 @@ export default function AddProjectWizard({ onClose, onAdded }) {
               </div>
             )}
 
+            {!connecting && (status.installations || []).length > 0 && !useExistingAccess && (
+              <button type="button" data-testid="add-wizard-use-existing-access"
+                onClick={() => { setUseExistingAccess(true); setPickedRepo(null); }}
+                className="btn-ghost" style={{ marginBottom: 12, fontSize: 12 }}>
+                Choose an already-authorized repository
+              </button>
+            )}
+            {!connecting && (syncing || connectionError || useExistingAccess) && (
+              <button type="button" data-testid="add-wizard-refresh-repos" onClick={refresh}
+                className="btn-ghost" style={{ marginBottom: 12, fontSize: 12 }}>
+                <RefreshCw size={12} /> Refresh repositories
+              </button>
+            )}
+
             {/* Fallback — public repo the App was never granted access to. */}
             {!manualEntry ? (
               <button
@@ -532,7 +584,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                   color: "var(--text-faint)", fontSize: 11.5,
                   textDecoration: "underline", cursor: "pointer",
                 }}>
-                Connecting a public repo instead? Paste the URL
+                Prefer to enter the repository URL?
               </button>
             ) : (
               <div style={{ marginTop: 4 }}>
@@ -597,14 +649,19 @@ export default function AddProjectWizard({ onClose, onAdded }) {
         {/* ──────────────── Step 2 — Confirm + save ──────────────── */}
         {step === 2 && repo && (
           <div data-testid="wizard-step-2">
-            <p style={{
+            <p data-testid="add-wizard-confirm-status" style={{
               fontSize: 13, color: "var(--text-dim)",
               margin: "0 0 14px", lineHeight: 1.6,
             }}>
               {installationForRepo
-                ? "Everything checks out. Confirm the project name and we'll take you to the chat."
-                : "This repo has no GitHub App access yet — it'll be added as a public, read-only clone."}
+                ? "GitHub access granted. Confirm the name and add this repository to Projects."
+                : "GitHub App access is required before this repository can be added."}
             </p>
+            {!installationForRepo && (
+              <button type="button" data-testid="add-wizard-confirm-install" onClick={openAppInstallPopup} className="btn-ghost">
+                <Github size={14} /> Grant GitHub App access
+              </button>
+            )}
 
             {/* Summary card */}
             <div
@@ -624,7 +681,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
                 <span>
                   {installationForRepo ? "Access to" : "Connecting"}{" "}
                   <strong>{repo.full_name}</strong>
-                  {installationForRepo ? " verified" : ""}
+                  {installationForRepo ? " granted" : ""}
                 </span>
               </div>
               <div style={{
@@ -632,7 +689,7 @@ export default function AddProjectWizard({ onClose, onAdded }) {
               }}>
                 {installationForRepo
                   ? `Connected via GitHub App · @${installationForRepo.github_login}`
-                  : "Public repo — no GitHub App access granted."}
+                  : "No GitHub App access granted."}
               </div>
             </div>
 
@@ -657,6 +714,13 @@ export default function AddProjectWizard({ onClose, onAdded }) {
               />
             </label>
 
+            {saveError && <p role="alert" data-testid="add-wizard-save-error" style={{ color: "#ef4444", fontSize: 13 }}>{saveError}</p>}
+            {savedProjectId && (
+              <button type="button" data-testid="add-wizard-open-existing" onClick={() => finishProject(savedProjectId)} className="btn-ghost">
+                Open saved project <ArrowRight size={14} />
+              </button>
+            )}
+
             <div style={navRowStyle}>
               <button
                 type="button"
@@ -671,20 +735,20 @@ export default function AddProjectWizard({ onClose, onAdded }) {
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving || !projectName.trim() || !installationForRepo}
+                disabled={saving || !!savedProjectId || !projectName.trim() || !installationForRepo}
                 data-testid="wizard-save"
                 data-guide-target="continue-btn"
                 style={cta(!saving && !!projectName.trim() && !!installationForRepo)}
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : null}
-                {saving ? "Saving…" : "Save & Open Chat"}
+                {saving ? "Adding project…" : stayOnProjects ? "Add project" : "Save & Open Chat"}
                 {!saving && <ArrowRight size={14} />}
               </button>
             </div>
           </div>
         )}
       </div>
-    </div>
+    </div>, document.body
   );
 }
 

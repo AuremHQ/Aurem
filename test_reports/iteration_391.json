@@ -1,0 +1,66 @@
+{
+  "summary": "Completed targeted GitHub connect regression validation across backend, frontend unit suites, and browser flows. Backend suites passed fully (55/55). Frontend targeted suites passed fully (38/38). Browser verified Add Project recovery flow, branch persistence (develop), no-opener bridge redirect to /projects?flow=connect-repo, and mobile/tablet/desktop Save CTA visibility. Pending-org approval banner verified on mobile. Real GitHub consent and live project creation were not end-to-end verified in this environment.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Login form",
+        "issue": "Login inputs/buttons on preview login page are not consistently discoverable by stable data-testid selectors (automation had to fall back to placeholder/type selectors).",
+        "selector": "input[placeholder='you@company.com'], input[type='password'], button:has-text('Sign in')",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Projects > Add Project wizard (mobile 390x844)",
+        "issues": [
+          "ORA guide popup overlaps lower wizard area, reducing clarity around lower controls on small screens."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_project_connect_bridge_regression.py",
+    "/app/backend/tests/test_github_app_router.py",
+    "/app/backend/tests/test_github_app_project_add.py",
+    "/app/backend/tests/test_connect_flow_refinement_2026_09_02.py",
+    "/app/backend/tests/test_r14_github_state_dropped_reconnect_2026_09.py",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.projectHandoff.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.claimFallback.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.deniedRace.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.freshIsolation.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.repoSyncLag.test.js",
+    "/app/frontend/src/components/__tests__/AddProjectWizard.projectHandoff.test.jsx",
+    "/app/frontend/src/pages/__tests__/Projects.connectReturn.test.jsx",
+    "/app/frontend/src/components/__tests__/NewUserWizard.connectRefinement.test.jsx",
+    "/app/frontend/src/components/__tests__/NewUserWizard.repoAccessRetry.test.jsx",
+    "/app/frontend/src/components/__tests__/ConnectRepoBanner.reconciliation.test.jsx",
+    "/app/test_reports/pytest/iter_connect_regression_backend.xml"
+  ],
+  "action_items": [
+    "Add stable data-testid attributes for login form fields/actions used in auth flow automation.",
+    "Tune/relocate ORA guide bubble in Add Project wizard for 390px viewport so it does not overlap modal controls.",
+    "Run one manual/live GitHub consent + repo selection + save flow on preview or staging to complement MOCKED browser fixture validation."
+  ],
+  "critical_code_review_comments": [
+    "Several production files exceed 700 lines (e.g., Projects.jsx, AddProjectWizard.jsx, routers/github_app.py, routers/cto_projects/management.py, services/github_app.py); split into focused modules to reduce regression risk and improve maintainability.",
+    "Connect flow logic itself is now coherent: callback is treated as access grant only, explicit /cto/projects/add persists project, bridge redirects correctly to /projects flow, and installation/repo ownership checks are preserved."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_391.json"
+  ],
+  "success_rate": {
+    "backend": "100% (55/55)",
+    "frontend": "100% targeted suites (38/38) + browser targeted flow pass"
+  },
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend and frontend targeted regression suites requested in this review all passed. Browser flow verification used deterministic route fixtures for GitHub status/add payload checks and bridge return behavior (MOCKED fixture-based for consent/provider responses). Pending org-approval banner also validated on mobile via real UI query params. A full live GitHub consent/install/repo-save E2E was not executed due unavailable user-controlled real consent session.",
+  "rca of the issue": "Root-cause areas from prior failures appear addressed: grant-change detection now compares repository signature not count-only; callback completion stops connect race so success is not overwritten by denial; background sync scope is per attempted installation instead of global connected state; bridge no-opener path now lands on /projects flow; Add Project includes explicit existing-access recovery path. Current run found no regression in these areas."
+}

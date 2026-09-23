@@ -50,6 +50,7 @@ beforeEach(() => {
   api.post.mockResolvedValue({ data: { ok: true } });
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
 });
 
@@ -81,16 +82,29 @@ describe("2026-09-09 — full isolation: freshInstallIds", () => {
   });
 
   it("t_postmessage_success_marks_exact_installation_fresh", async () => {
+    const popup = { closed: false, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup);
     api.get.mockResolvedValue({
       data: { installation_active: false, installations: [], state: "pending" },
     });
     const { result } = renderHook(() => useGitHubConnectStatus());
     await act(async () => { await Promise.resolve(); });
 
+    act(() => { result.current.startConnect(); });
+    // The authenticated status must confirm this user's installation;
+    // a browser-supplied installation ID alone is not authorization.
+    api.get.mockResolvedValue({ data: {
+      installation_active: true, state: "connected",
+      installations: [{ installation_id: 9001, repositories: [{ full_name: "new/repo" }] }],
+    } });
+
     await act(async () => {
-      window.dispatchEvent(new MessageEvent("message", {
+      const event = new MessageEvent("message", {
+        origin: "https://api.test",
         data: { type: "aurem-app-installed", status: "success", install_id: 9001 },
-      }));
+      });
+      Object.defineProperty(event, "source", { value: popup });
+      window.dispatchEvent(event);
       await Promise.resolve();
       await Promise.resolve();
     });
