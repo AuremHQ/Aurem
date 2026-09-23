@@ -87,6 +87,13 @@ class StreamState:
     # turn.py's non-streaming /chat/send).
     task_state: Optional[dict] = None
 
+    # Trust & Verification round — Enhancement 5 (pre-execution scope
+    # confirmation). Stashed by _mode_broadcast() in worker.py so the
+    # gate that runs right after it can read the SAME classify_intent_v2
+    # confidence/needs_confirm signal that was already computed for the
+    # "mode" SSE badge, instead of recomputing it a second time.
+    mode_confidence: Optional[dict] = None
+
     # ── watchdog.py output, read by sse_stream.py after the queue-
     # consumption loop ends ──
     result: Any = None

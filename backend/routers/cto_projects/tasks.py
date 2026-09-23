@@ -289,6 +289,14 @@ async def get_task(task_id: str, authorization: str = Header(None)) -> dict:
             t.pop("edited_files", None)
     except Exception:
         pass
+    # Trust & Verification round — Enhancement 2. Backend computes the
+    # exact user-facing phrase; the client only ever renders it, never
+    # infers a level from status/commit presence itself.
+    try:
+        from services.verification import display_level
+        t["verification_level_display"] = display_level(t.get("verification_level"))
+    except Exception:
+        t["verification_level_display"] = "Not verified"
     return {"ok": True, "task": t}
 
 

@@ -108,6 +108,20 @@ class ChatBody(BaseModel):
     # backward-compatible — omitted entirely by older/unpatched clients,
     # which behave exactly as before (a fresh attempt every time).
     retry_of_request_id: Optional[str] = Field(None, max_length=64)
+    # Trust & Verification round — Enhancement 5 (pre-execution scope
+    # confirmation, services/scope_confirmation.py). `mode_override`
+    # was previously read via `getattr(body, "mode_override", None)`
+    # in worker.py but never actually declared on the model, so it
+    # was silently dropped by Pydantic on every request — the
+    # existing "skip needs_confirm when overridden" comment described
+    # behaviour that could never fire. Now a real, additive field.
+    mode_override: Optional[str] = Field(None, max_length=8)
+    # Set by the frontend when the user clicks "Confirm and proceed"
+    # on a pending scope-confirmation card, to the exact proposal id
+    # returned by POST /verification/scope-confirm/{id}/confirm.
+    # Authorizes ONLY that one exact (session, prompt) pair — see
+    # services/scope_confirmation.confirm_proposal.
+    scope_confirmed_proposal_id: Optional[str] = Field(None, max_length=64)
 
     @validator("prompt")
     def _strip_prompt(cls, v: str) -> str:

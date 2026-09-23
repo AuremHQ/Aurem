@@ -146,6 +146,11 @@ async def _mode_broadcast(state: StreamState) -> str:
         _conf = classify_intent_v2(body.prompt or "", body.f12_payload)
     except Exception:
         _conf = None
+    # Trust & Verification round — Enhancement 5. Stash so the
+    # pre-execution scope-confirmation gate right after this function
+    # returns can read the SAME confidence signal instead of a second
+    # (possibly non-deterministic re-tokenized) classification pass.
+    state.mode_confidence = _conf
     if _conf:
         await q.put({
             "type": "mode",
@@ -1271,6 +1276,77 @@ async def _run_orchestrator(state: StreamState, req_mode_stream: str, max_iters_
     return result
 
 
+async def _scope_confirmation_gate(state: StreamState, _mode: str) -> Optional[dict]:
+    """Trust & Verification round — Enhancement 5 (pre-execution scope
+    confirmation, services/scope_confirmation.py).
+
+    Fires when the request is genuinely ambiguous per the
+    classifier's OWN `needs_confirm` signal (`state.mode_confidence`,
+    computed once in `_mode_broadcast` — not recomputed here) AND the
+    turn is about to fall through into the general tool-capable
+    orchestrator — every mode with its OWN mutation gate (Mode D's
+    "Approve the fix" click) or that never mutates (A/B/E/F, and the
+    ORA-agent-cascade's own checks) already short-circuited earlier in
+    this same dispatch cascade, so reaching this point IS the
+    consequential-execution boundary. Everything above this call in
+    `run_worker()` is read-only classification/planning.
+
+    Returns None (fall through, execute normally) when: not
+    ambiguous, already overridden (`body.mode_override`), or the
+    caller just supplied a valid `scope_confirmed_proposal_id` for
+    THIS exact prompt. Otherwise short-circuits with a scope-summary
+    result and a `scope_confirmation` SSE frame — no tool call runs
+    below this point on that path."""
+    body, q = state.body, state.q
+    if getattr(body, "mode_override", None):
+        return None
+    conf = state.mode_confidence
+    if not conf or not conf.get("needs_confirm"):
+        return None
+    db = get_db()
+    proposal_id = getattr(body, "scope_confirmed_proposal_id", None)
+    if proposal_id:
+        from services.scope_confirmation import confirm_proposal
+        res = await confirm_proposal(
+            db, proposal_id=proposal_id, user_id=state.user_id,
+            prompt=body.prompt or "",
+        )
+        if res.get("ok"):
+            # Exact displayed scope, confirmed — proceed exactly once.
+            # A resend of this SAME proposal_id is rejected by
+            # confirm_proposal's own "not_pending" check (it's now
+            # CONFIRMED), never a duplicate execution.
+            return None
+        logger.warning("scope_confirmation gate: confirm rejected (%s)", res.get("error"))
+        # Falls through to re-propose fresh below rather than
+        # silently executing on a rejected/expired confirmation.
+    from services.scope_confirmation import create_proposal
+    proposal = await create_proposal(
+        db, session_id=body.session_id, user_id=state.user_id,
+        project_id=body.project_id, prompt=body.prompt or "",
+        confidence=conf.get("confidence"), threshold=0.55, would_be_mode=_mode,
+    )
+    try:
+        await q.put({"type": "scope_confirmation", "proposal": {
+            "id": proposal["id"], "scope_summary": proposal["scope_summary"],
+            "expires_at": proposal["expires_at"],
+        }})
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "content": proposal["scope_summary"] + (
+            "\n\n**Confirm and proceed** to let me make this change, "
+            "**Change scope** to rephrase, or **Cancel**."
+        ),
+        "provider": "scope-confirmation-gate",
+        "fallback_chain": ["scope_confirmation"],
+        "iterations": 0, "tool_calls_run": 0, "tool_invocations": [],
+        "mode": _mode, "awaiting_scope_confirmation": True,
+        "scope_confirmation_proposal_id": proposal["id"],
+    }
+
+
 async def run_worker(state: StreamState) -> None:
     """Dispatch coordinator — mirrors the ORIGINAL `_worker()`
     closure's exact if/elif/return cascade (see module docstring for
@@ -1310,6 +1386,22 @@ async def run_worker(state: StreamState) -> None:
             logger.warning("required_tool_gate hoist failed (non-blocking): %r", _gate_e)
             state.required_read_gate = None
 
+        # Trust & Verification round — Enhancement 3, implicit trigger.
+        # Fire-and-forget: if this message reads as a correction
+        # report ("still broken", "that didn't work"), best-effort
+        # retroactively downgrade the most recently shipped task in
+        # this session. Never blocks/affects the actual reply below —
+        # see services/task_downgrade.maybe_auto_downgrade_recent_task
+        # (non-raising, returns None on any mismatch/error).
+        try:
+            from services.task_downgrade import maybe_auto_downgrade_recent_task
+            asyncio.create_task(maybe_auto_downgrade_recent_task(
+                get_db(), session_id=state.body.session_id,
+                user_id=state.user_id, message=state.body.prompt or "",
+            ))
+        except Exception:
+            pass
+
         r = await _mode_d_fast_path(state)
         if r is not None:
             await q.put({"type": "result", "result": r})
@@ -1338,6 +1430,11 @@ async def run_worker(state: StreamState) -> None:
             return
 
         r = await _ora_agent_cascade(state)
+        if r is not None:
+            await q.put({"type": "result", "result": r})
+            return
+
+        r = await _scope_confirmation_gate(state, _mode)
         if r is not None:
             await q.put({"type": "result", "result": r})
             return

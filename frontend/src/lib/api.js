@@ -295,7 +295,9 @@ export async function streamChat({ prompt, sessionId, session_id,
                                     onStep,   // Iter 212m-19 — live step cards
                                     onCouncil, // Iter 212m-78 — recalled count
                                     onIntent,  // Iter 212m-149 — gateway tier classification
+                                    onScopeConfirmation, // Trust & Verification round — Enhancement 5
                                     retryOfRequestId, retry_of_request_id,  // INTERACTION_CONTRACT_V1 P1
+                                    scopeConfirmedProposalId, scope_confirmed_proposal_id,
                                     signal }) {
   // Iter 212m-194 — coalesce camelCase + snake_case aliases so
   // AskAdvisorReal (snake) and ChatPanel (camel) both work.
@@ -308,6 +310,7 @@ export async function streamChat({ prompt, sessionId, session_id,
   // Iter 212m-212 — screenshot passthrough
   const _screenshotB64 = screenshot_b64 ?? screenshotB64;
   const _retryOfRequestId = retry_of_request_id ?? retryOfRequestId ?? null;
+  const _scopeConfirmedProposalId = scope_confirmed_proposal_id ?? scopeConfirmedProposalId ?? null;
   const token = getToken();
   // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
   // reproducible): this initial `fetch()` had no try/catch of its
@@ -343,6 +346,10 @@ export async function streamChat({ prompt, sessionId, session_id,
         // omitted (undefined -> not serialized meaningfully, backend
         // treats missing/None identically) on a normal first send.
         ...(_retryOfRequestId ? { retry_of_request_id: _retryOfRequestId } : {}),
+        // Trust & Verification round — Enhancement 5. Set only when
+        // resending after the user clicked "Confirm and proceed" on
+        // a scope-confirmation card.
+        ...(_scopeConfirmedProposalId ? { scope_confirmed_proposal_id: _scopeConfirmedProposalId } : {}),
       }),
       signal,
     });
@@ -461,6 +468,7 @@ export async function streamChat({ prompt, sessionId, session_id,
           else if (payload.type === "council") onCouncil?.(payload.council_recalled || 0);  // Iter 212m-78
           else if (payload.type === "ops_redirect") onOpsRedirect?.(payload);
           else if (payload.type === "task_handoff") onTaskHandoff?.(payload);
+          else if (payload.type === "scope_confirmation") onScopeConfirmation?.(payload);
           else if (payload.token) onToken?.(payload.token);
           else if (payload.thinking) onThinking?.(payload.elapsed_s || 0, payload.activity, payload.invocations || [], !!payload.slow_notice);
           else if (payload.watchdog_pending) onWatchdogPending?.();

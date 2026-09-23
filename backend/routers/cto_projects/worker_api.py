@@ -971,6 +971,51 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         except Exception as e:                                # noqa: BLE001
             logger.debug("[cto-task %s] pending_edits persist skipped: %r", task_id, e)
 
+        # Trust & Verification round — Enhancement 1, extended to this
+        # single-edit chat-task pipeline. Vanguard (above) is a
+        # SECURITY-only second-agent review; this is a SEPARATE
+        # correctness/acceptance check — "does this diff actually do
+        # what the user asked?" — using a DIFFERENT identity
+        # (independent_verifier:<model>) from the executor
+        # (worker_api:<agent>), fresh context, fail-closed. Runs
+        # BEFORE the GitHub commit so a "fail" verdict can actually
+        # block shipping — mirrors services/loop_independent_verifier.py's
+        # ship-gate for Loop Mode, generalized via
+        # services/task_independent_verifier.py + the shared
+        # services/verification.py ledger.
+        _executed_by = f"worker_api:{'deepseek+claude' if maxx_mode else 'deepseek'}"
+        try:
+            from services.task_independent_verifier import verify_task_completion
+            await _pkg._log(task_id, "🔎 Independent verifier checking the diff against your request…")
+            _iv_result = await verify_task_completion(
+                _pkg.get_db(), task_id=task_id, project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), task_text=task, files=edits,
+                executed_by=_executed_by,
+            )
+        except Exception as _iv_e:                             # noqa: BLE001
+            logger.warning("[cto-task %s] independent verifier crashed (non-blocking): %r",
+                           task_id, _iv_e)
+            _iv_result = {"decision": "inconclusive",
+                          "reason": f"verifier_crashed:{type(_iv_e).__name__}",
+                          "verification_level": None}
+        from services import verification as _v_mod
+        if _iv_result.get("decision") == _v_mod.DECISION_FAIL:
+            _iv_err = f"Independent verifier rejected this diff: {_iv_result.get('reason')}"
+            await _pkg._log(task_id, f"❌ {_iv_err}", "error")
+            await _pkg._set_status(
+                task_id, status="failed", error=_iv_err[:2000],
+                completed_at=time.time(),
+                verification_status=_v_mod.DECISION_FAIL,
+            )
+            return
+        await _pkg._log(
+            task_id,
+            "✅ Independent verifier: PASS"
+            if _iv_result.get("decision") == _v_mod.DECISION_PASS
+            else "⚠️ Independent verifier: inconclusive (shipping — marked \"Not verified\")",
+            "success" if _iv_result.get("decision") == _v_mod.DECISION_PASS else "warning",
+        )
+
         # 3) Commit + push as one atomic API call
         await _pkg._set_status(task_id, status="pushing")
         # Per-file progress frames so the live tape can render the
@@ -1230,6 +1275,16 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
                           verified=True,
+                          # Trust & Verification round — DISTINCT from
+                          # `verified` above (which only means "the
+                          # content GitHub returned matches what we
+                          # pushed" — write integrity, NOT correctness).
+                          # `verification_status`/`verification_level`
+                          # carry the independent verifier's own
+                          # pass/inconclusive decision from the gate
+                          # above, so the UI never conflates the two.
+                          verification_status=_iv_result.get("decision"),
+                          verification_level=_iv_result.get("verification_level"),
                           completed_at=time.time())
         # 2026-09-17 bug fix — founder-reported: Codebase Graph stayed
         # stale despite real same-day commits made via this (simple,

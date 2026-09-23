@@ -419,6 +419,46 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
             _guard_db, list(edits.keys()), owner=owner, repo=repo, branch=branch,
         )
 
+        # Trust & Verification round — Enhancement 1, extended to this
+        # single-edit chat-task pipeline. Separate identity
+        # (independent_verifier:<model>) from the executor
+        # (worker_git:codegen), fresh context, fail-closed. Runs
+        # BEFORE any file touches disk so a "fail" verdict can
+        # actually block shipping — mirrors
+        # services/loop_independent_verifier.py's ship-gate for Loop
+        # Mode, generalized via services/task_independent_verifier.py.
+        try:
+            from services.task_independent_verifier import verify_task_completion
+            await _pkg._log(task_id, "🔎 Independent verifier checking the diff against your request…")
+            _iv_result = await verify_task_completion(
+                _guard_db, task_id=task_id, project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), task_text=task, files=edits,
+                executed_by="worker_git:codegen",
+            )
+        except Exception as _iv_e:                             # noqa: BLE001
+            logger.warning("[cto-task %s] independent verifier crashed (non-blocking): %r",
+                           task_id, _iv_e)
+            _iv_result = {"decision": "inconclusive",
+                          "reason": f"verifier_crashed:{type(_iv_e).__name__}",
+                          "verification_level": None}
+        from services import verification as _v_mod
+        if _iv_result.get("decision") == _v_mod.DECISION_FAIL:
+            _iv_err = f"Independent verifier rejected this diff: {_iv_result.get('reason')}"
+            await _pkg._log(task_id, f"❌ {_iv_err}", "error")
+            await _pkg._set_status(
+                task_id, status="failed", error=_iv_err[:2000],
+                completed_at=time.time(),
+                verification_status=_v_mod.DECISION_FAIL,
+            )
+            return
+        await _pkg._log(
+            task_id,
+            "✅ Independent verifier: PASS"
+            if _iv_result.get("decision") == _v_mod.DECISION_PASS
+            else "⚠️ Independent verifier: inconclusive (shipping — marked \"Not verified\")",
+            "success" if _iv_result.get("decision") == _v_mod.DECISION_PASS else "warning",
+        )
+
         # 4) write
         for path, content in edits.items():
             fp = repo_path / path
@@ -444,6 +484,8 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         if "nothing to commit" in cm.stdout:
             await _pkg._log(task_id, "ℹ️ no diff to commit", "info")
             await _pkg._set_status(task_id, status="done", result=summary,
+                              verification_status=_iv_result.get("decision"),
+                              verification_level=_iv_result.get("verification_level"),
                               completed_at=time.time())
             return
         push = await asyncio.to_thread(_pkg._sh, ["git", "push", "origin", branch], repo_path, timeout=90)
@@ -458,6 +500,8 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                           commit_sha=sha,
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
+                          verification_status=_iv_result.get("decision"),
+                          verification_level=_iv_result.get("verification_level"),
                           completed_at=time.time())
         # 2026-09-17 bug fix — founder-reported: Codebase Graph stayed
         # stale despite real same-day commits made via this (simple,

@@ -2031,6 +2031,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     // session with the execute phase.
     const loopPhaseHint = opts.loopPhase || null;
     const promptOverride = opts.promptOverride || null;
+    const scopeConfirmedProposalId = opts.scopeConfirmedProposalId || null;
     const text = promptOverride != null ? promptOverride : input.trim();
     // Pull ready attachments (uploading ones get skipped silently —
     // user can re-send if they were too slow). Also keep errored ones
@@ -2670,6 +2671,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       // reset before runTurn's first invocation — see below), the
       // PRIOR attempt's own id on a retry re-invocation of runTurn.
       retryOfRequestId: lastRequestIdRef.current,
+      scopeConfirmedProposalId,
       signal: ctrl.signal,
       onMode: (m) => {
         bumpActivity();
@@ -3059,6 +3061,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               failureMode: d.failure_mode || null,
               recoveryAction: d.recovery_action || null,
               turnError: d.error || null,
+              // Trust & Verification round — Enhancement 5. Pinned so
+              // MessageBubble can render <ScopeConfirmCard> instead of
+              // the raw text when this turn stopped to ask for scope
+              // confirmation rather than executing.
+              awaitingScopeConfirmation: !!d.awaiting_scope_confirmation,
+              scopeConfirmationProposalId: d.scope_confirmation_proposal_id || null,
+              scopeConfirmationPrompt: d.awaiting_scope_confirmation ? finalPrompt : null,
               ...interactionFields(d),
             };
           }
@@ -3243,6 +3252,26 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser) return;
     send(null, { promptOverride: lastUser.content });
+  }
+
+  // Trust & Verification round — Enhancement 5. "Confirm and
+  // proceed" on a <ScopeConfirmCard> resends the EXACT original
+  // prompt (mirrors retryLastFix()'s established pattern) with
+  // `scopeConfirmedProposalId` set — the backend gate
+  // (services/scope_confirmation.confirm_proposal) only honours it
+  // when it matches the proposal's stored prompt verbatim.
+  function confirmScopeProposal(proposalId, originalPrompt) {
+    if (busy || !proposalId || !originalPrompt) return;
+    send(null, { promptOverride: originalPrompt, scopeConfirmedProposalId: proposalId });
+  }
+
+  // "Cancel"/"Change scope" just tell the backend so the proposal
+  // doesn't linger as pending — no re-send, no new tool execution.
+  async function cancelScopeProposal(proposalId) {
+    if (!proposalId) return;
+    try {
+      await api.post(`/verification/scope-confirm/${proposalId}/cancel`);
+    } catch { /* best-effort — the 15-min TTL expires it anyway */ }
   }
 
   function onKeyDown(e) {
@@ -5434,6 +5463,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
                 onRetryFix={retryLastFix}
                 onContinueTurn={continueTurn}
                 onRetryFailedTurn={retryFailedTurn}
+                onConfirmScope={confirmScopeProposal}
+                onCancelScope={cancelScopeProposal}
                 sessionId={sessionId}
                 activeProject={activeProject}
                 exhausted={exhausted}

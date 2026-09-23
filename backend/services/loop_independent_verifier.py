@@ -129,6 +129,45 @@ async def _log_row(db, row: dict) -> None:
         logger.warning("verification log insert failed: %r", e)
 
 
+_VERDICT_TO_DECISION = {
+    "yes": "pass", "no": "fail",
+    "skipped_no_llm": "inconclusive", "skipped_no_spec": "inconclusive",
+}
+
+
+async def _mirror_to_shared_ledger(
+    db, *, loop_id: str, model: str, verdict: str, reason: str,
+    user_id, project_id, original: str, criteria: list, origin: str,
+) -> None:
+    """Trust & Verification round — additive mirror into the SAME
+    shared `task_verifications` ledger (services/verification.py) the
+    single-edit chat-task pipeline writes to
+    (services/task_independent_verifier.py), so Enhancement 4's
+    trust-calibration metric and Enhancement 3's retroactive-downgrade
+    history see ONE unified decision trail regardless of which
+    pipeline produced a given task's completion — without changing
+    this module's own `loop_verification_log` row shape or callers
+    (services/loop_engine.py's ship gate keeps reading THIS function's
+    original return value exactly as before)."""
+    try:
+        from services import verification as _v
+        task_text = original or ""
+        if criteria:
+            task_text += "\n" + "\n".join(f"- {c}" for c in criteria)
+        revision_id = _v.compute_task_revision_id(task_text, {})
+        decision = _VERDICT_TO_DECISION.get(verdict, "inconclusive")
+        level = _v.LEVEL_SANDBOX_REPRODUCED if decision in ("pass", "fail") else None
+        await _v.record_verification(
+            db, task_id=loop_id, project_id=project_id, user_id=user_id,
+            task_revision_id=revision_id,
+            verified_by=f"independent_verifier:{model}",
+            executed_by="loop_engine:executor", decision=decision,
+            reason=reason, verification_level=level, origin=f"loop_mode:{origin}",
+        )
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning("loop_independent_verifier: shared-ledger mirror failed: %r", e)
+
+
 async def verify(db, *, loop_id: str,
                  files: list[dict],
                  verifier_model: Optional[str] = None,
@@ -161,6 +200,11 @@ async def verify(db, *, loop_id: str,
             "origin":         origin,
         }
         await _log_row(db, row)
+        await _mirror_to_shared_ledger(
+            db, loop_id=loop_id, model=model, verdict="skipped_no_spec",
+            reason=row["reason"], user_id=None, project_id=None,
+            original="", criteria=[], origin=origin,
+        )
         return row
 
     criteria = spec.get("acceptance_criteria") or []
@@ -198,6 +242,12 @@ async def verify(db, *, loop_id: str,
             "origin":         origin,
         }
         await _log_row(db, row)
+        await _mirror_to_shared_ledger(
+            db, loop_id=loop_id, model=model, verdict="skipped_no_llm",
+            reason=row["reason"], user_id=spec.get("user_id"),
+            project_id=spec.get("project_id"), original=original,
+            criteria=criteria, origin=origin,
+        )
         return row
 
     if err or not (text or "").strip():
@@ -213,6 +263,12 @@ async def verify(db, *, loop_id: str,
             "origin":         origin,
         }
         await _log_row(db, row)
+        await _mirror_to_shared_ledger(
+            db, loop_id=loop_id, model=model, verdict="skipped_no_llm",
+            reason=row["reason"], user_id=spec.get("user_id"),
+            project_id=spec.get("project_id"), original=original,
+            criteria=criteria, origin=origin,
+        )
         return row
 
     verdict, reason = _parse_verdict(text)
@@ -228,6 +284,11 @@ async def verify(db, *, loop_id: str,
         "origin":         origin,
     }
     await _log_row(db, row)
+    await _mirror_to_shared_ledger(
+        db, loop_id=loop_id, model=model, verdict=verdict, reason=reason,
+        user_id=spec.get("user_id"), project_id=spec.get("project_id"),
+        original=original, criteria=criteria, origin=origin,
+    )
     return row
 
 

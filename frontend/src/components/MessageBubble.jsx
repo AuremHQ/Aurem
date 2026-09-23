@@ -26,7 +26,7 @@ import FileDiffPeek from "./FileDiffPeek";
 import TaskProgressCard from "./TaskProgressCard";
 import TaskLiveTape from "./TaskLiveTape";
 import TaskManagementPanel, { hasChecklist } from "./TaskManagementPanel";
-import RenderedMessage from "./RenderedMessage";
+import ScopeConfirmCard from "./ScopeConfirmCard";import RenderedMessage from "./RenderedMessage";
 import EditedFileBubble from "./EditedFileBubble";
 import PaletteNudgeBubble from "./PaletteNudgeBubble";
 import LoopProgressBubble, { isLoopProgressContent } from "./LoopProgressBubble"; // Iter 331
@@ -466,7 +466,7 @@ export default function MessageBubble({
   idx, dbTurnIndex, m, onRegenerate, onRetryFix, sessionId,
   activeProject, exhausted, onTaskCompleted,
   onOpenDeployTab, collapseDefault = false, onOpenLivePopup,
-  onContinueTurn, onRetryFailedTurn,
+  onContinueTurn, onRetryFailedTurn, onConfirmScope, onCancelScope,
 }) {
   const [copied, setCopied] = useState(false);
   const [vote, setVote] = useState(m.feedback?.vote || null);
@@ -1027,6 +1027,18 @@ export default function MessageBubble({
           {/* Multi-file checklist parsed from ORA's message + DB-backed plan (pairs with Gap 3 + structural multi-file contract). */}
           {m.role === "assistant" && (hasChecklist(m.content) || m.shipped_task_id) && (
             <TaskManagementPanel text={m.content} taskId={m.shipped_task_id} />
+          )}
+          {/* Trust & Verification round — Enhancement 5. This turn
+              stopped BEFORE any tool call to ask for scope
+              confirmation — see routers/chat/worker.py's
+              `_scope_confirmation_gate`. */}
+          {m.role === "assistant" && m.awaitingScopeConfirmation && (
+            <ScopeConfirmCard
+              proposalId={m.scopeConfirmationProposalId}
+              prompt={m.scopeConfirmationPrompt}
+              onConfirm={onConfirmScope}
+              onCancel={onCancelScope}
+            />
           )}
           {/* Iter 206 — Inline "Add PAT" CTA when ORA hits a GitHub 401
               and asks the user for a Personal Access Token. Surfaces a

@@ -18,6 +18,7 @@
 import React, { useState } from "react";
 import { Loader2, ExternalLink, Undo2 } from "lucide-react";
 import { api } from "../lib/api";
+import VerificationLevelBadge from "./VerificationLevelBadge";
 import { toast } from "./Toast";
 import { SupportButton } from "./SupportPopup";
 import { shipStatusLabel, SHIP_STATUS } from "../lib/shipStatus";
@@ -324,9 +325,24 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
   const status = task?.status || "queued";
   const rbStatus = task?.rollback_status;
   const rbRunning = rbStatus === "queued" || rbStatus === "running";
+  const [reportState, setReportState] = useState("idle"); // idle | busy | done
+
+  const reportIssue = async () => {
+    if (reportState !== "idle") return;
+    setReportState("busy");
+    try {
+      await api.post(`/verification/tasks/${taskId}/report-issue`, {
+        reason: "User reported this shipped fix does not work as expected.",
+      });
+      setReportState("done");
+    } catch {
+      setReportState("idle");
+    }
+  };
 
   // While running
-  if (!task || (status !== "done" && status !== "failed" && status !== "blocked")) {
+  if (!task || (status !== "done" && status !== "failed" && status !== "blocked"
+               && status !== "needs_review")) {
     const stageIdx = STAGES.findIndex((s) => s.key === status);
     const current = stageIdx >= 0 ? STAGES[stageIdx] : { icon: "⏳", label: status };
     return (
@@ -379,12 +395,15 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
     .map((s) => s.step.replace(/^💾\s*/, ""));
 
   const reverted = !!task.rollback_sha;
+  const needsReview = task.status === "needs_review";
 
   return (
     <div data-testid={`ship-status-${taskId}`} role="status" aria-live="polite" style={{
       padding: "12px 14px",
-      background: reverted ? "var(--panel-2)" : "rgba(0, 230, 118, 0.05)",
-      border: `1px solid ${reverted ? "var(--border)" : "rgba(0,230,118,0.3)"}`,
+      background: needsReview ? "rgba(255,197,96,0.06)"
+                : reverted ? "var(--panel-2)" : "rgba(0, 230, 118, 0.05)",
+      border: `1px solid ${needsReview ? "rgba(255,197,96,0.4)"
+                          : reverted ? "var(--border)" : "rgba(0,230,118,0.3)"}`,
       borderRadius: 4,
       fontSize: 12,
       maxWidth: 460,
@@ -392,10 +411,10 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
       <div style={{
         display: "flex", alignItems: "center", gap: 8,
         fontFamily: "'JetBrains Mono', monospace",
-        color: reverted ? "var(--text-dim)" : "var(--ok)",
+        color: needsReview ? "var(--accent-2)" : reverted ? "var(--text-dim)" : "var(--ok)",
         fontWeight: 600,
       }}>
-        {reverted ? `↩︎ ${shipStatusLabel(SHIP_STATUS.ROLLED_BACK)}` : "✅ Pushed"}
+        {needsReview ? "⚠️ Needs review" : reverted ? `↩︎ ${shipStatusLabel(SHIP_STATUS.ROLLED_BACK)}` : "✅ Pushed"}
         {sha && (commitUrl ? (
           <a href={commitUrl} target="_blank" rel="noreferrer"
              data-testid={`ship-commit-link-${taskId}`}
@@ -410,6 +429,24 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
           </span>
         )}
       </div>
+
+      {/* Trust & Verification round — Enhancement 2. Backend-computed
+          phrase only; a commit landing only proves write integrity,
+          not correctness. */}
+      <div style={{ marginTop: 6 }}>
+        <VerificationLevelBadge
+          verificationStatus={task.verification_status}
+          verificationLevelDisplay={task.verification_level_display}
+          needsReview={task.status === "needs_review"}
+        />
+      </div>
+
+      {task.needs_review_reason && (
+        <div data-testid={`ship-needs-review-reason-${taskId}`}
+             style={{ marginTop: 6, fontSize: 11, color: "var(--accent-2)" }}>
+          ⚠️ {task.needs_review_reason}
+        </div>
+      )}
 
       {task.result && (
         <div style={{ marginTop: 6, color: "var(--text)" }}>{task.result}</div>
@@ -458,6 +495,25 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
                          display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> {shipStatusLabel(SHIP_STATUS.ROLLING_BACK)}
           </span>
+        )}
+        {/* Trust & Verification round — Enhancement 3, explicit
+            user-reported retroactive downgrade. Only offered once —
+            already needs_review or already reported this session. */}
+        {!needsReview && !reverted && (
+          <button
+            data-testid={`ship-report-issue-${taskId}`}
+            onClick={reportIssue}
+            disabled={reportState !== "idle"}
+            className="btn-ghost"
+            style={{
+              padding: "5px 10px", fontSize: 11,
+              borderColor: "rgba(255,197,96,0.35)",
+              color: "var(--accent-2)",
+              opacity: reportState === "busy" ? 0.6 : 1,
+            }}
+          >
+            {reportState === "done" ? "Reported ✓" : "Report an issue"}
+          </button>
         )}
       </div>
       {/* 2026-08-28 · First-Experience Wave B6/P2-B — visible
