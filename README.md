@@ -556,5 +556,10 @@ up on the next redeploy.
 
 ---
 
+**License:** Proprietary — All Rights Reserved, Polaris Built Inc.
+See [`LICENSE`](./LICENSE). This is a commercial product, not open
+source (the standalone `ora-grounding` extraction above is the one
+MIT-licensed exception).
+
 *Built by Aurem CTO · [auremcto.com](https://auremcto.com) ·
 sister app [aurem.live](https://aurem.live)*
