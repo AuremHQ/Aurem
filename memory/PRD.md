@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-23. The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`. Historical claims there are not fresh production verification.
 
+## Current task — false-success incidents #3 and #6, DIAGNOSIS ONLY (2026-09-23)
+
+User supplied six task-handling bugs with priority 3+6 → 2 → 1+4 → 5. Latest scope explicitly narrowed to **read-only diagnosis and isolated reproductions for #3/#6; NO implementation, real commits or production actions without separate approval**. Application source/config unchanged in this diagnostic round; only diagnostic artifacts/memory written.
+
+- **#3 confirmed transport gap:** `worker.py` emits `scope_confirmation`; `watchdog.py::consume_worker_queue` drops it; `stream.py` done payload omits scope fields; ChatPanel provides no `onScopeConfirmation` handler and reads missing done fields. Earlier helper-level scope-confirm tests did NOT prove this complete flow works; consider scope-confirmation integration incomplete, not production-verified.
+- **#3 confirmed typed-text path:** exact `Confirm and proceed` → heuristic CASUAL (0.86), pending_action `new_request`, confirmation predicate false, even with `pending_fix=True`; isolated pre-LLM test returns zero-tool casual result. IMPORTANT: actual ScopeConfirmCard button resends original prompt + proposal ID (serialization IS wired); typed-phrase reproduction alone does not prove the user's exact button incident.
+- **#3 additional gaps:** confirmation ID only consumed when a newly computed `needs_confirm` is true; stored execution mode is not restored; proposal confirmation API does not validate expected session/project. ScopeConfirmCard dynamically reproduced showing proceeding despite callback returning `{ok:false}`.
+- **#6 confirmed semantic/UI gap:** catalog `create_backlog_item` writes `ora_backlog_items`, not `cto_tasks`, `ora_self_bugs`, or `cto_founder_suggestions`; no repair/code-commit executor is in this catalog. A missing row in those other panels does NOT prove no backlog record exists. OraChatDrawer dynamically shows `Approved and executed` for `{}` and `{ok:null}` because it accepts anything except explicit false, and discards action result identifiers.
+- **#6 additional race:** approve route has no atomic claim. Isolated concurrent stale-proposal-read harness invokes mocked executor twice; not evidence that this happened in the reported production incident.
+- **Evidence:** `test_reports/iteration_392.json`, `test_reports/iteration_392_followup.json`; harnesses only in `/tmp`. Real functions tested with in-memory/MOCKED dependencies; two additional actual React component tests passed. Source-only findings and dynamic proofs are distinguished. No matching `AuremHQ/secure-team-workspace` project in preview DB; original production session/proposal/action IDs unavailable.
+- **Next:** present/approve targeted fix plan; implementation remains unapproved. Remaining issues #2/#1/#4/#5 not newly investigated end-to-end in this round. Original GitHub fix's live-provider/production verification remains pending.
+
 ## Latest task — GitHub connect to Projects handoff (2026-09-23)
 
 User reported: successful GitHub repository authorization from `/projects` > Add Project never appears in the left project list, including after reload. Approved targeted diagnosis/fix with existing permissions preserved; no production/GitHub settings changes.
