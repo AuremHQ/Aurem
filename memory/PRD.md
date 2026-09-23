@@ -52,6 +52,18 @@ User request (Hindi/English): audit `https://auremcto.com/admin/overview` agains
 
 Deep UI/interaction reliability audit across eight shared failure mechanisms produced the `INTERACTION_CONTRACT_V1` machinery, left OFF pending activation. **Activated and P1-gap-closed in the 2026-09-23 round above.** Full detail preserved in `CHANGELOG.md` and `memory/INTERACTION_RELIABILITY_AUDIT_2026_09_22.md` / `memory/CODING_AGENT_BLUEPRINT_V2.md`.
 
+## Trust & Verification round (2026-09-23) — six enhancements, audited + built (see CHANGELOG.md for full detail)
+
+User requested an audit against a six-item Trust & Verification spec, then build of everything missing. Audit found Enh.1 (independent verification) and Enh.5 (pre-execution scope confirmation) partially built (Loop Mode only / signal-computed-but-not-gated), Enh.2/3/4/6 fully missing. Built this round:
+- **Enh.1** — `services/task_independent_verifier.py` extends the existing Loop-Mode-only independent-verifier pattern to the single-edit chat-task pipeline (`worker_api.py`, `worker_git.py`), gated BEFORE commit/disk-write. Shared append-only ledger `services/verification.py` (`task_verifications` collection) now receives writes from BOTH Loop Mode (`loop_independent_verifier.py`, additive mirror) and single-edit tasks — enforces `verified_by != executed_by` at the write choke point.
+- **Enh.2** — `VerificationLevelBadge.jsx` + backend `display_level()`; surfaced in `LiveTaskPopup.jsx` and `TaskProgressCard.jsx`.
+- **Enh.3** — `services/task_downgrade.py`: `done -> needs_review` guarded/idempotent transition, explicit `POST /verification/tasks/{id}/report-issue` (+ UI button on `TaskProgressCard`), implicit correction-report regex trigger, `re-verify` endpoint (never a manual flip back to done).
+- **Enh.4** — `services/trust_calibration.py` + `trust_calibration_cron.py`: 30-day correction-rate snapshot, `GET /admin/trust-calibration`, "not enough data" (never fabricated 0%) when denominator is 0.
+- **Enh.5** — `services/scope_confirmation.py` + `_scope_confirmation_gate()` in `routers/chat/worker.py`: gates the real consequential-execution choke point (right before `_run_orchestrator`) using the classifier's own pre-existing-but-previously-unwired `needs_confirm` signal. `ScopeConfirmCard.jsx` renders Confirm/Change/Cancel.
+- **Enh.6** — `backend/scripts/lint_absolute_claims.py` + `absolute_claims_allowlist.json`, wired into `.github/workflows/ci.yml` as a new required job. Found and fixed 1 real violation in `services/first50_campaign.py` ("always works" onboarding email copy); allowlisted 3 genuine false positives.
+
+Tested: 14 new unit tests (`test_trust_verification_2026_09.py`) + 6 new live-endpoint e2e tests (`test_trust_verification_e2e_2026_09.py`), all passing; existing reliability/interaction regression suites unaffected (64/64 + prior suites green); 2 pre-existing failures in `test_cto_worker_safety_pipeline_2026_09_08.py` confirmed via `git stash` to be UNRELATED to this round. **Not live-verified**: a real GitHub-connected task completion through Enh.1/2/3's full lifecycle — preview `test@aurem.dev` only has demo-fixture projects (fake `installation_id`), no real GitHub App installation to exercise `worker_api.py`/`worker_git.py` end-to-end. Enh.5's live SSE trigger also not exercised (depends on classifier's own 0.55 heuristic firing on an ambiguous prompt) — code path + UI verified statically/via unit tests only.
+
 ## Known open items (not fixed by any round above)
 
 - `input_normalizer.py` silently changes a code-fenced JS string `a—b` into `a--b`.
@@ -63,7 +75,10 @@ Deep UI/interaction reliability audit across eight shared failure mechanisms pro
 ## Next priorities
 
 - **P0:** Rotate/renew `GITHUB_ACTIONS_TOKEN` and fix Resend sender/domain config — both founder/ops actions, not code fixes.
+- **P0:** Live-verify the Trust & Verification round's Enh.1/2/3 lifecycle against a REAL GitHub-App-installed project (preview account only has demo fixtures) — run a real chat-driven edit task and confirm verification_status/level persist + render correctly end-to-end.
 - **P1:** Wire `retry_of_request_id`/ledger into `/chat/send` for parity if that path becomes production-relevant again; production-live verification of the reliability round above once founder has production access available to this agent.
+- **P1:** Trigger Enh.5's scope-confirmation gate live with a real ambiguous prompt (classifier's 0.55 threshold) and confirm the ScopeConfirmCard/Confirm-resend loop end-to-end in the browser.
+- **P2:** Extend Enh.2's verification-level badge to more historical chat-history surfaces (currently: live popup + persistent ship card; older closed message bubbles don't re-fetch).
 - **P2:** `AdminOverview.jsx` file split into per-card components (~2650 lines, over guideline); calibrated router/model benchmarks; proof-details drawer.
 
 See ROADMAP.md for historical backlog; CHANGELOG.md for prior dated work.

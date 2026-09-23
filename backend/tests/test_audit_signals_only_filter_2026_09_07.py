@@ -30,7 +30,7 @@ class _FakeCollection:
     def __init__(self):
         self.last_query = None
 
-    def find(self, q):
+    def find(self, q, projection=None):
         self.last_query = q
         return _FakeCursor([{"turn_id": "t1"}])
 

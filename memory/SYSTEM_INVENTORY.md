@@ -991,3 +991,10 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `CHAT_FIRST_TOKEN_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349723Z] <!-- inv:envvar:CHAT_FIRST_TOKEN_TIMEOUT_S -->
 - `CHAT_STREAM_IDLE_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349740Z] <!-- inv:envvar:CHAT_STREAM_IDLE_TIMEOUT_S -->
 - `CHAT_HARD_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349757Z] <!-- inv:envvar:CHAT_HARD_TIMEOUT_S -->
+| `routers/verification.py` | `(none)` | 6 | auto-detected new router (verify) (Iter 0, 2026-09-23T01:38:01.085374Z) | <!-- inv:router:routers/verification.py -->
+- `services/scope_confirmation.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085410Z] <!-- inv:service:services/scope_confirmation.py -->
+- `services/task_downgrade.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085435Z] <!-- inv:service:services/task_downgrade.py -->
+- `services/task_independent_verifier.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085459Z] <!-- inv:service:services/task_independent_verifier.py -->
+- `services/trust_calibration.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085480Z] <!-- inv:service:services/trust_calibration.py -->
+- `services/trust_calibration_cron.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085503Z] <!-- inv:service:services/trust_calibration_cron.py -->
+- `services/verification.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085523Z] <!-- inv:service:services/verification.py -->

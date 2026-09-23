@@ -161,7 +161,7 @@ async def list_turns(
     if signals_only:
         q["system_signals_emitted"] = {"$exists": True, "$ne": []}
     try:
-        return await db[COLLECTION].find(q).sort("timestamp", -1).to_list(limit)
+        return await db[COLLECTION].find(q, {"_id": 0}).sort("timestamp", -1).to_list(limit)
     except Exception as e:                                   # noqa: BLE001
         logger.warning("audit_log.list_turns failed: %r", e)
         return []
