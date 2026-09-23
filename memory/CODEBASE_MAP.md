@@ -291,7 +291,7 @@ Run all ORA suite: `cd /app/backend && python -m pytest tests/test_ora_chat*.py 
 | **Anthropic (Emergent)** | Claude Sonnet 4.5 (Council primary) | `EMERGENT_LLM_KEY` (universal) |
 | **Anthropic direct (future)** | Claude Haiku 4.5 native web_search+web_fetch | `ANTHROPIC_API_KEY` (not set yet) |
 | **Stripe** | Subscriptions + credits | `STRIPE_API_KEY` |
-| **GitHub App (installation-based)** | Repo access + PRs — PAT support removed | Installation-based (`GITHUB_APP_TOKEN`, `GITHUB_WEBHOOK_SECRET`), not per-user PAT |
+| **GitHub App installation** (preferred) + legacy PAT (fallback) | Repo access + PRs | `installation_id` wins when both set; `github_token` (PAT) still fully supported — see `routers/cto_projects/management.py` |
 | **Vercel** | Personal Track deploys | `VERCEL_API_TOKEN` |
 | **Supabase** | User-provisioned Postgres | User's `SUPABASE_ACCESS_TOKEN` |
 | **Sentry** | Error tracking | `SENTRY_DSN` |

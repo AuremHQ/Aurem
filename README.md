@@ -491,8 +491,8 @@ listed here. Coming once it's wired into the tiers file.
 - **AI:** OpenRouter proxy + Groq direct + Anthropic via
   Emergent LLM Key + emergentintegrations
 - **Auth:** Custom JWT (with `jti` + `iat`) + Google OAuth
-  (Emergent-managed) + GitHub App (installation-based — the only
-  supported repo auth method; PATs were removed)
+  (Emergent-managed) + GitHub App (installation-based, preferred) with
+  legacy PAT (`github_token`) still supported as a fallback
 - **Real-time:** SSE (Server-Sent Events) for chat streams and fix
   progress. No websockets, no long-polling.
 - **Cache / snapshots:** `.aurem_cache/` git-tree snapshots on disk

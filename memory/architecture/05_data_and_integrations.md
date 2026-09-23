@@ -39,7 +39,7 @@ Connection: `MONGO_URL` + `DB_NAME` from `backend/.env` ONLY. Never hardcode, ne
 ## EXTERNAL INTEGRATIONS
 | Integration | Purpose | Auth |
 |---|---|---|
-| GitHub REST API | Repo read/write, PRs, commits | GitHub App (installation-based) — PAT support removed |
+| GitHub REST API | Repo read/write, PRs, commits | GitHub App installation (`installation_id`, preferred) with legacy PAT (`github_token`, still fully supported) — installation_id wins when both are set |
 | GitHub OAuth | **Identity-only** signup/login | OAuth app (internal integration) |
 | Google Auth | 1-click signup | Emergent-managed endpoint |
 | OpenRouter / Groq / Anthropic | LLM inference | Emergent LLM Key via `llm_router.py` |
@@ -53,6 +53,6 @@ Connection: `MONGO_URL` + `DB_NAME` from `backend/.env` ONLY. Never hardcode, ne
 4. New product collections use the `cto_*` prefix.
 5. Never return raw Mongo docs from endpoints — ObjectId → str via the model layer; datetimes use `datetime.now(timezone.utc)`.
 6. All GitHub API calls go through the existing GitHub service layer (`github_api_writer.py`, `github_cache.py`, `repo_context.py`) — no scattered ad-hoc HTTP calls, and respect `.aurem_cache` first to avoid secondary rate limits.
-7. OAuth (GitHub/Google) is identity-only — never conflate it with the GitHub App installation-based repo read/write flow.
+7. OAuth (GitHub/Google) is identity-only — never conflate it with the repo read/write flow (GitHub App installation preferred, legacy PAT still supported as fallback).
 8. All LLM traffic uses the Emergent LLM Key via `llm_router.py`/`smart_router.py` — never a hardcoded provider key.
 9. New real-time features reuse the existing SSE infrastructure — no websockets, no polling as a parallel mechanism.

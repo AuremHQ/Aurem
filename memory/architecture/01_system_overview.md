@@ -35,7 +35,7 @@
 - **Backend Routers**: 102 `include_router` registrations (~120 router files, `backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, Personal Track, ORA Chat, Supabase, managed DB, trust & verification. → file 03
 - **Backend Services**: 345 modules (`backend/services/`, incl. `ora_chat/`, `ora_chat_v2/`, `seo/`, `actions/`, `http/`, `llm/`, `video_pipeline/`, `visibility/` subpackages) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing, Personal Track scaffolding, Supabase provisioning, trust & verification. → file 04
 - **Data Layer**: MongoDB via Motor — users, projects, tasks, fixed-findings ledger, ORA sessions, house rules, audit logs. → file 05
-- **External Integrations**: GitHub App (installation-based; PAT support removed), LLM providers (OpenRouter/Anthropic/DeepSeek/Sonar), Google Auth, Stripe, Vercel, Supabase, Meta Pixel, SSE. → file 05
+- **External Integrations**: GitHub App (installation-based, preferred) with legacy PAT (`github_token`) still supported as fallback — see `routers/cto_projects/management.py`, LLM providers (OpenRouter/Anthropic/DeepSeek/Sonar), Google Auth, Stripe, Vercel, Supabase, Meta Pixel, SSE. → file 05
 - **Business Logic**: tier/quota system (`subscription_tiers.py` + `scan_fix_quota.py`), Personal Track quotas (`personal_track_quotas.py`). → file 06
 - **See also**: `/app/memory/CODEBASE_MAP.md` for a single-file, always-fresh structural snapshot with subsystem-level detail. `07_demo_drift.md` for the marketing-demo reality contract.
 
