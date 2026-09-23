@@ -783,7 +783,8 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         ship_suppressed: bool = False,
                         bin_ctx=None,
                         interrupted: bool = False,
-                        interaction: Optional[dict] = None) -> None:
+                        interaction: Optional[dict] = None,
+                        stream_state: Optional[str] = None) -> None:
     """Append user+assistant turns to db.chat_sessions, capped at 40 turns.
     Tags the session with the project it belongs to (None == Home/global).
     Iter 51 — when `shipped_task_id` is set (e.g. Mode D→C auto-handoff),
@@ -840,6 +841,13 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
         assistant_turn["ship_suppressed"] = True
     if interrupted:
         assistant_turn["interrupted"] = True
+    # INTERACTION_CONTRACT_V1 P1 — started/streaming/complete/cancelled/
+    # unknown enum (see services/chat_reliability.py). Additive field;
+    # None (omitted) when the caller didn't pass one — e.g. the flag
+    # is OFF, or a legacy call site never updated — so existing
+    # readers of `interrupted` are completely unaffected.
+    if stream_state:
+        assistant_turn["stream_state"] = stream_state
     set_on_insert = {
         "session_id": session_id,
         "user_id": user_id,

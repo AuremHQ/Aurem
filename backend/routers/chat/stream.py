@@ -107,6 +107,36 @@ _RECOVERY_ACTION_FOR_MODE = {
 }
 
 
+# INTERACTION_CONTRACT_V1 P1 — idempotent retry replay generator.
+# Emits the SAME meta/token/done SSE shape a fresh turn would, but
+# from the ALREADY-CACHED completed record — zero new provider call,
+# zero new tool dispatch. `replayed_from_retry: True` on both frames
+# lets a test/UI positively distinguish this from a fresh completion.
+async def _replay_retry_gen(rec: dict, body: "ChatBody"):
+    content = rec.get("content", "") or ""
+    yield (
+        "data: " + json.dumps({
+            "meta": True, "session_id": body.session_id,
+            "provider": rec.get("provider") or "aurem-cto",
+            "thinking_s": 0.0, "tool_calls_run": rec.get("tool_calls_run", 0),
+            "replayed_from_retry": True,
+        }) + "\n\n"
+    )
+    CHUNK = 16
+    for i in range(0, len(content), CHUNK):
+        yield f"data: {json.dumps({'token': content[i:i + CHUNK]})}\n\n"
+        await asyncio.sleep(0.005)
+    yield (
+        "data: " + json.dumps({
+            "done": True, "provider": rec.get("provider") or "aurem-cto",
+            "session_id": body.session_id, "tokens_remaining": None,
+            "turn_state": rec.get("turn_state") or "success",
+            "replayed_from_retry": True,
+            "tool_calls_run": rec.get("tool_calls_run", 0),
+        }) + "\n\n"
+    )
+
+
 # ─── Iter 212m-149 — Intent Gateway live-classify endpoint ────────────
 # Used by the chat composer to render the live tier-dot indicator
 # (casual / query / agentic) as the user types.  Heuristic-only
@@ -158,6 +188,33 @@ async def chat_stream(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                      "Connection": "keep-alive"},
         )
+    # INTERACTION_CONTRACT_V1 P1 — idempotent retry replay. See
+    # services/chat_reliability.py's module docstring for the full
+    # rationale. Checked BEFORE any budget/rate-limit/provider work —
+    # a genuine replay costs zero new tokens and must never be refused
+    # for a reason that only makes sense for a fresh attempt. Placed
+    # AFTER the mock-mode short-circuit deliberately: mock mode never
+    # writes ledger rows, so `retry_of_request_id` naturally finds
+    # nothing there and this is a guaranteed no-op under MOCK_LLM.
+    from services.interaction_contract import enabled as _ic_enabled
+    if _ic_enabled() and body.retry_of_request_id:
+        from services.chat_reliability import lookup_retry
+        _retry_rec = await lookup_retry(
+            get_db(), retry_of_request_id=body.retry_of_request_id,
+            session_id=body.session_id or "", user_id=user["user_id"],
+        )
+        if _retry_rec:
+            logger.info(
+                "chat_stream: retry_of_request_id=%s replayed from ledger "
+                "(no new provider/tool call) session=%s",
+                body.retry_of_request_id, body.session_id,
+            )
+            return StreamingResponse(
+                _replay_retry_gen(_retry_rec, body),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                         "Connection": "keep-alive"},
+            )
     # Iter 364 · Phase 3 · Token hard-stop enforcement (streaming path).
     # Same as /chat/send — refuse the request before spending any LLM
     # tokens when the wallet is empty or the monthly task cap is blown.
@@ -671,8 +728,25 @@ async def chat_stream(
             council_block=_council_block, recall_mode=_recall_mode,
             plain_english_active=_plain_english_active, is_founder=_is_founder,
             hard_timeout_s=HARD_TIMEOUT_S, soft_timeout_s=SOFT_TIMEOUT_S,
+            interaction_request_id=interaction_request_id,
         )
         state.t_start = _t.monotonic()
+        # INTERACTION_CONTRACT_V1 P1 — durable acceptance record BEFORE
+        # any provider/tool call runs (see services/chat_reliability.py
+        # module docstring — this is the "task accepted, not silently
+        # lost" durability point a crashed worker would otherwise
+        # leave no trace of), plus the 4-clock timeout tracker.
+        if _ic_enabled():
+            from services.chat_reliability import record_started
+            from services.timeout_clocks import TimeoutClocks
+            state.timeout_clocks = TimeoutClocks(
+                t_start=state.t_start, hard_deadline_s=HARD_TIMEOUT_S)
+            await record_started(
+                get_db(), request_id=interaction_request_id,
+                session_id=body.session_id or "", user_id=user_id,
+                project_id=body.project_id, prompt=body.prompt or "",
+                route="chat_stream",
+            )
         # Iter 212m-78 — Council recall caption. Emit FIRST so the
         # FE renders "📚 ORA recalled N similar past answers" before
         # any tokens arrive. Skipped silently when count is 0.
@@ -685,6 +759,8 @@ async def chat_stream(
             )
 
         async def _ticker():
+            _prev_inv_count = 0
+            _prev_label = state.activity.get("label")
             while True:
                 try:
                     await asyncio.wait_for(state.stop_event.wait(), timeout=0.6)
@@ -695,10 +771,20 @@ async def chat_stream(
                     # the UI can render chips ("read_repo_file ✓", "search_repo …")
                     # right below the thinking bar instead of only the label.
                     _inv = list(state.activity.get("invocations") or [])
+                    _label = state.activity["label"]
+                    # INTERACTION_CONTRACT_V1 P1 — real progress signal for
+                    # the 4-clock tracker's `stream_idle`/`connect` clocks:
+                    # a new tool invocation landed, or the activity label
+                    # moved away from whatever it last was.
+                    if state.timeout_clocks is not None and (
+                        len(_inv) > _prev_inv_count or _label != _prev_label
+                    ):
+                        state.timeout_clocks.mark_activity()
+                    _prev_inv_count, _prev_label = len(_inv), _label
                     await state.q.put({
                         "type": "tick",
                         "elapsed_s": elapsed,
-                        "activity": state.activity["label"],
+                        "activity": _label,
                         "invocations": _inv,
                         # 2026-09-08 — Turn-Completion Contract stream-idle
                         # notice (see STREAM_SLOW_NOTICE_S comment above).
@@ -713,6 +799,10 @@ async def chat_stream(
         # orchestrator's first LLM round-trip (which can be 1-5 s on
         # OpenRouter cold-start). The frontend uses this to anchor the
         # real-progress bar at 15% the moment the request is accepted.
+        # INTERACTION_CONTRACT_V1 P1 — `request_id` is carried so the
+        # frontend's "Retry" action can send it back as
+        # `retry_of_request_id` on a follow-up attempt (see
+        # ChatPanel.jsx's performRetry).
         yield (
             "data: " + json.dumps({
                 "meta": True,
@@ -720,11 +810,52 @@ async def chat_stream(
                 "provider": "aurem-cto",
                 "thinking_s": 0.0,
                 "tool_calls_run": 0,
+                "request_id": interaction_request_id,
             }) + "\n\n"
         )
 
-        async for _chunk in consume_worker_queue(state, worker_t, ticker_t):
-            yield _chunk
+        try:
+            async for _chunk in consume_worker_queue(state, worker_t, ticker_t):
+                yield _chunk
+        except (asyncio.CancelledError, GeneratorExit):
+            # INTERACTION_CONTRACT_V1 P1 — client disconnected / task
+            # cancelled WHILE STILL WAITING on the worker/provider,
+            # before any content existed to chunk out yet. The
+            # pre-existing mid-stream-drop handler further below only
+            # covers a disconnect AFTER content exists (inside the
+            # token-chunking loop) — this is the OTHER, often longer,
+            # window. Without this, a disconnect here left the ledger
+            # row stuck at `started` forever (still durable proof the
+            # task was accepted, but never resolved to a
+            # positively-known `cancelled` outcome) — live-verified via
+            # a real killed-client repro during this implementation
+            # before this except clause existed.
+            if _ic_enabled():
+                try:
+                    from services.chat_reliability import record_cancelled
+                    from services.interaction_contract import finalize as _fin
+                    partial_invocations = list(state.activity.get("invocations") or [])
+                    await record_cancelled(
+                        get_db(), request_id=interaction_request_id,
+                        reason="client_disconnect_while_waiting_for_worker",
+                        partial_content="", tool_calls_run=len(partial_invocations),
+                    )
+                    await _persist_turn(
+                        user_id, body.session_id or "", body.prompt, "",
+                        "aurem-cto", project_id=body.project_id,
+                        interrupted=True, stream_state="cancelled",
+                        interaction=_fin(
+                            {"turn_state": "partial" if partial_invocations else "error",
+                             "failure_mode": "client_disconnect_while_waiting_for_worker"},
+                            "", prompt=body.prompt, session_id=body.session_id or "",
+                            request_id=interaction_request_id,
+                        ),
+                    )
+                except Exception:
+                    logger.debug("chat_reliability record_cancelled skipped (disconnect while waiting)")
+            worker_t.cancel()
+            ticker_t.cancel()
+            raise
         if state.timed_out:
             return
         result = state.result
@@ -905,6 +1036,7 @@ async def chat_stream(
                         low_confidence=state.low_confidence,
                         ship_suppressed=state.ship_suppressed,
                         bin_ctx=bin_ctx, interrupted=True,
+                        stream_state="cancelled" if _ic_enabled() else None,
                         interaction=finalize(
                             {"turn_state": "partial", "failure_mode": "network_drop_mid_stream"},
                             _emitted_so_far, prompt=body.prompt, session_id=body.session_id or "",
@@ -913,6 +1045,21 @@ async def chat_stream(
                     )
                 except Exception:
                     logger.exception("mid-stream-drop persist_turn failed")
+                # INTERACTION_CONTRACT_V1 P1 — ledger terminal state: WE
+                # know the outcome (cancelled by a real client drop),
+                # so this is `cancelled`, not `unknown`. Never replayed
+                # by a future retry (only `completed` records are).
+                if _ic_enabled():
+                    try:
+                        from services.chat_reliability import record_cancelled
+                        await record_cancelled(
+                            get_db(), request_id=interaction_request_id,
+                            reason="network_drop_mid_stream",
+                            partial_content=_emitted_so_far,
+                            tool_calls_run=(result.get("tool_calls_run", 0) if isinstance(result, dict) else 0),
+                        )
+                    except Exception:
+                        logger.debug("chat_reliability record_cancelled skipped (mid-stream drop)")
                 # 2026-09-08 — task-chain logging. Awaited directly (not
                 # create_task) — the enclosing generator is already being
                 # torn down by CancelledError/GeneratorExit here, so a
@@ -1171,6 +1318,17 @@ async def chat_stream(
         if interaction:
             result["turn_state"] = interaction["turn_state"]
             result["continue_available"] = interaction["continue_available"]
+        # INTERACTION_CONTRACT_V1 P1 — stream-state enum (started →
+        # streaming → complete/cancelled/unknown), replacing the sole
+        # boolean `interrupted` flag for this normal-completion path.
+        # The transport DID finish (we're about to yield `done: true`
+        # below) regardless of whether the CONTENT itself is a
+        # success/error/partial turn_state — a worker-level `error`
+        # event (see watchdog.py's `ev["type"]=="error"` branch) means
+        # we can't positively confirm no tool side effect happened
+        # before the error, so that specific case is `unknown`, not
+        # `complete`.
+        _stream_state = "unknown" if _hard_error else "complete"
         await _persist_turn(user_id, body.session_id or "",
                             body.prompt, content, provider, watchdog=watchdog,
                             project_id=body.project_id,
@@ -1178,7 +1336,29 @@ async def chat_stream(
                             steps=collected_steps,
                             low_confidence=state.low_confidence,
                             ship_suppressed=state.ship_suppressed,
-                            bin_ctx=bin_ctx, interaction=interaction)
+                            bin_ctx=bin_ctx, interaction=interaction,
+                            stream_state=_stream_state if _ic_enabled() else None)
+        # INTERACTION_CONTRACT_V1 P1 — ledger terminal state. See
+        # services/chat_reliability.py: only a `completed` record with
+        # a non-"error" turn_state is ever replayed by a future retry.
+        if _ic_enabled():
+            try:
+                from services.chat_reliability import record_completed, record_unknown
+                _final_turn_state = result.get("turn_state") or ("error" if _hard_error else "success")
+                if _stream_state == "unknown":
+                    await record_unknown(
+                        get_db(), request_id=interaction_request_id,
+                        reason=str(_hard_error)[:300],
+                    )
+                else:
+                    await record_completed(
+                        get_db(), request_id=interaction_request_id,
+                        content=content, provider=provider,
+                        tool_calls_run=result.get("tool_calls_run", 0),
+                        turn_state=_final_turn_state,
+                    )
+            except Exception:
+                logger.debug("chat_reliability ledger record skipped (normal completion)")
 
         # 2026-09-08 — Chain-of-thought pattern analysis (structured,
         # not raw). Fire-and-forget, same convention as the audit_log/

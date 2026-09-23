@@ -1280,6 +1280,12 @@ async def run_worker(state: StreamState) -> None:
     stage. Always sets `state.stop_event` on the way out so
     watchdog.py's queue consumption loop can't wait forever."""
     q = state.q
+    # INTERACTION_CONTRACT_V1 P1 — the async task itself just got
+    # its first slice of CPU time; see TimeoutClocks.mark_connected's
+    # docstring for why this is deliberately separate from
+    # mark_activity() (real tool-call/output progress).
+    if state.timeout_clocks is not None:
+        state.timeout_clocks.mark_connected()
     try:
         # Part B3 (round 4 fix) — hoisted to the TOP, before ANY mode
         # dispatch below. Confirmed live (testing round 3): "Fix this

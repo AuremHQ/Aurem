@@ -560,6 +560,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   const lastF12PayloadRef = useRef(null);
   const endRef = useRef(null);
   const abortRef = useRef(null);
+  // INTERACTION_CONTRACT_V1 P1 — the `request_id` of the MOST RECENT
+  // /chat/stream attempt for the turn currently in flight. Captured
+  // off that attempt's own `meta` frame; sent back as
+  // `retry_of_request_id` on the NEXT retry so the backend can replay
+  // an already-completed original instead of re-running the
+  // provider/tools a second time (services/chat_reliability.py).
+  // Reset to null at the start of every genuinely NEW user message.
+  const lastRequestIdRef = useRef(null);
   // Iter 212m-43 — stuck-thinking auto-recovery watchdog. If the SSE
   // stream goes silent (no token / heartbeat / step / mode update)
   // for IDLE_TIMEOUT_MS, we abort the stream and silently retry the
@@ -2657,6 +2665,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       mode: chatMode,              // Iter 153: swift / pro / maxx review
       executionMode: execMode,     // Iter 212m-58: prompt / loop
       f12Payload,                  // iter 42: console/network/stack errors
+      // INTERACTION_CONTRACT_V1 P1 — set on every call INCLUDING the
+      // first: null on a genuinely fresh turn (lastRequestIdRef is
+      // reset before runTurn's first invocation — see below), the
+      // PRIOR attempt's own id on a retry re-invocation of runTurn.
+      retryOfRequestId: lastRequestIdRef.current,
       signal: ctrl.signal,
       onMode: (m) => {
         bumpActivity();
@@ -2741,6 +2754,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       },
       onMeta: (m) => {
         bumpActivity();
+        // INTERACTION_CONTRACT_V1 P1 — capture this attempt's own
+        // request_id so a FOLLOWING retry (if one is needed) can
+        // reference it. See lastRequestIdRef's declaration comment.
+        if (m && m.request_id) lastRequestIdRef.current = m.request_id;
         // Iter 141 — first real progress milestone. The meta frame
         // confirms the server accepted the request and routed it to
         // the orchestrator. Anchor the bar at 15% so the user gets
@@ -3172,6 +3189,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     // watchdog, never a real failure — swallow it silently; anything
     // else is truly unexpected and worth a console.warn.
     try {
+      // INTERACTION_CONTRACT_V1 P1 — this is a genuinely NEW user
+      // turn (not a retry re-invocation of runTurn), so there is no
+      // prior attempt to reference yet.
+      lastRequestIdRef.current = null;
       await runTurn();
     } catch (e) {
       const name = e?.name || "";

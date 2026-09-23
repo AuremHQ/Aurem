@@ -53,6 +53,14 @@ class StreamState:
     t_start: float = 0.0
     hard_timeout_s: float = 180.0
     soft_timeout_s: float = 48.0
+    # INTERACTION_CONTRACT_V1 P1 — 4-clock timeout tracker (see
+    # services/timeout_clocks.py). None when the flag is OFF; the
+    # legacy hard/soft-timeout pair above stays the sole mechanism in
+    # that case, unchanged. Also used as the durable ledger's request
+    # identity carrier so watchdog.py can record a terminal ledger
+    # state without needing extra params threaded through it.
+    timeout_clocks: Optional[Any] = None
+    interaction_request_id: str = ""
 
     # ── worker.py output, read by sse_stream.py's cost-logging call
     # after the worker completes ──

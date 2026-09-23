@@ -295,6 +295,7 @@ export async function streamChat({ prompt, sessionId, session_id,
                                     onStep,   // Iter 212m-19 — live step cards
                                     onCouncil, // Iter 212m-78 — recalled count
                                     onIntent,  // Iter 212m-149 — gateway tier classification
+                                    retryOfRequestId, retry_of_request_id,  // INTERACTION_CONTRACT_V1 P1
                                     signal }) {
   // Iter 212m-194 — coalesce camelCase + snake_case aliases so
   // AskAdvisorReal (snake) and ChatPanel (camel) both work.
@@ -306,6 +307,7 @@ export async function streamChat({ prompt, sessionId, session_id,
   const _f12Payload   = f12_payload    ?? f12Payload;
   // Iter 212m-212 — screenshot passthrough
   const _screenshotB64 = screenshot_b64 ?? screenshotB64;
+  const _retryOfRequestId = retry_of_request_id ?? retryOfRequestId ?? null;
   const token = getToken();
   // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
   // reproducible): this initial `fetch()` had no try/catch of its
@@ -337,6 +339,10 @@ export async function streamChat({ prompt, sessionId, session_id,
         f12_payload: _f12Payload,
         ora_panel,                       // Iter 212m-194 — was being dropped
         screenshot_b64: _screenshotB64,  // Iter 212m-212
+        // INTERACTION_CONTRACT_V1 P1 — set only on a genuine retry;
+        // omitted (undefined -> not serialized meaningfully, backend
+        // treats missing/None identically) on a normal first send.
+        ...(_retryOfRequestId ? { retry_of_request_id: _retryOfRequestId } : {}),
       }),
       signal,
     });

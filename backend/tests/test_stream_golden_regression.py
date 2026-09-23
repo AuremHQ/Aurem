@@ -28,6 +28,26 @@ Verified before re-recording that this was the ONLY diff (no other
 field/event changed on any of the 6 scenarios) — golden re-captured
 via `python -m tests._capture_stream_golden` to reflect the new
 contract fields as the new baseline.
+
+2026-09-22 · INTERACTION_CONTRACT_V1 activated (P1 follow-up round:
+4-clock timeout tracker + idempotent-retry ledger + stream-state
+enum — see services/timeout_clocks.py, services/chat_reliability.py).
+Two more INTENTIONAL, verified diffs, both re-recorded:
+  1. Every `meta` frame now also carries `request_id` — needed so the
+     frontend's "Retry" action can reference the exact attempt it is
+     retrying. Random per request by design; stripped from comparison
+     in normalize_events() rather than baked into the fixture.
+  2. The final `done` event's `interaction` field went from `None`
+     (the flag was OFF during every prior golden capture) to the real
+     envelope (`turn_state`, `request_hash`, `content_hash`, ...) now
+     that `INTERACTION_CONTRACT_V1=1` is the active configuration —
+     this machinery (services/interaction_contract.py) already
+     existed pre-2026-09-22; only its activation is new here. Its own
+     nested `request_id` is likewise random-per-run and stripped.
+  Verified before re-recording that these 2 were the ONLY diffs (ran
+  with -vv, confirmed every other field/event on all 6 scenarios was
+  byte-identical to the pre-activation golden) — re-captured via
+  `python -m tests._capture_stream_golden`.
 """
 import json
 import os

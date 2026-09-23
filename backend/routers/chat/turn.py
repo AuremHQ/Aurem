@@ -100,6 +100,14 @@ class ChatBody(BaseModel):
     # existing keyword-based routing (safe — never escalates the
     # council).
     task_type: Optional[str] = Field(None, max_length=32)
+    # INTERACTION_CONTRACT_V1 P1 — set by the frontend's "Retry" action
+    # to the `request_id` of the ORIGINAL attempt (captured off that
+    # attempt's own `meta`/`done` SSE frame). Lets the server replay an
+    # already-`completed` original instead of re-running the provider/
+    # tools a second time. See services/chat_reliability.py. Optional,
+    # backward-compatible — omitted entirely by older/unpatched clients,
+    # which behave exactly as before (a fresh attempt every time).
+    retry_of_request_id: Optional[str] = Field(None, max_length=64)
 
     @validator("prompt")
     def _strip_prompt(cls, v: str) -> str:
