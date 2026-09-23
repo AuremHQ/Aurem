@@ -1,4 +1,4 @@
-# 04 — BACKEND: SERVICES (108 modules — `backend/services/`) + 9-module `ora_chat/` subpackage
+# 04 — BACKEND: SERVICES (345 modules — `backend/services/`, incl. `ora_chat/`, `ora_chat_v2/`, `seo/`, `actions/`, `http/`, `llm/`, `video_pipeline/`, `visibility/` subpackages)
 (Self-contained context module. System map: file 01. Routers that call these: file 03. See also: `/app/memory/CODEBASE_MAP.md`.)
 
 ## CATEGORIES
@@ -37,7 +37,13 @@
 `personal_track_quotas.py`, `personal_track_smoke.py`, `preview_sandbox.py`, `scaffold_llm.py`, `aurem_managed_db.py`, `supabase_provisioner.py`, `github_org_client.py` — powers `routers/personal_track.py` + `routers/supabase.py` + `routers/managed_db.py`. Stack templates live in `backend/templates/stacks/{react-fastapi,nextjs-node,vue-express,plain-html}/`.
 
 ### ORA Chat (Iter 212m-244+, founder-only PIN-gated chat) — `backend/services/ora_chat/` subpackage
-9 modules — `router.py` (route configs: general/research/deep/slash/slash_explain/tool_orchestration), `safety.py` (CORE_SAFETY_RULES + AUREM_CONTEXT + assemble_system_prompt + KNOWN_COMMANDS), `providers.py` (OpenRouter wrapper), `session.py` (persistent Mongo sessions), `cost_tracker.py` (daily/monthly budget), `house_rules.py` (admin custom prefs), `slash_commands.py` (11 deterministic commands — 5 DB + 5 codebase + help), `deep_research.py` (Iter 212m-245: multi-label classifier + parallel fan-out GitHub/Reddit/GDELT/Sonar + DeepSeek V3 synth + cost-guard downgrade + feature-flagged Claude Haiku 4.5 tool_orchestration stub), `codebase_index.py` (Iter 212m-246: walks 803 files in ~0.3 s, BM25-lite retrieval with min_tokens=2/min_score=3.5 guards + curated `system_highlights()` + path-traversal-safe `read_file`).
+18 modules — `router.py` (route configs: general/research/deep/slash/slash_explain/tool_orchestration), `safety.py` (CORE_SAFETY_RULES + AUREM_CONTEXT + assemble_system_prompt + KNOWN_COMMANDS), `providers.py` (OpenRouter wrapper), `session.py` (persistent Mongo sessions), `cost_tracker.py` (daily/monthly budget), `house_rules.py` (admin custom prefs), `slash_commands.py` (11 deterministic commands — 5 DB + 5 codebase + help), `deep_research.py` (Iter 212m-245: multi-label classifier + parallel fan-out GitHub/Reddit/GDELT/Sonar + DeepSeek V3 synth + cost-guard downgrade + feature-flagged Claude Haiku 4.5 tool_orchestration stub), `codebase_index.py` (Iter 212m-246: walks 803 files in ~0.3 s, BM25-lite retrieval with min_tokens=2/min_score=3.5 guards + curated `system_highlights()` + path-traversal-safe `read_file`).
+
+### Trust & Verification *(2026-09-23, sandbox-verified — not yet production-verified)*
+`verification.py` (shared append-only `task_verifications` ledger, `verified_by != executed_by` enforcement), `task_independent_verifier.py` (extends Loop-Mode's independent-verifier pattern to single-edit chat tasks, gated before commit/disk-write), `task_downgrade.py` (`done → needs_review` guarded transition + explicit/implicit correction triggers + re-verify endpoint), `trust_calibration.py` + `trust_calibration_cron.py` (30-day correction-rate snapshot, honest "not enough data" when denominator is 0), `scope_confirmation.py` (pre-execution confirmation gate on the classifier's `needs_confirm` signal).
+
+### Interaction Reliability *(2026-09-23, sandbox-reproduced against real Mongo + LLM — not yet production-verified)*
+`timeout_clocks.py` (4 distinct clocks: `connect`/`first_token`/`stream_idle`/`hard_deadline`), `chat_reliability.py` (durable `chat_request_ledger`, idempotent retry replay, self-healing reconciler cron).
 
 ## RULES FOR THE AI DEVELOPER (hard constraints)
 1. All LLM calls route through `llm_router.py`/`smart_router.py` — never call a provider SDK/API directly from a scanner, fixer, or feature module. Never hardcode a provider API key.

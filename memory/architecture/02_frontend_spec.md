@@ -4,7 +4,7 @@
 ## STACK
 React SPA on port 3000 (supervisor-managed, hot reload). Tailwind + Shadcn UI (`src/components/ui/`) + Context API for state + SSE for real-time streaming. Package manager: **yarn only**.
 
-## PAGES (51 total — `src/pages/`)
+## PAGES (88 total — `src/pages/`)
 - **Public/Marketing**: `Landing`, `Pricing`, `Demo`, `VsDevin`, `WhyOra`, `PolicyPage`, `BugHunt` (has custom `bug-hunt-bg.png` background, scoped to this page only)
 - **Auth**: `Login`, `Signup`, `OAuthFinish`
 - **App Core**: `Dashboard`, `DashboardPreviewV2`, `Projects`, `CodebaseHealth`, `ToolsPage`, `Settings`, `Integrations`, `Tokens`, `Domain`, `Deploy`, `Automations`, `Analytics`, `BrainDump`, `FeatureWindow`, `OpsRecipes`, `ShipWall`, `Wrapped`, `SystemStatsPage`, `SidebarPreview`
@@ -26,6 +26,8 @@ React SPA on port 3000 (supervisor-managed, hot reload). Tailwind + Shadcn UI (`
 | `AdminRobotGuide` / `AuremAdminPanel` / `AdminHouseRules` | Admin-editable content panels |
 | `PatRequiredCTA` / `ConnectRepoBanner` / `GitHubCard` | GitHub PAT/repo connection prompts |
 | `FounderOfferCard` / `FounderOfferPill` | Founder-offer monetization surfaces |
+| `VerificationLevelBadge` | Trust & Verification (2026-09-23) — renders task verification level on live task popups + ship cards |
+| `ScopeConfirmCard` | Trust & Verification (2026-09-23) — Confirm/Change/Cancel gate before an ambiguous chat request executes |
 
 ## UI CONVENTIONS
 - Avatar dropdown contains ONLY Settings and Logout.
