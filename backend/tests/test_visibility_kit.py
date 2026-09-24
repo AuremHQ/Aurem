@@ -13,6 +13,7 @@ Named tests per spec + this app's own conventions:
   t_apply_no_copy_edit   — apply() only ever writes robots.txt/sitemap.xml/html-head,
                            never a content/prose file
 """
+import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -79,9 +80,10 @@ async def test_catalog_seeded():
     from motor.motor_asyncio import AsyncIOMotorClient
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = client[os.environ["DB_NAME"]]
-    items = await db.visibility_items.find({}, {"_id": 0}).to_list(20)
+    items = await db.visibility_items.find({}, {"_id": 0}).to_list(50)
     client.close()
-    assert len(items) == 8
+    catalog = importlib.import_module("migrations.003_visibility_kit").CATALOG_ITEMS
+    assert {i["key"] for i in items} == {c["key"] for c in catalog}
     assert sum(i["weight"] for i in items) == 100
 
 
@@ -136,7 +138,9 @@ async def test_apply_no_copy_edit_only_writes_managed_paths():
          patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
          patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
          patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
-         patch("services.visibility.apply.open_draft_pr", new=AsyncMock(return_value=("https://github.com/o/r/pull/1", None))):
+         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+             "ok": True, "pr_url": "https://github.com/o/r/pull/1",
+             "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["ai_crawler_policy", "sitemap_auto", "answer_blocks"],
             token="t", scan_urls=[{"loc": "https://x.com/"}],

@@ -24,6 +24,7 @@ import LoopLiveFeed from "../components/LoopLiveFeed";
 import { UserActionCard } from "../components/LoopActionCards";
 import { Chip, ChipRow } from "../components/Chip";
 import VerifyEngineCard from "../components/VerifyEngineCard";
+import ShipApproveCard from "../components/ShipApproveCard";
 
 
 // Fixed reference timestamps (Unix epoch millis) so every snapshot
@@ -175,7 +176,24 @@ const FIXTURES = {
   "chip-row-dense":        ChipRowDenseFixture,
   "verify-engine-card-with-fail": VerifyEngineCardWithFailure,
   "verify-engine-card-empty":     VerifyEngineCardEmpty,
+  // P2-D / P2-G — the ONE shared ship card in its 3 phases (pending shows
+  // the first-time PrMiniGuide; live shows Rollback; rolled_back label).
+  "ship-approve-card":            ShipApproveCardFixture,
 };
+
+function ShipApproveCardFixture() {
+  const noop = () => {};
+  return (
+    <Stage label="fixture: ship-approve-card / pending · live · rolled_back">
+      <div style={{ display: "grid", gap: 24 }}>
+        <ShipApproveCard testidPrefix="fx-pending" status="pending" onApprove={noop} onCancel={noop}
+          diffSummary="1 file · +4 / −0" />
+        <ShipApproveCard testidPrefix="fx-live" status="live" onRollback={noop} />
+        <ShipApproveCard testidPrefix="fx-rolled-back" status="rolled_back" />
+      </div>
+    </Stage>
+  );
+}
 
 // Simulates the densest realistic composer-adjacent chip row: every
 // chip family from the A1 audit's 14-surface table that renders via

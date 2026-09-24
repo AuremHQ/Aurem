@@ -21,12 +21,13 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import useAutoClearConsole from "./lib/useAutoClearConsole";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import { useEffect, useRef, lazy, Suspense } from "react";
-import Toaster from "./components/Toast";
+import Toaster, { toast } from "./components/Toast";
 import FixProgressDrawer from "./components/FixProgressDrawer";
 import { FixJobProvider } from "./components/FixJobContext";
 import PersistentFixBar from "./components/PersistentFixBar";
 import CookieConsentBanner from "./components/CookieConsentBanner";
 import OraGuideMascot from "./components/OraGuideMascot";
+import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import MaintenanceGate from "./components/MaintenanceGate";  // 2026-08
 import { PrivateRoute, AdminRoute } from "./components/PrivateRoute";
 
@@ -95,6 +96,7 @@ const OraDirect          = lazy(() => import("./pages/OraDirect"));             
 const PolicyPage        = lazy(() => import("./pages/PolicyPage"));
 const AboutPage         = lazy(() => import("./pages/AboutPage"));   // 2026-08-30 · public-site fixes
 const ContactPage       = lazy(() => import("./pages/ContactPage")); // 2026-08-30 · public-site fixes
+const DevelopersPage    = lazy(() => import("./pages/DevelopersPage")); // 2026-09-12 · agent-readiness fixes
 const Wrapped           = lazy(() => import("./pages/Wrapped"));
 const ShipWall          = lazy(() => import("./pages/ShipWall"));
 const BrainDump         = lazy(() => import("./pages/BrainDump"));
@@ -194,11 +196,7 @@ function SessionExpiredListener() {
         try { setUser(null);  } catch { /* noop */ }
         // Best-effort toast, then hard nav to /login preserving current
         // path so the user lands back after re-auth.
-        try {
-          import("sonner").then(({ toast }) => {
-            try { toast.error(msg, { duration: 4000 }); } catch { /* noop */ }
-          }).catch(() => {});
-        } catch { /* noop */ }
+        try { toast({ message: msg, kind: "error", duration: 4000 }); } catch { /* noop */ }
         const path = window.location.pathname + window.location.search;
         const isAuthPage = /^\/(login|signup|verify|oauth-finish|magic-login)/.test(
           window.location.pathname,
@@ -349,6 +347,12 @@ export default function App() {
       <SessionExpiredListener />
       <Toaster />
       <OraGuideMascot />
+      {/* 2026-09-21 — global mount (was previously inside Shell, gated
+          behind an auth token) so a first-time anonymous visitor on
+          Landing/Signup can also be prompted to install the PWA, not
+          just a user right after logging in. See PWAInstallPrompt.jsx
+          for the exact trigger rules. */}
+      <PWAInstallPrompt />
       {/* Iter 212m-148 — Global FixJob provider owns the SSE so the
           job survives panel toggles, route changes, and backdrop
           clicks.  PersistentFixBar is the always-visible 44px chrome;
@@ -419,6 +423,7 @@ export default function App() {
           <Route path="/admin/tasks"          element={<AdminRoute><Admin initialTab="tasks" /></AdminRoute>} />
           <Route path="/admin/agent-performance" element={<AdminRoute><Admin initialTab="agent_perf" /></AdminRoute>} />
           <Route path="/admin/mcp-usage"      element={<AdminRoute><Admin initialTab="mcp" /></AdminRoute>} />
+          <Route path="/admin/failure-patterns" element={<AdminRoute><Admin initialTab="failure_patterns" /></AdminRoute>} />
           <Route path="/admin/reliability"    element={<AdminRoute><Admin initialTab="reliability" /></AdminRoute>} />
           <Route path="/admin/settings"       element={<AdminRoute><Admin initialTab="settings" /></AdminRoute>} />
           <Route path="/admin/integrations" element={<AdminRoute><AdminIntegrations /></AdminRoute>} />
@@ -465,6 +470,7 @@ export default function App() {
           <Route path="/admin/bin-tracker"    element={<AdminRoute><Admin initialTab="bin_tracker" /></AdminRoute>} />
           <Route path="/admin/github-bulk-revoke" element={<AdminRoute><Admin initialTab="github_bulk_revoke" /></AdminRoute>} />
           <Route path="/admin/visibility-kit" element={<AdminRoute><Admin initialTab="visibility_kit" /></AdminRoute>} />
+          <Route path="/admin/onboarding-funnel" element={<AdminRoute><Admin initialTab="onboarding_funnel" /></AdminRoute>} />
           <Route path="/admin/feature-flags"  element={<AdminRoute><Admin initialTab="feature_flags" /></AdminRoute>} />
           <Route path="/admin/llm-credits"    element={<AdminRoute><Admin initialTab="llm_credits" /></AdminRoute>} />
           <Route path="/admin/parliament-live" element={<AdminRoute><Admin initialTab="parliament_live" /></AdminRoute>} />
@@ -482,6 +488,7 @@ export default function App() {
           <Route path="/policies/api-versioning" element={<PolicyPage slug="api-versioning" />} />
           <Route path="/about"              element={<AboutPage />} />
           <Route path="/contact"            element={<ContactPage />} />
+          <Route path="/developers"         element={<DevelopersPage />} />
           <Route path="/admin/architecture" element={<AdminRoute><Admin initialTab="arch" /></AdminRoute>} />
           <Route path="/admin/ops" element={<AdminRoute><OpsRecipes /></AdminRoute>} />
           <Route path="/admin/brain/:projectId" element={<AdminRoute><BrainDump /></AdminRoute>} />

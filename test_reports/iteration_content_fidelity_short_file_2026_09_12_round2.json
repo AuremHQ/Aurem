@@ -1,0 +1,29 @@
+{
+  "summary": "Round-2 backend-only verification of the verbatim-literal sibling check in _run_hallucination_gate. Ran the 3 requested test suites (test_2026_09_12_content_fidelity_short_file_hallucination.py, test_phase2c_cto_projects_router.py, test_cto_worker_safety_pipeline_2026_09_08.py): 199 passed, 1 failed (test_phase2c_cto_projects_router.py::TestSubmitTask::test_rate_limited — confirmed pre-existing unrelated failure per review request). All 6 tests in test_2026_09_12_content_fidelity_short_file_hallucination.py pass (3 round-1 + 3 new round-2). Verified new tests are NOT gamed: monkey-patched _verbatim_reasons to no-op and re-ran — the 2 positive round-2 tests (test_blank_line_instead_of_literal_now_caught_and_retried, test_blank_line_still_missing_literal_after_retry_blocks_the_commit) both FAIL against the old-logic emulation, while test_task_without_exactly_phrasing_unaffected correctly still passes (proves no-false-positive scope). Code review: _extract_verbatim_literals regex is scoped narrowly to 'exactly `X`' / 'exactly \"X\"' / \"exactly 'X'\" phrasing only; _verbatim_reasons is a straightforward substring miss check against combined edit content; combined with _hallucination_reasons via list concat in _run_hallucination_gate at both pre- and post-retry checkpoints; retry nudge now restates missing literals verbatim. Backend service healthy.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A - test suite", "issue": "test_phase2c_cto_projects_router.py::TestSubmitTask::test_rate_limited fails — CONFIRMED pre-existing unrelated flake per review request (git-stash bisected)"}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_2026_09_12_content_fidelity_short_file_hallucination.py",
+    "/app/test_reports/pytest/content_fidelity_round2.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Regex _VERBATIM_LITERAL_RE correctly narrows to explicit 'exactly `X`' phrasing (backtick/single-quote/double-quote wrapped) — will not fire on generic 'add a note' tasks; scope is appropriately tight.",
+    "_verbatim_reasons uses simple substring check (`lit not in haystack`) — correctly catches blank-line/altered writes; combined with _hallucination_reasons via `+` list concat before AND after retry in _run_hallucination_gate as required.",
+    "Retry nudge prompt explicitly restates missing verbatim literals — good corrective signal to the model.",
+    "`import re` correctly added at top of cto_projects_helpers.py.",
+    "No file-size or DRY issues introduced by this diff."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "99.5% (199/200 excl. known pre-existing flake = 100%)", "frontend": "N/A"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Round-2 content-fidelity fix (verbatim-literal check) is verified and non-gamed. The pre-existing test_rate_limited failure remains and should continue to be treated as unrelated. Do NOT flip kit_apply_enabled flag on the basis of this verification — that's a separate decision.",
+  "rca of the issue": "Round-1 (wholesale-rewrite / keep-ratio) check missed the live-prod case where the model preserved 100% of the original file but wrote a blank line instead of the required literal — keep-ratio was ~100% so no red flag. Round-2 adds a sibling check that regex-extracts any 'exactly `X`' literal from the task and verifies X appears verbatim in the combined edit content. If missing, the gate emits a reason, triggers a corrective retry (with the missing literal restated in the nudge), and re-checks; if still missing, the commit is aborted rather than falsely reported as 'Verified'."
+}

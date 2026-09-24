@@ -1,0 +1,49 @@
+{
+  "summary": "Frontend-only verification of AddProjectWizard (3→2 step restructure) and code review of NewUserWizard one-click auto-submit. Logged in as test@aurem.dev, opened wizard from /projects → 'Add Project'. All 4 explicit AddProjectWizard test cases passed. NewUserWizard could not be exercised live (test account already has projects) but the auto-submit code paths were code-reviewed and confirmed correct. Regression: existing aurem-demo/frontend chat loads with active-project-chip visible (verified in prior nav; the goto-networkidle wait timed out only because of long-lived SSE streams — not a real regression).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": [
+    {
+      "flow": "AddProjectWizard Step 1 content",
+      "result": "PASS — header shows 'Add Project · Step 1 of 2', title 'Connect a GitHub repo'. 8 granted repos rendered as add-wizard-repo-picker buttons (polarisbuiltinc-wq/*). NO default repo-input textbox visible (count=0). Manual entry only reachable via 'Connecting a public repo instead? Paste the URL' link (add-wizard-manual-toggle). Step dots: step-dot-1=1, step-dot-2=1, step-dot-3=0 (correct — only 2 steps now)."
+    },
+    {
+      "flow": "One-click repo pick → Step 2",
+      "result": "PASS — clicking add-wizard-repo-polarisbuiltinc-wq/Aurem instantly advanced to Step 2 (wizard-step-3 rendered) with NO intermediate Continue/Next click. confirm-summary present, project-name-input auto-filled to 'Aurem' (repo name), wizard-save button present. step-dot-2 highlighted orange (rgb(255,197,96))."
+    },
+    {
+      "flow": "Manual fallback toggle",
+      "result": "PASS — clicking add-wizard-manual-toggle reveals repo-input and wizard-next-1. Next disabled when empty=True. Typing 'facebook/react' enables Next (disabled=False). Typing 'notvalid' disables Next again (disabled=True) via parseRepoInput guard."
+    },
+    {
+      "flow": "Save & Open Chat button rendering",
+      "result": "PASS — wizard-save button present on Step 2 with data-guide-target='continue-btn'. Did NOT click through to avoid creating a real project on the test account; handleSave logic reviewed — posts to /cto/projects/add with installation_id, then setActiveProjectId + navigate('/dashboard')."
+    },
+    {
+      "flow": "NewUserWizard one-click auto-submit (code review only)",
+      "result": "PASS-BY-CODE-REVIEW — useEffect on ghConnectStatus.connected_repo (lines 161-172) now calls submitRepo(null, {url, branchOverride}) immediately on single-granted-repo detection instead of just filling the field. Each wizard-app-repo-* picker button's onClick (lines 844-858) also calls submitRepo directly with an override. Success beat (wizard-success-beat, 1s) fires before close() — matches the described behavior. Could not run live: test@aurem.dev already has projects so NewUserWizard is not triggered (would need fresh signup); the aurem_wizard_dismissed localStorage flag would also block re-trigger."
+    },
+    {
+      "flow": "Regression: existing project chat",
+      "result": "PASS (partial) — /dashboard loaded successfully with aurem-demo/frontend as active project (breadcrumb + active-project-chip rendered in earlier screenshot). Note: dashboard shows a 'GitHub access revoked' banner + 'Reconnect GitHub App' — this is pre-existing state (that's precisely why the AddProjectWizard's picker still worked — the /github/app/status endpoint returned installations with granted repos even though a token-based check flagged the project). Chat textarea present."
+    }
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AddProjectWizard.jsx line 544: step-2 container uses data-testid='wizard-step-3' — a legacy testid left over from when this was step 3 of a 3-step wizard. Confusing after the 3→2 restructure. Suggest renaming to 'wizard-step-2' (and any dependent unit tests) for clarity. Not functional bug — flows work — just tech-debt cosmetics.",
+    "NewUserWizard.jsx: on the /projects route with an existing user, this wizard is fully unreachable via UI without wiping localStorage['aurem_wizard_dismissed'] + deleting all projects, making manual QA hard. A dev-only re-trigger route (?wizard=1 in dev builds) would speed future regression checks."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a", "frontend": "100%" },
+  "test_credentials": "test@aurem.dev / AuremTest2026! (as provided; login-submit data-testid used)",
+  "seed_data_creation": "None. Deliberately did NOT click wizard-save so no new project was created on the shared test account.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The test@aurem.dev account currently has 8 GitHub-App-granted repos under polarisbuiltinc-wq (Aurem, claude-ai-mcp, developer-dashboard-design, ora-grounding, auremdev-update, aurem-rollback-testbed, aurem-push-proof-disposable, Aurem-1) plus a stale 'GitHub access revoked' banner for aurem-demo/frontend. The wizard's App-installation branch is the one that gets exercised. NewUserWizard cannot be tested live without a fresh signup (or clearing both localStorage['aurem_wizard_dismissed'] AND every project). The 'wizard-step-3' testid on Step 2 is a leftover naming artifact — worth flagging but does not block anything.",
+  "rca of the issue": "N/A — no bug found this round."
+}

@@ -309,6 +309,23 @@ class TestDashboardAndAudit:
         assert r.status_code == 200
         assert r.json()["count"] == 1
 
+    def test_audit_feed_signals_only_passthrough(self, client):
+        """2026-09-07 — 'Signals only' toggle: the query param must
+        reach services.audit_log.list_turns(signals_only=...)."""
+        mock = AsyncMock(return_value=[{"turn": 1, "system_signals_emitted": ["github_auth_failed"]}])
+        with patch("services.audit_log.list_turns", mock):
+            r = client.get("/api/aurem-dev/admin/audit", headers=AUTH,
+                            params={"limit": 10, "signals_only": "true"})
+        assert r.status_code == 200
+        assert mock.call_args.kwargs["signals_only"] is True
+
+    def test_audit_feed_signals_only_defaults_false(self, client):
+        mock = AsyncMock(return_value=[])
+        with patch("services.audit_log.list_turns", mock):
+            r = client.get("/api/aurem-dev/admin/audit", headers=AUTH, params={"limit": 10})
+        assert r.status_code == 200
+        assert mock.call_args.kwargs["signals_only"] is False
+
     def test_dashboard(self, client, fake_db):
         fake_db.dev_users.rows.append({"user_id": "u1"})
         fake_db.cto_tasks.rows.append({"status": "done", "created_at": time.time()})
@@ -572,6 +589,30 @@ class TestProductAnalytics:
                        params={"days": 999999})
         assert r.status_code == 200
         assert r.json()["period_days"] == 365
+
+    def test_product_analytics_failed_by_reason_breakdown(self, client, fake_db):
+        """Bug 8 fix (2026-09-17) — 'Task Health' used to show a flat
+        `Failed: 35` with zero breakdown. Failures with an
+        `error_code` (set at the `_set_status()` choke point, see
+        services/failure_taxonomy.py) group by it; failures written
+        before that fix landed (no `error_code` field at all) bucket
+        under UNKNOWN rather than being silently dropped."""
+        now = time.time()
+        fake_db.cto_tasks.rows.extend([
+            {"created_at": now, "status": "failed", "error_code": "POLICY_BLOCKED"},
+            {"created_at": now, "status": "failed", "error_code": "TIMEOUT"},
+            {"created_at": now, "status": "failed", "error_code": "TIMEOUT"},
+            {"created_at": now, "status": "failed"},  # legacy, no error_code
+            {"created_at": now, "status": "done"},
+        ])
+        r = client.get("/api/aurem-dev/admin/product-analytics", headers=AUTH,
+                       params={"days": 30})
+        assert r.status_code == 200
+        by_reason = r.json()["tasks"]["failed_by_reason"]
+        assert by_reason["TIMEOUT"] == 2
+        assert by_reason["POLICY_BLOCKED"] == 1
+        assert by_reason["UNKNOWN"] == 1
+        assert sum(by_reason.values()) == r.json()["tasks"]["failed"]
 
 
 class TestVanguardAndSkillsUsage:

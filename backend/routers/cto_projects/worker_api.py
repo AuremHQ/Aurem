@@ -33,7 +33,6 @@ from services.cto_projects_helpers import (
 )
 
 import routers.cto_projects as _pkg
-from . import router
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +110,13 @@ _AI_SYS = (
     "     '<keep the rest>', or any synonym. If you cannot fit the whole\n"
     "     file, split the task — do NOT abbreviate.\n"
     "  3. If editing a file you were shown, preserve everything you did\n"
-    "     not intend to change. Copy lines verbatim if needed.\n"
+    "     not intend to change. Copy lines verbatim if needed. This is\n"
+    "     ESPECIALLY true for import/require statements at the top of\n"
+    "     the file — NEVER drop an import unless the task explicitly\n"
+    "     asks you to remove that specific dependency. A file that\n"
+    "     compiles but is missing an import used elsewhere in the file\n"
+    "     breaks the app at runtime, even though it looked like a\n"
+    "     small, safe edit.\n"
     "  4. Do not invent file paths. Only emit paths that exist in the\n"
     "     context, OR paths you genuinely want to create.\n"
     "  5. Tests, configs and docs that need to change MUST also be emitted\n"
@@ -174,7 +179,6 @@ async def _persist_push_failed(task_id: str, e: "PushFailedError") -> str:
 # so this file doesn't carry their ~230 lines directly.
 # ─────────────────────────────────────────────────────────────────────
 from services.cto_pipeline_steps import (
-    _check_js_syntax, _syntax_errors,
     _run_hallucination_gate, _run_syntax_gate, _run_lint_gate,
 )
 
@@ -184,7 +188,6 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
     """API-only worker — no `git` binary needed. Reads target files from
     GitHub, asks AUREM to generate edits, then commits everything as ONE
     atomic commit via the Git Data API."""
-    import httpx
     owner = proj["github_owner"]
     repo = proj["github_repo"]
     branch = proj.get("branch", "main")
@@ -247,13 +250,34 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             for f in target_files[:8]
         ])
         contents: dict = {}
+        # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug).
+        # Was `body[:10000]` — for a real, feature-ful frontend entry
+        # file (many imports/providers/routes) that's well under the
+        # file's real size, so the model never saw large chunks of
+        # the file yet was still told to return a COMPLETE new file
+        # body. Shared helper raises the budget + explicitly warns
+        # the model off a full-file rewrite for anything still too
+        # big to fit, instead of letting it silently guess.
+        from services.cto_projects_helpers import _context_with_truncation_marker
+        truncated_files: dict[str, int] = {}   # path -> real size
         for path, body in zip(target_files[:8], fetched):
             if body is not None:
-                contents[path] = body[:10000]
+                contents[path], _was_trunc = _context_with_truncation_marker(body)
+                if _was_trunc:
+                    truncated_files[path] = len(body)
                 await _pkg._log(task_id, f"📄 read {path}")
                 # When user didn't specify files, keep first 4 hits
                 if not files and len(contents) >= 4:
                     break
+        if truncated_files:
+            await _pkg._log(
+                task_id,
+                "⚠️ " + ", ".join(
+                    f"{p} ({n:,} chars)" for p, n in truncated_files.items()
+                ) + " exceeded the context budget — AUREM was told NOT "
+                    "to rewrite these files whole",
+                "warning",
+            )
         # iter 114 — persist files_read for the live popup
         try:
             from services.task_diff import build_files_read
@@ -445,9 +469,10 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                                 ok=ok,
                             )
                     if parallelized and edits:
-                        summary = f"Parallel codegen ({agents_count} agents) — {task[:120]}"
+                        from services.plural_utils import pluralize
+                        summary = f"Parallel codegen ({pluralize(agents_count, 'agent')}) — {task[:120]}"
                         await _pkg._log(task_id,
-                                   f"✅ {agents_count} agents merged {len(edits)} file edits",
+                                   f"✅ {pluralize(agents_count, 'agent')} merged {len(edits)} file edits",
                                    "success")
             except Exception as _pe:
                 from services.error_classifier import classify_error
@@ -463,7 +488,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 reply = await _retry(
                     lambda: _pkg.call_llm(
                         messages=[{"role": "user", "content": user_msg}],
-                        system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                        system=_AI_SYS, max_tokens=12000, temperature=0.0,
                     ),
                     what="AI codegen", task_id=task_id,
                 )
@@ -547,7 +572,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             reply2 = await _retry(
                 lambda: _pkg.call_llm(
                     messages=[{"role": "user", "content": user_msg + "\n\n" + nudge}],
-                    system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                    system=_AI_SYS, max_tokens=12000, temperature=0.0,
                 ),
                 what="AI codegen auto-retry", task_id=task_id,
             )
@@ -648,7 +673,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                         lambda: _pkg.call_llm(
                             messages=[{"role": "user",
                                        "content": user_msg + "\n\n" + _miss_nudge}],
-                            system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
                         ),
                         what="multi-file contract retry", task_id=task_id,
                     )
@@ -804,7 +829,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                         lambda: _pkg.call_llm(
                             messages=[{"role": "user",
                                        "content": user_msg + "\n\n" + _vg_nudge}],
-                            system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
                         ),
                         what="Vanguard auto-fix retry", task_id=task_id,
                     )
@@ -945,6 +970,51 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 )
         except Exception as e:                                # noqa: BLE001
             logger.debug("[cto-task %s] pending_edits persist skipped: %r", task_id, e)
+
+        # Trust & Verification round — Enhancement 1, extended to this
+        # single-edit chat-task pipeline. Vanguard (above) is a
+        # SECURITY-only second-agent review; this is a SEPARATE
+        # correctness/acceptance check — "does this diff actually do
+        # what the user asked?" — using a DIFFERENT identity
+        # (independent_verifier:<model>) from the executor
+        # (worker_api:<agent>), fresh context, fail-closed. Runs
+        # BEFORE the GitHub commit so a "fail" verdict can actually
+        # block shipping — mirrors services/loop_independent_verifier.py's
+        # ship-gate for Loop Mode, generalized via
+        # services/task_independent_verifier.py + the shared
+        # services/verification.py ledger.
+        _executed_by = f"worker_api:{'deepseek+claude' if maxx_mode else 'deepseek'}"
+        try:
+            from services.task_independent_verifier import verify_task_completion
+            await _pkg._log(task_id, "🔎 Independent verifier checking the diff against your request…")
+            _iv_result = await verify_task_completion(
+                _pkg.get_db(), task_id=task_id, project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), task_text=task, files=edits,
+                executed_by=_executed_by,
+            )
+        except Exception as _iv_e:                             # noqa: BLE001
+            logger.warning("[cto-task %s] independent verifier crashed (non-blocking): %r",
+                           task_id, _iv_e)
+            _iv_result = {"decision": "inconclusive",
+                          "reason": f"verifier_crashed:{type(_iv_e).__name__}",
+                          "verification_level": None}
+        from services import verification as _v_mod
+        if _iv_result.get("decision") == _v_mod.DECISION_FAIL:
+            _iv_err = f"Independent verifier rejected this diff: {_iv_result.get('reason')}"
+            await _pkg._log(task_id, f"❌ {_iv_err}", "error")
+            await _pkg._set_status(
+                task_id, status="failed", error=_iv_err[:2000],
+                completed_at=time.time(),
+                verification_status=_v_mod.DECISION_FAIL,
+            )
+            return
+        await _pkg._log(
+            task_id,
+            "✅ Independent verifier: PASS"
+            if _iv_result.get("decision") == _v_mod.DECISION_PASS
+            else "⚠️ Independent verifier: inconclusive (shipping — marked \"Not verified\")",
+            "success" if _iv_result.get("decision") == _v_mod.DECISION_PASS else "warning",
+        )
 
         # 3) Commit + push as one atomic API call
         await _pkg._set_status(task_id, status="pushing")
@@ -1099,11 +1169,24 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             _db_plan, proj.get("user_id") or "",
         )
         try:
+            # 2026-09-12 — content-fidelity fix, part 2. The commit
+            # message used to be `f"AUREM: {task[:60]}"` — a blind
+            # quote of the raw task text, which can describe an
+            # action ("append exactly <tag>") that the actual diff
+            # doesn't match (confirmed live: message claimed an exact
+            # append, the real diff was a full-file replace with no
+            # such tag). Lead with the FACTUAL, diff-derived file list
+            # so the message is always at least honest about WHAT was
+            # touched, with the task text as secondary context.
+            _changed = ", ".join(sorted(edits.keys())[:4])
+            if len(edits) > 4:
+                _changed += f" (+{len(edits) - 4} more)"
+            _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
             result = await _retry(
                 lambda: _pkg.gh_api_commit(
                     owner=owner, repo=repo, branch=branch, token=user_token,
                     files=edits,
-                    commit_message=f"AUREM: {task[:60]}",
+                    commit_message=_commit_msg,
                     author_name=_author_name, author_email=_author_email,
                     progress=_prog,
                 ),
@@ -1192,7 +1275,33 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
                           verified=True,
+                          # Trust & Verification round — DISTINCT from
+                          # `verified` above (which only means "the
+                          # content GitHub returned matches what we
+                          # pushed" — write integrity, NOT correctness).
+                          # `verification_status`/`verification_level`
+                          # carry the independent verifier's own
+                          # pass/inconclusive decision from the gate
+                          # above, so the UI never conflates the two.
+                          verification_status=_iv_result.get("decision"),
+                          verification_level=_iv_result.get("verification_level"),
                           completed_at=time.time())
+        # 2026-09-17 bug fix — founder-reported: Codebase Graph stayed
+        # stale despite real same-day commits made via this (simple,
+        # one-shot) GitHub-API worker — the graph staleness-check-
+        # and-rebuild previously only lived inside the full multi-step
+        # PLANNING loop. Fire-and-forget (never blocks/affects the
+        # already-shipped "done" status above; swallows its own
+        # errors) — see services/graph_builder.refresh_graph_after_commit.
+        try:
+            from services.graph_builder import refresh_graph_after_commit
+            asyncio.create_task(refresh_graph_after_commit(
+                db=_pkg.get_db(), project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), gh_token=user_token,
+                gh_owner=owner, gh_repo=repo, branch=branch,
+            ))
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[cto-task %s] graph refresh scheduling skipped: %r", task_id, e)
         # iter 114 — rich diff + popup data
         try:
             from services.task_diff import (

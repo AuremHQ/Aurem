@@ -127,6 +127,7 @@ async def classify_batch(force: bool = False) -> dict:
         messages=[{"role": "user", "content": prompt}],
         temperature=0.15, top_p=cfg["top_p"],
         presence_penalty=0.0, max_tokens=1500,
+        feature="Hallucination Classifier",
     )
     if err:
         return {"ok": False, "error": err, "cases_reviewed": len(rows)}

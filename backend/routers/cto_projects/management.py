@@ -22,12 +22,13 @@ from pydantic import BaseModel
 
 from services.cto_projects_helpers import (
     _parse_repo, _run_project_indexing,
-    _BROWSE_SKIP_DIRS, _BROWSE_SKIP_EXTS, _BROWSE_MAX_FILE_BYTES,
+    _BROWSE_MAX_FILE_BYTES,
     _browse_keep_path,
 )
 
 import routers.cto_projects as _pkg
 from . import router
+from services.http.client import ext_client
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ async def check_project_pat(
                 "message": f"GitHub App auth unavailable ({_auth_err})"}
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=8.0) as cx:
+        async with ext_client("github", timeout=httpx.Timeout(8.0)) as cx:
             r = await cx.get(
                 "https://api.github.com/user",
                 headers={
@@ -197,7 +198,6 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
     installation_active: Optional[bool] = None
     pat_verified_flag = True   # both branches verify against real GitHub
 
-    import httpx as _httpx
 
     # ── Branch A: GitHub App install ────────────────────────────────
     if installation_id:
@@ -519,7 +519,7 @@ async def test_project_pat(
     }
     url = f"https://api.github.com/repos/{owner}/{repo}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with ext_client("github", timeout=httpx.Timeout(10.0)) as c:
             r = await c.get(url, headers=headers)
     except httpx.RequestError as e:
         logger.warning("test-pat: network error %s/%s: %r", owner, repo, e)
@@ -602,7 +602,7 @@ async def get_project_tree(
         f"/git/trees/{branch}?recursive=1"
     )
     try:
-        async with httpx.AsyncClient(timeout=15.0) as c:
+        async with ext_client("github", timeout=httpx.Timeout(15.0)) as c:
             r = await c.get(url, headers=headers)
         if r.status_code == 404:
             raise HTTPException(404, f"Branch {branch} not found on GitHub")
@@ -798,6 +798,19 @@ async def update_project(
             raise HTTPException(status, {"error": err_code, "message": err_msg})
         updates["auth_method"]         = "github_app"
         updates["installation_active"] = True
+    # 2026-09 — Visibility Kit domain fix. `services/visibility/apply.py`
+    # reads `site_meta.domain` to build the Preferred Sources deeplink
+    # and had NO writer anywhere in the codebase — every real "Apply"
+    # failed with "no site URL/domain on file" even for a fully
+    # connected project. This is the one place a user's live URL is
+    # already captured (the "Your live site URL" flow / preview_url),
+    # so mirror it into site_meta.domain here instead of adding a
+    # second URL field the user would have to fill in twice.
+    if "preview_url" in updates:
+        from services.visibility.apply import _domain_from_url
+        domain = _domain_from_url(updates["preview_url"])
+        if domain:
+            updates["site_meta.domain"] = domain
     r = await db.cto_projects.update_one(
         {"project_id": project_id, "user_id": me["user_id"]},
         {"$set": updates},

@@ -61,7 +61,9 @@ _TRACKED_PREFIXES = (
 # bar than the rest of the codebase. Substring match against the
 # repo-relative path (e.g. "backend/routers/chat.py" contains "chat.py").
 _HIGH_RISK_FILES = (
-    "routers/chat.py", "routers/cto_projects.py", "routers/auth.py",
+    # chat + cto_projects were split into packages — match both shapes.
+    "routers/chat.py", "routers/chat/", "routers/cto_projects.py",
+    "routers/cto_projects/", "routers/auth.py",
     "cto_services/auth.py", "services/loop_engine.py",
 )
 

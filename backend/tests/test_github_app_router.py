@@ -393,15 +393,14 @@ class TestCallback:
         assert len(fake_db.github_installations.rows) == 0
 
     def test_replayed_state_soft_redirect(self, configured, client, fake_db):
-        state = self._seed_state(fake_db)
-        # First hit — happy path
-        with patch.object(httpx, "AsyncClient",
-                          _make_mock_client(self._github_handler(iid=2001))):
-            client.get(
-                f"/api/aurem-dev/github/app/callback?installation_id=2001&state={state}",
-                follow_redirects=False,
-            )
-        # Second hit with same state — should be rejected
+        # Simulate an already-consumed, unrecoverable state (used=True
+        # directly, no prior successful link on this installation_id) —
+        # a clean test of "single-use token replay with nothing to fall
+        # back to" without the (correct, by-design) reuse-existing-link
+        # self-heal masking it, since that only kicks in once an
+        # installation has actually been linked once already.
+        state = self._seed_state(fake_db, state="legacy-oauth-state-xyz")
+        fake_db.oauth_states.rows[0]["used"] = True
         r2 = client.get(
             f"/api/aurem-dev/github/app/callback?installation_id=2001&state={state}",
             follow_redirects=False,
@@ -410,7 +409,9 @@ class TestCallback:
         assert "err=invalid_state" in r2.headers["location"]
 
     def test_expired_state_soft_redirect(self, configured, client, fake_db):
-        state = self._seed_state(fake_db, ttl=-10)  # already expired
+        # Same reasoning as above — a non-"gha:" state so expiry
+        # rejection isn't masked by the unrelated string self-heal.
+        state = self._seed_state(fake_db, state="legacy-oauth-state-abc", ttl=-10)  # already expired
         r = client.get(
             f"/api/aurem-dev/github/app/callback?installation_id=3001&state={state}",
             follow_redirects=False,
@@ -736,7 +737,7 @@ class TestInstalledBridge:
         # install_id echoed into the client script
         assert "install_id" in body
         # Non-popup fallback path present
-        assert "/dashboard" in body
+        assert "window.location.replace('/projects' + tail)" in body
 
     def test_err_bridge_still_returns_200(self, configured, client):
         # Errors from callback (invalid_state, github_probe_failed) all

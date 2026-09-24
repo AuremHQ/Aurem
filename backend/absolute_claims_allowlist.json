@@ -1,0 +1,26 @@
+{
+  "_comment": "Trust & Verification round, Enhancement 6 — absolute-claim CI lint allowlist. Every entry needs file, rule, justification, owner, and expiry. Reject broad wildcard exemptions. See backend/scripts/lint_absolute_claims.py.",
+  "entries": [
+    {
+      "file": "frontend/src/components/AddProjectWizard.jsx",
+      "rule": "always_works",
+      "justification": "Claim is about a native <a target=\"_blank\"> click's browser behavior (cannot be popup-blocked the way window.open() can), not about AUREM's own service reliability — a real, narrow, technically-true statement about a browser mechanism.",
+      "owner": "aurem-frontend",
+      "expiry": "2027-03-01"
+    },
+    {
+      "file": "frontend/src/components/NewUserWizard.jsx",
+      "rule": "always_works",
+      "justification": "Same fallback-link affordance as AddProjectWizard.jsx (duplicated onboarding wizard copy) — claim is about native <a> click behavior, not AUREM service reliability.",
+      "owner": "aurem-frontend",
+      "expiry": "2027-03-01"
+    },
+    {
+      "file": "frontend/src/components/OraChatHouseRulesPanel.jsx",
+      "rule": "guaranteed",
+      "justification": "Placeholder/example text in an admin-only persona-rules editor instructing admins NOT to use the word \"guaranteed\" in ORA's own voice — the word appears as an example of banned phrasing, not as a claim being made to end users.",
+      "owner": "aurem-backend",
+      "expiry": "2027-03-01"
+    }
+  ]
+}

@@ -66,6 +66,9 @@ test.describe("Interaction latency — observed baseline (iter 305)", () => {
     // Uses the fixture directly — hermetic (no real backend/SSE).
     // The fixture's `FeedLiveEvents` renders the 3rd scripted event
     // ("Independent verifier: verdict yes") as its final DOM state.
+    // Warm-up: on CI the Vite dev server compiles this route on first
+    // hit (10s+ cold). Measure render latency, not cold-compile.
+    await page.goto("/dev/visual?state=feed-live-events", { waitUntil: "networkidle", timeout: 60000 });
     const t0 = Date.now();
     await page.goto("/dev/visual?state=feed-live-events",
                      { waitUntil: "domcontentloaded" });

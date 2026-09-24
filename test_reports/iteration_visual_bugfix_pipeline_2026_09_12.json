@@ -1,0 +1,47 @@
+{
+  "summary": "Tested the new Multimodal Visual Bug-Fix pipeline (Phase 1+2). Backend: 12/13 pytest tests passed — upload/get-image/analyze all work end-to-end, vision OCR correctly extracted 'Submit Payment' and 'Checkout' verbatim from a synthetic PNG, cross-user 404 isolation works, ?auth= query param serves image, graceful empty candidate_files works. Frontend: attachment pill + Find-and-fix affordance + card mount all work, upload+analyze API calls both return 200 (verified via network events), BUT the VisualBugAnalysisCard renders ONLY the header — never transitions to loading→done content. RCA: ChatPanel.jsx line 1977 spreads the backend response (which contains status:'analyzed') AFTER setting status:'done', so the backend's 'analyzed' status wins, and the card's render branches (uploading/analyzing/done/error) all fail to match — nothing below the header ever renders.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/aurem-dev/visual-bugfix/upload", "issue": "A 10MB+ payload is rejected with 413 by a global request-body middleware (limit 2MB) BEFORE reaching the route's own 10MB _MAX_BYTES check. Uploads over ~2MB fail — not the 10MB the route advertises. Still safe (400/413 error, no crash/hang), but the effective size cap is much smaller than the spec's 10MB. Consider raising the global middleware for this route or lowering the advertised limit."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ChatPanel.jsx handleVisualBugAnalyze (line ~1972-1978)",
+        "issue": "CRITICAL: after analyze returns 200, VisualBugAnalysisCard is stuck showing only the '<Search icon> Visual bug analysis — <filename>' header and the X dismiss button — no thumbnail, no defects list, no extracted strings, no candidate/no-candidates section. Root cause: `setVisualBugAnalysis({ status:'done', ..., ...analysis })` — the spread of `analysis` comes AFTER `status:'done'`, and the backend response object contains `status:'analyzed'`. Result: state ends up with status:'analyzed', which the card's JSX (VisualBugAnalysisCard.jsx L47/L54/L61) only recognizes as one of {uploading, analyzing, done, error}, so no content branch renders. Fix: swap the spread order — `{ ...analysis, status:'done', name:fileName, imageId:uploaded.id, imageUrl:... }` — OR drop 'status' from analysis before spreading, OR rename the card's internal state name to something other than 'status'.",
+        "selector": "[data-testid=\"visual-bug-analysis-card\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {"flow": "Visual bug analyze end-to-end (paperclip → analyze → card result)", "issue": "Backend returns 200 with correct data (verified via network events AND direct curl: {ok:true, status:'analyzed', extracted_strings:['Submit Payment','Checkout'], candidate_files:[]}), but frontend never surfaces the result to the user due to the status-key spread-override bug above. User sees a permanent empty card.", "affected_selectors": ["[data-testid=\"visual-bug-card-loading\"]", "[data-testid=\"visual-bug-card-thumbnail\"]", "[data-testid=\"visual-bug-card-defects\"]", "[data-testid=\"visual-bug-card-extracted-string\"]", "[data-testid=\"visual-bug-card-no-candidates\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_visual_bugfix_pipeline_2026_01.py",
+    "/app/test_reports/pytest/visual_bugfix_2026_01.xml"
+  ],
+  "action_items": [
+    "Fix ChatPanel.jsx handleVisualBugAnalyze spread order so backend's status:'analyzed' does not clobber the frontend's status:'done'. Simplest fix: `setVisualBugAnalysis({ ...analysis, status:'done', name:fileName, imageId:uploaded.id, imageUrl:`${API_BASE}/visual-bugfix/${uploaded.id}/image?auth=${encodeURIComponent(token||'')}` })`.",
+    "Optionally align backend /analyze response `status` key OR the frontend state key to avoid future collisions (e.g. rename frontend state to `phase` / `uiStatus`).",
+    "Optional: raise the global request-body middleware limit for the /visual-bugfix/upload route (currently 2MB global cap fires before the route's own 10MB check), or lower the advertised 10MB cap to match reality."
+  ],
+  "critical_code_review_comments": [
+    "ChatPanel.jsx L1972-1978: spread-after-status is a classic override bug — status:'analyzed' from backend overrides status:'done'. Broke the entire user-facing result surface despite backend being 100% correct.",
+    "visual_bugfix.py L100-101 vs global middleware: the route's own 10MB check is unreachable because a body-size middleware kicks in at ~2MB. Either coordinate the limits or the route's error message misleads about the real cap.",
+    "visual_bugfix_vision.py: correctly wraps LLM failure into ok:false without raising — good. tempfile.NamedTemporaryFile(delete=True) usage is safe. OCR quality verified live (Submit Payment, Checkout extracted verbatim)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_visual_bugfix_pipeline_2026_01.py (new)"
+  ],
+  "success_rate": {"backend": "92% (12/13 pytest — the one failure is the 413-vs-400 middleware ordering nit)", "frontend": "50% (attach/analyze-button/network-calls all work; result rendering is completely broken due to the spread-order bug)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview) and free-gate-test-0822@aurem.dev / FreeGateTest2026! (second user for isolation tests)",
+  "seed_data_creation": "None persistent — test runs generate visual_bug_reports docs which auto-expire via the 14-day TTL index. Test-created reports were left in place (they carry TEST synthetic PNG content and will auto-clear).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend is solid. The single frontend bug is a 1-line fix in ChatPanel.jsx handleVisualBugAnalyze — reorder the object literal so that `status:'done'` (and the other frontend-controlled fields name/imageId/imageUrl) come AFTER `...analysis`, not before. Once fixed, retest by attaching a PNG in the composer, clicking the eyeglass '🔍' Find-and-fix button on the pill, and verifying the card transitions loading → result-with-thumbnail + extracted strings pills + 'No connected repo to search…' fallback (since aurem-demo/frontend has a revoked GitHub App installation, candidate_files will be [] which is expected/graceful).",
+  "rca of the issue": "1. User attaches image → pill shows with data-testid=visual-bug-analyze-btn-{id} (works). 2. Click → handleVisualBugAnalyze sets status='uploading', POSTs /upload (200 verified), sets status='analyzing', POSTs /analyze (200 verified — backend correctly runs the single Gemini 3.1 Pro vision call, extracts 'Submit Payment' + 'Checkout' verbatim, returns candidate_files:[] gracefully because the active project's GitHub App is revoked). 3. On success, setVisualBugAnalysis({ status:'done', name, imageId, imageUrl, ...analysis }). BUG: `analysis` object from `await analyzeRes.json()` contains {ok:true, id, status:'analyzed', error:null, visual_defects, extracted_strings, ...}. Because `...analysis` is the LAST spread, its `status:'analyzed'` overrides the intended `status:'done'`. 4. VisualBugAnalysisCard only renders content when status matches uploading/analyzing/done/error — 'analyzed' matches none, so only the header/dismiss render. Fix in one line by putting status/name/imageId/imageUrl AFTER the spread."
+}

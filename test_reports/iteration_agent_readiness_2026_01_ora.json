@@ -1,0 +1,17 @@
+{
+  "summary": "Full verification of is-agentic.com agent-readiness fixes for auremcto.com. All curl-level and browser-level checks PASS. /developers renders SSR H1 in raw HTML and hydrates cleanly in browser with data-testid='developers-page'. 404 middleware correctly returns real 404 with links (sitemap.xml, llms.txt, developers, api/docs). All 10 pre-existing routes still return 200 (no regression from KNOWN_PREFIXES change). All 3 /.well-known/* files return 200 with valid JSON — the shadowing-by-404-middleware bug is confirmed fixed. OpenAPI has BearerAuth security scheme (type=http, scheme=bearer, description mentions read:repo/write:repo/ship:commit/admin scopes) and top-level security=[{BearerAuth:[]}]. Both legacy x-ratelimit-* and IETF standard ratelimit-* headers present on /api/openapi.json. Homepage footer has all 5 new testids (footer-developers, footer-api-docs, footer-openapi, footer-llms-txt, footer-about) with correct hrefs. llms.txt updated with Developer portal, well-known links, and honest 'no separate OAuth 2.0 client-credentials AS' disclaimer. The 'LOADING…' screenshot quirk main agent saw did NOT reproduce here — page renders normally; likely was a transient headless-browser hydration artifact, not a real user-facing bug.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Cookie-consent banner covers the bottom-right of /developers on desktop until dismissed — not blocking (footer links still clickable), but consider not showing on utility/dev pages, or ensure it doesn't overlap the llms-full.txt link on smaller viewports.",
+    "React Router v6 future-flag warnings (v7_startTransition, v7_relativeSplatPath) are logged on every page load; consider opting-in to silence noise."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All agent-readiness fixes verified against live preview pod (yarn start / Vite dev server, same as prod deploy). No regressions. Screenshot 'LOADING' quirk from main agent was not reproducible — /developers hydrates fine after networkidle+2s wait."
+}

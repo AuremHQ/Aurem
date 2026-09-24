@@ -40,7 +40,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db

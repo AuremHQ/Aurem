@@ -138,8 +138,13 @@ def test_orchestrator_max_iters_no_longer_falls_back_to_raw_content():
         "regression — empty strip_tool_calls() fallback is leaking raw "
         "content again. Use _synthesise_max_iters_summary(...)."
     )
-    # And the replacement must be in place.
-    assert "_synthesise_max_iters_summary(prompt, invocations)" in src
+    # And the replacement must be in place. 2026-09 — P0 bug-brief Bug
+    # 3 added an optional `explicit_steps` param to the call (see
+    # semantic_mode_router-adjacent orchestrator.py changes); match
+    # the call prefix rather than the exact old 2-arg form so this
+    # regression pin doesn't fail on a backward-compatible signature
+    # change while still catching the actual regression it guards.
+    assert "_synthesise_max_iters_summary(prompt, invocations" in src
 
 
 def test_chat_router_timeout_emits_tokens_not_just_error():

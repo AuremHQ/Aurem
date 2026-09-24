@@ -32,7 +32,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import httpx
 
@@ -478,7 +478,7 @@ async def _probe_resend() -> dict:
         from_email = os.environ.get("RESEND_FROM_EMAIL", "")
         if not verified:
             return _result("resend", "Resend Email", "warn",
-                           summary=f"Key valid but 0 verified domains",
+                           summary="Key valid but 0 verified domains",
                            detail=f"Found {len(domains)} domains, none verified",
                            fix_hint="Verify aurem.live via DNS records in Resend dashboard")
         vlist = ", ".join(d.get("name") for d in verified)
@@ -639,9 +639,9 @@ async def _probe_supabase_platform() -> dict:
             "supabase_platform", "Supabase Provisioner",
             "disabled",
             summary=f"Disabled — missing {', '.join(missing)}",
-            detail=(f"services/supabase_provisioner.py imports 24 call "
-                    f"sites but every function silently returns without "
-                    f"provisioning when these are unset."),
+            detail=("services/supabase_provisioner.py imports 24 call "
+                    "sites but every function silently returns without "
+                    "provisioning when these are unset."),
             fix_hint=("Set both in backend/.env then restart backend, "
                       "OR delete supabase_provisioner + sweeper if the "
                       "feature is intentionally shelved."),
@@ -688,9 +688,9 @@ async def _probe_vercel_platform() -> dict:
             "vercel_platform", "Vercel (Platform-scoped)",
             "disabled",
             summary=f"Disabled — missing {', '.join(missing)}",
-            detail=(f"services/vercel_platform_deploy.py has 6 call "
-                    f"sites but silently returns error dicts when these "
-                    f"are unset. Personal Track hosting depends on it."),
+            detail=("services/vercel_platform_deploy.py has 6 call "
+                    "sites but silently returns error dicts when these "
+                    "are unset. Personal Track hosting depends on it."),
             fix_hint=("Set both in backend/.env then restart, OR delete "
                       "vercel_platform_deploy.py if not planned."),
         )
@@ -776,17 +776,61 @@ async def _probe_emergent_llm() -> dict:
                        summary="EMERGENT_LLM_KEY not configured",
                        fix_hint="Profile → Universal Key in Emergent dashboard")
     model_name = "gpt-5.4-mini"
-    try:
+    # 2026-09-07 deploy-log fix — `emergentintegrations.LlmChat.send_message`
+    # goes through LiteLLM's OpenAI provider, which was observed calling
+    # the SYNCHRONOUS `litellm.completion()` and internally doing
+    # `loop.run_until_complete(...)` on the calling thread (deploy logs:
+    # "coroutine 'OpenAIChatCompletion.acompletion' was never awaited" +
+    # `asyncio.runners.py run_until_complete`). Because this probe runs
+    # on the SAME uvicorn worker loop as every other request, that call
+    # blocked the entire event loop for its full duration — starving
+    # concurrent requests (including the trivial `/health` liveness
+    # probe) and producing the exact symptom reported: repeated nginx
+    # "upstream timed out ... /health" + `_global_rate_limit_guard`
+    # "RuntimeError: No response returned", which makes Kubernetes mark
+    # the pod unhealthy and the deploy fail/restart-loop. Same isolation
+    # pattern already used above for the Stripe probe's sync SDK calls
+    # (`asyncio.to_thread` running its own fresh event loop) — runs this
+    # entire call on a dedicated OS thread so nothing it does internally
+    # can ever touch the main event loop again.
+    #
+    # 2026-09-09 deploy-log fix — the isolation above stops this call
+    # from blocking the MAIN loop, but `_run()`'s outer
+    # `asyncio.wait_for(coro, timeout=PROBE_TIMEOUT)` only cancels the
+    # AWAIT — it cannot kill the underlying OS thread (Python threads
+    # aren't cancellable). Deploy logs still showed the exact same
+    # nginx `/health` timeout symptom recurring, correlated with a
+    # fresh `[G20] Emergent LLM Key: Probe timed out after 20.0s`
+    # incident: when OpenAI itself is slow, the orphaned thread keeps
+    # running (however long the real call takes — seconds to minutes)
+    # and keeps occupying a slot in the shared `to_thread` executor
+    # pool the whole time, invisible to the "timed out" bookkeeping.
+    # Repeated slow probes can pile up enough orphaned threads to
+    # starve the pool other real work (e2b, Stripe) needs, adding to
+    # the same CPU-burst pressure that starves /health on the 500m-CPU
+    # prod pod. Fix: give `_inner()` its OWN internal timeout (via
+    # `asyncio.wait_for` on ITS OWN fresh event loop, a few seconds
+    # under `PROBE_TIMEOUT`) so the thread itself gives up and exits
+    # promptly instead of being abandoned to run indefinitely.
+    def _sync_send() -> str:
+        import asyncio as _asyncio
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         import uuid as _uuid
-        chat = (
-            LlmChat(api_key=key, session_id=f"healthcheck-{_uuid.uuid4().hex[:8]}",
-                    system_message="Reply with exactly the word: OK")
-            .with_model("openai", model_name)
-            .with_params(max_tokens=10)  # gpt-5.4-mini only supports temperature=1 (default)
-        )
-        resp = await chat.send_message(UserMessage(text="ping"))
-        text = (resp or "").strip()
+
+        async def _inner() -> str:
+            chat = (
+                LlmChat(api_key=key, session_id=f"healthcheck-{_uuid.uuid4().hex[:8]}",
+                        system_message="Reply with exactly the word: OK")
+                .with_model("openai", model_name)
+                .with_params(max_tokens=10)  # gpt-5.4-mini only supports temperature=1 (default)
+            )
+            resp = await chat.send_message(UserMessage(text="ping"))
+            return (resp or "").strip()
+
+        return _asyncio.run(_asyncio.wait_for(_inner(), timeout=PROBE_TIMEOUT - 2.0))
+
+    try:
+        text = await asyncio.to_thread(_sync_send)
         try:
             from services.ora_chat.cost_tracker import log_call as _log_call
             await _log_call(

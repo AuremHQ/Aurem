@@ -51,7 +51,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ async def run_check_safely(check: HealthCheck) -> dict:
     try:
         result = await asyncio.wait_for(check.check_fn(), timeout=8.0)
     except asyncio.TimeoutError:
-        return result_red(f"check timed out after 8s")
+        return result_red("check timed out after 8s")
     except Exception as exc:   # noqa: BLE001
         logger.warning(
             "[health-registry] check %r raised: %r", check.id, exc

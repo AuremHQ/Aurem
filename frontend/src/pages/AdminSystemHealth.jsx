@@ -23,6 +23,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { toast } from "../components/Toast";
 
 const REFRESH_MS = 30_000;
 const PROD_ORIGIN = "https://auremcto.com";
@@ -83,6 +84,10 @@ export default function AdminSystemHealth() {
   const [loopMetrics, setLoopMetrics] = useState(null);
   const [tokenMetrics, setTokenMetrics] = useState(null);
   const [webhookFence, setWebhookFence] = useState(null);
+  const [webhookFenceInstallOnly, setWebhookFenceInstallOnly] = useState(false);
+  const [unlinkedInstalls, setUnlinkedInstalls] = useState(null);
+  const [linkBusy, setLinkBusy] = useState(null);
+  const [linkEmailDrafts, setLinkEmailDrafts] = useState({});
   const [previewDeployMonitor, setPreviewDeployMonitor] = useState(null);
   const [driftAlerts, setDriftAlerts] = useState(null);
   const [liveModelMode, setLiveModelMode] = useState(null);
@@ -150,9 +155,22 @@ export default function AdminSystemHealth() {
     // 7) R5c — GitHub Webhook Fence. Live check of the App's webhook
     // pipeline (subscribed events + last-15 deliveries success/fail).
     try {
-      const r = await api.get("/admin/github-webhook-fence");
+      const r = await api.get("/admin/github-webhook-fence", {
+        params: webhookFenceInstallOnly ? { event_filter: "installation" } : {},
+      });
       setWebhookFence(r.data);
     } catch (e) { nextErrs.webhook_fence = e?.response?.data?.detail || e?.message || "webhook-fence failed"; }
+
+    // 2026-09-16 — founder-reported incident (rebecca@millingtonstudio.com:
+    // GitHub-side install succeeded, confirmed live via GitHub's API, but
+    // Aurem's DB had zero record). Live list of installations GitHub
+    // confirms exist that have no Aurem user attached yet — the tool an
+    // admin uses to find + fix exactly that case, plus a "Reconcile now"
+    // action for the same poll-based fallback the background cron runs.
+    try {
+      const r = await api.get("/admin/github/installations/unlinked");
+      setUnlinkedInstalls(r.data);
+    } catch (e) { nextErrs.unlinked_installs = e?.response?.data?.detail || e?.message || "unlinked-installs failed"; }
 
     // 8) Trust Surfaces Round (S4/S5), 2026-08-29 — Preview & Deploy
     // monitor tile + the 30-day meter line.
@@ -177,13 +195,70 @@ export default function AdminSystemHealth() {
 
     setErrs(nextErrs);
     setLastRefresh(new Date());
-  }, []);
+  }, [webhookFenceInstallOnly]);
 
   useEffect(() => {
     fetchAll();
     const id = setInterval(fetchAll, REFRESH_MS);
     return () => clearInterval(id);
   }, [fetchAll]);
+
+  // 2026-09-16 — "Reconcile now" button on the Unlinked GitHub
+  // Installations card: same poll-based fallback the background cron
+  // runs (services/github_app.py::reconcile_installations), on demand.
+  const reconcileNow = useCallback(async () => {
+    setLinkBusy("__reconcile__");
+    try {
+      const r = await api.post("/admin/github/installations/reconcile");
+      const added = r.data?.added?.length ?? 0;
+      toast({
+        message: added > 0
+          ? `Reconcile found ${added} installation(s) GitHub knew about that we didn't.`
+          : "Reconcile ran — no missing installations found.",
+        kind: "success",
+      });
+      const listRes = await api.get("/admin/github/installations/unlinked", {
+        params: { reconcile_first: false },
+      });
+      setUnlinkedInstalls(listRes.data);
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail?.message || e?.message || "Reconcile failed", kind: "error" });
+    } finally {
+      setLinkBusy(null);
+    }
+  }, []);
+
+  // Manually attach an unlinked installation to a user by email — the
+  // admin-side fix for exactly the reported incident: an install that
+  // succeeded on GitHub's side but has no Aurem account attached yet.
+  const linkInstallation = useCallback(async (installationId) => {
+    const email = (linkEmailDrafts[installationId] || "").trim();
+    if (!email) {
+      toast({ message: "Enter the user's email first", kind: "error" });
+      return;
+    }
+    setLinkBusy(installationId);
+    try {
+      await api.post(`/admin/github/installations/${installationId}/link`, { email });
+      toast({ message: `Linked installation ${installationId} to ${email}`, kind: "success" });
+      setUnlinkedInstalls((prev) => prev && ({
+        ...prev,
+        rows: prev.rows.filter((r) => r.installation_id !== installationId),
+      }));
+      setLinkEmailDrafts((prev) => {
+        const next = { ...prev };
+        delete next[installationId];
+        return next;
+      });
+    } catch (e) {
+      toast({
+        message: e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message || "Link failed",
+        kind: "error",
+      });
+    } finally {
+      setLinkBusy(null);
+    }
+  }, [linkEmailDrafts]);
 
   const outOfSync =
     previewVer && prodVer
@@ -831,11 +906,27 @@ export default function AdminSystemHealth() {
                       </div>
                     )}
                   </div>
-                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}` }}>
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <Row
-                      label="Recent deliveries checked"
+                      label={webhookFenceInstallOnly ? "Install-event deliveries checked" : "Recent deliveries checked"}
                       value={String(webhookFence.recent_deliveries?.length ?? 0)}
                     />
+                    <button
+                      data-testid="webhook-fence-install-only-toggle"
+                      onClick={() => setWebhookFenceInstallOnly((v) => !v)}
+                      title="workflow_job fires far more often than install events and can push them off the last-15 window entirely — toggle to scan past the noise for the real installation-webhook delivery"
+                      style={{
+                        fontSize: 10, fontFamily: C.mono, letterSpacing: "0.04em",
+                        padding: "3px 8px", borderRadius: 4, cursor: "pointer",
+                        border: `1px solid ${webhookFenceInstallOnly ? C.amber : C.border}`,
+                        background: webhookFenceInstallOnly ? `${C.amber}22` : "transparent",
+                        color: webhookFenceInstallOnly ? C.amber : C.faint,
+                      }}
+                    >
+                      {webhookFenceInstallOnly ? "✓ install events only" : "install events only"}
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
                     <Row
                       label="Failing"
                       value={String(webhookFence.failing_count ?? 0)}
@@ -866,7 +957,101 @@ export default function AdminSystemHealth() {
                       </div>
                     </details>
                   )}
+                  {webhookFenceInstallOnly && webhookFence.recent_deliveries?.length === 0 && (
+                    <div style={{ fontSize: 11, color: C.faint, marginTop: 6, fontStyle: "italic" }}>
+                      No `installation` deliveries found in the scanned window — either
+                      none have fired recently, or they're older than the scan depth.
+                    </div>
+                  )}
                 </>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: C.faint }}>loading…</div>
+          )}
+        </Card>
+
+        {/* 2026-09-16 — founder-reported incident (rebecca@millingtonstudio.com:
+            GitHub-side install + 7-repo selection succeeded, confirmed live
+            against GitHub's own API, but Aurem's DB had zero record — no
+            poll-based fallback existed for GitHub's push-only webhook).
+            Lists every installation GitHub confirms exists that has no
+            Aurem user attached yet, with a manual "link by email" action
+            and an on-demand "Reconcile now" (same pass the background
+            cron runs every 30 min). */}
+        <Card
+          testid="card-unlinked-github-installs"
+          title="Unlinked GitHub Installations"
+          status={StatusBadge((unlinkedInstalls?.rows?.length ?? 0) > 0 ? "degraded" : "ok")}
+        >
+          {errs.unlinked_installs ? (
+            <div style={{ fontSize: 12, color: C.red }}>{errs.unlinked_installs}</div>
+          ) : unlinkedInstalls ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <Row
+                  label="Unlinked installations"
+                  value={String(unlinkedInstalls.rows?.length ?? 0)}
+                  color={(unlinkedInstalls.rows?.length ?? 0) > 0 ? C.amber : C.green}
+                />
+                <button
+                  data-testid="unlinked-installs-reconcile-now"
+                  onClick={reconcileNow}
+                  disabled={linkBusy === "__reconcile__"}
+                  title="Poll GitHub directly for installations our webhook/callback may have missed entirely"
+                  style={{
+                    fontSize: 10, fontFamily: C.mono, letterSpacing: "0.04em",
+                    padding: "4px 9px", borderRadius: 4, cursor: "pointer",
+                    border: `1px solid ${C.border}`, background: "transparent", color: C.dim,
+                    opacity: linkBusy === "__reconcile__" ? 0.5 : 1,
+                  }}
+                >
+                  {linkBusy === "__reconcile__" ? "reconciling…" : "↻ reconcile now"}
+                </button>
+              </div>
+              {(unlinkedInstalls.rows?.length ?? 0) > 0 && (
+                <div style={{ marginTop: 10, maxHeight: 260, overflowY: "auto" }}>
+                  {unlinkedInstalls.rows.map((r) => (
+                    <div
+                      key={r.installation_id}
+                      data-testid={`unlinked-install-row-${r.installation_id}`}
+                      style={{
+                        padding: "8px 0", borderBottom: `1px dashed ${C.border}`,
+                        display: "flex", flexDirection: "column", gap: 4,
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: C.mono }}>
+                        <span style={{ color: C.text }}>{r.github_login || "(unknown account)"}</span>
+                        <span style={{ color: C.faint }}>#{r.installation_id}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <input
+                          data-testid={`unlinked-install-email-input-${r.installation_id}`}
+                          type="email"
+                          placeholder="user's email to link…"
+                          value={linkEmailDrafts[r.installation_id] || ""}
+                          onChange={(e) => setLinkEmailDrafts((prev) => ({ ...prev, [r.installation_id]: e.target.value }))}
+                          style={{
+                            flex: 1, fontSize: 11, padding: "5px 7px", borderRadius: 4,
+                            border: `1px solid ${C.border}`, background: C.bg, color: C.text,
+                          }}
+                        />
+                        <button
+                          data-testid={`unlinked-install-link-btn-${r.installation_id}`}
+                          onClick={() => linkInstallation(r.installation_id)}
+                          disabled={linkBusy === r.installation_id}
+                          style={{
+                            fontSize: 11, padding: "5px 10px", borderRadius: 4, cursor: "pointer",
+                            border: `1px solid ${C.green}60`, background: `${C.green}18`, color: C.green,
+                            opacity: linkBusy === r.installation_id ? 0.5 : 1,
+                          }}
+                        >
+                          {linkBusy === r.installation_id ? "linking…" : "Link"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           ) : (

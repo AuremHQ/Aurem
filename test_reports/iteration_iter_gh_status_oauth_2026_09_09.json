@@ -1,0 +1,25 @@
+{
+  "summary": "Backend-only verification of two production-log-driven fixes: (1) FIX 1 — GET /github/app/status refactored from sequential per-installation GitHub round-trips to bounded-concurrency (asyncio.gather + Semaphore(5)) to eliminate thundering-herd health-check timeouts; (2) FIX 2 — GET /github/oauth/repos now wraps gh_repos() in try/except httpx.HTTPStatusError so revoked/expired tokens produce clean 401/502 HTTPExceptions instead of raw 500 tracebacks. Executed the three requested pytest files (16 tests total) — all 16 PASSED in 1.00s. Backend supervisor status RUNNING, no startup exceptions (only benign idempotent TTL index warnings from init_prod_collections, pre-existing and unrelated).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter_hardening3_github_connect_status.py",
+    "/app/backend/tests/test_iter_2026_09_09_oauth_repos_revoked_token.py",
+    "/app/backend/tests/test_iter2026_08_27_github_connect_state_recovery.py",
+    "/app/test_reports/pytest/iter_gh_status_oauth_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIX 1 correctly preserves per-row semantics (cache freshness check, DB persist, graceful fallback to previously-cached repos on error) while removing serial-await bottleneck. Semaphore(5) is a reasonable cap for GitHub API concurrency per user.",
+    "FIX 2 leaks no raw exception text; both 401 (expired connection) and 502 (upstream failure) messages are user-friendly.",
+    "New concurrency test asserts <1.2s for 10x 0.2s-latency installations — provides real regression protection against a future accidental revert to sequential loop.",
+    "Consider also asserting order-independence of results in the concurrency test (nice-to-have, not blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "N/A (not tested this round)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Both fixes verified. 5 pre-existing status tests + 2 new concurrency tests + 2 new oauth-repos error-handling tests + 7 pre-existing state-recovery tests all green. Backend boots cleanly under supervisor. No further action required for this round.",
+  "rca of the issue": "FIX 1 RCA: sequential `for install in installations: await fetch()` combined with 10s cache TTL + ~2.5s frontend poll interval caused all installation caches to expire in same window; user with N installations (some dead => 404) generated N sequential GitHub round-trips per /status call, blocking the event loop long enough to make sibling /health probes exceed nginx upstream timeout (110). Mitigation: asyncio.gather with Semaphore(5) parallelizes fetches and isolates per-installation failures via return_exceptions/try-except in _resolve_row. FIX 2 RCA: unwrapped httpx.raise_for_status() on stale OAuth token propagated HTTPStatusError as raw 500. Mitigation: try/except at handler boundary translates GitHub 401 -> HTTPException(401 friendly), other -> 502."
+}

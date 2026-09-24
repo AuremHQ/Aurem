@@ -1,0 +1,115 @@
+{
+  "summary": "READ-ONLY isolated diagnosis for BUG #3 and #6 completed with in-memory fakes only (no real DB writes, no production API actions). Reproduced transport/classification/gating/UI-state issues and approve-action race behavior.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/chat (SSE stream path)",
+        "issue": "scope_confirmation queue event is not forwarded by watchdog and done payload omits awaiting_scope_confirmation/scope_confirmation_proposal_id, so client relying on done frame loses scope-confirm state.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "/api/chat (pre-LLM intent path)",
+        "issue": "Exact phrase 'Confirm and proceed' classified as casual/new_request (heuristic tier=casual, pending_action classify_confirm_intent=new_request, is_confirmation_reply=false), allowing casual short-circuit with 0 tools.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "/api/chat (scope confirmation gate)",
+        "issue": "_scope_confirmation_gate only validates scope_confirmed_proposal_id when mode_confidence.needs_confirm=true; confirm_proposal checks proposal_id+user_id+prompt but not session/project binding.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "/api/ora-chat/action/approve",
+        "issue": "No atomic claim between read-check and approve/execute logging; two concurrent approve calls can both execute and log approved+executed twice.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/ora-chat/action/approve + create_backlog_item",
+        "issue": "create_backlog_item writes only ora_backlog_items; does not create cto_tasks/ora_self_bugs/cto_founder_suggestions and does not schedule any executor job for those surfaces."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ScopeConfirmCard",
+        "issue": "Card sets resolved='confirmed' before callback outcome, so UI can show 'Confirmed — proceeding…' even if callback is stale/no-op/failure.",
+        "selector": "[data-testid='scope-confirm-proceed-btn']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "OraChatDrawer ActionProposalCard",
+        "issue": "resolveAction uses r?.data?.ok !== false, so {ok:null} and {} are treated as success and rendered as 'Approved and executed.'",
+        "selector": "[data-testid='ora-action-resolved']",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Chat SSE scope confirmation",
+        "issue": "api.streamChat supports onScopeConfirmation frames, but ChatPanel streamChat call does not provide onScopeConfirmation handler and relies on done payload fields that are absent.",
+        "affected_selectors": [
+          "N/A (transport/event wiring)",
+          "[data-testid='scope-confirm-card']"
+        ]
+      },
+      {
+        "flow": "ORA action approval",
+        "issue": "Approved status shown even on malformed/missing ok response, and action result identifiers are not surfaced in recent action list.",
+        "affected_selectors": [
+          "[data-testid='ora-action-approve-btn']",
+          "[data-testid='ora-action-resolved']",
+          "[data-testid^='ora-action-audit-row-']"
+        ]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "OraChatDrawer recent actions panel",
+        "issues": [
+          "Result IDs/errors are not shown in list rows despite backend carrying proposal_id/result/error fields.",
+          "Recent actions fetch errors are swallowed silently (catch ignore), reducing operator observability."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/tmp/readonly_repro_3_6.py",
+    "/tmp/readonly_repro_3_6_output.json",
+    "/tmp/repro_3b_prellm_fake.py",
+    "/tmp/repro_3b_prellm_fake_output.json",
+    "/tmp/frontend_readonly_probe_3d_6b.js",
+    "/tmp/frontend_readonly_probe_3d_6b_output.json",
+    "/tmp/existing_oradrawer_test.log"
+  ],
+  "action_items": [
+    "Add explicit scope_confirmation event forwarding branch in watchdog consume loop and/or durable done-frame scope fields consumed by ChatPanel.",
+    "Harden confirmation phrase routing for 'Confirm and proceed' across intent_gateway/pending_action/response_confidence boundary so it does not fall into casual new-request path when confirming pending fix.",
+    "Scope confirmation gate should validate/consume confirm proposal ID independent of new needs_confirm recomputation and bind confirmation to expected session/project when required.",
+    "Make approve_action atomic (single claim transition) to prevent double-approve/double-execute races.",
+    "In OraChatDrawer resolveAction, treat missing/null ok as failure and surface result backlog_id/error details in resolved and audit UI."
+  ],
+  "critical_code_review_comments": [
+    "watchdog.py lacks ev['type']=='scope_confirmation' branch while worker emits it.",
+    "stream.py done_payload omits awaiting_scope_confirmation/scope_confirmation_proposal_id though ChatPanel reads those from done frame.",
+    "ScopeConfirmCard optimistic resolved state is set before async result confirmation.",
+    "approve_action has TOCTOU race (read proposed -> separate writes/execute) with no transactional claim.",
+    "OraChatDrawer uses permissive success predicate (ok !== false), enabling false-positive execution UI."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_392.json",
+    "/tmp/readonly_repro_3_6.py",
+    "/tmp/repro_3b_prellm_fake.py",
+    "/tmp/frontend_readonly_probe_3d_6b.js"
+  ],
+  "success_rate": {
+    "backend": "90%",
+    "frontend": "75%"
+  },
+  "seed_data_creation": "None. In-memory fake DB objects only.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "No production incident reconstruction was attempted (missing original prod IDs). All reproductions were isolated and MOCKED/in-memory only. ScopeConfirmCard dynamic React execution was not run via vitest due project include filter; structural/static proof plus source-order probe and existing OraChatDrawer tests were used.",
+  "rca of the issue": "#3 transport/classifier gap is multi-point: worker emits scope_confirmation + result flags, watchdog drops scope_confirmation, stream done payload omits scope fields, ChatPanel does not subscribe to onScopeConfirmation callback and depends on done fields; additionally 'Confirm and proceed' phrase falls through casual/new_request classifiers causing tool-less short-circuit. #6 behavior split: create_backlog_item only creates ora_backlog_items (not tasks/self-repair/suggestions), while frontend resolveAction treats malformed responses as success; approve_action also has non-atomic approve race that can duplicate approved/executed events under concurrency."
+}

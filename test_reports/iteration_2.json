@@ -1,40 +1,33 @@
 {
-  "summary": "Iteration 2: ADD chat session persistence + SSE streaming. Backend 10/10 pytest pass — 5 new chat endpoints (send-persist, history, sessions list, delete, SSE stream) all correct, auth 401 enforced on all 5, cross-user isolation verified (User B sees [] / deleted=0 for User A's session). SSE stream emits meta → tokens → done frames with correct content-type and persists to /chat/history. Frontend Playwright E2E all critical flows pass: login → /dashboard auto-mounts session, send streams tokens with cursor + 'via emergent' label, sidebar refreshes with new session, page refresh restores session+history from localStorage, switching sessions loads history, delete removes row and creates new session if active, Stop button aborts cleanly.",
+  "summary": "Backend-only regression for Section 16 prompt-caching wiring (LLM_PROMPT_CACHING_ENABLED=0 default). Wrote /app/backend/tests/test_prompt_caching_regression.py — 6/6 tests PASS live against REACT_APP_BACKEND_URL. Confirmed: (a) normal single-turn chat 200 (iters=1, cache_system=False branch — reply 'done'), (b) multi-iteration tool-loop chat 200 with orchestrator reaching iter=2/N (log evidence 'R10_TIMING llm_call iter=2/3' etc, provider=glm-5.2 & deepseek-v3-council-c, no tracebacks), (c) 3 sequential ordinary chat turns all 200, (d) no Python tracebacks / UnboundLocalError in /var/log/supervisor/backend.err.log during or after the run. Flag default-off wiring does not regress normal chat.",
   "backend_issues": {
     "critical": [],
-    "minor": []
-  },
-  "frontend_issues": {
-    "ui_bugs": [],
-    "integration_issues": [],
-    "design_issues": [
-      {"screen": "ChatPanel during streaming", "issues": ["For short prompts (e.g. 'Reply with: HELLO_STREAM') the orchestrator computes full response server-side (~3-6s) before SSE chunking begins, so the assistant bubble sits empty with NO loading indicator until tokens arrive, then completes in ~200ms. Suggest showing a faint 'thinking…' shimmer or spinner inside the empty assistant bubble while content==='' and streaming===true, so users get feedback during the pre-token wait. Cosmetic — not blocking."]}
+    "minor": [
+      {"endpoint": "/api/aurem-dev/chat/send", "issue": "Could NOT reproduce the documented pre-existing max_tool_iters=0 UnboundLocalError with prompt 'Say hi.' — request short-circuited via intent-gateway-casual (provider='intent-gateway-casual') and returned 200 before reaching the buggy code path in orchestrator.py:~3265. This is not a regression of the current fix; it just means the repro prompt needs to be one that actually enters the tool-loop path (e.g. a coding/tool-requiring prompt) before max_tool_iters=0 will bite. Main agent's separate git-stash repro remains authoritative — recorded as pre-existing LOW-priority not tied to this fix."}
     ]
   },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
   "test_report_links": [
-    "/app/backend/tests/test_aurem_chat_persistence.py",
-    "/app/backend/tests/test_aurem_backend.py",
-    "/app/test_reports/pytest/pytest_iter2.xml"
+    "/app/backend/tests/test_prompt_caching_regression.py",
+    "/app/test_reports/pytest/prompt_caching_regression.xml"
   ],
   "action_items": [
-    "OPTIONAL: add a 'thinking…' indicator inside the empty assistant bubble between user-send and first SSE token (orchestrator latency window) so the chat doesn't look frozen for short prompts."
+    "None blocking. Optional: if desired, tighten the max_tool_iters=0 pre-existing bug repro test by using a tool-requiring prompt (e.g. 'read a file X') so the request actually enters the buggy loop path instead of being absorbed by intent-gateway-casual."
   ],
   "critical_code_review_comments": [
-    "chat.py /stream: orchestrator output is computed fully then chunked — works fine and gives 'live typing' UX, but the perceived latency before first token equals full LLM call duration. Acceptable today; for true token streaming the orchestrator would need to expose an async generator path.",
-    "chat.py _persist_turn: silently no-ops when session_id is empty — good; consider logging a debug line so missing session_id during /send doesn't get masked in production.",
-    "DELETE /chat/sessions/{id} returns 200 with deleted=0 even when nothing was deleted (instead of 404). This is intentional for the cross-user-isolation case but means a missing id can't be distinguished from a foreign id. Spec accepts {ok:true, deleted:1} and we return deleted=0 for the wrong-user case — matches the review_request requirement (404/0 deleted).",
-    "Shell.jsx deleteSession useCallback dep array omits `newSessionId` — fine since it's a stable module export, but lint may complain in strict mode.",
-    "api.js streamChat: when fetch is aborted (Stop button), the reader loop throws AbortError which is currently swallowed silently. The UI does call setBusy(false) via the explicit `stop()` callback so the user-visible state is correct, but onError is NOT invoked on abort — intentional and correct.",
-    "Inherited cosmetic from iter1: api-pill briefly shows 'api offline' on initial mount until /api/health resolves."
+    "openrouter_client.py: guard `_caching_enabled = os.getenv('LLM_PROMPT_CACHING_ENABLED','0')=='1'` is correctly checked BEFORE reading the ContextVar hint — flag-off path is truly inert, byte-identical for non-Claude/no-opt-in callers. Good.",
+    "_state.py: `get_prompt_cache_context()` returns a safe default dict `{session_id:None, cache_system:False}` when unset — no KeyError risk in callers. Async ContextManager `prompt_cache_context` uses ContextVar tokens correctly (reset in finally-ish semantics via async CM).",
+    "orchestrator.py: opt-in `cache_system=(iters>=2)` is defensible — the system prompt is only guaranteed byte-identical from iter 2 onward, so this avoids invalidating a cache on iter 1 when SP composition may still vary. Good.",
+    "councils.py / ceo.py: unconditional opt-in is fine because Council persona SP is a fixed constant per member. Verify (out of scope for this pass) that ceo.py's rescue path doesn't accidentally mutate the SP mid-session — a future test could hash the SP across iterations to prove invariance.",
+    "openrouter_providers.py::_call_deepseek: session_id passthrough is scoped inside `if os.getenv('LLM_PROMPT_CACHING_ENABLED','0')=='1'` so default-off path is byte-identical payload. Good.",
+    "Env: `LLM_PROMPT_CACHING_ENABLED=0` present and set to 0 as advertised. Both `LLM_MODEL` lines (14 and 86) exist in backend/.env — the second one (`qwen3.8-27b`) overwrites the first at load time; unrelated to this fix but worth cleaning up in a future pass."
   ],
-  "updated_files": [
-    "/app/backend/tests/test_aurem_chat_persistence.py (new — 10 tests)"
-  ],
-  "success_rate": {"backend": "100% (10/10 new + 10/10 regression from iter1)", "frontend": "100% on critical flows"},
-  "test_credentials": "test@aurem.dev / testpass123 (seeded). Cross-user test created e2e-userb-{ts}@aurem.dev.",
-  "seed_data_creation": "Tests created ~5 chat sessions for seeded user (PONG, hello, Streaming works great today, STREAM_OK, etc.) — visible in sidebar Recent Chats. Plus one User B account for isolation test. None cleaned up; safe to leave for next iteration regression.",
+  "updated_files": ["/app/backend/tests/test_prompt_caching_regression.py"],
+  "success_rate": {"backend": "100% (6/6 pytest cases pass)", "frontend": "N/A - skipped per request"},
+  "test_credentials": "Used preview account test@aurem.dev / AuremTest2026! from /app/memory/test_credentials.md",
+  "seed_data_creation": "None. Real live LLM calls (glm-5.2, deepseek-v3-council-c, longcat-2.0 observed in R10_TIMING logs); minimal token spend (short prompts).",
   "retest_needed": false,
-  "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "Two backend test files now: test_aurem_backend.py (iter1: health, auth, /send, stacks) and test_aurem_chat_persistence.py (iter2: history, sessions, delete, SSE, isolation). Both should be run for regression. Session_id stored under localStorage 'aurem_active_session'; JWT under 'aurem_token'. SSE content-type is 'text/event-stream'; frames are meta → token → done. /chat/sessions returns array sorted by updated_at desc. Cross-user delete returns deleted=0 (no 404). Sidebar testids: recent-chats, new-chat-btn, session-row-{id}, delete-session-{id}. Chat testids: chat-input, chat-send, chat-stop, chat-cursor, chat-panel, chat-messages.",
-  "rca of the issue": "N/A — no blocking issues."
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Section 16 prompt-caching feature is wired but flag-gated OFF. Test file at /app/backend/tests/test_prompt_caching_regression.py can be reused as a smoke regression whenever the flag is toggled or the orchestrator's system-prompt composition changes. When flag is turned ON in a future test, add a test that asserts the Anthropic system message becomes a content-block list (with cache_control.ephemeral) only for anthropic/* models AND cache_system=True — the current tests only cover the OFF branch since that's this env's default.",
+  "rca of the issue": "N/A - this was a fix regression pass, not a bug hunt. Fix is confirmed non-regressing for default-off configuration; caching efficacy itself was pre-verified by main agent against real Anthropic API (89.6% cost reduction) and not re-run here to avoid unnecessary spend."
 }

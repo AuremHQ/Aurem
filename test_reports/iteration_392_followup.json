@@ -1,0 +1,41 @@
+{
+  "date": "2026-09-23",
+  "scope": "READ-ONLY diagnosis and isolated reproduction of bugs 3 and 6. No application fixes authorized/applied.",
+  "parent_report": "/app/test_reports/iteration_392.json",
+  "endpoint_correction": [
+    "/api/aurem-dev/chat/stream",
+    "/api/aurem-dev/ora-chat/action/approve"
+  ],
+  "dynamic_frontend_followup": {
+    "command": "yarn vitest run --config /tmp/readonly-vitest.config.mjs --reporter verbose",
+    "log": "/tmp/readonly_ui_repro_3d_6b.log",
+    "test_file": "/tmp/readonly_ui_repro_3d_6b.test.jsx",
+    "tests_passed": 2,
+    "meaning": "Tests assert the CURRENT BROKEN behavior; passing is reproduction, not a fix.",
+    "scope_card": "Actual React ScopeConfirmCard displays Confirmed — proceeding when its callback returns {ok:false}.",
+    "admin_approval": "Actual React OraChatDrawer displays Approved and executed for a backlog success receipt, {ok:null}, and {}. All network responses mocked."
+  },
+  "confirmed_backend_reproductions": {
+    "scope_event_drop": "Actual consume_worker_queue receives scope_confirmation followed by result; emits zero scope SSE frames.",
+    "typed_confirmation": "Actual classifiers map Confirm and proceed to CASUAL 0.86 and new_request; confirmation predicate false, with pending_fix true or false.",
+    "casual_short_circuit": "resolve_pre_llm with mocked casual reply returns intent-gateway-casual, tool_calls_run=0.",
+    "backlog_destination": "Actual catalog executor writes only fake ora_backlog_items; fake tasks/self-bugs/suggestions remain empty.",
+    "concurrency": "Actual approval route with two simulated stale proposed reads invokes mocked executor twice; two approved and two executed audit events. Real Mongo concurrency not exercised."
+  },
+  "static_findings": [
+    "Final SSE done_payload omits scope confirmation fields; ChatPanel does not pass onScopeConfirmation.",
+    "Scope-confirm proposal expected project/session are not checked; stored would_be_mode is not used to resume execution.",
+    "Scope gate runs after several early dispatch paths and ignores supplied confirmation ID when recomputed needs_confirm is false.",
+    "Admin recent-actions UI omits result IDs/errors and silently ignores fetch errors.",
+    "Current admin catalog does not contain a code-repair/commit executor."
+  ],
+  "important_distinctions": [
+    "The ScopeConfirmCard button resends the original prompt and proposal ID; it does NOT submit the label text. Typed-phrase reproduction is a separate path.",
+    "Creating a backlog record is not executing a repair task. Absence from Tasks/Self-Repair/Suggestions alone does not prove absence of the backlog record.",
+    "No matching secure-team-workspace project found in preview; exact production incidents are not reconstructed.",
+    "All reproduction database/provider/execution/browser-response dependencies are MOCKED; runtime application APIs remain unchanged."
+  ],
+  "source_changes": "None in backend/, frontend/src/, or frontend/vitest.config.js. Disposable harness/config/node_modules symlink are in /tmp; report and memory are diagnostic artifacts.",
+  "credentials": "No user accounts, passwords, tokens, GitHub grants or environment settings created/modified.",
+  "implementation_status": "NOT STARTED — requires separate approval"
+}

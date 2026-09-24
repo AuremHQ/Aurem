@@ -225,6 +225,20 @@ def test_aurem_branch_name_is_deterministic_and_safe():
     # Must NOT contain unsafe path chars.
     assert "/" not in name[len("aurem/"):]
     assert "!" not in name
+    # 2026-09-17 (Bug 1) — TRUE determinism: same call twice, same
+    # instant or a second apart, must produce the IDENTICAL name. The
+    # old implementation appended `int(time.time())`, which passed
+    # this test's original (weaker) assertions above while still
+    # minting a new branch/PR every single run — the actual root
+    # cause of 389 duplicate PRs.
+    import time
+    name_a = aurem_branch_name("fix", "todo_comment")
+    time.sleep(1.1)
+    name_b = aurem_branch_name("fix", "todo_comment")
+    assert name_a == name_b, (
+        "aurem_branch_name() is not deterministic across calls — this "
+        "is exactly the bug that let 389 duplicate PRs accumulate."
+    )
 
 
 @pytest.mark.asyncio

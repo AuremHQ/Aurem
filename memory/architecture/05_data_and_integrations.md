@@ -25,6 +25,10 @@ Connection: `MONGO_URL` + `DB_NAME` from `backend/.env` ONLY. Never hardcode, ne
 | `cto_payments` / `topup_alerts` / `founder_offer` / `referrals` | Billing surfaces |
 | `feature_flags` / `ui_settings` / `thinking_hints` / `house_rules` | Admin-editable config |
 | `api_keys` / `cto_support` / `cto_support_messages` / `frontend_errors` / `quality_scores` / `onboarding_emails` / `user_seo_claims` / `warm_start_jobs` / `cto_automations` / `aurem_cto_deploy_runs` / `aurem_cto_deploy_configs` / `github_deployments` / `integration_health` / `ora_fix_learning` / `cto_maxx_usage` | Supporting collections |
+| `task_verifications` | Iter 2026-09-23 · shared append-only verification ledger, `verified_by != executed_by` enforced |
+| `trust_calibration_snapshots` | Iter 2026-09-23 · 30-day correction-rate snapshots for `GET /admin/trust-calibration` |
+| `scope_confirmation_proposals` | Iter 2026-09-23 · pending Confirm/Change/Cancel proposals for ambiguous chat requests |
+| `chat_request_ledger` | Iter 2026-09-23 · durable per-turn acceptance/outcome record powering idempotent retry replay |
 
 ### Removed collections (Iter 212m-192 — Session 5 DB cleanup)
 | Collection | Reason |
@@ -35,7 +39,7 @@ Connection: `MONGO_URL` + `DB_NAME` from `backend/.env` ONLY. Never hardcode, ne
 ## EXTERNAL INTEGRATIONS
 | Integration | Purpose | Auth |
 |---|---|---|
-| GitHub REST API | Repo read/write, PRs, commits | User PAT (auto Read/Write scopes) |
+| GitHub REST API | Repo read/write, PRs, commits | GitHub App installation (`installation_id`, preferred) with legacy PAT (`github_token`, still fully supported) — installation_id wins when both are set |
 | GitHub OAuth | **Identity-only** signup/login | OAuth app (internal integration) |
 | Google Auth | 1-click signup | Emergent-managed endpoint |
 | OpenRouter / Groq / Anthropic | LLM inference | Emergent LLM Key via `llm_router.py` |
@@ -49,6 +53,6 @@ Connection: `MONGO_URL` + `DB_NAME` from `backend/.env` ONLY. Never hardcode, ne
 4. New product collections use the `cto_*` prefix.
 5. Never return raw Mongo docs from endpoints — ObjectId → str via the model layer; datetimes use `datetime.now(timezone.utc)`.
 6. All GitHub API calls go through the existing GitHub service layer (`github_api_writer.py`, `github_cache.py`, `repo_context.py`) — no scattered ad-hoc HTTP calls, and respect `.aurem_cache` first to avoid secondary rate limits.
-7. OAuth (GitHub/Google) is identity-only — never conflate it with the PAT-based repo read/write flow.
+7. OAuth (GitHub/Google) is identity-only — never conflate it with the repo read/write flow (GitHub App installation preferred, legacy PAT still supported as fallback).
 8. All LLM traffic uses the Emergent LLM Key via `llm_router.py`/`smart_router.py` — never a hardcoded provider key.
 9. New real-time features reuse the existing SSE infrastructure — no websockets, no polling as a parallel mechanism.

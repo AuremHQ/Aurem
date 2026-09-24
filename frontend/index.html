@@ -90,6 +90,49 @@
     <!-- End Meta Pixel Code -->
 
     <!-- =============================================================== -->
+    <!-- OpenAI (ChatGPT) Ads Measurement Pixel — 2026-09                -->
+    <!-- =============================================================== -->
+    <!--
+      Loads OpenAI's Ads conversion-measurement SDK for Pixel ID
+      NgbBMUb16VNBMyxu1kJ7Rn. Deferred with the same
+      __auremDeferThirdParty helper used for Google Ads gtag + Meta
+      Pixel above (interaction-or-idle, 4.5s fallback) so it doesn't
+      add to first-paint cost. The oaiq() queue stub is created
+      up-front (synchronous) so any early oaiq("measure", …) call
+      from src/lib/analytics.js just queues and drains once the SDK
+      loads — same discipline as the dataLayer/fbq stubs above.
+      Conversion events (registration_completed, github_repo_connected,
+      subscription_created) are dispatched from src/lib/analytics.js —
+      keep this block tiny and cache-friendly.
+
+      Debug logging is OFF by default (never ships console noise to
+      real visitors). Append ?oaiq_debug=1 to any URL while verifying
+      the integration to see oaiq's console diagnostics.
+    -->
+    <script>
+    (function (w, d, s, u) {
+      if (w.oaiq) return;
+      var q = function () { q.q.push(arguments); };
+      q.q = [];
+      w.oaiq = q;
+      var boot = function () {
+        if (w.__oaiqBooted) return; w.__oaiqBooted = true;
+        var js = d.createElement(s);
+        js.async = true;
+        js.src = u;
+        var f = d.getElementsByTagName(s)[0];
+        f.parentNode.insertBefore(js, f);
+        w.oaiq("init", {
+          pixelId: "NgbBMUb16VNBMyxu1kJ7Rn",
+          debug: /(?:^\?|&)oaiq_debug=1(?:&|$)/.test(w.location.search),
+        });
+      };
+      window.__auremDeferThirdParty(boot, 4500);
+    })(window, document, "script", "https://bzrcdn.openai.com/sdk/oaiq.min.js");
+    </script>
+    <!-- End OpenAI Ads Pixel -->
+
+    <!-- =============================================================== -->
     <!-- PRIMARY SEO  (Iter 212m-68 — SEO + GEO + AEO overhaul)          -->
     <!-- =============================================================== -->
     <title>ORA by Aurem — The AI Engineer That Actually Commits | $9/mo</title>

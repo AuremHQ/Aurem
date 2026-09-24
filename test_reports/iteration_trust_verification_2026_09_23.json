@@ -1,0 +1,53 @@
+{
+  "summary": "Verified Trust & Verification Round (Enh 1-6) backend endpoints, code wiring, lint tool, and regression suites. Live GitHub-task E2E (Enh 1+2+3 real flow) and live scope-confirm UI (Enh 5) were NOT exercisable in preview because no real GitHub installation exists — all projects under test@aurem.dev are demo fixtures with fake installation_ids. All tested surfaces PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_trust_verification_e2e_2026_09.py",
+    "/app/test_reports/pytest/trust_verification_e2e_2026_09_23.xml"
+  ],
+  "tests_executed": {
+    "enhancement_6_lint": {
+      "clean_baseline": "exit 0, ✅ absolute-claim lint clean (3 allowlisted)",
+      "with_violation_scratch_jsx": "exit 1, detected 2 violations (guaranteed + 100% guaranteed) on frontend/src/__scratch_absolute_claim.jsx:1",
+      "after_cleanup": "exit 0, clean"
+    },
+    "enhancement_4_trust_calibration": {
+      "admin_get": "200 OK, snapshot has {window_days:30, numerator, denominator, correction_rate_pct, not_enough_data, window_start, window_end, formula_version, computed_at}; when denominator=0 correction_rate_pct is null and not_enough_data=true (verified)",
+      "unauth": "401 (protected)"
+    },
+    "verification_endpoints_shape": {
+      "GET /api/aurem-dev/verification/tasks/nonexistent (auth)": "404 Task not found",
+      "POST report-issue on nonexistent": "safely rejected (no downgrade)",
+      "POST re-verify on nonexistent": "safely rejected (no restored:true)",
+      "POST scope-confirm/{id}/cancel on nonexistent": "handled"
+    },
+    "regression_pytest": "64/64 passed — test_trust_verification_2026_09.py (14) + test_chat_reliability_idempotent_retry_2026_09.py (12) + test_interaction_reliability_contract.py (38)",
+    "wiring_check": {
+      "worker_api.py:988": "from services.task_independent_verifier import verify_task_completion — PRESENT",
+      "worker_git.py:431": "from services.task_independent_verifier import verify_task_completion — PRESENT"
+    },
+    "frontend_smoke": "Landing page loads without console errors. All required data-testid selectors exist in source: ltp-verification-level (LiveTaskPopup.jsx:579), verification-level-badge (VerificationLevelBadge.jsx:30), ship-report-issue-${taskId} (TaskProgressCard.jsx:504), scope-confirm-card (ScopeConfirmCard.jsx:39)."
+  },
+  "not_tested_live_and_why": [
+    "Enh 1+2 live task completion via GitHub-connected project: preview test@aurem.dev account has 21 projects but all are DEMO fixtures (installation_id=987654321 fake or None). Cannot trigger real worker_api/worker_git verification path against real repo. Main agent should run this against production tjsandhu/aurem or seed a real installation.",
+    "Enh 3 live report-issue + re-verify cycle on a real 'done' task: same reason — no real completed task available.",
+    "Enh 5 live scope-confirmation UI trigger: depends on classifier heuristic 0.55 threshold; component code + data-testids present, endpoint /scope-confirm/{id}/cancel responds — but SSE live fire not attempted per review request's 'best-effort' guidance."
+  ],
+  "action_items": [
+    "Main agent (or user) should exercise a real GitHub-connected chat task on production/staging to observe: (a) '🔎 Independent verifier checking...' step, (b) verification_status=pass + verification_level=SANDBOX-REPRODUCED persistence, (c) TaskProgressCard badge rendering, (d) report-issue → needs_review downgrade + idempotency."
+  ],
+  "critical_code_review_comments": [
+    "Enh 6 lint script correctly excludes allowlist and works both directions (clean/violation).",
+    "Trust-calibration correctly returns correction_rate_pct=null when denominator=0 (no fabricated 0%) — matches spec.",
+    "Independent verifier import namespaces (independent_verifier:<model>) are wired in both worker_api and worker_git so ledger record_verification's verified_by!=executed_by guarantee is enforced by construction.",
+    "One minor: preview /api/aurem-dev/cto/projects/list surfaces 21 demo projects — consider seeding at least one project with a real (or clearly-marked mock) installation flow so live E2E testing agents can hit worker_api/worker_git."
+  ],
+  "updated_files": ["/app/backend/tests/test_trust_verification_e2e_2026_09.py"],
+  "success_rate": {"backend": "100% (70/70 tests + 6 e2e endpoint tests)", "frontend": "smoke only (loads, testids present)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (works, admin confirmed via 200 on /admin/trust-calibration)",
+  "seed_data_creation": "None. Scratch jsx file used for Enh 6 lint check was created and immediately deleted.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend Trust & Verification round is solid on all statically/endpoint-verifiable surfaces. If a real GitHub-App-installed project becomes available for test@aurem.dev, run a live chat-driven single-file edit task and assert: verification step log line, verification_status=pass, verification_level_display in {'Tested in a sandbox; not confirmed live', 'Verified in staging; not confirmed in production'}, then POST report-issue → downgraded:true → 2nd call → already:true → GET task shows status=needs_review. Reuse /app/backend/tests/test_trust_verification_e2e_2026_09.py as regression."
+}

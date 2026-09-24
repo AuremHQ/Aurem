@@ -36,49 +36,76 @@ def build_files_changed(
     before: dict[str, str | None],
     after:  dict[str, str | None],
 ) -> list[dict]:
-    """For each file in `after`, compare line-by-line with `before` and
-    emit:
+    """For each file in `after`, compare with `before` and emit:
         - lines_added   : count of lines added
         - lines_removed : count of lines removed
         - line_number   : 1-based line of the first differing line
                           (None when the file is brand-new)
         - old_value     : the old line at line_number  (None when new file)
         - new_value     : the new line at line_number  (None when deleted)
+
+    2026-09-17 bug fix — was previously a NAIVE POSITIONAL (index-by-
+    index) comparison: `old_lines[i] != new_lines[i]` for every i. That
+    has no concept of a line being inserted/deleted — a single new
+    line added anywhere ABOVE the real change shifts every subsequent
+    index by one, so the old line at that shifted position gets
+    compared against an unrelated new line and reported as a false
+    "replace" (real founder-facing bug: an unprompted, purely-additive
+    comment insertion was shown as `- import React...` / `+ // comment`,
+    implying the import was deleted, when it had only shifted down one
+    line — genuinely misleading and could make a safe change look
+    destructive). Fixed by using `difflib.SequenceMatcher` (proper LCS-
+    based alignment, same tool already used by `build_unified_diff_
+    hunks` below) so insert/delete/replace are only ever reported when
+    they're real, alignment-aware changes — a pure insertion is now
+    reported as new_value-only (old_value=None), never as a fake
+    replace of an unrelated, merely-shifted line.
     """
+    from difflib import SequenceMatcher
+
     rows: list[dict] = []
     for name, new_body in (after or {}).items():
         new_lines = _lines(new_body)
         old_body  = (before or {}).get(name)
         old_lines = _lines(old_body)
 
-        # Quick raw add/remove counts (independent of first-diff line)
-        # — use set semantics within a line index to keep this O(n).
-        added   = max(0, len(new_lines) - len(old_lines))
-        removed = max(0, len(old_lines) - len(new_lines))
-        # For matching-length region, refine: count lines that actually changed
-        common = min(len(old_lines), len(new_lines))
-        for i in range(common):
-            if old_lines[i] != new_lines[i]:
-                added   += 1
-                removed += 1
-
         first_diff_idx = None
         old_value     = None
         new_value     = None
+
         if old_body is None:
             # Brand-new file → no "line that changed" — use first line
+            added   = len(new_lines)
+            removed = 0
             if new_lines:
                 first_diff_idx = 1
                 new_value      = new_lines[0]
         else:
-            for i in range(max(len(old_lines), len(new_lines))):
-                a = old_lines[i] if i < len(old_lines) else None
-                b = new_lines[i] if i < len(new_lines) else None
-                if a != b:
-                    first_diff_idx = i + 1
-                    old_value      = a
-                    new_value      = b
-                    break
+            added   = 0
+            removed = 0
+            first_op = None
+            sm = SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag == "equal":
+                    continue
+                if tag in ("replace", "delete"):
+                    removed += (i2 - i1)
+                if tag in ("replace", "insert"):
+                    added += (j2 - j1)
+                if first_op is None:
+                    first_op = (tag, i1, i2, j1, j2)
+            if first_op is not None:
+                tag, i1, i2, j1, j2 = first_op
+                if tag == "replace":
+                    first_diff_idx = i1 + 1
+                    old_value      = old_lines[i1]
+                    new_value      = new_lines[j1]
+                elif tag == "delete":
+                    first_diff_idx = i1 + 1
+                    old_value      = old_lines[i1]
+                elif tag == "insert":
+                    first_diff_idx = j1 + 1
+                    new_value      = new_lines[j1]
 
         rows.append({
             "name":          name,

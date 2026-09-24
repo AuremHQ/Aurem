@@ -13,7 +13,6 @@ Tunable thresholds live at the top of the class for future ops work.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from typing import Any, Optional
 

@@ -24,15 +24,14 @@ from __future__ import annotations
 import logging
 import os
 import asyncio
-import re
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, Depends
+from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin_dep
+from cto_services.auth import require_admin_dep
 from cto_services.db import get_db, require_db
 from services.usage import get_usage
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
@@ -40,8 +39,6 @@ from services.usage import get_usage
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
 from services.admin_analytics_cache import (
-    cached_agg,
-    invalidate as _cache_invalidate,
     mongo_swr_cache,
 )
 
@@ -242,6 +239,21 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     ).sort("created_at", -1).limit(20).to_list(20)
     user["project_count"] = len(user["projects"])
     user["task_count"] = await db.cto_tasks.count_documents({"user_id": user_id})
+    # 2026-09-12 — founder-reported UX confusion (Joe Sebright case):
+    # "Tasks: 0" next to a post_scan_nudge_task_sent activity-log entry
+    # looked like a tracking bug. It isn't — `task_count` above counts
+    # actual `cto_tasks` documents (real work items the orchestrator
+    # created), while nudge_task_sent is a deliberate, DIFFERENT signal
+    # (see engagement_nudge.py docstring): "did the user try to ask ORA
+    # for something", fired the moment a real message arrives, BEFORE
+    # the orchestrator decides whether it becomes a task, a plain
+    # answer, or nothing. Surfacing both counts distinctly so this
+    # reads as "two different things", not "one broken counter".
+    user["nudge_task_sent_count"] = await db.funnel_events.count_documents(
+        {"user_id": user_id, "event_type": {"$in": [
+            "post_scan_nudge_task_sent", "post_skip_nudge_task_sent",
+        ]}},
+    )
     user["session_count"] = await db.chat_sessions.count_documents({"user_id": user_id})
     # Live token budget (plan + admin-granted bonus - used)
     try:
@@ -249,6 +261,20 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     except Exception as e:
         logger.warning(f"usage lookup failed for {user_id}: {e}")
         user["usage"] = None
+    # 2026-09-16 — founder-reported bug: the top-level `tokens_remaining`
+    # field above came straight from the raw `dev_users` document (a
+    # SEPARATE, legacy counter that a few older features — chat_helpers,
+    # security_scan, codebase_health — still decrement directly). It is
+    # NOT kept in sync with grants/usage, so after an admin "Grant
+    # tokens" action, this field silently kept its stale pre-grant value
+    # while `usage.remaining` (below) correctly reflected the grant —
+    # two numbers for "how many tokens does this user have left" on the
+    # same page, guaranteed to disagree. `usage.remaining` is the
+    # documented single source of truth (services/usage.py docstring)
+    # — overwrite the top-level field with it so nothing on this
+    # response can show a stale number next to the correct one.
+    if user["usage"] is not None:
+        user["tokens_remaining"] = user["usage"]["remaining"]
     # Recent admin grants for this user
     user["token_grants"] = await db.cto_token_grants.find(
         {"user_id": user_id}, {"_id": 0},
@@ -970,6 +996,65 @@ async def admin_send_user_offer(
         "failed_detail": failed[:20],
         "recipients": [t["email"] for t in targets],
         "reply_to":   reply_to,
+    }
+
+
+@router.post("/users/notify")
+async def admin_send_user_notification(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+):
+    """Send a custom message straight into a user's in-app notification
+    bell (GET /notifications → services/notifications.py, db.notifications
+    collection) — shows up live in their dashboard, same read/unread
+    lifecycle as system events (scan_done, ship_done, etc). Distinct
+    from /users/email-offer above, which sends to the inbox instead.
+
+      Request body:
+        {
+          "user_ids": ["uid_..", "uid_.."],  # required unless all=true, max 500
+          "all": false,                        # broadcast to every user instead
+          "message": "Heads up: we're doing scheduled maintenance…",
+        }
+
+    Returns: {sent, all, recipients[]}
+    """
+    actor = await _require_admin(authorization)
+    db = require_db()
+
+    user_ids = (body or {}).get("user_ids") or []
+    send_all = bool((body or {}).get("all"))
+    message = ((body or {}).get("message") or "").strip()
+
+    if not message:
+        raise HTTPException(400, "message required")
+    if len(message) > 2000:
+        raise HTTPException(400, "message too long (max 2000 chars)")
+
+    if send_all:
+        cursor = db.dev_users.find({}, {"_id": 0, "user_id": 1})
+        target_ids = [u["user_id"] async for u in cursor if u.get("user_id")]
+    else:
+        if not isinstance(user_ids, list) or not user_ids:
+            raise HTTPException(400, "user_ids[] required (non-empty) unless all=true")
+        if len(user_ids) > 500:
+            raise HTTPException(400, "Too many recipients (max 500 per batch)")
+        target_ids = user_ids
+
+    from services.notifications import emit_notification
+    for uid in target_ids:
+        await emit_notification(db, user_id=uid, type="admin_message", text=message)
+
+    logger.info(
+        "admin notification sent by=%s recipients=%d all=%s",
+        actor.get("email"), len(target_ids), send_all,
+    )
+    # Bulk broadcasts can be thousands of user_ids — no value in
+    # echoing the full list back to the admin's browser for those;
+    # cap what we return regardless of how many were actually sent.
+    return {
+        "ok": True, "sent": len(target_ids), "all": send_all,
+        "recipients": target_ids[:50],
     }
 
 

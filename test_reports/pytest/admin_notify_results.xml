@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="4" failures="0" skipped="0" tests="4" time="0.959" timestamp="2026-09-20T18:47:56.158569+00:00" hostname="agent-env-00f4b217-af18-4f22-8897-05bbe431b0a7"><testcase classname="tests.test_admin_notify_and_scan" name="test_notify_missing_message" time="0.729"><error message="failed on setup with &quot;ModuleNotFoundError: No module named 'services'&quot;">backend/tests/conftest.py:284: in reset_circuit_breakers
+    from services.retry_guard import reset_breakers_for_tests
+E   ModuleNotFoundError: No module named 'services'</error></testcase><testcase classname="tests.test_admin_notify_and_scan" name="test_notify_missing_targets" time="0.005"><error message="failed on setup with &quot;ModuleNotFoundError: No module named 'services'&quot;">backend/tests/conftest.py:284: in reset_circuit_breakers
+    from services.retry_guard import reset_breakers_for_tests
+E   ModuleNotFoundError: No module named 'services'</error></testcase><testcase classname="tests.test_admin_notify_and_scan" name="test_notify_targeted_and_verify_persistence" time="0.005"><error message="failed on setup with &quot;ModuleNotFoundError: No module named 'services'&quot;">backend/tests/conftest.py:284: in reset_circuit_breakers
+    from services.retry_guard import reset_breakers_for_tests
+E   ModuleNotFoundError: No module named 'services'</error></testcase><testcase classname="tests.test_admin_notify_and_scan" name="test_notify_all_broadcast" time="0.005"><error message="failed on setup with &quot;ModuleNotFoundError: No module named 'services'&quot;">backend/tests/conftest.py:284: in reset_circuit_breakers
+    from services.retry_guard import reset_breakers_for_tests
+E   ModuleNotFoundError: No module named 'services'</error></testcase></testsuite></testsuites>

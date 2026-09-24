@@ -129,6 +129,19 @@ def snapshot_all() -> dict[str, dict]:
     return {d: b.snapshot() for d, b in _BREAKERS.items()}
 
 
+def reset_breakers_for_tests() -> None:
+    """Test-only: reset every breaker to a fresh `closed` state and
+    clear the transitions ring. `_BREAKERS` is a process-wide
+    singleton — without this, one test simulating repeated GitHub/
+    other-dep failures can trip a breaker OPEN for its 60s cooldown
+    and cascade into unrelated tests later in the same pytest session
+    (same failure class as `services.rate_limiter`'s in-memory
+    buckets — see tests/conftest.py's `reset_in_memory_rate_limit_buckets`)."""
+    for dep in list(_BREAKERS.keys()):
+        _BREAKERS[dep] = CircuitBreaker(dep)
+    _TRANSITIONS.clear()
+
+
 def recent_transitions(limit: int = 50) -> list[dict]:
     return list(_TRANSITIONS)[-limit:]
 

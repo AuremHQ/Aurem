@@ -300,3 +300,57 @@ def test_security_scan_has_fix_endpoint():
     # Must enforce founder bypass.
     assert "is_unlimited" in src
     assert '"founder"' in src
+
+
+# ─── 4. pr_url response gap (found + fixed 2026-09-18 while ─────────
+# live-verifying the Bug 1 duplicate-PR fix against a real connected
+# repo, polarisbuiltinc-wq/Aurem-1) — apply_finding_fix() has always
+# returned `pr_url` in its result dict, but /codebase-health/fix's
+# response silently dropped it: a caller (the frontend, or anyone
+# scripting against this API) had no way to know a PR was opened,
+# let alone link to it, without digging through server logs.
+@pytest.mark.asyncio
+async def test_codebase_health_fix_endpoint_surfaces_pr_url(monkeypatch):
+    from routers import codebase_health as ch
+    from services import finding_fix_applier as ff
+    from services import scan_fix_quota as sfq
+
+    class _Tasks:
+        async def insert_one(self, doc): pass
+    class _Users:
+        async def find_one(self, q, proj=None):
+            return {"tokens_remaining": 100}
+    class _DB:
+        cto_tasks = _Tasks()
+        dev_users = _Users()
+
+    async def fake_current_dev(auth=None):
+        return {"user_id": "u1", "tier": "founder",
+                "is_admin": True, "is_unlimited": True}
+    monkeypatch.setattr(ch, "current_dev", fake_current_dev)
+    monkeypatch.setattr(ch, "get_db", lambda: _DB())
+    monkeypatch.setattr(sfq, "assert_can_fix", AsyncMock(return_value={"tier": "founder"}))
+    monkeypatch.setattr(sfq, "record_scan_fixes", AsyncMock(return_value=None))
+
+    async def fake_apply(*, db, user, project_id, finding):
+        return {
+            "ok": True, "commit_sha": "ec9927d", "full_sha": "ec9927d" * 5,
+            "html_url": "https://github.com/o/r/commit/ec9927d",
+            "pr_url": "https://github.com/polarisbuiltinc-wq/Aurem-1/pull/1",
+            "file": finding["file"], "rule_id": finding["rule_id"],
+            "message": "Fixed",
+        }
+    monkeypatch.setattr(ff, "apply_finding_fix", fake_apply)
+
+    res = await ch.request_fix(
+        body={"project_id": "p_64987820ec", "finding_id": "large_fn",
+              "title": "large_function", "file": "a.py", "line": 52,
+              "message": "x", "fix_hint": "split it up"},
+        authorization="Bearer x",
+    )
+    assert res["ok"] is True
+    assert res["pr_url"] == "https://github.com/polarisbuiltinc-wq/Aurem-1/pull/1", (
+        "the endpoint must surface pr_url from apply_finding_fix()'s "
+        "result — dropping it means callers can never link to the "
+        "real PR a fix actually opened/reused"
+    )

@@ -230,7 +230,10 @@ def test_j005_loop_start_endpoint_runs_plan_phase_and_returns_awaiting_confirmat
         async def _call_founder():
             return await _loop_router.start_loop(
                 body=_loop_router.StartBody(
-                    user_message="add health endpoint"
+                    user_message=(
+                        "Add a GET /health route in backend/routers/health.py "
+                        "that returns {\"ok\": true}"
+                    )
                 ),
                 request=_fake_req,
                 authorization="Bearer f",
@@ -282,7 +285,10 @@ def test_j006_loop_task_specs_freeze_is_idempotent_and_snapshots_files():
         task_id="task-1",
         user_id="u1",
         project_id="p1",
-        user_message="add health endpoint",
+        user_message=(
+                        "Add a GET /health route in backend/routers/health.py "
+                        "that returns {\"ok\": true}"
+                    ),
         plan={
             "title": "add health",
             "steps": "- create /api/health route\n- add unit test coverage",

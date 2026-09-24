@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+from typing import Optional
 
 import httpx
 
@@ -31,6 +32,12 @@ logger = logging.getLogger(__name__)
 
 # ─── Endpoint + retry policy ─────────────────────────────────────────────
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# 2026-09-12 — OpenRouter dashboard attribution. Fixed branding value,
+# intentionally NOT read from the APP_URL env var (that one correctly
+# tracks this deployment's OAuth-callback domain, currently aurem.dev
+# — an unrelated concern).
+_OPENROUTER_REFERER = "https://auremcto.com"
 
 # Iter 124 — retry policy for transient upstream failures (rate limit / 5xx).
 # Exponential backoff with full jitter so concurrent callers don't sync up.
@@ -122,6 +129,7 @@ async def call_openrouter_model(
     user: str,
     max_tokens: int = 1000,
     temperature: float = 0.2,
+    feature: Optional[str] = None,
 ) -> str:
     """Iter 165 — generic OpenRouter caller for the agents pipeline.
 
@@ -138,6 +146,13 @@ async def call_openrouter_model(
     a usable completion string, with a log line marking which model
     actually answered.
 
+    2026-09-12 — `feature` (e.g. "Loop Planning", "Self-Heal Retry",
+    "Vision Describe") tags the OpenRouter dashboard's `X-Title` per
+    call-site so background/guard traffic is distinguishable from
+    user-facing traffic in openrouter.ai/logs — previously every
+    caller shared one generic "AUREM" title. Optional, defaults to
+    the generic title for any caller that hasn't been tagged yet.
+
     Returns "" on any failure; the agents layer handles fallback so we
     keep this function thin and predictable.
     """
@@ -151,7 +166,7 @@ async def call_openrouter_model(
         _DEEPSEEK_DIRECT_MODEL, _GROQ_MODEL,
         _call_deepseek_direct, _call_groq,
     )
-    from ._state import _set_last_provider
+    from ._state import _set_last_provider, get_prompt_cache_context
 
     api_key = _openrouter_key()
     if not api_key:
@@ -159,15 +174,65 @@ async def call_openrouter_model(
         return ""
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": os.getenv("APP_URL", "https://auremcto.com"),
-        "X-Title": "AUREM",
+        # 2026-09-12 — decoupled from the general-purpose APP_URL env
+        # var (which correctly tracks this deployment's OAuth-callback
+        # domain, currently aurem.dev) — OpenRouter attribution is a
+        # fixed branding value, not a per-deployment redirect URL.
+        "HTTP-Referer": _OPENROUTER_REFERER,
+        "X-Title": f"AUREM - {feature}" if feature else "AUREM",
         "Content-Type": "application/json",
     }
+    # 2026-09-22 — Section 16 cost-efficiency fix. Opt-in, flag-gated
+    # prompt caching. `LLM_PROMPT_CACHING_ENABLED` defaults OFF; even
+    # when on, this only ever fires for a caller that explicitly wrapped
+    # itself in `prompt_cache_context(...)` (see _state.py) — every
+    # other caller gets the EXACT same plain-string `system` content
+    # and payload shape as before this change.
+    #
+    # `cache_control` (Anthropic's own mechanism, passed through by
+    # OpenRouter) is the only one of the 4 providers in this file that
+    # NEEDS an explicit marker — DeepSeek/GLM/LongCat cache
+    # automatically server-side (confirmed via provider docs, see
+    # SCALING_PLAN addendum / audit notes), so the marker is
+    # DELIBERATELY restricted to `anthropic/` model slugs; applying it
+    # to a non-Anthropic backend would be a silent no-op at best and
+    # an unverified request-shape risk at worst.
+    _caching_enabled = os.getenv("LLM_PROMPT_CACHING_ENABLED", "0") == "1"
+    _cache_hint = get_prompt_cache_context() if _caching_enabled else {"session_id": None, "cache_system": False}
+    _use_cache_control = bool(_cache_hint.get("cache_system")) and model.startswith("anthropic/")
+    _sticky_session_id = _cache_hint.get("session_id")
+    system_content = (
+        [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        if _use_cache_control else system
+    )
     base_messages = [
-        {"role": "system", "content": system},
+        {"role": "system", "content": system_content},
         {"role": "user",   "content": user},
     ]
     _timeout_s = float(os.getenv("LLM_HTTP_TIMEOUT_S", "25.0"))
+    # 2026-09-08 — QA regression report Result 3 (live-reproduced):
+    # exact-phrase degeneration loop ("your page" repeated 20+ times
+    # in a table cell) on a short/low-entropy generation. Confirmed
+    # via code read that NO OpenRouter call anywhere in this codebase
+    # passed frequency_penalty/presence_penalty — a well-known lever
+    # for exactly this failure mode. A modest, OpenAI-schema-standard
+    # value meaningfully suppresses exact-token-sequence repetition
+    # without perceptibly changing normal answer quality. Env-
+    # overridable for easy tuning without a redeploy.
+    _freq_penalty = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4"))
+    # 2026-09-11 — founder re-repro'd the SAME exact-phrase degeneration
+    # ("your page" x20+ in one table cell) live in production AFTER the
+    # frequency_penalty fix above had already deployed (confirmed via
+    # /api/health build_hash match). Root cause of the miss: OpenRouter
+    # forwards `frequency_penalty` to the underlying engine (vLLM/SGLang
+    # for GLM-5.2 + LongCat-2.0, both used here), but that alone doesn't
+    # reliably stop a determined EXACT-token-sequence loop — that's what
+    # `repetition_penalty` (a distinct, multiplicative lever, default 1.0
+    # = neutral) is specifically for. Using a light 1.1 value (GLM-5.2's
+    # own docs recommend ~1.05 to avoid heavier values causing cross-
+    # lingual "drift") to stack with frequency_penalty for this failure
+    # class without perceptibly changing normal answers.
+    _rep_penalty = float(os.getenv("LLM_REPETITION_PENALTY", "1.1"))
 
     # Try the requested model first, then each free fallback in turn.
     candidates = [model] + [m for m in _free_fallback_models() if m != model]
@@ -177,8 +242,19 @@ async def call_openrouter_model(
             "model": candidate,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "frequency_penalty": _freq_penalty,
+            "repetition_penalty": _rep_penalty,
             "messages": base_messages,
         }
+        if _sticky_session_id:
+            # 2026-09-22 — Section 16 fix. Sticky routing hint so
+            # repeat calls in the same session land on the same
+            # OpenRouter backend replica — this is what lets
+            # DeepSeek/GLM/LongCat's AUTOMATIC server-side caching
+            # actually get a hit instead of round-robining onto a
+            # cold replica each time. Harmless if the model/provider
+            # ignores it.
+            payload["session_id"] = _sticky_session_id
         try:
             async with httpx.AsyncClient(timeout=_timeout_s) as c:
                 r = await c.post(OPENROUTER_URL, headers=headers, json=payload)
@@ -193,6 +269,19 @@ async def call_openrouter_model(
             if not isinstance(_msg, dict):
                 raise TypeError(f"message is {type(_msg).__name__}, expected dict")
             content = (_msg.get("content") or "").strip()
+            if _caching_enabled:
+                # 2026-09-22 — measurement hook. Anthropic/OpenRouter
+                # surface cache hit/write token counts inside `usage`
+                # (`cache_read_input_tokens` / `cache_creation_input_tokens`,
+                # or the OpenAI-normalized `prompt_tokens_details.cached_tokens`
+                # depending on provider). Log-only — never changes the
+                # return shape — so a live before/after run can be read
+                # straight out of the backend log.
+                logger.info(
+                    "prompt_caching: model=%s cache_system=%s session_id=%s usage=%r",
+                    candidate, _use_cache_control, bool(_sticky_session_id),
+                    (data or {}).get("usage"),
+                )
             # Iter 309 · Pre-Phase-1 — loop-token accounting.
             # No-op unless a loop context is active (see
             # loop_token_ledger.loop_call_context).

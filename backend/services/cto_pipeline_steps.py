@@ -24,7 +24,12 @@ from __future__ import annotations
 from typing import Optional
 
 from services.llm import call_llm
-from services.cto_projects_helpers import _log, _emit, _retry, _hallucination_reasons
+from services.cto_projects_helpers import (
+    _log, _emit, _retry, _hallucination_reasons,
+    _verbatim_reasons, _extract_verbatim_literals,
+    _dropped_import_reasons, _dropped_statement_reasons,
+    _symbol_scope_creep_reasons, _file_scope_creep_reasons,
+)
 
 
 def _check_js_syntax(filepath: str, content: str) -> Optional[str]:
@@ -112,8 +117,39 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     but kept almost none of its real lines, the content is invented.
     One targeted retry re-injects the REAL file; still bad -> returns
     an error string (caller must fail the task, never commit).
+
+    2026-09-12 — content-fidelity fix, round 2. Also runs
+    `_verbatim_reasons()`: the keep-ratio check above only catches
+    WHOLESALE rewrites — it does nothing when the original is fully
+    preserved but a specific "exactly `X`" literal the task explicitly
+    required comes out blank/altered (confirmed live, commit 2e74ea1).
+    Both checks share the same retry-then-abort path; the retry nudge
+    explicitly restates any missing literal(s) verbatim so the model
+    isn't just told "you were wrong" without being re-told what the
+    exact required text was.
+
+    2026-09-13 — Phase 1 scope-creep broadening. Also runs
+    `_symbol_scope_creep_reasons()` (an existing function/class
+    rewritten or deleted without the task ever naming it) and
+    `_file_scope_creep_reasons()` (a file touched that was never
+    shown to the model and never named in the task) — same
+    retry-then-abort path, same in-band nudge pattern.
+
+    2026-09-17 — Bug 2 fix (live incident, commit 36ecdee). Also runs
+    `_dropped_statement_reasons()`: a task that itself claims to be a
+    trivial "add a comment/marker" change must not also silently
+    delete real statements elsewhere in the file (confirmed live —
+    two unrelated `console.log(...)` calls vanished on exactly this
+    kind of task). Narrower trigger than the two checks above (see
+    its own docstring) so it never flags legitimate multi-line edits.
     Returns (possibly-updated edits, error_or_None)."""
-    _hallu = _hallucination_reasons(edits, contents)
+    _verb = _verbatim_reasons(user_msg, edits)
+    _dropped_imports = _dropped_import_reasons(edits, contents)
+    _dropped_stmts = _dropped_statement_reasons(user_msg, edits, contents)
+    _symbol_creep = _symbol_scope_creep_reasons(user_msg, edits, contents)
+    _file_creep = _file_scope_creep_reasons(user_msg, edits, contents)
+    _hallu = (_hallucination_reasons(edits, contents) + _verb
+              + _dropped_imports + _dropped_stmts + _symbol_creep + _file_creep)
     if not _hallu:
         return edits, None
     await _log(task_id,
@@ -124,19 +160,62 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
         f"FILE: {p}\n```\n{contents.get(p) or contents.get(p.lstrip('./'))}\n```"
         for p in edits
         if (contents.get(p) or contents.get(p.lstrip("./"))))
+    _literal_reminder = ""
+    if _verb:
+        _literals = _extract_verbatim_literals(user_msg)
+        _literal_reminder = (
+            "\n\nCRITICAL: your last attempt did NOT include the exact "
+            "literal text the task required. You MUST include this "
+            "EXACT text, verbatim, character-for-character (do not "
+            "paraphrase, summarize, or leave it blank):\n"
+            + "\n".join(f"  {lit!r}" for lit in _literals)
+        )
+    _import_reminder = ""
+    if _dropped_imports:
+        _import_reminder = (
+            "\n\nCRITICAL: your last attempt DELETED import/require "
+            "statement(s) that exist in the real file below, even "
+            "though the task never asked you to remove them. This "
+            "breaks the app (undefined references at runtime). Every "
+            "import/require line present in the real file below MUST "
+            "still be present in your new version unless the task "
+            "explicitly says to remove that specific dependency:\n  - "
+            + "\n  - ".join(_dropped_imports)
+        )
+    _scope_reminder = ""
+    if _symbol_creep or _file_creep:
+        _scope_reminder = (
+            "\n\nCRITICAL: your last attempt changed/removed existing "
+            "code or created a file that the task never asked about. "
+            "ONLY touch what the task explicitly requires; leave every "
+            "other function, class, and file exactly as it was in the "
+            "real content below:\n  - "
+            + "\n  - ".join(_symbol_creep + _file_creep)
+        )
+    _stmt_reminder = ""
+    if _dropped_stmts:
+        _stmt_reminder = (
+            "\n\nCRITICAL: your last attempt SILENTLY DELETED real "
+            "statement(s) elsewhere in the file, even though this "
+            "task only asked you to add a comment/marker. Keep every "
+            "existing line exactly as-is and ONLY add the requested "
+            "comment/marker — do not touch, simplify, or remove "
+            "anything else:\n  - " + "\n  - ".join(_dropped_stmts)
+        )
     _h_nudge = (
         "Your previous edit did NOT match the real file — it "
         "invented code that does not exist. Below is the REAL, "
         "current content of each file. Re-apply the requested "
         "change as a MINIMAL modification of this exact content. "
         "Preserve every existing line unless the task requires "
-        "changing it.\n\n" + _real_blob
+        "changing it." + _literal_reminder + _import_reminder
+        + _scope_reminder + _stmt_reminder + "\n\n" + _real_blob
     )
     reply3 = await _retry(
         lambda: call_llm(
             messages=[{"role": "user",
                        "content": user_msg + "\n\n" + _h_nudge}],
-            system=ai_sys, max_tokens=3500, temperature=0.0,
+            system=ai_sys, max_tokens=12000, temperature=0.0,
         ),
         what="AI hallucination-retry", task_id=task_id,
     )
@@ -144,7 +223,12 @@ async def _run_hallucination_gate(task_id: str, edits: dict, contents: dict,
     _edits2 = _pfb(reply3)
     if _edits2:
         edits = _edits2
-    _hallu = _hallucination_reasons(edits, contents)
+    _hallu = (_hallucination_reasons(edits, contents)
+              + _verbatim_reasons(user_msg, edits)
+              + _dropped_import_reasons(edits, contents)
+              + _dropped_statement_reasons(user_msg, edits, contents)
+              + _symbol_scope_creep_reasons(user_msg, edits, contents)
+              + _file_scope_creep_reasons(user_msg, edits, contents))
     if _hallu:
         err = ("AI kept producing content that does not match the "
                "real file (refusing to push):\n  - "
@@ -184,7 +268,7 @@ async def _run_syntax_gate(task_id: str, edits: dict,
             lambda: call_llm(
                 messages=[{"role": "user",
                            "content": user_msg + "\n\n" + _syn_nudge}],
-                system=ai_sys, max_tokens=3500, temperature=0.0,
+                system=ai_sys, max_tokens=12000, temperature=0.0,
             ),
             what="AI syntax-fix auto-retry", task_id=task_id,
         )

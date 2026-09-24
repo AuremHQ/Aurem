@@ -20,7 +20,6 @@ lines to keep the prompt small; final report is capped at ~1200 tokens.
 from __future__ import annotations
 import re
 import asyncio
-from datetime import datetime, timezone
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.llm import call_llm_with_meta
@@ -161,7 +160,11 @@ def static_scan_all(file_blocks: dict) -> list[dict]:
 
 AUDIT_SYSTEM = """You are a senior code auditor reviewing a production codebase.
 
-Identify issues that STATIC ANALYSIS CANNOT FIND:
+If the user's request below asks about something SPECIFIC (a
+particular system, file, or piece of logic), your findings MUST
+prioritize and directly address that specific ask FIRST — never
+substitute the generic checklist below for what they actually asked
+about. Then also cover the standard checklist as additional findings:
 - Business logic bugs
 - Missing authentication on routes that need it  
 - Race conditions in async code
@@ -178,12 +181,28 @@ FIX: <one-sentence fix>
 (repeat for each issue, max 8 issues)"""
 
 
-async def llm_deep_audit(file_summaries: str, repo_ctx: str) -> list[dict]:
-    """LLM audit for logic-level issues. Returns list of issue dicts."""
+async def llm_deep_audit(file_summaries: str, repo_ctx: str, user_focus: str = "") -> list[dict]:
+    """LLM audit for logic-level issues. Returns list of issue dicts.
+
+    `user_focus` — 2026-09 P0 bug-brief Bug 2 fix. The caller's raw
+    audit request (e.g. "audit this repo for existing classification/
+    routing logic and recommend whether to add X"). Previously
+    `run_audit()` accepted `user_message` but only used it for
+    logging — the LLM prompt never saw it, so every audit ran the
+    SAME generic security/quality/performance checklist regardless
+    of what was actually asked (confirmed root cause of the "canned
+    health-scan ignoring the actual request" bug). Passing it through
+    here lets the LLM prioritize findings that address the specific
+    ask, on top of the standard checklist — additive, not a
+    replacement for the baseline scan."""
     try:
+        user_prompt = f"Repo: {repo_ctx}\n\n"
+        if user_focus and user_focus.strip():
+            user_prompt += f"The user's actual request: {user_focus.strip()[:500]!r}\n\n"
+        user_prompt += f"Code summaries:\n{file_summaries[:3000]}"
         resp = await call_llm_with_meta(
             system=AUDIT_SYSTEM,
-            user=f"Repo: {repo_ctx}\n\nCode summaries:\n{file_summaries[:3000]}",
+            user=user_prompt,
             mode="chat",
             max_tokens=800,
         )
@@ -213,6 +232,65 @@ async def llm_deep_audit(file_summaries: str, repo_ctx: str) -> list[dict]:
         issues.append(current)
 
     return issues[:8]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Part C — LLM-finding verification (extend the diff-hallucination gate's
+# "does the evidence actually support this claim" logic to bulk-summary
+# output). Confirmed real incident: a "37 issues found" report included a
+# "duplicate font imports" finding that did not exist on inspection. Unlike
+# `cto_pipeline_steps.py`'s diff gate (which verifies a code CHANGE against
+# the real file), there is no diff here — the LLM free-text-parses its own
+# "ISSUE:/FILE:/SEVERITY:" blocks with zero grounding check against the
+# files it was actually shown. Two checks, weakest evidence first:
+#   1. Hard drop — claimed `filepath` doesn't exist in the real scanned
+#      set at all (the LLM invented a path).
+#   2. Soft drop — the finding's own description shares NO real keyword
+#      with the claimed file's actual content. A genuine finding, even in
+#      loose prose, usually echoes at least one real identifier/word from
+#      the file; a fabricated one (like "duplicate font imports" on a file
+#      with no "font" anywhere) shares none.
+# Deliberately NOT a second LLM call — that would just add a second
+# hallucination-risk on top of the first. Purely deterministic.
+_STOPWORDS = frozenset({
+    "the", "this", "that", "with", "from", "into", "have", "does", "should",
+    "could", "would", "there", "which", "when", "where", "file", "code",
+    "issue", "found", "missing", "possible", "likely", "these", "those",
+})
+
+
+def _finding_keywords(description: str) -> list[str]:
+    words = re.findall(r"[a-zA-Z_]{4,}", (description or "").lower())
+    return [w for w in words if w not in _STOPWORDS]
+
+
+def verify_llm_findings(llm_findings: list[dict], file_blocks: dict) -> list[dict]:
+    """Filters `llm_findings` (mutates nothing, returns a new list) —
+    drops findings whose claimed file doesn't exist, or whose
+    description shares no real keyword with that file's actual
+    content. Never raises; a verification failure keeps the finding
+    rather than silently losing real signal."""
+    verified: list[dict] = []
+    for f in llm_findings or []:
+        try:
+            claimed_path = (f.get("filepath") or "").strip()
+            # exact match first, then "ends with" for a path the LLM
+            # abbreviated (e.g. "auth.py" for "backend/routers/auth.py")
+            real_path = claimed_path if claimed_path in file_blocks else next(
+                (p for p in file_blocks if p.endswith(claimed_path)), None,
+            ) if claimed_path else None
+            if not real_path:
+                continue  # hard drop — file doesn't exist in the real scan
+            content_lower = (file_blocks.get(real_path) or "").lower()
+            keywords = _finding_keywords(f.get("description", ""))
+            if keywords and not any(kw in content_lower for kw in keywords):
+                continue  # soft drop — zero grounding in the real file
+            f["filepath"] = real_path
+            f["verified"] = True
+            verified.append(f)
+        except Exception:                                    # noqa: BLE001
+            verified.append(f)  # never lose a finding to a guard bug
+    return verified
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -278,7 +356,22 @@ def build_audit_report(
 
     lines = [
         f"**Audit report — {repo_ctx}**",
-        f"_{files_scanned} files scanned · {len(critical)} critical · {len(high)} high · {len(medium)} medium · {len(low)} low_",
+        # 2026-09-17 bug fix — founder-reported: this line read as
+        # self-contradictory ("0 files scanned" yet real findings
+        # listed below it) because `files_scanned` only counts files
+        # whose CONTENT was fetched for static/LLM deep analysis,
+        # while missing-file checks (.env.example, Dockerfile, etc.)
+        # are a SEPARATE repo-structure presence check against the
+        # file tree — those can surface real findings even when zero
+        # files were deep-scanned. Scoping the wording to "deep-
+        # scanned" (rather than the previous unqualified "scanned")
+        # removes the "scanned nothing, found things" contradiction
+        # without inventing a new, hard-to-define "checks run" count.
+        (
+            f"_{files_scanned} file(s) deep-scanned · {len(critical)} "
+            f"critical · {len(high)} high · {len(medium)} medium · "
+            f"{len(low)} low_"
+        ),
         "",
     ]
 
@@ -307,9 +400,27 @@ def build_audit_report(
     else:
         fixable = [i for i in all_issues if i.get("fix") and i.get("filepath")]
         if fixable:
+            # 2026-09-22 — the suggestion (and the frontend button, which
+            # parses this exact string via extractSuggestions) must
+            # reflect the REAL top severity present, not a hardcoded
+            # "critical". A scan with 0 critical / 0 high but medium/low
+            # fixable items used to still say "fix the critical issues".
+            # Build the phrase from the highest severity that actually
+            # has a fixable item. (No fixable items -> no button at all,
+            # already handled by the `if fixable` gate.)
+            def _has_fixable(bucket):
+                return any(i.get("fix") and i.get("filepath") for i in bucket)
+            if _has_fixable(critical):
+                _label = "critical issues"
+            elif _has_fixable(high):
+                _label = "high-priority issues"
+            elif _has_fixable(medium):
+                _label = "medium-priority issues"
+            else:
+                _label = "low-priority items"
             lines.append(
                 f"\n_{len(fixable)} of these can be auto-fixed. "
-                f"Say **\"fix the critical issues\"** and I'll ship them via Mode C._"
+                f"Say **\"fix the {_label}\"** and I'll ship them via Mode C._"
             )
 
     return "\n".join(lines)
@@ -365,9 +476,12 @@ async def run_audit(
 
     static_findings, llm_findings, quick_wins = await asyncio.gather(
         _async_static(),
-        llm_deep_audit(file_summaries, repo_ctx),
+        llm_deep_audit(file_summaries, repo_ctx, user_focus=user_message),
         _async_wins(),
     )
+    # Part C — verify LLM-authored findings against the real scanned
+    # content before they ever reach the user-facing report.
+    llm_findings = verify_llm_findings(llm_findings, dict(important_files))
 
     # Build report
     report = build_audit_report(

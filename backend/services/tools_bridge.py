@@ -256,12 +256,9 @@ def extract_tool_calls(text: str) -> list[dict]:
     # ORA sometimes emits this when DeepSeek mimics
     # Python REPL style instead of JSON fence.
     import re as _re
-    _PY_CALL_RE = _re.compile(
-        r'(\w+)\s*\(\s*(.*?)\s*\)',
-        _re.DOTALL
-    )
     _KNOWN_TOOLS = {
         "read_repo_file", "read_repo_files", "write_repo_file",
+        "patch_repo_file",
         "get_repo_structure",
         "list_repo_files",
         "search_repo", "semantic_search_repo", "get_commit_diff",
@@ -290,6 +287,12 @@ def extract_tool_calls(text: str) -> list[dict]:
         # in LOCAL_TOOLS but must ALSO be listed here, same lesson as
         # the Vercel batch above.
         "save_finding",
+        # 2026-09-07 · Master Plan S1 — get_library_docs (Context7)
+        # registered in LOCAL_TOOLS, same lesson again: must be here
+        # too or DeepSeek/GLM's Python-style emissions silently drop.
+        "get_library_docs",
+        # 2026-09-07 · Master Plan S2 — sequential_thinking, same lesson.
+        "sequential_thinking",
     }
     # Hoisted so both Shape-4 and Shape-6 (XML block below) share it
     # without redefining per-iteration.
@@ -300,11 +303,53 @@ def extract_tool_calls(text: str) -> list[dict]:
         r"\d+|True|False|None"      # primitives
         r")"
     )
-    for match in _PY_CALL_RE.finditer(text):
-        fn_name = match.group(1).strip()
-        if fn_name not in _KNOWN_TOOLS:
-            continue
-        raw_args = match.group(2).strip()
+
+    def _scan_balanced_args(s: str, open_paren_idx: int) -> str:
+        """2026-09-07 · Master Plan S2 fix — the old
+        `r'(\\w+)\\s*\\(\\s*(.*?)\\s*\\)'` non-greedy regex stopped at
+        the FIRST ')' anywhere in the call, including one that just
+        happens to appear inside a quoted string argument (e.g. a
+        `thought="...like this (an example)..."` value, or any
+        parenthetical aside in free text). That silently truncated
+        `raw_args` and dropped the call entirely — real bug, caught by
+        a live model run once `sequential_thinking`'s free-text
+        `thought` arg made it non-hypothetical. This walks the string
+        tracking quote state and paren depth so a ')' or '(' inside a
+        quoted value is never mistaken for the call's real closing
+        paren. `open_paren_idx` is the index of the call's opening
+        '(' itself; returns the text strictly between the matching
+        '(' and ')'."""
+        depth = 0
+        i = open_paren_idx
+        n = len(s)
+        quote_char = None
+        start_args = open_paren_idx + 1
+        while i < n:
+            ch = s[i]
+            if quote_char:
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if ch == quote_char:
+                    quote_char = None
+            elif ch in ("\"", "'"):
+                quote_char = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return s[start_args:i]
+            i += 1
+        return s[start_args:]  # unterminated — best effort, rest of string
+
+    _tools_alt = "|".join(sorted((_re.escape(t) for t in _KNOWN_TOOLS),
+                                  key=len, reverse=True))
+    _PY_CALL_START_RE = _re.compile(r"\b(" + _tools_alt + r")\s*\(")
+    for match in _PY_CALL_START_RE.finditer(text):
+        fn_name = match.group(1)
+        open_paren_idx = match.end() - 1  # index of the '(' just matched
+        raw_args = _scan_balanced_args(text, open_paren_idx).strip()
         if not raw_args:
             calls.append({"tool": fn_name, "args": {}})
             continue
@@ -382,16 +427,15 @@ def extract_tool_calls(text: str) -> list[dict]:
         if parsed:
             continue
         # 2. Try Python-style call inside the block, e.g.
-        #    `read_repo_file(path="x")`. The `_PY_CALL_RE` requires
-        #    `name(` — malformed shapes like `name)("x")` won't match,
+        #    `read_repo_file(path="x")`. Uses the same balanced-paren
+        #    `_PY_CALL_START_RE` + `_scan_balanced_args` as Shape 4
+        #    above — malformed shapes like `name)("x")` won't match,
         #    so also do a plain scan for a known tool name and any
         #    string literals to use as positional args.
         py_hit = False
-        for pm in _PY_CALL_RE.finditer(inner):
-            fn = pm.group(1).strip()
-            if fn not in _KNOWN_TOOLS:
-                continue
-            raw = pm.group(2).strip()
+        for pm in _PY_CALL_START_RE.finditer(inner):
+            fn = pm.group(1)
+            raw = _scan_balanced_args(inner, pm.end() - 1).strip()
             args_dict: dict = {}
             for kw in kw_re.finditer(raw):
                 k, v_raw = kw.group(1), kw.group(2)

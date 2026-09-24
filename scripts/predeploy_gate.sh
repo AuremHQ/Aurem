@@ -9,12 +9,28 @@
 # Lanes (all blocking):
 #   1. Backend pytest blocking lane (legacy/flaky/llm_judge excluded
 #      via pytest.ini addopts) — must be 0 failed / 0 errors.
-#   2. Frontend vitest component + lib suites.
+#   2. Frontend vitest component + lib + utils suites.
 #   3. Regression Library locks (services.qa_matrix) — every entry in
 #      .emergent/qa-history/regression_library.json re-verified.
+#
+# 2026-09-22 — SYSTEM AUDIT v2 (Section 7) found two real gaps, both
+# fixed here:
+#   (a) Lane 2's vitest glob only covered src/components/__tests__ and
+#       src/lib — src/utils/__tests__ (including the Bug-1 smart-
+#       punctuation regression test) was NEVER actually run by this
+#       gate. Widened to include it explicitly (NOT the whole src/
+#       tree — that has 10 pre-existing, unrelated baseline failures
+#       today; fixing those is separate work, not silently folded in
+#       here).
+#   (b) `backend/evals/runner.py` (the adversarial quality/security/
+#       agent-behavior eval battery) existed and even said "exits 0/1
+#       to gate the deploy" in its own docstring, but was never
+#       actually CALLED by this script — it only fed an admin tile
+#       nobody had to look at. Now Lane 11, blocking.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+bash scripts/interaction_gate.sh
 echo "══════════ PRE-DEPLOY QA GATE ══════════"
 
 echo "── Lane 1/3: backend pytest (blocking lane) ──"
@@ -24,7 +40,7 @@ echo "── Lane 1/3: backend pytest (blocking lane) ──"
     --ignore=tests/test_iter212m163_aggression_chat.py)
 
 echo "── Lane 2/3: frontend vitest ──"
-(cd frontend && npx vitest run src/components/__tests__/ src/lib)
+(cd frontend && npx vitest run src/components/__tests__/ src/lib src/utils/__tests__/)
 
 echo "── Lane 3/3: regression library locks ──"
 (cd backend && python -m services.qa_matrix \
@@ -75,6 +91,17 @@ echo "── Lane 10: Guard 4 — rendered-page secret scanner vs LIVE prod (202
 # founder rather than silently gating on a pre-existing state.
 python3 backend/scripts/g4_secret_scanner.py || \
     echo "⚠️  Lane 10 flagged a secret leak on the CURRENTLY LIVE site — see output above BEFORE dispatching deploy."
+
+echo "── Lane 11: agent behavior + quality/security eval battery (2026-09-22 · BLOCKING) ──"
+# backend/evals/runner.py — was built to gate deploys (see its own
+# docstring) but was never wired in until this fix (System Audit v2,
+# Section 7). Covers: the 12-prompt quality battery, the security
+# battery, the project-scoping isolation test, AND (new 2026-09-22)
+# the agent-behavior regression category for this P0 bug-brief:
+# multi-step silent-truncation prompts + the transport-error/audit
+# routing-hijack regression. Exits 1 on any HARD fail — this line has
+# no `|| echo` fallback on purpose; a hard fail must stop the deploy.
+(cd backend && python -m evals.runner --report /tmp/aurem_predeploy_eval_report.json)
 
 echo "══════════ GATE PASSED — safe to deploy ══════════"
 echo "⚠️  REMINDER (Iter 356): deploy ke BAAD founder se 'Save to GitHub' click"

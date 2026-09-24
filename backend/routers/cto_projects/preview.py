@@ -13,6 +13,7 @@ every existing `patch("routers.cto_projects.X", ...)` /
 unchanged, since the lookup resolves against the live `__init__.py`
 attribute at call time instead of freezing a copy at import time.
 """
+import re
 import uuid
 from datetime import datetime
 
@@ -191,3 +192,122 @@ async def get_preview_receipt(
         raise HTTPException(404, "Receipt not found or expired")
     import io as _io
     return StreamingResponse(_io.BytesIO(data), media_type="image/jpeg")
+
+
+# ─── 2026-09-17 bug fix — founder-reported: Preview panel's "Live now"
+# iframe can render a permanently blank/white result with ZERO
+# explanation to the user. Root cause: the panel only ever inferred
+# up/down state from the iframe's own `onLoad` event (a 10s client
+# timer flips to a "may be offline" overlay if `onLoad` never fires) —
+# but a cross-origin iframe's `onLoad` fires even for a browser-level
+# connection-error page, hiding that overlay and leaving a blank
+# result the panel had no way to explain. This endpoint does a real
+# SERVER-SIDE reachability probe (no CORS/iframe blind spots) so the
+# panel can show an honest message instead of trusting `onLoad` alone.
+#
+# Distinguishes (best-effort, not a certainty — see docstring):
+#   - "no_deployment"  — the connection itself failed (DNS/refused/
+#     timeout at the TCP level). Nothing appears to be listening at
+#     this address at all.
+#   - "deployment_down" — a server DID respond, just with a 5xx error
+#     (something is deployed and reachable, just currently erroring).
+#   - reachable=true for any response under 500 (even a 404) — a
+#     web server exists and answered; the iframe will render whatever
+#     that actually is, which is itself informative.
+@router.get("/projects/{project_id}/preview/reachability")
+async def check_preview_reachability(
+    project_id: str,
+    authorization: str = Header(None),
+) -> dict:
+    me = await _pkg.current_dev(authorization)
+    db = _pkg.require_db()
+    proj = await db.cto_projects.find_one(
+        {"project_id": project_id, "user_id": me["user_id"]},
+        {"_id": 0, "preview_url": 1, "live_url": 1},
+    )
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    url = (proj.get("preview_url") or proj.get("live_url") or "").strip()
+    if not url or not re.match(r"^https?://", url, re.I):
+        return {
+            "ok": True, "reachable": False, "reason": "no_deployment",
+            "detail": "No live URL is configured for this project yet.",
+            "checked_url": None,
+        }
+
+    import httpx
+    timeout = httpx.Timeout(connect=4.0, read=4.0, write=4.0, pool=4.0)
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True,
+            headers={"User-Agent": "aurem-preview-check/1.0"},
+        ) as c:
+            async with c.stream("GET", url) as r:
+                status_code = r.status_code
+                # Peek at just the first chunk (not the whole body —
+                # keeps this fast even for large pages) so we can
+                # sniff for known "no deployment" platform signatures
+                # below, regardless of status code.
+                body_snippet = b""
+                async for chunk in r.aiter_bytes(chunk_size=4096):
+                    body_snippet = chunk
+                    break
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        # No response at any level — the connection itself never
+        # succeeded (DNS failure / refused / nothing listening). The
+        # strongest signal available that nothing is actually
+        # deployed at this address.
+        return {
+            "ok": True, "reachable": False, "reason": "no_deployment",
+            "detail": f"Couldn't connect to {url} — nothing appears to be "
+                       "listening at this address.",
+            "checked_url": url,
+        }
+    except httpx.TimeoutException:
+        return {
+            "ok": True, "reachable": False, "reason": "deployment_down",
+            "detail": f"{url} did not respond within 4 seconds.",
+            "checked_url": url,
+        }
+    except httpx.RequestError as e:
+        return {
+            "ok": True, "reachable": False, "reason": "deployment_down",
+            "detail": f"Couldn't reach {url} ({type(e).__name__}).",
+            "checked_url": url,
+        }
+
+    # 2026-09-17 bug fix (round 2) — founder-reported LIVE on the real
+    # target site (aurem.live): it responds with HTTP 400 and the
+    # literal body "Deployment not found" — a deterministic, well-
+    # documented "nothing is actually deployed here" signal used by
+    # several hosting platforms. Because 400 < 500, this was
+    # previously misclassified as `reachable: true`, so the panel
+    # correctly deferred to the iframe — which then rendered that
+    # provider's own blank/minimal error page with zero Aurem-side
+    # explanation (exactly the reported symptom). Sniffing the body
+    # for these known phrases, regardless of status code, catches
+    # this "technically responded, but nothing is deployed" class.
+    body_text = body_snippet.decode("utf-8", errors="ignore").lower()
+    NO_DEPLOYMENT_BODY_SIGNATURES = (
+        "deployment not found",
+        "this deployment cannot be found",
+    )
+    if any(sig in body_text for sig in NO_DEPLOYMENT_BODY_SIGNATURES):
+        return {
+            "ok": True, "reachable": False, "reason": "no_deployment",
+            "detail": f"{url} responded with HTTP {status_code}, but the "
+                       "response itself says no deployment exists there.",
+            "checked_url": url, "status_code": status_code,
+        }
+
+    if status_code < 500:
+        return {
+            "ok": True, "reachable": True,
+            "status_code": status_code, "checked_url": url,
+        }
+    return {
+        "ok": True, "reachable": False, "reason": "deployment_down",
+        "detail": f"{url} responded with HTTP {status_code}.",
+        "checked_url": url, "status_code": status_code,
+    }

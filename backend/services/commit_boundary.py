@@ -92,6 +92,70 @@ _TRAILING_PROMISE_RE = re.compile(
 )
 
 
+# 2026-02 — confirmed live regression (founder QA report): the
+# App.js "+2/-58" incident (2026-09-13, `_dropped_import_reasons()`
+# etc. in cto_projects_helpers.py) was fixed ONLY inside
+# worker_api.py/cto_pipeline_steps.py's task-execution pipeline — the
+# code that runs AFTER the user clicks "Approve the fix". That fix
+# never covered THIS surface: the system prompt tells the model the
+# ```aurem-handoff fence itself must be a bare one-paragraph brief
+# with "No code blocks inside — the worker writes the code itself
+# based on this brief" (services/orchestrator.py) — but nothing stops
+# the model from writing a full proposed code block SOMEWHERE ELSE in
+# the SAME reply, alongside the fence. The frontend's Cursor-like
+# diff-peek feature (`extractShipFiles`/`FileDiffPeek` in
+# MessageBubble.jsx) is specifically designed to pick up exactly such
+# a block, match it to a file path named in the brief, fetch the real
+# GitHub content, and render a live side-by-side diff — entirely
+# client-side, with ZERO safety gating (no `_dropped_import_reasons`,
+# no hallucination check — those only exist in the POST-approval
+# worker pipeline). Confirmed repro (index.js, +2/-47, dropped all 4
+# top-level imports): the model wrote an off-spec illustrative code
+# block next to the brief, and the diff-peek rendered it as a "plan
+# clean ✓" preview with zero verification, before Approve was ever
+# clicked — an entirely different, ungated code path than the one the
+# earlier fix covered, not a narrower version of the same fix.
+#
+# Fix: per the system prompt's own stated contract, a well-formed
+# ```aurem-handoff reply should NEVER contain any other fenced code
+# block. Rather than trying to replicate cto_projects_helpers.py's
+# import-safety heuristics against the frontend's own loose path-
+# matching logic (fragile, two implementations to keep in sync),
+# enforce the EXISTING contract deterministically: strip every fenced
+# block that is not the handoff fence itself before the reply ever
+# reaches the user. `extractShipFiles` then finds no code block for
+# any path, `peekFiles.length === 0`, and the diff-peek row correctly
+# renders nothing — no misleading, ungated preview — instead of a
+# scary, unverified diff next to a "clean ✓" badge.
+#
+# Implementation note: a naive "any ``` not immediately followed by
+# aurem-handoff" regex is unsafe here — the handoff fence's own
+# CLOSING ``` also isn't followed by "aurem-handoff" (that string
+# only ever appears once, right after the OPENING ```), so a single
+# combined pattern matches from that closing marker forward into the
+# NEXT real code block and merges the two into one garbled block.
+# Same fix shape as business_voice_filter.py's URL protection: pull
+# the handoff fence out FIRST (its span is unambiguous — `_FENCE_RE`
+# already matches it as one atomic unit), strip every remaining ```
+# block from what's left, then put the handoff fence back verbatim.
+_ANY_FENCE_RE = re.compile(r"```[^\n`]*\n[\s\S]*?```")
+
+
+def strip_stray_code_blocks_near_handoff(content: str) -> str:
+    if not content or "```aurem-handoff" not in content:
+        return content
+    handoff_match = _FENCE_RE.search(content)
+    if not handoff_match:
+        return content
+    before, handoff, after = (
+        content[:handoff_match.start()], handoff_match.group(0), content[handoff_match.end():],
+    )
+    before = _ANY_FENCE_RE.sub("", before)
+    after = _ANY_FENCE_RE.sub("", after)
+    out = f"{before}\n{handoff}\n{after}" if (before.strip() or after.strip()) else handoff
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
 def strip_false_confirm_promise(content: str) -> str:
     if not content or "```aurem-handoff" not in content:
         return content

@@ -13,10 +13,8 @@ Reuses the project's stored GitHub PAT (same one used by
 
 from __future__ import annotations
 import re
-import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 import httpx
 

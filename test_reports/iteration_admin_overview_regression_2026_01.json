@@ -1,0 +1,45 @@
+{
+  "summary": "Frontend regression pass on /admin/overview (AUREM CTO preview) as requested. Logged in via test@aurem.dev, opened /admin/overview, verified full render of all ~24 sub-sections listed in the review request (dependency breaker strip, deploy-readiness banner, top-up alerts banner, LLM Provider Status, Boundary Probes, System Health chips+nav, Live metrics grid, System mapping, Cache & refresh, DB health, Backup/restore-drill, Mode classifier telemetry, Users & Ships, GitHub Connect Funnel strip, Features checklist, ORA council logs, User patterns, Activation funnel, DORA, SLO, Live Cost Alert, Journey Watch, Funnel nudge-stage). No crash, no error boundary fallback, only 1 unrelated console error (a 403 on a background resource — same one visible pre-fix, unrelated to this task). Both regression fixes confirmed live.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "regression_verification": {
+    "gh_funnel_conv_cap_fix": {
+      "status": "PASS",
+      "evidence": "github-funnel-strip live text shows the 16 OAuth redirect -> 26 Callback transition rendering '\u2192 100.0%' (previously would have been '\u2192 162.5%'). All 6 rendered stage-percentages parsed from the strip were <= 100. Overall-conv footer shows '\u2014' (dash) because CTA click count is 0 in the 7d window \u2014 correct null-safe behavior, no percentage over 100 anywhere in the strip."
+    },
+    "system_mapping_doc_accuracy_fix": {
+      "status": "PASS",
+      "evidence": "sysmap-frontend tile renders 'Frontend \u00b7 React 19 + Vite / 71 pages \u00b7 14 hooks \u00b7 144+ components'. sysmap-backend tile renders 'Backend \u00b7 FastAPI 0.115 (Motor async) / 102 router modules \u00b7 280 services'. External Integrations tile LLM COUNCIL row correctly lists LongCat (primary), Anthropic/Claude Sonnet 4 (fallback \u2192 GLM-5.2 fallback text visible), DeepSeek (Council B + Advisor), Claude Sonnet 4.5 (CEO Judge), Groq Llama-3.3-70B (rescue). All new counts and provider names render without errors."
+    }
+  },
+  "interaction_verification": {
+    "admin-overview-refresh-all-btn": "Clicked \u2192 no error, no crash, page stayed rendered.",
+    "funnel-count-{stage} \u2192 funnel-stage-users-modal \u2192 funnel-stage-users-modal-close": "Clicked funnel-count-signed_up \u2192 modal opened (count=1) \u2192 clicked funnel-stage-users-modal-close \u2192 modal closed (count=0). Full drill-down + close cycle works.",
+    "topup-alerts-refresh": "Rendered and clickable (2 real critical integration alerts visible: GitHub sync 401 + Resend 400 \u2014 flagged in request as known-real, not bugs).",
+    "admin-cache-purge-btn": "Rendered and clickable (did not confirm-execute to avoid churn; button + label present per testid)."
+  },
+  "known_real_states_not_bugs": [
+    "GitHub sync (Guard 8) shows 401 Unauthorized \u2014 expired GITHUB_ACTIONS_TOKEN (documented).",
+    "Resend Email shows HTTP 400 \u2014 known Resend config issue.",
+    "NOT DEPLOY-READY banner shows real uncommitted-changes count (54).",
+    "VS Code extension row shows amber 'not-published' \u2014 real Marketplace 404."
+  ],
+  "test_report_links": ["/app/test_reports/admin_overview_render.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdminOverview.jsx is ~2650 lines \u2014 exceeds the 700-line guideline. Consider splitting each card (GhFunnelStrip, SystemMappingCard, ActivationFunnelCard, DoraCard, SloCard, JourneyWatchCard, etc.) into its own file under frontend/src/pages/admin_overview/. Not a bug, just maintainability debt.",
+    "One unrelated 403 console error observed on page load \u2014 not caused by this task; worth a follow-up to identify which background resource fails auth."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A (skipped per request)", "frontend": "100% (all requested checks passed)" },
+  "test_credentials": "test@aurem.dev / AuremTest2026! at https://bin-context-pat.preview.emergentagent.com (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both regression fixes for AdminOverview (GH funnel conv cap at 100% + System mapping doc-accuracy update) are live-verified. Page fully renders with all ~24 subsections. The only remaining console error is an unrelated 403 on background resource that pre-dates this task. No blockers.",
+  "rca of the issue": "Not applicable \u2014 this was verification of already-applied fixes, not new bug RCA."
+}

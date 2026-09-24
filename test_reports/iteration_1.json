@@ -1,36 +1,34 @@
 {
-  "summary": "Full E2E test of AUREM Dev: 10/10 backend pytest tests pass (health, auth signup/login/me, chat with Emergent LLM, stacks). Full frontend Playwright run also passes: landing (hero + CTAs + sidebar + api-online pill), signup flow with unique email, login with seeded creds, chat send + assistant reply via Emergent (reply: 'Hello to you as well!'), all 7 sidebar nav items load without runtime errors, logout clears token and redirects to /login.",
+  "summary": "Backend-only live regression sweep for Section 15 batch (hard per-tool-call cap, input normalizer, regression-backlog cron). Wrote /app/backend/tests/test_section15_batch_live_2026_09_22.py with 7 live end-to-end tests against the preview backend using test@aurem.dev. All 7 passed. Confirmed: (a) input normalizer accepts curly quotes / em-dash / ellipsis / foreign scripts / emoji without 500 or mangling; empty prompt returns 400/422 (not 500); ~15k char prompt handled without 500; (b) admin self-bugs list endpoint /api/aurem-dev/admin/self-bugs/list reachable & returns valid JSON as admin; (c) regression-backlog cron registers cleanly at startup ('🔁 regression-backlog scan cron enabled (every 86400s ≈ 1.0 days)' repeatedly seen in backend logs after each hot-reload); (d) normal chat/send flow works end-to-end with real LLM (OpenRouter/DeepSeek path), no orchestrator exceptions during test run; (e) both scaling-plan and repo-write-access investigation docs exist under /app/memory/. Hard per-tool-call cap could not be forced live (LLM decides tool calls) — verified only via non-regression of normal multi-tool chat + review of orchestrator log lines (R10_TIMING sequences complete cleanly, no hangs). Main agent's unit tests (test_hard_per_tool_call_cap_2026_09.py, test_input_normalizer_2026_09.py, test_regression_backlog_cron_2026_09.py) trusted per request scope.",
   "backend_issues": {
     "critical": [],
-    "minor": []
+    "minor": [
+      {"endpoint": "/api/aurem-dev/chat/send", "issue": "Whitespace-only prompt ('   \\n\\t  ') is accepted (200) and routed to intent-gateway-casual as if it were a real message, rather than being rejected the way empty prompt is (422). Not a regression from this batch, but potentially worth aligning with empty-prompt behavior for consistency in the new normalizer/validator layer."}
+    ]
   },
   "frontend_issues": {
     "ui_bugs": [],
     "integration_issues": [],
-    "design_issues": [
-      {"screen": "Dashboard (post-login)", "issues": ["api-pill briefly renders 'api offline' on initial mount before /api/health resolves; cosmetic only — pill flips to 'api online' once response lands. Consider initializing health=null and rendering pill only after first response, or default-hopeful state."]}
-    ]
+    "design_issues": []
   },
   "test_report_links": [
-    "/app/backend/tests/test_aurem_backend.py",
-    "/app/test_reports/pytest/pytest_results.xml"
+    "/app/backend/tests/test_section15_batch_live_2026_09_22.py",
+    "/app/test_reports/pytest/section15_batch_live_2026_09_22.xml"
   ],
-  "action_items": [],
+  "action_items": [
+    "OPTIONAL: decide whether whitespace-only prompts should 422 like empty prompts do, or continue routing to casual reply — current behavior is inconsistent but harmless."
+  ],
   "critical_code_review_comments": [
-    "main.py calls load_dotenv() twice (lines 16 and 36) — second call is a no-op but unnecessary. Cosmetic.",
-    "Frontend api.js: process.env access path is duplicated/legacy alongside import.meta.env — works under CRA-style env injection, but if migrated to pure Vite, the import.meta fallback is the only one wired (vite.config likely injects process.env). No bug today; flag for future migration.",
-    "Chat health pill on Dashboard initial mount shows 'api offline' for a few ms while /api/health is in flight (default state is null which fails the .ok ternary). Cosmetic.",
-    "Logout uses window.location.href — fine for now but a navigate('/login') would keep SPA history cleaner."
+    "services/regression_backlog_cron.py cron logs 'regression-backlog scan cron enabled' on every hot-reload (seen 7+ times in current backend.err.log window). Consider guarding the log or startup-hook registration so hot-reload doesn't spam it — cosmetic only, not a functional bug.",
+    "backend/tests/conftest.py imports `services.retry_guard` without adjusting sys.path, so tests only work when pytest is invoked from /app/backend (fails with ModuleNotFoundError from /app root). Consider adding a conftest at repo root with sys.path insertion, or documenting `cwd=/app/backend` for CI."
   ],
   "updated_files": [
-    "/app/backend/tests/test_aurem_backend.py (new)",
-    "/app/memory/test_credentials.md (populated)"
+    "/app/backend/tests/test_section15_batch_live_2026_09_22.py"
   ],
-  "success_rate": {"backend": "100%", "frontend": "100%"},
-  "test_credentials": "test@aurem.dev / testpass123 (seeded). Fresh signups use e2e-{timestamp}@aurem.dev.",
-  "seed_data_creation": "Test created one transient signup user e2e-1780017648@aurem.dev (free tier, 1000 tokens). Seeded test@aurem.dev remains.",
+  "success_rate": {"backend": "100% (7/7)", "frontend": "not tested (scope: backend only)"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md) — admin tier, login via POST /api/aurem-dev/auth/login worked.",
+  "seed_data_creation": "None",
   "retest_needed": false,
   "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "Backend at REACT_APP_BACKEND_URL/api/* with /api/aurem-dev prefix for aurem routes. Chat uses Emergent LLM (provider returns 'emergent'). All 7 sidebar pages render. Token stored in localStorage as 'aurem_token'; user object as 'aurem_user'. pytest file at /app/backend/tests/test_aurem_backend.py is reusable for regression.",
-  "rca of the issue": "N/A — no blocking issues found."
+  "context_for_next_testing_agent": "The Section 15 batch (hard per-tool-call cap, input normalizer, regression-backlog cron, plus two docs) is live and green on preview. Live-verified tests are in /app/backend/tests/test_section15_batch_live_2026_09_22.py (run from /app/backend cwd). Hard per-tool-call cap is NOT deterministically reachable via live LLM prompts — trust the mocked unit tests at backend/tests/test_hard_per_tool_call_cap_2026_09.py. Cron is scheduled every 24h with 5-min startup delay so can only be verified by manually calling scan_and_flag_recurring_failure_reasons() or waiting a day. Only functional non-issue: whitespace-only prompt behaves differently from empty prompt (200 vs 422)."
 }

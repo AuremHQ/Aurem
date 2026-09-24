@@ -1,0 +1,22 @@
+{
+  "summary": "RETEST of the two issues from iteration_visual_bugfix_pipeline_2026_09_12.json. Both fixes confirmed working. (1) Frontend spread-order bug in ChatPanel.jsx handleVisualBugAnalyze — the object now correctly puts `...analysis` FIRST and `status:'done'/name/imageId/imageUrl` AFTER, so backend's status:'analyzed' no longer clobbers the frontend's 'done'. Playwright end-to-end verified: attach PNG → click Find-and-fix pill → VisualBugAnalysisCard mounts → loading state observed → thumbnail rendered → 3 extracted-strings pills ('Submit Payment', 'Checkout', 'Error: failed to load') → defects list rendered → no-candidates fallback rendered (expected because active project 'aurem-demo/frontend' has a revoked GitHub App install). (2) Backend 2MB→10MB middleware ordering fixed: '/api/aurem-dev/visual-bugfix/upload' is now in _BODY_LIMIT_BYPASS_PREFIXES in main.py. Independent live curl verified: 7MB PNG → 200 OK with correct metadata; 14MB PNG → 400 'Image too large (14680072 bytes, max 10485760)' (route's own check, not 413, not a crash). (3) pytest test_visual_bugfix_pipeline_2026_01.py: 13/13 PASSED on stable run (first run had 1 flaky 502 on the upload of test_analyze_with_bogus_project_graceful — reran individually and full suite, both green; not a regression, infra-side transient).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_visual_bugfix_pipeline_2026_01.py",
+    "/app/test_reports/pytest/visual_bugfix_retest.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix confirmed clean and minimal: 1-line spread-order swap in ChatPanel.jsx L1972-1978, and one-line allowlist addition to _BODY_LIMIT_BYPASS_PREFIXES in main.py.",
+    "Note: test_analyze_with_bogus_project_graceful showed a one-off 502 on upload on the very first invocation of the suite (passed on rerun and on fresh full suite run). Likely ingress-side transient warm-up when the pod has been idle. Not a code issue; consider adding pytest-rerunfailures @pytest.mark.flaky(reruns=1) on upload tests if this recurs in CI."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (all VisualBugAnalysisCard testids resolved end-to-end)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "None persistent — visual_bug_reports docs auto-expire via 14-day TTL.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Visual Bug-Fix pipeline (Phase 1+2) is fully green: backend 13/13 pytest, frontend end-to-end verified via Playwright on /dashboard. Both previously-reported bugs (frontend spread-order override + backend 2MB middleware clash) are fixed and independently confirmed by curl and by UI. Safe to move on to Phase 3.",
+  "rca of the issue": "Previous run flagged 2 bugs — both are now fixed. Frontend: `setVisualBugAnalysis({ ...analysis, status:'done', name, imageId, imageUrl })` now has `...analysis` first so it can no longer overwrite the four frontend-owned keys. Backend: the /visual-bugfix/upload route is now in the middleware's bypass allowlist so the route's own 10MB cap governs (7MB→200, 14MB→400)."
+}

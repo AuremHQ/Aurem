@@ -205,6 +205,16 @@ jobs:
           JWT_SECRET: ci-test-secret-32-chars-minimum!!
           AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
           AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
+          # Seeded CI founder (see seed step below) + a login rate-limit
+          # high enough that ~100 test logins from one runner IP don't
+          # trip the 10/min production default (429 cascade).
+          FOUNDER_EMAILS: test@aurem.dev
+          ADMIN_EMAIL: test@aurem.dev
+          LOGIN_RATE_PER_MIN: "1000"
+          # CI-only: the booted server is a SEPARATE process from pytest, so
+          # conftest's per-test bucket reset can't reach it — live-HTTP
+          # tests share one runner IP and tripped the 10/min login limit.
+          RATE_LIMIT_DISABLED: "1"
         run: |
           uvicorn main:app --host 0.0.0.0 --port 8001 &
           echo $! > /tmp/backend.pid
@@ -212,6 +222,16 @@ jobs:
             curl -sf http://127.0.0.1:8001/health && break
             sleep 1
           done
+          # CI seed — the live-HTTP tests log in as the preview founder
+          # account; a fresh CI Mongo has no users, so create it here
+          # (FOUNDER_EMAILS makes the signup founder/admin + verified).
+          # Idempotent: a 409 on re-run is fine.
+          curl -sS -o /dev/null -w "seed signup -> %{http_code}\n" \
+            -X POST http://127.0.0.1:8001/api/aurem-dev/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@aurem.dev","password":"AuremTest2026!","name":"CI Founder"}' || true
+          # Regression-pattern registry (test_regression_registry expects >= 8 rows).
+          python scripts/seed_regression_patterns.py
       - name: Run regression + invariant tests
         working-directory: backend
         env:
@@ -233,6 +253,8 @@ jobs:
           # CI dummy values, same pattern as JWT_SECRET above.
           AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
           AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
+          FOUNDER_EMAILS: test@aurem.dev
+          FOUNDER_ALERT_FROM: "AUREM Guardian <alerts@aurem.live>"
         run: |
           # Iter 309 · Phase 0.2 — DISCOVERY-BASED test collection.
           # Prior version was a hardcoded whitelist of specific test
@@ -405,6 +427,158 @@ jobs:
           python backend/scripts/ci_check_new_bloat.py "$BASE_SHA" "$HEAD_SHA" $OVERRIDE
 
 
+  stable-first-paint:
+    # Master Plan S3 (2026-09) — this app is a Vite CSR SPA, but
+    # frontend/scripts/seo-prerender.mjs writes real static HTML into
+    # #root for several public routes so crawlers see real content;
+    # ReactDOM.createRoot().render() then WIPES and repaints it on
+    # mount (no reconciliation the way hydrateRoot would do). A
+    # component whose first render reads a browser-only or
+    # non-deterministic value (window/localStorage/matchMedia/
+    # Date.now/Math.random) as a useState initializer can't match
+    # what the prerenderer wrote — same visible-flash risk a prior
+    # fix already had to patch around once (see seo-prerender.mjs's
+    # "2026-09-04 · flash-of-unstyled-content fix").
+    #
+    # Same non-retroactive convention as new-bloat-guard above: only
+    # NEWLY ADDED files are checked (this app already had 26
+    # pre-existing violations the very first time this script ran —
+    # blocking on those would wall off every future unrelated PR).
+    name: Stable first paint (new files only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Resolve diff range + run checker
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -e
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch origin "$BASE_REF" --depth=50 || true
+            BASE_SHA="origin/$BASE_REF"
+            HEAD_SHA="HEAD"
+          else
+            if [ -z "$BEFORE" ] || echo "$BEFORE" | grep -q '^0*$'; then
+              BASE_SHA="HEAD~1"
+            else
+              BASE_SHA="$BEFORE"
+            fi
+            HEAD_SHA="$SHA"
+          fi
+          echo "Diffing $BASE_SHA..$HEAD_SHA"
+          node frontend/scripts/check-stable-first-paint.mjs --diff "$BASE_SHA" "$HEAD_SHA"
+
+
+  viewport-check:
+    # Master Plan S4 (2026-09) — "layoutlint"-style structural check
+    # (NOT a pixel-diff — this repo already root-caused two flaky
+    # pixel-diff failures from nondeterministic live content, see
+    # visual-regression below) at every breakpoint in
+    # frontend/breakpoints.config.js: a key screen must not force
+    # horizontal page scroll, the #1 real-world "broken on mobile"
+    # symptom. Reuses the exact backend+frontend boot pattern from
+    # visual-regression below (same services/env block) since both
+    # jobs need a real backend, not the frontend's error-boundary
+    # fallback screen.
+    name: Viewport check (key screens x breakpoints)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongodb:
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MONGO_URL:  mongodb://localhost:27017
+      DB_NAME:    aurem_viewport_ci
+      JWT_SECRET: ci-test-secret-32-chars-minimum!!
+      FOUNDER_EMAILS: test@aurem.dev
+      ADMIN_EMAIL: test@aurem.dev
+      LOGIN_RATE_PER_MIN: "1000"
+      RATE_LIMIT_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          for attempt in 1 2 3; do
+            pip install -r requirements.txt \
+              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+              && break
+            echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 5))
+          done
+      - name: Boot backend in background
+        working-directory: backend
+        run: |
+          uvicorn main:app --host 0.0.0.0 --port 8001 &
+          echo $! > /tmp/backend.pid
+          for i in {1..60}; do
+            curl -sf http://127.0.0.1:8001/health && break
+            sleep 1
+          done
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install frontend deps
+        working-directory: frontend
+        run: yarn install --frozen-lockfile || { echo "::warning::yarn.lock out of sync in repo - falling back to yarn install"; yarn install; }
+      - name: Install Playwright browsers (chromium only)
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          REACT_APP_BACKEND_URL: http://localhost:8001
+        run: |
+          yarn start &
+          echo "started; waiting for :3000 ..."
+          for i in $(seq 1 30); do
+            if curl -sSf -o /dev/null http://localhost:3000/; then
+              echo "frontend up after ${i}s"; break
+            fi
+            sleep 1
+          done
+      - name: Run viewport check
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+        run: npx playwright test tests/visual/viewport_check.spec.js
+      - name: Stop backend
+        if: always()
+        run: |
+          if [[ -f /tmp/backend.pid ]]; then kill "$(cat /tmp/backend.pid)" || true; fi
+      - name: Upload HTML report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewport-check-report
+          path: frontend/playwright-report
+          retention-days: 7
+
+
   frontend-vitest:
     # Iter 302 — Frontend QA Charter Layer 1 + Layer 3 C2.
     # Runs the RTL state-sync suite AND the axe-core component-level
@@ -418,7 +592,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
       - name: Install frontend deps
@@ -462,6 +636,10 @@ jobs:
       MONGO_URL:  mongodb://localhost:27017
       DB_NAME:    aurem_visual_ci
       JWT_SECRET: ci-test-secret-32-chars-minimum!!
+      FOUNDER_EMAILS: test@aurem.dev
+      ADMIN_EMAIL: test@aurem.dev
+      LOGIN_RATE_PER_MIN: "1000"
+      RATE_LIMIT_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -490,10 +668,18 @@ jobs:
             curl -sf http://127.0.0.1:8001/health && break
             sleep 1
           done
+          # CI seed — the live-HTTP tests log in as the preview founder
+          # account; a fresh CI Mongo has no users, so create it here
+          # (FOUNDER_EMAILS makes the signup founder/admin + verified).
+          # Idempotent: a 409 on re-run is fine.
+          curl -sS -o /dev/null -w "seed signup -> %{http_code}\n" \
+            -X POST http://127.0.0.1:8001/api/aurem-dev/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@aurem.dev","password":"AuremTest2026!","name":"CI Founder"}' || true
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
       - name: Install frontend deps
@@ -521,7 +707,7 @@ jobs:
         working-directory: frontend
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
-        run: npx playwright test
+        run: npx playwright test tests/visual/public_routes.spec.js
       - name: Stop backend
         if: always()
         run: |
@@ -549,7 +735,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
       - name: Install frontend deps

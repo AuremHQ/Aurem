@@ -69,25 +69,18 @@ def test_send_button_is_circular_pill():
 
 
 def test_loop_mode_toggle_lives_inside_toolbar():
-    src = _read("components/ChatPanel.jsx")
-    # Iter 212m-103 → 212m-163 — the toggle must render inside the
-    # composer toolbar block (not above the composer like the legacy
-    # implementation).  We assert the source ordering by finding the
-    # toolbar open + the LoopModeToggle tag below it.
-    #
-    # Iter 212m-163 reinstated the toggle (founder/admin only) after
-    # Iter 212m-149 had temporarily replaced it with the
-    # IntentTierIndicator.  Accept either single-line or multi-line
-    # JSX shape.
+    """Loop selection was merged into the header Swift/Pro/Maxx dropdown
+    (ModeLoopPill) — founder decision, see git log ba491c8e. The composer
+    must have ZERO standalone loop toggles, and the send button must
+    still live inside the composer toolbar."""
     import re
+    src = _read("components/ChatPanel.jsx")
     toolbar_idx = src.find('<div className="composer-toolbar">')
-    m = re.search(r"<LoopModeToggle\b", src)
-    toggle_idx = m.start() if m else -1
-    send_idx   = src.find('data-testid="chat-send"')
+    send_idx    = src.find('data-testid="chat-send"')
     assert toolbar_idx != -1, "composer-toolbar opener not found"
-    assert toggle_idx != -1, "LoopModeToggle not mounted"
     assert send_idx != -1,   "chat-send button not found"
-    assert toolbar_idx < toggle_idx < send_idx, (
-        "LoopModeToggle must render inside composer-toolbar between the "
-        "icon group and the Send button (Iter 212m-103 layout contract)."
-    )
+    assert toolbar_idx < send_idx, "send button must render inside the toolbar"
+    assert not re.search(r"<LoopModeToggle\b", src), (
+        "standalone LoopModeToggle must NOT be mounted in the composer — "
+        "loop selection lives in the header ModeLoopPill dropdown")
+    assert "<ModeLoopPill" in src, "ModeLoopPill (header loop selector) must be mounted"

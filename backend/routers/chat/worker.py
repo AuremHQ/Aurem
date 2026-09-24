@@ -19,21 +19,19 @@ threading its own ~10 locals across yet another module boundary).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
+import time
 from typing import Optional
 
 from services.orchestrator import chat_with_tools
-from services.llm import call_llm_with_meta, call_emergent_watchdog
 from services.chat_helpers import (
-    _detect_mode, is_fix_confirmation, _f12_has_real_signal,
-    _is_transient_proxy_error, _TRANSIENT_PROXY_CODES, classify_intent,
+    is_fix_confirmation, classify_intent,
 )
 from core.task_type import infer_task_type as _infer_task_type
 from cto_services.db import get_db
 
-from .misc import BUSINESS_OWNER_VOICE_CONTRACT, ORA_PANEL_TONE
+from .misc import ORA_PANEL_TONE
 from .stream_state import StreamState
 
 logger = logging.getLogger(__name__)
@@ -108,9 +106,36 @@ async def _mode_broadcast(state: StreamState) -> str:
     the mode already computed for the council-recall call above
     (`_recall_mode`) instead of classifying the same prompt twice;
     recompute only if that block was skipped (ora_panel=true) or
-    didn't run."""
+    didn't run.
+
+    2026-09 · P0 bug-brief Bug 2 — `_mode` now goes through
+    `services.semantic_mode_router.classify_mode_semantic()`, which
+    is feature-flagged OFF by default (SEMANTIC_MODE_ROUTER_ENABLED).
+    OFF = byte-identical to the old `classify_intent()` call this
+    replaced. ON = Jev-based semantic classification with a
+    confidence threshold + hysteresis, actually GATING dispatch
+    instead of only decorating the UI with a `needs_confirm` badge
+    nothing downstream enforced (the confirmed root cause of the
+    keyword-hijack bug — see semantic_mode_router.py's docstring)."""
     body, q = state.body, state.q
-    _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload)
+    from services.semantic_mode_router import is_enabled as _sem_router_enabled
+    if _sem_router_enabled():
+        from services.semantic_mode_router import classify_mode_semantic
+        _sem = await classify_mode_semantic(
+            body.prompt or "", body.f12_payload, body.project_id, body.session_id,
+        )
+        _mode = _sem["mode"]
+        _sem_confidence = _sem["confidence"]
+        _sem_source = _sem["source"]
+    else:
+        # Flag off — EXACT original behaviour, including the "don't
+        # classify twice" reuse of the council-recall call's result.
+        _mode = state.recall_mode if state.recall_mode is not None else classify_intent(body.prompt or "", body.f12_payload, body.project_id)
+        _sem_confidence = None
+        _sem_source = "keyword"
+    from services.interaction_contract import enabled, factual_lookup
+    if enabled() and factual_lookup(body.prompt):
+        _mode, _sem_source = "A", "interaction-factual-boundary"
     # Confidence scoring — surfaces a `mode_confirm` event when the
     # message is ambiguous so the UI can ask the user before burning
     # an LLM call on the wrong mode. Honoured only when the user has
@@ -121,14 +146,23 @@ async def _mode_broadcast(state: StreamState) -> str:
         _conf = classify_intent_v2(body.prompt or "", body.f12_payload)
     except Exception:
         _conf = None
+    # Trust & Verification round — Enhancement 5. Stash so the
+    # pre-execution scope-confirmation gate right after this function
+    # returns can read the SAME confidence signal instead of a second
+    # (possibly non-deterministic re-tokenized) classification pass.
+    state.mode_confidence = _conf
     if _conf:
         await q.put({
             "type": "mode",
             "mode": _mode,
-            "confidence": _conf["confidence"],
+            "confidence": _sem_confidence if _sem_confidence is not None else _conf["confidence"],
             "scores": _conf["scores"],
             "needs_confirm": _conf["needs_confirm"]
                 and not getattr(body, "mode_override", None),
+            # 2026-09 — surfaces which router actually decided, so the
+            # admin Cockpit / eval suite can verify the flag's live
+            # behaviour without grepping logs.
+            "router_source": _sem_source,
         })
         # Fire-and-forget telemetry — keeps a rolling window of the
         # last 100 classifications so we can tune the vocabulary
@@ -161,6 +195,77 @@ async def _mode_broadcast(state: StreamState) -> str:
     except Exception:
         pass
     return _mode
+
+
+async def _scan_followup_check(state: StreamState) -> Optional[dict]:
+    """2026-09-21 — Bug C fix (live QA report). Runs BEFORE mode
+    classification, independent of it. Founder repro: "list the bug
+    hunt findings from the scan you just ran" doesn't match Mode D's
+    is_debug_request() at all (that classifier requires a soft error
+    term PAIRED with a debug-action verb like "fix the"/"debug" — a
+    bare "list …" ask matches neither), so it fell through to the
+    general orchestrator with zero awareness a scan had just run and
+    answered with a generic templated response. This fires whenever
+    the message references scan/findings AND a real scan for this
+    project ran recently (services.mode_d_debugger.
+    try_scan_followup_reply — same recency + real-data contract
+    regardless of which mode the message would otherwise classify
+    as). No-op (returns None, nothing else changes) when either
+    condition is false."""
+    body, user_id, q = state.body, state.user_id, state.q
+    if not body.project_id or body.project_id == "home":
+        return None
+    from services.mode_d_debugger import (
+        has_scan_followup_signal, try_scan_followup_reply,
+    )
+    if not has_scan_followup_signal(body.prompt or ""):
+        return None
+    d_result = await try_scan_followup_reply(
+        get_db(), user_id=user_id, project_id=body.project_id,
+        user_message=body.prompt or "",
+        # Heartbeat so the SSE watchdog (soft_timeout_s=48s, fires
+        # when zero tool invocations are recorded) doesn't preempt a
+        # real multi-fix turn with its own generic "slow to respond"
+        # message before this function gets a chance to finish —
+        # confirmed live repro fixing 2 real findings took >48s.
+        on_fix_progress=lambda n: state.activity["invocations"].extend(
+            [{"tool": "apply_finding_fix", "ts": time.time()}] * max(n, 2),
+        ),
+    )
+    if d_result is None:
+        return None
+    await q.put({"type": "mode", "mode": "D"})
+    # Real citations, not a guessed claim: mark each file this reply
+    # names as "read" this turn so CitationGuard (routers/chat/
+    # stream.py) doesn't flag them as unsourced and trigger an
+    # unrelated re-read + LLM rewrite pass on top of already-grounded
+    # text (confirmed live repro: it does, and the rewrite's own
+    # narration replaced the clean findings list with unrelated file
+    # summaries).
+    synthetic_tool_calls = [
+        {"tool": "read_repo_file", "args": {"path": p}}
+        for p in (d_result.get("files_referenced") or [])
+    ]
+    return {
+        "ok": True,
+        "content":  d_result.get("ora_reply", ""),
+        "provider": "scan-followup",
+        "fallback_chain": ["scan_followup"],
+        "iterations": 1, "tool_calls_run": len(synthetic_tool_calls),
+        "tool_invocations": [], "tool_calls": synthetic_tool_calls,
+        "mode": "D",
+        "can_auto_fix": False,
+        "severity": d_result.get("severity", "medium"),
+        "fast_path_used": True,
+        # This is deterministic text built straight from real DB
+        # rows (exact file:line findings, real commit shas) — the
+        # SAME class of "already-correct, must not be rewritten"
+        # content confirm-executor/pending_action mark this way; see
+        # run_rendering_pipeline's updated comment for the real repro
+        # this fixes (business_voice_filter turning `file:line` into
+        # "a project page").
+        "_skip_output_guards": True,
+    }
 
 
 async def _mode_d_e(state: StreamState, _mode: str) -> Optional[dict]:
@@ -459,8 +564,7 @@ async def _ora_agent_cascade(state: StreamState) -> Optional[dict]:
         return None
     from services.llm import (
         _call_glm, _call_claude, _call_deepseek,
-        _call_deepseek_direct, _call_groq, _GLM_MODEL,
-        cap_for, temperature_for,
+        _call_deepseek_direct, _call_groq, cap_for, temperature_for,
     )
     # Iter 212m-53 — Ask Advisor dedicated config (admin-set). Read
     # the dedicated prompt + LLM choice; fall back to the legacy
@@ -691,10 +795,15 @@ async def _prep_pre_llm(state: StreamState) -> dict:
         ora_panel=bool(body.ora_panel),
         intent_probe_text=_intent_probe_text,
         log_ctx={"db": get_db(), "user_id": user_id, "project_id": body.project_id},
+        # 2026-02 round-4 — already computed at the top of run_worker(),
+        # before this function's caller even ran; reuse it instead of
+        # calling the real read_repo_file tool a second time.
+        precomputed_required_read_gate=state.required_read_gate,
     )
     _intent_result = _pre.intent_result
     _tier = _pre.tier
     req_mode_stream = _pre.mode
+    state.task_state = _pre.task_state
     # Emit an SSE `intent` frame so the chat UI can render the tier
     # dot + clarifying probe inline — same position (right after
     # classification, before any short-circuit result) as before
@@ -730,6 +839,8 @@ async def _prep_pre_llm(state: StreamState) -> dict:
         "req_mode_stream": req_mode_stream,
         "max_iters_eff": _max_iters_eff,
         "published": _published,
+        "forced_read_context": _pre.forced_read_context,
+        "required_read_gate": _pre.required_read_gate,
     }
 
 
@@ -1120,6 +1231,7 @@ async def _run_orchestrator(state: StreamState, req_mode_stream: str, max_iters_
         task_type=body.task_type or _infer_task_type(body.prompt),
         is_founder=state.is_founder,
         bin_ctx=bin_ctx,
+        task_state_scope_files=((state.task_state or {}).get("scope") or {}).get("files"),
     )
     # Snapshot final invocations so a late timeout still has data.
     if isinstance(result, dict):
@@ -1164,6 +1276,77 @@ async def _run_orchestrator(state: StreamState, req_mode_stream: str, max_iters_
     return result
 
 
+async def _scope_confirmation_gate(state: StreamState, _mode: str) -> Optional[dict]:
+    """Trust & Verification round — Enhancement 5 (pre-execution scope
+    confirmation, services/scope_confirmation.py).
+
+    Fires when the request is genuinely ambiguous per the
+    classifier's OWN `needs_confirm` signal (`state.mode_confidence`,
+    computed once in `_mode_broadcast` — not recomputed here) AND the
+    turn is about to fall through into the general tool-capable
+    orchestrator — every mode with its OWN mutation gate (Mode D's
+    "Approve the fix" click) or that never mutates (A/B/E/F, and the
+    ORA-agent-cascade's own checks) already short-circuited earlier in
+    this same dispatch cascade, so reaching this point IS the
+    consequential-execution boundary. Everything above this call in
+    `run_worker()` is read-only classification/planning.
+
+    Returns None (fall through, execute normally) when: not
+    ambiguous, already overridden (`body.mode_override`), or the
+    caller just supplied a valid `scope_confirmed_proposal_id` for
+    THIS exact prompt. Otherwise short-circuits with a scope-summary
+    result and a `scope_confirmation` SSE frame — no tool call runs
+    below this point on that path."""
+    body, q = state.body, state.q
+    if getattr(body, "mode_override", None):
+        return None
+    conf = state.mode_confidence
+    if not conf or not conf.get("needs_confirm"):
+        return None
+    db = get_db()
+    proposal_id = getattr(body, "scope_confirmed_proposal_id", None)
+    if proposal_id:
+        from services.scope_confirmation import confirm_proposal
+        res = await confirm_proposal(
+            db, proposal_id=proposal_id, user_id=state.user_id,
+            prompt=body.prompt or "",
+        )
+        if res.get("ok"):
+            # Exact displayed scope, confirmed — proceed exactly once.
+            # A resend of this SAME proposal_id is rejected by
+            # confirm_proposal's own "not_pending" check (it's now
+            # CONFIRMED), never a duplicate execution.
+            return None
+        logger.warning("scope_confirmation gate: confirm rejected (%s)", res.get("error"))
+        # Falls through to re-propose fresh below rather than
+        # silently executing on a rejected/expired confirmation.
+    from services.scope_confirmation import create_proposal
+    proposal = await create_proposal(
+        db, session_id=body.session_id, user_id=state.user_id,
+        project_id=body.project_id, prompt=body.prompt or "",
+        confidence=conf.get("confidence"), threshold=0.55, would_be_mode=_mode,
+    )
+    try:
+        await q.put({"type": "scope_confirmation", "proposal": {
+            "id": proposal["id"], "scope_summary": proposal["scope_summary"],
+            "expires_at": proposal["expires_at"],
+        }})
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "content": proposal["scope_summary"] + (
+            "\n\n**Confirm and proceed** to let me make this change, "
+            "**Change scope** to rephrase, or **Cancel**."
+        ),
+        "provider": "scope-confirmation-gate",
+        "fallback_chain": ["scope_confirmation"],
+        "iterations": 0, "tool_calls_run": 0, "tool_invocations": [],
+        "mode": _mode, "awaiting_scope_confirmation": True,
+        "scope_confirmation_proposal_id": proposal["id"],
+    }
+
+
 async def run_worker(state: StreamState) -> None:
     """Dispatch coordinator — mirrors the ORIGINAL `_worker()`
     closure's exact if/elif/return cascade (see module docstring for
@@ -1173,8 +1356,58 @@ async def run_worker(state: StreamState) -> None:
     stage. Always sets `state.stop_event` on the way out so
     watchdog.py's queue consumption loop can't wait forever."""
     q = state.q
+    # INTERACTION_CONTRACT_V1 P1 — the async task itself just got
+    # its first slice of CPU time; see TimeoutClocks.mark_connected's
+    # docstring for why this is deliberately separate from
+    # mark_activity() (real tool-call/output progress).
+    if state.timeout_clocks is not None:
+        state.timeout_clocks.mark_connected()
     try:
+        # Part B3 (round 4 fix) — hoisted to the TOP, before ANY mode
+        # dispatch below. Confirmed live (testing round 3): "Fix this
+        # critical issue: exec_usage (in <path>)" is ambiguous between
+        # Mode D (debug session, _mode_d_e below) and the general
+        # orchestrator path — whichever branch's classifier claims the
+        # turn, `state.required_read_gate` must already be populated so
+        # stream.py's enforce_required_read_gate() applies uniformly to
+        # whatever `content` THAT branch produces, not only the
+        # orchestrator's. Cheap + idempotent (same read either way);
+        # _prep_pre_llm below still recomputes it for the orchestrator
+        # branch's own forced_read_context injection — harmless, same
+        # deterministic result.
+        try:
+            from services.required_tool_gate import run_required_read_gate
+            state.required_read_gate = await run_required_read_gate(
+                message=state.body.prompt or "",
+                ctx={"user_id": state.user_id,
+                     "project_id": state.body.project_id, "bin_ctx": state.bin_ctx},
+            )
+        except Exception as _gate_e:                              # noqa: BLE001
+            logger.warning("required_tool_gate hoist failed (non-blocking): %r", _gate_e)
+            state.required_read_gate = None
+
+        # Trust & Verification round — Enhancement 3, implicit trigger.
+        # Fire-and-forget: if this message reads as a correction
+        # report ("still broken", "that didn't work"), best-effort
+        # retroactively downgrade the most recently shipped task in
+        # this session. Never blocks/affects the actual reply below —
+        # see services/task_downgrade.maybe_auto_downgrade_recent_task
+        # (non-raising, returns None on any mismatch/error).
+        try:
+            from services.task_downgrade import maybe_auto_downgrade_recent_task
+            asyncio.create_task(maybe_auto_downgrade_recent_task(
+                get_db(), session_id=state.body.session_id,
+                user_id=state.user_id, message=state.body.prompt or "",
+            ))
+        except Exception:
+            pass
+
         r = await _mode_d_fast_path(state)
+        if r is not None:
+            await q.put({"type": "result", "result": r})
+            return
+
+        r = await _scan_followup_check(state)
         if r is not None:
             await q.put({"type": "result", "result": r})
             return
@@ -1201,6 +1434,11 @@ async def run_worker(state: StreamState) -> None:
             await q.put({"type": "result", "result": r})
             return
 
+        r = await _scope_confirmation_gate(state, _mode)
+        if r is not None:
+            await q.put({"type": "result", "result": r})
+            return
+
         pre = await _prep_pre_llm(state)
         if pre["short_circuit"] is not None:
             await q.put({"type": "result", "result": pre["short_circuit"]})
@@ -1217,6 +1455,21 @@ async def run_worker(state: StreamState) -> None:
             return
 
         state.sys_for_advisor = state.extra_sys
+        if pre.get("forced_read_context"):
+            state.sys_for_advisor = (
+                (state.sys_for_advisor or "") + "\n\n" + pre["forced_read_context"]
+            ).strip()
+        # Part B3 — state.required_read_gate was already stashed at
+        # the very TOP of run_worker() (before this branch), and
+        # resolve_pre_llm() above was given that SAME value via
+        # `precomputed_required_read_gate` (no second read_repo_file
+        # call). NOT enforced here — stream.py (this function's
+        # caller) reads it AFTER its own run_confidence_gate /
+        # apply_output_guards / business_voice_filter guards run —
+        # any of those can rewrite `content` back into the exact
+        # clarifying-question class this gate exists to prevent
+        # (confirmed live), so enforcement must happen there, as the
+        # true last content-mutating step, not here.
         result = await _run_orchestrator(
             state, req_mode_stream, max_iters_eff, _published,
             intent_result, tier,

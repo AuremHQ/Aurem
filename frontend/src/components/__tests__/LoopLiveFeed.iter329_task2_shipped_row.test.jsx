@@ -199,8 +199,12 @@ describe("Iter 329 · Task 2 — ShippedRow render + rollback flow", () => {
     expect(loopApi.rollbackLoop).toHaveBeenCalledWith("loop_task2_d");
     expect(screen.getByTestId("loop-shipped-row-5d939a4")
       .getAttribute("data-rollback-phase")).toBe("submitting");
-    expect(btn).toBeDisabled();
-    expect(btn).toHaveTextContent(/Rolling back/);
+    // P2-D (this round) — the button unmounts/remounts as the shared
+    // ShipApproveCard swaps render branches per phase, so re-query
+    // fresh each time rather than holding the stale `btn` reference.
+    let liveBtn = screen.getByTestId("loop-shipped-rollback-btn-5d939a4");
+    expect(liveBtn).toBeDisabled();
+    expect(liveBtn).toHaveTextContent(/Rolling back/);
 
     // POST resolves → terminal "handed-off"; button stays disabled
     // and points the user at OperationHistory.
@@ -211,8 +215,12 @@ describe("Iter 329 · Task 2 — ShippedRow render + rollback flow", () => {
       expect(screen.getByTestId("loop-shipped-row-5d939a4")
         .getAttribute("data-rollback-phase")).toBe("handed-off");
     });
-    expect(btn).toBeDisabled();
-    expect(btn).toHaveTextContent(/see history/i);
+    liveBtn = screen.getByTestId("loop-shipped-rollback-btn-5d939a4");
+    expect(liveBtn).toBeDisabled();
+    // Canonical "Rolling back…" wording (was locally "— see history"
+    // before the P2-D 3-surface ship-UI merge; founder asked for ONE
+    // label across all 3 surfaces).
+    expect(liveBtn).toHaveTextContent(/Rolling back/);
 
     // Hand-off proof — Iter 339l: LoopLiveFeed forwards the loopId to
     // the PARENT via onRollbackStarted (ChatPanel opens the single

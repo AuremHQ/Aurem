@@ -57,4 +57,29 @@ describe("K1 — ship CTA render-failure fallback (Round-2 P0-1)", () => {
     const result = detectShipCtaFallback("The tests are passing now.");
     expect(result.shouldFallback).toBe(false);
   });
+
+  // 2026-09-08 — QA regression report, Result 4 ("Approve button
+  // doesn't load", 5+ occurrences). Root-caused via live repro on a
+  // real repo: prompt "clean up the code ... and ship it" on an
+  // already-clean file made the model correctly conclude nothing
+  // needed fixing, but it still emitted the ```aurem-handoff fence
+  // with NO mutation verb inside — extractHandoffBrief's own gate 5
+  // already rejects that fence (correctly, it's not actionable), but
+  // the OLD detectShipCtaFallback treated ANY fence presence as
+  // "should have shipped but failed", showing a false error banner
+  // for what was actually a correct "nothing to fix" answer.
+  it("t_no_mutation_verb_fence_is_not_a_failure (root-cause fix, live-reproduced): a fence with no mutation verb inside (model concluded nothing needs fixing) must NOT trigger the fallback banner", () => {
+    const noOpFence = "I've read the file — it's already clean.\n\n" +
+      "```aurem-handoff\nIn `drill/rollback_drill_target.py` the code is already production-ready — no changes needed. This update confirms the file passes review.\n```";
+    const result = detectShipCtaFallback(noOpFence);
+    expect(result.shouldFallback).toBe(false);
+    expect(result.hasFence).toBe(false);
+  });
+
+  it("t_mutation_verb_fence_rejected_elsewhere_still_flags (defense-in-depth, no over-correction): a fence that DOES contain a mutation verb but gets rejected by a different gate (e.g. an unread file citation) is a real failed-ship attempt and must still show the fallback banner", () => {
+    const genuineButRejected = "I'll fix this.\n\n```aurem-handoff\nIn `some/unread/file.py` fix the bug in the parser.\n```";
+    const result = detectShipCtaFallback(genuineButRejected);
+    expect(result.shouldFallback).toBe(true);
+    expect(result.hasFence).toBe(true);
+  });
 });

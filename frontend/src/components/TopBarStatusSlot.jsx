@@ -33,12 +33,13 @@ function _isDevEnv() {
   return host !== "auremcto.com" && host !== "www.auremcto.com";
 }
 
-export default function TopBarStatusSlot() {
+export default function TopBarStatusSlot({ sessionId }) {
   const f12 = useF12Errors();
   const isFounder = isAdminOrFounder(getUser());
   const showF12Badge = isFounder && _isDevEnv();
   const [detectedMode, setDetectedMode] = useState(null);
   const [serverMode,   setServerMode]   = useState(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const onStatus = (e) => {
@@ -64,10 +65,17 @@ export default function TopBarStatusSlot() {
         ? { mode: serverMode, color: "#6b7280", label: "Mode " + serverMode }
         : null);
 
+  // 2026-09-09 — AUREM Admin Context Bridge (Chrome extension): the
+  // extension's popup needs this session's ID pasted in so a capture
+  // lands in THIS conversation (not a global/ambient snapshot). It
+  // wasn't visible anywhere in the UI before — this is the minimal
+  // surface for that, founder/admin-only like the F12 badge next to it.
+  const showSessionIdBadge = isFounder && !!sessionId;
+
   // 2026-08-21 — founder request: F12 chip is founder/admin-only.
   // Regular users never see it (background capture still runs for
   // everyone; only the UI trigger is gated).
-  if (!modeProp && !(showF12Badge && f12.hasErrors)) return null;
+  if (!modeProp && !(showF12Badge && f12.hasErrors) && !showSessionIdBadge) return null;
 
   return (
     <div
@@ -95,6 +103,31 @@ export default function TopBarStatusSlot() {
             } catch { /* noop */ }
           }}
         />
+      )}
+      {showSessionIdBadge && (
+        <button
+          type="button"
+          data-testid="context-bridge-session-id-copy"
+          title="Copy this chat session's ID — paste it into the AUREM Context Bridge Chrome extension so a capture lands in this conversation"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(sessionId);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            } catch { /* clipboard unavailable — badge still shows the id to select manually */ }
+          }}
+          style={{
+            display: "flex", alignItems: "center", gap: 6,
+            fontSize: 11, fontFamily: "monospace",
+            color: copied ? "#22c55e" : "#9ca3af",
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 6, padding: "3px 8px",
+            cursor: "pointer", transition: "color .15s, border-color .15s",
+          }}
+        >
+          {copied ? "Copied ✓" : `Session: ${sessionId.slice(0, 10)}…`}
+        </button>
       )}
     </div>
   );

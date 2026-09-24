@@ -232,19 +232,32 @@ function CheckList({ title, filterFn, checks, testid, onAck }) {
   );
 }
 
-function ModeBoard() {
+export function ModeBoard() {
   // State (mode) surfaces — NOT health checks. Fed by real endpoints.
   const [ver, setVer] = useState(null);
   const [stripe, setStripe] = useState(null);
   useEffect(() => {
     api.get("/version").then(r => setVer(r.data)).catch(() => {});
-    // Stripe mode is derivable from env: /admin/settings shows it,
-    // but we can also infer from /admin/status/all int_stripe detail.
-    api.get("/admin/status/all").then(r => {
-      const s = (r.data?.checks || []).find(c => c.id === "int_stripe");
+    // 2026-09 fix: was reading the binary int_stripe health check
+    // (green=configured / anything else="not-set"), which collapsed
+    // "warn" (test mode, key present but charges disabled) into the
+    // SAME "not-set" label as genuinely missing — showed "not-set"
+    // even when Stripe was actually configured in test mode, which
+    // disagreed with /admin/integrations (correctly shows "DEGRADED
+    // · TEST mode"). Read the richer per-integration status instead.
+    api.get("/admin/integrations/health").then(r => {
+      const s = (r.data?.results || []).find(x => x.id === "stripe");
       setStripe(s || null);
     }).catch(() => {});
   }, []);
+
+  const stripeLabel = (() => {
+    if (!stripe) return "?";
+    if (stripe.status === "ok") return "configured";
+    if (stripe.status === "warn") return "test mode";
+    if (stripe.status === "missing") return "not-set";
+    return "error";
+  })();
 
   return (
     <div data-testid="cockpit-mode-board"
@@ -260,7 +273,7 @@ function ModeBoard() {
         {ver?.last_github_push && (
           <Chip label={`gh: ${ver.last_github_push.commit_sha || "?"}`} mono />
         )}
-        <Chip label={`stripe: ${stripe?.status === "green" ? "configured" : "not-set"}`} />
+        <Chip label={`stripe: ${stripeLabel}`} />
       </div>
     </div>
   );

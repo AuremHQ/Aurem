@@ -61,6 +61,7 @@ async def _call(
     max_tokens: int,
     temperature: float,
     timeout_s: float = 25.0,
+    feature: Optional[str] = None,
 ) -> str:
     """Single entry point — delegates to llm.call_openrouter_model
     with a hard `asyncio.wait_for` ceiling so a hung upstream cannot
@@ -71,6 +72,7 @@ async def _call(
             call_openrouter_model(
                 model=model, system=system, user=user,
                 max_tokens=max_tokens, temperature=temperature,
+                feature=feature,
             ),
             timeout=timeout_s,
         )
@@ -86,6 +88,7 @@ async def _call(
                 call_openrouter_model(
                     model=MODELS["fallback"], system=system, user=user,
                     max_tokens=max_tokens, temperature=temperature,
+                    feature=feature,
                 ),
                 timeout=timeout_s,
             )
@@ -111,6 +114,7 @@ class ReaderAgent:
             max_tokens=get_budget("read"),
             temperature=0.0,
             timeout_s=15.0,
+            feature="Reader Agent",
         )
 
 
@@ -148,6 +152,7 @@ class CoderAgent:
             max_tokens=get_budget("code", mode),
             temperature=0.15,
             timeout_s=25.0,
+            feature="Coder Agent",
         )
 
 
@@ -194,6 +199,7 @@ class ReviewerAgent:
             user=f"Task: {task[:200]}\n\nCode:\n{code[:3000]}",
             max_tokens=budget, temperature=0.0,
             timeout_s=12.0 if mode == "swift" else 18.0,
+            feature="Reviewer Agent",
         )
 
         if not result or result.strip().upper().startswith("PASS"):
@@ -243,6 +249,7 @@ class SecurityAgent:
             max_tokens=get_budget("security"),
             temperature=0.0,
             timeout_s=12.0,
+            feature="Security Agent",
         )
         if not result:
             return []

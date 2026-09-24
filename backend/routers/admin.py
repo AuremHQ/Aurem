@@ -11,28 +11,20 @@ Mounted under /api/aurem-dev/admin/* by main.py.
 from __future__ import annotations
 
 import logging
-import os
-import asyncio
 import re
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev, require_admin_dep
 from cto_services.db import get_db, require_db
-from services.usage import get_usage
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
-from services.admin_analytics_cache import (
-    cached_agg,
-    invalidate as _cache_invalidate,
-    mongo_swr_cache,
-)
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on
@@ -597,7 +589,6 @@ async def _compute_activation_funnel() -> dict:
     so the cache wrapper above can call it on a cold miss."""
     db = require_db()
 
-    import re
 
     # Iter 356 — exclusion rules extracted to services/test_accounts.py
     # (shared with the public marketing stats). Same behaviour as before.
@@ -913,7 +904,6 @@ _SCRIPT_RE = re.compile(r"<\s*/?\s*script[^>]*>", re.IGNORECASE)
 # Iter 212m-71 — admin cache introspection + flush.  Founders use this
 # when they ship a data fix and need to see the impact immediately
 # instead of waiting for the 60 s TTL to roll over.
-from services.admin_analytics_cache import stats as _cache_stats
 
 
 # ── Iter 212m-234 P0 — Manual re-trigger for the dev_users.created_at

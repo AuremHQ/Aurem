@@ -120,7 +120,7 @@ const StepSignup = ({ tick }) => {
         <div style={{ textAlign: "center", marginBottom: 16 }}>
           <div style={{ fontFamily: C.mono, fontSize: 10, color: C.amber, letterSpacing: "0.18em", marginBottom: 8 }}>SIGN UP</div>
           <div style={{ fontFamily: "Georgia, serif", fontSize: 22, fontWeight: 700, color: C.text, letterSpacing: "-0.5px" }}>
-            Create your developer account
+            Start building, production-ready from day one
           </div>
           <div style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>1,000 tokens free. No card required.</div>
         </div>

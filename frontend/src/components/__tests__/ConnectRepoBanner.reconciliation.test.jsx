@@ -107,7 +107,7 @@ describe("Bug-3/Bug-2 — confirmed different sub-causes, each fixed + tested", 
     });
     render(<ConnectRepoBanner onConnect={vi.fn()} onProjectCreated={vi.fn()} />);
     await waitFor(() => expect(api.get).toHaveBeenCalled());
-    expect(screen.getByTestId("connect-repo-banner-cta").textContent).toMatch(/connect repo/i);
+    expect(screen.getByTestId("connect-repo-banner-cta").textContent).toMatch(/connect your repo/i);
   });
 
   it("t_already_added_shows_open_existing_project", async () => {

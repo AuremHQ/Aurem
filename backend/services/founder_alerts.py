@@ -22,7 +22,7 @@ Public API:
 from __future__ import annotations
 
 import os
-import time
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -130,7 +130,7 @@ async def send_founder_alert(
         f"this stream.</p>"
     )
     try:
-        resp = _send_via_resend(conf, subject, html)
+        resp = await asyncio.to_thread(_send_via_resend, conf, subject, html)
         ok = 200 <= int(resp.get("status", 0)) < 300
     except Exception as e:                              # noqa: BLE001
         logger.warning("[G10] resend send failed: %r", e)
@@ -192,7 +192,7 @@ async def send_daily_digest(db, hours: int = 24) -> dict:
         f"{rows}</table>"
     )
     try:
-        resp = _send_via_resend(conf, f"AuremCTO digest {today}", html)
+        resp = await asyncio.to_thread(_send_via_resend, conf, f"AuremCTO digest {today}", html)
     except Exception as e:                              # noqa: BLE001
         return {"sent": False, "error": str(e)[:200]}
     await db.founder_alert_sends.insert_one({

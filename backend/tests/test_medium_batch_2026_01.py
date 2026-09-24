@@ -50,14 +50,14 @@ def test_intent_gateway_regression_show_leads():
 
 # ---------- Chat classify_intent LOOP_PHASE strip ----------
 def test_chat_strips_loop_phase_prefix_source():
-    src = "".join(open(f"/app/backend/routers/chat/{_f}.py", encoding="utf-8").read() for _f in ("__init__","misc","turn","stream","history"))
+    src = "".join(open(f"/app/backend/routers/chat/{_f}.py", encoding="utf-8").read() for _f in ("__init__","misc","turn","stream","history","worker"))
     # Confirm strip regex present near classify_intent call
     assert 'LOOP_PHASE:' in src
     assert 'r"^LOOP_PHASE:\\w+\\s*\\n"' in src
-    # And it wraps body.prompt before classify call
+    # And the stripped text is what gets handed to the intent probe
     idx = src.find('_intent_probe_text = re.sub')
-    idx_classify = src.find('_classify_intent(', idx)
-    assert 0 < idx < idx_classify
+    idx_probe = src.find('intent_probe_text=_intent_probe_text', idx)
+    assert 0 < idx < idx_probe
 
 def test_chat_strip_regex_behavior():
     import re
@@ -109,15 +109,21 @@ def test_raw_exception_leak_lint_ignores_founder_alert():
 # ---------- CI coverage ratchet output ----------
 def test_coverage_ratchet_prints_tiered_floor_and_diff_coverage():
     import subprocess
+    # Latest commit that touched the (high-risk) chat router package.
+    sha = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "--", "backend/routers/chat/stream.py"],
+        cwd="/app", capture_output=True, text=True,
+    ).stdout.strip()
+    assert sha, "no commit touching backend/routers/chat/stream.py"
     r = subprocess.run(
         ["python3", "backend/scripts/ci_check_coverage_ratchet.py",
-         "a260adb~1", "a260adb", "backend/coverage.json"],
+         f"{sha}~1", sha, "backend/coverage.json"],
         cwd="/app", capture_output=True, text=True,
     )
     out = r.stdout + r.stderr
     assert "HIGH-RISK" in out, out
     assert "diff-coverage:" in out, out
-    # Must have parsed added lines (>0) for chat.py
+    # Must have parsed added lines (>0) for the chat router
     assert "new statement line(s)" in out
 
 

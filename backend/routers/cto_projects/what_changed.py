@@ -13,6 +13,7 @@ from fastapi import Header, HTTPException
 
 import routers.cto_projects as _pkg
 from . import router
+from services.http.client import ext_client
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ async def get_what_changed(
         "X-GitHub-Api-Version": "2022-11-28",
     }
     try:
-        async with httpx.AsyncClient(timeout=15.0) as c:
+        async with ext_client("github", timeout=httpx.Timeout(15.0)) as c:
             r = await c.get(
                 f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}",
                 headers=headers,

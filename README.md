@@ -1,4 +1,4 @@
-# ORA by Aurem CTO
+# ORA by Aurem
 ### The AI Engineer That Actually Commits.
 
 > No IDE. No token billing. No broken loops. Just code that ships.
@@ -42,7 +42,7 @@ Two products in the same house:
 
 ## Architecture Map <a id="architecture-map"></a>
 
-Deeper per-layer files live in `memory/architecture/01…06_*.md`. This
+Deeper per-layer files live in `memory/architecture/01…07_*.md`. This
 is the one-screen mental model.
 
 ```
@@ -53,19 +53,19 @@ is the one-screen mental model.
 ┌──────────────────────────▼──────────────────────────────────┐
 │              FRONTEND — React SPA (port 3000)                │
 │  Tailwind + Shadcn UI + Context API + SSE streaming          │
-│  38 pages · ~91 custom components  (see memory/architecture/02) │
+│  88 pages · ~279 custom components  (see memory/architecture/02) │
 └──────────────────────────┬──────────────────────────────────┘
                            │  /api/aurem-dev/*  (Kubernetes ingress)
 ┌──────────────────────────▼──────────────────────────────────┐
 │              BACKEND — FastAPI (port 8001)                   │
-│  49 include_router calls in `backend/main.py`                │
-│  Router → Core (Parliament) → 92 Services → External APIs    │
+│  102 include_router calls in `backend/main.py`               │
+│  Router → Core (Parliament) → 345 Services → External APIs   │
 └──────────┬───────────────┬───────────────┬──────────────────┘
            │               │               │
      ┌─────▼─────┐   ┌─────▼──────┐  ┌─────▼──────────────┐
      │  MongoDB  │   │ GitHub App │  │ LLM Providers        │
      │ (Motor)   │   │ (install-  │  │ OpenRouter · Groq ·  │
-     │  ~76 cols │   │  based)    │  │ Anthropic (Emergent) │
+     │ 150+ cols │   │  based)    │  │ Anthropic (Emergent) │
      └───────────┘   └────────────┘  │ Council A primary =  │
                                      │ claude-sonnet-4.5    │
                                      └──────────────────────┘
@@ -75,12 +75,13 @@ is the one-screen mental model.
 
 | Layer | Job | Docs |
 |-------|-----|------|
-| Frontend | React SPA — chat UI, dashboards, wizards, admin suite. `REACT_APP_BACKEND_URL` only. 38 pages · ~91 custom components. | `memory/architecture/02_frontend_spec.md` |
+| Frontend | React SPA — chat UI, dashboards, wizards, admin suite. `REACT_APP_BACKEND_URL` only. 88 pages · ~279 custom components. | `memory/architecture/02_frontend_spec.md` |
 | Backend Core "Parliament" | Intent classification + multi-agent routing (`backend/core/`) | `memory/architecture/03_backend_core_and_routers.md` |
-| Backend Routers | 49 HTTP endpoint groups (`backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, QA, suggestions | `03_…` |
-| Backend Services | 92 modules (`backend/services/`) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing | `memory/architecture/04_backend_services.md` |
+| Backend Routers | 102 HTTP endpoint groups (`backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, QA, suggestions, verification | `03_…` |
+| Backend Services | 345 modules (`backend/services/`) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing, trust & verification | `memory/architecture/04_backend_services.md` |
 | Data Layer | MongoDB via Motor — users, projects, tasks, fixed-findings ledger, audit logs | `memory/architecture/05_data_and_integrations.md` |
 | Business Logic | Tier/quota system (`subscription_tiers.py` + `scan_fix_quota.py`) | `memory/architecture/06_business_logic_and_open_items.md` |
+| Demo Drift Guardrails | Reality contract for the marketing `/demo` route — audit before shipping any UI change it depicts | `memory/architecture/07_demo_drift.md` |
 
 ### The 5 core patterns (must-follow)
 
@@ -122,6 +123,52 @@ not "ships today" as a blanket claim:
   production, or still behind a safety gate pending its own
   verification. See "Two environments" further down: every fix lands
   on preview first, production catches up on the next redeploy.
+
+### 🧭 Interaction Reliability Contract (`INTERACTION_CONTRACT_V1`) *(2026-09-23)*
+**Status: 🟡 ROLLING OUT** — sandbox-reproduced against real Mongo + real LLM
+calls, not yet production-verified (no production access from this agent).
+- 4 distinct timeout clocks (`services/timeout_clocks.py`): `connect` /
+  `first_token` / `stream_idle` / `hard_deadline` — replaces one conflated
+  elapsed-time signal; `hard_deadline` always mirrors the legacy timeout
+  exactly, so a turn can only stop *earlier/clearer*, never later.
+- Idempotent retry replay (`services/chat_reliability.py`): every chat turn
+  is durably recorded in `chat_request_ledger` on acceptance. A retry of an
+  already-`completed` turn replays verbatim — zero new LLM call, zero new
+  tool dispatch. A self-healing reconciler cron marks stuck rows `unknown`
+  after 240s (never fakes `completed`/`cancelled`).
+- Live E2E proof: real retry replayed in 206 ms with `replayed_from_retry:
+  true`; client-disconnect-mid-request repro confirmed the ledger row
+  durably written before any provider work, then correctly resolved to
+  `unknown` by the reconciler.
+- `/chat/send` (non-streaming fallback) and `/ora` (separate advisor engine)
+  are out of scope this round — only `/chat/stream`, the live production
+  chat path, received this treatment.
+
+### 🔍 Evidence-Bound Trust & Verification *(2026-09-23)*
+**Status: 🟡 ROLLING OUT** — unit + live-endpoint tested on preview, not yet
+production-verified end-to-end against a real GitHub-connected project.
+Six-part audit + build against a trust/verifiability spec:
+- **Independent verification** — `task_independent_verifier.py` extends the
+  existing Loop-Mode-only pattern to single-edit chat tasks, gated before
+  commit/disk-write; both paths mirror into a shared append-only
+  `task_verifications` ledger enforcing `verified_by != executed_by`.
+- **User-visible verification levels** — `VerificationLevelBadge.jsx`,
+  surfaced on live task popups and persistent ship cards.
+- **Retroactive downgrade** — `services/task_downgrade.py`: a guarded
+  `done → needs_review` transition via explicit "report an issue" or an
+  implicit correction-report trigger; re-verify only, never a manual flip
+  back to done.
+- **Trust-calibration metric** — `services/trust_calibration.py` + cron:
+  30-day correction-rate snapshot at `GET /admin/trust-calibration`, honest
+  "not enough data" instead of a fabricated 0% when there's nothing to
+  measure yet.
+- **Pre-execution scope confirmation** — `services/scope_confirmation.py`
+  gates the real execution choke point using the classifier's own
+  `needs_confirm` signal; `ScopeConfirmCard.jsx` renders Confirm/Change/
+  Cancel before an ambiguous request runs.
+- **Absolute-claim CI lint** — `backend/scripts/lint_absolute_claims.py`,
+  a required CI job that already caught and fixed one real "always works"
+  claim in production copy before this line was written.
 
 ### 🔀 Ship-via-PR — never direct push
 **Status: 🟡 ROLLING OUT**
@@ -444,8 +491,8 @@ listed here. Coming once it's wired into the tiers file.
 - **AI:** OpenRouter proxy + Groq direct + Anthropic via
   Emergent LLM Key + emergentintegrations
 - **Auth:** Custom JWT (with `jti` + `iat`) + Google OAuth
-  (Emergent-managed) + GitHub App (installation-based — the only
-  supported repo auth method; PATs were removed)
+  (Emergent-managed) + GitHub App (installation-based, preferred) with
+  legacy PAT (`github_token`) still supported as a fallback
 - **Real-time:** SSE (Server-Sent Events) for chat streams and fix
   progress. No websockets, no long-polling.
 - **Cache / snapshots:** `.aurem_cache/` git-tree snapshots on disk
@@ -508,6 +555,11 @@ up on the next redeploy.
   feature*
 
 ---
+
+**License:** Proprietary — All Rights Reserved, Polaris Built Inc.
+See [`LICENSE`](./LICENSE). This is a commercial product, not open
+source (the standalone `ora-grounding` extraction above is the one
+MIT-licensed exception).
 
 *Built by Aurem CTO · [auremcto.com](https://auremcto.com) ·
 sister app [aurem.live](https://aurem.live)*

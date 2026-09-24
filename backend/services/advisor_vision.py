@@ -123,7 +123,7 @@ async def _call_openrouter(
         "Content-Type": "application/json",
         # OpenRouter attribution headers — nice-to-have, not required.
         "HTTP-Referer": "https://auremcto.com",
-        "X-Title": "Aurem Advisor",
+        "X-Title": "AUREM - Advisor Vision",
     }
     try:
         r = await ext_request(

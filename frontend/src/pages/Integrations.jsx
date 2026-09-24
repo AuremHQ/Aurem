@@ -146,8 +146,8 @@ export default function Integrations() {
         </h1>
         <p style={styles.sub}>
           One-click install for Cursor, VS Code, Claude Desktop, and Claude Code CLI.
-          Every request runs against your projects with strict per-user isolation
-          (BINContext + ORAContext).
+          Every request runs only against your own projects — nothing is shared
+          between accounts.
         </p>
       </header>
 

@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import bcrypt
-import httpx
 from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel
 

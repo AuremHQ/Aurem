@@ -88,6 +88,38 @@ def test_changed_truncates_long_lines():
     assert row["new_value"] == "x = 'short'"
 
 
+# 2026-09-17 bug fix — founder-reported: a purely-additive line
+# insertion (a new comment added above an unrelated, unchanged
+# import) was misreported as a delete+replace of that import,
+# because the old naive positional (index-by-index) comparison had
+# no concept of a line shift. Real commit was +4/-2, genuinely safe;
+# the popup showed `- import React...` / `+ // comment`, implying
+# the import was removed. Locks in the SequenceMatcher-based fix.
+def test_changed_pure_insertion_not_reported_as_false_replace():
+    before = {"App.jsx": 'import React from "react";\nexport default 1;\n'}
+    after  = {"App.jsx": '// a new comment\nimport React from "react";\nexport default 1;\n'}
+    row = build_files_changed(before, after)[0]
+    # A pure insertion must report new_value ONLY — old_value must
+    # NOT be populated with the shifted (but unchanged) import line.
+    assert row["old_value"] is None
+    assert row["new_value"] == "// a new comment"
+    assert row["line_number"] == 1
+    assert row["lines_added"] == 1
+    assert row["lines_removed"] == 0
+
+
+def test_changed_pure_deletion_not_reported_as_false_replace():
+    before = {"App.jsx": '// a stray comment\nimport React from "react";\nexport default 1;\n'}
+    after  = {"App.jsx": 'import React from "react";\nexport default 1;\n'}
+    row = build_files_changed(before, after)[0]
+    # A pure deletion must report old_value ONLY — new_value must NOT
+    # be populated with the shifted (but unchanged) import line.
+    assert row["old_value"] == "// a stray comment"
+    assert row["new_value"] is None
+    assert row["lines_added"] == 0
+    assert row["lines_removed"] == 1
+
+
 # ── shape_vanguard_findings ─────────────────────────────────────
 def test_shape_vanguard_normalises_keys():
     raw = [{"rule": "hardcoded_secret", "file": "auth.py", "line": 12,

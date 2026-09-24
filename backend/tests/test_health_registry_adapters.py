@@ -197,6 +197,7 @@ async def test_g12_red_when_last_drill_failed(monkeypatch):
 # ─────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_g21_green_when_scan_passes(monkeypatch):
+    health_checks._G21_CACHE.update({"result": None, "computed_at": 0.0})
     monkeypatch.setattr(
         "scripts.g21_security_scan.run_scan",
         lambda: {"supply_chain": {"unpinned_count": 0, "yarn_lock_present": True},
@@ -209,6 +210,7 @@ async def test_g21_green_when_scan_passes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_g21_red_when_scan_fails(monkeypatch):
+    health_checks._G21_CACHE.update({"result": None, "computed_at": 0.0})
     monkeypatch.setattr(
         "scripts.g21_security_scan.run_scan",
         lambda: {"supply_chain": {"unpinned_count": 1, "yarn_lock_present": True},

@@ -913,3 +913,88 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `loop_run_log kind='task_handoff'` — auto-detected in backend/routers/cto_projects/tasks.py (verify) [Iter 0, 2026-09-02T02:36:18.589778Z] <!-- inv:loop_run_log_kind:task_handoff -->
 - `services/browser_tools.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-02T23:53:45.134232Z] <!-- inv:service:services/browser_tools.py -->
 - `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` — auto-detected in backend/services/browser_tools.py (verify) (default: unset) [Iter 0, 2026-09-02T23:53:45.134268Z] <!-- inv:envvar:PLAYWRIGHT_CHROME_EXECUTABLE_PATH -->
+
+### Iter 0 · 2026-09-07
+
+- `PREVIEW_API` — auto-detected in backend/scripts/r10_e2e_testbed.py (verify) (default: unset) [Iter 0, 2026-09-07T04:37:10.103235Z] <!-- inv:envvar:PREVIEW_API -->
+- `services/context7_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T06:04:03.068752Z] <!-- inv:service:services/context7_skills.py -->
+- `CONTEXT7_API_KEY` — auto-detected in backend/services/context7_skills.py (verify) (default: unset) [Iter 0, 2026-09-07T06:04:03.068788Z] <!-- inv:envvar:CONTEXT7_API_KEY -->
+- `services/sequential_thinking_skills.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-07T16:10:27.102139Z] <!-- inv:service:services/sequential_thinking_skills.py -->
+| `routers/admin_onboarding_funnel.py` | `/admin/onboarding-funnel` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-07T17:04:05.514355Z) | <!-- inv:router:routers/admin_onboarding_funnel.py -->
+- `ENABLE_ONBOARDING_NUDGE` — auto-detected in backend/main.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578214Z] <!-- inv:envvar:ENABLE_ONBOARDING_NUDGE -->
+- `MIN_NUDGE_STAGE_AGE_HOURS` — auto-detected in backend/services/funnel_nudge_cron.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578275Z] <!-- inv:envvar:MIN_NUDGE_STAGE_AGE_HOURS -->
+- `MAX_NUDGES_PER_RUN` — auto-detected in backend/services/funnel_nudge_cron.py (verify) (default: unset) [Iter 0, 2026-09-07T19:20:36.578292Z] <!-- inv:envvar:MAX_NUDGES_PER_RUN -->
+
+### Iter 0 · 2026-09-08
+
+- `services/task_chain_logging.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-08T02:24:44.373186Z] <!-- inv:service:services/task_chain_logging.py -->
+
+### Iter 0 · 2026-09-10
+
+| `routers/admin_context_bridge.py` | `/admin/ora` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-10T02:06:49.556822Z) | <!-- inv:router:routers/admin_context_bridge.py -->
+| `routers/admin_ora_chat_limits.py` | `/admin/llm` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-10T03:21:40.699028Z) | <!-- inv:router:routers/admin_ora_chat_limits.py -->
+| `routers/admin_video_pipeline.py` | `/admin/video` | 7 | auto-detected new router (verify) (Iter 0, 2026-09-10T03:50:40.877514Z) | <!-- inv:router:routers/admin_video_pipeline.py -->
+- `REACT_APP_BACKEND_URL_FOR_TESTS` — auto-detected in backend/tests/test_video_pipeline_2026_09_10.py (verify) (default: unset) [Iter 0, 2026-09-10T06:06:06.380653Z] <!-- inv:envvar:REACT_APP_BACKEND_URL_FOR_TESTS -->
+
+### Iter 0 · 2026-09-12
+
+| `routers/visual_bugfix.py` | `/visual-bugfix` | 3 | auto-detected new router (verify) (Iter 0, 2026-09-12T17:37:17.972600Z) | <!-- inv:router:routers/visual_bugfix.py -->
+- `services/visual_bugfix_storage.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T17:37:17.972635Z] <!-- inv:service:services/visual_bugfix_storage.py -->
+- `services/visual_bugfix_vision.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T17:37:17.972690Z] <!-- inv:service:services/visual_bugfix_vision.py -->
+- `services/visual_bugfix_patch.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T18:16:37.797246Z] <!-- inv:service:services/visual_bugfix_patch.py -->
+- `services/visual_bugfix_pr.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T18:16:37.797315Z] <!-- inv:service:services/visual_bugfix_pr.py -->
+- `services/visual_bugfix_preview.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-12T18:16:37.797337Z] <!-- inv:service:services/visual_bugfix_preview.py -->
+
+### Iter 0 · 2026-09-13
+
+| `routers/architect.py` | `/architect` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-13T17:57:12.845822Z) | <!-- inv:router:routers/architect.py -->
+- `services/architect_agent.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-13T17:57:12.845869Z] <!-- inv:service:services/architect_agent.py -->
+
+### Iter 0 · 2026-09-14
+
+- `services/internal_directive_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-14T04:03:06.932964Z] <!-- inv:service:services/internal_directive_guard.py -->
+
+### Iter 0 · 2026-09-15
+
+- `services/task_state.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-15T03:15:08.227916Z] <!-- inv:service:services/task_state.py -->
+
+### Iter 0 · 2026-09-18
+
+- `OPENROUTER_API_KEY` — auto-detected in backend/services/llm/jev_client.py (verify) (default: unset) [Iter 0, 2026-09-18T16:45:13.625503Z] <!-- inv:envvar:OPENROUTER_API_KEY -->
+| `routers/evidence.py` | `/evidence` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-18T17:24:18.740301Z) | <!-- inv:router:routers/evidence.py -->
+- `services/evidence_pointer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-18T17:24:18.740342Z] <!-- inv:service:services/evidence_pointer.py -->
+- `loop_run_log kind='scan'` — auto-detected in backend/tests/test_evidence_pointer_2026_09_20.py (verify) [Iter 0, 2026-09-18T17:24:18.740367Z] <!-- inv:loop_run_log_kind:scan -->
+- `loop_run_log kind='scan_result'` — auto-detected in backend/routers/codebase_health.py (verify) [Iter 0, 2026-09-18T22:25:47.854804Z] <!-- inv:loop_run_log_kind:scan_result -->
+
+### Iter 0 · 2026-09-21
+
+- `services/legitimate_refusal.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T13:35:28.981469Z] <!-- inv:service:services/legitimate_refusal.py -->
+- `services/health_reporter.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T14:40:35.902512Z] <!-- inv:service:services/health_reporter.py -->
+- `services/casl_consent.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-21T16:25:55.149789Z] <!-- inv:service:services/casl_consent.py -->
+
+### Iter 0 · 2026-09-22
+
+- `SEMANTIC_MODE_ROUTER_CANARY_PCT` — auto-detected in backend/evals/runner.py (verify) (default: unset) [Iter 0, 2026-09-22T02:12:36.826133Z] <!-- inv:envvar:SEMANTIC_MODE_ROUTER_CANARY_PCT -->
+- `services/semantic_mode_router.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T02:12:36.826169Z] <!-- inv:service:services/semantic_mode_router.py -->
+- `ENABLE_REGRESSION_BACKLOG_SCAN` — auto-detected in backend/main.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808030Z] <!-- inv:envvar:ENABLE_REGRESSION_BACKLOG_SCAN -->
+- `services/input_normalizer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T03:09:57.808062Z] <!-- inv:service:services/input_normalizer.py -->
+- `services/regression_backlog_cron.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-22T03:09:57.808089Z] <!-- inv:service:services/regression_backlog_cron.py -->
+- `REGRESSION_BACKLOG_SCAN_INTERVAL_SECONDS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808109Z] <!-- inv:envvar:REGRESSION_BACKLOG_SCAN_INTERVAL_SECONDS -->
+- `REGRESSION_BACKLOG_STARTUP_DELAY_SECONDS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808123Z] <!-- inv:envvar:REGRESSION_BACKLOG_STARTUP_DELAY_SECONDS -->
+- `REGRESSION_BACKLOG_LOOKBACK_DAYS` — auto-detected in backend/services/regression_backlog_cron.py (verify) (default: unset) [Iter 0, 2026-09-22T03:09:57.808136Z] <!-- inv:envvar:REGRESSION_BACKLOG_LOOKBACK_DAYS -->
+
+### Iter 0 · 2026-09-23
+
+- `services/chat_reliability.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T00:24:34.349645Z] <!-- inv:service:services/chat_reliability.py -->
+- `services/timeout_clocks.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T00:24:34.349681Z] <!-- inv:service:services/timeout_clocks.py -->
+- `CHAT_CONNECT_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349705Z] <!-- inv:envvar:CHAT_CONNECT_TIMEOUT_S -->
+- `CHAT_FIRST_TOKEN_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349723Z] <!-- inv:envvar:CHAT_FIRST_TOKEN_TIMEOUT_S -->
+- `CHAT_STREAM_IDLE_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349740Z] <!-- inv:envvar:CHAT_STREAM_IDLE_TIMEOUT_S -->
+- `CHAT_HARD_TIMEOUT_S` — auto-detected in backend/services/timeout_clocks.py (verify) (default: unset) [Iter 0, 2026-09-23T00:24:34.349757Z] <!-- inv:envvar:CHAT_HARD_TIMEOUT_S -->
+| `routers/verification.py` | `(none)` | 6 | auto-detected new router (verify) (Iter 0, 2026-09-23T01:38:01.085374Z) | <!-- inv:router:routers/verification.py -->
+- `services/scope_confirmation.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085410Z] <!-- inv:service:services/scope_confirmation.py -->
+- `services/task_downgrade.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085435Z] <!-- inv:service:services/task_downgrade.py -->
+- `services/task_independent_verifier.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085459Z] <!-- inv:service:services/task_independent_verifier.py -->
+- `services/trust_calibration.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085480Z] <!-- inv:service:services/trust_calibration.py -->
+- `services/trust_calibration_cron.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085503Z] <!-- inv:service:services/trust_calibration_cron.py -->
+- `services/verification.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085523Z] <!-- inv:service:services/verification.py -->

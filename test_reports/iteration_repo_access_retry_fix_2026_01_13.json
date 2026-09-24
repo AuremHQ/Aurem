@@ -1,0 +1,52 @@
+{
+  "summary": "Independently verified the NewUserWizard single-repo auto-submit retry-budget fix. Ran the vitest suites at frontend/src/components/__tests__/NewUserWizard.repoAccessRetry.test.jsx (5/5 passing) and NewUserWizard.connectRefinement.test.jsx (3/3 passing) — total 8/8 passing, 0 failures, real output captured. Verified the two named regression tests specifically call out in the request pass. Confirmed the constants and retry-check logic in NewUserWizard.jsx match the fix spec. Also completed the optional /login sanity check — page renders past Suspense within 5s and shows the real login form (no stuck 'LOADING...' state on this side).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verification_details": {
+    "vitest_command": "cd /app/frontend && npx vitest run src/components/__tests__/NewUserWizard.repoAccessRetry.test.jsx src/components/__tests__/NewUserWizard.connectRefinement.test.jsx",
+    "vitest_result": "Test Files 2 passed (2) | Tests 8 passed (8) | Duration 2.72s | Exit code 0",
+    "named_tests_confirmed_passing": [
+      "t_shows_friendly_retry_message_not_scary_error_on_first_failure (102ms) PASS",
+      "t_succeeds_on_retry_without_ever_showing_the_error (62ms) PASS",
+      "t_keeps_retrying_quietly_well_past_the_OLD_9s_budget_never_showing_the_error (24ms) PASS — direct regression for canndalf@gmail.com incident",
+      "t_gives_up_after_the_90s_time_budget_and_shows_the_real_error (43ms) PASS — proves bounded ceiling",
+      "t_unrelated_errors_never_trigger_a_retry (21ms) PASS",
+      "connectRefinement suite: 3/3 PASS"
+    ],
+    "code_review_confirmations": {
+      "NewUserWizard.jsx:157": "const _REPO_ACCESS_RETRY_BUDGET_MS = 90_000; — matches spec",
+      "NewUserWizard.jsx:158": "const _REPO_ACCESS_RETRY_DELAY_MS = 4000; — matches spec (was 3000)",
+      "NewUserWizard.jsx:150": "const repoAccessRetryStartRef = useRef(0); — new time-budget anchor present",
+      "NewUserWizard.jsx:503": "Retry condition uses `Date.now() - repoAccessRetryStartRef.current < _REPO_ACCESS_RETRY_BUDGET_MS` — time-budget approach confirmed, no fixed attempt-count comparison remains",
+      "NewUserWizard.jsx:506": "repoAccessRetryStartRef.current = Date.now(); — start timestamp captured on first entry",
+      "old_constants_grep": "No `_REPO_ACCESS_MAX_RETRIES` symbol found anywhere in NewUserWizard.jsx — cleanly removed"
+    },
+    "login_sanity_check": {
+      "url": "https://bin-context-pat.preview.emergentagent.com/login",
+      "result": "PASS — rendered past Suspense fallback within 5s; login form (Continue with Google / Continue with GitHub / email+password) visible; no 'LOADING...' stuck-state observed",
+      "conclusion": "Main agent's Suspense-loading blocker appears to be tool/session-side (not reproducible from this sub-agent's browser automation session); would not affect a real user's browser."
+    }
+  },
+  "test_report_links": [
+    "/app/frontend/src/components/__tests__/NewUserWizard.repoAccessRetry.test.jsx",
+    "/app/frontend/src/components/__tests__/NewUserWizard.connectRefinement.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is correctly implemented: time-budget approach (90s / 4s) fully replaces the old count-based approach (3 / 3s). The direct regression test for canndalf's exact incident timeline passes.",
+    "No leftover references to the old _REPO_ACCESS_MAX_RETRIES constant.",
+    "Bounded 90s ceiling verified by t_gives_up_after_the_90s_time_budget_and_shows_the_real_error — retry loop cannot spin forever."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only fix, not tested per request)", "frontend": "100% (8/8 vitest + login sanity PASS)"},
+  "test_credentials": "Not needed — vitest is fully self-contained. /login sanity check did not require login (just render check).",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix is complete and verified. Constants: _REPO_ACCESS_RETRY_BUDGET_MS=90_000, _REPO_ACCESS_RETRY_DELAY_MS=4000. Vitest suites at NewUserWizard.repoAccessRetry.test.jsx (5 tests) and NewUserWizard.connectRefinement.test.jsx (3 tests) all pass. /login route renders normally from external browser automation.",
+  "rca of the issue": "Old code retried only 3× at 3s (9s budget), while GitHub App install permission propagation lag is documented in this codebase to exceed 60s. Production log for canndalf showed app_install_granted firing exactly 3 times before repo_connect_gate_skipped — matching the old _REPO_ACCESS_MAX_RETRIES=3 constant exactly. Fix replaces attempt-count with a 90s time budget at 4s intervals, keeping the user on a calm 'Almost there...' UI throughout, only surfacing the real error after the full 90s ceiling is exceeded."
+}

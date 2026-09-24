@@ -196,21 +196,94 @@ async def classify_intent_llm(
     }
 
 
+# ── Layer 2b · TypeSafe Jev decision-model classifier ───────────────
+# 2026-09-19 — opt-in alternative to classify_intent_llm() above.
+# Same 3-way decision, but via OpenRouter's Decisions API
+# (typesafe/jev-1.13) instead of a general chat-completion call.
+# Benchmarked on this codebase's own real traffic pattern (5 messages
+# that fall through the regex layer): ~2.5x faster (302.6ms vs
+# 761.1ms avg), ~6.75x cheaper ($0.0000186 vs $0.0001257 avg/call),
+# and matched google/gemini-2.5-flash's label on all 5 samples. Kept
+# OPT-IN (see classify_intent()'s `classifier` param) rather than a
+# hard cutover — Jev is in beta, and this is a founder-review-facing
+# path where a wrong intent just offers/hides one CTA (low blast
+# radius), so it's a reasonable first place to dogfood it, but a
+# hard default switch on a brand-new external dependency without a
+# rollback lever isn't.
+_JEV_CRITERIA = {
+    INTENT_PREVIEW: (
+        "user is exploring/asking to see, generate, sample, mock up, "
+        "or preview a code snippet or UI element — no repository "
+        "edit is being requested"
+    ),
+    INTENT_CODE_CHANGE: (
+        "user is asking to modify their real repository: commit, "
+        "apply, push, update a file, fix a bug in the codebase, kick "
+        "off a loop run, open a PR, ship, deploy — OR a short "
+        "imperative confirmation that clearly continues a prior edit "
+        "request ('fix it', 'do it', 'ship it', 'go ahead', 'make "
+        "that change')"
+    ),
+    INTENT_CASUAL: (
+        "greeting, thanking, small-talk, or the message contains NO "
+        "concrete code/preview/edit request and NO short imperative "
+        "confirmation of a code action ('hi', 'hello', 'thanks', "
+        "'ok', 'what can you do?')"
+    ),
+}
+
+
+async def classify_intent_jev(
+    text: str,
+    *,
+    model: str = "typesafe/jev-1.13",
+    timeout: float = 5.0,
+) -> tuple[str, dict]:
+    """Layer 2b · same decision as classify_intent_llm(), via Jev's
+    Decisions API instead of a chat-completion call. Returns
+    (intent, meta) — same shape as classify_intent_llm() so callers
+    (and classify_intent()'s orchestrator) can swap between the two
+    without changing their own error handling."""
+    if not text or not text.strip():
+        return INTENT_UNKNOWN, {"reason": "empty_text"}
+    from services.llm.jev_client import ask_choice
+    label, meta = await ask_choice(
+        state=f"ORA chat message from the founder: {text[:4000]!r}",
+        instructions="Classify the intent of this chat message.",
+        criteria=_JEV_CRITERIA,
+        model=model,
+        timeout=timeout,
+    )
+    if label is None:
+        logger.warning("intent_router: Jev classify failed (%r)", meta.get("error"))
+        return INTENT_UNKNOWN, meta
+    return label, meta
+
+
 # ── Public API · Two-layer orchestrator ────────────────────────────
 async def classify_intent(
     text: str,
     *,
     one_shot_fn: Optional[Callable[..., Awaitable[tuple[str, dict, Any]]]] = None,
     llm_model: str = "google/gemini-2.5-flash",
+    classifier: str = "llm",
 ) -> dict:
     """Full two-layer classify.
+
+    `classifier`: "llm" (default, unchanged behaviour — general
+    chat-completion model) or "jev" (opt-in — TypeSafe Jev's
+    Decisions API; see classify_intent_jev()'s docstring for the
+    real before/after numbers this was benchmarked with). Default
+    stays "llm" — Jev is a new beta external dependency, so this is
+    an explicit opt-in per call site until it's proven on more
+    production traffic than the 5-message sample it shipped with.
 
     Returns a dict:
         {
           "intent":  "PREVIEW_ONLY"|"CODE_CHANGE"|"UNKNOWN",
-          "source":  "regex"|"llm"|"empty",
+          "source":  "regex"|"llm"|"jev"|"empty",
           "matches": [regex-pattern-strings]  (regex layer only),
-          "meta":    { … }                    (llm layer only),
+          "meta":    { … }                    (llm/jev layer only),
         }
     """
     if not text or not text.strip():
@@ -220,6 +293,10 @@ async def classify_intent(
     if r_intent != INTENT_UNKNOWN:
         return {"intent": r_intent, "source": "regex",
                 "matches": r_matches, "meta": {}}
+    if classifier == "jev":
+        jev_intent, jev_meta = await classify_intent_jev(text)
+        return {"intent": jev_intent, "source": "jev",
+                "matches": [], "meta": jev_meta}
     if one_shot_fn is None:
         # No LLM available (e.g. tests, or providers wired down) —
         # safe default: UNKNOWN.  Callers treat UNKNOWN as "don't

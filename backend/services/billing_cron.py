@@ -31,13 +31,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from calendar import monthrange
 
 import httpx
 
 from services.http import ext_request
-from services.http.client import ExternalCallError
 
 logger = logging.getLogger(__name__)
 

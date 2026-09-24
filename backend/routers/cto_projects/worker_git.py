@@ -24,7 +24,6 @@ from services.cto_pipeline_steps import (
 )
 
 import routers.cto_projects as _pkg
-from . import router
 from .worker_api import _frontend_subset, _AI_SYS
 
 logger = logging.getLogger(__name__)
@@ -70,10 +69,14 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         # 2) read target files
         await _pkg._set_status(task_id, status="reading")
         contents = {}
+        # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug) —
+        # see the matching fix + full rationale in worker_api.py.
+        from services.cto_projects_helpers import _context_with_truncation_marker
         for f in (files or [])[:6]:
             fp = repo_path / f
             if fp.is_file():
-                contents[f] = fp.read_text(errors="replace")[:10000]
+                _body = fp.read_text(errors="replace")
+                contents[f], _ = _context_with_truncation_marker(_body)
                 await _pkg._log(task_id, f"📄 read {f}")
         if not contents:
             # auto-pick a few likely files
@@ -81,7 +84,8 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                          "src/App.jsx", "src/main.jsx", "pages/index.js", "README.md"]:
                 fp = repo_path / cand
                 if fp.is_file():
-                    contents[cand] = fp.read_text(errors="replace")[:10000]
+                    _body = fp.read_text(errors="replace")
+                    contents[cand], _ = _context_with_truncation_marker(_body)
                     if len(contents) >= 4:
                         break
 
@@ -162,7 +166,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
             reply = await _retry(
                 lambda: _pkg.call_llm(
                     messages=[{"role": "user", "content": user_msg}],
-                    system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                    system=_AI_SYS, max_tokens=12000, temperature=0.0,
                 ),
                 what="AI codegen", task_id=task_id,
             )
@@ -185,7 +189,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                     lambda: _pkg.call_llm(
                         messages=[{"role": "user",
                                    "content": user_msg + "\n\n" + _nudge}],
-                        system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                        system=_AI_SYS, max_tokens=12000, temperature=0.0,
                     ),
                     what="AI codegen auto-retry", task_id=task_id,
                 )
@@ -319,7 +323,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                         lambda: _pkg.call_llm(
                             messages=[{"role": "user",
                                        "content": user_msg + "\n\n" + _vg_nudge}],
-                            system=_AI_SYS, max_tokens=3500, temperature=0.0,
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
                         ),
                         what="Vanguard auto-fix retry", task_id=task_id,
                     )
@@ -415,6 +419,46 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
             _guard_db, list(edits.keys()), owner=owner, repo=repo, branch=branch,
         )
 
+        # Trust & Verification round — Enhancement 1, extended to this
+        # single-edit chat-task pipeline. Separate identity
+        # (independent_verifier:<model>) from the executor
+        # (worker_git:codegen), fresh context, fail-closed. Runs
+        # BEFORE any file touches disk so a "fail" verdict can
+        # actually block shipping — mirrors
+        # services/loop_independent_verifier.py's ship-gate for Loop
+        # Mode, generalized via services/task_independent_verifier.py.
+        try:
+            from services.task_independent_verifier import verify_task_completion
+            await _pkg._log(task_id, "🔎 Independent verifier checking the diff against your request…")
+            _iv_result = await verify_task_completion(
+                _guard_db, task_id=task_id, project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), task_text=task, files=edits,
+                executed_by="worker_git:codegen",
+            )
+        except Exception as _iv_e:                             # noqa: BLE001
+            logger.warning("[cto-task %s] independent verifier crashed (non-blocking): %r",
+                           task_id, _iv_e)
+            _iv_result = {"decision": "inconclusive",
+                          "reason": f"verifier_crashed:{type(_iv_e).__name__}",
+                          "verification_level": None}
+        from services import verification as _v_mod
+        if _iv_result.get("decision") == _v_mod.DECISION_FAIL:
+            _iv_err = f"Independent verifier rejected this diff: {_iv_result.get('reason')}"
+            await _pkg._log(task_id, f"❌ {_iv_err}", "error")
+            await _pkg._set_status(
+                task_id, status="failed", error=_iv_err[:2000],
+                completed_at=time.time(),
+                verification_status=_v_mod.DECISION_FAIL,
+            )
+            return
+        await _pkg._log(
+            task_id,
+            "✅ Independent verifier: PASS"
+            if _iv_result.get("decision") == _v_mod.DECISION_PASS
+            else "⚠️ Independent verifier: inconclusive (shipping — marked \"Not verified\")",
+            "success" if _iv_result.get("decision") == _v_mod.DECISION_PASS else "warning",
+        )
+
         # 4) write
         for path, content in edits.items():
             fp = repo_path / path
@@ -427,10 +471,21 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         await asyncio.to_thread(_pkg._sh, ["git", "config", "user.email", "cto@auremcto.com"], repo_path)
         await asyncio.to_thread(_pkg._sh, ["git", "config", "user.name", "AUREM"], repo_path)
         await asyncio.to_thread(_pkg._sh, ["git", "add", "-A"], repo_path)
-        cm = await asyncio.to_thread(_pkg._sh, ["git", "commit", "-m", f"AUREM: {task[:60]}"], repo_path)
+        # 2026-09-12 — content-fidelity fix, part 2 (same as
+        # worker_api.py) — lead the commit message with the FACTUAL,
+        # diff-derived file list rather than blindly quoting the raw
+        # task text, which can describe an action the actual diff
+        # doesn't match.
+        _changed = ", ".join(sorted(edits.keys())[:4])
+        if len(edits) > 4:
+            _changed += f" (+{len(edits) - 4} more)"
+        _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
+        cm = await asyncio.to_thread(_pkg._sh, ["git", "commit", "-m", _commit_msg], repo_path)
         if "nothing to commit" in cm.stdout:
             await _pkg._log(task_id, "ℹ️ no diff to commit", "info")
             await _pkg._set_status(task_id, status="done", result=summary,
+                              verification_status=_iv_result.get("decision"),
+                              verification_level=_iv_result.get("verification_level"),
                               completed_at=time.time())
             return
         push = await asyncio.to_thread(_pkg._sh, ["git", "push", "origin", branch], repo_path, timeout=90)
@@ -445,7 +500,25 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                           commit_sha=sha,
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
+                          verification_status=_iv_result.get("decision"),
+                          verification_level=_iv_result.get("verification_level"),
                           completed_at=time.time())
+        # 2026-09-17 bug fix — founder-reported: Codebase Graph stayed
+        # stale despite real same-day commits made via this (simple,
+        # one-shot) git-binary worker — the graph staleness-check-
+        # and-rebuild previously only lived inside the full multi-step
+        # PLANNING loop. Fire-and-forget (never blocks/affects the
+        # already-shipped "done" status above; swallows its own
+        # errors) — see services/graph_builder.refresh_graph_after_commit.
+        try:
+            from services.graph_builder import refresh_graph_after_commit
+            asyncio.create_task(refresh_graph_after_commit(
+                db=_guard_db, project_id=proj.get("project_id"),
+                user_id=proj.get("user_id"), gh_token=user_token,
+                gh_owner=owner, gh_repo=repo, branch=branch,
+            ))
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[cto-task %s] graph refresh scheduling skipped: %r", task_id, e)
         # Iter 388g-fix — parity with `_run_task_via_api`: persist the
         # rich diff payload (files_changed + unified-diff hunks +
         # github_url + time_taken_seconds) so /cto/tasks/{id} returns

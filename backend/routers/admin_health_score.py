@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Header
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import get_db
@@ -34,10 +34,47 @@ async def trigger_coverage_run(authorization: Optional[str] = Header(None)) -> d
     past this environment's ingress upstream timeout, so we launch it
     detached and let the admin poll GET /health-score for the fresh
     result (health_test_coverage_runs.generated_at) instead of holding
-    the HTTP connection open."""
+    the HTTP connection open.
+
+    2026-09-20 — deploy-health fix, round 5. `deployment_agent` traced
+    live prod nginx "upstream timed out ... /health" flaps to this
+    action: the pytest+coverage subprocess it launches is genuinely
+    CPU-heavy (real fork/exec, not just an asyncio await) and competes
+    for the pod's own CPU cgroup quota with the FastAPI process
+    serving /health on the exact same pod. There's no separate worker
+    pod to relocate this onto, so the safe fix is to refuse the action
+    outright when running against production (same `AUREM_ENV` /
+    MONGO_URL-based detection `routers/version._env_from_host` already
+    uses) rather than risk flapping live health checks for real users.
+    """
+    from routers.version import _env_from_host
+    if _env_from_host("") == "production":
+        raise HTTPException(
+            status_code=409,
+            detail="Test-coverage scan is disabled in production — the "
+                   "pytest+coverage subprocess competes with this pod's own "
+                   "CPU quota and can flap live /health checks. Run this "
+                   "from a preview environment instead.",
+        )
     import asyncio
-    from services.health_coverage_scan import run_coverage_scan
+    from services.health_coverage_scan import is_scan_in_progress, run_coverage_scan
     db = get_db()
+    # 2026-09-20 — round 6, live-reproduced bug: a live "timeout of
+    # 40000ms exceeded" report on the Admin Cockpit health-score
+    # widget traced to two overlapping pytest+coverage subprocesses
+    # running at once (no server-side guard existed — the widget's
+    # client-side `disabled={running}` resets on a page reload / a
+    # second tab). `run_coverage_scan` now has an atomic Mongo lock
+    # that makes a second overlapping call a no-op; this pre-check
+    # just gives the caller an immediate, honest 409 instead of a
+    # silent "started" that quietly does nothing.
+    if await is_scan_in_progress(db):
+        raise HTTPException(
+            status_code=409,
+            detail="A coverage scan is already running — poll GET "
+                   "/health-score for the run already under way instead "
+                   "of retriggering.",
+        )
     asyncio.create_task(run_coverage_scan(db))
     return {"status": "started", "note": "runs in background — poll GET /health-score, "
                                           "expect a fresh test_coverage.last_verified in a few minutes"}

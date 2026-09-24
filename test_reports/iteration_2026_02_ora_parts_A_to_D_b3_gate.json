@@ -1,0 +1,58 @@
+{
+  "summary": "Backend regression verification for the 2026-02 Parts A-D ticket (B3 required-tool gate + B1 tool-call trace + B2 citation-guard + B4 patch_repo_file + C mode-E auditor). Ran 31 pre-existing unit tests (all pass) plus 6 new live end-to-end tests against the running backend. B3 gate mechanically fires (confirmed via MongoDB task_chains: forced read_repo_file logged with real ok/error/timestamp), but the LLM final response does NOT reliably surface the forced-read error to the user — reproduced the original incident: response asked 'what exactly should change, and where on your site?' despite the gate having injected the failure context. B1 has a real gap: tool_call_records[].name is being persisted as None. Ordinary chat and tool registration for patch_repo_file both fine.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/aurem-dev/chat/send",
+        "issue": "B3 gate fires (forced read_repo_file logged in task_chains.tool_call_records with error 'No project selected...') but LLM final response STILL asks a generic clarifying question ('just to make sure i get this right — what exactly should change, and where on your site?') for the exact original incident prompt. The forced_read_context appears not to influence the assistant reply for this prompt in the 'code' mode / agentic tier path. Reproduced with fresh session_id live-b3-noproj-3d03c073. Non-deterministic: an earlier session (live-b3-noproj-bc55e9a1) responded better. So the gate injects context but does not enforce it in the model output on every run.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "MongoDB task_chains.tool_call_records",
+        "issue": "B1 partial regression: tool_call_records[].name is persisted as None even though ok/error/timestamp are populated correctly. Main agent's ticket claims name/args/ok/error/timestamp/turn_id should all be populated. Verified across 2 fresh sessions."
+      },
+      {
+        "endpoint": "MongoDB task_chains.invocations",
+        "issue": "invocations list is empty (0 entries) for the B3-gate-forced read_repo_file calls, while tool_calls list has 2 entries. Main agent's ticket says the response-building code was switched to prefer 'invocations' (richer) over 'tool_calls' (thinner stub). If invocations is empty when the gate fires, the response will fall back to the thin stub — worth verifying whether the gate-forced tool call is written into invocations at all."
+      },
+      {
+        "endpoint": "GET /api/aurem-dev/projects",
+        "issue": "Returns 404 Not Found for authenticated test_admin_001. Demo projects p_demo_a / p_demo_b return 403 'The connection to your website's code isn't available right now' on chat/send — could not exercise B3 with a real connected project. Likely pre-existing infra state (not from this session's changes), but blocks the second B3 verification path."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/live_2026_02_b3_regression.py",
+    "/app/backend/tests/test_2026_02_required_tool_gate_b3.py",
+    "/app/backend/tests/test_2026_02_citation_guard_b2_tool_claims.py",
+    "/app/backend/tests/test_2026_02_task_chain_b1_full_trace.py",
+    "/app/backend/tests/test_2026_02_patch_repo_file_b4.py",
+    "/app/backend/tests/test_2026_02_mode_e_auditor_part_c_verification.py",
+    "/app/test_reports/pytest/pytest_2026_02_ticket.xml",
+    "/app/test_reports/pytest/pytest_live_b3.xml"
+  ],
+  "action_items": [
+    "CRITICAL: The B3 gate is loaded and mechanically fires (task_chains proves read_repo_file was invoked with real 'No project selected' error), but the LLM's final chat response does NOT reliably reflect that forced context — original clarifying-question incident still reproduces. Verify that forced_read_context is (a) actually being appended to sys_for_advisor/extra_sys on the path the message actually takes (looks like 'code' mode + agentic tier), and (b) strong enough to override the intent-gateway clarify behavior. Consider making the injected system directive imperative ('You MUST report to the user that the file could not be read because <error>; do NOT ask clarifying questions') rather than just context.",
+    "Fix B1 name persistence: tool_call_records[].name is None. Check log_task_chain / where the forced-gate tool call is written — likely the caller passes name via a different key or the extraction only picks up name from local_tools invocations, not the pre-LLM gate path.",
+    "Investigate why invocations list is empty (0) while tool_calls has 2 entries when only the B3 gate fired — the ticket's own fix (prefer invocations over tool_calls) will silently regress here.",
+    "Environment: demo projects p_demo_a / p_demo_b are 403 for test_admin_001 and GET /api/aurem-dev/projects returns 404 — either the router path is different or the demo-project seed didn't run for this user. Blocks B3 real-project verification and B4 patch_repo_file live test."
+  ],
+  "critical_code_review_comments": [
+    "The B3 gate's user-facing effectiveness depends on the LLM honouring the injected forced_read_context. This is soft enforcement, not deterministic. Consider a post-LLM guard: if pre_llm_outcome.forced_read_context is populated AND the final response contains a clarifying-question shape AND does not mention the rule-id or path, rewrite/regenerate. Otherwise the 'deterministic PRE-LLM gate' is only deterministic about firing the tool, not about the user-visible outcome.",
+    "tool_call_records.name=None indicates a data-model mismatch between the pre-LLM gate's tool-call bookkeeping and log_task_chain's expected schema. Add an assertion or default to prevent None.",
+    "invocations vs tool_calls duplication is now a real fragility — the switch to 'prefer invocations' only helps when invocations is populated. Consider a single source of truth."
+  ],
+  "updated_files": [
+    "/app/backend/tests/live_2026_02_b3_regression.py"
+  ],
+  "success_rate": {"backend": "36/37 assertions pass (unit 31/31, live 5/6, B3 core-response live check FAILS)", "frontend": "not tested"},
+  "test_credentials": "email=test@aurem.dev, password=AuremTest2026! → user_id=test_admin_001 (admin, unlimited). Valid.",
+  "seed_data_creation": "None. Only sent transient chat messages.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The core B3 user-visible bug still reproduces intermittently. The pre-LLM gate mechanically fires and writes a forced read_repo_file call into task_chains with real ok=False/error/timestamp — that plumbing works. What DOESN'T reliably work is the LLM honouring the injected forced_read_context: on session live-b3-noproj-3d03c073 (fresh, no project), the LLM replied with a generic 'what exactly should change, and where on your site?' clarifying question, which is functionally the same failure mode as the original incident. Re-verify after main agent tightens the enforcement (imperative directive OR post-LLM regen guard). Also verify tool_call_records[].name is no longer None and that invocations list gets populated when the B3 gate is the one firing the tool call.",
+  "rca of the issue": "The B3 required-tool gate is architected as: (1) detect rule-id+path pattern → (2) force call read_repo_file → (3) inject the result as forced_read_context into the system prompt for the advisor LLM. Steps 1 and 2 are working (confirmed via MongoDB task_chains showing 2 tool_call_records with the expected 'No project selected' error). Step 3 is where user-visible correctness is failing: the injected context is advisory, and the intent-gateway/advisor path can still emit a generic 'clarify what should change' response — the exact failure mode the ticket set out to fix. Mitigation: make the injected directive imperative (e.g. wrap forced_read_context with 'CRITICAL: Do NOT ask clarifying questions. Report to the user verbatim that read_repo_file failed with: <error>. Then propose next steps citing rule-id <X> and path <Y>.') or add a post-LLM check that if forced_read_context was set and the final content doesn't cite the rule-id or path, regenerate."
+}

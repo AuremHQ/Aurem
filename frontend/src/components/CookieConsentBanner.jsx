@@ -25,13 +25,30 @@ import {
 
 export default function CookieConsentBanner() {
   const location = useLocation();
-  // 2026-08-27 — Cosmetic Polish fix. This banner is mounted once,
-  // outside <Routes>, so it never unmounts on navigation — but on
-  // /admin/* it kept surfacing on top of the founder's own dashboard,
-  // where a public-visitor GDPR consent prompt is irrelevant (admin is
-  // logged-in internal tooling, not a marketing/tracked surface). Skip
-  // it entirely there instead of just visually clipping it.
-  const isAdminRoute = location.pathname.startsWith("/admin");
+  // 2026-09-09 — founder ticket (Part 0c): this banner was colliding
+  // (z-index overlap) with the ORA GUIDE tooltip in the chat/
+  // dashboard view. Rather than another z-index patch (one was
+  // already tried — see Z_FLOATING_GUIDE's comment in
+  // OraGuideMascot.jsx — and the collision still recurred), remove
+  // the collision at its source: ORA GUIDE only ever renders for a
+  // LOGGED-IN user (`hidden = !loggedIn || ...`), so hiding this
+  // banner whenever a user IS logged in makes the two mutually
+  // exclusive by construction — no route list to keep in sync, and
+  // it can never re-overlap even if new authenticated pages are
+  // added later. In practice this means consent is only ever shown
+  // to a logged-OUT visitor — typically on /login or /signup right
+  // before they sign in, exactly as requested, but also still on
+  // public marketing pages (unchanged behavior there) — and, since
+  // `aurem_consent` persists the decision, it plainly never re-nags
+  // once made. Previously only /admin/* was excluded; that exclusion
+  // is now subsumed by the broader logged-in check.
+  const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem("aurem_token"));
+  useEffect(() => {
+    setLoggedIn(!!localStorage.getItem("aurem_token"));
+    const onStorage = (e) => { if (e.key === "aurem_token") setLoggedIn(!!e.newValue); };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [location.pathname]);
   const [visible, setVisible]   = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
   const [cats, setCats] = useState(DEFAULT_CATS);
@@ -68,7 +85,7 @@ export default function CookieConsentBanner() {
     return () => window.removeEventListener("aurem:reopen-consent", openBanner);
   }, [openBanner]);
 
-  if (isAdminRoute || !visible) return null;
+  if (loggedIn || !visible) return null;
 
   const acceptAll = () => {
     const next = { necessary: true, functional: true, analytics: true, marketing: true };

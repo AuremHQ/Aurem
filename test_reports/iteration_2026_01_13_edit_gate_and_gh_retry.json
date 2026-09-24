@@ -1,0 +1,32 @@
+{
+  "summary": "Backend-only review of two fixes: (1) GitHub App single-shot HTTP calls now wrapped in call_with_retry for transient network errors; (2) free-tier edit-gating: unconditional upgrade-offer short-circuit removed; assert_has_task_budget is now the sole gate. Ran 20 targeted unit tests + 5 live E2E tests against the preview backend + 68 GitHub-App/loop-safety regression tests. All passing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter_2026_01_13_edit_gate_and_github_status.py",
+    "/app/backend/tests/test_chat_pre_llm_dedup_2026_09_06.py",
+    "/app/backend/tests/test_iter2026_09_03_live_verification.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "chat_pre_llm.py::resolve_pre_llm() correctly reorders so needs_edit_upgrade_offer() short-circuit is removed and assert_has_task_budget() is the sole gate for free-tier agentic turns. Fail-open on non-402 errors is appropriate (defensive quota check, not the feature).",
+    "github_app.get_installation_token() / get_repo_via_installation() and loop_safety.validate_github_token() are wrapped in call_with_retry, retrying ONLY httpx.TimeoutException / httpx.NetworkError; real 4xx statuses pass through immediately — correct semantics.",
+    "conftest reset_circuit_breakers autouse fixture prevents cross-test breaker pollution — good hygiene."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter_2026_01_13_edit_gate_and_github_status.py (new live E2E)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "not tested (backend-only round)"},
+  "test_credentials": "free-gate-test-0822@aurem.dev / FreeGateTest2026! (verified tasks_remaining=10 at test time). test@aurem.dev / AuremTest2026! (founder/admin).",
+  "seed_data_creation": "None. Used existing preview test accounts.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Live verification confirmed: free-tier account (tasks_this_month=0, tasks_remaining=10) sending 'update my opening hours' now returns provider='longcat-2.0' (real model) instead of 'edit-tier-upgrade-offer'. Founder account also returns real provider. Connection-status endpoint returns HTTP 200. All 20 unit tests referenced by main agent (test_chat_pre_llm_dedup_2026_09_06.py + test_iter2026_09_03_live_verification.py) and 68 GitHub-App/loop-safety tests pass. No regressions found.",
+  "live_e2e_results": {
+    "free_tier_usage_before_test": {"tasks_this_month": 0, "tasks_remaining": 10, "monthly_task_cap": 10, "tier": "free"},
+    "free_tier_edit_update_opening_hours": {"provider": "longcat-2.0", "verdict": "PASS — no paywall"},
+    "free_tier_edit_change_phone_number": {"provider": "longcat-2.0", "verdict": "PASS — no paywall"},
+    "founder_edit_update_opening_hours": {"provider": "longcat-2.0", "verdict": "PASS — no upgrade offer"},
+    "github_connection_status_endpoint": {"http": 200, "verdict": "PASS — happy path intact"}
+  }
+}

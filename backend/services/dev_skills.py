@@ -33,7 +33,6 @@ import httpx
 
 from services.http import ext_client
 
-from cto_services.db import get_db
 from .repo_context import _fetch_file as _gh_fetch_file
 from .sandbox_runner import run_python_check
 # Iter 212m-172 — _repo_ctx_from / _NO_BIN_CTX_ERROR are imported

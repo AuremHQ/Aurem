@@ -1,0 +1,230 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+........................F....F.....                                      [100%]
+=================================== FAILURES ===================================
+_________ test_chat_stream_conflict_via_asgi_blocks_before_worker_path _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xfdc7dde09410>
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_conflict_via_asgi_blocks_before_worker_path(monkeypatch):
+        from main import app
+        from routers.chat import stream as stream_router
+        from services.ora_chat_v2 import llm_client
+    
+        async def _fake_user(_authorization=None):
+            return {"user_id": "u_conflict_stream", "tier": "founder", "is_admin": True, "is_unlimited": True}
+    
+        hit = {"mock": 0}
+    
+        def _bomb_mock():
+            hit["mock"] += 1
+            raise AssertionError("mock path should not run on conflict")
+    
+        monkeypatch.setattr(stream_router, "current_dev", _fake_user)
+        monkeypatch.setattr(llm_client, "is_mock", _bomb_mock)
+    
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/aurem-dev/chat/stream",
+                json={
+                    "prompt": "Never modify files, and patch index.js now.",
+                    "session_id": "s_conflict_stream",
+                },
+            )
+>       assert resp.status_code == 409
+E       assert 499 == 409
+E        +  where 499 = <Response [499 ]>.status_code
+
+tests/test_interaction_reliability_contract.py:329: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    main:main.py:2468 middleware caught unhandled exception on POST /api/aurem-dev/chat/stream
+Traceback (most recent call last):
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 159, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/anyio/streams/memory.py", line 132, in receive
+    raise EndOfStream from None
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/main.py", line 2456, in _security_headers
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2432, in __call__
+    return await self.app(scope, _replay, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2359, in _nosql_op_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2313, in _body_size_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2279, in __call__
+    return await super().__call__(scope, receive, _peek_send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 24, in __call__
+    await responder(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 44, in __call__
+    await self.app(scope, receive, self.send_with_gzip)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 352, in _sentry_exceptionmiddleware_call
+    await old_call(self, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/fastapi.py", line 155, in _sentry_app
+    return await old_app(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/chat/stream.py", line 146, in chat_stream
+    if _mock_llm_on():
+       ^^^^^^^^^^^^^^
+  File "/app/backend/tests/test_interaction_reliability_contract.py", line 315, in _bomb_mock
+    raise AssertionError("mock path should not run on conflict")
+AssertionError: mock path should not run on conflict
+_ test_invoke_local_tool_enforces_read_only_scope_and_allows_single_authorized_edit _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xfdc7ddab6390>
+
+    @pytest.mark.asyncio
+    async def test_invoke_local_tool_enforces_read_only_scope_and_allows_single_authorized_edit(monkeypatch):
+        from services import local_tools
+    
+        called = {"count": 0}
+    
+        async def _stub_write(_ctx, _args):
+            called["count"] += 1
+            return {"ok": True, "path": (_args or {}).get("path")}
+    
+        monkeypatch.setitem(local_tools.LOCAL_TOOLS, "write_repo_file", _stub_write)
+    
+        ctx_ro = {"user_prompt": "Do not modify any code. Just report status.", "tool_calls": []}
+        ro = await local_tools.invoke_local_tool(
+            "write_repo_file", {"path": "README.md", "content": "x"}, ctx_ro
+        )
+        assert ro.get("ok") is False
+        assert ro.get("error_class") == "read_only_request"
+        assert called["count"] == 0
+    
+        ctx_scope = {
+            "user_prompt": "Please update README.md with one line.",
+            "tool_calls": [],
+            "scope_files": {"src/app.py"},
+        }
+        blocked = await local_tools.invoke_local_tool(
+            "write_repo_file", {"path": "README.md", "content": "x"}, ctx_scope
+        )
+>       assert blocked.get("ok") is False
+E       AssertionError: assert True is False
+E        +  where True = <built-in method get of dict object at 0xfdc7ddb5f200>('ok')
+E        +    where <built-in method get of dict object at 0xfdc7ddb5f200> = {'ok': True, 'path': 'README.md'}.get
+
+tests/test_interaction_reliability_contract.py:478: AssertionError
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /app/backend/routers/chat/turn.py:104: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("prompt")
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /app/backend/routers/chat/turn.py:116: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("task_type")
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_fields.py:192: UserWarning: Field name "schema" in "InsertBody" shadows an attribute in parent "BaseModel"
+    warnings.warn(
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/asyncio.py:87: RuntimeWarning: coroutine 'patch_loop_close.<locals>._flush' was never awaited
+    logger.debug(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+-------- generated xml file: /app/test_reports/interaction/backend.xml ---------
+=========================== short test summary info ============================
+FAILED tests/test_interaction_reliability_contract.py::test_chat_stream_conflict_via_asgi_blocks_before_worker_path
+FAILED tests/test_interaction_reliability_contract.py::test_invoke_local_tool_enforces_read_only_scope_and_allows_single_authorized_edit
+2 failed, 33 passed, 6 warnings in 2.12s

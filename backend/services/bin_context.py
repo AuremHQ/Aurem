@@ -35,9 +35,8 @@ Why not just pass the raw project dict?
 from __future__ import annotations
 
 import logging
-import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import HTTPException
@@ -191,9 +190,9 @@ async def build_bin_context(
     if not pat:
         logger.warning(
             "build_bin_context: credential resolution failed for "
-            "user=%s project=%s (owner=%s/%s) auth_method=%s",
+            "user=%s project=%s (owner=%s/%s) auth_method=%s err=%s detail=%s",
             user_id, pid_clean, owner, repo,
-            proj.get("auth_method") or "pat",
+            proj.get("auth_method") or "pat", _auth_err, _auth_detail,
         )
         raise HTTPException(
             status_code=403,

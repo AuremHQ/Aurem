@@ -1,0 +1,29 @@
+{
+  "summary": "Verified full-isolation fix for the new-project GitHub connect flow (freshInstallIds scoping in useGitHubConnectStatus, applied to both NewUserWizard.jsx and AddProjectWizard.jsx) plus the Continue-button loop fix in NewUserWizard.submitRepo's catch block. Vitest: all 14 targeted tests pass (freshIsolation 3/3, repoSyncLag 3/3, claimFallback 5/5, NewUserWizard.connectRefinement 3/3). Live browser: logged in as test@aurem.dev (an account with 12+ pre-existing projects and prior GitHub App installations on multiple orgs), opened AddProjectWizard via /projects → '+ Add Project' — Scenario A passes: the wizard's fresh mount shows ONLY the 'Install Aurem for your repos' CTA (add-wizard-app-cta / add-wizard-app-install-btn), with NO pre-populated add-wizard-repo-picker leaking stale org installations. Scenario C-equivalent path verified: switching to the manual-URL fallback and advancing to Step 2 keeps the wizard on Step 2 (no visual reset back to a 'Continue with GitHub' starting state). Scenario B (GitHub popup + Configure org) cannot be automated end-to-end from this sandbox (requires real GitHub SSO/popup interaction) — the unit tests cover the postMessage/claim + poll-diff logic that implements it. ConnectRepoBanner.jsx left unchanged as instructed. Backend not tested (no backend changes this round).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.freshIsolation.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.repoSyncLag.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.claimFallback.test.js",
+    "/app/frontend/src/components/__tests__/NewUserWizard.connectRefinement.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "useGitHubConnectStatus.js: the poll-diff fallback in startConnect uses `newIds.length > 0 ? newIds : currentIds` — for the 're-configure existing org (no new id, just changed repo grants)' case, this promotes EVERY currently-active installation to fresh. This is called out in the code as an intentional degraded fallback and it is safe (user just went through GitHub's own picker moments ago), but be aware it means a fresh reconfigure-only session on an account with multiple prior installs will mark all of them fresh. If tighter isolation is ever needed, backend could return a per-install `granted_at` timestamp so the client can diff by recency instead.",
+    "NewUserWizard.jsx line ~180-190: one-click auto-submit effect depends on freshRepos only; if user has an existing install with exactly 1 repo but no NEW fresh installation yet (fresh mount), the effect will not auto-submit — which is the desired new behaviour. Just noting that the previous behaviour of 'auto-submit on initial mount with a single pre-existing repo' is intentionally gone; this may be a UX change some existing users notice.",
+    "AddProjectWizard.jsx one-click auto-select useEffect (line ~149-155) similarly depends on allGrantedRepos (scoped to freshInstallations); good — matches NewUserWizard behaviour."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100% (14/14 vitest + live Scenario A + Scenario C manual-path)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview) — worked as expected. Account has 12+ projects, prior GitHub App installations visible on /projects page, ideal for stale-leak regression check.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Scenario B (real GitHub popup → Configure org → verify only fresh installation shown in wizard) still requires a human-in-the-loop pass; the freshInstallIds unit tests cover the underlying logic (postMessage precise-id + poll-diff fallback). If ever needed live, run through the actual GitHub App install flow at github.com/settings/installations. The /projects page has a proj-add-btn that opens AddProjectWizard — this is the entry point (project switcher panel does not expose an add-project CTA). Also observed a pre-existing unrelated banner 'GitHub access revoked for aurem-demo/frontend' on dashboard load — that's the account's ACTIVE project having a revoked App install (documented in test_credentials.md correction from 2026-08-28), not a regression this round.",
+  "rca of the issue": "Root cause of the original bug: the shared hook exposed `status.installations` (the backend's authoritative GLOBAL list of every installation this GitHub account has EVER granted, forever) directly to the wizards, and NewUserWizard/AddProjectWizard both rendered / auto-selected repos from that list on mount. For an account with a prior installation from an earlier project, a brand new project's wizard therefore mounted already showing those old orgs' repos as if freshly connected — and the one-click auto-submit effect (single-repo case) could even auto-submit an unrelated old repo silently. Continue-button loop: NewUserWizard.submitRepo's catch block reset ghStatus to 'disconnected' on any 'GitHub not connected' error, wiping the App-picker UI back to the initial 'Continue with GitHub' CTA — visually indistinguishable from GitHub's install screen reappearing. Fix (verified): hook now tracks freshInstallIds — populated only via postMessage/claim (precise) or the startConnect poll-diff vs a preConnectIdsRef snapshot (fallback). Both wizards filter installations through freshInstallIds before rendering / auto-submitting. submitRepo's 'disconnected' reset now gated on `!appPickerActive`."
+}

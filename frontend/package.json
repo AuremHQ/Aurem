@@ -11,8 +11,12 @@
     "test:visual:update": "playwright test --update-snapshots",
     "test:visual:report": "playwright show-report",
     "test": "vitest run",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "test:watch": "vitest",
     "test:a11y": "vitest run src/components/__tests__/a11y_components.test.jsx",
+    "check:hydration": "node scripts/check-stable-first-paint.mjs",
+    "check:viewport": "playwright test tests/visual/viewport_check.spec.js",
     "verify:prod": "node scripts/postdeploy-verify.mjs https://auremcto.com/signup",
     "verify:preview": "node scripts/postdeploy-verify.mjs https://launch-pad-237.emergent.host/signup"
   },
@@ -23,6 +27,7 @@
     "@xyflow/react": "^12.11.0",
     "axios": "^1.18.0",
     "canvas-confetti": "^1.9.4",
+    "dayjs": "^1.11.23",
     "dompurify": "^3.4.12",
     "framer-motion": "^12.42.2",
     "html2canvas": "^1.4.1",
@@ -34,7 +39,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.0",
     "recharts": "^3.10.1",
-    "sonner": "^2.0.7",
+    "sonner": "^2.0.8",
     "streamdown": "^2.5.0"
   },
   "devDependencies": {
@@ -49,6 +54,7 @@
     "@vitest/coverage-v8": "^3.2.6",
     "autoprefixer": "^10.4.0",
     "axe-core": "^4.12.1",
+    "eslint": "9",
     "jsdom": "^25",
     "postcss": "^8.5.18",
     "tailwindcss": "^3.4.0",
@@ -57,7 +63,7 @@
     "vitest-axe": "^0.1.0"
   },
   "resolutions": {
-    "brace-expansion": "^5.0.8",
+    "browserslist": "^4.28.7",
     "form-data": "^4.0.6",
     "tmp": "^0.2.6",
     "postcss": "^8.5.18",

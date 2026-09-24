@@ -7,12 +7,13 @@ import { Rocket, Github } from "lucide-react";
 import AuthShell from "../components/AuthShell";
 import usePageMeta from "../lib/usePageMeta";
 import { api, setToken, setUser } from "../lib/api";
-import { trackSignup, metaCompleteRegistration } from "../lib/analytics";
+import { trackSignup, metaCompleteRegistration, openaiRegistrationCompleted } from "../lib/analytics";
 import RobotGuide, { RobotGuideKeyframes, escapeHtml } from "../components/RobotGuide";
 import GoogleIcon from "../components/GoogleIcon";
 import { scorePassword, MIN_ACCEPTABLE_SCORE } from "../lib/passwordStrength";
 import PasswordInput from "../components/PasswordInput";
 import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
+import CountryCodeSelect from "../components/CountryCodeSelect";
 import { isValidPhoneNumber } from "libphonenumber-js";
 
 export default function Signup() {
@@ -26,6 +27,10 @@ export default function Signup() {
   const rawNext = searchParams.get("next") || "";
   const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", password_confirm: "" });
+  // 2026-09-22 — country-code selector for the phone field (still fully
+  // optional, this only supplies the "+XX" prefix so the user doesn't
+  // have to remember/type their own country code).
+  const [phoneDial, setPhoneDial] = useState("+1");
   const [agreed, setAgreed] = useState(false);
   // Iter 212m-187 — admin-editable welcome message
   const [welcomeMsg, setWelcomeMsg] = useState("");
@@ -64,10 +69,13 @@ export default function Signup() {
     // Phone is OPTIONAL — never blocks signup when left blank. If the
     // user does type something, validate it for real (not a regex) so
     // we don't store garbage; libphonenumber-js is the same library
-    // family the backend uses (Google's libphonenumber).
-    const phone = form.phone.trim();
+    // family the backend uses (Google's libphonenumber). The country
+    // dropdown only supplies the "+XX" prefix — combine it with the
+    // national number the user typed before validating/submitting.
+    const nationalNumber = form.phone.trim();
+    const phone = nationalNumber ? `${phoneDial} ${nationalNumber}` : "";
     if (phone && !isValidPhoneNumber(phone)) {
-      setError("That phone number doesn't look valid — include the country code (e.g. +1 415 555 2671), or leave it blank.");
+      setError("That phone number doesn't look valid — check the country code and number, or leave it blank.");
       return;
     }
     setBusy(true);
@@ -115,6 +123,8 @@ export default function Signup() {
       trackSignup();
       // Iter 389 — Meta Pixel CompleteRegistration (email/password).
       metaCompleteRegistration("email");
+      // 2026-09 — OpenAI Ads registration_completed conversion.
+      openaiRegistrationCompleted(r.data?.user_id);
       try { localStorage.setItem("aurem_just_logged_in", "1"); } catch { /* ignore */ }
       // Iter 390 — Developer-only rollout. Backend defaults every new
       // signup to track="developer" at insert time, so /choose-track
@@ -138,7 +148,7 @@ export default function Signup() {
       <section style={{ maxWidth: 460, margin: "20px auto" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign up</span>
-          <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>Create your developer account</h1>
+          <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>Start building, production-ready from day one</h1>
           <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
             1,000 tokens free. No card required.
           </p>
@@ -262,14 +272,22 @@ export default function Signup() {
 
             <label>
               <span className="label-mini">Phone number (optional)</span>
-              <input
-                data-testid="signup-phone"
-                className="input"
-                type="tel"
-                value={form.phone}
-                onChange={(e) => u("phone", e.target.value)}
-                placeholder="+1 415 555 2671"
-              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <CountryCodeSelect
+                  testId="signup-phone-country"
+                  value={phoneDial}
+                  onChange={setPhoneDial}
+                />
+                <input
+                  data-testid="signup-phone"
+                  className="input"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => u("phone", e.target.value)}
+                  placeholder="415 555 2671"
+                  style={{ flex: 1 }}
+                />
+              </div>
               <span style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 4, display: "block" }}>
                 Only if you want us to follow up beyond email — never required.
               </span>

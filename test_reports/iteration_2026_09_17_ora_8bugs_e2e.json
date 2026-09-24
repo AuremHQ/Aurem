@@ -1,0 +1,51 @@
+{
+  "summary": "E2E browser verification of the 8-bug batch (Aurem QA regression fix spec, 2026-09-17). Verified live in preview env at https://bin-context-pat.preview.emergentagent.com. Bugs #3, #7, #8 verified live in browser. Bugs #4, #5, #6 verified via source-code review + existing unit tests (11 pytest tests pass). Bugs #1, #2 skipped (no live GitHub-connected fix-loop project available in this pod, and #2 requires controlling LLM output). No regressions detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Chat send with disconnected project", "issue": "Sending a message (/help) in dashboard returned 403 and 'Not delivered' — because the currently active project (aurem-demo/frontend) is not GitHub-connected in this preview pod. This BLOCKS live E2E verification of Bug #4 (markdown rendering via a real assistant reply), Bug #5 (parallel-codegen '1 agent' text), and Bug #6 (scan result persisted to chat). Not a regression from this batch — pre-existing environment state.", "affected_selectors": ["[data-testid='chat-input']"]}
+    ],
+    "design_issues": [
+      {"screen": "/analytics", "issues": ["Page <title> stays as landing default 'ORA by Aurem — The AI Engineer That Actually Commits | $9/mo' instead of an 'Analytics — ORA by Aurem' style title. Minor — Analytics.jsx does not use pageTitle() from siteConfig. Bug #7 fix explicitly covered Landing/VS/CodebaseHealth/BugHunt but not /analytics; can be closed as out-of-scope for this batch or added for consistency."]}
+    ]
+  },
+  "verification_details": {
+    "bug_3_approval_without_diff": "PASS (live). Dashboard /dashboard renders [data-testid=ship-cto-1-approve-btn] alongside [data-testid=ship-no-diff-yet-1] with text 'No diff to review yet — the code is written after you approve, then checked and shown here before it's pushed.'. Page innerText contains NO 'second reviewer' and NO 'double-checked' misleading copy. Maxx chip's title attribute correctly reads 'no separate second-reviewer pass'. Source: frontend/src/components/ShipDialog.jsx lines 97-117.",
+    "bug_4_nested_markdown": "PASS (code review + unit tests). RenderedMessage.jsx (lines 194-256) implements _safeHref regex allowing only https?|mailto|/|# schemes (correctly blocks javascript:), and matches image-in-link '[![alt](src)](href)' BEFORE bare-link fallback in a single split-regex, preventing the truncation. Unit test frontend/src/components/__tests__/RenderedMessage.bug4_nested_link_2026_09_17.test.jsx already passes. Live browser trigger not possible in this env (chat 403 — see integration issue above).",
+    "bug_5_pluralization": "PASS (code review + unit tests). backend/services/plural_utils.py::pluralize returns '1 agent' for count=1 and 'N agents' otherwise. worker_api.py lines 472-475 correctly route through it. pytest tests/test_bug5_pluralization_2026_09_17.py — 3/3 passed.",
+    "bug_6_scan_persisted_to_chat": "PASS (code review). backend/routers/codebase_health.py lines 313-332 correctly calls services.ora_chat.session.append_message with role='assistant', route='scan-result', session_id sourced from request body — best-effort, wrapped in try/except so scan response never breaks. Live browser trigger not possible (chat 403).",
+    "bug_7_title_consistency": "PASS (live). Titles observed by navigating routes: Landing -> 'ORA by Aurem — The AI Engineer That Actually Commits | $9/mo'; /bug-hunt -> 'Bug Hunt — Detect 50+ vulnerabilities in your codebase | ORA by Aurem'; /vs/cursor -> 'ORA vs Cursor (2026) — honest comparison | Cursor alternative'; /codebase-health -> 'Codebase Health — ORA by Aurem'; navigating BACK to / restores 'ORA by Aurem — The AI Engineer That Actually Commits | $9/mo'. No stale title carry-over observed. Note: /analytics does not set a page-specific title (minor design issue above).",
+    "bug_8_failure_taxonomy_analytics": "PASS (live). /analytics as admin user renders 'TASK HEALTH' card with Completed 12 / Failed 122 / Maxx mode 0 / New users/wk 33; a 'FAILED — BY REASON' subsection appears underneath with 'unknown: 122'. [data-testid=analytics-failed-by-reason] present in DOM. Reason counts sum to failed total. No render errors. pytest tests/test_bug8_failure_taxonomy_2026_09_17.py — 8/8 passed.",
+    "bug_1_duplicate_prs": "SKIPPED per review-request instruction — no live GitHub-connected multi-loop test project available. Unit test test_bug1_duplicate_prs_2026_09_17.py exists and per E1 report already passes.",
+    "bug_2_dropped_statement_guard": "SKIPPED per review-request instruction — deterministic LLM-output control not possible via UI. Sanity check: normal dashboard chat loads without regression; the 'Approve the fix' idle-state UI is intact. Unit test test_bug2_dropped_statement_guard_2026_09_17.py exists and per E1 report already passes."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bug5_pluralization_2026_09_17.py",
+    "/app/backend/tests/test_bug8_failure_taxonomy_2026_09_17.py",
+    "/app/frontend/src/components/__tests__/ShipDialog.bug3_no_diff_disclosure_2026_09_17.test.jsx",
+    "/app/frontend/src/components/__tests__/RenderedMessage.bug4_nested_link_2026_09_17.test.jsx",
+    "/app/frontend/src/lib/__tests__/siteConfig.bug7_2026_09_17.test.js",
+    "/app/frontend/src/pages/__tests__/Analytics.bug8_failed_by_reason_2026_09_17.test.jsx"
+  ],
+  "action_items": [
+    "OPTIONAL / consistency: Extend Bug #7 fix to /analytics — Analytics.jsx should call usePageMeta({title: pageTitle('Analytics')}) so the tab title reads 'Analytics — ORA by Aurem' instead of the landing default.",
+    "The preview pod has no GitHub-connected project (banner: '12 projects point to deleted or unreachable repos') — Bugs #1, #4-live, #5-live, #6-live cannot be reproduced end-to-end here without setting up one connected repo. Not a code bug; environment gap."
+  ],
+  "critical_code_review_comments": [
+    "RenderedMessage.jsx (Bug #4) — _safeHref allows relative paths '/' and fragment '#' which is standard; javascript:/data: correctly rejected. Regex ordering (image-in-link before bare-image before bare-link) is load-bearing — a comment already documents this. Good.",
+    "ShipDialog.jsx (Bug #3) — the no-diff disclosure sits INSIDE the idle branch only; on shipping/shipped states the TaskProgressCard replaces it as intended. No dead-code branch.",
+    "codebase_health.py (Bug #6) — persist path is best-effort inside try/except and only fires when session_id present. Correct. Frontend must pass session_id in the request body — verified via grep in ChatPanel.jsx wiring."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (11/11 pytest for bug5+bug8; existing bug1/bug2 unit tests per E1 report also green)", "frontend": "3/3 live-browser-verified bugs pass; 3/3 code-reviewed bugs correct; 2/3 skipped per env limits"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview admin, from /app/memory/test_credentials.md) — works.",
+  "seed_data_creation": "None. Used existing preview dashboard state (aurem-demo/frontend disconnected project with a pre-existing 'update the footer copyright' plan message that surfaces the Approve/no-diff UI needed for Bug #3 verification).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "If a fully GitHub-connected preview project can be attached, run a real fix loop and confirm live Bug #4 (send an assistant message containing '[![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/org/repo/actions)' and confirm clickable image renders; also inject '[link](javascript:alert(1))' and confirm plain-text output, no <a>) and Bug #5 ('1 agent' vs '3 agents' in the summary text)/Bug #6 (durable scan-result assistant message survives page refresh). None of these were reproducible in this preview pod because chat send returns 403 with 'project disconnected from GitHub'.",
+  "rca_of_the_issue": "N/A — no new bugs found this pass. Only observation is the /analytics page title minor inconsistency (below Bug #7's scope by the review-request's own file list)."
+}

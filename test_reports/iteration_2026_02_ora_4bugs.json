@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only testing of the AUREM /ora 4-bug round (2026-02, build_hash bc02820d1a8d). All 30 targeted pytest unit cases across the 5 named test files PASSED. Live e2e retries against POST /api/aurem-dev/chat/send on real project p_64987820ec (7 tests) also all PASSED: (a) Bug1 stray-code-block-near-handoff could NOT be forced live in 4 fresh attempts using founder-style prompts (matches main agent's 8-attempt experience — confirms stochastic, not a broken fix); the unit-level regression fully covers strip_stray_code_blocks_near_handoff() with 6 tests, all green. (b) Bug2 leading-dot filename orphaning ('.that page'/'.that file') did NOT recur; no fenced-code corruption observed. (c) Bug3 file-not-found on made-up path returned a clean user-facing 'FILE NOT FOUND' message with ZERO leakage of 'STOP guessing paths' or 'list_repo_files' or 'Your next tool call MUST' — the required_tool_gate.py fallback_response fix is holding. (d) Bug4 (coverage-only) both branches of the required-read gate implicitly exercised. Additionally, the pre-existing 5th bug flagged by main agent (business_voice_map generic-substitution collision producing duplicated 'a project page/a project page' text) WAS clearly observed live during a Bug1 retry — reported as a separate new finding below, not blocking.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (services/business_voice_filter.py word-map)", "issue": "NEW 5TH BUG (pre-known, do-not-fix-per-instructions): substitution-rule collision renders distinct real file/repo paths as duplicated 'a project page/a project page'. Reproduced live at POST /api/aurem-dev/chat/send with prompt='add a comment to package.json' on project p_64987820ec: response contained '**`a project page/a project page`**' three times in a numbered list where three DIFFERENT real package paths should have been. Also 'I found 3 main `that file` pages in your website' shows the generic-substitution over-replacing the word 'files'. Distinct from the two Bug2 root causes fixed this round (leading-dot + code-fence protection). Track as a new ticket."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_handoff_diff_safety_guard_2026_02.py",
+    "/app/backend/tests/test_business_voice_file_page_label_protection_2026_02.py",
+    "/app/backend/tests/test_business_voice_nonpage_filename_2026_09_12.py",
+    "/app/backend/tests/test_internal_directive_guard_2026_02.py",
+    "/app/backend/tests/test_2026_02_required_tool_gate_b3.py",
+    "/app/backend/tests/live_4bugs_2026_02_ora.py",
+    "/app/test_reports/pytest/iter_4bugs_2026_02.xml"
+  ],
+  "action_items": [
+    "None blocking for this 4-bug ticket — all fixes verified.",
+    "File a NEW/separate ticket for the 5th bug: business_voice_map 'a project page/a project page' duplication substitution collision (reproducible live with prompt='add a comment to package.json' on p_64987820ec). Main agent instructions explicitly said do-not-fix in this round."
+  ],
+  "critical_code_review_comments": [
+    "services/business_voice_filter.py's two new guardrails (_CODE_FENCE_RE stash-before-pass and _LABEL_PLACEHOLDER for _humanize_filename) are correct in isolation, but the word-map itself is still ordering-sensitive and greedy — 5th bug is a direct consequence of the same generic-substitution pass. Long-term, consider tokenising filename spans up-front and only substituting tokens that aren't already inside a placeholder — the current placeholder mechanism protects labels once created but doesn't protect the raw path fragments the map still tries to translate. This is architectural feedback, not a fix request for this ticket.",
+    "services/required_tool_gate.py fallback_response now correctly runs strip_leaked_tool_directives() at the source (defence-in-depth alongside apply_output_guards) — good pattern; keep it. The B3 architectural note in the guard docstring / chat_helpers.py apply_output_guards() should be preserved so future refactors don't accidentally reorder guards back to being pre-fallback only.",
+    "Unit test coverage for the three new guards is tight (30/30 pass) and includes the exact-text regressions the founder reported. Recommend keeping test_fallback_response_never_leaks_internal_retry_directive and test_fenced_code_block_content_is_never_touched pinned as permanent regression gates."
+  ],
+  "updated_files": [
+    "/app/backend/tests/live_4bugs_2026_02_ora.py (new — live regression harness, 7 tests, all pass)"
+  ],
+  "success_rate": {"backend": "100% (30/30 unit + 7/7 live = 37/37)", "frontend": "N/A (not requested)"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (login endpoint returns Bearer token — used via Authorization header, not cookies). Project id p_64987820ec confirmed reachable.",
+  "seed_data_creation": "None — used the existing p_64987820ec project and files (frontend/src/index.js, validators.py, injection_scanner.py path) exactly as specified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The 4-bug round (2026-02, build bc02820d1a8d) is fully verified. If regressing later, run: pytest tests/test_handoff_diff_safety_guard_2026_02.py tests/test_business_voice_file_page_label_protection_2026_02.py tests/test_business_voice_nonpage_filename_2026_09_12.py tests/test_internal_directive_guard_2026_02.py tests/test_2026_02_required_tool_gate_b3.py tests/live_4bugs_2026_02_ora.py -v. Live suite takes ~2.5min (LLM latency). Bug1 is stochastic — 4 live attempts here + 8 by main agent = 12 total without natural reproduction; keep the unit regression as the gate. NEW 5th bug ('a project page/a project page' duplication) is a distinct next-ticket concern.",
+  "rca of the issue": "N/A — no active regression in this ticket. Historical RCA for each of the 4 bugs is captured in the fixed source files' inline comments and docstrings, and in the test files' module docstrings."
+}

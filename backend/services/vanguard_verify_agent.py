@@ -45,7 +45,7 @@ import difflib
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Optional
 
 from .vanguard_scanner import scan_file_blocks, has_critical
 
@@ -391,6 +391,7 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
                     user="Review the following patch:\n\n" + envelope,
                     max_tokens=2000,
                     temperature=0.0,
+                    feature="Vanguard Verify",
                 ),
                 timeout=30.0,
             )
@@ -410,6 +411,7 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
                         user="Review the following patch:\n\n" + envelope,
                         max_tokens=2000,
                         temperature=0.0,
+                        feature="Vanguard Verify",
                     ),
                     timeout=30.0,
                 )

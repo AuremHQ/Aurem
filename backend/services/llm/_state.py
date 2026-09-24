@@ -25,7 +25,9 @@ so external attribute access (`llm._last_provider_ctx`,
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from typing import Optional
 
 
 # ═══ Provenance stash ═══════════════════════════════════════════
@@ -93,3 +95,44 @@ _LONGCAT_LAST_PROBE: dict = {
     "model":      "",             # resolved model slug at probe time
     "enabled":    False,          # LONGCAT_ENABLED at probe time
 }
+
+
+# ═══ Prompt-caching hint (Section 16 cost-efficiency fix, 2026-09-22) ═══
+# Advisory-only ambient context read by `call_openrouter_model`
+# (Claude/GLM/LongCat) and `_call_deepseek` — NOT a new kwarg threaded
+# through every one of `_meta.py`'s ~10 call sites (that would be a
+# much larger, riskier diff for the same result). A caller that knows
+# its `system` string is genuinely static/reused (Parliament Council
+# personas, an orchestrator follow-up tool-loop iteration) wraps the
+# call in `prompt_cache_context(...)`; every other caller sees the
+# inert default below and gets ZERO behavior change — the transport
+# layer additionally requires `LLM_PROMPT_CACHING_ENABLED=1` before it
+# acts on this at all (see openrouter_client.py / openrouter_providers.py).
+#
+# `cache_system=True` is a HINT, not a guarantee of correctness — the
+# transport layer still gates the actual `cache_control` marker to
+# Claude-family models only (the one provider in this stack that
+# needs an explicit marker; DeepSeek/GLM/Groq cache automatically
+# server-side per provider docs, no marker possible or needed).
+_prompt_cache_ctx: ContextVar[dict] = ContextVar(
+    "aurem_prompt_cache_context",
+    default={"session_id": None, "cache_system": False},
+)
+
+
+def get_prompt_cache_context() -> dict:
+    return dict(_prompt_cache_ctx.get())
+
+
+@asynccontextmanager
+async def prompt_cache_context(*, session_id: Optional[str] = None,
+                                cache_system: bool = False):
+    """Scope a block of code (one or more LLM calls) with a caching
+    hint. ContextVar-scoped per asyncio task, same isolation guarantee
+    as `_last_provider_ctx` above — concurrent requests never see each
+    other's hint. Always resets on exit, even on exception."""
+    token = _prompt_cache_ctx.set({"session_id": session_id, "cache_system": cache_system})
+    try:
+        yield
+    finally:
+        _prompt_cache_ctx.reset(token)

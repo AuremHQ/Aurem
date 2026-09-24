@@ -334,3 +334,65 @@ async def emit_first_scan_fix_clicked(
         db, user_id=user_id, event_type="first_scan_fix_clicked",
         metadata={"project_id": project_id, "finding_id": finding_id},
     )
+
+
+# ── Mandatory Repo-Connect Gate + Post-Connect Engagement Nudge
+#    (2026-09-09) — thin named wrappers, same convention as the
+#    first_scan_* events above. See routers/onboarding.py for the
+#    endpoints that call these and services/engagement_nudge.py for
+#    the "real task message" heuristic behind the *_task_sent event.
+
+async def emit_repo_connect_gate_shown(db, *, user_id: str) -> None:
+    await emit_funnel_event(db, user_id=user_id, event_type="repo_connect_gate_shown")
+
+
+async def emit_repo_connect_gate_skipped(db, *, user_id: str) -> None:
+    await emit_funnel_event(db, user_id=user_id, event_type="repo_connect_gate_skipped")
+
+
+async def emit_repo_connect_gate_completed(
+    db, *, user_id: str, project_id: Optional[str] = None,
+) -> None:
+    await emit_funnel_event(
+        db, user_id=user_id, event_type="repo_connect_gate_completed",
+        metadata={"project_id": project_id},
+    )
+
+
+async def emit_engagement_nudge_shown(
+    db, *, user_id: str, trigger: str, project_id: Optional[str] = None,
+) -> None:
+    # 2026-09-11 — bug fix: this used to hardcode event_type=
+    # "post_scan_nudge_shown" regardless of `trigger`, so every
+    # legitimate "post_skip" nudge (correctly shown right after a
+    # user skips the connect gate) got logged under the WRONG event
+    # name. In the funnel-events timeline that looked exactly like
+    # "post_scan_nudge_shown fired with zero repo connection or scan"
+    # — a pure analytics mislabeling bug, not a real UX defect (the
+    # nudge itself was the right one; only its logged name was wrong).
+    # Confirmed against 3 real production users who skipped the gate
+    # and never scanned, yet showed `post_scan_nudge_shown` in their
+    # event history. Now the logged event_type always matches the
+    # trigger that actually fired: "post_skip_nudge_shown" or
+    # "post_scan_nudge_shown". Allowlisted so a future typo'd trigger
+    # can't silently mint a garbage event_type in funnel_events.
+    if trigger not in ("post_scan", "post_skip"):
+        logger.warning("emit_engagement_nudge_shown: unknown trigger %r, dropping", trigger)
+        return
+    await emit_funnel_event(
+        db, user_id=user_id, event_type=f"{trigger}_nudge_shown",
+        metadata={"trigger": trigger, "project_id": project_id},
+    )
+
+
+async def emit_engagement_nudge_task_sent(
+    db, *, user_id: str, trigger: Optional[str], seconds_since_shown: Optional[float] = None,
+) -> None:
+    # Same fix + allowlist as emit_engagement_nudge_shown above.
+    if trigger not in ("post_scan", "post_skip"):
+        logger.warning("emit_engagement_nudge_task_sent: unknown trigger %r, dropping", trigger)
+        return
+    await emit_funnel_event(
+        db, user_id=user_id, event_type=f"{trigger}_nudge_task_sent",
+        metadata={"trigger": trigger, "seconds_since_shown": seconds_since_shown},
+    )

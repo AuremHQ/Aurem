@@ -3,10 +3,41 @@
  * anywhere in the tree. Extracted from TabBar.jsx (2026-08-27,
  * mechanical split — no behaviour change) to keep that file under the
  * platform's file-size guard.
+ *
+ * 2026-09-08 — Turn-Completion Contract, Section 6 (Approve button
+ * mount race). Root cause of a recurring "the Approve button didn't
+ * load" bug: `/cto/projects/list` had ZERO retry on failure — one
+ * transient network blip (common right when a page full of chat
+ * bubbles is loading, high request contention) left `project` null
+ * for the entire page session (nothing re-triggers a re-fetch), which
+ * cascades into `canShip=false` in MessageBubble.jsx → the Approve
+ * button replaced by "Switch to a connected project" — permanently,
+ * until a manual page refresh happened to land on a lucky fetch.
+ * `fetchProjectsWithRetry` below adds ONE silent retry with a short
+ * backoff before giving up, matching the "silently retry once before
+ * showing the user a visible Retry" contract — most transient blips
+ * never surface to the user at all now.
  */
 import { useEffect, useState } from "react";
 import { api, getToken } from "../lib/api";
 import { getActiveProjectId, setActiveProjectId } from "./activeProject";
+
+async function fetchProjectsWithRetry() {
+  try {
+    return await api.get("/cto/projects/list");
+  } catch (firstErr) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      return await api.get("/cto/projects/list");
+    } catch (retryErr) {
+      console.warn(
+        "useActiveProject: /cto/projects/list failed twice (silent retry exhausted)",
+        retryErr,
+      );
+      throw retryErr;
+    }
+  }
+}
 
 export function useActiveProject() {
   const [pid, setPid] = useState(() => getActiveProjectId());
@@ -47,7 +78,7 @@ export function useActiveProject() {
       //   • users whose last active project was deleted while logged out
       //   • incognito sessions
       let cancelled = false;
-      api.get("/cto/projects/list")
+      fetchProjectsWithRetry()
         .then((r) => {
           if (cancelled) return;
           const list = r.data?.projects || [];
@@ -63,11 +94,11 @@ export function useActiveProject() {
             setActiveProjectId(target.project_id);
           }
         })
-        .catch(() => { /* offline / auth failure — silent */ });
+        .catch(() => { /* offline / auth failure — silent, retry already exhausted */ });
       return () => { cancelled = true; };
     }
     let cancelled = false;
-    api.get("/cto/projects/list")
+    fetchProjectsWithRetry()
       .then((r) => {
         if (cancelled) return;
         const list = r.data?.projects || [];
@@ -96,7 +127,7 @@ export function useActiveProject() {
         setProject(null);
         setActiveProjectId(null);
       })
-      .catch(() => { /* keep cached project intact on transient failure */ });
+      .catch(() => { /* keep cached project intact — retry already exhausted */ });
     return () => { cancelled = true; };
   }, [pid]);
 

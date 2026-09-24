@@ -33,7 +33,7 @@ export function dismissWizard() {
   try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* private mode */ }
 }
 
-export default function NewUserWizard({ onComplete }) {
+export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   const [step]         = useState(1);
   const [repoUrl, setRepoUrl]   = useState("");
   const [branch, setBranch]     = useState("main");
@@ -80,16 +80,145 @@ export default function NewUserWizard({ onComplete }) {
   const {
     status: ghConnectStatus, connecting: appConnecting,
     timedOut: appTimedOut, denied: appDenied, startConnect: startAppConnect,
-    retry: retryAppConnect, refresh: refreshGhConnectStatus,
+    retry: retryAppConnect, refresh: refreshGhConnectStatus, installUrl: appInstallUrl,
+    freshInstallIds = [],
   } = useGitHubConnectStatus();
-  const appInstalls = ghConnectStatus.installations;
-  const appPickerActive = ghConnectStatus.installation_active;
+  // 2026-09-09 — "full isolation" fix (founder-reported, screen
+  // recording: a brand new project's connect step showed/auto-picked
+  // repos from OLD, unrelated installations — e.g. `polaris.butler.org`
+  // / `AuronHQ` installed for a completely different earlier project
+  // — and looped back to GitHub's install screen when "Continue" was
+  // pressed with a stale repo already filled in). `ghConnectStatus` is
+  // the GLOBAL, all-time status for this GitHub account; `appInstalls`/
+  // `appPickerActive` below are narrowed to ONLY installations freshly
+  // confirmed during THIS wizard session, so a new project never shows
+  // or uses connect history from a different past project.
+  //
+  // 2026-09-11 — founder-reported (3 real users, evidence-confirmed):
+  // that same isolation filter was ALSO applied when this wizard is
+  // rendered as the mandatory `asGate` — where the user by definition
+  // has ZERO existing projects (the gate only shows pre-first-project).
+  // There is no "different past project" to isolate from there, so a
+  // user who already installed the App and granted repo access in an
+  // earlier page load (e.g. closed the tab before finishing repo
+  // selection) was shown the "Install Aurem for your repos" CTA again
+  // from scratch, as if nothing had happened — confusing, and a real
+  // cause of users clicking Skip right after doing the hard part. When
+  // `asGate`, use the account's full global installation history
+  // instead of the fresh-only filter; the AddProjectWizard reuse case
+  // (which genuinely has other projects to isolate from) is unaffected.
+  const appInstalls = React.useMemo(
+    () => asGate
+      ? (ghConnectStatus.installations || [])
+      : (ghConnectStatus.installations || []).filter(
+          (inst) => freshInstallIds.includes(String(inst.installation_id)),
+        ),
+    [ghConnectStatus.installations, freshInstallIds, asGate],
+  );
+  const appPickerActive = appInstalls.length > 0;
+  // Flat list of repos across ONLY the fresh installations — the
+  // fresh-scoped equivalent of the backend's global `connected_repo`/
+  // `repos` fields, used by the one-click auto-submit effect below.
+  const freshRepos = React.useMemo(
+    () => appInstalls.flatMap((inst) => inst.repositories || []),
+    [appInstalls],
+  );
   // 2026-08-27 — founder-confirmed workaround: some accounts get stuck
   // with an orphaned/already-installed App that never links (retrying
   // the same install popup replays the same stuck state). After the
   // first failed attempt, surface the manual reset path the founder
   // proved works: revoke the App on GitHub, then reinstall fresh.
   const [connectAttempts, setConnectAttempts] = useState(0);
+
+  // 2026-09-13 — 4th confirmed real user hit this EXACT failure class
+  // (canndalf@gmail.com, Meta Ads signup): their real production
+  // activity log shows `app_install_granted` fired 3 times before
+  // `repo_connect_gate_skipped` — i.e. all 3 of the retries below ran
+  // out and STILL hit `installation_no_repo_access`, meaning the 9s
+  // total budget (3 × 3s) is measurably too short against the same
+  // GitHub-side propagation lag this file already documents elsewhere.
+  // Matched (not just "roughly aligned with") the ceiling this
+  // codebase already has real production evidence for on the closely
+  // related repo-LIST sync check: `useGitHubConnectStatus.js`'s
+  // `BACKGROUND_SYNC_MAX_MS = 2 * 60_000` (120s). NOTE: that same file
+  // also documents an observed worst case of the repo-LIST becoming
+  // non-empty lagging "well over an hour" after a genuine install —
+  // 120s does NOT cover that extreme tail, and no foreground retry
+  // loop reasonably should. This budget only closes the gap between
+  // the old 9s and the 120s ceiling this codebase already trusts for
+  // the same class of lag; the single-repo verify call resolving
+  // faster than a full repo-list sync is plausible but NOT proven
+  // with dedicated evidence for this specific check. If this still
+  // isn't enough in production, the next step is the same fallback
+  // `useGitHubConnectStatus.js` already uses for its own worst case —
+  // hand off to `startBackgroundRepoSync` instead of failing in the
+  // foreground — not another larger fixed number.
+  // Switched from a fixed retry COUNT to a time BUDGET so it keeps
+  // quietly retrying (via `retryingAccess`'s calm "still finishing
+  // up" message, never the scary error) until real time has actually
+  // run out, not an arbitrary attempt count.
+  const repoAccessRetryRef = useRef(0);
+  const repoAccessRetryStartRef = useRef(0);
+  const [retryingAccess, setRetryingAccess] = useState(false);
+  // Synchronous companion to `retryingAccess` (state updates aren't
+  // visible within the SAME function call that triggered them) — the
+  // `finally` block below reads THIS ref, not the state, to decide
+  // whether to release `busy` for the CURRENT invocation.
+  const retryPendingRef = useRef(false);
+  const _REPO_ACCESS_RETRY_BUDGET_MS = 2 * 60_000;
+  const _REPO_ACCESS_RETRY_DELAY_MS = 4000;
+
+  // ── Mandatory Repo-Connect Gate (2026-09-09), Part 1 ─────────────
+  // When rendered as the pre-chat gate (`asGate`), fire the funnel
+  // signal exactly once on mount — best-effort, never blocks the UI.
+  // useRef guard (same pattern as sessionStartedRef elsewhere in this
+  // file) so React 18 StrictMode's dev-only double-invoke of mount
+  // effects can't double-log this in the funnel data.
+  const gateShownFiredRef = useRef(false);
+  useEffect(() => {
+    if (!asGate || gateShownFiredRef.current) return;
+    gateShownFiredRef.current = true;
+    api.post("/onboarding/repo-connect-gate/shown").catch(() => {});
+  }, [asGate]);
+
+  // Explicit "Skip for now" action — the ONLY way out of the gate
+  // besides a real connect. Distinct from closing/Escape (which the
+  // gate build disables entirely, see the header + useModalA11y wiring
+  // below) so an accidental tab-close/refresh is never mistaken for a
+  // deliberate skip (Part 1, Case C — the gate just shows again next
+  // load, with zero extra code needed for that: it's a pure function
+  // of "has a project? skipped?", both re-checked fresh every load).
+  function handleSkip() {
+    if (asGate) {
+      api.post("/onboarding/repo-connect-gate/skip").catch(() => {});
+      onSkip?.();
+    }
+    close();
+  }
+
+  // Part 1, Case A — fired at every "user now has a real project"
+  // exit from the gate (fresh connect, scaffold-from-idea, or picking
+  // an already-connected repo). Best-effort funnel signal only; the
+  // gate itself stops showing again purely because `has_project`
+  // becomes true — this event just tells us it was THIS screen that
+  // got them there.
+  function fireGateCompleted(newProjectId) {
+    if (!asGate) return;
+    api.post("/onboarding/repo-connect-gate/completed", { project_id: newProjectId }).catch(() => {});
+  }
+
+  // 2026-09-09 — bug fix (founder-reported, screenshot): unlike
+  // `fireGateCompleted` above, this is NOT gated on `asGate` — the
+  // stale "One step left — pick a repo…" mascot bubble it fixes can
+  // happen from ANY wizard entry point (not just the mandatory gate),
+  // since OraGuideMascot polls `/auth/me/funnel-stage` independently
+  // on its own 15s timer and had no way to know a connect just
+  // happened. Fired at the same 3 success exits as the function
+  // above so the mascot can re-check immediately instead of leaving
+  // a just-connected user staring at a stale "please connect" ask.
+  function notifyProjectConnected() {
+    try { window.dispatchEvent(new Event("aurem:project-connected")); } catch { /* noop */ }
+  }
 
   // Initial OAuth status check.
   useEffect(() => {
@@ -107,7 +236,7 @@ export default function NewUserWizard({ onComplete }) {
         // old logic treated them as equivalent. Fix: always check for
         // an active App installation FIRST. Only skip straight past
         // the App CTA if one already exists.
-        const [oauthRes, ghStatusData] = await Promise.allSettled([
+        const [oauthRes] = await Promise.allSettled([
           api.get("/github/oauth/status"),
           refreshGhConnectStatus(),
         ]);
@@ -119,25 +248,16 @@ export default function NewUserWizard({ onComplete }) {
           fetchRepos();  // convenience dropdown for OAuth-linked accounts
         }
 
-        const data = ghStatusData.status === "fulfilled" ? ghStatusData.value : null;
-        if (data?.installation_active) {
-          // Already has the App installed — go straight to its repo
-          // picker, no CTA needed.
-          if (data.connected_repo) {
-            setRepoUrl(`https://github.com/${data.connected_repo}`);
-            const inst = (data.installations || []).find(
-              (i) => (i.repositories || []).some((r) => r.full_name === data.connected_repo),
-            );
-            const repo = inst?.repositories?.find((r) => r.full_name === data.connected_repo);
-            setBranch(repo?.default_branch || "main");
-          }
-          setGhStatus("choosing");
-        } else {
-          // No App installed yet (whether or not legacy OAuth is
-          // linked) — land on "choosing" so the App-install CTA is
-          // always the first thing a user without an App sees.
-          setGhStatus("choosing");
-        }
+        // 2026-09-09 — full-isolation fix: no longer auto-fills repoUrl/
+        // branch from `data.connected_repo` here — that field is the
+        // GLOBAL "exactly one repo across this account's ENTIRE
+        // install history", which silently pre-filled an unrelated old
+        // project's repo into a brand new project. `ghStatus` still
+        // always lands on "choosing" either way — appPickerActive
+        // (now fresh-only, computed above) decides what actually
+        // renders there, so a fresh install still starts empty until
+        // the user goes through the App picker in THIS session.
+        setGhStatus("choosing");
       } catch {
         if (!cancelled) setGhStatus("choosing");
       }
@@ -149,16 +269,31 @@ export default function NewUserWizard({ onComplete }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-select the repo the moment status resolves to exactly one —
-  // whether that's on initial load or right after a connect completes.
+  // 2026-09-04 — one-click connect (founder-reported: our flow needed
+  // GitHub popup -> pick repo AGAIN in our own list -> click a SEPARATE
+  // "Continue" button; Emergent's own Save-to-GitHub is popup -> pick
+  // repo -> done). The moment status resolves to exactly one granted
+  // repo — whether on initial load or right after the App-install
+  // popup closes — auto-fill AND auto-submit immediately. No second
+  // click. Multi-repo installs still show the picker below (there's a
+  // real choice to make there), but picking one now submits instantly
+  // instead of just filling the URL field.
+  // 2026-09-09 — full-isolation fix: switched from the backend's
+  // GLOBAL `ghConnectStatus.connected_repo` (exactly one repo across
+  // this account's ENTIRE install history — could silently auto-
+  // submit an unrelated old project's repo) to `freshRepos`, scoped
+  // to installations confirmed during THIS session only.
   useEffect(() => {
-    if (ghConnectStatus.connected_repo && !repoUrl) {
-      setRepoUrl(`https://github.com/${ghConnectStatus.connected_repo}`);
-      const repo = (ghConnectStatus.repos || [])[0];
-      setBranch(repo?.default_branch || "main");
+    if (freshRepos.length === 1 && !repoUrl) {
+      const only = freshRepos[0];
+      const branchGuess = only.default_branch || "main";
+      const url = `https://github.com/${only.full_name}`;
+      setRepoUrl(url);
+      setBranch(branchGuess);
+      submitRepo(null, { url, branchOverride: branchGuess });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ghConnectStatus.connected_repo]);
+  }, [freshRepos]);
 
   async function fetchRepos() {
     setReposBusy(true);
@@ -281,16 +416,25 @@ export default function NewUserWizard({ onComplete }) {
     onComplete?.();
   }
 
-  async function submitRepo(e) {
+  async function submitRepo(e, override) {
     e?.preventDefault();
     setErr("");
-    if (!REPO_RX.test(repoUrl.trim())) {
+    // 2026-09-04 — one-click connect: callers that already know the
+    // exact repo (auto-detect effect above, repo-picker button below)
+    // pass it explicitly instead of relying on state that may not
+    // have re-rendered yet (setRepoUrl/setBranch are async).
+    const urlToUse = override?.url ?? repoUrl;
+    const branchToUse = override?.branchOverride ?? branch;
+    if (!REPO_RX.test(urlToUse.trim())) {
       setErr("Use a real GitHub repo URL — github.com/owner/repo");
       return;
     }
     setBusy(true);
+    // Each fresh call starts clean — only THIS invocation's own retry
+    // branch below is allowed to flip this back to true for `finally`.
+    retryPendingRef.current = false;
     try {
-      const parts = repoUrl.trim().replace(/\/$/, "").split("/");
+      const parts = urlToUse.trim().replace(/\/$/, "").split("/");
       const name = parts[parts.length - 1].replace(/\.git$/, "");
 
       // 2026-02-10 · Phase 4 — if the App picker is active AND the
@@ -299,7 +443,7 @@ export default function NewUserWizard({ onComplete }) {
       // install branch. Otherwise no token is sent (public-repo path).
       let installation_id = null;
       if (appPickerActive && appInstalls.length > 0) {
-        const chosenFullName = repoUrl.trim()
+        const chosenFullName = urlToUse.trim()
           .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
           .replace(/\/$/, "")
           .replace(/\.git$/i, "");
@@ -315,8 +459,8 @@ export default function NewUserWizard({ onComplete }) {
 
       const payload = {
         name,
-        github_url: repoUrl.trim(),
-        branch:     branch.trim() || "main",
+        github_url: urlToUse.trim(),
+        branch:     branchToUse.trim() || "main",
         // 2026-08-24 — funnel stitching: lets the backend's server-side
         // `repo_selected` event join this browser's funnel journey.
         funnel_session: getFunnelSessionId(),
@@ -329,6 +473,9 @@ export default function NewUserWizard({ onComplete }) {
       // clone (unauthenticated). Private repos need the GitHub App.
 
       const r = await api.post("/cto/projects/add", payload);
+      repoAccessRetryRef.current = 0;
+      repoAccessRetryStartRef.current = 0;
+      setRetryingAccess(false);
       // 2026-08-20 — founder's call: no forced "first task" step
       // inside the wizard anymore. Connecting the repo is the whole
       // job here — land straight in the normal chat window, same as
@@ -336,6 +483,8 @@ export default function NewUserWizard({ onComplete }) {
       const newProjectId = r.data?.project_id;
       setProject(newProjectId);
       setActiveProjectId(newProjectId);
+      fireGateCompleted(newProjectId);
+      notifyProjectConnected();
       // 2026-09-01 — connect-flow refinement (D3, standard pattern):
       // a ~1s "Connected ✓" beat, then auto-land — no 12s blocking
       // interstitial, no silent instant vanish either.
@@ -352,26 +501,67 @@ export default function NewUserWizard({ onComplete }) {
         });
         return;
       }
+      // 2026-09-12/13 — see repoAccessRetryRef comment above: this ONE
+      // error code specifically means "the install itself is real and
+      // fine, GitHub's own permission propagation just hasn't caught
+      // up yet" — auto-retry quietly, for a real TIME budget (not a
+      // small fixed attempt count), before treating it as a real
+      // failure the user needs to act on.
+      if (
+        typeof detail === "object" &&
+        detail?.error === "installation_no_repo_access" &&
+        (repoAccessRetryRef.current === 0
+          || Date.now() - repoAccessRetryStartRef.current < _REPO_ACCESS_RETRY_BUDGET_MS)
+      ) {
+        if (repoAccessRetryRef.current === 0) {
+          repoAccessRetryStartRef.current = Date.now();
+        }
+        repoAccessRetryRef.current += 1;
+        retryPendingRef.current = true;
+        setRetryingAccess(true);
+        setTimeout(() => {
+          submitRepo(null, { url: urlToUse, branchOverride: branchToUse });
+        }, _REPO_ACCESS_RETRY_DELAY_MS);
+        return;
+      }
+      repoAccessRetryRef.current = 0;
+      repoAccessRetryStartRef.current = 0;
+      retryPendingRef.current = false;
+      setRetryingAccess(false);
       const msg = (typeof detail === "object" && detail?.message)
         ? detail.message
         : (typeof detail === "string" ? detail : (e2?.message || "Could not connect repo."));
       // If the server replies "GitHub not connected" mid-flow (e.g. user
       // is in manual mode for a private repo), flip the panel back to
       // the OAuth-connect view instead of asking them to leave.
-      if (/github not connected/i.test(msg)) {
+      // 2026-09-09 — loop fix (founder-reported: this Full reset made
+      // an App-picker error look exactly like "starting over from
+      // scratch", reopening what looked like the GitHub install
+      // screen with no clear explanation). Only do the full OAuth-
+      // view reset for the plain manual-URL path — when the App
+      // picker is active, the user is already mid-flow with a real
+      // installation; just surface the error inline and let them
+      // pick again, never yank them back to square one.
+      if (/github not connected/i.test(msg) && !appPickerActive) {
         setGhStatus("disconnected");
         setErr("This repo needs GitHub access. Connect once below — your manual URL will stick.");
       } else {
         setErr(msg);
       }
     } finally {
-      setBusy(false);
+      // 2026-09-12 — keep the busy/spinner state alive through a
+      // silent retry so the UI never flickers back to an idle
+      // "Continue" button in between attempts, only settling once
+      // we've truly succeeded or truly given up.
+      if (!retryPendingRef.current) setBusy(false);
     }
   }
 
   function openExistingProject() {
     if (!alreadyConnected?.projectId) return;
     setActiveProjectId(alreadyConnected.projectId);
+    fireGateCompleted(alreadyConnected.projectId);
+    notifyProjectConnected();
     close();
   }
 
@@ -407,6 +597,8 @@ export default function NewUserWizard({ onComplete }) {
       if (!newProjectId) throw new Error("No project_id returned");
       setProject(newProjectId);
       setActiveProjectId(newProjectId);
+      fireGateCompleted(newProjectId);
+      notifyProjectConnected();
       close();
     } catch (e2) {
       const detail = e2?.response?.data?.detail;
@@ -425,11 +617,17 @@ export default function NewUserWizard({ onComplete }) {
   // the first-time wizard could not Escape out of it if the form was
   // broken.  Now hooks in the reusable a11y trap; onClose invokes
   // the same `close()` function the "Skip for now" link uses.
+  // 2026-09-09 — Mandatory Gate: when `asGate`, Escape/X are
+  // disabled entirely (`onClose: undefined`, X hidden below) — the
+  // ONLY ways out are a real connect or the explicit "Skip for now"
+  // action (handleSkip). Closing via any other means (tab close,
+  // refresh, back) is Part 1's Case C: no state changes, so the
+  // gate simply shows again next chat load.
   const wizardRef = useRef(null);
   useModalA11y({
     ref:     wizardRef,
     isOpen:  true,
-    onClose: close,
+    onClose: asGate ? undefined : close,
   });
 
   return (
@@ -480,11 +678,13 @@ export default function NewUserWizard({ onComplete }) {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {!asGate && (
             <button data-testid="wizard-close" onClick={close} title="Skip"
                     style={{ background:"transparent", border:"none", padding:4,
                              color:"#64748b", cursor:"pointer", display:"flex" }}>
               <X size={14} />
             </button>
+            )}
           </div>
         </header>
 
@@ -540,6 +740,11 @@ export default function NewUserWizard({ onComplete }) {
               <h2 id="wizard-title" style={hStyle}>
                 {mode === "connect" ? "Connect your GitHub repo" : "Start from an idea"}
               </h2>
+              {mode === "connect" && (
+                <p data-testid="wizard-repo-explainer" style={{ ...pStyle, margin: "4px 0 14px" }}>
+                  A "repo" is just where your website's code lives on GitHub.
+                </p>
+              )}
 
               {/* 2026-08-24 · Guard 22 · Phase 3.1 — path chooser. Default
                   stays "connect" (existing behaviour untouched); this just
@@ -577,9 +782,10 @@ export default function NewUserWizard({ onComplete }) {
               {ghStatus === "disconnected" && (
                 <div data-testid="wizard-gh-disconnected">
                   <p style={pStyle}>
-                    Connect GitHub once — AUREM will use it to read your
-                    repos, write commits, and open PRs. We never store the
-                    token in plaintext.
+                    Connect GitHub once — this lets AUREM see your
+                    website's code (your "repo"), make changes, and open
+                    a request for you to approve before anything goes
+                    live. We never store your access key in plain text.
                   </p>
                   <div style={{ position: "relative" }}>
                     <div data-testid="wizard-pulse-ring" style={oraPulseRingStyle} />
@@ -606,7 +812,7 @@ export default function NewUserWizard({ onComplete }) {
                     busy={false}
                     primary="Skip — paste a URL"
                     onPrimary={() => setGhStatus("manual")}
-                    onSkip={close}
+                    onSkip={handleSkip}
                   />
                 </div>
               )}
@@ -643,11 +849,33 @@ export default function NewUserWizard({ onComplete }) {
                           </div>
                           {appConnecting ? (
                             <div data-testid="wizard-app-connecting" style={{
-                              display: "flex", alignItems: "center", gap: 8,
+                              display: "flex", flexDirection: "column", gap: 6,
                               fontSize: 12, color: "var(--text-faint)",
                             }}>
-                              <Loader2 size={14} className="spin" color="#ff9d5c" />
-                              Waiting for you to finish in the GitHub popup…
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <Loader2 size={14} className="spin" color="#ff9d5c" />
+                                Waiting for you to finish in the GitHub popup…
+                              </div>
+                              {/* 2026-09-05 — founder-reported (with console/
+                                  network evidence): some browser/extension
+                                  combos let window.open() return a handle
+                                  that never shows a real popup — silently
+                                  neutralized, not rejected outright. A real
+                                  <a target="_blank"> click can't be blocked
+                                  like that, so it's always offered here. */}
+                              {appInstallUrl && (
+                                <a
+                                  data-testid="wizard-app-fallback-link"
+                                  href={appInstallUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    fontSize: 11, color: "#ff9d5c",
+                                    textDecoration: "underline",
+                                  }}>
+                                  Not seeing the popup? Click here to open it
+                                </a>
+                              )}
                             </div>
                           ) : appTimedOut || appDenied ? (
                             <div data-testid="wizard-app-timeout" style={{
@@ -681,6 +909,20 @@ export default function NewUserWizard({ onComplete }) {
                                   <RefreshCw size={11} /> Try again
                                 </button>
                               </div>
+                              {appInstallUrl && (
+                                <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
+                                  Or{" "}
+                                  <a
+                                    data-testid="wizard-app-fallback-link-2"
+                                    href={appInstallUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: "#ff9d5c", textDecoration: "underline" }}>
+                                    open the GitHub connect page directly
+                                  </a>{" "}
+                                  — this always works even if popups are blocked.
+                                </div>
+                              )}
                               {connectAttempts >= 2 && (
                                 <div style={{ fontSize: 11, color: "var(--text-faint)", lineHeight: 1.4 }}>
                                   Still stuck?{" "}
@@ -817,11 +1059,21 @@ export default function NewUserWizard({ onComplete }) {
                                     key={r.id || r.full_name}
                                     data-testid={`wizard-app-repo-${r.full_name}`}
                                     type="button"
+                                    disabled={busy}
                                     onClick={() => {
-                                      setRepoUrl(`https://github.com/${r.full_name}`);
-                                      setBranch(r.default_branch || "main");
+                                      // 2026-09-04 — one-click connect: picking a
+                                      // repo here now finishes the job immediately
+                                      // (was: fill the URL field, then require a
+                                      // SEPARATE "Continue" click below — the exact
+                                      // extra step Emergent's own Save-to-GitHub
+                                      // doesn't have).
+                                      const url = `https://github.com/${r.full_name}`;
+                                      const branchGuess = r.default_branch || "main";
+                                      setRepoUrl(url);
+                                      setBranch(branchGuess);
                                       trackFunnel("app_repo_selected", "wizard",
                                         { repo: r.full_name });
+                                      submitRepo(null, { url, branchOverride: branchGuess });
                                     }}
                                     style={{
                                       padding: "5px 10px", fontSize: 11,
@@ -833,9 +1085,13 @@ export default function NewUserWizard({ onComplete }) {
                                         : "1px solid rgba(255,255,255,0.12)",
                                       borderRadius: 4,
                                       color: "var(--text)",
-                                      cursor: "pointer",
+                                      cursor: busy ? "wait" : "pointer",
+                                      opacity: busy ? 0.6 : 1,
                                       fontFamily: "'JetBrains Mono', monospace",
                                     }}>
+                                    {busy && (repoUrl || "").endsWith(r.full_name)
+                                      ? <Loader2 size={11} className="spin" style={{ marginRight: 4 }} />
+                                      : null}
                                     {r.full_name}
                                     {r.private && (
                                       <span style={{
@@ -848,16 +1104,17 @@ export default function NewUserWizard({ onComplete }) {
                               </div>
                             </div>
                           ))}
-                          {repoUrl && (
+                          {repoUrl && busy && (
                             <div data-testid="wizard-app-repo-selected-cta" style={{
                               marginTop: 8, padding: "8px 12px", borderRadius: 6,
                               background: "rgba(34,197,94,0.08)",
                               border: "1px solid rgba(34,197,94,0.36)",
                               color: "#22C55E", fontSize: 11, fontWeight: 600,
                               fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                              display: "flex", alignItems: "center", gap: 6,
                             }}>
-                              ✓ {repoUrl.replace(/^https?:\/\/github\.com\//i, "")} selected —
-                              click <strong>Continue</strong> below to connect it.
+                              <Loader2 size={11} className="spin" />
+                              Connecting {repoUrl.replace(/^https?:\/\/github\.com\//i, "")}…
                             </div>
                           )}
                           <button
@@ -940,6 +1197,7 @@ export default function NewUserWizard({ onComplete }) {
                   <input
                     data-testid="wizard-repo-input"
                     autoFocus={ghStatus !== "connected"}
+                    autoComplete="off"
                     value={repoUrl}
                     onChange={(e) => setRepoUrl(e.target.value)}
                     placeholder="https://github.com/owner/repo"
@@ -948,6 +1206,7 @@ export default function NewUserWizard({ onComplete }) {
                   <label style={lStyle}>Branch</label>
                   <input
                     data-testid="wizard-branch-input"
+                    autoComplete="off"
                     value={branch}
                     onChange={(e) => setBranch(e.target.value)}
                     placeholder="main"
@@ -958,7 +1217,20 @@ export default function NewUserWizard({ onComplete }) {
                   {/* end URL/branch outer conditional
                       (hidden on pure "choosing" landing) */}
 
-                  {err && <div data-testid="wizard-error" style={errStyle}>{err}</div>}
+                  {retryingAccess && (
+                    <div data-testid="wizard-repo-access-retrying" style={{
+                      fontSize: 12, color: "var(--text-faint)",
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "8px 0",
+                    }}>
+                      <Loader2 size={13} className="spin" color="#ff9d5c" />
+                      <span>
+                        Almost there — GitHub is still finishing up your
+                        access grant. Connecting automatically…
+                      </span>
+                    </div>
+                  )}
+                  {!retryingAccess && err && <div data-testid="wizard-error" style={errStyle}>{err}</div>}
                   {/* 2026-08-27 · Journey Watch Phase 1 — ROOT FIX for the
                       duplicate-CTA bug: on the pure "choosing" landing (no
                       App installed yet) this Footer used to render a
@@ -970,7 +1242,7 @@ export default function NewUserWizard({ onComplete }) {
                       true CTA already lives in the app-cta-block above. */}
                   {(ghStatus === "choosing" && !appPickerActive) ? (
                     <div style={{ display: "flex", justifyContent: "flex-end", padding: "16px 0 4px" }}>
-                      <button data-testid="wizard-skip-link" type="button" onClick={close}
+                      <button data-testid="wizard-skip-link" type="button" onClick={handleSkip}
                               style={{ background: "transparent", border: "none",
                                        color: "var(--text-faint)", fontSize: 11,
                                        padding: "6px 4px", cursor: "pointer" }}>
@@ -982,7 +1254,7 @@ export default function NewUserWizard({ onComplete }) {
                       busy={busy}
                       primary="Continue"
                       onPrimary={submitRepo}
-                      onSkip={close}
+                      onSkip={handleSkip}
                     />
                   )}
                 </>
@@ -1012,7 +1284,7 @@ export default function NewUserWizard({ onComplete }) {
                         busy={scaffoldBusy}
                         primary="Draft my project"
                         onPrimary={submitIdea}
-                        onSkip={close}
+                        onSkip={handleSkip}
                       />
                     </>
                   )}
@@ -1120,7 +1392,7 @@ function buildRobotMessage({ ghStatus, busy, err, repoUrl }) {
   {
     if (ghStatus === "checking") return `Checking your GitHub connection…`;
     if (ghStatus === "disconnected")
-      return `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — connects in seconds, no PAT needed.`;
+      return `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — connects in seconds, no password or access key to manage.`;
     if (ghStatus === "manual")
       return `Paste any <strong>public repo URL</strong> below. For private repos, connect GitHub from Settings later. <span class="ora-arrow">👇</span>`;
     if (ghStatus === "choosing" && !repoUrl)

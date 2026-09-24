@@ -9,7 +9,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Check, GitBranch, Cloud, Database, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toastApi";
 import { PersonalShell } from "./_shell";
 import { api } from "../../lib/api";
 

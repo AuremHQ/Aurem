@@ -24,6 +24,7 @@ vi.mock("../../lib/api", () => ({
     get: vi.fn(() => Promise.resolve({ data: {} })),
     post: vi.fn(() => Promise.resolve({ data: {} })),
   },
+  getToken: () => null,
 }));
 vi.mock("../Toast", () => ({ toast: vi.fn() }));
 
@@ -64,7 +65,7 @@ describe("NEW P0 Task 1a — Approve button renders from a valid injected fence"
         />
       </MemoryRouter>,
     );
-    const btn = screen.getByTestId("ship-cto-btn-0");
+    const btn = screen.getByTestId("ship-cto-0-approve-btn");
     expect(btn).toBeInTheDocument();
     expect(btn.textContent).toMatch(/Approve the fix/i);
     // The fallback "button didn't load" banner must NOT also render.
@@ -83,7 +84,7 @@ describe("NEW P0 Task 1a — Approve button renders from a valid injected fence"
         />
       </MemoryRouter>,
     );
-    const btn = screen.getByTestId("ship-cto-btn-1");
+    const btn = screen.getByTestId("ship-cto-1-approve-btn");
     expect(btn).toBeInTheDocument();
     expect(btn.textContent).toMatch(/Approve the fix/i);
   });
@@ -100,7 +101,7 @@ describe("NEW P0 Task 1a — Approve button renders from a valid injected fence"
         />
       </MemoryRouter>,
     );
-    expect(screen.queryByTestId("ship-cto-btn-2")).toBeNull();
+    expect(screen.queryByTestId("ship-cto-2-approve-btn")).toBeNull();
     expect(screen.getByTestId("ship-cto-row-2").textContent).toMatch(
       /connected project/i,
     );

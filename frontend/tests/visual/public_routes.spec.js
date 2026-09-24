@@ -25,6 +25,51 @@
 import { test, expect } from "@playwright/test";
 
 
+// Iter 300 — root-cause fix for the flaky landing/login diffs: both
+// were failing not from any CSS/design regression, but from two live
+// data sources that legitimately change between baseline capture and
+// test run:
+//   1. CookieConsentBanner (first-visit only) — repositions the whole
+//      fold depending on whether it's showing.
+//   2. Landing's `/promo/first50/status` + `/usage/public/stats`
+//      polls — real DB counters that drift over time, shifting the
+//      hero chip / trust-badge text and reflowing everything below it.
+// stubDynamicContent() neutralises both BEFORE first paint so every
+// run renders the exact same fold, regardless of real promo/usage
+// state or first-visit cookie status.
+async function stubDynamicContent(page) {
+  // Already-consented — CookieConsentBanner reads this on mount and
+  // renders nothing when present (see cookieConsentStorage.js STORAGE_KEY).
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "aurem_consent",
+      JSON.stringify({
+        v: 1,
+        ts: "2026-01-01T00:00:00.000Z",
+        choice: "essential",
+        cats: { necessary: true, functional: true, analytics: false, marketing: false },
+      })
+    );
+  });
+  // Fixed promo counter — matches routers/promo_first50.py response shape.
+  await page.route("**/promo/first50/status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ claimed: 200, total: 500, remaining: 300, is_active: true }),
+    })
+  );
+  // Hide the live trust-badge tile — matches routers/usage.py's own
+  // fallback shape so the page renders exactly as it does pre-data.
+  await page.route("**/usage/public/stats", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ available: false }),
+    })
+  );
+}
+
 // Shared setup — freeze anything that would otherwise shift between
 // runs (animations, live clocks, video autoplay).
 async function freezePage(page) {
@@ -52,6 +97,7 @@ async function freezePage(page) {
 
 test.describe("Public routes — visual regression (iter 299)", () => {
   test("landing '/' renders the hero and fold consistently", async ({ page }) => {
+    await stubDynamicContent(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await freezePage(page);
     await expect(page).toHaveScreenshot("landing.png", {
@@ -61,6 +107,7 @@ test.describe("Public routes — visual regression (iter 299)", () => {
   });
 
   test("'/why-ora' marketing page long-content layout is stable", async ({ page }) => {
+    await stubDynamicContent(page);
     await page.goto("/why-ora", { waitUntil: "domcontentloaded" });
     await freezePage(page);
     await expect(page).toHaveScreenshot("why-ora.png", {
@@ -69,6 +116,7 @@ test.describe("Public routes — visual regression (iter 299)", () => {
   });
 
   test("'/demo' page renders demo layout", async ({ page }) => {
+    await stubDynamicContent(page);
     await page.goto("/demo", { waitUntil: "domcontentloaded" });
     await freezePage(page);
     await expect(page).toHaveScreenshot("demo.png", {
@@ -77,6 +125,7 @@ test.describe("Public routes — visual regression (iter 299)", () => {
   });
 
   test("'/login' form UI is pixel-stable", async ({ page }) => {
+    await stubDynamicContent(page);
     await page.goto("/login", { waitUntil: "domcontentloaded" });
     await freezePage(page);
     await expect(page).toHaveScreenshot("login.png", {
@@ -89,6 +138,7 @@ test.describe("Public routes — visual regression (iter 299)", () => {
     // LoopLiveFeed — the three components that Batch 1 extracted.
     // A visual regression here catches state-sync bug classes that
     // slip past the RTL DOM-only assertions.
+    await stubDynamicContent(page);
     await page.goto("/dev/loop-live-feed", { waitUntil: "domcontentloaded" });
     await freezePage(page);
     await expect(page).toHaveScreenshot("loop-live-feed-demo.png", {

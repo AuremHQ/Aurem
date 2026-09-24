@@ -38,7 +38,6 @@ Also handles two anti-patterns from the same paper:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any

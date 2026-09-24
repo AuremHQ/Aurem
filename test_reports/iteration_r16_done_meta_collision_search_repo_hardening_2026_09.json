@@ -1,0 +1,43 @@
+{
+  "summary": "Regression verification for the two ORA chat/agent pipeline fixes landed 2026-09-05: (1) frontend SSE dispatcher `payload.meta === true` fix in frontend/src/lib/api.js::streamChat that stops the terminal `done` event (which carries an unrelated `meta:{}` object) from being swallowed by the `onMeta` branch, and (2) backend search_repo timeout hardening in backend/services/local_tools.py adding _SEARCH_REPO_SNAPSHOT_BUDGET_S (8s) and _SEARCH_REPO_TOTAL_BUDGET_S (20s) so slow/huge repo snapshots fail fast into the graceful API fallback instead of being externally killed at the orchestrator's 45s outer cap. Verified all requested test files pass. Spot-checked github_app regression suite still clean (36/36). Confirmed the one pre-existing failure in test_session4_p1_batch (silent-catch lint style test hitting a `pass` at local_tools.py:149) is unrelated to today's fix — the `pass` is inside `except (ProcessLookupError, PermissionError):` from commit 09607a12 dated Aug 31, whereas today's R16 hardening is at lines 1376 & 1584-1700.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (unit test)", "issue": "Pre-existing lint-style failure test_session4_p1_batch.py::test_silent_catch_sites_now_log_before_swallowing[services/local_tools.py] — flags a `pass` at local_tools.py:149 (inside `except (ProcessLookupError, PermissionError):` in _run_subprocess). Confirmed via git blame to originate from commit 09607a12 (2026-08-31), unrelated to the 2026-09-05 R16 timeout hardening at lines 1376/1584-1700. Deselected by main agent for the same reason; verified pre-existing here."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter212m179_full_search.py",
+    "/app/frontend/src/lib/__tests__/streamChat.doneMetaCollision.test.js",
+    "/app/frontend/src/components/__tests__/iter388l.bug13_14_15_16.test.jsx",
+    "/app/frontend/src/components/__tests__/Session7_Item3_rapid_send_lock.test.jsx"
+  ],
+  "results": {
+    "backend_test_iter212m179_full_search": "8/8 passed (0.64s) — includes both new TestR16SnapshotTimeoutHardening cases: test_slow_snapshot_falls_back_to_api_within_budget (verifies fallback within ~0.05s budget), test_everything_hanging_still_returns_typed_timeout_not_a_hang (verifies typed timeout when both snapshot AND api fallback hang)",
+    "frontend_streamChat_doneMetaCollision": "3/3 passed — t_real_production_shaped_stream_fires_onDone_not_just_onMeta (uses exact captured payload from preview backend), t_done_with_nonempty_meta_object_still_fires_onDone_not_onMeta, t_midstream_boolean_meta_events_still_route_to_onMeta_unaffected",
+    "frontend_iter388l_bug13_14_15_16": "13/13 passed (no regression on related streaming/button-lock)",
+    "frontend_Session7_Item3_rapid_send_lock": "6/6 passed (no regression on rapid-send lock)",
+    "backend_github_app_regression": "36/36 passed (test_github_app_router.py 25, test_r14_...09.py 9, test_r15_...09.py 2)",
+    "broader_local_tools_regression": "200 passed, 2 skipped, 1 pre-existing unrelated failure (documented above)",
+    "preview_smoke": "GET /api/health and / both return 200 on https://bin-context-pat.preview.emergentagent.com"
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix #1 (api.js): correct minimal fix. Guarding on the exact boolean discriminator (`payload.meta === true`) is the right shape — the two same-named fields are semantically unrelated (a mid-stream boolean flag vs a terminal quota/CTA hint object) and colliding them via truthiness was the exact bug. Non-invasive and self-documenting via inline comment.",
+    "Fix #2 (local_tools.py): the layered budget design (inner snapshot cap + outer total cap, both < orchestrator's 45s outer safety net) is sound and correctly acknowledges httpx `read` timeout's known limitation (bounds inter-chunk time, not total transfer). The constants are module-level so tests can shrink them for deterministic ms-level runs, which is the correct testability pattern.",
+    "Known infra limitation NOT fixed in-code (explicitly per request): ~60s Cloudflare/GCLB SSE buffer & total-response cap on the preview URL. Correctly escalated via support_agent to support@emergent.sh. No app-code change appropriate here; document in known-limitations."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (44/44 relevant tests: 8 iter212m179 + 36 github_app)", "frontend": "100% (22/22 relevant tests: 3 doneMetaCollision + 13 iter388l + 6 Session7_Item3)"},
+  "test_credentials": "Not used — verification was via deterministic unit tests. Preview credentials (test@aurem.dev / AuremTest2026!) available in /app/memory/test_credentials.md if E2E is needed later.",
+  "seed_data_creation": "None. All backend tests use monkeypatch-injected fake snapshots and near-zero budgets for deterministic runs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both fixes are landed and unit-test-verified. If a future session needs to reproduce the button-stuck bug: use the exact SSE frame sequence in streamChat.doneMetaCollision.test.js (a done frame carrying `meta: {}` alongside `done: true`). If reproducing the search_repo hang: point at project_id p_64987820ec (polarisbuiltinc-wq/Aurem-1) which has the 264MB tarball. The Cloudflare/GCLB ~60s external SSE cap on the preview URL is a real, already-escalated infra constraint — complex multi-step agent turns that legitimately need >55s can still die with zero bytes to the external client; this is NOT a new backend/frontend bug. Backend `via: 1.1 google` header + stripped X-Accel-Buffering is the diagnostic signature.",
+  "rca of the issue": "Bug #1 (button stuck): SSE dispatcher used exclusive if/else-if keyed on field PRESENCE (`if (payload.meta) ...`). Backend `done` frames carry an independent nested `meta` object (quota/upgrade CTA hints, often `{}`); empty object is truthy in JS so `onMeta` matched first and `onDone` never fired → busy/streaming flag never reset → send button stuck on 'Thinking…' until 90s watchdog. Reproduction: SSE frame `{done:true, meta:{}, ...}` post-tokens. Mitigation: exact boolean match `payload.meta === true`. Bug #2 (search_repo hang): httpx `read` timeout only bounds INTER-chunk time, not total transfer duration. For repos with a slow/huge (264MB in the founder's Aurem-1 repo, from a 201MB stray .agent dir) but steadily-streaming tarball, snapshot download exceeded the orchestrator's 45s per-tool outer cap and was externally killed. Cache marker is only written on successful extract, so the failure repeated identically every call. Mitigation: internal snapshot budget (_SEARCH_REPO_SNAPSHOT_BUDGET_S=8s) and total-function budget (_SEARCH_REPO_TOTAL_BUDGET_S=20s), both well under the 45s outer cap, allowing graceful fall-through to the budgeted GitHub API fallback."
+}

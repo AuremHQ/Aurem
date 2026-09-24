@@ -4,41 +4,44 @@ Split from the former routers/chat.py god-file (4184 lines) on
 2026-09-08. See routers/chat/__init__.py for the split rationale.
 """
 from __future__ import annotations
-import asyncio
-import json
 import logging
-import os
-import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, validator
+from fastapi import Header, HTTPException
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.orchestrator import chat_with_tools
-from services.llm import call_llm_with_meta, call_emergent_watchdog, cap_for
-from services.repo_context import get_repo_context
-from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
-from core.task_type import infer_task_type as _infer_task_type  # Iter 212m-177/178 P0-3
-from services.chat_helpers import (
-    _detect_mode, _deduct_tokens,
-    is_fix_confirmation, _safe_provenance, detect_prompt_injection,
-    _f12_has_real_signal, _is_transient_proxy_error, _TRANSIENT_PROXY_CODES,
-    classify_intent,
-    _TITLE_SYSTEM, _generate_title, _maybe_set_title,
-    _regenerate_without_recall, _strip_council_block,
-    _persist_turn,
-    _build_failed_followup, _build_blocked_followup, _build_done_fallback,
-    _FOLLOWUP_SYS, _generate_done_followup,
-    retrieved_context_for_grounding, apply_output_guards,
-)
 
 from . import router
 
 logger = logging.getLogger(__name__)
+
+
+# 2026-09-11 — defense-in-depth for the chat date-bucket/ordering bug
+# (see services/loop_engine.py _persist_chat_turns' timestamp fix +
+# frontend sortMessagesByTimestamp): a stale/delayed $push (e.g. a
+# Loop turn-pair persisted long after it was submitted) can still
+# land out of true chronological order in the stored array. Mirrors
+# dateDividers.js's sortMessagesByTimestamp exactly: only compare by
+# `ts` when BOTH sides have a valid, DIFFERENT numeric value —
+# otherwise fall back to original array position, so ties/missing
+# values are never aggressively reordered. Extracted to a module-
+# level function so it's directly unit-testable without a DB/auth
+# harness.
+def sort_turns_by_ts(turns: list) -> list:
+    import functools
+
+    def _cmp(pair_a, pair_b):
+        idx_a, ta = pair_a
+        idx_b, tb = pair_b
+        at = ta.get("ts") if isinstance(ta.get("ts"), (int, float)) else None
+        bt = tb.get("ts") if isinstance(tb.get("ts"), (int, float)) else None
+        if at is not None and bt is not None and at != bt:
+            return -1 if at < bt else 1
+        return -1 if idx_a < idx_b else (1 if idx_a > idx_b else 0)
+
+    return [t for _, t in sorted(enumerate(turns), key=functools.cmp_to_key(_cmp))]
 
 
 @router.get("/history")
@@ -67,12 +70,14 @@ async def chat_history(
     # null on out-of-range positional $set from stale clients). One
     # null crashed the frontend hydration entirely.
     turns = [t for t in turns if isinstance(t, dict) and t.get("role")]
+    turns = sort_turns_by_ts(turns)
     return {
         "ok": True,
         "messages": turns,
         "session_id": session_id,
         "title": (doc or {}).get("title", ""),
     }
+
 
 
 

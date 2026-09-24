@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="8" failures="0" errors="0" time="0.064776015">
+    <testsuite name="src/utils/__tests__/interactionReliability.test.jsx" timestamp="2026-09-22T21:57:35.458Z" hostname="agent-env-00f4b217-af18-4f22-8897-05bbe431b0a7" tests="8" failures="0" errors="0" skipped="0" time="0.064776015">
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; extractSuggestions should honor interaction contract and avoid arbitrary quote chips" time="0.001117969">
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; mapHistoryTurn preserves interaction and snake-case turn-state fields" time="0.000482526">
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; MessageBubble must not infer review badge from provider/council without interaction evidence" time="0.04731097">
+            <system-err>
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+            </system-err>
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; interactionFields keeps legacy fallback when interaction envelope is absent" time="0.000368773">
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; hasVerifiedReview requires request/content-bound evidence" time="0.000174534">
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; extractSuggestions tolerates malformed suggested_actions without crashing" time="0.000659419">
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; unverified command prose cannot become an actionable suggestion" time="0.000106118">
+        </testcase>
+        <testcase classname="src/utils/__tests__/interactionReliability.test.jsx" name="interaction reliability contract (baseline, expected to fail pre-fix) &gt; review_mode pro/swift does not imply reviewed badge under v1 without review_evidence" time="0.013590972">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -13,28 +13,20 @@ Every handler + helper is COPIED VERBATIM from the pre-split admin.py.
 from __future__ import annotations
 
 import logging
-import os
 import asyncio
-import re
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, Depends
+from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin_dep
-from cto_services.db import get_db, require_db
-from services.usage import get_usage
+from cto_services.auth import require_admin_dep
+from cto_services.db import require_db
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
-from services.admin_analytics_cache import (
-    cached_agg,
-    invalidate as _cache_invalidate,
-    mongo_swr_cache,
-)
 from services.admin_error_autofix import run_error_autofix
 
 logger = logging.getLogger(__name__)

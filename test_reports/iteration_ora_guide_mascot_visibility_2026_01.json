@@ -1,0 +1,36 @@
+{
+  "summary": "Verified ORA GUIDE mascot global rendering per founder request. Logged in as test@aurem.dev on preview (bin-context-pat.preview.emergentagent.com). Confirmed OraGuideMascot renders globally from App.jsx (line 348) and is visible on all authenticated pages tested (/dashboard, /projects, /settings). Click behavior verified — opens the 'ORA GUIDE' suggestion bubble anchored to bottom-right, showing project-scoped findings with 'Open Advisor' and 'Close' actions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/03_after_login.png",
+    "/app/test_reports/screenshots/mascot_opened.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OraGuideMascot.jsx is 562 lines — approaching the 700-line split threshold; consider extracting STAGE_COPY/suggestion fetching into hooks if adding more features.",
+    "HIDE_PREFIXES in GlobalHelpFAB.jsx is imported by OraGuideMascot via shouldHide() — dual ownership is fine but worth a comment that /admin is intentionally excluded from the mascot (confirmed rendering NOT on /admin in this test).",
+    "Post-login flow surfaced a 403 on one XHR (unidentified endpoint) — noise, not blocking, but worth silencing if it's the /auth/me/funnel-stage poll returning 403 for admins."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None — used existing test@aurem.dev fixtures on preview pod.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "verification_matrix": {
+    "/dashboard": "mascot avatar visible + clickable, opens ORA GUIDE panel with 4 repo-sourced suggestions",
+    "/projects": "mascot avatar visible",
+    "/settings": "mascot avatar visible",
+    "/admin": "mascot NOT rendered (intentional — /admin is in HIDE_PREFIXES in GlobalHelpFAB.jsx line 26)",
+    "/login": "mascot NOT rendered (intentional — /login is in HIDE_PREFIXES)",
+    "/ (landing)": "mascot NOT rendered (intentional — EXACT_HIDE)",
+    "/insights, /ship": "routes do not exist in App.jsx router — fell through to fallback; not applicable"
+  },
+  "context_for_next_testing_agent": "Original problem statement was truncated in the review request (only ~180 chars visible) — I inferred the intent from the 'other_misc_info' hint: 'ORA GUIDE mascot lives globally (rendered in App.jsx), so it should be visible on any authenticated page, not just Dashboard.' Verified this is TRUE on preview. If the founder's actual complaint was about a specific screenshot showing the mascot missing on a page it should be on, I could not reproduce that on preview with test@aurem.dev. Main agent may want to confirm which specific page/screenshot the founder saw the mascot missing on before further work.",
+  "rca_of_the_issue": "No bug reproduced. Mascot renders as designed on all in-scope authenticated routes. shouldHide() (GlobalHelpFAB.jsx L31-34) correctly hides on /login, /signup, /verify, /support, /demo, /bug-hunt, /why-ora, /both, /admin, /dev/* and exact '/'. All other auth routes get the mascot via App.jsx L348 top-level <OraGuideMascot /> outside <Suspense>/router boundaries. If the founder's screenshot shows mascot missing on e.g. /dashboard, likely causes to investigate: (a) session/localStorage.aurem_token missing at render time causing loggedIn=false path in mascot; (b) z-index conflict — mascot uses Z_FLOATING_GUIDE from lib/zIndex.js — worth verifying no modal has higher z-index blocking it; (c) shouldHide false-positive on a URL that startsWith('/support') e.g. /support-tickets or similar; (d) production-only build issue (I only tested preview, not auremcto.com prod — per test_credentials.md founder prod password is redacted, cannot test there)."
+}

@@ -35,7 +35,6 @@ export function fetchSessionsShared(projectId, force = false) {
 }
 import { toast } from "./Toast";
 import TokenBell from "./TokenBell";
-import PWAInstallPrompt from "./PWAInstallPrompt";
 import FloatingORAButton from "./FloatingORAButton";
 import ClearCacheButton from "./ClearCacheButton";
 import ThemeToggle from "./ThemeToggle";
@@ -1116,7 +1115,10 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
         </main>
       </div>
       )}
-      {token && !chromeless && <PWAInstallPrompt />}
+      {/* 2026-09-21 — moved to App.jsx as a single global mount so the
+          install prompt can also trigger on a first-ever anonymous
+          visit (landing/signup), not just right after login. Removed
+          from here to avoid double-mounting for logged-in users. */}
       {/* Iter 149 — Floating ORA Panel. Mounted only when an authenticated
           token is present so the panel inherits the logged-in user's JWT
           (never the admin token).

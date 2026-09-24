@@ -86,10 +86,11 @@ def test_regression_iter284_queued_chip_and_agent_running_present():
     chat_src = open("/app/frontend/src/components/ChatPanel.jsx").read()
     bar_src  = open("/app/frontend/src/components/AgentStatusBar.jsx").read()
 
-    # ChatPanel must still mount the extracted component (regression
-    # against accidental removal / dead import).
-    assert "<AgentStatusBar" in chat_src, (
-        "ChatPanel must mount <AgentStatusBar /> above the composer"
+    # The "Agent is running…" caption bar was intentionally REMOVED from
+    # ChatPanel (redundant with the inline thinking bubble — git bc15f929).
+    # The component file is kept for reuse; ChatPanel must not mount it.
+    assert "<AgentStatusBar" not in chat_src, (
+        "AgentStatusBar was deliberately unmounted from ChatPanel (bc15f929)"
     )
 
     assert 'data-testid="agent-status-bar"' in bar_src, (

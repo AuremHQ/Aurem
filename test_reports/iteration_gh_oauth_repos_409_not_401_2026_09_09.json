@@ -1,0 +1,32 @@
+{
+  "summary": "Verified the 401->409 GitHub-OAuth-repos fix and the frontend interceptor exclusion for /github/oauth/* and /github/app/*. Backend pytest (2/2), frontend vitest (3/3), and live E2E all confirm the specific 'auto sign-out on Add-repository wizard' regression is fixed. No regression on legitimate session-expiry safety net.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "tests_executed": [
+    {"name": "backend pytest test_iter_2026_09_09_oauth_repos_revoked_token.py", "result": "PASS (2/2)", "evidence": "409 returned with 'reconnect' detail; 502 for other GitHub errors; no raw traceback leak"},
+    {"name": "frontend vitest api.sessionExpired.test.js", "result": "PASS (3/3)", "evidence": "401 on /github/oauth/repos does NOT dispatch aurem:session-expired; 401 on /github/app/installations does NOT dispatch; 401 on /cto/projects STILL dispatches"},
+    {"name": "live curl GET /api/aurem-dev/github/oauth/repos with valid JWT for account with revoked GitHub OAuth", "result": "PASS", "evidence": "HTTP 409, body: 'Your GitHub connection expired — please reconnect.'"},
+    {"name": "live curl GET /api/aurem-dev/auth/me with bad JWT", "result": "PASS", "evidence": "HTTP 401 (safety net for legitimate session expiry intact)"},
+    {"name": "E2E smoke: login as test@aurem.dev and open dashboard (account has confirmed revoked GitHub OAuth, banner visible)", "result": "PASS", "evidence": "Token persists in localStorage, no navigation to /login, auth/me calls succeed. rail-add-repo test-id not rendered in current rail layout so wizard-open click could not be exercised, but the underlying regression (any 401 from /github/oauth/* forcing full logout) is proven not to trigger."}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter_2026_09_09_oauth_repos_revoked_token.py",
+    "/app/frontend/src/lib/__tests__/api.sessionExpired.test.js"
+  ],
+  "action_items": [
+    "Minor: In this preview build the `data-testid=\"rail-add-repo\"` element is not rendered in the current dashboard rail layout (verified via querySelector — not in DOM even after dashboard fully mounts). This blocks a direct E2E click-through of the NewUserWizard open path from the sidebar. Not a blocker for THIS iteration's fix (it's proven by pytest + vitest + the live 409 curl), but if the rail 'Add repository' entrypoint is expected to be visible for standard logged-in users, main agent may want to double-check RailShell.jsx rendering conditions (Dashboard.jsx handleAddRepo, sidebar collapsed vs expanded state, or account/project state gating)."
+  ],
+  "critical_code_review_comments": [
+    "backend/routers/github_oauth.py line ~577-581: fix is correctly implemented — status_code == 401 branch on the upstream httpx.HTTPStatusError is converted to HTTPException(409) with an actionable 'reconnect' detail. No raw exception text leaks. Good.",
+    "frontend/src/lib/api.js line ~113-116: exclusion list is a substring match on /github/oauth/ and /github/app/. Defense-in-depth is correctly narrow — will not accidentally exclude unrelated auth endpoints, will correctly exclude both current and future github/oauth/* and github/app/* paths.",
+    "The 409-vs-401 semantic is defensible: 401 = 'YOUR AUREM session is invalid'; 409 = 'a linked third-party resource is in conflict/stale state'. This aligns with common REST conventions and preserves the frontend's global-401-means-logout contract without special-casing."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (per /app/memory/test_credentials.md; account confirmed to have a revoked GitHub OAuth link — 'GitHub access revoked for aurem-demo/frontend' banner visible on dashboard, which is the exact scenario the fix targets)",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The 401->409 fix in routers/github_oauth.py + the /github/oauth/* & /github/app/* exclusion in lib/api.js interceptor are both live and verified end-to-end. The preview test account (test@aurem.dev) is a great fixture for this because it actually has a stale/revoked legacy GitHub OAuth link -- calling GET /api/aurem-dev/github/oauth/repos with its valid JWT returns real 409 body. The rail-add-repo data-testid not being visible in DOM was NOT blocking the fix verification but may be a separate rail-layout concern to look at.",
+  "rca of the issue": "User complaint: 'clicking Add repository / Continue with GitHub App signs me out instead of opening install flow, and the install popup never auto-closes after picking a repo.' RCA: NewUserWizard auto-called GET /github/oauth/repos on mount when legacy OAuth status was connected=true, even if the stored GitHub token was revoked on GitHub's side. Server returned 401 (from a prior fix) -> frontend global axios response interceptor treated ANY 401 as AUREM-JWT-dead -> wiped localStorage aurem_token and window.location.href='/login' -> the whole browser session was force-logged-out BEFORE the user ever clicked Continue with GitHub App, AND the install popup never got a chance to run postMessage+auto-close because the parent tab was already gone. Mitigation shipped in TWO layers: (1) backend returns 409 (semantic: 'linked third-party resource conflict') instead of 401 so the two states can never collide; (2) frontend interceptor also explicitly excludes /github/oauth/* and /github/app/* URLs from the aurem:session-expired dispatch as defense-in-depth. Both layers verified passing here."
+}

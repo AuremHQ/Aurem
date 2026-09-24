@@ -13,9 +13,11 @@
  * Iter 62: extracted from ChatPanel.jsx as part of the P1 split.
  */
 import React, { useState, useEffect, useRef } from "react";
+import { hasVerifiedReview } from "../utils/interactionState";
+import { InteractionStatus } from "./InteractionStatus";
 import {
   User, Bot, Loader2, ShieldCheck, AlertTriangle, RefreshCw,
-  Copy as CopyIcon, ThumbsUp, ThumbsDown, Zap,
+  Copy as CopyIcon, ThumbsUp, ThumbsDown, Zap, X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
@@ -24,7 +26,7 @@ import FileDiffPeek from "./FileDiffPeek";
 import TaskProgressCard from "./TaskProgressCard";
 import TaskLiveTape from "./TaskLiveTape";
 import TaskManagementPanel, { hasChecklist } from "./TaskManagementPanel";
-import RenderedMessage from "./RenderedMessage";
+import ScopeConfirmCard from "./ScopeConfirmCard";import RenderedMessage from "./RenderedMessage";
 import EditedFileBubble from "./EditedFileBubble";
 import PaletteNudgeBubble from "./PaletteNudgeBubble";
 import LoopProgressBubble, { isLoopProgressContent } from "./LoopProgressBubble"; // Iter 331
@@ -35,6 +37,7 @@ import SystemSignalBanner from "./SystemSignalBanner";
 import UnlockProCTA, { shouldShowUnlockProCTA } from "./UnlockProCTA";
 import StepCards from "./StepCards";   // Iter 212m-19 — live step cards
 import RollbackConfirmModal from "./RollbackConfirmModal";
+import ThinkingLoader from "./ThinkingLoader";
 import { brandProvider } from "../lib/providerLabel";
 import { useFriendlyStatusPhrase } from "../hooks/useFriendlyStatusPhrase";
 import { trackShipRenderFailed } from "../lib/analytics";
@@ -54,7 +57,23 @@ export function detectShipCtaFallback(content) {
   }
   const hasFence = SHIP_FENCE_MARKER.test(content);
   const mentionsCta = SHIP_CTA_MENTION.test(content);
-  return { shouldFallback: hasFence || mentionsCta, hasFence };
+  // 2026-09-08 — root-cause fix for the recurring "Approve button
+  // didn't load" false-positive banner (live-reproduced: prompt
+  // "clean up the code ... and ship it" on a file that was already
+  // clean → model correctly concluded there was nothing to fix, but
+  // still emitted the ```aurem-handoff fence with no mutation verb
+  // inside it — a benign "no-op" conclusion, not a failed ship
+  // attempt). A fence with NO mutation verb was never going to
+  // become a real Approve button (extractHandoffBrief's own gate 5
+  // rejects it too) — so it shouldn't be reported as a UI failure.
+  // Only a fence that LOOKS like a genuine mutation attempt (has a
+  // mutation verb) but still got rejected by a later, stricter gate
+  // (fabricated citation, missing path, too long, etc.) is a real
+  // "should have shipped but couldn't" case worth the error banner.
+  const fenceMatch = content.match(/```aurem-handoff\s*\n([\s\S]*?)```/i);
+  const fenceIsNonActionable = !!fenceMatch && !MUTATION_VERBS.test(fenceMatch[1]);
+  const realHasFence = hasFence && !fenceIsNonActionable;
+  return { shouldFallback: realHasFence || mentionsCta, hasFence: realHasFence };
 }
 
 // ---- Helpers (only used here) ----------------------------------------------
@@ -188,7 +207,22 @@ function _normalisePath(p) {
 // m.content so the Ship button logic is unaffected.
 export function stripHandoffFenceForDisplay(content) {
   if (!content || typeof content !== "string") return content;
-  return content.replace(/```aurem-handoff\s*\n[\s\S]*?```/g, "").trim();
+  const hadFence = SHIP_FENCE_MARKER.test(content);
+  const stripped = content.replace(/```aurem-handoff\s*\n[\s\S]*?```/g, "").trim();
+  // 2026-09-11 — real bug repro (TC-04, founder screenshot): when the
+  // model's ENTIRE reply is JUST the internal aurem-handoff fence
+  // (no surrounding prose at all), stripping it for display left
+  // literally nothing behind — the bubble rendered with only its
+  // badges/attribution line and a blank body, looking broken. The
+  // Ship button below (driven by extractHandoffBrief on the
+  // UNSTRIPPED m.content) still worked fine — this was purely a
+  // "nothing to show in the bubble itself" display gap. If stripping
+  // actually removed a real fence and left nothing behind, show a
+  // short, honest one-liner instead of an empty body.
+  if (hadFence && !stripped) {
+    return "Proposed a change — review it below.";
+  }
+  return stripped;
 }
 
 function extractHandoffBrief(content, verifiedPaths) {
@@ -269,28 +303,51 @@ function extractHandoffBrief(content, verifiedPaths) {
 // Ship-via-CTO modal. Returns `[{ path, added }]` — `added` is a best-effort
 // estimate based on the matching code block in the message, or 0 when
 // we couldn't tie a code block to the path.
+//
+// 2026-02 — CRITICAL FIX (founder-confirmed, 3/3 reliable repro:
+// "add a comment '<any text>' to package.json or a valid file"):
+// a well-formed `aurem-handoff` brief is REQUIRED to contain plain-
+// English instructions and NO code block ("the worker writes the
+// code itself based on this brief" — that's the whole point of a
+// brief, not a diff). Its prose naturally NAMES the target file
+// (e.g. "In `frontend/src/index.js` add the comment...") — `FILE_RX`
+// correctly matches that path token, but with NO code block to pair
+// it with, `block` was always `undefined` and every path got
+// returned anyway with `code: ""`. `FileDiffPeek` then diffed the
+// REAL current file against that empty string and showed EVERY
+// real line as deleted — a false, deterministic "destructive diff"
+// on literally every correctly-formatted handoff naming an existing
+// file, 100% independent of the EARLIER stray-code-block fix (which
+// targets a completely different problem: a stray block appearing
+// IN THE CHAT TEXT, not this hover-diff computation). There's
+// nothing to preview when the worker hasn't written any code yet —
+// only surface a peek chip for a path that has a REAL matched code
+// block to diff against.
 function extractShipFiles(content, brief) {
   if (!brief) return [];
   const FILE_RX = /(?:[\w./_-]+\/)*[\w._-]+\.(?:jsx|tsx|yaml|toml|html|json|js|ts|py|yml|md|css|sh|env|sql|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|c|h)\b/g;
   const paths = Array.from(new Set((brief.match(FILE_RX) || [])
     .filter((p) => p.length < 200)
     .slice(0, 12)));
-  // Estimate added lines per file: count lines in any ```fenced block
-  // whose first comment line mentions the path. Falls back to total
-  // code-block line count / number of files.
-  const codeBlocks = Array.from(content.matchAll(/```[\w-]*\n([\s\S]*?)```/g))
-    .map((m) => m[1] || "");
-  const totalLines = codeBlocks.reduce((s, b) => s + b.split("\n").length, 0);
-  const perFile = paths.length ? Math.round(totalLines / paths.length) : 0;
-  return paths.map((p) => {
-    const block = codeBlocks.find((b) =>
-      b.slice(0, 200).includes(p.split("/").pop()) || b.slice(0, 200).includes(p),
-    );
-    const added = block
-      ? block.split("\n").filter((l) => l.trim()).length
-      : perFile;
-    return { path: p, added, removed: 0, code: block || "" };
-  });
+  // 2026-02 — the generic fence regex matches ANY ```lang block,
+  // including ```aurem-handoff itself (its own brief prose naturally
+  // mentions the target filename, which would otherwise false-match
+  // as "proposed code" for that path — the exact subtler bug this
+  // fix's own first draft had). Explicitly exclude the handoff fence
+  // by its language tag; only a REAL code fence counts as a preview.
+  const codeBlocks = Array.from(content.matchAll(/```([\w-]*)\n([\s\S]*?)```/g))
+    .filter((m) => (m[1] || "").trim().toLowerCase() !== "aurem-handoff")
+    .map((m) => m[2] || "");
+  return paths
+    .map((p) => {
+      const block = codeBlocks.find((b) =>
+        b.slice(0, 200).includes(p.split("/").pop()) || b.slice(0, 200).includes(p),
+      );
+      if (!block) return null;   // plan-only brief, no code to preview yet
+      const added = block.split("\n").filter((l) => l.trim()).length;
+      return { path: p, added, removed: 0, code: block };
+    })
+    .filter(Boolean);
 }
 
 // ---- Sub-components --------------------------------------------------------
@@ -409,6 +466,7 @@ export default function MessageBubble({
   idx, dbTurnIndex, m, onRegenerate, onRetryFix, sessionId,
   activeProject, exhausted, onTaskCompleted,
   onOpenDeployTab, collapseDefault = false, onOpenLivePopup,
+  onContinueTurn, onRetryFailedTurn, onConfirmScope, onCancelScope,
 }) {
   const [copied, setCopied] = useState(false);
   const [vote, setVote] = useState(m.feedback?.vote || null);
@@ -418,8 +476,33 @@ export default function MessageBubble({
     taskId: m.shipped_task_id || null,
     error: null,
   });
+  // 2026-09-11 — real QA repro (round 2): double-clicking "Approve
+  // the fix" fast enough triggered TWO concurrent /cto/tasks/submit
+  // requests ("attempt 1/3 failed", "attempt 2/3 failed" — external
+  // API contention). Root cause: the existing guard at the top of
+  // shipViaCTO() reads `shipState.status` from a CLOSURE snapshotted
+  // at render time — React state updates are batched/async, so a
+  // second click landing before the FIRST click's `setShipState({
+  // status: "shipping" })` has actually committed+re-rendered still
+  // sees the stale "idle" status and sails right through the guard.
+  // A ref is synchronous and mutates immediately (no batching, no
+  // stale-closure risk) — the bulletproof fix for this exact class
+  // of double-click race. Backend-side de-dup already prevented a
+  // duplicate COMMIT this time, but relying on that alone is risky
+  // (extra load on the external LLM API, and a different timing
+  // could still produce two real commits) — block it here instead.
+  const shipInFlightRef = useRef(false);
   // Live task progress (polled while shipped task is in-flight)
   const [taskInfo, setTaskInfo] = useState(null);
+  // 2026-09 audit — Rollback fire-and-forget bug. confirmRollbackShipped()
+  // POSTed /rollback and showed a static "Rollback queued" toast with NO
+  // follow-up: the ship-status poller above already stopped (task.status
+  // reached a terminal state when the SHIP completed), so once rollback
+  // was queued nothing ever re-checked rollback_status. Users saw
+  // "queued" forever even though the backend (confirmed via a real prod
+  // drill) can legitimately take minutes to land the revert commit.
+  // rollbackPollTick increments to (re)trigger the poll effect below.
+  const [rollbackPollTick, setRollbackPollTick] = useState(0);
   // 2026-08-28 · First-Experience Wave P2-B — themed confirm replaces
   // the last native window.confirm() pair in the primary "Approve the
   // fix" → rollback path (ShippedRow/OperationHistory were already
@@ -539,24 +622,77 @@ export default function MessageBubble({
     return () => { cancelled = true; };
   }, [shipState.taskId, onTaskCompleted]);
 
+  // 2026-09 audit fix — poll rollback_status until it reaches a
+  // terminal state, then surface a real toast (success or failure)
+  // instead of leaving the user with a static "Rollback queued" that
+  // never updates. Bounded at 10 minutes (200 * 3s) — the real prod
+  // drill that surfaced this bug observed a ~5-6 minute revert lag,
+  // so this leaves margin above the worst case actually measured.
+  useEffect(() => {
+    if (!rollbackPollTick) return;
+    const tid = shipState.taskId;
+    if (!tid) return;
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 200; // 200 * 3s = 10 minutes
+    async function tick() {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const r = await api.get(`/cto/tasks/${tid}`);
+        const t = r.data?.task || null;
+        if (cancelled || !t) return;
+        setTaskInfo(t);
+        if (t.rollback_status === "done") {
+          toast({ message: "Rollback complete — commit reverted on GitHub", kind: "success" });
+          return;
+        }
+        if (t.rollback_status === "failed") {
+          toast({
+            message: sanitizeErrorMessage(t.rollback_error, "Rollback failed — manual check needed"),
+            kind: "error",
+          });
+          return;
+        }
+        if (attempts < MAX_ATTEMPTS) setTimeout(tick, 3000);
+      } catch {
+        if (attempts < MAX_ATTEMPTS) setTimeout(tick, 5000);
+      }
+    }
+    tick();
+    return () => { cancelled = true; };
+  }, [rollbackPollTick, shipState.taskId]);
+
   async function rollbackShipped() {
     const tid = shipState.taskId;
     if (!tid) return;
     setRbConfirmOpen(true);
   }
 
+  // 2026-09-11 — same double-click race class as shipInFlightRef
+  // above, applied to the OTHER critical action (Rollback) for
+  // consistency/defense-in-depth per the founder's own stated
+  // principle: any critical action button needs a synchronous
+  // in-flight guard, not just a state-based `disabled` prop.
+  const rollbackInFlightRef = useRef(false);
+
   async function confirmRollbackShipped() {
     setRbConfirmOpen(false);
     const tid = shipState.taskId;
     if (!tid) return;
+    if (rollbackInFlightRef.current) return;
+    rollbackInFlightRef.current = true;
     try {
       await api.post(`/cto/tasks/${tid}/rollback`, { confirm: "ROLLBACK" });
-      toast({ message: "Rollback queued", kind: "info" });
+      toast({ message: "Rollback queued — this can take a few minutes, we'll update you here", kind: "info" });
+      setRollbackPollTick((n) => n + 1);
     } catch (e) {
       toast({
         message: sanitizeErrorMessage(e, "Rollback failed to start"),
         kind: "error",
       });
+    } finally {
+      rollbackInFlightRef.current = false;
     }
   }
 
@@ -608,7 +744,7 @@ export default function MessageBubble({
   // This is the user-reported fix: previously the button reappeared
   // after refresh / re-login because extractHandoffBrief ran against
   // the raw content and didn't know the turn had already shipped.
-  const handoffBrief = showActions && !m.shipped_task_id
+  const handoffBrief = showActions && !m.shipped_task_id && !m.ship_cancelled
     ? extractHandoffBrief(m.content, m.verifiedPaths)
     : null;
   const canShip = !!(handoffBrief && activeProject?.project_id && !exhausted);
@@ -648,6 +784,8 @@ export default function MessageBubble({
 
   async function shipViaCTO() {
     if (!canShip || shipState.status === "shipping" || shipState.status === "shipped") return;
+    if (shipInFlightRef.current) return;
+    shipInFlightRef.current = true;
     // Iter 212m-87 — replaced window.confirm() with the v0 Ship via CTO
     // modal. Files + Vanguard status now render inline in a dark overlay.
     const files = extractShipFiles(m.content, handoffBrief);
@@ -713,7 +851,14 @@ export default function MessageBubble({
     // TaskProgressCard/TaskLiveTape once shipped, so the modal's
     // post-ship UX was redundant too. One click now ships for real;
     // no second popup.
-    await doSubmit().catch(() => { /* doSubmit already surfaced the error via toast + shipState */ });
+    try {
+      await doSubmit().catch(() => { /* doSubmit already surfaced the error via toast + shipState */ });
+    } finally {
+      // Reset so a genuine retry after a real failure isn't blocked
+      // forever — only the double-click WITHIN one in-flight submit
+      // is guarded against.
+      shipInFlightRef.current = false;
+    }
   }
 
   return (
@@ -803,6 +948,23 @@ export default function MessageBubble({
           ) : (
             m.content
           )}
+          {/* 2026-09-11 — real QA repro (TC-C): a failed send used to
+              leave the user bubble looking exactly like a normal,
+              delivered message. Now it's clearly marked so the user
+              never wonders "did that actually go through?". */}
+          {m.role === "user" && m.sendFailed && (
+            <div
+              data-testid={`send-failed-indicator-${idx}`}
+              style={{
+                marginTop: 6, fontSize: 12, color: "var(--danger)",
+                display: "flex", alignItems: "center", gap: 4,
+                justifyContent: "flex-end",
+              }}
+            >
+              <AlertTriangle size={12} />
+              Not delivered
+            </div>
+          )}
           {/* Iter 212m-61 — Mermaid diagram payload from /diagram. */}
           {m.role === "assistant" && m.diagram?.code && (
             <MermaidBlock
@@ -866,6 +1028,18 @@ export default function MessageBubble({
           {m.role === "assistant" && (hasChecklist(m.content) || m.shipped_task_id) && (
             <TaskManagementPanel text={m.content} taskId={m.shipped_task_id} />
           )}
+          {/* Trust & Verification round — Enhancement 5. This turn
+              stopped BEFORE any tool call to ask for scope
+              confirmation — see routers/chat/worker.py's
+              `_scope_confirmation_gate`. */}
+          {m.role === "assistant" && m.awaitingScopeConfirmation && (
+            <ScopeConfirmCard
+              proposalId={m.scopeConfirmationProposalId}
+              prompt={m.scopeConfirmationPrompt}
+              onConfirm={onConfirmScope}
+              onCancel={onCancelScope}
+            />
+          )}
           {/* Iter 206 — Inline "Add PAT" CTA when ORA hits a GitHub 401
               and asks the user for a Personal Access Token. Surfaces a
               one-click button that opens the per-project PAT setup
@@ -880,6 +1054,117 @@ export default function MessageBubble({
               describe the error itself. */}
           {m.role === "assistant" && !m.streaming && (
             <SystemSignalBanner signals={m.system_signals} />
+          )}
+          {/* 2026-09-08 — Turn-Completion Contract. A turn may only
+              end in SUCCESS / EXPLICIT FAILURE / EXPLICIT PARTIAL —
+              never silent idle. This renders the two non-success
+              states with their real, working recovery action
+              (never text-only). Root fix for: "scan the whole repo
+              and list every file" ending on "Let me grab the
+              remaining directories..." with no list ever delivered
+              and no error/continue shown. */}
+          {m.role === "assistant" && !m.streaming && m.turnState === "partial" && m.continueAvailable && (
+            <div
+              data-testid="turn-partial-banner"
+              style={{
+                marginTop: 10, display: "flex", alignItems: "center",
+                gap: 10, padding: "8px 12px", borderRadius: 6,
+                border: "1px solid rgba(232,160,32,0.28)",
+                background: "rgba(232,160,32,0.06)",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                I paused partway through — that was my next planned step, not a finished result.
+              </span>
+              <button
+                type="button"
+                data-testid="turn-continue-btn"
+                onClick={() => onContinueTurn?.()}
+                style={{
+                  marginLeft: "auto", flexShrink: 0,
+                  fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                  borderRadius: 999, cursor: "pointer",
+                  border: "1px solid rgba(232,160,32,0.55)",
+                  background: "rgba(232,160,32,0.12)",
+                  color: "#e8a020",
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          )}
+          {m.role === "assistant" && !m.streaming && m.turnState === "error" && (
+            <div
+              data-testid="turn-failure-banner"
+              style={{
+                marginTop: 10, display: "flex", alignItems: "center",
+                gap: 10, padding: "8px 12px", borderRadius: 6,
+                border: "1px solid rgba(239,68,68,0.3)",
+                background: "rgba(239,68,68,0.06)",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "rgba(239,68,68,0.9)" }}>
+                This failed{m.turnError ? ` — ${m.turnError}` : ""}.
+                {m.failureMode === "provider_filtered"
+                  ? " Try editing your message and resending."
+                  : m.failureMode === "provider_rate_or_5xx"
+                  ? " The provider was busy — safe to retry now."
+                  : " Safe to retry."}
+              </span>
+              {m.failureMode !== "provider_filtered" && (
+                <button
+                  type="button"
+                  data-testid="turn-retry-btn"
+                  onClick={() => onRetryFailedTurn?.()}
+                  style={{
+                    marginLeft: "auto", flexShrink: 0,
+                    fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                    borderRadius: 999, cursor: "pointer",
+                    border: "1px solid rgba(239,68,68,0.5)",
+                    background: "rgba(239,68,68,0.1)",
+                    color: "rgba(239,68,68,0.95)",
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+          {/* 2026-09-08 — Turn-Completion Contract, Section 5: a turn
+              cut short by a genuine mid-stream client drop is
+              persisted with `interrupted: true` instead of being
+              silently discarded (see stream.py's token-emission
+              try/finally). On reload, render it as what it is —
+              never as if it were a normal complete answer. */}
+          {m.role === "assistant" && !m.streaming && m.interrupted && (
+            <div
+              data-testid="turn-interrupted-badge"
+              style={{
+                marginTop: 10, display: "flex", alignItems: "center",
+                gap: 10, padding: "8px 12px", borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "var(--bg-elev)",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                ⚠ Connection dropped partway through this reply — showing what was received.
+              </span>
+              <button
+                type="button"
+                data-testid="turn-interrupted-retry-btn"
+                onClick={() => onRetryFix?.()}
+                style={{
+                  marginLeft: "auto", flexShrink: 0,
+                  fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                  borderRadius: 999, cursor: "pointer",
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text-dim)",
+                }}
+              >
+                Retry
+              </button>
+            </div>
           )}
           {/* Inline HTML preview directly inside the bubble (separate from side PreviewPanel) */}
           {m.role === "assistant" && !m.streaming && (() => {
@@ -997,7 +1282,7 @@ export default function MessageBubble({
                 color: "var(--text-faint)", fontStyle: "italic", fontSize: 13,
                 fontFamily: "'JetBrains Mono', monospace",
               }}>
-                <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+                <ThinkingLoader size={16} />
                 {/* 2026-08-22 — dropped the raw "· 205.0s" ticking
                     counter and the literal "Retrying…"/"Reconnecting…"
                     labels (both make the system visibly look slow).
@@ -1006,6 +1291,26 @@ export default function MessageBubble({
                     bar above still carries the real % signal. */}
                 <span>{friendlyPhrase}</span>
               </span>
+              {/* 2026-09-08 — Turn-Completion Contract stream-idle
+                  notice. Production repro: "waited 48s and only got 1
+                  tool call through" was reported as a silent wait —
+                  the tick-driven friendlyPhrase above already updates
+                  every ~0.6s, but never escalated its TONE. Once the
+                  backend's STREAM_SLOW_NOTICE_S threshold trips (see
+                  stream.py), this shows explicitly rather than
+                  leaving the user to guess whether anything is
+                  actually still happening. */}
+              {m.slowNotice && (
+                <span
+                  data-testid="stream-slow-notice"
+                  style={{
+                    fontSize: 11, color: "#e8a020",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  This is running slower than usual…
+                </span>
+              )}
               {/* Iter 149 — Live tool invocation chips. Surfaces the
                   raw tool-call activity from the orchestrator (e.g.
                   "read_repo_file ✓", "search_repo …") so the user knows
@@ -1095,6 +1400,11 @@ export default function MessageBubble({
               } else if (prov.includes("deepseek")) {
                 writer = "DeepSeek";
               }
+              if (m.interaction?.version === 1) {
+                reviewer = hasVerifiedReview(m.interaction) ? m.interaction.review_evidence.reviewer : null;
+                // Tier is a request preference, not execution provenance.
+                writer = prov.includes("claude") ? "Claude" : prov.includes("deepseek") ? "DeepSeek" : null;
+              }
               if (!writer) return null;
               return (
                 <div
@@ -1124,7 +1434,9 @@ export default function MessageBubble({
               );
             })()
           )}
-          {!m.streaming && m.content && (m.council || m.provider === "mode-b-council") && (
+          {!m.streaming && <InteractionStatus interaction={m.interaction} index={idx} />}
+          {!m.streaming && m.content && (m.interaction?.version === 1 ? hasVerifiedReview(m.interaction) :
+            (m.council || m.provider === "mode-b-council")) && (
             <div data-testid={`council-badge-${idx}`} style={{
               marginTop: 8, fontSize: 10,
               fontFamily: "'JetBrains Mono', monospace",
@@ -1253,6 +1565,29 @@ export default function MessageBubble({
             </button>
           </div>
         )}
+        {/* 2026-09-12 — Bug 2 fix (critical-diff cancel bug). The user
+            explicitly rejected this pending fix in a later message
+            (or on a prior visit before refresh) — show that plainly
+            instead of letting the Approve button silently vanish,
+            which would read as a broken app. */}
+        {m.role === "assistant" && m.ship_cancelled && !m.shipped_task_id && (
+          <div
+            data-testid={`ship-cancelled-note-${idx}`}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              margin: "8px 0 2px 4px", padding: "5px 11px",
+              fontSize: 11.5, fontWeight: 600,
+              color: "var(--text-dim)",
+              background: "rgba(148,163,184,0.08)",
+              border: "1px solid rgba(148,163,184,0.25)",
+              borderRadius: 999,
+            }}
+            title="You cancelled this fix — nothing was applied to your repo."
+          >
+            <X size={12} strokeWidth={2.5} />
+            Cancelled — this fix was not applied
+          </div>
+        )}
         <ShipDialog
           idx={idx}
           msg={m}
@@ -1371,7 +1706,8 @@ export default function MessageBubble({
         )}
 
         {/* Watchdog result */}
-        {m.role === "assistant" && m.watchdog && m.watchdog.ok && (
+        {m.role === "assistant" && m.watchdog && m.watchdog.ok &&
+          (m.interaction?.version !== 1 || hasVerifiedReview(m.interaction)) && (
           <WatchdogPanel idx={idx} wd={m.watchdog} onRegenerate={onRegenerate} />
         )}
         {m.role === "assistant" && m.watchdog && !m.watchdog.ok && (

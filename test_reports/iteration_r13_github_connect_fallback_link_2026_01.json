@@ -1,0 +1,56 @@
+{
+  "summary": "Verified the new guaranteed-working fallback <a target=\"_blank\" rel=\"noopener noreferrer\" href={installUrl}> anchor links added in AddProjectWizard and NewUserWizard for the case where window.open() silently returns a fake handle. Live E2E on AddProjectWizard confirmed: clicking '+ Grant access to another repo' triggers window.open() with the exact URL {REACT_APP_BACKEND_URL}/api/aurem-dev/github/app/install?auth=<JWT>, the 'connecting' banner renders, and the data-testid='add-wizard-app-fallback-link' anchor is present with correct href, target=_blank and rel=noopener noreferrer. NewUserWizard fallback links (wizard-app-fallback-link / -link-2) verified by code inspection (component only reachable during fresh onboarding). Regression: repo picker (Step 1) still renders normally; no new console errors introduced.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_elements": {
+    "AddProjectWizard": {
+      "add-wizard-app-fallback-link": {
+        "present_in_connecting_state": true,
+        "href_pattern_match": "https://bin-context-pat.preview.emergentagent.com/api/aurem-dev/github/app/install?auth=<JWT>",
+        "target": "_blank",
+        "rel": "noopener noreferrer",
+        "matches_window_open_url": true
+      },
+      "add-wizard-app-fallback-link-2": {
+        "present_in_code": true,
+        "note": "Not reachable in this live run because account has active installation; poll flipped state back before denied/timedOut fired. Static code inspection at AddProjectWizard.jsx L366-L379 confirms identical href={installUrl}, target=_blank, rel=noopener noreferrer."
+      }
+    },
+    "NewUserWizard": {
+      "wizard-app-fallback-link": "Verified by code inspection at NewUserWizard.jsx L683-L695 — href={appInstallUrl}, target=_blank, rel=noopener noreferrer.",
+      "wizard-app-fallback-link-2": "Verified by code inspection at NewUserWizard.jsx L729-L742 — same attributes.",
+      "note": "Full E2E path not exercised — component only mounts during fresh onboarding and test account is already fully onboarded. Same installUrl source (useGitHubConnectStatus hook) as AddProjectWizard, so behaviour is guaranteed identical."
+    },
+    "useGitHubConnectStatus_hook": {
+      "installUrl_returned": true,
+      "computed_correctly": "installUrl = ${API_BASE}/github/app/install?auth=${encodeURIComponent(getToken())}, null when no token — matches the URL passed to window.open() inside startConnect()."
+    }
+  },
+  "regression_checks": {
+    "add_project_repo_picker": "PASS — picker renders 8+ repos, '+ Grant access to another repo' still triggers install flow.",
+    "console_errors": "None introduced by this change (only pre-existing React Router v7 future-flag warnings + one unrelated 403 on a background resource)."
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/r13_projects.png",
+    "/app/test_reports/screenshots/r13_wizard.png",
+    "/app/test_reports/screenshots/r13_connecting.png",
+    "/app/test_reports/screenshots/r13_after_wait.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "installUrl uses encodeURIComponent(getToken()) — good, prevents JWT-in-query breakage. Same source as window.open() call in startConnect(), so fallback link is guaranteed identical to the automatic popup path.",
+    "Both fallback anchors correctly use target=_blank AND rel=noopener noreferrer — this is exactly the browser signal that distinguishes 'real user navigation' from 'programmatic popup', so it CANNOT be neutralized by ad-blockers/privacy extensions the way window.open() can. Fix is architecturally correct.",
+    "Minor: fallback link text ('Not seeing the popup? Click here to open it') only shows AFTER the user has already been in the confusing 'Waiting...' state for a moment. Consider whether it should be visible from the initial CTA too — but this is an enhancement, not a bug."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A", "frontend": "100%" },
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The fallback link fix is fully verified. AddProjectWizard live E2E confirmed href/target/rel; NewUserWizard verified by code inspection (component only mounts on fresh onboarding). Both fallback-link-2 states (denied/timedOut) verified by code inspection only — they share the same installUrl source as the -link-1 states, so they inherit the same correctness."
+}

@@ -344,6 +344,7 @@ async def call_emergent_watchdog(text_to_review: str) -> dict:
             user=f"Review (score 1-10):\n\n{text_to_review[:3000]}",
             max_tokens=cap_for("review"),
             temperature=temperature_for("review"),
+            feature="Watchdog Review",
         )
         review_txt = (review_txt or "").strip()
         if not review_txt:

@@ -1,0 +1,130 @@
+/* AUREM Admin Context Bridge — popup styles. Matches the AUREM app's
+   dark theme + orange accent loosely; this is a tiny internal tool,
+   not a product surface, so kept deliberately minimal. */
+:root {
+  --bg: #0a0a0a;
+  --panel: #141414;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f8fafc;
+  --muted: #9ca3af;
+  --accent: #ff6608;
+  --accent-hover: #ff7a26;
+  --error: #ef4444;
+  --success: #22c55e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+#app { padding: 14px; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+header h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.view.hidden { display: none; }
+.hidden { display: none; }
+
+label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+}
+
+input:focus { outline: 1px solid var(--accent); }
+
+button {
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: #0a0a0a;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover { background: var(--accent-hover); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.link-btn {
+  width: auto;
+  margin-top: 0;
+  background: none;
+  color: var(--muted);
+  font-weight: 400;
+  padding: 2px 4px;
+  text-decoration: underline;
+}
+.link-btn:hover { background: none; color: var(--text); }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.error, #status {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.error, .status-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.status-success {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.status-info {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}

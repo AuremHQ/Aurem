@@ -28,10 +28,18 @@ describe("ChatPanel — ship-failure toast has a Retry action (R6)", () => {
 });
 
 describe("ShipConfirmModal — error phase has a Retry button (R6)", () => {
-  it("renders data-testid=ship-modal-retry wired to handleShip", () => {
-    expect(SHIP_MODAL_SRC).toContain('data-testid="ship-modal-retry"');
-    const idx = SHIP_MODAL_SRC.indexOf('data-testid="ship-modal-retry"');
-    expect(SHIP_MODAL_SRC.slice(idx, idx + 60)).toContain("onClick={handleShip}");
+  it("renders a Retry button via the shared ShipApproveCard, wired to handleShip", () => {
+    // R3 (this round) — the Retry button physically moved into the
+    // shared <ShipApproveCard/> (same component ShipDialog uses).
+    // ShipConfirmModal now passes onRetry={handleShip} down to it.
+    expect(SHIP_MODAL_SRC).toContain('onRetry={phase === "error" ? handleShip : null}');
+    expect(SHIP_MODAL_SRC).toContain("<ShipApproveCard");
+    const cardSrc = readFileSync(
+      path.resolve(__dirname, "../ShipApproveCard.jsx"), "utf-8"
+    );
+    expect(cardSrc).toContain("const retryTestid = testidOverrides.retry ||");
+    expect(cardSrc).toContain('`${testidPrefix}-retry-btn`');
+    expect(cardSrc).toContain("onClick={onRetry}");
   });
 
   it("handleShip allows re-entry from the error phase (not just confirm)", () => {

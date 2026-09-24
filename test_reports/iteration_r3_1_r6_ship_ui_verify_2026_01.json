@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only verification of R3-1 (TabBar repo quick-switch polish), R6 (PrMiniGuide + ship status label unification), ship-failure toast Retry, and ShipConfirmModal error-phase Retry button. R6 items and Retry are fully working live. R3-1 UI changes are ONLY covered by unit tests — <TabBar /> is not rendered anywhere in the running app (only its helper exports are consumed), so end users never see the new owner/repo labels or connection dots in production. Live regression smoke passed: login works, dashboard renders without page errors, ShipConfirmModal opens/closes cleanly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TabBar", "issue": "R3-1 quick-switch polish (owner/repo label + connection dot) only exists in TabBar.jsx's <Tab> sub-component, and <TabBar /> is not rendered anywhere in the running app. Live app uses <ProjectSwitcher /> (dropdown) mounted via Dashboard.jsx.projectSwitcherSlot instead. The R3-1 change therefore does not reach end users. Unit tests still pass because they mount <TabBar /> directly.", "selector": "[data-testid=\"tabbar\"] (absent in live DOM at /dashboard)", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/components/__tests__/TabBar.r3_1_quick_switch.test.jsx (4/4 pass)",
+    "/app/frontend/src/components/__tests__/TaskProgressCard.r6_status_label.test.jsx (2/2 pass)"
+  ],
+  "action_items": [
+    "Decide whether R3-1 was intended for the legacy <TabBar /> (needs remount above chat panel) OR for the live <ProjectSwitcher /> component. If the latter, port the owner/repo label + connection dot (data-testid=tab-{project_id} / tab-{project_id}-connection-dot) into ProjectSwitcher.jsx so users actually see it.",
+    "Optional: delete or clearly mark TabBar.jsx as legacy if ProjectSwitcher is now canonical, to avoid future R-round work landing in a dead component."
+  ],
+  "critical_code_review_comments": [
+    "R3-1 acceptance test regressed to unit-test-only coverage because <TabBar /> has zero JSX call sites in the production tree — greppable evidence: `grep -rn '<TabBar' src/` returns only test files. The problem statement's stated selectors (tab-{project_id}, tab-{project_id}-connection-dot) do not appear in the live DOM after login for either 1-project or many-project users.",
+    "PrMiniGuide, Toast string-arg fix, ShipConfirmModal error-phase Retry, and the shared shipStatus.js 'Rolled back' label are all correctly wired and verified live — good work on these.",
+    "Minor: <PrMiniGuide /> in ShipConfirmModal is rendered in the 'confirm' phase only (line 488) — if a user first arrives at ship via the loop-engine 'shipped' event (skips confirm), they won't have seen the guide. Ship-approval flows through ShipDialog still cover this because canShip is set there, so overall FTUX is still met.",
+    "TabBar.jsx line 165: Tab sub-component receives repoLabel/wired props but is only reachable when <TabBar /> is mounted — see main finding above."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not tested this round per request)", "frontend": "80% (4/5 live-verifiable items pass; R3-1 not reachable in live UI)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview) — login confirmed working, lands on /dashboard.",
+  "seed_data_creation": "none",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "R6 PrMiniGuide is verified via aurem:open-ship-modal event → guide appears, has text 'pull request'/'Merge'/'live on your site', dismiss X sets localStorage aurem_pr_mini_guide_seen_v1=1, subsequent modal opens do NOT re-show it. ShipConfirmModal error phase correctly shows ship-modal-retry alongside ship-modal-close-final. TaskProgressCard/ShipConfirmModal/LoopLiveFeed all say 'Rolled back' via shared lib/shipStatus.js — no 'Reverted' string remains in production render paths. The one gap: R3-1 TabBar polish lives only in unit tests; live app uses ProjectSwitcher dropdown. Screenshot at .screenshots/logged_in.jpeg shows the live dashboard chrome for reference.",
+  "rca of the issue": "R3-1: main agent modified frontend/src/components/TabBar.jsx which was previously the tab strip above the chat panel, but the app migrated to <ProjectSwitcher /> (dashboard/v2/ProjectSwitcher.jsx) mounted through TopBar.projectSwitcherSlot at some earlier point. Only TabBar's non-JSX exports (getActiveProjectId/setActiveProjectId/useActiveProject) are still consumed. Fix path: either remount <TabBar /> in TopBar, OR replicate the label+dot changes into ProjectSwitcher.jsx and add matching testids."
+}

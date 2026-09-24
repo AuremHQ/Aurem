@@ -135,7 +135,9 @@ async def _run_rollback_via_api(task_id: str, proj: dict, commit_sha: str,
         await _rollback_log(task_id, step, status)
 
     try:
-        await _set(rollback_status="running")
+        # 2026-09-1…21 chars truncated…lay ("queued but not yet scheduled" vs. GH API being slow)
+        # without needing raw server log access to diagnose next time.
+        await _set(rollback_status="running", rollback_worker_started_at=time.time())
         # Iter 212m-218 — attribute the revert commit to the real
         # developer instead of the historical "AUREM" bot identity.
         from services.git_identity import resolve_git_identity
@@ -197,7 +199,7 @@ async def _run_rollback_with_git(task_id: str, proj: dict, commit_sha: str,
             await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
 
     try:
-        await _set(rollback_status="running")
+        await _set(rollback_status="running", rollback_worker_started_at=time.time())
         await _rollback_log(task_id, f"Cloning {owner}/{repo}@{branch}…")
         # Full history needed (no --depth=1) so the revert can find the sha
         # 2026-09-09 — offloaded to a thread (asyncio.to_thread) so these

@@ -1,0 +1,81 @@
+....FFFF.FF.F.FFFF                                                       [100%]
+=================================== FAILURES ===================================
+_ test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[True-True] _
+tests/test_interaction_reliability_contract.py:81: in test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret
+    assert "src/header.py:12" in out
+E   assert 'src/header.py:12' in "Check a project file and inline `repo_id` before changing code.\nCode string: 'that flow'\nURL: https://example.com/docs\nLeaked token sample: sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n"
+_ test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[True-False] _
+tests/test_interaction_reliability_contract.py:83: in test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret
+    assert "Mode D" in out
+E   assert 'Mode D' in "Check src/header.py:12 and inline `repo_id` before changing code.\nCode string: 'that flow'\nURL: https://example.com/docs\nLeaked token sample: sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n"
+_ test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[False-True] _
+tests/test_interaction_reliability_contract.py:81: in test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret
+    assert "src/header.py:12" in out
+E   assert 'src/header.py:12' in "Check a project page and inline `repo_id` before changing content.\nContent string: 'that flow'\nURL: https://example.com/docs\nLeaked token sample: sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n"
+_ test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[False-False] _
+tests/test_interaction_reliability_contract.py:81: in test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret
+    assert "src/header.py:12" in out
+E   assert 'src/header.py:12' in "Check the top of your page:12 and inline `repo_id` before changing content.\nContent string: 'that flow'\nURL: https://example.com/docs\nLeaked token sample: sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n"
+_______ test_persist_turn_signature_exposes_optional_interaction_object ________
+tests/test_interaction_reliability_contract.py:114: in test_persist_turn_signature_exposes_optional_interaction_object
+    assert "interaction" in sig.parameters, (
+E   AssertionError: _persist_turn must accept optional interaction={version,turn_state,...}
+E   assert 'interaction' in mappingproxy(OrderedDict([('user_id', <Parameter "user_id: 'str'">), ('session_id', <Parameter "session_id: 'str'">), ...ool' = False">), ('bin_ctx', <Parameter "bin_ctx=None">), ('interrupted', <Parameter "interrupted: 'bool' = False">)]))
+E    +  where mappingproxy(OrderedDict([('user_id', <Parameter "user_id: 'str'">), ('session_id', <Parameter "session_id: 'str'">), ...ool' = False">), ('bin_ctx', <Parameter "bin_ctx=None">), ('interrupted', <Parameter "interrupted: 'bool' = False">)])) = <Signature (user_id: 'str', session_id: 'str', user_prompt: 'str', assistant_reply: 'str', provider: 'str', watchdog: ... low_confidence: 'bool' = False, ship_suppressed: 'bool' = False, bin_ctx=None, interrupted: 'bool' = False) -> 'None'>.parameters
+_ test_interaction_flag_on_status_question_about_council_is_not_council_request _
+tests/test_interaction_reliability_contract.py:123: in test_interaction_flag_on_status_question_about_council_is_not_council_request
+    assert is_council_request("What is the status of the decision council?", "B") is False
+E   AssertionError: assert True is False
+E    +  where True = is_council_request('What is the status of the decision council?', 'B')
+__ test_classify_intent_numbered_factual_status_list_must_not_route_to_d_e_b ___
+tests/test_interaction_reliability_contract.py:139: in test_classify_intent_numbered_factual_status_list_must_not_route_to_d_e_b
+    assert mode not in {"D", "E", "B"}
+E   AssertionError: assert 'B' not in {'B', 'D', 'E'}
+____________ test_chat_send_source_contains_pre_llm_conflict_guard _____________
+tests/test_interaction_reliability_contract.py:153: in test_chat_send_source_contains_pre_llm_conflict_guard
+    assert "request_conflict" in src, "chat_send must call interaction_contract.request_conflict"
+E   AssertionError: chat_send must call interaction_contract.request_conflict
+E   assert 'request_conflict' in '"""\nrouters/chat/turn.py — POST /chat/send (one non-streaming turn).\nSplit from the former routers/chat.py god-file...      # "Unlock Pro" CTA instead of a dead-end text mention.\n        "meta": result.get("meta") or {},\n    }\n\n\n\n'
+______ test_recurring_failed_tool_signatures_flag_even_when_turn_success _______
+tests/test_interaction_reliability_contract.py:200: in test_recurring_failed_tool_signatures_flag_even_when_turn_success
+    assert result.get("flagged", 0) >= 1, (
+E   AssertionError: recurring failed tool signatures should open review backlog even on success turns
+E   assert 0 >= 1
+E    +  where 0 = <built-in method get of dict object at 0xfdff102e0780>('flagged', 0)
+E    +    where <built-in method get of dict object at 0xfdff102e0780> = {'flagged': 0, 'scanned': 2}.get
+_______ test_interaction_gate_script_exists_and_is_blocking_in_predeploy _______
+tests/test_interaction_reliability_contract.py:211: in test_interaction_gate_script_exists_and_is_blocking_in_predeploy
+    assert os.path.exists(gate_path), "missing scripts/interaction_gate.sh"
+E   AssertionError: missing scripts/interaction_gate.sh
+E   assert False
+E    +  where False = <function exists at 0xfdff25137420>('/app/scripts/interaction_gate.sh')
+E    +    where <function exists at 0xfdff25137420> = <module 'posixpath' (frozen)>.exists
+E    +      where <module 'posixpath' (frozen)> = os.path
+_ test_interaction_reliability_workflow_exists_and_is_required_by_deploy_workflows _
+tests/test_interaction_reliability_contract.py:222: in test_interaction_reliability_workflow_exists_and_is_required_by_deploy_workflows
+    assert os.path.exists(wf), "missing reusable workflow .github/workflows/interaction-reliability.yml"
+E   AssertionError: missing reusable workflow .github/workflows/interaction-reliability.yml
+E   assert False
+E    +  where False = <function exists at 0xfdff25137420>('/app/.github/workflows/interaction-reliability.yml')
+E    +    where <function exists at 0xfdff25137420> = <module 'posixpath' (frozen)>.exists
+E    +      where <module 'posixpath' (frozen)> = os.path
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /app/test_reports/pytest/interaction_audit_baseline_backend.xml -
+=========================== short test summary info ============================
+FAILED tests/test_interaction_reliability_contract.py::test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[True-True]
+FAILED tests/test_interaction_reliability_contract.py::test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[True-False]
+FAILED tests/test_interaction_reliability_contract.py::test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[False-True]
+FAILED tests/test_interaction_reliability_contract.py::test_rendering_pipeline_preserves_path_line_code_bytes_and_redacts_secret[False-False]
+FAILED tests/test_interaction_reliability_contract.py::test_persist_turn_signature_exposes_optional_interaction_object
+FAILED tests/test_interaction_reliability_contract.py::test_interaction_flag_on_status_question_about_council_is_not_council_request
+FAILED tests/test_interaction_reliability_contract.py::test_classify_intent_numbered_factual_status_list_must_not_route_to_d_e_b
+FAILED tests/test_interaction_reliability_contract.py::test_chat_send_source_contains_pre_llm_conflict_guard
+FAILED tests/test_interaction_reliability_contract.py::test_recurring_failed_tool_signatures_flag_even_when_turn_success
+FAILED tests/test_interaction_reliability_contract.py::test_interaction_gate_script_exists_and_is_blocking_in_predeploy
+FAILED tests/test_interaction_reliability_contract.py::test_interaction_reliability_workflow_exists_and_is_required_by_deploy_workflows
+11 failed, 7 passed, 1 warning in 0.53s

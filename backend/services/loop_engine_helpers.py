@@ -24,6 +24,11 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+# 24 h TTL on the loop_plans collection (founder's spec). Lives here (not
+# in loop_engine) so this module has no import back into loop_engine.
+PLAN_TTL_S = 24 * 60 * 60
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -82,9 +87,6 @@ async def _log_error(db, loop_id: str, phase: str, error: str,
 # ─── Plan persistence (24h TTL via background sweeper) ────────────────
 
 async def _save_plan(db, loop_id: str, plan: dict) -> None:
-    # Lazy import — avoids a circular import with services.loop_engine
-    # (which imports this module at load time).
-    from services.loop_engine import PLAN_TTL_S
     await db.loop_plans.update_one(
         {"loop_id": loop_id},
         {"$set": {"loop_id": loop_id, "plan": plan,

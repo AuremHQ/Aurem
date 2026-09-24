@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { getCachedScan, setCachedScan } from "../lib/securityScanCache";
-import { toast } from "sonner";
+import { toast } from "../lib/toastApi";
 import SecretScanCard from "./SecretScanCard";
 import BulkFixConfirmModal from "./BulkFixConfirmModal";
 import useFixQuota from "../lib/useFixQuota";

@@ -38,6 +38,7 @@ Security:
 # for JWT signing and installation-token handling.
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -47,9 +48,10 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from cto_services.auth import current_dev
-from cto_services.db import get_db, require_db
+from cto_services.db import get_db, require_db  # noqa: F401 — get_db is a test patch target
 from services import github_app as _ga
 from services.github_app_config import is_configured as _app_configured
 from routers.github_funnel import track_server_side as _funnel_track
@@ -131,44 +133,14 @@ async def _upsert_installation(
     delivery_id: Optional[str] = None,
     repositories: Optional[list[dict]] = None,
 ) -> dict:
-    """Idempotent upsert into `github_installations`.
-
-    * `$setOnInsert`: `installed_at` (immutable install-time epoch)
-    * `$set`: everything mutable (auth data, active flag, updated_at,
-              optionally user_id / repositories / last_webhook_delivery)
-    """
-    now = _now_utc_epoch()
-    account = meta.get("account") or {}
-    set_doc: dict = {
-        "installation_id":       installation_id,
-        "github_login":          account.get("login") or "",
-        "github_account_type":   account.get("type") or "",
-        "github_account_id":     account.get("id"),
-        "target_type":           meta.get("target_type") or "",
-        "repository_selection":  meta.get("repository_selection") or "",
-        "permissions":           meta.get("permissions") or {},
-        "events":                meta.get("events") or [],
-        "active":                True,
-        "suspended_at":          None,
-        "deleted_at":            None,
-        "updated_at":            now,
-    }
-    if user_id:
-        set_doc["user_id"]   = user_id
-        set_doc["linked_at"] = now
-    if repositories is not None:
-        set_doc["repositories"] = repositories
-    if delivery_id:
-        set_doc["last_webhook_delivery"] = delivery_id
-
-    return await db.github_installations.find_one_and_update(
-        {"installation_id": installation_id},
-        {
-            "$set":         set_doc,
-            "$setOnInsert": {"installed_at": now},
-        },
-        upsert=True,
-        return_document=True,     # pymongo ReturnDocument.AFTER equivalent
+    """Thin pass-through — the real implementation moved to
+    `services/github_app.py::upsert_installation` (2026-09-16) so the
+    new admin reconciliation tooling can share it without a
+    router-to-router import. Kept as a local alias so every existing
+    call site in this file stays unchanged."""
+    return await _ga.upsert_installation(
+        db, installation_id, meta,
+        user_id=user_id, delivery_id=delivery_id, repositories=repositories,
     )
 
 
@@ -306,6 +278,21 @@ async def install_callback(
 
     db = require_db()
 
+    # 2026-09-05 — same cold-start race `/install` was hardened against
+    # on 2026-08-24, now confirmed hitting `/callback` too (founder
+    # screen recording on auremcto.com: state validated fine, GitHub
+    # authorized fine, but the metadata fetch below failed with
+    # `err=github_probe_failed` — traced to `_ga.app_jwt()` raising
+    # `GitHubAppNotConfigured` because the in-process runtime cache
+    # hadn't hydrated from Mongo yet). The whole OAuth round-trip
+    # (user reviewing GitHub's consent screen) easily outlasts a
+    # fresh-worker's boot window, so this can't be "fixed" by boot
+    # ordering alone — every request on this path needs the same
+    # one-shot DB fallback `/install` already has.
+    if not _app_configured():
+        from services.github_app_config import ensure_configured_from_db
+        await ensure_configured_from_db(db)
+
     # ── State validation (atomic single-use) ──────────────────────────
     state_row = None
     if state:
@@ -320,53 +307,118 @@ async def install_callback(
         )
 
     _recovered_user_id = None
-    if state and state_row is None:
-        # State row missing/expired/already-used — this used to be a
-        # dead end: the webhook still records `installation.created`
-        # with user_id:null, and the user's wizard silently reverts to
-        # the connect CTA with zero feedback (2026-08-27 founder report
-        # — real-world GitHub App install that never linked). FIX: our
-        # own state string is `gha:<user_id>:<random 24-byte token>` —
-        # the random suffix makes it unforgeable, so on TTL-expiry or a
-        # benign double-fire (GitHub occasionally redirects the
-        # callback twice) it is safe to recover `user_id` from the
-        # string itself rather than dropping the link entirely. Still
-        # a hard 401/redirect-to-error below if the string doesn't even
-        # match our own format (can't recover a user_id from nothing —
-        # that's a genuinely malformed/forged state).
-        if state.startswith("gha:"):
+    if state_row is None:
+        # No usable state row. Two distinct causes land here:
+        #   (a) `state` was present but the row is missing/expired/
+        #       already-used (double-fire, TTL, etc).
+        #   (b) `state` is COMPLETELY ABSENT from the query string.
+        #       This is documented, reproducible GitHub behavior
+        #       (confirmed live 2026-09-04 via founder screen
+        #       recording): when a user who ALREADY has this App
+        #       installed revisits the connect flow, GitHub routes
+        #       them through its own "manage installation"
+        #       (/settings/installations/<id>) screen instead of a
+        #       fresh consent screen, and DROPS the `state` query
+        #       param on the eventual redirect back to us — only
+        #       `installation_id` + `setup_action` survive. Previously
+        #       this whole recovery block was gated on `state` being
+        #       truthy, so case (b) fell straight through to an
+        #       orphaned/unlinked install (2026-09-04 fix).
+        if state and state.startswith("gha:"):
+            # Case (a) with a still-recognisable string. Our own state
+            # string is `gha:<user_id>:<random 24-byte token>` — the
+            # random suffix makes it unforgeable, so on TTL-expiry or a
+            # benign double-fire (GitHub occasionally redirects the
+            # callback twice) it is safe to recover `user_id` from the
+            # string itself rather than dropping the link entirely.
             _parts = state.split(":", 2)
             if len(_parts) == 3 and _parts[1]:
                 _recovered_user_id = _parts[1]
-        logger.warning(
-            "GH_CONNECT_STATE_INVALID installation_id=%s state_prefix=%s "
-            "recovered_user_id=%s (row missing/expired/used — see comment)",
-            installation_id, state[:8], _recovered_user_id,
-        )
+        if _recovered_user_id is None:
+            # Case (b), or a case (a) string that doesn't match our
+            # format. Last resort before declaring this orphaned: if
+            # this exact installation_id is ALREADY linked to a user
+            # from a prior successful connect, this redirect isn't a
+            # new link attempt at all — it's GitHub re-confirming an
+            # existing install (repo added/removed, or the user
+            # re-opened the connect wizard while already installed).
+            # Reuse the existing link instead of failing a perfectly
+            # valid reconnect/update.
+            _existing_row = await db.github_installations.find_one(
+                {"installation_id": int(installation_id)}
+            )
+            if _existing_row and _existing_row.get("user_id"):
+                _recovered_user_id = _existing_row["user_id"]
+                logger.info(
+                    "GH_CONNECT_STATE_MISSING_REUSED_EXISTING_LINK "
+                    "installation_id=%s user_id=%s state_present=%s — "
+                    "no usable state token but installation was already "
+                    "linked; treating as a valid reconnect/update instead "
+                    "of failing",
+                    installation_id, _recovered_user_id, bool(state),
+                )
+        if state:
+            logger.warning(
+                "GH_CONNECT_STATE_INVALID installation_id=%s state_prefix=%s "
+                "recovered_user_id=%s (row missing/expired/used — see comment)",
+                installation_id, state[:8], _recovered_user_id,
+            )
+        else:
+            logger.warning(
+                "GH_CONNECT_STATE_ABSENT installation_id=%s recovered_user_id=%s "
+                "(GitHub dropped `state` — likely existing-installation "
+                "update flow, see comment)",
+                installation_id, _recovered_user_id,
+            )
         if _recovered_user_id is None:
             # Truly orphaned — no user_id, no DB row, no recoverable
-            # state string. Enrich the log with account/repo context
-            # (best-effort; installation_id alone isn't enough to grep
-            # an incident against a specific founder report) before
-            # giving up. This is the ONLY case that stays unlinked —
-            # every other state failure self-heals via the recovery
-            # above.
+            # state string, no existing link. Enrich the log with
+            # account/repo context (best-effort; installation_id alone
+            # isn't enough to grep an incident against a specific
+            # founder report) before giving up.
+            #
+            # 2026-09-16 — CONFIRMED FIX (founder-reported incident:
+            # rebecca@millingtonstudio.com's GitHub-side install/repo-
+            # selection succeeded — confirmed live against GitHub's own
+            # API — but Aurem's DB had zero record of it at all). Root
+            # cause: this exact branch used to fetch `meta`/repos ONLY
+            # to log them, then throw the data away and return without
+            # ever writing to `github_installations` — so if the
+            # webhook's OWN `installation.created` delivery also
+            # missed/failed (or this callback fires again on a later
+            # revisit — GitHub can drop `state` on that path per the
+            # 2026-09-04 fix above), NOTHING in Aurem ever recorded
+            # that this installation exists, on GitHub OR in our DB.
+            # Now persists exactly what the webhook path persists
+            # (unlinked ghost row, `user_id=None`) so the installation
+            # is at minimum visible + linkable via the admin "Unlinked
+            # GitHub Installations" tool instead of vanishing.
             try:
                 _orphan_meta = await _fetch_installation_meta(installation_id)
                 _orphan_login = (_orphan_meta.get("account") or {}).get("login")
             except Exception:                                     # noqa: BLE001
+                _orphan_meta = None
                 _orphan_login = None
             try:
                 _orphan_repos = await _ga.list_installation_repos(int(installation_id))
+                _orphan_repo_slim = [_slim_repo(r) for r in _orphan_repos]
                 _orphan_repo_names = [r.get("full_name") for r in _orphan_repos][:10]
             except Exception:                                      # noqa: BLE001
+                _orphan_repo_slim = None
                 _orphan_repo_names = None
+            if _orphan_meta is not None:
+                await _upsert_installation(
+                    db, int(installation_id), _orphan_meta,
+                    repositories=_orphan_repo_slim,
+                )
             logger.error(
                 "GH_CONNECT_ORPHANED_INSTALL installation_id=%s account=%s "
                 "repos=%s state_prefix=%s — no user_id could be recovered; "
-                "install landed unlinked, needs manual DB correlation "
-                "(db.github_installations updateOne by installation_id + user_id)",
-                installation_id, _orphan_login, _orphan_repo_names, state[:8] if state else None,
+                "ghost row %s in db.github_installations (needs manual "
+                "admin link — see /admin/github/installations/unlinked)",
+                installation_id, _orphan_login, _orphan_repo_names,
+                state[:8] if state else None,
+                "persisted" if _orphan_meta is not None else "COULD NOT BE PERSISTED (metadata fetch also failed)",
             )
             return RedirectResponse(
                 url=_dashboard_url(request, _DEEP_LINK_ERR_STATE),
@@ -756,8 +808,7 @@ _BRIDGE_HTML = """<!doctype html>
   } else if (status === 'pending') {
     msg.innerHTML = 'Installation is pending your org admin\\'s approval.';
   } else {
-    msg.innerHTML = '<span class="err">Install did not complete</span>' +
-      (err ? '<div class="hint">Reason: ' + err + '</div>' : '');
+    msg.textContent = 'Install did not complete' + (err ? ': ' + err : '');
   }
 
   var payload = { type: 'aurem-app-installed', status: status,
@@ -775,13 +826,13 @@ _BRIDGE_HTML = """<!doctype html>
   // page — not as a delay on this popup. So this window can close on
   // the standard short "acknowledged" beat instead of blocking for 12s.
   if (window.opener && !window.opener.closed) {
-    try { window.opener.postMessage(payload, '*'); } catch (e) {}
+    try { window.opener.postMessage(payload, window.location.origin); } catch (e) {}
     setTimeout(function(){ try { window.close(); } catch (e) {} }, 1200);
     return;
   }
 
-  // 2. Non-popup fallback — meta-refresh to /dashboard so the user
-  //    still lands somewhere sensible.
+  // 2. Existing users do not have the onboarding wizard mounted on
+  // /dashboard. Return to Projects, which resumes repository selection.
   var tail = '';
   if (status === 'success' && installId) {
     tail = '?flow=connect-repo&install=success&install_id=' + installId;
@@ -790,7 +841,7 @@ _BRIDGE_HTML = """<!doctype html>
   } else {
     tail = '?flow=connect-repo&err=' + (err || 'unknown');
   }
-  setTimeout(function(){ window.location.replace('/dashboard' + tail); }, 1200);
+  setTimeout(function(){ window.location.replace('/projects' + tail); }, 1200);
 })();
 </script>
 </body></html>"""
@@ -807,8 +858,8 @@ async def install_bridge(
     Detects `window.opener` — if the browser is a popup opened by the
     wizard, it posts an `aurem-app-installed` message back to the
     parent and closes itself. Otherwise it meta-refreshes to
-    `/dashboard?flow=connect-repo&…` so the user still lands on the
-    right screen.
+    `/projects?flow=connect-repo&…` to resume explicit project creation,
+    including accounts that already have projects.
 
     Query params (all optional):
       status      — "success" | "pending" | "err"
@@ -857,6 +908,78 @@ async def list_my_installations(
 
 
 # ═════════════════════════════════════════════════════════════════════
+# 4z. POST /claim — authenticated client-side link fallback
+#     (2026-09-04 — GitHub-state-dropped reconnect fix, part 2).
+#
+# `/callback` (above) now reuses an EXISTING link when GitHub drops
+# `state` on an already-installed reconnect. But that only self-heals
+# an installation that was linked to a user at least once before. If
+# the very first-ever install for a given installation_id lands via
+# the webhook (which never carries user_id) BEFORE any authenticated
+# browser callback completes, the row is orphaned from birth and
+# `/callback`'s reuse-existing-link has nothing to reuse.
+#
+# This endpoint closes that gap from the other end: the browser tab
+# that is actually driving the connect flow IS authenticated (it holds
+# the user's JWT) and DOES know which `installation_id` GitHub just
+# handed back (via the bridge's postMessage, or the non-popup
+# meta-refresh landing params) — so let it claim the row directly
+# instead of depending on a fragile query-string round-trip through
+# GitHub at all.
+#
+# Guardrails against hijacking an orphaned installation_id that
+# belongs to a DIFFERENT, unrelated account:
+#   * No-op (200) if already linked to the calling user.
+#   * 403 if linked to a DIFFERENT user already.
+#   * 409 if the row is unlinked but was installed more than
+#     `_CLAIM_WINDOW_SECONDS` ago — an old orphan is a signal for
+#     manual review, not a same-session self-heal.
+#   * 404 if the row doesn't exist yet (webhook hasn't landed) —
+#     caller can retry briefly.
+_CLAIM_WINDOW_SECONDS = _STATE_TTL_SECONDS  # same 15-minute window as oauth_states
+
+
+class _ClaimBody(BaseModel):
+    installation_id: int
+
+
+@router.post("/claim")
+async def claim_installation(
+    body: _ClaimBody,
+    authorization: Optional[str] = Header(None),
+):
+    user = await current_dev(authorization)
+    db = require_db()
+
+    row = await db.github_installations.find_one(
+        {"installation_id": int(body.installation_id)}
+    )
+    if not row:
+        raise HTTPException(404, "installation_not_found")
+
+    existing_user_id = row.get("user_id")
+    if existing_user_id == user["user_id"]:
+        return {"ok": True, "already_linked": True}
+    if existing_user_id:
+        raise HTTPException(403, "installation_belongs_to_another_user")
+
+    installed_at = row.get("installed_at") or 0
+    if (_now_utc_epoch() - installed_at) > _CLAIM_WINDOW_SECONDS:
+        raise HTTPException(409, "installation_too_old_to_claim")
+
+    await db.github_installations.update_one(
+        {"installation_id": int(body.installation_id)},
+        {"$set": {"user_id": user["user_id"], "linked_at": _now_utc_epoch()}},
+    )
+    logger.info(
+        "GH_CONNECT_CLIENT_CLAIMED installation_id=%s user_id=%s — "
+        "client-side claim linked a previously-orphaned installation",
+        body.installation_id, user["user_id"],
+    )
+    return {"ok": True, "already_linked": False}
+
+
+# ═════════════════════════════════════════════════════════════════════
 # 4a. GET /status — 2026-08 hardening (F4-github-connect · I4b).
 #
 # THE authoritative live-status endpoint the connect investigation
@@ -877,6 +1000,22 @@ async def list_my_installations(
 # immediately) and return state=error with a plain-language reason.
 # ═════════════════════════════════════════════════════════════════════
 _STATUS_CACHE_TTL_S = 10
+
+# 2026-09-09 — founder-reported production incident: nginx logged 3
+# consecutive `/health` upstream timeouts (110: Connection timed out)
+# in the same ~15s window as two overlapping `GET /github/app/status`
+# calls (dashboard polls this every ~2.5s) plus 2 dead-installation
+# 404s ("access_tokens" 404 — installation revoked on GitHub's side).
+# Root cause: the loop below ran fully SEQUENTIALLY — one `await`
+# GitHub call per installation, one at a time — for up to 50 rows.
+# With a 10s cache TTL and ~2.5s polling, every installation's cache
+# tends to expire in the same window, so a user with several
+# installations (some now dead) triggers a "thundering herd" of
+# sequential GitHub round-trips on EVERY poll while any tab has this
+# open. Bounding concurrency (instead of one-at-a-time) cuts total
+# wall time roughly proportionally to installation count, without
+# hammering GitHub's rate limits (still capped, just not serial).
+_STATUS_FETCH_CONCURRENCY = 5
 
 
 @router.get("/status")
@@ -900,8 +1039,13 @@ async def connect_status(authorization: Optional[str] = Header(None)):
 
     now = time.time()
     any_error: Optional[str] = None
-    out_installs = []
-    for row in rows:
+
+    # 2026-09-09 — bounded-concurrency fetch (see comment above
+    # _STATUS_FETCH_CONCURRENCY). Same per-row logic as before, just
+    # no longer forced onto one sequential await chain.
+    sem = asyncio.Semaphore(_STATUS_FETCH_CONCURRENCY)
+
+    async def _resolve_row(row: dict) -> tuple[dict, bool]:
         iid = row.get("installation_id")
         cached_repos = row.get("repositories")
         updated_at = row.get("updated_at") or 0
@@ -910,8 +1054,12 @@ async def connect_status(authorization: Optional[str] = Header(None)):
             and (now - updated_at) < _STATUS_CACHE_TTL_S
         )
         if fresh:
-            repos = cached_repos
-        else:
+            return {
+                "installation_id": iid,
+                "github_login":    row.get("github_login"),
+                "repositories":    cached_repos,
+            }, False
+        async with sem:
             try:
                 fetched = await _ga.list_installation_repos(int(iid))
                 repos = [_slim_repo(r) for r in fetched]
@@ -919,6 +1067,11 @@ async def connect_status(authorization: Optional[str] = Header(None)):
                     {"installation_id": iid},
                     {"$set": {"repositories": repos, "updated_at": now}},
                 )
+                return {
+                    "installation_id": iid,
+                    "github_login":    row.get("github_login"),
+                    "repositories":    repos,
+                }, False
             except Exception as e:
                 logger.warning(
                     "[status] live repo fetch failed for install %s: %r",
@@ -927,13 +1080,18 @@ async def connect_status(authorization: Optional[str] = Header(None)):
                 # Do NOT overwrite/long-cache the failure — keep whatever
                 # was cached (even if empty) and let the NEXT poll retry.
                 repos = cached_repos if isinstance(cached_repos, list) else []
-                if not repos:
-                    any_error = "github_fetch_failed"
-        out_installs.append({
-            "installation_id": iid,
-            "github_login":    row.get("github_login"),
-            "repositories":    repos,
-        })
+                return {
+                    "installation_id": iid,
+                    "github_login":    row.get("github_login"),
+                    "repositories":    repos,
+                }, not repos
+
+    resolved = await asyncio.gather(*(_resolve_row(row) for row in rows))
+    out_installs = []
+    for inst, had_error in resolved:
+        out_installs.append(inst)
+        if had_error:
+            any_error = "github_fetch_failed"
 
     all_repos = [
         {**r, "installation_id": inst["installation_id"],

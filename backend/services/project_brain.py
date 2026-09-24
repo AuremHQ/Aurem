@@ -294,6 +294,38 @@ async def update_brain_after_commit(
         return
 
 
+# 2026-02 — extracted from update_brain_from_conversation() as a PURE
+# function (no db, no side effects) so the exact same detection logic
+# can be re-run in dry-run mode against real historical messages
+# (see admin_project_brain_trigger_audit() below) without any risk of
+# logic drift between "what actually writes" and "what we audit
+# against" — the founder's Gap-2 follow-up question ("show the actual
+# count, out of N real interactions, how many matched vs didn't, and
+# why") cannot be answered honestly with two independently-maintained
+# copies of the same keyword list.
+STACK_KEYWORDS = [
+    "fastapi", "flask", "django", "react", "vue", "next.js", "mongodb",
+    "postgres", "redis", "celery", "docker", "kubernetes", "stripe",
+    "typescript", "python", "node", "graphql", "rest", "grpc",
+]
+REJECTION_SIGNALS = ["don't use", "avoid", "we decided against", "not using", "we rejected"]
+DECISION_SIGNALS = ["we'll use", "let's go with", "decided to", "going with", "we chose"]
+
+
+def detect_brain_triggers(user_message: str, ora_reply: str) -> dict:
+    """Returns which of the 3 write triggers this exchange matches —
+    the SAME check `update_brain_from_conversation` uses to decide
+    what to persist. Pure/no I/O, safe to call in a dry-run audit."""
+    lower_msg = (user_message or "").lower()
+    lower_reply = (ora_reply or "").lower()
+    found_stack = [k for k in STACK_KEYWORDS if k in lower_msg or k in lower_reply]
+    return {
+        "stack":      found_stack,
+        "rejected":   any(s in lower_msg for s in REJECTION_SIGNALS),
+        "decision":   any(s in lower_msg for s in DECISION_SIGNALS),
+    }
+
+
 async def update_brain_from_conversation(
     db: AsyncIOMotorDatabase,
     project_id: str,
@@ -316,18 +348,11 @@ async def update_brain_from_conversation(
     _l = _log.getLogger(__name__)
     try:
         now = datetime.now(timezone.utc)
-        lower_msg = user_message.lower()
-        lower_reply = ora_reply.lower()
+        triggers = detect_brain_triggers(user_message, ora_reply)
+        found_stack = triggers["stack"]
 
         push_ops = {}
 
-        # Detect tech stack mentions
-        stack_keywords = [
-            "fastapi", "flask", "django", "react", "vue", "next.js", "mongodb",
-            "postgres", "redis", "celery", "docker", "kubernetes", "stripe",
-            "typescript", "python", "node", "graphql", "rest", "grpc",
-        ]
-        found_stack = [k for k in stack_keywords if k in lower_msg or k in lower_reply]
         if found_stack:
             await db["project_brains"].update_one(
                 {"project_id": project_id},
@@ -335,17 +360,13 @@ async def update_brain_from_conversation(
                 upsert=True,
             )
 
-        # Detect rejection signals ("don't use", "we decided against", "avoid")
-        rejection_signals = ["don't use", "avoid", "we decided against", "not using", "we rejected"]
-        if any(s in lower_msg for s in rejection_signals):
+        if triggers["rejected"]:
             push_ops["rejected"] = {
                 "$each": [{"idea": user_message[:120], "why_rejected": "user explicitly rejected", "date": str(now.date())}],
                 "$slice": -30,
             }
 
-        # Detect decision signals ("we'll use", "let's go with", "decided to")
-        decision_signals = ["we'll use", "let's go with", "decided to", "going with", "we chose"]
-        if any(s in lower_msg for s in decision_signals):
+        if triggers["decision"]:
             push_ops["decisions"] = {
                 "$each": [{"title": user_message[:100], "reason": "from conversation", "date": str(now.date())}],
                 "$slice": -30,

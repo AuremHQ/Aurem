@@ -101,7 +101,7 @@ async def _vercel_get(path: str, params: Optional[dict] = None) -> dict:
     """Thin GET wrapper — returns `{"ok": True, "data": json}` or
     `{"ok": False, "error": ...}`. Keeps the skill bodies short."""
     if not _token():
-        return {"ok": False, "error": "VERCEL_API_TOKEN not configured"}
+        return {"ok": False, "error": "Vercel not connected yet"}
     try:
         async with ext_client("vercel") as c:
             r = await c.get(f"{VERCEL_API}{path}", headers=_headers(),
@@ -118,7 +118,7 @@ async def _vercel_get(path: str, params: Optional[dict] = None) -> dict:
 
 async def _vercel_post(path: str, body: dict) -> dict:
     if not _token():
-        return {"ok": False, "error": "VERCEL_API_TOKEN not configured"}
+        return {"ok": False, "error": "Vercel not connected yet"}
     try:
         async with ext_client("vercel") as c:
             r = await c.post(f"{VERCEL_API}{path}", headers=_headers(),
@@ -139,7 +139,7 @@ async def _vercel_post(path: str, body: dict) -> dict:
 
 async def _vercel_delete(path: str) -> dict:
     if not _token():
-        return {"ok": False, "error": "VERCEL_API_TOKEN not configured"}
+        return {"ok": False, "error": "Vercel not connected yet"}
     try:
         async with ext_client("vercel") as c:
             r = await c.delete(f"{VERCEL_API}{path}", headers=_headers())

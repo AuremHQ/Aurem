@@ -192,6 +192,14 @@ def test_architecture_review_create_and_list(headers):
     assert r2.status_code == 200
     reviews = r2.json().get("reviews", [])
     assert any(rv.get("notes") == "TEST_review from pytest" for rv in reviews)
+    # Clean up: a synthetic rubric left in the DB would count as the
+    # "fresh human review" half of the Architecture score (metric pollution).
+    from dotenv import dotenv_values
+    from pymongo import MongoClient
+    env = {**dotenv_values("/app/backend/.env"), **os.environ}
+    if env.get("MONGO_URL") and env.get("DB_NAME"):
+        MongoClient(env["MONGO_URL"])[env["DB_NAME"]] \
+            .architecture_review_log.delete_many({"reviewer": "TEST_bot"})
 
 
 # ── Test-coverage trigger ──

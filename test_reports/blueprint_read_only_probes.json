@@ -1,0 +1,20 @@
+{
+  "environment": "sandbox; mocked classifier timeout; no production traffic",
+  "normalizer": {
+    "input": "```js\nconst label = \"a—b\";\n```",
+    "observed": {
+      "text": "```js\nconst label = \"a--b\";\n```",
+      "changed": true,
+      "flagged": false,
+      "change_fraction": 0.0
+    },
+    "literal_preserved": false
+  },
+  "classifier_timeout_with_prior_E": {
+    "mode": "E",
+    "confidence": null,
+    "source": "keyword_fallback",
+    "switched": false
+  },
+  "status": "OPEN findings, not fixes"
+}

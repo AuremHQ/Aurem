@@ -1,0 +1,16 @@
+
+ RUN  v3.2.7 /app/frontend
+
+ ❯ src/utils/__tests__/interactionReliability.test.jsx (3 tests | 3 failed) 59ms
+   × interaction reliability contract (baseline, expected to fail pre-fix) > extractSuggestions should honor interaction contract and avoid arbitrary quote chips 6ms
+     → expected [ 'do not parse this' ] to deeply equal []
+   × interaction reliability contract (baseline, expected to fail pre-fix) > mapHistoryTurn preserves interaction and snake-case turn-state fields 1ms
+     → expected undefined to deeply equal { version: 1, …(4) }
+   × interaction reliability contract (baseline, expected to fail pre-fix) > MessageBubble must not infer review badge from provider/council without interaction evidence 50ms
+     → expected <div …(2)></div> to be null
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  21:22:49
+   Duration  2.91s (transform 236ms, setup 181ms, collect 1.15s, tests 59ms, environment 721ms, prepare 112ms)
+

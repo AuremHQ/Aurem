@@ -234,18 +234,66 @@ def lint_file_blocks(file_blocks: dict) -> dict:
 # Auto-fix (best-effort for safe rules only)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _strip_console_log_calls(content: str) -> tuple[str, int]:
+    """Removes every console.log(...) call, regardless of whether it's
+    alone on its line, missing a trailing semicolon, or has nested
+    parens inside its arguments (e.g. console.log('x', foo(bar))).
+    A naive fixed-shape regex (the previous implementation) only
+    matched a call that was ENTIRELY alone on its line and ended in
+    exactly `);` — any real-world variation (no semicolon, trailing
+    comment, nested call, not alone on the line) silently survived,
+    which is exactly why this same pre-existing console.log kept
+    re-blocking unrelated future commits to the same file (2026-02
+    founder QA finding — confirmed as a repeat, not a one-off).
+    Finds each `console.log(` occurrence and walks forward with
+    paren-depth counting to find its real matching close paren (handles
+    nesting), then removes just that call (+ an immediately-following
+    `;` if present). If the line becomes blank, the whole line
+    (including its newline) is removed too."""
+    count = 0
+    out_lines = []
+    for line in content.split("\n"):
+        new_line = line
+        while True:
+            m = re.search(r"\bconsole\.log\s*\(", new_line)
+            if not m:
+                break
+            start = m.start()
+            depth = 0
+            i = m.end() - 1  # position of the opening "("
+            end = None
+            while i < len(new_line):
+                if new_line[i] == "(":
+                    depth += 1
+                elif new_line[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+                i += 1
+            if end is None:
+                break  # unbalanced on this line (multi-line call) — leave it
+            # consume an immediately-following semicolon too, if present
+            if end < len(new_line) and new_line[end] == ";":
+                end += 1
+            new_line = new_line[:start] + new_line[end:]
+            count += 1
+        if new_line.strip() == "" and line.strip() != "":
+            continue  # drop now-blank line entirely
+        out_lines.append(new_line)
+    return "\n".join(out_lines), count
+
+
 def auto_fix_file(filepath: str, content: str) -> tuple[str, list[str]]:
     """
     Auto-fixes safe issues in a file. Returns (fixed_content, list_of_fixes).
     Only fixes console.log and transition: all — safe, mechanical changes.
     """
     fixes = []
-    original = content
 
-    # Remove console.log lines
-    new_content, n = re.subn(r"^\s*console\.log\s*\([^)]*\);\s*\n?", "", content, flags=re.MULTILINE)
+    # Remove console.log calls (any real-world shape, see _strip_console_log_calls)
+    content, n = _strip_console_log_calls(content)
     if n:
-        content = new_content
         fixes.append(f"Removed {n} console.log statement(s)")
 
     # Fix transition: all → transition: opacity 0.2s, transform 0.2s

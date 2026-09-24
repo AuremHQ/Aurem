@@ -418,6 +418,22 @@ class TestBulkRevokeRouter:
         assert exc.value.detail["valid_count"] == 1
 
     @pytest.mark.asyncio
+    async def test_hard_guard_blocks_over_five_even_all_broken(
+        self, admin_bin_wired, fake_db, monkeypatch,
+    ):
+        """t_hard_guard_blocks_over_five_even_all_broken — 2026-09-07:
+        a misclick selecting >5 rows must still require the typed
+        confirm phrase, even when none of them currently work."""
+        from fastapi import HTTPException
+        from routers.admin_bin import GithubBulkRevokeBody
+        body = GithubBulkRevokeBody(installation_ids=[1, 2, 3, 4, 5, 6])  # 6, no confirm_text
+        with pytest.raises(HTTPException) as exc:
+            await admin_bin_wired.github_bulk_revoke(body=body, authorization="Bearer x")
+        assert exc.value.status_code == 400
+        assert exc.value.detail["error"] == "hard_guard_blocked"
+        assert exc.value.detail["valid_count"] == 0
+
+    @pytest.mark.asyncio
     async def test_gated_by_live_verified_flag_even_with_confirm(
         self, admin_bin_wired, fake_db, monkeypatch,
     ):
@@ -460,7 +476,7 @@ class TestBulkRevokeRouter:
         monkeypatch.setattr(gbr, "bulk_revoke", _fake_bulk_revoke)
 
         from routers.admin_bin import GithubBulkRevokeBody
-        body = GithubBulkRevokeBody(installation_ids=[10, 11])
+        body = GithubBulkRevokeBody(installation_ids=[10, 11], reason="test sweep")
         out = await admin_bin_wired.github_bulk_revoke(body=body, authorization="Bearer x")
 
         assert sorted(recorded["ids"]) == [10, 11]
@@ -501,7 +517,7 @@ class TestBulkRevokeRouter:
         monkeypatch.setattr(gbr, "bulk_revoke", _fake_bulk_revoke)
 
         from routers.admin_bin import GithubBulkRevokeBody
-        body = GithubBulkRevokeBody(installation_ids=[1, 2, 3])
+        body = GithubBulkRevokeBody(installation_ids=[1, 2, 3], reason="test sweep")
         out = await admin_bin_wired.github_bulk_revoke(body=body, authorization="Bearer x")
 
         assert len(out["revoked"]) == 1
@@ -537,8 +553,45 @@ class TestBulkRevokeRouter:
         assert row["action"] == "bulk_github_revoke"
         assert row["actor"] == "admin@aurem.dev"
         assert row["installation_ids"] == [1]
+        assert row["user_ids"] == ["u1"]
         assert row["reason"] == "cleanup sweep"
         assert row["result"]["revoked"] == 1
+
+    @pytest.mark.asyncio
+    async def test_reason_required_for_real_revoke(self, admin_bin_wired, fake_db, monkeypatch):
+        """t_reason_required_for_real_revoke — 2026-09-07 founder review:
+        a reason is mandatory once past the hard-guard/live-verified
+        gates, so it never fires ahead of those more fundamental blocks."""
+        fake_db.dev_users.rows.append({"user_id": "u1", "email": "a@example.com"})
+        fake_db.cto_projects.rows.append(
+            {"project_id": "p1", "user_id": "u1", "auth_method": "github_app",
+             "github_owner": "o", "github_repo": "r1", "installation_id": 1,
+             "status": "connected", "tasks_done": 0},
+        )
+        _patch_probe(monkeypatch, {"p1": "missing"})
+        from services import feature_flags as ff
+        monkeypatch.setattr(ff, "is_enabled", AsyncMock(return_value=True))
+        called = AsyncMock(side_effect=AssertionError("must not call GitHub without a reason"))
+        monkeypatch.setattr(gbr, "bulk_revoke", called)
+
+        from fastapi import HTTPException
+        from routers.admin_bin import GithubBulkRevokeBody
+        body = GithubBulkRevokeBody(installation_ids=[1])  # no reason
+        with pytest.raises(HTTPException) as exc:
+            await admin_bin_wired.github_bulk_revoke(body=body, authorization="Bearer x")
+        assert exc.value.status_code == 400
+        assert exc.value.detail["error"] == "reason_required"
+        called.assert_not_called()
+
+    def test_batch_capped_at_ten(self):
+        """t_batch_capped_at_ten — 2026-09-07: Pydantic rejects any
+        selection over 10 installation_ids before the request even
+        reaches the route body."""
+        from pydantic import ValidationError
+        from routers.admin_bin import GithubBulkRevokeBody
+        GithubBulkRevokeBody(installation_ids=list(range(10)))  # exactly 10 is fine
+        with pytest.raises(ValidationError):
+            GithubBulkRevokeBody(installation_ids=list(range(11)))
 
     @pytest.mark.asyncio
     async def test_user_data_preserved_on_revoke(self, admin_bin_wired, fake_db, monkeypatch):
@@ -558,7 +611,7 @@ class TestBulkRevokeRouter:
             {"installation_id": 1, "outcome": "deleted", "status_code": 204, "error": None}]))
 
         from routers.admin_bin import GithubBulkRevokeBody
-        body = GithubBulkRevokeBody(installation_ids=[1])
+        body = GithubBulkRevokeBody(installation_ids=[1], reason="test sweep")
         await admin_bin_wired.github_bulk_revoke(body=body, authorization="Bearer x")
 
         assert len(fake_db.cto_projects.rows) == 1  # row still exists

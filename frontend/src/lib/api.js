@@ -99,7 +99,21 @@ api.interceptors.response.use((response) => {
         || url.includes("/auth/change-password")
         || url.includes("/auth/forgot-password")
         || url.includes("/auth/reset-password");
-      if (hadToken && !isAuthEndpoint) {
+      // 2026-09-09 — CRITICAL defense-in-depth (founder-reported:
+      // "signs out automatically instead of connecting to a new
+      // GitHub App"). A 401 from a GITHUB-linked endpoint can mean
+      // "the user's linked GitHub OAuth/App token is stale/revoked"
+      // — a third-party credential problem, NOT "your AUREM JWT is
+      // dead". That distinction is now enforced server-side too
+      // (routers/github_oauth.py returns 409, not 401, for a revoked
+      // GitHub token) but this endpoint is excluded here as well so
+      // no endpoint on this family can ever again force-logout the
+      // whole browser (every open tab shares this localStorage key)
+      // over a problem that has nothing to do with the AUREM session.
+      const isThirdPartyTokenEndpoint =
+        url.includes("/github/oauth/")
+        || url.includes("/github/app/");
+      if (hadToken && !isAuthEndpoint && !isThirdPartyTokenEndpoint) {
         window.dispatchEvent(new CustomEvent("aurem:session-expired", {
           detail: {
             url,
@@ -281,6 +295,9 @@ export async function streamChat({ prompt, sessionId, session_id,
                                     onStep,   // Iter 212m-19 — live step cards
                                     onCouncil, // Iter 212m-78 — recalled count
                                     onIntent,  // Iter 212m-149 — gateway tier classification
+                                    onScopeConfirmation, // Trust & Verification round — Enhancement 5
+                                    retryOfRequestId, retry_of_request_id,  // INTERACTION_CONTRACT_V1 P1
+                                    scopeConfirmedProposalId, scope_confirmed_proposal_id,
                                     signal }) {
   // Iter 212m-194 — coalesce camelCase + snake_case aliases so
   // AskAdvisorReal (snake) and ChatPanel (camel) both work.
@@ -292,28 +309,57 @@ export async function streamChat({ prompt, sessionId, session_id,
   const _f12Payload   = f12_payload    ?? f12Payload;
   // Iter 212m-212 — screenshot passthrough
   const _screenshotB64 = screenshot_b64 ?? screenshotB64;
+  const _retryOfRequestId = retry_of_request_id ?? retryOfRequestId ?? null;
+  const _scopeConfirmedProposalId = scope_confirmed_proposal_id ?? scopeConfirmedProposalId ?? null;
   const token = getToken();
-  const res = await fetch(`${API_BASE}/chat/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      prompt,
-      session_id: _sessionId,
-      max_tool_iters: _maxToolIters,
-      maxx_mode: _maxxMode,
-      agent,
-      mode,
-      execution_mode: _executionMode,
-      project_id: _projectId,
-      f12_payload: _f12Payload,
-      ora_panel,                       // Iter 212m-194 — was being dropped
-      screenshot_b64: _screenshotB64,  // Iter 212m-212
-    }),
-    signal,
-  });
+  // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
+  // reproducible): this initial `fetch()` had no try/catch of its
+  // own. If the AbortController fires while it's still in flight (a
+  // 2nd/3rd rapid Stop click after the 1st already aborted), the
+  // rejection propagated uncaught all the way to the caller —
+  // "AbortError: signal is aborted without reason" in the console.
+  // The reader loop below already treats an abort as expected, not a
+  // failure (see its own catch further down); mirror that exact
+  // convention here for the pre-stream window too, so every caller
+  // of streamChat() gets this for free, not just one call site.
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        prompt,
+        session_id: _sessionId,
+        max_tool_iters: _maxToolIters,
+        maxx_mode: _maxxMode,
+        agent,
+        mode,
+        execution_mode: _executionMode,
+        project_id: _projectId,
+        f12_payload: _f12Payload,
+        ora_panel,                       // Iter 212m-194 — was being dropped
+        screenshot_b64: _screenshotB64,  // Iter 212m-212
+        // INTERACTION_CONTRACT_V1 P1 — set only on a genuine retry;
+        // omitted (undefined -> not serialized meaningfully, backend
+        // treats missing/None identically) on a normal first send.
+        ...(_retryOfRequestId ? { retry_of_request_id: _retryOfRequestId } : {}),
+        // Trust & Verification round — Enhancement 5. Set only when
+        // resending after the user clicked "Confirm and proceed" on
+        // a scope-confirmation card.
+        ...(_scopeConfirmedProposalId ? { scope_confirmed_proposal_id: _scopeConfirmedProposalId } : {}),
+      }),
+      signal,
+    });
+  } catch (e) {
+    const name = e?.name || "";
+    const msg = (e?.message || "").toLowerCase();
+    const isAbort = name === "AbortError" || msg.includes("aborted");
+    if (!isAbort) onError?.(`Request failed: ${e?.message || e}`);
+    return;
+  }
   if (!res.ok || !res.body) {
     const txt = await res.text().catch(() => "");
     // Iter 388f — friendly 422 handling. When the backend rejects a
@@ -401,15 +447,30 @@ export async function streamChat({ prompt, sessionId, session_id,
         if (!line) continue;
         try {
           const payload = JSON.parse(line.slice(5).trim());
-          if (payload.meta) onMeta?.(payload);
+          // 2026-09-05 — critical fix: `meta` is used for TWO unrelated
+          // things in this protocol — (a) a mid-stream "this frame is a
+          // meta event" discriminator, ALWAYS the literal boolean
+          // `true` (see routers/chat/stream.py `{"meta": True, ...}`),
+          // and (b) an unrelated nested object on the terminal `done`
+          // frame (checkout_url/quota hints, e.g. `{"done": true,
+          // "meta": {}, ...}`). `{}` is truthy in JS, so the old loose
+          // `if (payload.meta)` matched the done frame FIRST in this
+          // if/else-if chain and swallowed it — onDone never fired,
+          // `busy` never reset, and the send/stop button stayed stuck
+          // on "Stop" on literally every turn (only recovered via the
+          // 90s idle watchdog). Match the boolean discriminator
+          // exactly so the two same-named-but-unrelated fields can't
+          // collide.
+          if (payload.meta === true) onMeta?.(payload);
           else if (payload.type === "mode") onMode?.(payload);
           else if (payload.type === "step") onStep?.(payload);   // Iter 212m-19
           else if (payload.type === "intent") onIntent?.(payload.intent || {});  // Iter 212m-149
           else if (payload.type === "council") onCouncil?.(payload.council_recalled || 0);  // Iter 212m-78
           else if (payload.type === "ops_redirect") onOpsRedirect?.(payload);
           else if (payload.type === "task_handoff") onTaskHandoff?.(payload);
+          else if (payload.type === "scope_confirmation") onScopeConfirmation?.(payload);
           else if (payload.token) onToken?.(payload.token);
-          else if (payload.thinking) onThinking?.(payload.elapsed_s || 0, payload.activity, payload.invocations || []);
+          else if (payload.thinking) onThinking?.(payload.elapsed_s || 0, payload.activity, payload.invocations || [], !!payload.slow_notice);
           else if (payload.watchdog_pending) onWatchdogPending?.();
           else if (payload.watchdog) onWatchdog?.(payload.watchdog);
           else if (payload.done) onDone?.(payload);

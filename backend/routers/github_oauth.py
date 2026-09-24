@@ -287,6 +287,17 @@ async def callback(
         )
 
     if not state or ":" not in state:
+        # 2026-09-22 · Revenue Recovery audit — this branch and the two
+        # below it (unknown state, expired state) previously raised with
+        # ZERO funnel telemetry, making every one of these failures
+        # invisible to /funnel/github/stats. That blind spot is exactly
+        # what made "is OAuth actually the activation blocker?" unanswerable
+        # from the dashboard — the funnel showed oauth_redirect counts but
+        # no matching callback_received failures to explain the drop-off.
+        await _funnel_track(
+            "callback_received", source="unknown", session_id=None,
+            meta={"outcome": "error", "reason": "invalid_state"},
+        )
         raise HTTPException(400, "Invalid state")
     mode_or_user, _, _ = state.partition(":")
 
@@ -297,6 +308,10 @@ async def callback(
     # Verify state was actually issued by us
     s = await db.oauth_states.find_one({"state": state})
     if not s:
+        await _funnel_track(
+            "callback_received", source="unknown", session_id=None,
+            meta={"outcome": "error", "reason": "unknown_state"},
+        )
         raise HTTPException(400, "Unknown OAuth state")
     # Iter 212j — 5-minute TTL on OAuth state. Without this, a user
     # who opens the OAuth tab and finishes auth hours later could
@@ -311,6 +326,12 @@ async def callback(
             created_at = created_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) - created_at > timedelta(minutes=5):
             await db.oauth_states.delete_one({"state": state})
+            await _funnel_track(
+                "callback_received",
+                source=s.get("funnel_source") or "unknown",
+                session_id=s.get("funnel_session"),
+                meta={"outcome": "error", "reason": "state_expired"},
+            )
             raise HTTPException(400, "OAuth state expired")
     flow = s.get("mode") or (
         "signup" if mode_or_user in ("signup", "login") else "connect"
@@ -548,7 +569,38 @@ async def repos(authorization: Optional[str] = Header(None)) -> dict:
     token = ((u or {}).get("github") or {}).get("access_token")
     if not token:
         raise HTTPException(400, "GitHub not connected")
-    data = await gh_repos(token)
+    try:
+        data = await gh_repos(token)
+    except httpx.HTTPStatusError as e:
+        # 2026-09-09 — founder-reported production incident: a stale/
+        # revoked OAuth token here previously raised an UNHANDLED
+        # httpx.HTTPStatusError, propagating through the whole
+        # FastAPI/Starlette stack as a raw 500 (full traceback logged
+        # in prod) instead of a clean, actionable error. GitHub 401s
+        # mean the token was revoked/expired — tell the client to
+        # reconnect; anything else from GitHub's side is a clean 502.
+        #
+        # 2026-09-09b — CRITICAL follow-up (founder-reported): this was
+        # first shipped as a plain `HTTPException(401, ...)`. The
+        # frontend's GLOBAL axios interceptor (lib/api.js) treats ANY
+        # 401 from ANY AUREM endpoint as "your AUREM session/JWT is
+        # dead" — it wipes the shared localStorage token and hard-
+        # navigates to /login. That 401 semantic is reserved for the
+        # AUREM JWT itself; a revoked/expired GitHub OAuth token is an
+        # unrelated, third-party credential problem and must NEVER
+        # collide with it. Concretely: NewUserWizard calls this
+        # endpoint automatically on mount for any account with a
+        # stale legacy GitHub OAuth link — completely unprompted, the
+        # instant the "Add repository" wizard opened — so that stale
+        # link alone was enough to force-logout the ENTIRE browser
+        # (every open tab shares the same localStorage) before the
+        # user ever reached the "Continue with GitHub App" button.
+        # 409 Conflict ("this specific external resource is in a bad
+        # state") reports the same fact without colliding with the
+        # app-wide 401-means-"log me out" contract.
+        if e.response.status_code == 401:
+            raise HTTPException(409, "Your GitHub connection expired — please reconnect.")
+        raise HTTPException(502, "GitHub couldn't be reached right now. Please try again.")
     return {
         "ok": True,
         "repos": [

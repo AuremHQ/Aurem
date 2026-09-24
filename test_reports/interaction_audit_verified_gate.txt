@@ -1,0 +1,53 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......................................                                   [100%]
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /app/backend/routers/chat/turn.py:104: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("prompt")
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /app/backend/routers/chat/turn.py:116: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("task_type")
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_fields.py:192: UserWarning: Field name "schema" in "InsertBody" shadows an attribute in parent "BaseModel"
+    warnings.warn(
+
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+tests/test_interaction_reliability_contract.py::test_chat_send_conflict_via_asgi_blocks_before_mock_path
+  /root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/asyncio.py:87: RuntimeWarning: coroutine 'patch_loop_close.<locals>._flush' was never awaited
+    logger.debug(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+-------- generated xml file: /app/test_reports/interaction/backend.xml ---------
+38 passed, 6 warnings in 1.86s
+Sentry is attempting to send 1 pending events
+Waiting up to 2 seconds
+Press Ctrl-C to quit
+yarn run v1.22.22
+$ /app/frontend/node_modules/.bin/vitest run src/utils/__tests__/interactionReliability.test.jsx --reporter=default --reporter=junit --outputFile.junit=/app/test_reports/interaction/frontend.xml
+
+ RUN  v3.2.7 /app/frontend
+
+stderr | src/utils/__tests__/interactionReliability.test.jsx > interaction reliability contract (baseline, expected to fail pre-fix) > MessageBubble must not infer review badge from provider/council without interaction evidence
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/utils/__tests__/interactionReliability.test.jsx (8 tests) 65ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  21:57:33
+   Duration  1.58s (transform 201ms, setup 40ms, collect 723ms, tests 65ms, environment 244ms, prepare 237ms)
+
+JUNIT report written to /app/test_reports/interaction/frontend.xml
+Done in 1.91s.

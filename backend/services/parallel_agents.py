@@ -15,8 +15,6 @@ specific system prompt (~200 tokens).
 
 from __future__ import annotations
 import asyncio
-import re
-from typing import Optional
 from services.llm import call_llm_with_meta   # existing in your codebase
 
 

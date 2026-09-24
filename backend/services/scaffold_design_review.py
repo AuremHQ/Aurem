@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -30,8 +29,7 @@ from typing import Optional
 from services.ora_chat.providers import one_shot as _one_shot
 from services.loop_independent_verifier import (
     _log_row as _shared_log_row,           # audit-log writer, no-raise
-    _COLL,                                  # "loop_verification_log"
-)
+    )
 
 logger = logging.getLogger(__name__)
 

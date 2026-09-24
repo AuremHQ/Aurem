@@ -1,0 +1,57 @@
+{
+  "summary": "Verified 3-bug batch (FounderOfferPill per-user hiding, AuthShell branding 'ORA by Aurem', Signup heading + CountryCodeSelect combined-phone submit). All 3 bugs PASS backend + frontend. Pytest source-pin regression 5/5 passed; broader signup/founder_offer sweep 89 passed with the pre-declared unrelated failure test_iter212m222_signup_created_at::test_admin_list_users_tolerates_both_types (baseline, not caused by this batch).",
+  "bugs_verified": {
+    "bug1_founder_offer_pill": {
+      "status": "PASS",
+      "evidence": {
+        "fresh_user_projects_pill_text": "🎁 500 of 500 free SEO fixes for founders left",
+        "claimed_user_projects_pill_count": 0,
+        "anonymous_landing_pill_text": "🎁 500 of 500 free SEO fixes for founders left",
+        "founder_offer_status_endpoint": {"remaining": 500, "total": 500, "is_active": true},
+        "user_status_for_test@aurem.dev": {"repos_claimed": 1}
+      }
+    },
+    "bug2_auth_shell_logo": {
+      "status": "PASS",
+      "evidence": {
+        "/signup logo": "ORA by Aurem",
+        "/login logo": "ORA by Aurem",
+        "'AUREM DEV' present anywhere on either page": false
+      }
+    },
+    "bug3_signup_heading_and_country_code": {
+      "status": "PASS",
+      "evidence": {
+        "h1_text": "Start building, production-ready from day one",
+        "signup-phone-country tag": "SELECT",
+        "default_dial_code": "+1",
+        "signup-phone required attr": null,
+        "blank_phone_signup": "success (redirected /dashboard)",
+        "IN_phone_signup": "success — Mongo dev_users.phone stored as '+919876543210' (E164 combined from +91 dropdown + '9876543210' input)",
+        "invalid_phone_client_error": "That phone number doesn't look valid — check the country code and number, or leave it blank.",
+        "invalid_phone_backend_error_when_bypassed": "That phone number doesn't look valid — please double-check it, or leave it blank."
+      }
+    }
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "pytest": {
+    "test_founder_bug_batch_2026_09_22.py": "5 passed",
+    "signup_or_founder_offer_sweep": "89 passed, 1 failed (pre-existing test_iter212m222 admin_list_users_tolerates_both_types — flagged by main agent as baseline, confirmed unrelated to this batch)"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_founder_bug_batch_2026_09_22.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FounderOfferPill.jsx: two useEffects each with their own 60s interval — minor duplication but fine. Consider merging so the token-check refresh cycle isn't independent from the counter refresh; not a bug.",
+    "Signup phone combines '+91' + ' ' + national → libphonenumber-js normalizes fine, but the space in `${phoneDial} ${nationalNumber}` is brittle for locales that already include a leading 0 (India national 0-prefix) — currently accepted by libphonenumber; not blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 3 TEST_ prefixed signup accounts via /api/aurem-dev/auth/signup during Bug 3 validation (TEST_nophone_*, TEST_phone_*, TEST_ui_nophone_*, TEST_ui_inphone_*). Safe to leave; prefixed for cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 3 bugs in this batch verified in preview env. FounderOfferPill is now per-user aware and hides for accounts with repos_claimed>0; anonymous Landing shows it normally. AuthShell logo confirmed 'ORA by Aurem' on /signup and /login. Signup h1 = 'Start building, production-ready from day one'. CountryCodeSelect (SELECT tag, default '+1') combines with phone input server-side; Mongo stores E164 like '+919876543210'."
+}

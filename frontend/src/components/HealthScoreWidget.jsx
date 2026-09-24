@@ -7,7 +7,7 @@
  * an explicit gray "UNSCORED — insufficient data" state, never a
  * softened placeholder number.
  */
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../lib/api";
 import { useAsyncState } from "../hooks/useAsyncState";
 
@@ -26,7 +26,13 @@ const C = {
 
 const LABELS = {
   security:       "Security",
-  bug_density:    "Bug Density",
+  // 2026-09-21 — founder review: "Bug Density" is misleading — this
+  // category is fed by the G20 infra/guard-incident log (open +
+  // resolved-30d + MTTR), NOT a code-level bug count. Renamed to be
+  // honest about what it actually measures; the backend's own note
+  // (services/health_score.py::score_bug_density) says the same
+  // thing, but a headline label is what people actually read.
+  bug_density:    "Incident Rate (infra proxy)",
   reliability:    "Reliability",
   test_coverage:  "Test Coverage",
   code_quality:   "Code Quality",
@@ -51,7 +57,7 @@ function relAge(iso) {
   return `${d.toFixed(1)}d ago`;
 }
 
-function CategoryBar({ id, cat, weight, expanded, onToggle }) {
+function CategoryBar({ id, cat, weight, expanded, onToggle, stale }) {
   const color = cat.status === "scored" ? scoreColor(cat.score) : C.gray;
   const pct = cat.status === "scored" ? cat.score : 0;
   return (
@@ -69,10 +75,31 @@ function CategoryBar({ id, cat, weight, expanded, onToggle }) {
                         fontFamily: C.mono }}>
           {cat.status === "scored" ? `${cat.score}/100` : "UNSCORED"}
         </span>
-        {cat.live && cat.status === "scored" && (
+        {/* 2026-09-21 — founder review: a disclaimer buried below the
+            bar in small italic text gets skipped — "log headline
+            dekhte hain, disclaimer nahi padhte". Put the short version
+            of it directly next to the number itself instead. */}
+        {cat.caveat_short && cat.status === "scored" && (
+          <span data-testid={`health-score-caveat-badge-${id}`}
+                title={cat.caveat}
+                style={{ fontSize: 9, color: C.amber, border: `1px solid ${C.amber}55`,
+                          borderRadius: 4, padding: "1px 5px", fontFamily: C.mono,
+                          whiteSpace: "nowrap" }}>
+            ⚠ {cat.caveat_short}
+          </span>
+        )}
+        {cat.live && cat.status === "scored" && !stale && (
           <span style={{ fontSize: 9, color: C.green, border: `1px solid ${C.green}55`,
                           borderRadius: 4, padding: "1px 5px", fontFamily: C.mono }}>
             LIVE
+          </span>
+        )}
+        {stale && (
+          <span data-testid={`health-score-stale-badge-${id}`}
+                title="The last fetch to /admin/health-score failed — showing the last successful result instead of a fresh one."
+                style={{ fontSize: 9, color: C.red, border: `1px solid ${C.red}55`,
+                          borderRadius: 4, padding: "1px 5px", fontFamily: C.mono }}>
+            STALE
           </span>
         )}
       </div>
@@ -83,8 +110,11 @@ function CategoryBar({ id, cat, weight, expanded, onToggle }) {
         }} />
       </div>
       {cat.status === "scored" && cat.last_verified && (
-        <div style={{ fontSize: 10, color: C.faint, marginTop: 3, fontFamily: C.mono }}>
-          last verified {relAge(cat.last_verified)}
+        <div data-testid={`health-score-freshness-${id}`}
+             style={{ fontSize: 10, color: stale ? C.red : C.faint, marginTop: 3, fontFamily: C.mono }}>
+          {stale
+            ? `stale — last successful fetch: ${relAge(cat.last_verified)}`
+            : `last verified ${relAge(cat.last_verified)}`}
         </div>
       )}
       {cat.caveat && (
@@ -100,14 +130,40 @@ function CategoryBar({ id, cat, weight, expanded, onToggle }) {
         </div>
       )}
       {expanded && (
-        <pre data-testid={`health-score-evidence-${id}`}
-             style={{
-               marginTop: 8, background: "#00000066", border: `1px solid ${C.border}`,
-               borderRadius: 6, padding: 10, fontSize: 10.5, color: C.dim,
-               fontFamily: C.mono, overflowX: "auto", whiteSpace: "pre-wrap",
-             }}>
-          {JSON.stringify(cat.evidence, null, 2) || "(no evidence recorded)"}
-        </pre>
+        <>
+          {/* 2026-09-21 — founder review: "score 70 kyun hai pata nahi
+              — formula kahin dikh nahi raha". Render the exact
+              arithmetic as a plain list before the raw evidence dump,
+              instead of only the raw JSON. */}
+          {Array.isArray(cat.evidence?.formula_breakdown) && (
+            <div data-testid={`health-score-breakdown-${id}`}
+                 style={{ marginTop: 8, background: "#00000066", border: `1px solid ${C.border}`,
+                          borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
+              <div style={{ color: C.faint, fontFamily: C.mono, fontSize: 9,
+                            letterSpacing: "0.1em", marginBottom: 4 }}>
+                WHY {cat.score}/100 — SCORE BREAKDOWN
+              </div>
+              {cat.evidence.formula_breakdown.map((row, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between",
+                                       color: C.dim, fontFamily: C.mono, padding: "2px 0" }}>
+                  <span>{row.label}</span>
+                  <span style={{ color: row.value < 0 ? C.red : C.text, fontWeight: 600 }}>
+                    {row.value > 0 && row.label !== "Base score" && row.label !== "Final score" ? "+" : ""}
+                    {row.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <pre data-testid={`health-score-evidence-${id}`}
+               style={{
+                 marginTop: 8, background: "#00000066", border: `1px solid ${C.border}`,
+                 borderRadius: 6, padding: 10, fontSize: 10.5, color: C.dim,
+                 fontFamily: C.mono, overflowX: "auto", whiteSpace: "pre-wrap",
+               }}>
+            {JSON.stringify(cat.evidence, null, 2) || "(no evidence recorded)"}
+          </pre>
+        </>
       )}
     </div>
   );
@@ -121,14 +177,27 @@ export default function HealthScoreWidget() {
   const [running, setRunning] = useState(false);
   const [reviewNotes, setReviewNotes] = useState("");
   const review = useAsyncState(15000);
+  // 2026-09-21 — founder review: "LIVE · last verified 0h ago" is a
+  // fake-fresh timestamp if the CURRENT fetch is actually failing
+  // (e.g. the 40s coverage-scan CPU-contention timeout fixed
+  // 2026-09-20) while the widget quietly keeps showing the last
+  // successful `data` underneath an error banner. Track whether the
+  // shown data is stale (a fetch failed AFTER we already had data)
+  // separately from `err` (which only means "the LATEST attempt
+  // failed", not "there's nothing to show").
+  const [stale, setStale] = useState(false);
+  const hasDataRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
       const r = await api.get("/admin/health-score", { timeout: 40000 });
       setData(r.data);
+      hasDataRef.current = true;
       setErr(null);
+      setStale(false);
     } catch (e) {
       setErr(e?.message || "fetch failed");
+      if (hasDataRef.current) setStale(true);
     } finally {
       setLoading(false);
     }
@@ -145,13 +214,30 @@ export default function HealthScoreWidget() {
       const triggeredAt = Date.now();
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 15000));
-        const r = await api.get("/admin/health-score", { timeout: 40000 });
-        setData(r.data);
-        const lv = r.data?.categories?.test_coverage?.last_verified;
-        if (lv && new Date(lv).getTime() >= triggeredAt) break;
+        try {
+          const r = await api.get("/admin/health-score", { timeout: 40000 });
+          setData(r.data);
+          hasDataRef.current = true;
+          setStale(false);
+          const lv = r.data?.categories?.test_coverage?.last_verified;
+          if (lv && new Date(lv).getTime() >= triggeredAt) break;
+        } catch {
+          // One poll failing mid-wait doesn't mean the scan failed —
+          // keep the OLD data marked stale (honest) and keep polling.
+          if (hasDataRef.current) setStale(true);
+        }
       }
     } catch (e) {
-      setErr(e?.message || "coverage run failed");
+      // 2026-09-20 — backend now returns 409 when a scan is already
+      // in progress (server-side concurrency guard, root-caused from
+      // a live "timeout of 40000ms exceeded" report: two overlapping
+      // pytest+coverage subprocesses starved the pod's CPU). Surface
+      // that as a clear, actionable message instead of a raw error.
+      if (e?.response?.status === 409) {
+        setErr(e?.response?.data?.detail || "a scan is already running — try again shortly");
+      } else {
+        setErr(e?.message || "coverage run failed");
+      }
     } finally {
       setRunning(false);
     }

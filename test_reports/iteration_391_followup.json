@@ -1,0 +1,33 @@
+{
+  "date": "2026-09-23",
+  "parent_report": "/app/test_reports/iteration_391.json",
+  "frontend_tests_passed": 38,
+  "backend_tests_passed": 57,
+  "real_mongo_tests_passed": 2,
+  "real_mongo_evidence": "Actual callback -> installation upsert -> explicit project add -> list; fresh Mongo client confirms persisted owner/install/default branch; duplicate create returns existing ID; foreign account rejected; temporary databases dropped.",
+  "followup_issues": {
+    "mobile_guide_overlap": "Fixed: body portal, Z_ACTIVE_MODAL above floating guide, bounded scrollable dialog, focus trap. Actual browser bounds and hit-testing pass 320/390/768/1024/1440px.",
+    "login_selectors": "Not reproduced: existing login-email, login-password, login-submit are each visible/unique. Real preview login succeeded using these selectors. No auth changes made."
+  },
+  "checks": {
+    "frontend_build": "PASS",
+    "focused_frontend_lint": "PASS",
+    "new_backend_test_lint": "PASS",
+    "existing_github_router_ruff_baseline": 27,
+    "existing_github_router_ruff_current": 27,
+    "introduced_router_lint_findings": 0
+  },
+  "test_credentials": "Existing /app/memory/test_credentials.md account reused; no accounts/passwords created or modified.",
+  "runtime_mocked_apis": [],
+  "MOCKED_test_dependencies": [
+    "External GitHub metadata, repository probe and installation token responses in isolated Mongo tests",
+    "Expensive background scans in isolated Mongo tests",
+    "Identity resolver only in isolated ASGI integration tests (real ownership checks retained)",
+    "GitHub status/add/list browser fixtures in independent test run"
+  ],
+  "not_verified": [
+    "Actual user-controlled GitHub consent -> installation -> project save end-to-end",
+    "Production version, account-specific provider delivery and production resolution"
+  ],
+  "next_action": "Manual real GitHub grant -> choose repo -> explicit Add project -> selected list entry -> reload verification. Do not infer production success from fixture-based tests."
+}

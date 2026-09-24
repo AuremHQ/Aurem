@@ -1,0 +1,37 @@
+{
+  "summary": "Live-verified both root-cause fixes in this round: (BUG 1) false-positive 'Approve button didn't load' banner suppression, and (BUG 2) frequency_penalty=0.4 addition across all 4 LLM call sites. Also spot-checked Turn-Completion Contract regression. All fixes look correct and behave as expected in preview.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard (/dashboard)", "issues": ["~30+ HTTP 404 console errors on load (see network — likely a poll endpoint or missing asset). Pre-existing, unrelated to this round's fixes, but noisy for debugging. Worth a separate cleanup pass."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/frontend/src/components/__tests__/MessageBubble.k1_ship_fallback.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "BUG 1 fix (frontend defense-in-depth) in MessageBubble.jsx detectShipCtaFallback() is correct: `realHasFence` now = fence present AND fence contains at least one mutation verb (uses the same MUTATION_VERBS regex shared with Gate 5 of extractHandoffBrief). A stray non-actionable fence no longer triggers the false banner. Analytics trackShipRenderFailed() only fires when hasFence=realHasFence, so telemetry stays clean too.",
+    "BUG 1 fix (backend prompt) in orchestrator.py:943-956 explicitly instructs the model to NOT emit the aurem-handoff fence for no-op conclusions ('already correct', 'passes review as-is', etc). Live-verified: model emits plain-prose 'No changes needed.' with zero fences.",
+    "BUG 2 fix: frequency_penalty=0.4 (env-overridable via LLM_FREQUENCY_PENALTY) confirmed present at all 4 real LLM HTTP call construction sites: openrouter_client.py:190, openrouter_providers.py:352 & :409, groq_client.py:132. As main agent flagged, this is probabilistic — spot-checking coherence on a normal chat turn showed no quality degradation.",
+    "Regression sanity: turn_state / continue_available / failure_mode fields still emitted in orchestrator.py done payloads (lines 2747, 2789, 3043, 3077). No spurious partial/failure UI banners in live smoke test.",
+    "Dashboard 404 noise (30+ per session load) is unrelated to this round but worth a separate investigation — flooding the console makes real errors harder to spot."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "Set localStorage.aurem_active_project='p_r10_testbed_e2e' as recommended, active project resolved to polarisbuiltinc-wq/aurem-rollback-testbed which had a real (non-revoked) GitHub connection.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "This round verified 2 root-cause fixes in a single session: (1) false-positive 'Approve button didn't load' banner on no-op fix conclusions — fixed via both backend prompt (orchestrator.py:943-956) AND frontend defense-in-depth (MessageBubble.jsx detectShipCtaFallback checking for mutation verb inside fence); live-repro'd on 'review README.md if fine, say so' — model replied 'No changes needed.' with NO fence + NO banner. (2) LLM text repetition/degeneration — added frequency_penalty=0.4 to all 4 real LLM HTTP call sites; spot-check on live chat showed normal coherence. Frontend unit tests: 6/6 pass in MessageBubble.k1_ship_fallback.test.jsx. Turn-Completion Contract (turn_state/continue_available/failure_mode SSE fields) still emitted correctly — verified via grep of orchestrator.py.",
+  "live_repro_evidence": {
+    "bug1_prompt": "Please review the README.md and if it already looks fine, just say so — nothing to fix.",
+    "bug1_response": "The your page is clean and correct — it clearly states this is a test website for undo functionality and is not for production use. No changes needed.",
+    "bug1_false_banner_count": 0,
+    "bug1_turn_state_banners": {"partial": false, "failure": false},
+    "sse_endpoint_hit": "POST /api/aurem-dev/chat/stream — HTTP 200"
+  },
+  "out_of_scope_observation": "Main agent flagged a THIRD, separate issue: tool-error message ('The files X and Y were not found...') sometimes leaking into final chat content on multi-new-file fix requests. NOT observed in this testing session — no evidence for or against. Left for a future dedicated investigation as main agent noted."
+}

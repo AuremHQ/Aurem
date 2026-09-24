@@ -5,41 +5,43 @@ Split from the former routers/chat.py god-file (4184 lines) on
 """
 from __future__ import annotations
 import asyncio
-import json
 import logging
 import os
-import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import Header
 from pydantic import BaseModel, Field, validator
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.orchestrator import chat_with_tools
-from services.llm import call_llm_with_meta, call_emergent_watchdog, cap_for
+from services.llm import call_emergent_watchdog
 from services.repo_context import get_repo_context
-from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
 from core.task_type import infer_task_type as _infer_task_type  # Iter 212m-177/178 P0-3
 from services.chat_helpers import (
     _detect_mode, _deduct_tokens,
-    is_fix_confirmation, _safe_provenance, detect_prompt_injection,
-    _f12_has_real_signal, _is_transient_proxy_error, _TRANSIENT_PROXY_CODES,
     classify_intent,
-    _TITLE_SYSTEM, _generate_title, _maybe_set_title,
+    _maybe_set_title,
     _regenerate_without_recall, _strip_council_block,
     _persist_turn,
-    _build_failed_followup, _build_blocked_followup, _build_done_fallback,
-    _FOLLOWUP_SYS, _generate_done_followup,
-    retrieved_context_for_grounding, apply_output_guards,
+    retrieved_context_for_grounding, run_rendering_pipeline,
 )
 
 from . import router
 from .misc import PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT
 
 logger = logging.getLogger(__name__)
+
+
+async def _fire_task_sent_bg(user_id: str, prompt: str) -> None:
+    """Background wrapper — see services/engagement_nudge.py. Isolated
+    here so a failure can never propagate into the chat request."""
+    try:
+        from services.engagement_nudge import maybe_fire_task_sent
+        await maybe_fire_task_sent(get_db(), user_id=user_id, prompt=prompt)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("_fire_task_sent_bg failed: %r", e)
 
 
 class ChatBody(BaseModel):
@@ -98,10 +100,40 @@ class ChatBody(BaseModel):
     # existing keyword-based routing (safe — never escalates the
     # council).
     task_type: Optional[str] = Field(None, max_length=32)
+    # INTERACTION_CONTRACT_V1 P1 — set by the frontend's "Retry" action
+    # to the `request_id` of the ORIGINAL attempt (captured off that
+    # attempt's own `meta`/`done` SSE frame). Lets the server replay an
+    # already-`completed` original instead of re-running the provider/
+    # tools a second time. See services/chat_reliability.py. Optional,
+    # backward-compatible — omitted entirely by older/unpatched clients,
+    # which behave exactly as before (a fresh attempt every time).
+    retry_of_request_id: Optional[str] = Field(None, max_length=64)
+    # Trust & Verification round — Enhancement 5 (pre-execution scope
+    # confirmation, services/scope_confirmation.py). `mode_override`
+    # was previously read via `getattr(body, "mode_override", None)`
+    # in worker.py but never actually declared on the model, so it
+    # was silently dropped by Pydantic on every request — the
+    # existing "skip needs_confirm when overridden" comment described
+    # behaviour that could never fire. Now a real, additive field.
+    mode_override: Optional[str] = Field(None, max_length=8)
+    # Set by the frontend when the user clicks "Confirm and proceed"
+    # on a pending scope-confirmation card, to the exact proposal id
+    # returned by POST /verification/scope-confirm/{id}/confirm.
+    # Authorizes ONLY that one exact (session, prompt) pair — see
+    # services/scope_confirmation.confirm_proposal.
+    scope_confirmed_proposal_id: Optional[str] = Field(None, max_length=64)
 
     @validator("prompt")
     def _strip_prompt(cls, v: str) -> str:
-        return (v or "").strip()
+        # 2026-09-22 — Section 15.1 spec: the REAL backend guarantee,
+        # since the frontend punctuation guard (chatTextUtils.js) can
+        # always be bypassed by a different client (direct API
+        # access, curl, a future mobile app). Runs on every request
+        # that constructs a ChatBody, regardless of which endpoint
+        # (/chat/send, /chat/stream) or client hits it.
+        from services.input_normalizer import normalize_input
+        result = normalize_input((v or "").strip())
+        return result["text"]
 
     @validator("task_type")
     def _validate_task_type(cls, v):
@@ -118,6 +150,30 @@ class ChatBody(BaseModel):
         return v if v in ok else None
 
 
+MOCK_SEND_TEXT = (
+    "I'm ORA (mock mode). The live model isn't connected on "
+    "this instance — no real LLM calls are being made. This "
+    "is a placeholder for UX testing."
+)
+
+
+def _mock_send_response(body: ChatBody, user: dict) -> dict:
+    """Canned /chat/send reply for MOCK_LLM — same shape as the real
+    return, provider='mock', never carries an aurem-handoff fence."""
+    return {
+        "ok": True, "content": MOCK_SEND_TEXT, "provider": "mock",
+        "watchdog": None, "mode": "A", "temperature": 0.0, "iterations": 0,
+        "session_id": body.session_id, "user_id": user.get("user_id"),
+        "tokens_remaining": None, "low_confidence": False, "bail_reason": None,
+        "ship_suppressed": False, "council_recalled": 0,
+        "plain_english_contract_active": False, "leak_stripped": False,
+        "length_capped": False, "output_guard_ref_id": None,
+        "council": None, "task_type": None, "tier": None, "intent": None,
+        "repo_owner": None, "repo_name": None, "branch": None,
+        "findings_saved": [], "palette_nudges": [], "meta": {"mock": True},
+    }
+
+
 @router.post("/send")
 async def chat_send(
     body: ChatBody,
@@ -126,6 +182,21 @@ async def chat_send(
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
     user = await current_dev(authorization)
+    from services.interaction_contract import request_conflict, finalize, new_request_id
+    request_conflict(body.prompt)
+    interaction_request_id = new_request_id()
+    # Engagement Nudge (2026-09-09), Part 2 — fire-and-forget signal
+    # for "did the user try to ask ORA for something", independent of
+    # mock mode / budget / whatever the orchestrator ends up doing
+    # with this prompt. Never awaited inline — must add zero latency
+    # and never affect the real response.
+    asyncio.ensure_future(_fire_task_sent_bg(user["user_id"], body.prompt))
+    # MOCK_LLM short-circuit (2026-09-08) — mirrors chat_stream's W2 Step 2
+    # guard. Sits BEFORE budget/pre-LLM/orchestrator so no provider,
+    # intent-escalation, watchdog or council call can ever fire in mock.
+    from services.ora_chat_v2.llm_client import is_mock as _mock_llm_on
+    if _mock_llm_on():
+        return _mock_send_response(body, user)
     # Iter 364 · Phase 3 · Token hard-stop enforcement.
     # BEFORE any LLM provider call, refuse the request if the user has
     # exhausted their effective token budget OR blown their monthly
@@ -257,7 +328,7 @@ async def chat_send(
             # that index — so this call was returning 0 candidates on
             # every real request, unconditionally. classify_intent()
             # is a cheap heuristic (no LLM call), safe here.
-            _recall_mode_send = classify_intent(body.prompt or "", body.f12_payload)
+            _recall_mode_send = classify_intent(body.prompt or "", body.f12_payload, body.project_id)
             _council_block, _council_recalled = await get_council_few_shot(
                 _db_ref, body.prompt or "",
                 mode=_recall_mode_send,
@@ -374,6 +445,8 @@ async def chat_send(
     _intent_result = _pre.intent_result
     _tier = _pre.tier
     req_mode = _pre.mode
+    if _pre.forced_read_context:
+        extra_sys = (extra_sys + "\n\n" + _pre.forced_read_context).strip()
     if result is None:
         _max_iters_eff = 3 if _tier == "query" else min(body.max_tool_iters, 4)
         # 2026-09-04 — FIX for the "promise-then-silence" hang
@@ -405,6 +478,7 @@ async def chat_send(
                     task_type=body.task_type or _infer_task_type(body.prompt),
                     is_founder=_is_fnd,
                     bin_ctx=bin_ctx,
+                    task_state_scope_files=((_pre.task_state or {}).get("scope") or {}).get("files"),
                 ),
                 timeout=_hard_timeout_s,
             )
@@ -459,7 +533,7 @@ async def chat_send(
     _bail_reason = None
     try:
         from services.response_confidence import (
-            response_seems_mismatched, has_ship_suggestion, FALLBACK_MESSAGE,
+            response_seems_mismatched, has_ship_suggestion,
         )
         from services.bail_reason import classify_bail
         _mismatch = response_seems_mismatched(body.prompt or "", content, _prior_fix_signal)
@@ -548,67 +622,51 @@ async def chat_send(
     # deterministic real-execution path (see that module's docstring
     # for why the false-success guard's premise no longer applies
     # there).
-    content = apply_output_guards(
+    #
+    # 2026-02 — Context-Confusion fix Part D: this call plus the
+    # leak-strip/length-cap/business-voice passes that used to be
+    # hand-copied separately here AND in stream.py are now ONE
+    # shared, traced pipeline (`run_rendering_pipeline`,
+    # chat_helpers.py) — the exact same call stream.py makes, so the
+    # two call sites can never silently drift out of order/sync.
+    content, _render_trace = await run_rendering_pipeline(
         body.prompt or "", content, _prior_fix_signal,
         retrieved_context_for_grounding(extra_sys, result),
         skip=bool(result.get("_skip_output_guards")),
         tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
+        session_id=body.session_id, user_id=user["user_id"],
+        plain_english_active=_plain_english_active,
+        ora_panel=getattr(body, "ora_panel", False),
     )
+    _leak_stripped = _render_trace["leak_stripped"]
+    _length_capped = _render_trace["length_capped"]
+    _output_guard_ref_id = _render_trace["output_guard_ref_id"]
 
-    # 2026-08-27 · Output Guard (Phase 1 net, "Show the Outcome, Never
-    # the Engine"). Runs AFTER the mismatch/retry/fallback resolution
-    # above (nets whatever text is actually about to be returned).
-    # Never touches ship/confirm content.
-    #
-    # P5 (Journey/Intent-Grounding build round) — leak-STRIPPING now
-    # runs for EVERY user, not just the plain_english_contract_active
-    # allowlist (founder call: these are real bugs — raw booleans,
-    # internal jargon like "Iter 286"/"Mode D" — not part of the
-    # explain-mode verbosity/tone enhancement). Length-CAPPING (the
-    # re-summarize-if-too-long net) stays flag-gated — that's a real
-    # behavior/tone change, not a leak fix.
-    _leak_stripped = False
-    _length_capped = False
-    _output_guard_ref_id = None
-    if content and "aurem-handoff" not in content:
-        try:
-            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
-            from core.errors import new_ref_id
-            # universal_only=True unless the explain-mode contract is
-            # active this turn — otherwise the explain-only tier (file
-            # paths, DB collection names, framework jargon) would strip
-            # legitimate scan/dev content for every user (the P6 regression).
-            # M3 (2026-08-30) — a file the user named THIS turn (e.g. "ship
-            # a fix to README.md") is exempted from the bare-file-path
-            # redaction; every other path is still redacted, unchanged.
-            content, _leak_stripped = strip_machinery_leak(
-                content, universal_only=not _plain_english_active,
-                user_named_files=extract_named_files(body.prompt),
-            )
-            if _plain_english_active:
-                content, _length_capped = await enforce_length_cap(content)
-            if _leak_stripped or _length_capped:
-                _output_guard_ref_id = new_ref_id()
-        except Exception as _og_exc:
-            logger.debug("output_guard skipped (chat/send): %r", _og_exc)
 
-    # R1 (2026-08-31) — business-owner voice filter, applied LAST (after
-    # every other content-mutating guard, INCLUDING output_guard above)
-    # so nothing downstream can re-introduce a raw filename/dev term.
-    # Same "aurem-handoff" exemption as output_guard just above: that
-    # fence is structured ship-pipeline machinery the frontend parses
-    # for the real file path (Approve/ShipDialog) — NOT prose. Rewriting
-    # tokens inside it would risk breaking the exact ship flow this
-    # rework must not touch (see R5a — the K1 approve-button history).
-    if content and "aurem-handoff" not in content:
-        try:
-            from services.business_voice_filter import apply_business_owner_guards
-            content = await apply_business_owner_guards(
-                getattr(body, "ora_panel", False), content, body.prompt or "",
-                session_id=body.session_id, user_id=user["user_id"],
-            )
-        except Exception as _bvf_e:
-            logger.debug("business_voice filter skipped (chat_send): %r", _bvf_e)
+    # Part B3 enforcement — deterministic override, placed as the
+    # ABSOLUTE LAST content-mutating step (after response_confidence/
+    # bail_reason, output_guard, AND business_voice_filter above —
+    # each of those can itself rewrite `content`, including back into
+    # the exact canned clarifying-question class this gate exists to
+    # prevent, e.g. bail_reason.py's _LOW_CONFIDENCE_MESSAGE, with
+    # zero awareness of required_read_gate). Whatever `content` is at
+    # this point, if it still looks like that failure, replace it
+    # with the guaranteed-correct fallback built straight from the
+    # real read result. This MUST be the true last word — moved here
+    # (was originally right after response_confidence, which turned
+    # out not to be last either) after confirming live that even THAT
+    # placement still got overwritten downstream.
+    if _pre.required_read_gate:
+        from services.required_tool_gate import enforce_required_read_gate
+        content = enforce_required_read_gate(_pre.required_read_gate, content)
+        # 2026-02 round-4 — this gate's read_repo_file call happens
+        # OUTSIDE the orchestrator's own tool-dispatch loop, so without
+        # this it was invisible to B1's persisted trace (log_task_chain
+        # below reads result["tool_calls"]) even though a real read
+        # happened. Append it so the trace matches reality.
+        _gate_tcr = _pre.required_read_gate.get("tool_call_record")
+        if _gate_tcr:
+            result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
 
     # Maxx mode: watchdog review (only if we have non-empty content)
     # Iter 161 — same legacy-only gating as the streaming path: skip
@@ -646,12 +704,36 @@ async def chat_send(
         except Exception as _mce:
             logger.debug("maxx_cost_log write failed (chat_send): %r", _mce)
 
+    interaction = finalize(result, content, prompt=body.prompt,
+                           session_id=body.session_id or "", request_id=interaction_request_id,
+                           low_confidence=_low_confidence)
+    if interaction:
+        result["turn_state"] = interaction["turn_state"]
     await _persist_turn(user["user_id"], body.session_id or "",
                         body.prompt, content, provider, watchdog=watchdog,
                         project_id=body.project_id,
                         low_confidence=_low_confidence,
                         ship_suppressed=_ship_suppressed,
-                        bin_ctx=bin_ctx)
+                        bin_ctx=bin_ctx, interaction=interaction)
+    # 2026-09-08 — task-chain logging (structured, not raw CoT).
+    try:
+        from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
+        from services.tool_failure_evidence import turn_tool_calls
+        asyncio.create_task(log_task_chain(
+            _db, user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id, user_prompt=body.prompt or "",
+            tool_calls=turn_tool_calls(result), final_response=content,
+            turn_state=result.get("turn_state") or "success",
+            failure_mode=result.get("failure_mode") or result.get("error"),
+            sequential_thoughts=result.get("sequential_thoughts") or [],
+        ))
+        asyncio.create_task(log_unverified_tool_claims(
+            _db, user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id,
+            claims=result.get("unverified_tool_claims_blocked") or [],
+        ))
+    except Exception as _tc_exc:
+        logger.debug("task_chain logging skipped (chat_send): %r", _tc_exc)
     if body.session_id:
         asyncio.create_task(
             _maybe_set_title(user["user_id"], body.session_id, body.prompt)
@@ -711,6 +793,8 @@ async def chat_send(
         pass
     return {
         "ok": result.get("ok", True),
+        **({"interaction": interaction, "turn_state": interaction["turn_state"],
+            "continue_available": interaction["continue_available"]} if interaction else {}),
         "content": content,
         "provider": provider,
         "watchdog": watchdog,

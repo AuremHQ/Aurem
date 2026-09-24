@@ -101,16 +101,25 @@ async def test_t_self_bug_dashboard_type_filter():
 
 
 @pytest.mark.asyncio
-async def test_t_self_bug_dashboard_readonly():
-    """No mutate/delete route exists on this router — read-only by
-    construction."""
+async def test_t_self_bug_dashboard_ledger_stays_immutable():
+    """2026-09-21 — Self-Repair audit Part 3/4: the router now has two
+    narrow, explicitly-scoped mutate actions (mark-fixed, review-
+    proposal) on the LEARNED-PATTERN status/review fields — but the
+    raw ledger (`ora_self_bugs`) itself still has no edit/delete route
+    anywhere on this router. No PUT/DELETE exists at all, and every
+    route is either GET or one of exactly the two named POST actions."""
     from routers.self_bugs_admin import router
-    methods = {route.methods and next(iter(route.methods)) for route in router.routes}
+    allowed_post_paths = {"/admin/self-bugs/mark-fixed", "/admin/self-bugs/review-proposal"}
     for route in router.routes:
-        assert "GET" in route.methods
-        assert "POST" not in route.methods
         assert "DELETE" not in route.methods
         assert "PUT" not in route.methods
+        if "POST" in route.methods:
+            assert route.path in allowed_post_paths, (
+                f"unexpected POST route {route.path!r} — the ledger itself "
+                "must stay append-only/immutable"
+            )
+        else:
+            assert "GET" in route.methods
 
 
 @pytest.mark.asyncio

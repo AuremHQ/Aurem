@@ -57,10 +57,13 @@ def test_agent_status_bar_amber_border_css_preserved():
 
 
 def test_chatpanel_uses_agent_status_bar_component_not_inline_jsx():
+    # The caption bar was deliberately unmounted from ChatPanel (git
+    # bc15f929 — redundant with the inline thinking bubble); the extracted
+    # component file stays. Neither the mount NOR the old inline JSX may
+    # reappear in ChatPanel.
     src = _read(CHATPANEL)
-    assert 'import AgentStatusBar from "./AgentStatusBar"' in src
-    assert "<AgentStatusBar busy={busy} queuedCount={queuedCount}" in src
-    # Old inline JSX MUST be gone — the extraction is not "half done".
+    assert "<AgentStatusBar" not in src
+    # Old inline JSX MUST stay gone — no half-reverted extraction.
     assert '{busy && (\n        <div className="chat-inline-card" data-testid="agent-status-shell"' \
         not in src
 

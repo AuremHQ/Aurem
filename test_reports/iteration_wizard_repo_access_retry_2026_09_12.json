@@ -1,0 +1,27 @@
+{
+  "summary": "Verified FIX A (NewUserWizard auto-retry on installation_no_repo_access) and FIX B (useGitHubConnectStatus denial grace window) end-to-end. All 21 targeted unit tests pass (6 files: connectRefinement 3/3, repoAccessRetry 4/4, claimFallback 5/5, freshIsolation 5/5, repoSyncLag 3/3, deniedRace 1/1). TEST A1 live UI reproduction against the real preview backend succeeded cleanly: seeded a synthetic github_installations row (id 888777666, qa-retry-check-org/demo-repo, active:true) for fresh-p2-empty-0903@aurem.dev (0 projects), logged in, and observed the mandatory gate. From t=0.5s through t=6.5s the wizard showed only the new friendly `wizard-repo-access-retrying` message ('Almost there — GitHub is still finishing up your access grant...'), NO `wizard-error` and NO `wizard-app-install-btn` (bare CTA); at ~t=7s (retries exhausted, 3 attempts ~3s apart) the real actionable `wizard-error` appeared exactly once and stayed — no infinite silent loop. The repo-picker view (`wizard-app-repo-picker`) stayed rendered throughout. Synthetic install row cleaned up post-test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/frontend/src/components/__tests__/NewUserWizard.repoAccessRetry.test.jsx",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.deniedRace.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.repoSyncLag.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.freshIsolation.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.claimFallback.test.js",
+    "/app/frontend/src/components/__tests__/NewUserWizard.connectRefinement.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Both fixes are tight and well-scoped: retry is limited to the ONE specific error code (installation_no_repo_access), bounded to 3 attempts, other errors surface immediately as before — no risk of masking real failures.",
+    "The denial grace window (2 re-checks, 1s apart) is small enough to keep UX responsive but wide enough to absorb realistic webhook lag.",
+    "Note (already documented in test file header): the asGate mount effect fires submitRepo twice under RTL/jsdom, but confirmed live (both this iteration and prior) that the real running app fires exactly one request per attempt — pre-existing test-harness quirk, not a bug."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (no backend endpoints re-tested this round; unaffected surface)", "frontend": "100% (21/21 unit tests + live UI reproduction passing)"},
+  "test_credentials": "fresh-p2-empty-0903@aurem.dev / FreshEmpty2026! (preview, 0 projects, ideal gate fixture)",
+  "seed_data_creation": "Inserted then removed a synthetic github_installations row (installation_id 888777666, github_login qa-retry-check-org, repositories:[qa-retry-check-org/demo-repo], active:true) for user_id 612673b71f2e424d9bc711f26eec195e (fresh-p2-empty-0903@aurem.dev) for TEST A1. Row deleted after test; gate-skip flags also unset to leave the account clean.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The mandatory-gate 'third-time' bug (auto-submit racing GitHub grant propagation) is fully resolved. TEST A2 (real-installation happy path) was not exercised live — no real GitHub App install for a first-time account exists in this preview pod — but the retry logic only fires on the specific installation_no_repo_access error code, so the success path is behaviorally unchanged and covered by the existing connectRefinement tests (3/3 passing) plus unit test t_succeeds_on_retry_without_ever_showing_the_error. TEST A3 (asGate=false / add-project wizard) is covered by connectRefinement's non-gate cases.",
+  "rca of the issue": "Root cause A (verified live in this iteration): NewUserWizard's one-click auto-submit fires the instant freshRepos.length===1 on mount; GitHub's grant propagation can lag a few seconds behind installation_active becoming true, so the backend's verify call 404s as installation_no_repo_access and the user sees a scary red error as their first UI beat post-grant — driving the Skip click. Mitigation (FIX A) verified: auto-retry up to 3 times, 3s apart, ONLY for this error code, with a friendly 'Almost there…' indicator during retries; real error only surfaces if all retries fail. Root cause B: useGitHubConnectStatus.startConnect's popup-closed branch had no grace window — a closed popup + not-yet-persisted installation_active (webhook lag) falsely fired app_install_denied. Mitigation (FIX B) verified via unit test: 2 re-checks 1s apart before declaring denial."
+}

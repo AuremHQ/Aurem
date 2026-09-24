@@ -1,0 +1,43 @@
+{
+  "summary": "Verified fix for chat date-bucketing / chronological ordering after page refresh. Backend unit tests (2/2) confirm _persist_chat_turns() now stamps the user turn with self._started_at (loop-start time) instead of time.time() at completion. Frontend unit tests (11/11, including 4 new t_sort_* cases) confirm sortMessagesByTimestamp is stable, respects ties, handles missing ts, and is a no-op on already-sorted arrays. Code review confirms it is correctly wired into ChatPanel.jsx's history-load useEffect (line 1518) and that `ts` is preserved on hydrated turn objects (line 1526). Live UI: sent messages render in correct order under a single 'Today' divider before refresh. Full end-to-end refresh assertion within the SAME session was blocked by an unrelated preview-env issue (GitHub App revoked → project connection unavailable → backend replies with a placeholder and doesn't persist non-loop user turns), so post-refresh the just-sent messages disappear entirely. That is orthogonal to the ordering/date-bucket bug and does not invalidate the fix — the fix's correctness is proven by the unit tests + code wiring.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Chat message persistence in preview env",
+        "issue": "When the active project's GitHub App is revoked/disconnected, sending a normal (non-loop) chat message shows a placeholder assistant reply ('connection to your website's code isn't available right now') and the user turn appears NOT to be persisted (post-refresh the message is absent from /chat/history for the same session_id). This blocks end-to-end verification of any chat-history behavior in the preview env. Root cause is the environment's stale GitHub connection, not the date-bucket fix itself.",
+        "affected_selectors": ["[data-testid=\"chat-input\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_2026_09_11_loop_chat_turn_timestamp.py",
+    "/app/frontend/src/utils/__tests__/dateDividers.test.js"
+  ],
+  "action_items": [
+    "OPTIONAL: In preview env, reconnect the AUREM GitHub App to the demo project (aurem-demo/frontend) so end-to-end chat persistence works and testers can visually re-verify the refresh-order/date-bucket fix live. Not blocking — fix correctness is proven by unit tests.",
+    "OPTIONAL: 6 console errors (403) surface on chat page load due to the same revoked-GH-token condition; these disappear once the GitHub App is reconnected."
+  ],
+  "critical_code_review_comments": [
+    "sortMessagesByTimestamp is stable and correctly falls back to original index on ties/missing ts — good defensive design as a general reload-time safety net beyond the specific loop-pause case.",
+    "Frontend history-load hydration explicitly preserves `ts: typeof t.ts === 'number' ? t.ts : undefined` (ChatPanel.jsx:1526) — necessary for the sort to have real values to work on. Confirmed present.",
+    "loop_engine._persist_chat_turns fix uses `self._started_at` (captured at LoopEngine construction) for the user turn and `now` for the assistant turn — semantically correct: user prompt existed at construction, assistant reply only exists at completion.",
+    "Minor: /chat/history returns raw stored order (no backend-side sort). Frontend sort is now the single source of ordering truth on reload. Acceptable, but the codebase could add a defensive `.sort` on the /chat/history backend for extra safety (cheap, would prevent client-only sorters like curl/scripts from seeing wrong order)."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (2/2 unit tests pass)",
+    "frontend": "100% (11/11 unit tests pass; UI pre-refresh sanity check pass; full e2e refresh blocked by unrelated env)"
+  },
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview)",
+  "seed_data_creation": "None (transient chat messages only)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "For a true end-to-end verification of the reload ordering fix in the preview env, first reconnect the demo project's GitHub App (currently revoked, causing all non-loop chat sends to return a placeholder response without persisting the turn). Once persistence works, the flow is: (1) log in test@aurem.dev, (2) send 3 chat messages in the current session, (3) capture localStorage['aurem.chat.sessionId'], (4) refresh, (5) verify the same session_id is restored, and that /api/aurem-dev/chat/history?session_id=<id> returns the messages with monotonically non-decreasing ts values, and the UI renders them under a single 'Today' divider in send order. Note: the frontend uses baseURL `${REACT_APP_BACKEND_URL}/api/aurem-dev`, so the correct absolute path is /api/aurem-dev/chat/history — NOT /api/chat/history (which 404s).",
+  "rca of the issue": "Original bug RCA (already fixed by main agent, verified by this run): services/loop_engine.py._persist_chat_turns() only ran at loop TERMINAL state. When a loop was paused for approval (plan/ship gate) and later resumed hours/days later, the user's original prompt was persisted with `time.time()` at COMPLETION time instead of the loop's real submission time, causing (a) the turn to be $push'd at the end of chat_sessions.turns (wrong chronological position) and (b) date-bucketing to place old prompts under 'Today' instead of their actual day. Fix: user turn now uses self._started_at (captured at LoopEngine __init__); assistant turn keeps `now`. Frontend belt-and-suspenders: sortMessagesByTimestamp() stable-sorts by ts on history reload so any out-of-order backend push still renders correctly."
+}

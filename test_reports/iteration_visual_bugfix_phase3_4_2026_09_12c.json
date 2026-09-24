@@ -1,0 +1,40 @@
+{
+  "summary": "Phase 3+4 Visual Bug-Fix pipeline testing. Backend error-path & quota-shape testing all passed (10/10 pytest). Confirmed the sandbox's known GitHub-App-missing constraint: /generate-patch, /preview, /approve-pr all cleanly 400 (never 500/hang) when repo is unconnected or the pipeline is out of order. /status is always 200. /discard always 200 and sets status=discarded. GET /api/aurem-dev/usage/me still 200 for both admin and free-tier accounts after the new visual_bug_reports counter added in services/usage.py::get_usage() — no regression. Confirmed via code that both /upload and /generate-patch call assert_has_task_budget (dual gate as spec required). Frontend chat smoke: login OK, chat composer renders, no page-blocking errors. Deep VisualDiffWorkbench UI walkthrough could not be done live because candidate_files is always empty in this sandbox (no GitHub install), matching the founder's explicit sandbox limitation note; instead verified code-review: state machine, cleanup interval, prop wiring from ChatPanel are correct.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/aurem-dev/visual-bugfix/upload", "issue": "Emergent object-storage 500s intermittently on upload (~1 in 5 during rapid sequential upload). Retried once and it succeeds. Same behavior observed in Phase 1+2 reports. Not new."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_visual_bugfix_phase3_4_2026_09_12.py",
+    "/app/test_reports/pytest/visual_bugfix_p34.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "VisualDiffWorkbench.jsx: polling interval is stored in pollRef and cleaned up on unmount (useEffect return) and on status transitions — no stale-closure or leaked interval risk. Correct.",
+    "VisualDiffWorkbench.jsx `runGeneratePatch` is wrapped in useCallback with correct deps [reportId, token, onTokenLimit], and useEffect only re-fires when runGeneratePatch identity changes — safe.",
+    "ChatPanel.jsx onClose sends fire-and-forget POST /discard then clears both workbenchReportId AND visualBugAnalysis — matches spec ('best-effort discard, clear local state').",
+    "VisualBugAnalysisCard.jsx conditionally renders `visual-bug-card-generate-fix-btn` only when candidate_files.length>0 AND onGenerateFix prop is passed — correct guard for sandbox 'no repo' case.",
+    "backend/routers/visual_bugfix.py `_repo_creds_and_ctx` hard-fails 400 on missing repo/token — matches Phase 3 'hard-fail unlike Phase 2's soft-degrade' spec.",
+    "usage.py extension counts visual_bug_reports with terminal-ish statuses ['patch_generated','previewed','preview_failed','pr_created'] — mirrors scan_fix_usage/loop_sessions precedent. Verified /usage/me still returns 200 with correct shape.",
+    "generate-patch calls assert_has_task_budget AFTER checking status/candidate_files but BEFORE the LLM call — pre-flight gate at correct point.",
+    "Approve-PR endpoint returns {ok:false, error} on failure instead of raising HTTP 5xx — good for the UI's error-state code path in VisualDiffWorkbench which reads data.error.",
+    "Minor: VisualDiffWorkbench sets phase='preview_failed' on preview-start error (line 74) but preview_failed error path in JSX only shows the warning ABOVE the existing patch; the diff still renders below — fail-safe degradation correctly preserved. Confirmed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_visual_bugfix_phase3_4_2026_09_12.py"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "smoke-only (no full workbench live-test possible without GitHub install)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! and free-gate-test-0822@aurem.dev / FreeGateTest2026!",
+  "seed_data_creation": "None (used existing accounts). Test uploads a couple of 1x1 PNGs via /visual-bugfix/upload; these are TTL-expired after 14d and non-invasive.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 3+4 backend error paths + quota-endpoint regression fully verified. The sandbox has NO working GitHub App installation — this makes the full happy path (generate-patch -> preview -> approve-pr) untestable end-to-end here; only the 400 error paths and quota shape can be exercised. If a future run finds a project with a working GitHub App install, use the test file test_visual_bugfix_phase3_4_2026_09_12.py as the base and add a happy-path class. Live 402 quota repro was NOT driven (would require running ~10 real chat tasks against the free-tier account to fill the cap) — code-level confirmation only: both /upload and /generate-patch call assert_has_task_budget (grep passes).",
+  "rca of the issue": "N/A — no bugs found. The observed intermittent 500 on Emergent object-store upload is a pre-existing environment issue (not introduced by Phase 3+4) and is handled by client retry."
+}

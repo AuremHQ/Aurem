@@ -1,0 +1,14 @@
+{
+ "loop_id": "r10e2e_17e09aea07",
+ "branch": "auremcto/ship-r10e2e-1788751715",
+ "pre_merge_sha": "94782191944c1d050129b0b38dfea11864ceb998",
+ "pr_url": "https://github.com/polarisbuiltinc-wq/aurem-rollback-testbed/pull/1",
+ "pr_number": 1,
+ "sha_before": "eca279371e56f017464dab787ffdd43d7b3cc823",
+ "path": "r10-e2e/r10e2e_17e09aea07.md",
+ "user_id": "test_admin_001",
+ "merged_sha": "d82c23671996fe6d14614983950fc9ad9b7d44fe",
+ "sha_after_merge": "d82c23671996fe6d14614983950fc9ad9b7d44fe",
+ "revert_sha": "1fe24ee3faaf2de6785a2f33e7c6bae9f15dfec4",
+ "sha_after_rollback": "1fe24ee3faaf2de6785a2f33e7c6bae9f15dfec4"
+}

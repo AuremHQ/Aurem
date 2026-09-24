@@ -1,0 +1,45 @@
+{
+  "summary": "Round 3 re-verification of B3 required_read_gate on /api/aurem-dev/chat/stream AND regression on /chat/send. Result: STILL BROKEN and FLAKY. Stream: 1/3 runs produced the canonical gate reply, 2/3 runs produced LLM output with the file path mangled to `.that page` (rule id `exec_usage` retained but full file path lost). Send regression (was clean in round 2): now ALSO fails — path mangled to `.that page` in this session's run. Ordinary chat/stream ('build me a login page') completes normally. Root cause hypothesis: business_voice_filter / path-mangling filter still runs AFTER (or in parallel with) enforce_required_read_gate — its .agent-plugins-repo → 'that page/a project page' substitution destroys the file path the gate is meant to preserve. Alternatively the stash `state.required_read_gate` set in worker.py is not being reliably read by stream.py before the token loop (2/3 stream runs show no canonical gate text at all).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/aurem-dev/chat/stream", "issue": "B3 required_read_gate is FLAKY (~33% success): 2/3 runs produced LLM output where file path .agent/skills/plugins/antigravity-awesome-skills-claude/skills/007/scripts/scanners/injection_scanner.py was mangled to `.that page`, and one of those runs also never sent a final done event (only intermediate 'type: step' done). Only 1/3 runs produced the canonical gate reply mentioning the full path.", "priority": "CRITICAL"},
+      {"endpoint": "/api/aurem-dev/chat/send", "issue": "REGRESSION from round 2 (was clean). Same B3 message this round produced mangled path `.that page` with only exec_usage rule id intact. Same voice/path-mangling filter appears to be re-running after enforce_required_read_gate on send path too.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "/api/aurem-dev/chat/stream", "issue": "Intermediate SSE frame `{\"type\":\"step\",\"text\":\"✅ Done\",\"done\":true}` collides with the final done event shape — any consumer that treats `done:true` as terminal will stop reading early. Recommend removing `done:true` from the step frame or gating final done detection by presence of `provider`/`session_id`."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_b3_gate_stream.py",
+    "/app/test_reports/pytest/b3_stream_round3.xml",
+    "/app/test_reports/round3_stream_raw_evidence.txt"
+  ],
+  "raw_evidence": {
+    "stream_run1_PASS_canonical": "I looked for `.agent/skills/plugins/antigravity-awesome-skills-claude/skills/007/scripts/scanners/injection_scanner.py` to check the `exec_usage` finding you flagged, but couldn't read it: No project selected. Please select a project from the sidebar and try again — repo tools cannot run against Home.. Connect a project first, then ask again and I will read it and tell you if it is a real issue.",
+    "stream_run2_FAIL_mangled": "The read for rule `exec_usage` at path `.that page` failed — no project is currently selected, so website tools can't run against Home. I can't inspect or fix that page until a project is connected...",
+    "stream_run3_FAIL_mangled_no_done": "[ISSUE] Unable to locate the page `.that page` to verify the `exec_usage` rule violation. The page path you specified does not exist in the current website snapshot. I found three potential injection scanner pages in `/app/a project page/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/`... (also: final done event never arrived — only intermediate step done frames)",
+    "send_regression_FAIL_mangled": "[ISSUE] Unable to verify the critical issue for `exec_usage` in `.that page` — the page was not found in the connected website. This appears to be a path from an internal AUREM skills plugin...",
+    "raw_first_dump_from_/tmp/stream_dump.py": "I can't read that page — it doesn't exist at the pod path I tried (`/app/.agent/skills/..a project that page` returned \"No such page or directory\"), and website tools can't run because no project is selected (Home view). Let me search the pod filesystem for it. But I can update the text, images, or layout on your site instead — want me to do that?"
+  },
+  "action_items": [
+    "CRITICAL: Fix path-mangling / business_voice_filter to bypass file paths matching well-known patterns (extensions .py/.js/.ts/.md, path segments containing '/' or '.agent/'). Its .agent→that/a project, repo→website, filename→page substitutions destroy the very file path the required_read_gate is inserting.",
+    "CRITICAL: Investigate why enforce_required_read_gate() fires only ~1/3 of the time on chat/stream. Possibilities: (a) state.required_read_gate stashed in worker.py isn't populated in some race (worker runs async, stream.py reads state before stash completes), (b) the pre-LLM classifier is non-deterministic and only sometimes tags this prompt with required_read_gate, (c) the enforcement is being placed after a code path that early-returns to the token-streaming loop with the original LLM content when gate metadata is missing.",
+    "CRITICAL REGRESSION: chat/send B3 gate no longer clean after this round's stream-side fix — the stream fix appears to have re-broken send (or send was already flaky and only appeared clean in round 2). Re-audit send path too.",
+    "MINOR: Change intermediate SSE step frame to not carry `done:true` (currently `{type:step, text:'✅ Done', done:true}` collides with the terminal done event and confuses SSE consumers).",
+    "Consider making required_read_gate enforcement idempotent: after enforce_required_read_gate() rewrites the text, freeze it in state and have business_voice_filter check a `gate_locked=True` flag to skip its mutations entirely."
+  ],
+  "critical_code_review_comments": [
+    "The B3 gate has now had 3 layered root causes across 3 rounds, all in different files, and Round 3 revealed a 4th layer: the voice/path-mangling filter itself corrupts file paths in the gate output. The current architecture has too many mutually-visible content-mutating passes — recommend a single 'final content freeze' point with an immutable flag, downstream filters must check and skip.",
+    "chat/stream emits `{type:step, done:true}` intermediate frames which is a footgun for any SSE consumer treating done:true as terminal.",
+    "The B3 gate flakes (1/3 hit rate on stream) suggests it may depend on state populated by an async worker that hasn't finished when the stream router reads it. Needs an await/sync point."
+  ],
+  "updated_files": ["/app/backend/tests/test_b3_gate_stream.py"],
+  "success_rate": {"backend": "40% (2/5 tests passed: send regression FAIL, 2 of 3 stream B3 runs FAIL, 1 stream B3 run PASS, 1 ordinary stream PASS)", "frontend": "n/a"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (from review_request; not from /app/memory/test_credentials.md — that file was not consulted this round since credentials were provided inline).",
+  "seed_data_creation": "none",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "This is round 3 on the ORA B3 required_read_gate ticket. Rounds 1 & 2 fixed intent classification and send-path ordering; round 3 was supposed to fix stream. It is still broken, plus round 3 introduced a regression to send. The mangling filter converts .agent→that/a project, injection_scanner.py→page, repo→website — you'll see `.that page` / `a project page` / `website` in mangled outputs. Only ~1/3 of stream runs produce the canonical gate reply with the full file path intact. Test file at /app/backend/tests/test_b3_gate_stream.py runs 3 stream + 1 send + 1 ordinary. Run with `cd /app/backend && python -m pytest tests/test_b3_gate_stream.py -v -s`. Raw evidence in /app/test_reports/round3_stream_raw_evidence.txt.",
+  "rca of the issue": "Two distinct failures in this round: (1) On both chat/stream (2/3 runs) and chat/send (this round), the file path in the required_read_gate's canonical output is being corrupted by the business_voice_filter / path-mangling filter running AFTER the gate — outputs contain `.that page` / `a project page` / `website` instead of the actual file path. (2) Additionally on chat/stream 2/3 runs, the LLM-generated response is streaming through instead of the canonical gate replacement — suggesting enforce_required_read_gate() is not always firing, likely because state.required_read_gate stashed by worker.py is being read before it's populated in the async worker, OR the pre-LLM classifier is non-deterministically failing to tag the prompt. Mitigation: (a) exempt file-path tokens from the mangling filter, (b) add an immutable content freeze flag after enforce_required_read_gate() that downstream filters must respect, (c) add an await/sync barrier between worker stash and stream.py's read of state.required_read_gate, (d) log both `pre.get('required_read_gate')` at worker time and `state.required_read_gate` at stream-guard time so the flake can be diagnosed."
+}

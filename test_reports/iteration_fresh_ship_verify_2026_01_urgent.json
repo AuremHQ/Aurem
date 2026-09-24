@@ -1,0 +1,64 @@
+{
+  "summary": "URGENT single-shot fresh verification of ship-via-PR on PRODUCTION auremcto.com against founder account + real repo TJSNDHU/Aurem (project p_c2b5b8a916). MECHANICALLY: ship pipeline works — click on the 'Approve the fix' CTA produced a real commit on main (SHA c771f0bddc8cb016eafdba05536367db2e6bc2c3) at t+29.05s from the Approve click. HOWEVER, two important caveats founder must weigh before flipping kit_apply_enabled: (1) the ship landed as a DIRECT COMMIT TO MAIN (parent_count=1, no PR opened), even though the UI reassurance banner said 'We'll open a pull request on your GitHub, review it there if you like, or just click Merge' — so the feature name 'ship-via-PR' is currently a misnomer on prod for this repo/project, it's actually 'ship-via-direct-commit-to-main'; (2) CONTENT FIDELITY BUG — I asked ORA to *append* a single one-line marker `<!-- ora-fresh-ship-check-2026-01-C -->` to README.md and nothing else. The plan card and commit-title claimed exactly that (commit msg: 'AUREM: In `README.md`, append exactly `<!-- ora-fresh-ship-check-20...'), but the actual diff on GitHub *replaced* the whole file (previous body `[x] README.md → done` → new body `# Project Name\\n\\nThis is the project README file...\\n## Installation\\n...` with 10 lines added, 1 removed). The requested marker string is NOT anywhere in the shipped file (confirmed via raw.githubusercontent.com/TJSNDHU/Aurem/main/README.md). Same 'ORA normalizes broader than requested' pattern flagged in the prior A5 (730919a) run, but this time it's worse: the requested marker is completely absent, and the commit message misrepresents the actual change. Prior A5 run was also PARTIAL for the same reason (called out on line 28 of iteration_prod_regression_auremcto_2026_01_v2.json: 'ORA also normalized README.md (+5 -1 lines) not just a pure single-line append — safe but broader than requested'). This run makes it stronger: the shipped commit's content diverges from what the plan card promised.",
+  "test_target": "A5-style single ship, timed, on prod",
+  "founder_decision_input": {
+    "ship_pipeline_mechanically_works": true,
+    "seconds_from_approve_click_to_github_commit": 29.05,
+    "commit_sha": "c771f0bddc8cb016eafdba05536367db2e6bc2c3",
+    "approve_click_iso_utc": "2026-09-06T01:12:41Z",
+    "commit_committer_iso_utc": "2026-09-06T01:13:02Z",
+    "landed_as": "DIRECT_COMMIT_TO_MAIN",
+    "pr_opened": false,
+    "commit_parent_count": 1,
+    "commit_author": "Tejinder sandhu",
+    "requested_change": "Append the exact one line `<!-- ora-fresh-ship-check-2026-01-C -->` to end of README.md, nothing else",
+    "actual_change_on_github": "Whole README.md rewritten (+10 -1 lines) with a generic template. Requested marker string is NOT present anywhere in the shipped file.",
+    "commit_message_matches_actual_diff": false,
+    "baseline_sha_pre_ship": "031a354e040ef0db5990b371450bd8ea3f4af541"
+  },
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/aurem-dev/cto/tasks/... (ship) — the LLM/plan → diff → commit pipeline behind it", "issue": "Content-fidelity gap: plan card and commit-title both claim 'append exactly `<!-- ora-fresh-ship-check-2026-01-C -->`' but the shipped diff replaces the entire README.md with a generic template that does NOT contain the requested marker. This is deceptive at the git-history level (log message ≠ actual diff) and is a trust-breaking bug for any downstream feature (Visibility Kit / kit_apply_enabled) that depends on ORA shipping exactly what it promised in the plan. RCA hypothesis: model was allowed to re-read README, saw the file was almost empty ('[x] README.md → done'), and 'normalized' it instead of doing a pure append; the append instruction got embedded only in the commit message string via the AUREM: template, not enforced against the actual patch. Recommended fix: (a) run the plan card's diff through a diff-equivalence check against the actual pushed patch before merging/pushing, or (b) constrain the tool call to git-apply the exact plan-card diff verbatim, no post-hoc model rewrite.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "UI banner 'What happens next: We'll open a pull request on your GitHub, review it there if you like, or just click Merge.'", "issue": "This banner is shown on the plan card but no PR is actually opened — the ship lands as a DIRECT COMMIT to main (parent_count=1, GET /repos/TJSNDHU/Aurem/pulls?state=all shows no PR matching the new SHA; the newest PR overall is #385 from 2026-08-29). Either the banner copy is wrong for this repo, or the PR opt-in is not being invoked. Founder-facing: users will trust the banner and get direct-to-main behavior."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Ship-via-PR", "issue": "Ship pipeline is really ship-via-direct-commit for this repo — no PR opened despite UI 'we'll open a pull request' banner.", "affected_selectors": ["button:has-text('Approve the fix')"]}
+    ],
+    "design_issues": []
+  },
+  "per_test_results": {
+    "A_login": {"result": "PASS", "note": "email/pw login → /dashboard succeeded"},
+    "B_send_prompt": {"result": "PASS", "note": "prompt 'append <!-- ora-fresh-ship-check-2026-01-C --> to README.md, show plan, wait for Approve' → plan card with correct diff appeared within ~10s"},
+    "C_approve_click_to_gh_commit": {"result": "PASS", "seconds": 29.05, "sha": "c771f0bddc8cb016eafdba05536367db2e6bc2c3"},
+    "D_landed_as_pr_or_direct": {"result": "DIRECT_COMMIT_TO_MAIN", "note": "parent_count=1, no PR opened despite UI banner claim"},
+    "E_content_fidelity": {"result": "FAIL", "note": "requested marker NOT in the shipped diff; whole file replaced with a generic template"}
+  },
+  "screenshots": [
+    "/app/test_reports/screenshots/prod_fresh3_before_approve.jpeg",
+    "/app/test_reports/screenshots/prod_fresh3_after_ship.jpeg"
+  ],
+  "action_items": [
+    "HIGH — GATE the kit_apply_enabled flag decision on fixing the content-fidelity bug: ORA's plan-card diff must equal the diff actually pushed to GitHub. Right now the pushed patch can diverge from what the user approved (commit c771f0b is proof).",
+    "HIGH — Decide whether the 'ship-via-PR' feature is really 'ship-via-direct-commit' for this account/repo. If PR opening is intended, investigate why no PR was created for this commit; if direct-commit-to-main is intentional, fix the plan-card 'What happens next' banner copy to stop promising a PR review step.",
+    "MEDIUM — Consider a safety rail: reject a commit-message whose 'append exactly `X`' claim isn't verifiable by grep-ing `X` in the new blob. This alone would have prevented this run's misrepresentation.",
+    "LOW — Same historical-chat clutter as prior iterations (old '❌ Task failed — nothing was committed' cards still in scroll)."
+  ],
+  "critical_code_review_comments": [
+    "Commit message templating (`AUREM: In README.md, append exactly ...`) is being generated from the user's intent string, not from the actual git diff. Log messages should be derived from — or at minimum validated against — the real patch. Right now git log is silently unreliable.",
+    "Ship endpoint is fast (<30s, well inside the 90s watchdog) and doesn't repeat the A6-style rollback-latency issue — but the correctness bar is now the blocker, not the speed bar.",
+    "'Approve the fix' button click reliably fires the ship — no z-index/overlay problem observed on 1440x900 desktop in this run for the CTA itself."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "ship endpoint returns 200 and produces a real commit; content correctness FAILS", "frontend": "Approve CTA renders + clicks cleanly; UI banner promising PR is misleading"},
+  "test_credentials": "Founder credentials from review_request; per policy the password is not echoed anywhere in this report or logs.",
+  "seed_data_creation": "One real commit was written to TJSNDHU/Aurem@main (c771f0bddc8cb016eafdba05536367db2e6bc2c3) with a 10-line generic README template. This is harmless (README-only, no code touched) — per review_request 'no need to revert - a one-line README comment is harmless to leave'. Founder should decide whether to restore prior README content or accept the new template. Note: previous main content ('[x] README.md → done') was overwritten, not preserved as an appended line, so a manual restore-then-append would be needed if founder wanted the original content back.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth email/pw works. Cookie banner 'Accept all' overlay appears after login on prod — dismiss with button:has-text('Accept all'). Chat send: [data-testid=chat-send]. For 'Approve the fix' CTA specifically use button:has-text('Approve the fix') exact — do NOT match on 'Approve' alone, because ORA emits chat bubbles containing the word 'approve' in prose ('Hey! Ready to approve and implement...') which the button-text matcher will pick up as false positives. Always take a baseline count of 'Approve the fix' buttons on the page BEFORE sending your prompt, then wait for count>baseline before clicking. GitHub anonymous API is limited to 60/hr — polling every 4s keeps you safely under. Baseline HEAD sha of main before this test: 031a354e040ef0db5990b371450bd8ea3f4af541. New HEAD after this test: c771f0bddc8cb016eafdba05536367db2e6bc2c3. Ship landed as DIRECT commit, not PR — no PR API activity to test against.",
+  "rca of the issue": "Content-fidelity fail RCA: ORA's plan card correctly renders a `+ <!-- ora-fresh-ship-check-2026-01-C -->` line and even the commit-message template claims 'append exactly `<!-- ora-fresh-ship-check-...`', but the actual git patch is `-[x] README.md → done` → `+# Project Name\\n\\n...\\n## Installation\\n...`. The model, when told to 'append to README.md', re-read the file, decided the existing contents were sub-optimal, and rewrote the whole thing — the marker line was silently lost in that rewrite. Meanwhile the commit-message template string was interpolated from the user's intent, not from the actual diff, so git log now permanently lies about what changed. FIX PATH: (1) constrain the ship worker to `git apply <plan_card_diff>` verbatim, or (2) after the model produces a new blob, diff it against the plan-card diff and abort ship if they diverge, or (3) at minimum, derive the commit message from the real patch and refuse to ship if the promised 'append X' string isn't present in the resulting file."
+}

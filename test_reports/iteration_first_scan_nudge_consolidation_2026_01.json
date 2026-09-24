@@ -1,0 +1,25 @@
+{
+  "summary": "Verified frontend consolidation of the standalone FirstScanNudge banner into OraGuideMascot's secondaryNudge system. FirstScanNudge.jsx file is removed. OraGuideMascot.jsx contains: (1) FIRST_SCAN_DISMISS_KEY = (pid) => `aurem_first_scan_nudge_dismissed_${pid}` — identical dismiss-key format to original, (2) same `/onboarding/first-scan/status` endpoint with `status !== 'skipped'` gate, (3) same message copy ('New here? Start with a quick scan of your site...'), (4) same `/scan` prefill via `ora:prefill` CustomEvent, (5) dismiss writes '1' to localStorage under the per-project key so the nudge stays dismissed across reloads, (6) `aurem:user-message-sent` event listener clears any pending first_scan nudge (replaces the local `messages.some(role==='user')` gate), dispatched from ChatPanel useEffect. Stage bubble still preempts secondary nudges (never both open at once). All 6 vitest cases in P2FirstExperienceWave.test.jsx pass (P2-A, P2-B x3, P2-C, P2-F). Public frontend URL loads cleanly, mascot correctly hidden when logged out.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/components/__tests__/P2FirstExperienceWave.test.jsx",
+    "/app/frontend/src/components/OraGuideMascot.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OraGuideMascot.jsx is 562 lines — approaching the 700-line split threshold. Consider extracting the secondary-nudge (external/first_scan) state machine + effects into a `useSecondaryNudge` hook for future maintainability.",
+    "Line 273 toggleOpen(): when opened manually with a secondary_nudge of kind 'external', panelMode is set to 'external' via secondaryNudge.kind — but the render check at line 394 is `panelMode === 'external' || panelMode === 'first_scan'`, correct. For 'external', variant is used to select action (post_skip → connect wizard). Minor: if a future variant is added without matching branch in actSecondaryNudge (line 291), the button will silently only run dismiss(); consider a default no-op log.",
+    "The ChatPanel effect (line 221-225) dispatches `aurem:user-message-sent` on EVERY message state change once at least one user message exists. This is idempotent but slightly noisy; a ref-guard to dispatch only on the first user message would avoid redundant events."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (no backend changes)", "frontend": "100% (6/6 vitest tests passing)"},
+  "seed_data_creation": "None required.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Task was a pure frontend consolidation: standalone FirstScanNudge banner deleted, its endpoint/message/dismiss-key/prefill behavior all moved into OraGuideMascot's secondaryNudge system. LocalStorage dismiss key format preserved exactly: `aurem_first_scan_nudge_dismissed_<project_id>`. If a full live-login E2E is desired later, sign in, land on chat with a connected-but-never-scanned project, verify a floating mascot bubble appears saying 'New here? Start with a quick scan of your site...', click 'Scan my site' → composer prefilled with '/scan'; reload → nudge does NOT reappear (localStorage sticks); also verify sending any user message while the nudge is open closes it and it does not reappear for that project."
+}

@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } from "../src/data/competitors.mjs";
 import { ABOUT, CONTACT } from "../src/data/companyInfo.mjs";
+import { DEVELOPERS } from "../src/data/developerInfo.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
@@ -77,14 +78,47 @@ function injectLd(html, ld) {
 }
 
 function injectRoot(html, inner) {
+  // 2026-09-04 — flash-of-unstyled-content fix. `inner` is raw semantic
+  // HTML (h1/p/ul, no classes) meant for non-JS crawlers. Real visitors
+  // briefly see it verbatim before React's `createRoot().render()`
+  // replaces #root's children — on a slow connection/bundle load that
+  // showed up as an unstyled plain-text dump flashing before the
+  // actual (styled) homepage, on every load/refresh. Scoping it with
+  // the site's own dark theme (bg/text/accent match index.css) makes
+  // that unavoidable pre-hydration window look intentional/branded
+  // instead of broken. Crawlers that don't execute CSS still get the
+  // exact same semantic markup/text — nothing removed, nothing hidden.
+  const styled = `<div class="ora-seo-snapshot">${inner}</div>` +
+    `<style>
+      .ora-seo-snapshot{background:#0a0e1a;color:#f8fafc;min-height:100vh;
+        font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
+        max-width:760px;margin:0 auto;padding:64px 24px;line-height:1.6}
+      .ora-seo-snapshot h1{font-size:28px;font-weight:700;margin:0 0 18px;letter-spacing:-0.5px}
+      .ora-seo-snapshot h2{font-size:20px;font-weight:700;margin:32px 0 12px}
+      .ora-seo-snapshot p{color:#94a3b8;margin:0 0 14px;font-size:15px}
+      .ora-seo-snapshot ul,.ora-seo-snapshot ol{margin:0 0 14px;padding-left:22px;color:#94a3b8;font-size:15px}
+      .ora-seo-snapshot li{margin-bottom:8px}
+      .ora-seo-snapshot a{color:#f59e0b;text-decoration:none}
+      .ora-seo-snapshot strong{color:#f8fafc}
+      .ora-seo-snapshot table{width:100%;border-collapse:collapse;margin:0 0 14px;font-size:14px}
+      .ora-seo-snapshot th,.ora-seo-snapshot td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}
+    </style>`;
   const re = /(<div id="root">)([\s\S]*?)(<\/div>)/;
-  if (re.test(html)) return html.replace(re, `$1${inner}$3`);
-  return html.replace('<div id="root"></div>', `<div id="root">${inner}</div>`);
+  if (re.test(html)) return html.replace(re, `$1${styled}$3`);
+  return html.replace('<div id="root"></div>', `<div id="root">${styled}</div>`);
 }
 
 function vsBody(c) {
-  const rows = c.rows.map(([l, a, t]) =>
-    `<tr><td>${esc(l)}</td><td>${esc(a)}</td><td>${esc(t)}</td></tr>`).join("");
+  // 2026-09-22 · group mode ("vibe-coders" style entries have
+  // `c.competitors` + `c.pickThemGroups` instead of a single
+  // `c.name`/`c.pickThem`) — kept symmetric with VsPage.jsx's
+  // generic rendering so the static SEO snapshot never drifts from
+  // what a real visitor/crawler with JS sees.
+  const rows = c.rows.map((row) => {
+    const [l, a, ...them] = row;
+    return `<tr><td>${esc(l)}</td><td>${esc(a)}</td>` +
+      them.map((t) => `<td>${esc(t)}</td>`).join("") + `</tr>`;
+  }).join("");
   const faq = c.faq.map(({ q, a }) =>
     `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("");
   const pick = (h, items) =>
@@ -93,17 +127,23 @@ function vsBody(c) {
     .filter((o) => o.slug !== c.slug)
     .map((o) => `<a href="/vs/${o.slug}">ORA vs ${esc(o.name)}</a>`)
     .join(" · ");
+  const themHeader = c.isGroup
+    ? c.competitors.map((comp) => `<th>${esc(comp.name)}</th>`).join("")
+    : `<th>${esc(c.name)}</th>`;
+  const pickThemBlocks = c.isGroup
+    ? c.pickThemGroups.map((g) => pick(`Choose ${g.name} if you want…`, g.items)).join("")
+    : pick(`Choose ${c.name} if you want…`, c.pickThem);
   return `<main>
 <h1>ORA vs ${esc(c.name)}</h1>
 <p>Honest comparison · data verified ${esc(LAST_VERIFIED)}.</p>
 <p>${esc(c.intro)}</p>
 ${pick("Choose ORA if you want…", c.pickAurem)}
-${pick(`Choose ${c.name} if you want…`, c.pickThem)}
+${pickThemBlocks}
 <h2>The pricing difference, in real numbers</h2>
 ${c.pricingProse.map((p) => `<p>${esc(p)}</p>`).join("")}
 <p><small>${esc(c.pricingFootnote)}</small></p>
 <h2>Feature by feature</h2>
-<table><thead><tr><th></th><th>ORA</th><th>${esc(c.name)}</th></tr></thead>
+<table><thead><tr><th></th><th>ORA</th>${themHeader}</tr></thead>
 <tbody>${rows}</tbody></table>
 <h2>Frequently asked</h2>
 ${faq}
@@ -191,7 +231,7 @@ function homeBody() {
 </ul>
 <h2>Pricing</h2>
 <p>Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing.</p>
-<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/signup">Start free</a></p>
+<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }
 
@@ -224,6 +264,24 @@ function privacyBody() {
     join(ROOT, "public", "policies", "privacy-policy.md"), "utf8",
   );
   return `<main>${marked.parse(md)}</main>`;
+}
+
+// 2026-09-12 · is-agentic.com agent-readiness fixes — /developers
+// needs the same real-HTML-without-JS treatment as /about, /contact.
+function developersBody() {
+  const sections = DEVELOPERS.sections.map((s) => {
+    const links = s.links
+      .map((l) => `<li><a href="${esc(l.href)}">${esc(l.label)}</a></li>`)
+      .join("");
+    return `<h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p><ul>${links}</ul>`;
+  }).join("");
+  const intro = DEVELOPERS.intro.map((p) => `<p>${esc(p)}</p>`).join("");
+  return `<main>
+<h1>${esc(DEVELOPERS.heading)}</h1>
+${intro}
+${sections}
+<p><a href="/about">About</a> \u00b7 <a href="/contact">Contact</a> \u00b7 <a href="/privacy">Privacy</a></p>
+</main>`;
 }
 
 {
@@ -270,6 +328,15 @@ function privacyBody() {
   writeFileSync(join(DIST, "privacy", "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote /privacy/index.html");
+}
+
+{
+  let html = swapHead(base, DEVELOPERS);
+  html = injectRoot(html, developersBody());
+  mkdirSync(join(DIST, "developers"), { recursive: true });
+  writeFileSync(join(DIST, "developers", "index.html"), html);
+  written += 1;
+  console.log("[seo-prerender] wrote /developers/index.html");
 }
 
 console.log(`[seo-prerender] done — ${written} snapshots.`);

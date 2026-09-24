@@ -17,6 +17,7 @@ from fastapi import Header, HTTPException
 
 import routers.cto_projects as _pkg
 from . import router
+from services.http.client import ext_client
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +209,7 @@ async def _run_warm_agents(
     async def agent_recent() -> None:
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=8.0) as cx:
+            async with ext_client("github", timeout=httpx.Timeout(8.0)) as cx:
                 r = await cx.get(
                     f"https://api.github.com/repos/{gh_owner}/{gh_repo}/commits",
                     params={"per_page": 5, "sha": branch},

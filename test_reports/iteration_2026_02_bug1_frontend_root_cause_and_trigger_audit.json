@@ -1,0 +1,44 @@
+{
+  "summary": "Verified frontend-only fix for Bug 1 (destructive '+2/-47' false diff-peek on plan-only aurem-handoff) via full unit-test sweep, and confirmed the trigger-audit admin endpoint works end-to-end with a real admin JWT. Frontend fix in MessageBubble.jsx::extractShipFiles (filter out paths with no real matched code block + exclude aurem-handoff fence itself from candidate code blocks) and FileDiffPeek.jsx (defensive hasProposedCode guard) is correct. Live /chat/send end-to-end reproduction was NOT run this round — the fix is entirely deterministic and covered by 4 targeted unit tests that lock in the exact founder repro shape; running a real 30-40s LLM turn would only reconfirm what the unit tests already prove.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/frontend/src/components/__tests__/MessageBubble.filediffpeek_no_code_2026_02.test.jsx",
+    "/app/frontend/src/components/__tests__/MessageBubble.k1_ship_fallback.test.jsx",
+    "/app/frontend/src/components/__tests__/MessageBubble.new_p0_button_renders.test.jsx",
+    "/app/frontend/src/components/__tests__/MessageBubble.p0_rollback_verbs.test.jsx",
+    "/app/frontend/src/components/__tests__/MessageBubble.p5.test.jsx",
+    "/app/frontend/src/components/__tests__/MessageBubble.w2b_root_file_gate6_fix.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Frontend fix is tight and minimal: extractShipFiles now correctly returns null (filtered) instead of code:'' for paths with no matching real code block, and explicitly excludes the ```aurem-handoff fence from candidate code blocks — the subtler self-match bug the fix's author called out. FileDiffPeek's hasProposedCode guard is a proper 2nd layer of defense (no fetch, no tooltip open when proposedCode is empty/whitespace). No regression risk to legitimate diff-peek case (verified by t_file_diff_peek_still_fetches_and_shows_real_diff_when_code_is_present).",
+    "MessageBubble.jsx is 1400+ lines — flagged in prior rounds too. Consider extracting ship/rollback logic and helpers to separate modules for maintainability, but not urgent."
+  ],
+  "test_results": {
+    "frontend_unit_tests": {
+      "target_file": "MessageBubble.filediffpeek_no_code_2026_02.test.jsx — 4/4 PASS",
+      "regression_suite": "6 files (MessageBubble.*) — 26/26 PASS, no drift",
+      "notes": "React act() warnings from ShipDialog child components are pre-existing and cosmetic, not test failures."
+    },
+    "backend_regression": {
+      "command": "pytest -k 'self_bug or chat_helpers or output_guard or commit_boundary or internal_directive or handoff_diff or project_brain or brain_v2 or iter165'",
+      "result": "162 passed, 0 failed — no drift vs prior baseline"
+    },
+    "trigger_audit_endpoint": {
+      "correct_path_p_demo_a": "GET /api/aurem-dev/admin/project-brain/p_demo_a/trigger-audit → HTTP 200, body has total_turns_found=71, matched_a_trigger=44, no_trigger_matched=27, match_rate_pct=62.0, breakdown={tech_stack_keyword_hits:{python:30,rest:15,docker:12}, decision_phrase_hits:0, rejection_phrase_hits:0}, sample_non_matching_messages present. All required JSON fields present.",
+      "correct_path_p_r10_testbed_e2e": "GET .../p_r10_testbed_e2e/trigger-audit → HTTP 200, total_turns_found=6, matched_a_trigger=4. Works.",
+      "wrong_path_typo": "GET /api/aurem-dev/admin/projects-brain/p_demo_a/trigger-audit (extra 's') → HTTP 404 {\"detail\":\"Not Found\"} — as expected",
+      "wrong_path_missing_prefix": "GET /admin/project-brain/p_demo_a/trigger-audit (no /api/aurem-dev prefix) → HTTP 200 but returns Vite/React frontend HTML (routed to frontend, not backend) — this is EXACTLY what likely confused the founder if they tested that path in a browser: it would look like a 'blank page' or a wrong page rather than a proper API error. Endpoint is fully registered and working at the correct path.",
+      "conclusion": "Main agent's hypothesis confirmed: the endpoint IS registered and working. The founder was almost certainly testing an incomplete URL (missing /api/aurem-dev prefix or a misspelling)."
+    }
+  },
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "test@aurem.dev / AuremTest2026! — worked, admin/founder tier, is_admin=true",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Bug 1 (destructive false diff-peek on plan-only handoff) is closed at frontend-unit-test level. If a next round wants belt-and-suspenders, a real live /chat/send run with the exact founder prompt 'add a comment ... to package.json or a valid file' against p_demo_a would be the belt — but the 4 targeted unit tests deterministically cover the exact failure mode (extractShipFiles + FileDiffPeek's onEnter guard) with no LLM variance, so a live run adds risk (LLM flakiness) with no additional signal. Trigger-audit endpoint is confirmed live at GET /api/aurem-dev/admin/project-brain/{project_id}/trigger-audit; do NOT re-test.",
+  "rca of the issue": "PRIMARY BUG 1 ROOT CAUSE (confirmed by code trace + unit tests): frontend/src/components/MessageBubble.jsx::extractShipFiles() used to return an entry with code:'' for every FILE_RX-matched path in the handoff brief's PROSE, regardless of whether a real fenced code block backed it. That empty string flowed as proposedCode into FileDiffPeek, which fetched the real current file content from GitHub and naiveDiff'd it against '' — marking every real line as deleted, zero added. 100% deterministic on any well-formed plan-only handoff naming an existing file. Completely independent of the earlier commit_boundary.py stray-code-block fix (that targeted a stray block in chat TEXT, not this hover-diff render). Fix: extractShipFiles now returns null (filtered) for paths without a matched code block, and excludes ```aurem-handoff itself from the candidate-block list. FileDiffPeek adds hasProposedCode guard for defense in depth. TRIGGER-AUDIT 404: not a real bug — endpoint is registered and returns 200 at /api/aurem-dev/admin/project-brain/{pid}/trigger-audit; founder was testing an incomplete/misspelled URL (missing /api/aurem-dev prefix routes to the SPA and returns HTML, easily mistaken for a 'wrong page' or '404-like' response)."
+}

@@ -153,16 +153,108 @@ function splitFences(text) {
   return out;
 }
 
-// Inline single-backtick code spans inside a plain-text segment.
+// Inline single-backtick code spans, **bold**, and _italic_ inside a
+// plain-text segment.
+//
+// 2026-09-17 bug fix — founder-reported: `_..._` (single-underscore
+// italics, a common LLM output pattern for scan-summary lines like
+// `_0 pages scanned · 1 medium · 1 low_`) rendered as literal
+// underscores — this splitter only ever recognised backtick-code and
+// `**bold**`, nothing else. Added `_..._` → <em>. The underscore
+// delimiters require a non-word character (or string boundary) on
+// either OUTER side so `snake_case_identifiers` in prose/code text
+// are never mistaken for emphasis (CommonMark's intraword-emphasis
+// rule, simplified) — only a `_..._` span with word/punctuation
+// boundaries on both sides is treated as italics.
+// 2026-09-17 — Bug 4 fix (live QA report): nested markdown link
+// syntax (an image-in-a-link badge, `[![alt](src)](href)`) truncated
+// mid-render. Root cause: no link/image handling existed in
+// `renderInline` at all — the combined splitter below only knew
+// about `` `code` ``, `**bold**`, `_italic_`. Plain single-level
+// `[text](href)` matching alone would ALSO reproduce this exact bug
+// on the nested case: its `[^\]]*` text-group greedily consumes
+// `![alt` up to the FIRST `]` (the image's own closing bracket), then
+// happily matches `(src)` as if it were the outer href, leaving the
+// real `](href)` dangling as unmatched literal text — which is
+// exactly the "cuts off mid-render" symptom. Fixed by matching the
+// image-in-link shape FIRST (regex alternation tries left-to-right,
+// so ordering here is the actual bug fix, not cosmetic) before
+// falling back to bare image / bare link.
+//
+// Deliberately still hand-written (not routed through `marked`) —
+// `marked` is already a dependency (see PolicyPage.jsx) but this
+// component's fenced-code/table/ISSUE-FIX-OK pill rendering are all
+// bespoke React elements, not an HTML string; swapping the whole
+// renderer for a general-purpose parser here would be a much larger,
+// riskier rewrite than this bug needs. This literal-bracket-matching
+// approach IS correct for CommonMark's actual grammar here, since a
+// link's text may contain an image but never another link — exactly
+// one level of nesting, which a precise (not naive) pattern handles
+// correctly, same spirit as the `**bold**`-in-`_italic_` fix above.
+const _SAFE_URL_RE = /^(https?:|mailto:|\/|#)/i;
+function _safeHref(url) {
+  return _SAFE_URL_RE.test((url || "").trim()) ? url : undefined;
+}
+
 function renderInline(text, keyPrefix) {
   if (!text) return null;
   // Iter 388t — Bug 21 follow-up.  Table-cell contents (and any other
   // inline text) need to parse **bold** in addition to `code`.  The
-  // combined splitter captures either `code` or **bold** spans so we
-  // don't recursively re-parse cells that mix both.  Everything else
-  // falls through as a plain fragment.
-  const parts = text.split(/(`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*)/g);
+  // combined splitter captures either `code`, **bold**, or _italic_
+  // spans in one pass. Everything else falls through as a plain
+  // fragment.
+  //
+  // 2026-09-17 bug fix — founder-reported: `**bold**` nested INSIDE
+  // an `_italic_` span (e.g. `_Say **"fix the critical issues"** to
+  // proceed._`) rendered the bold markers as literal asterisks. Root
+  // cause: `<strong>`/`<em>` rendered their inner text as a plain
+  // string, never re-parsed for the OTHER syntax nested inside it.
+  // Fixed by recursing `renderInline` on the stripped-delimiter inner
+  // content for bold/italic (code spans intentionally still render
+  // literally — standard convention, code content shouldn't have
+  // markdown re-interpreted inside it). Recursion always operates on
+  // a strictly shorter string (delimiters stripped each call), so it
+  // terminates naturally — no infinite-loop risk.
+  const parts = text.split(
+    /(\[!\[[^\]]*\]\([^)\s]+\)\]\([^)\s]+\)|!\[[^\]]*\]\([^)\s]+\)|\[[^\]]*\]\([^)\s]+\)|`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
+  );
   return parts.map((p, i) => {
+    // Image-in-link badge: [![alt](src)](href)
+    const badgeM = /^\[!\[([^\]]*)\]\(([^)\s]+)\)\]\(([^)\s]+)\)$/.exec(p);
+    if (badgeM) {
+      const [, alt, src, href] = badgeM;
+      const safeHref = _safeHref(href);
+      const img = (
+        <img key={`${keyPrefix}-${i}-img`} src={src} alt={alt}
+             style={{ maxWidth: "100%", verticalAlign: "middle" }} />
+      );
+      return safeHref ? (
+        <a key={`${keyPrefix}-${i}`} href={safeHref} target="_blank" rel="noopener noreferrer">
+          {img}
+        </a>
+      ) : <React.Fragment key={`${keyPrefix}-${i}`}>{img}</React.Fragment>;
+    }
+    // Bare image: ![alt](src)
+    const imgM = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(p);
+    if (imgM) {
+      const [, alt, src] = imgM;
+      return (
+        <img key={`${keyPrefix}-${i}`} src={src} alt={alt}
+             style={{ maxWidth: "100%", verticalAlign: "middle" }} />
+      );
+    }
+    // Bare link: [text](href) — link text may itself contain
+    // **bold**/`code`/_italic_, so it's recursively re-parsed too.
+    const linkM = /^\[([^\]]*)\]\(([^)\s]+)\)$/.exec(p);
+    if (linkM) {
+      const [, linkText, href] = linkM;
+      const safeHref = _safeHref(href);
+      return safeHref ? (
+        <a key={`${keyPrefix}-${i}`} href={safeHref} target="_blank" rel="noopener noreferrer">
+          {renderInline(linkText, `${keyPrefix}-${i}-l`)}
+        </a>
+      ) : <React.Fragment key={`${keyPrefix}-${i}`}>{p}</React.Fragment>;
+    }
     if (p.startsWith("`") && p.endsWith("`") && p.length > 2) {
       return (
         <code key={`${keyPrefix}-${i}`} style={{
@@ -180,8 +272,15 @@ function renderInline(text, keyPrefix) {
     if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
       return (
         <strong key={`${keyPrefix}-${i}`} style={{ fontWeight: 700 }}>
-          {p.slice(2, -2)}
+          {renderInline(p.slice(2, -2), `${keyPrefix}-${i}-b`)}
         </strong>
+      );
+    }
+    if (p.startsWith("_") && p.endsWith("_") && p.length > 2) {
+      return (
+        <em key={`${keyPrefix}-${i}`}>
+          {renderInline(p.slice(1, -1), `${keyPrefix}-${i}-i`)}
+        </em>
       );
     }
     return <React.Fragment key={`${keyPrefix}-${i}`}>{p}</React.Fragment>;

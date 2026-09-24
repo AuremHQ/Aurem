@@ -41,10 +41,8 @@ import logging
 import os
 import re
 import time
-import uuid
-from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, AsyncIterator, Optional
+from typing import AsyncIterator, Optional
 
 # 2026-08-26 — safe mechanical extraction (zero logic change): standalone
 # helpers that don't touch LoopEngine's internal state or the module-level
@@ -54,11 +52,12 @@ from typing import Any, AsyncIterator, Optional
 # below, which stay in this file) keep resolving them unchanged. See PRD.md
 # 2026-08-26 entry — the LoopEngine class itself is a separate future item.
 from services.loop_engine_helpers import (
+    PLAN_TTL_S,  # noqa: F401 — re-export (public constant)
     _now, _iso, _new_event,
     _persist_session, _log_error, _save_plan, _td,
-    record_backup, rollback,
-    new_loop_id, load_session, _commit_message,
+    record_backup, load_session, _commit_message,
     _run_security_scan, _run_diff_security_scan,
+    rollback, new_loop_id,  # noqa: F401 — public facade (tests/callers use loop_engine.rollback / new_loop_id)
 )
 from core.boundaries import coerce
 from core.errors import ContractError
@@ -180,8 +179,8 @@ SELF_HEAL_LLM_TIMEOUT_S = 60
 # emitted in this long mid-phase, we emit a synthetic `engine_silent`
 # event so the frontend's heartbeat dot doesn't lie about progress.
 ENGINE_SILENT_WARN_S = 45
-# 24 h TTL on the loop_plans collection (founder's spec).
-PLAN_TTL_S = 24 * 60 * 60
+# PLAN_TTL_S (24 h loop_plans TTL) is defined in loop_engine_helpers and
+# re-exported via the import block above.
 # Iter 278 — heartbeat cadence during slow single-file LLM generation.
 # Named constant (not a magic literal) so future tuning is greppable
 # and CI-invariants can lock the value against silent regressions.
@@ -1222,7 +1221,6 @@ class LoopEngine:
                              f"{_auth_detail or 'Connect this repo via the GitHub App.'}")
             return
 
-        from services.loop_execute import generate_files
 
         # Iter 212m-116 — Apply Sweep-pattern file selector: trim the
         # planner's `files_to_change` to the TOP-N most relevant by
@@ -1582,9 +1580,8 @@ class LoopEngine:
                             )
                             await self._narrate(
                                 step="execute", tone="danger",
-                                text=(f"{path} too large ({_cur_bytes // 1024}"
-                                      f" KB > {_HUGE_FILE_BYTES // 1024} KB) "
-                                      f"— split the file to proceed"),
+                                text=(f"{path} too large ({_cur_bytes // 1024}KB"
+                                      f">{_HUGE_FILE_BYTES // 1024}KB) — split it"),
                                 correlation_id=f"execute:{path}",
                             )
                             return None
@@ -2133,7 +2130,7 @@ class LoopEngine:
             }
             return
 
-        from services.loop_verify import verify_files, self_heal
+        from services.loop_verify import verify_files
 
         # Iter 309 · Narration — test-run-start pending.
         # correlation_id = "verify:pass_1" pairs with the first
@@ -3573,12 +3570,15 @@ class LoopEngine:
             if existing:
                 self.context["commit"] = existing
                 self.context.pop("ship_pending", None)
-                self.state = LoopState.COMPLETED
+                await self._emit(
+                    LoopState.COMPLETED, "ship", step=5, total_steps=5,
+                    message=f"Already shipped — commit {str(existing.get('sha') or '')[:7]}",
+                )
             return
 
         # Resume — push the commit for real.
-        self.state = LoopState.SHIPPING
-        self.phase = "ship"
+        await self._emit(LoopState.SHIPPING, "ship", step=5, total_steps=5,
+                         message="Preparing to ship…")
         # X1/W3 hardening (2026-08-30, overnight-loop-2 P0) — locked
         # decision: a mock-mode loop REFUSES to write to a real repo,
         # regardless of how far planning got. Never silently ships
@@ -3698,7 +3698,18 @@ class LoopEngine:
         pr_ship_branch = None
         if ship_via_pr:
             from services.loop_safety import ship_branch_name, create_or_reuse_branch
-            pr_ship_branch = ship_branch_name(self.loop_id)
+            # 2026-09-18 fix (Bug 1 round 2 — 371 duplicate PRs).
+            # This used to key on `self.loop_id`, which is a fresh
+            # UUID every single loop run — so every "fix the critical
+            # issues" re-run (even for the exact same project, same
+            # findings) minted a brand-new branch + brand-new PR,
+            # with `ship_branch_name`'s OWN internal timestamp
+            # compounding the problem. Keying on `project_id` instead
+            # means repeated ship-via-PR runs for the SAME project
+            # land as new commits on the SAME open "staging" PR until
+            # it's merged/closed — one ongoing PR per project, not
+            # one per run.
+            pr_ship_branch = ship_branch_name(self.project_id or self.loop_id)
             _br_ok, _br_err = await create_or_reuse_branch(
                 owner=owner, repo=repo, base_branch=branch,
                 new_branch=pr_ship_branch, token=token,
@@ -3792,7 +3803,7 @@ class LoopEngine:
             # cache row so the banner/sidebar dot reflect that on the
             # very next poll instead of replaying a pre-ship reading.
             try:
-                from routers.repo_status import invalidate as _invalidate_repo_status
+                from services.repo_status_cache import invalidate as _invalidate_repo_status
                 _invalidate_repo_status(self.project_id or "")
             except Exception as _inv_err:                              # noqa: BLE001
                 logger.debug("[loop %s] repo_status invalidate skipped: %r",
@@ -3817,8 +3828,8 @@ class LoopEngine:
         pr_number = None
         if ship_via_pr and pr_ship_branch:
             try:
-                from services.loop_safety import open_draft_pr, add_pr_label
-                pr_url, pr_err = await open_draft_pr(
+                from services.loop_safety import open_or_reuse_pr, add_pr_label
+                result = await open_or_reuse_pr(
                     owner=owner, repo=repo,
                     head_branch=pr_ship_branch, base_branch=branch,
                     title=f"ship: {commit_message.splitlines()[0][:200]}",
@@ -3826,18 +3837,28 @@ class LoopEngine:
                           f"Commit: {full_sha}\n\nAUREM CTO ship-via-PR "
                           f"(Overnight T7, Preview only)."),
                     token=token,
+                    update_comment=(
+                        f"**New commit from Loop {self.loop_id}:** "
+                        f"`{short_sha}` — {commit_message.splitlines()[0][:200]}\n\n"
+                        f"_Reusing this PR instead of opening a "
+                        f"duplicate — same project, still open._"
+                    ),
                 )
+                pr_url = result.get("pr_url")
+                pr_err = result.get("error")
                 if pr_err:
-                    logger.warning("[loop %s] ship-via-PR open_draft_pr failed: %s",
+                    logger.warning("[loop %s] ship-via-PR open_or_reuse_pr failed: %s",
                                    self.loop_id, pr_err)
                 elif pr_url:
-                    pr_number = int(pr_url.rsplit("/", 1)[-1])
-                    await add_pr_label(owner=owner, repo=repo,
-                                        pr_number=pr_number, label="aura:ship",
-                                        token=token)
+                    pr_number = result.get("pr_number")
+                    if not result.get("reused") and pr_number:
+                        await add_pr_label(owner=owner, repo=repo,
+                                            pr_number=pr_number, label="aura:ship",
+                                            token=token)
                     try:
                         await self.db.ship_pr_events.insert_one({
-                            "event": "ship_pr_opened", "user_id": self.user_id,
+                            "event": "ship_pr_opened" if not result.get("reused") else "ship_pr_reused",
+                            "user_id": self.user_id,
                             "loop_id": self.loop_id, "pr_url": pr_url,
                             "pr_number": pr_number, "ts": _now(),
                         })
@@ -4202,13 +4223,76 @@ class LoopEngine:
             return
         self._chat_turns_saved = True
         now = time.time()
+        # 2026-09-11 — real founder bug repro: a loop paused for human
+        # approval (plan/ship gate) can sit for HOURS/DAYS before the
+        # user resumes it. This function only fires at TERMINAL state,
+        # so `now` here is the RESUME/completion moment, not when the
+        # user actually typed the prompt. Stamping the USER turn with
+        # `now` made an hours/days-old message look brand new: pushed
+        # to the END of chat_sessions.turns (out of true chronological
+        # order relative to anything sent in between) AND date-bucketed
+        # under "today" instead of the day it was really sent — exactly
+        # the founder's "old commit message appears at the bottom,
+        # mislabeled" repro. Fix: the USER turn uses the loop's real
+        # start time (`self._started_at`, set at LoopEngine construction
+        # in routers/loop.py — i.e. the instant the user's request was
+        # received). The ASSISTANT reply legitimately only exists now,
+        # so its `ts` stays `now`.
+        user_turn_ts = self._started_at
         commit = (self.context or {}).get("commit") or {}
         sha7 = (commit.get("sha") or commit.get("full_sha") or "")[:7]
+        pr_url = commit.get("pr_url")
         msg = (ev.get("message") or "").strip()
+        evidence_ref: Optional[dict] = None
         if state == LoopState.COMPLETED and sha7:
-            reply = f"🚀 **Loop run complete — shipped `{sha7}`.**"
-            if commit.get("html_url"):
-                reply += f"\n\n[View commit]({commit['html_url']})"
+            # 2026-09-20 — pointer + preview (services/evidence_
+            # pointer.py, shared with Bug 6's scan message). Two real
+            # gaps fixed together here:
+            #  1) this used to say "shipped" unconditionally whenever
+            #     sha7 was set — even when the commit only landed on
+            #     a throwaway PR branch (pr_url set, not merged),
+            #     which is NOT live. Narration already made this
+            #     distinction (~line 4063); this durable chat message
+            #     didn't. It does now.
+            #  2) the persisted message carried totals only, with no
+            #     way back to the loop's own full record — same
+            #     failure class as Bug 6's scan message. Now carries
+            #     an evidence_ref resolvable via GET /api/aurem-dev/
+            #     evidence/loop_run/{loop_id} → db.loop_sessions.
+            from services.evidence_pointer import build_evidence_message
+            files_changed = list(commit.get("files") or [])
+            scan_results = (self.context or {}).get("scan_results") or {}
+            sev = (scan_results.get("summary", {}) or {}).get("by_severity", {}) \
+                if isinstance(scan_results, dict) else {}
+            verify_failed = (self.context or {}).get("verify_failed_files") or []
+            body_lines = []
+            if pr_url:
+                headline = f"🚀 **Loop run complete — PR opened for `{sha7}`.**"
+                body_lines.append(
+                    "_Not live yet — merge the PR on GitHub to ship it._"
+                )
+            else:
+                headline = f"🚀 **Loop run complete — shipped `{sha7}`.**"
+            body_lines.append(f"- {len(files_changed)} file(s) changed")
+            if sev:
+                body_lines.append(
+                    f"- Security scan: {sev.get('critical', 0)} critical, "
+                    f"{sev.get('high', 0)} high"
+                )
+            if verify_failed:
+                body_lines.append(
+                    f"- Verify: {len(verify_failed)} file(s) still failing"
+                )
+            built = build_evidence_message(
+                kind="loop_run", record_id=self.loop_id,
+                headline=headline, body_lines=body_lines,
+                preview_items=[f"`{p}`" for p in files_changed],
+                preview_total=len(files_changed),
+                link_label="View PR" if pr_url else "View commit",
+                link_url=(pr_url or commit.get("html_url")),
+            )
+            reply = built["text"]
+            evidence_ref = built["evidence_ref"]
         elif state == LoopState.COMPLETED:
             reply = f"✅ **Loop run complete.** {msg}".strip()
         elif state == LoopState.ABORTED:
@@ -4216,6 +4300,11 @@ class LoopEngine:
         else:
             reply = (f"❌ **Loop failed** at {self.phase or '?'} phase — "
                      f"{msg[:300]}")
+        assistant_turn: dict = {"role": "assistant", "content": reply,
+                                 "ts": now, "provider": "loop",
+                                 "loop_id": self.loop_id}
+        if evidence_ref:
+            assistant_turn["evidence_ref"] = evidence_ref
         try:
             await self.db.chat_sessions.update_one(
                 {"session_id": self.session_id, "user_id": self.user_id},
@@ -4230,9 +4319,8 @@ class LoopEngine:
                              "last_message": reply[:120]},
                     "$push": {"turns": {"$each": [
                         {"role": "user", "content": self.user_message,
-                         "ts": now, "loop_id": self.loop_id},
-                        {"role": "assistant", "content": reply, "ts": now,
-                         "provider": "loop", "loop_id": self.loop_id},
+                         "ts": user_turn_ts, "loop_id": self.loop_id},
+                        assistant_turn,
                     ], "$slice": -200}},
                 },
                 upsert=True,
@@ -4691,7 +4779,8 @@ async def _generate_plan(user_id: str, project_id: Optional[str],
         meta = await asyncio.wait_for(
             call_llm_with_meta(sys_msg, user_message,
                                review_mode="pro",
-                               mode="loop_plan"),
+                               mode="loop_plan",
+                               feature="Loop Planning"),
             timeout=PLAN_LLM_TIMEOUT_S,
         )
     except asyncio.TimeoutError:

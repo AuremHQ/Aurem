@@ -1,0 +1,20 @@
+backend/services/chat_helpers.py:172:# `enforce_length_cap` -> `apply_business_owner_guards` was the exact
+backend/services/chat_helpers.py:282:            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
+backend/services/chat_helpers.py:292:                content, length_capped = await enforce_length_cap(content)
+backend/services/output_guard.py:202:async def enforce_length_cap(text: str, *, max_tokens: int = LENGTH_CAP_TOKENS) -> tuple[str, bool]:
+backend/services/output_guard.py:235:    final_text, length_capped = await enforce_length_cap(clean_text)
+backend/services/design_refusal_guard.py:92:DEFAULT_DESIGN_REPLY = (
+backend/services/design_refusal_guard.py:109:def strip_design_refusal(text: str) -> str:
+backend/services/design_refusal_guard.py:127:        return DEFAULT_DESIGN_REPLY
+backend/services/no_dead_end_guard.py:30:# your pages yet"). Appending DEFAULT_ALTERNATIVE on top of an
+backend/services/no_dead_end_guard.py:40:# 2026-09-22 — the DEFAULT_ALTERNATIVE below is a WEBSITE-CONTENT line
+backend/services/no_dead_end_guard.py:57:DEFAULT_ALTERNATIVE = (
+backend/services/no_dead_end_guard.py:87:def ensure_alternative(text: str, alternative: str | None = None) -> str:
+backend/services/no_dead_end_guard.py:92:    alt = alternative or DEFAULT_ALTERNATIVE
+backend/services/business_voice_filter.py:286:    from services.bail_reason import strip_banned_fallback_phrases
+backend/services/business_voice_filter.py:287:    from services.no_dead_end_guard import ensure_alternative, has_dead_end
+backend/services/business_voice_filter.py:293:    content = strip_banned_fallback_phrases(content, user_prompt)
+backend/services/business_voice_filter.py:301:    content = ensure_alternative(content)
+backend/services/business_voice_filter.py:309:        from services.design_refusal_guard import is_compliant_design_reply, strip_design_refusal
+backend/services/business_voice_filter.py:324:            content = strip_design_refusal(content)
+backend/services/bail_reason.py:179:def strip_banned_fallback_phrases(text: str, user_message: str) -> str:

@@ -37,6 +37,7 @@ _COST_PER_M_TOKENS: dict[str, tuple[float, float]] = {
     "z-ai/glm-5.2":                                              (0.30,  0.60),
     "anthropic/claude-sonnet-4.5":                               (3.00, 15.00),
     "gpt-5.4-mini":                                               (0.75,  4.50),
+    "gemini-3.1-pro-preview":                                     (2.00, 12.00),
 }
 _DEFAULT_COST = (1.0, 3.0)   # unknown model → conservative estimate
 

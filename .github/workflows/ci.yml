@@ -37,7 +37,7 @@ jobs:
       - name: Set up Node 20
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
 
@@ -367,6 +367,20 @@ jobs:
         working-directory: backend
         run: python -m pytest -m source_of_truth -v --tb=short --timeout=30
 
+      - name: Guard — Decision-point audit lock (health/coverage/notifier/repo-identity)
+        # 2026-09-21 — audit confirmed the deployment health gate,
+        # coverage-scan classification, notifier alert routing, and
+        # repo-identity/stale-cache validation are all already
+        # deterministic (no LLM) — see tests/unit/*_test.py. Same
+        # "own loud, isolated CI signal" rationale as the guard above:
+        # a future refactor that silently breaks one of these 4
+        # already-correct decision points must never get lost inside
+        # the wider "Run tests" pass/fail count. if: always() for the
+        # same reason.
+        if: always()
+        working-directory: backend
+        run: python -m pytest tests/unit/ -v --tb=short --timeout=30
+
       - name: Legacy lane (deferred failures — non-blocking)
         # Iter 345 — founder ruling: 259 pre-existing failures
         # (iter36–iter267 era) are quarantined via @pytest.mark.legacy
@@ -445,6 +459,9 @@ jobs:
       OPENROUTER_API_KEY:   ${{ secrets.OPENROUTER_API_KEY }}
       EMERGENT_LLM_KEY:     ${{ secrets.EMERGENT_LLM_KEY }}
       AUREM_MASTER_KEY: ci-test-master-key-32-chars-long!!
+      # CI-only login/rate-limit bypass for the booted server (shared runner IP).
+      LOGIN_RATE_PER_MIN: "1000"
+      RATE_LIMIT_DISABLED: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -454,7 +471,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: qa/simulated-user/package-lock.json
 
@@ -522,7 +539,7 @@ jobs:
       - name: Set up Node 20 (for yarn audit)
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
 
@@ -674,9 +691,34 @@ jobs:
           exit 1
 
 
+  absolute-claim-lint:
+    # Trust & Verification round, Enhancement 6 — static scan of
+    # user-visible copy/templates for unsupported absolute
+    # reliability claims ("100% reliable", "guaranteed", "always
+    # works", "never fails", "fully reliable"). Deliberately narrow:
+    # CANNOT guarantee arbitrary runtime chat output never makes a
+    # claim — that's a separate problem owned by the completion gate
+    # (services/verification.py) and output guards, not this job.
+    # See backend/scripts/lint_absolute_claims.py's own docstring.
+    name: Copy — Absolute-claim lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run absolute-claim lint
+        run: python3 backend/scripts/lint_absolute_claims.py
+
+
   deploy-gate:
     name: Deploy gate — all checks passed
-    needs: [frontend-build, backend-tests, simulated-user-qa, security-scan, secret-scan]
+    needs: [frontend-build, backend-tests, simulated-user-qa, security-scan, secret-scan, absolute-claim-lint]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     env:

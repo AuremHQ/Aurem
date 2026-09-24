@@ -36,7 +36,40 @@ ORCHESTRATOR = BACKEND / "services" / "orchestrator.py"
 # all 7 sites verified still-hooks, only line numbers shifted). If a
 # real hygiene target ever slips into orchestrator.py, it will NOT be
 # in this set and the test below will fail.
-LEGIT_UI_HOOK_LINES = {2172, 2177, 2279, 2544, 2595, 2626, 2635}
+# 2026-09-21 · Failure-Patterns/Self-Repair audit — Part 1.2 broadened
+# the tool-loop guard (~+30 lines: new _consecutive_same_tool_no_progress
+# helper + its constant, added right next to _is_same_tool_call, plus a
+# few extra lines in the guard-trip block itself). Re-derived via
+# _collect_silent_catches() against the current file: same 7 sites,
+# same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
+# 2026-09-22 · Section 16 cost-efficiency fix (prompt caching) wrapped
+# the `call_llm_with_meta` call in `prompt_cache_context(...)` — a
+# comment block + one `async with` line added right before it (net
+# +9 lines), shifting everything below that point. Re-derived via
+# _collect_silent_catches() against the current file: same 7 sites,
+# same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
+LEGIT_UI_HOOK_LINES = {2485, 2490, 2598, 2945, 3041, 3078, 3087}
+# 2026-02 · Part B1/B2 tool-observability fix (task_chain_logging.py's
+# `entry["status"]` reassignment + CitationGuard tool-claim block) added
+# lines earlier in chat_with_tools(). Re-derived via
+# _collect_silent_catches() against the current file: same 7 sites,
+# same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
+# 2026-09-09 · Turn-Completion Contract broadened (gerund-lead +
+# explicit stall-tell detection added to _is_intent_only_announcement,
+# ~+39 lines earlier in the file — see orchestrator.py's comment
+# above _STALL_TELL_RE for the production repro this fixes). Re-
+# verified against the actual current file: same 7 sites, same
+# activity_hook/step_hook try-bodies, purely a line-drift re-snapshot
+# — zero behavior change to these 7 UI-hook fail-opens.
+# 2026-09-08 (2nd pass) — task-chain / COT-on-failure wiring added
+# `"sequential_thoughts": local_ctx.get(...)` lines right next to the
+# `"tool_calls"` line on 4 of chat_with_tools()'s exit paths, shifting
+# everything below each insertion point by a further +1..+3 lines.
+# Re-derived directly from _collect_silent_catches() against the
+# current file — same 7 sites, still all UI-hook fail-opens.
 # 2026-08-23 audit fix — the last 3 of these 7 line numbers drifted
 # (+4) after this session's findings-to-fix-bridge edits added lines
 # earlier in orchestrator.py (capturing `findings_saved_this_turn`),
@@ -56,6 +89,12 @@ LEGIT_UI_HOOK_LINES = {2172, 2177, 2279, 2544, 2595, 2626, 2635}
 # MEMORY anchor instruction, ~+86 lines added earlier in the file).
 # Re-verified against the current file: same 7 sites, same
 # activity_hook/step_hook try-bodies, purely a line-drift re-snapshot.
+# 2026-09-08 · Turn-Completion Contract root fix (3 separate silent-
+# idle bugs traced to one root cause — see orchestrator.py's module
+# comment above _is_intent_only_announcement) added ~140 lines earlier
+# in the file. Re-verified against the actual current file: same 7
+# sites, same activity_hook/step_hook try-bodies, purely a line-drift
+# re-snapshot — zero behavior change to these 7 UI-hook fail-opens.
 
 
 def _is_truly_empty_return(s: ast.stmt) -> bool:

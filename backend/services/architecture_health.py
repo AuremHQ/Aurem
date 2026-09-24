@@ -35,7 +35,6 @@ on the current codebase.
 """
 from __future__ import annotations
 
-import ast
 import os
 import re
 import time
@@ -408,6 +407,17 @@ def _scan_boundaries(files: list[tuple[str, str]]) -> list[BoundaryViolation]:
                         ))
                         break
                 else:
+                    # A sub-module importing its OWN package facade
+                    # (`routers/cto_projects/tasks.py` → `import
+                    # routers.cto_projects as _pkg`, the late-binding
+                    # trampoline tests monkeypatch) is intra-package, not
+                    # the cross-router coupling this rule targets — same
+                    # exemption the `from routers.x import` form above
+                    # already gets. 2026-09-07.
+                    own_pkg = f"{top_name}." + rel_norm[len(dst_pref):].split("/")[0] \
+                        if rel_norm.startswith(dst_pref) and "/" in rel_norm[len(dst_pref):] else None
+                    if own_pkg and (s == f"import {own_pkg}" or s.startswith(f"import {own_pkg} as ")):
+                        continue
                     hits.append(BoundaryViolation(
                         file=rel, rule=rule_id, detail=s,
                     ))

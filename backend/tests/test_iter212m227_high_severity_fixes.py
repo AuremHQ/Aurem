@@ -109,7 +109,7 @@ def test_bug_hunt_cors_wildcard_still_fires_on_real_code():
 def test_perf_scanner_skips_own_rule_files():
     """codebase_health.py contains fix-hint strings like `.to_list(None)`
     that used to trigger unbounded_tolist on itself."""
-    from routers.codebase_health import _scan_performance
+    from services.codebase_health_core import _scan_performance
 
     src = (
         'def _perf_fix_hint(rid):\n'

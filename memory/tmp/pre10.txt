@@ -1,0 +1,15 @@
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/admin/token-pnl
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/admin/token-pnl
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/admin/token-pnl
+FAILED tests/test_deploy_verification_discipline.py::test_changelog_header_references_checklist
+FAILED tests/test_deploy_verification_discipline.py::test_prd_points_to_checklist_at_top
+FAILED tests/test_iter319_scan_fail_closed.py::test_scan_text_imported_into_run_diff_security_scan
+FAILED tests/test_iter319_scan_fail_closed.py::test_scan_text_imported_into_run_security_scan
+FAILED tests/test_iter352_payments_truth.py::test_payments_page_has_reconcile_button
+FAILED tests/test_iter352_payments_truth.py::test_reconcile_endpoint_is_admin_gated
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_stripe_configured_reads_env_not_hardcoded
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_reports_real_revenue_from_paid_only
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_returns_zero_revenue_when_no_paid_rows
+FAILED tests/test_phase2c_codebase_health_router.py::TestLastScan::test_no_history_returns_null_score
+FAILED tests/test_phase2c_codebase_health_router.py::TestLastScan::test_zero_score_zero_total_treated_as_no_scan
+FAILED tests/test_phase2c_cto_projects_router.py::TestSubmitTask::test_rate_limited

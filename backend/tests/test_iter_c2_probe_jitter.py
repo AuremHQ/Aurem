@@ -2,7 +2,7 @@
 
 Deploy-loop closure (Step 2): a >1-worker prod pod could otherwise run
 `schedule_integration_health_cron()`'s probe cycle in perfect lockstep
-across both workers forever (same boot instant -> same 150s sleep ->
+across both workers forever (same boot instant -> same 300s sleep ->
 same cadence), doubling the CPU burst each cycle competes for.
 `_startup_jitter_s()` adds a bounded (0-60s) per-worker offset, seeded
 by PID (not boot wall-clock time, which would be identical for two
@@ -38,8 +38,8 @@ def test_proof_a_same_boot_instant_different_pids_desync():
     jitter_1 = _startup_jitter_s(pid=worker_1_pid)
     jitter_2 = _startup_jitter_s(pid=worker_2_pid)
 
-    first_probe_cycle_start_1 = boot_instant + 150 + jitter_1
-    first_probe_cycle_start_2 = boot_instant + 150 + jitter_2
+    first_probe_cycle_start_1 = boot_instant + 300 + jitter_1
+    first_probe_cycle_start_2 = boot_instant + 300 + jitter_2
 
     assert jitter_1 != jitter_2, (
         "two different worker PIDs must not collide on the jitter "
@@ -90,8 +90,10 @@ def test_proof_b_single_worker_schedule_only_gets_bounded_startup_offset(monkeyp
 
     asyncio.run(go())
 
-    # First sleep = the boot stagger (150s) + the bounded jitter — a
-    # ONE-TIME offset, not a change to the recurring cadence.
-    assert sleeps[0] == 150 + 12.5
+    # First sleep = the boot stagger (300s, raised 2026-02 so the
+    # cold-start uncached probe burst lands after a deploy readiness
+    # window closes) + the bounded jitter — a ONE-TIME offset, not a
+    # change to the recurring cadence.
+    assert sleeps[0] == 300 + 12.5
     # Second sleep = the normal recurring interval, untouched by jitter.
     assert sleeps[1] == 600

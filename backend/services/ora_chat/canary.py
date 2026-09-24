@@ -264,7 +264,7 @@ async def run_canary(triggered_by: str = "cron") -> dict:
             rv = await ora_review.run_review(
                 user_id="canary", session_id="canary",
                 query="canary seeded review", draft=draft, context=ctx,
-                reason="canary_seed")
+                reason="canary_seed", feature="Grounding Canary")
             row = {"name": name,
                    "flags": len(rv.get("flags") or []),
                    "types": sorted({f["type"] for f in

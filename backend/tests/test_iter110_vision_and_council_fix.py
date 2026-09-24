@@ -86,7 +86,7 @@ def test_council_NOT_fired_on_empty_or_whitespace_only_user_text():
 
 # ── Bug B: vision fallback model ──────────────────────────────────
 def test_vision_module_has_primary_and_fallback_models():
-    from routers import upload as up
+    from services import vision_describe as up
     assert hasattr(up, "_PRIMARY_VISION_MODEL")
     assert hasattr(up, "_FALLBACK_VISION_MODEL")
     # Fallback must be a different model than primary, otherwise no point
@@ -94,7 +94,7 @@ def test_vision_module_has_primary_and_fallback_models():
 
 
 def test_vision_fallback_default_is_a_known_vision_model():
-    from routers import upload as up
+    from services import vision_describe as up
     # Reasonable defaults — must be an OpenRouter-format slug "<vendor>/<model>"
     assert "/" in up._FALLBACK_VISION_MODEL
 
@@ -103,7 +103,7 @@ def test_describe_image_uses_fallback_when_primary_returns_empty(monkeypatch):
     """Mock OpenRouter: primary returns empty content, fallback returns
     a useful description. The helper should return the fallback's text."""
     import asyncio
-    from routers import upload as up
+    from services import vision_describe as up
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
     calls = []
@@ -132,7 +132,7 @@ def test_describe_image_uses_fallback_when_primary_returns_empty(monkeypatch):
 
     monkeypatch.setattr(up.httpx, "AsyncClient", MockClient)
     raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-    out = asyncio.run(up._describe_image_via_vision(raw, "image/png", "x.png"))
+    out = asyncio.run(up.describe_image_via_vision(raw, "image/png", "x.png"))
     assert "Visual description" in out
     assert "red square" in out
     # Confirm fallback was actually tried
@@ -142,7 +142,7 @@ def test_describe_image_uses_fallback_when_primary_returns_empty(monkeypatch):
 def test_describe_image_returns_primary_when_primary_succeeds(monkeypatch):
     """When primary works, fallback should NOT be called (save API spend)."""
     import asyncio
-    from routers import upload as up
+    from services import vision_describe as up
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     calls = []
 
@@ -164,6 +164,6 @@ def test_describe_image_returns_primary_when_primary_succeeds(monkeypatch):
 
     monkeypatch.setattr(up.httpx, "AsyncClient", MockClient)
     raw = b"\x89PNG" + b"\x00" * 100
-    out = asyncio.run(up._describe_image_via_vision(raw, "image/png", "x.png"))
+    out = asyncio.run(up.describe_image_via_vision(raw, "image/png", "x.png"))
     assert "primary" in out
     assert calls == [up._PRIMARY_VISION_MODEL]  # fallback never tried

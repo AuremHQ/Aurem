@@ -17,6 +17,13 @@ export function useChatStream() {
     abortRef.current = controller;
     try {
       await streamChat({ ...opts, signal: controller.signal });
+    } catch (e) {
+      // 2026-09-12 — same fix as the inline streamChat path: an
+      // AbortError here is always our own abort() below, never a
+      // real failure — never let it become an unhandled rejection.
+      const name = e?.name || "";
+      const msg = (e?.message || "").toLowerCase();
+      if (name !== "AbortError" && !msg.includes("aborted")) throw e;
     } finally {
       // Clear the ref only if we're still the active controller —
       // a fresh stream() call may have replaced us mid-await.
@@ -26,9 +33,9 @@ export function useChatStream() {
     }
   }, []);
 
-  const abort = useCallback(() => {
+  const abort = useCallback((reason) => {
     if (abortRef.current) {
-      abortRef.current.abort();
+      abortRef.current.abort(reason);
       abortRef.current = null;
     }
   }, []);

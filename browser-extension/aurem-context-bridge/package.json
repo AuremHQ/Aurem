@@ -1,0 +1,14 @@
+{
+  "name": "aurem-context-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AUREM Admin Context Bridge Chrome extension (Manifest V3). Build only — nothing runs as a server.",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/chrome": "^0.0.260"
+  }
+}

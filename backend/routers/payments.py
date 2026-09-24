@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
-from services.subscription_tiers import TIER_LIMITS, Tier, _coerce
+from services.subscription_tiers import TIER_LIMITS, _coerce
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Payments"])
@@ -229,7 +229,7 @@ _BOOT_AUDIT_DONE = False
 # verbatim to services/financials.py. services/integration_health.py
 # needed this for its Stripe price-drift check; re-imported here for
 # this router's own auto-discovery fallback, unchanged behaviour.
-from services.financials import _PLAN_MATCH, _match_discovered_price   # noqa: E402
+from services.financials import _match_discovered_price   # noqa: E402
 
 
 async def _discover_price_id(plan: str) -> Optional[str]:
@@ -384,6 +384,13 @@ async def create_checkout_session(
         )
 
     return {"url": checkout_url, "checkout_url": checkout_url, "session_id": session.id}
+
+
+# Services reach checkout through services/checkout_gateway (no service→
+# router import). Late-bound lambda so test monkeypatches of
+# `routers.payments.create_checkout_session` keep taking effect.
+from services.checkout_gateway import register_checkout_provider  # noqa: E402
+register_checkout_provider(lambda user, plan: create_checkout_session(user, plan))
 
 
 @router.post("/payments/checkout")

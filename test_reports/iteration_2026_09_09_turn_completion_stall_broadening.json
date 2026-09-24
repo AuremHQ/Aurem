@@ -1,0 +1,34 @@
+{
+  "summary": "Backend-only verification of the 2026-09-09 broadening of the Turn-Completion Contract fix (from 2026-09-08). The fix widens `_INTENT_LEAD_RE` to cover gerund-lead openers ('Checking', 'Verifying', 'Looking', etc.) AND adds a NEW independent signal `_STALL_TELL_RE` that fires on explicit stall-language anywhere in the message ('stand by', 'no reply needed', 'I'll update when', 'hang tight', 'one moment', 'bear with me', 'hold on'). Ran the three requested test files together — 34/34 tests PASS in 3.38s. Backend supervisor status: RUNNING (uptime 1h 43m, no exceptions, /api endpoints returning 200 OK in live logs). The `LEGIT_UI_HOOK_LINES = {2337, 2342, 2450, 2764, 2844, 2875, 2884}` update is self-validated by the silent-catch-lock test file itself: `test_every_orchestrator_silent_catch_is_ui_hook` PASSES, which asserts each of those 7 sites is a legitimate UI-hook fail-open — mechanical re-snapshot verified correct.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_turn_completion_contract_2026_09_08.py",
+    "/app/backend/tests/test_session5_item2_orchestrator_silent_catch_lock.py",
+    "/app/backend/tests/test_stream_golden_regression.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "The dual-signal design (regex opener OR explicit stall-tell, gated by safety checks: no code fence, <3 list items, <220 chars) is a genuinely broader mechanism than whack-a-mole additions — matches the founder's 'fix from the roots' directive. The stall-tell signal is the stronger of the two: it triggers regardless of sentence structure, on the model's own explicit self-declaration that it isn't done. This is a good, invariant-style guard.",
+    "Potential future gap (LOW): the 220-char length gate is a heuristic. A model could theoretically emit a stall-announcement >220 chars (e.g. verbose stall like 'Let me now take a careful pass through each of the imports one at a time, verifying each against ...') and evade the guard. Consider a follow-up that ALSO trips on stall-tell alone even in long messages IF no delivered payload markers exist (no code fence, no headings, no bullet list ≥3, no numeric/quoted evidence). Not a blocker today — the reported repro was 197 chars.",
+    "Potential future gap (LOW): stall-tell regex is English-only. If the product ever supports non-English replies (Hindi/Hinglish shows in the persona prompt), stall-tell phrases would need i18n. Not urgent — current LLM output is English.",
+    "The LEGIT_UI_HOOK_LINES line-number-based lock is inherently fragile to any edit above line 2337 — every insertion shifts all 7 numbers. The test file's own docstring documents this maintenance convention, so it's a known trade-off. A more robust future refactor could tag each legit fail-open site with a unique in-code marker (e.g. `# ui-hook-fail-open-id: chip-render-1`) and have the lock test enforce the marker set instead of line numbers — eliminates all line-drift maintenance. Optional, not urgent.",
+    "`_is_intent_only_announcement` regex now covers 20+ opener phrases; consider extracting the opener list to a top-level tuple/set for readability rather than one large regex — trivial refactor."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A (backend-only round)"},
+  "test_credentials": "not used this round (pure unit tests)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "This iteration verified the 2026-09-09 broadening: gerund-lead regex + new _STALL_TELL_RE signal in backend/services/orchestrator.py (lines 251-309). All 34 tests across the 3 target files pass. Backend boots cleanly. LEGIT_UI_HOOK_LINES re-snapshot is validated by the lock-file's own self-tests (all 5 pass). If a future 5th live repro appears despite this fix, next agent should first check whether the message is >220 chars — that is the only remaining structural escape hatch in `_is_intent_only_announcement`. See critical_code_review_comments for the recommended follow-up hardening path.",
+  "rca of the issue": "The 4th live repro of the silent-stall bug class opened with 'Checking...' — a gerund that the original 2026-09-08 `_INTENT_LEAD_RE` regex (which only anchored on 'Let me', 'I'll', 'I will', 'I'm going to', 'Next,', 'Now,', 'going to') did not match. Because match returned None, `_is_intent_only_announcement()` short-circuited to False, `assert_turn_completion_contract` never raised, `_wrap_as_explicit_partial` never ran, and the turn closed silently exactly as the founder reported. Fix broadens the regex to cover the gerund-lead class (checking/verifying/looking/investigating/digging/reviewing/analyzing/analysing/confirming/examining/scanning/searching/inspecting/working on) AND introduces a second independent structural signal `_STALL_TELL_RE` that fires on explicit stall-language anywhere in the message — a stronger invariant since the model itself is declaring 'this isn't a reply yet'. Detection is now the OR of two signals (still safety-gated by no-code-fence + <3-list-items + <220-chars) so no single phrasing variation can silently escape."
+}

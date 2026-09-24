@@ -569,6 +569,27 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
               {agent}{tokens ? ` · ${formatTokens(tokens)} tokens` : ""}{elapsed != null ? ` · ${elapsed}s` : ""}
             </span>
           </div>
+          {/* Trust & Verification round — Enhancement 2. Backend-
+              computed phrase only (task.verification_level_display) —
+              never inferred client-side from the presence of a
+              commit sha, which only proves write integrity, not
+              correctness. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              data-testid="ltp-verification-level"
+              data-verification-status={task?.status === "needs_review" ? "needs_review" : (task?.verification_status || "inconclusive")}
+              style={{
+                fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 999,
+                border: `1px solid ${C.border}`,
+                color: task?.status === "needs_review" ? C.amber
+                     : task?.verification_status === "pass" ? C.green
+                     : task?.verification_status === "fail" ? C.red
+                     : C.dim,
+              }}
+            >
+              {task?.status === "needs_review" ? "Needs review" : (task?.verification_level_display || "Not verified")}
+            </span>
+          </div>
           {ghUrl && (
             <a data-testid="ltp-view-github" href={ghUrl}
                target="_blank" rel="noopener noreferrer"

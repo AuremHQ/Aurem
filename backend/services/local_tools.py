@@ -256,6 +256,14 @@ from .vercel_skills import (
     VERCEL_TOOLS as _VERCEL_TOOLS,
     VERCEL_TOOL_SPECS as _VERCEL_TOOL_SPECS,
 )
+from .context7_skills import (
+    CONTEXT7_TOOLS as _CONTEXT7_TOOLS,
+    CONTEXT7_TOOL_SPECS as _CONTEXT7_TOOL_SPECS,
+)
+from .sequential_thinking_skills import (
+    SEQUENTIAL_THINKING_TOOLS as _SEQUENTIAL_THINKING_TOOLS,
+    SEQUENTIAL_THINKING_TOOL_SPECS as _SEQUENTIAL_THINKING_TOOL_SPECS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1083,7 +1091,97 @@ async def write_repo_file(ctx: dict, args: dict) -> dict:
     }
 
 
-# ── TOOL 2c: get_repo_structure (cached symbol map) ──────────────────────────
+# ── TOOL 2b: patch_repo_file (Part B4 — minimal-diff default) ────────────────
+
+async def patch_repo_file(ctx: dict, args: dict) -> dict:
+    """Targeted old-value -> new-value replacement — the DEFAULT way
+    to edit an EXISTING file. Prefer this over `write_repo_file` for
+    anything short of a genuine full-file rewrite: passing a whole
+    regenerated file body to the LLM (write_repo_file's contract) is
+    exactly the shape of mistake that caused the App.jsx incident
+    (see AGENTS.md §9) — a "update the footer text" edit silently
+    dropped 4 unrelated context-provider imports because the model
+    was regenerating the ENTIRE file instead of touching one spot.
+
+    Args:
+      path             str — repo-relative file path
+      old_value        str — exact existing text, must appear EXACTLY
+                              ONCE in the current file (re-fetched
+                              fresh here, not trusted from an earlier
+                              read this turn — the file may have
+                              changed). Ambiguous or stale matches are
+                              rejected rather than guessed at.
+      new_value        str — replacement text
+      commit_message?  str
+
+    Returns the same shape as `write_repo_file` on success, or
+    `{"ok": False, "error": ..., "gate": "patch_not_unique"|...}` —
+    the caller (LLM) is expected to re-read the file and retry with
+    a more specific `old_value`, or fall back to `write_repo_file`
+    only if the task genuinely requires a full rewrite.
+
+    Deliberately delegates ALL safety gates (Vanguard, syntax check,
+    test-file lock, contrast guard, write_guard) to `write_repo_file`
+    itself instead of duplicating them — this only computes the new
+    full body and hands it off, exactly like
+    `pending_action.py::_execute_edit` already does for chat-approved
+    edits.
+    """
+    path      = (args or {}).get("path")
+    old_value = (args or {}).get("old_value")
+    new_value = (args or {}).get("new_value")
+
+    if not path or not isinstance(path, str):
+        return {"ok": False, "error": "Missing required arg `path`."}
+    if old_value is None or new_value is None:
+        return {"ok": False, "error": "Missing required arg `old_value` or `new_value`."}
+    if old_value == "":
+        return {"ok": False, "error": "`old_value` cannot be empty — that would match everywhere."}
+
+    read_res = await read_repo_file(ctx, {"path": path})
+    if not read_res.get("ok"):
+        return {"ok": False, "error": f"Could not read `{path}` to patch it: "
+                                       f"{read_res.get('error', 'unknown error')}",
+                "gate": "patch_read_failed", "path": path}
+    current = read_res.get("content") or ""
+    occurrences = current.count(old_value)
+    if occurrences == 0:
+        return {
+            "ok": False, "gate": "patch_not_found", "path": path,
+            "error": (
+                "`old_value` was not found in the current file content — "
+                "re-read the file and use the exact current text, not a "
+                "remembered or paraphrased version."
+            ),
+        }
+    if occurrences > 1:
+        return {
+            "ok": False, "gate": "patch_not_unique", "path": path,
+            "error": (
+                f"`old_value` matches {occurrences} times — ambiguous. "
+                "Include more surrounding context in `old_value` so it "
+                "matches exactly one location."
+            ),
+        }
+    new_content = current.replace(old_value, new_value, 1)
+
+    write_res = await write_repo_file(ctx, {
+        "path": path, "content": new_content,
+        "commit_message": (args or {}).get("commit_message") or f"chore: patch {path}",
+        "allow_test_file_change": (args or {}).get("allow_test_file_change"),
+    })
+    if not write_res.get("ok"):
+        return write_res
+
+    # Read-back verification — same CBR-5/8 standard as
+    # pending_action.py::_execute_edit: never claim success without
+    # independently re-reading the committed content.
+    verify_res = await read_repo_file(ctx, {"path": path})
+    verified = bool(verify_res.get("ok")) and new_value in (verify_res.get("content") or "")
+    write_res["verified"] = verified
+    return write_res
+
+
 
 async def get_repo_structure(ctx: dict, args: dict) -> dict:
     """Iter 212m-7 — Return the cached function/class/route symbol map
@@ -1370,6 +1468,11 @@ _SNAPSHOT_ROOT = "/app/.aurem_cache/repo_snapshots"
 _SNAPSHOT_DL_TIMEOUT_S = 120.0
 _SNAPSHOT_MAX_BYTES = 400 * 1024 * 1024
 _PER_FILE_HIT_CAP = 50
+# Iter R16 (2026-09-05) — see search_repo()'s docstring. Module-level
+# so tests can monkeypatch them to near-zero for fast, deterministic
+# timeout-path coverage instead of sleeping real seconds.
+_SEARCH_REPO_SNAPSHOT_BUDGET_S = 8.0
+_SEARCH_REPO_TOTAL_BUDGET_S = 20.0
 _snapshot_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -1400,6 +1503,17 @@ async def _repo_head_sha(owner: str, repo: str, branch: str,
         return None
 
 
+def _snapshot_cache_key(owner: str, repo: str, branch: str) -> str:
+    """2026-09-21 — decision-point audit (Part 2 lock-in). Extracted
+    from the inline `key = ...` line in `_ensure_repo_snapshot` — same
+    sanitization rule, now a named, independently-testable function:
+    locked by tests/unit/repo_identity_test.py. Non-alnum/underscore/
+    dot/dash characters become `_` so an owner/repo/branch name with
+    slashes or spaces can't collide with the on-disk cache-dir naming
+    scheme or escape `_SNAPSHOT_ROOT`."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", f"{owner}__{repo}__{branch}")
+
+
 async def _ensure_repo_snapshot(
     owner: str, repo: str, branch: str, token: str,
 ) -> tuple[Optional[str], Optional[str]]:
@@ -1411,7 +1525,7 @@ async def _ensure_repo_snapshot(
     import tempfile
     import httpx
 
-    key = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{owner}__{repo}__{branch}")
+    key = _snapshot_cache_key(owner, repo, branch)
     dest = os.path.join(_SNAPSHOT_ROOT, key)
     marker = os.path.join(dest, ".aurem_head_sha")
 
@@ -1592,7 +1706,40 @@ async def search_repo(ctx: dict, args: dict) -> dict:
       max?      int   — fallback-path cap on matching files (default 20)
 
     Returns {ok, matches: [{file, line_no, line}], total_matches, ...}
+
+    Iter R16 (2026-09-05) — the orchestrator hard-caps EVERY tool call
+    at 45s (see orchestrator.py::_run_one). Found live: a repo whose
+    snapshot tarball was unusually large (264MB — a stray 201MB
+    directory checked into git) took >45s to download+extract, so the
+    orchestrator's outer cap killed the WHOLE call before it could
+    ever fall back to the budgeted API path — and since the cache
+    marker is only written on a SUCCESSFUL extract, this repeated on
+    every future call for that repo too (never caches, never
+    recovers). httpx's `read` timeout alone doesn't help here — it
+    only bounds time-BETWEEN-chunks, not total transfer duration, so a
+    slow-but-steady stream sails past it. Fix: bound the WHOLE
+    function (snapshot attempt + fallback, whichever combination) at
+    20s — well under the orchestrator's 45s per-tool cap AND under the
+    external proxy's observed ~60s total-turn ceiling (a turn already
+    spends 10-25s on LLM calls before/after tool execution) — so a
+    slow/huge repo fails fast and cleanly into the fallback (or a
+    typed timeout) instead of being externally cancelled with nothing
+    to show, or eating so much of the turn's budget that the whole
+    response gets killed with zero bytes delivered.
     """
+    try:
+        return await asyncio.wait_for(_search_repo_impl(ctx, args),
+                                       timeout=_SEARCH_REPO_TOTAL_BUDGET_S)
+    except asyncio.TimeoutError:
+        return {"ok": False,
+                "error": f"search_repo timed out after "
+                         f"{_SEARCH_REPO_TOTAL_BUDGET_S:.0f}s (repo snapshot "
+                         f"+ fallback scan both too slow) — try a narrower "
+                         f"query (add a `path` or `ext`).",
+                "timed_out": True}
+
+
+async def _search_repo_impl(ctx: dict, args: dict) -> dict:
     pattern    = (args or {}).get("pattern") or ""
     sub_path   = (args or {}).get("path") or ""
     ext        = (args or {}).get("ext") or ""
@@ -1615,7 +1762,17 @@ async def search_repo(ctx: dict, args: dict) -> dict:
     except re.error:
         compiled = re.compile(re.escape(pattern), re.IGNORECASE)
 
-    snap_dir, snap_err = await _ensure_repo_snapshot(owner, repo, branch, token)
+    # Snapshot attempt gets its own short budget so a cold/huge build
+    # doesn't eat the whole total budget and starve the fallback
+    # below of any chance to run. A cache-hit (the common case after
+    # the first call for a given HEAD sha) resolves in ~1-2s regardless.
+    try:
+        snap_dir, snap_err = await asyncio.wait_for(
+            _ensure_repo_snapshot(owner, repo, branch, token),
+            timeout=_SEARCH_REPO_SNAPSHOT_BUDGET_S,
+        )
+    except asyncio.TimeoutError:
+        snap_dir, snap_err = None, "snapshot_build_timeout"
     if snap_dir:
         try:
             matches = await asyncio.to_thread(
@@ -2420,12 +2577,38 @@ TOOL_SPECS: list[dict] = [
         },
     },
     {
+        "name": "patch_repo_file",
+        "description": (
+            "Part B4 — the DEFAULT way to edit an EXISTING file. Give the "
+            "exact current text (`old_value`) and what it should become "
+            "(`new_value`) — only that one spot changes, everything else "
+            "in the file is left byte-for-byte untouched. PREFER THIS over "
+            "write_repo_file for anything short of a genuine full-file "
+            "rewrite: regenerating a whole file body risks silently "
+            "dropping unrelated code (a real incident dropped 4 top-level "
+            "imports from App.jsx during a 'change the footer text' edit "
+            "— see AGENTS.md). `old_value` must match EXACTLY ONCE in the "
+            "CURRENT file — if you're not sure it's still current, "
+            "read_repo_file first. Runs the same Vanguard/syntax/test-file "
+            "safety gates as write_repo_file."
+        ),
+        "args_spec": {
+            "path":            "string — repo-relative file path",
+            "old_value":       "string — exact existing text, must be unique in the file",
+            "new_value":       "string — replacement text",
+            "commit_message":  "optional string",
+        },
+    },
+    {
         "name": "write_repo_file",
         "description": (
             "Iter 212m-6 — Commit a SINGLE file directly to the connected "
-            "repo with the supplied full content. Use this for SMALL surgical "
-            "fixes you can ship in one round-trip (typo, missing import, "
-            "single-function patch). DO NOT use for multi-file refactors — "
+            "repo with the supplied full content. Reserve this for a "
+            "genuine full-file rewrite or a brand-new file — for any "
+            "targeted change to an EXISTING file, use patch_repo_file "
+            "instead (old_value -> new_value); regenerating the whole "
+            "body risks silently dropping unrelated code that wasn't "
+            "part of the actual ask. DO NOT use for multi-file refactors — "
             "for those, emit an `aurem-handoff` brief instead so the task "
             "queue runs the full agent+verify pipeline.\n"
             "\n"
@@ -2589,7 +2772,7 @@ TOOL_SPECS: list[dict] = [
             ),
         },
     },
-] + _WEB_TOOL_SPECS + _DEV_TOOL_SPECS + _VERCEL_TOOL_SPECS
+] + _WEB_TOOL_SPECS + _DEV_TOOL_SPECS + _VERCEL_TOOL_SPECS + _CONTEXT7_TOOL_SPECS + _SEQUENTIAL_THINKING_TOOL_SPECS
 
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
@@ -2597,6 +2780,7 @@ LOCAL_TOOLS: dict[str, callable] = {
     "read_repo_file":       read_repo_file,
     "read_repo_files":      read_repo_files,
     "write_repo_file":      write_repo_file,
+    "patch_repo_file":      patch_repo_file,
     "get_repo_structure":   get_repo_structure,
     "list_repo_files":      list_repo_files,
     "search_repo":          search_repo,
@@ -2609,7 +2793,93 @@ LOCAL_TOOLS: dict[str, callable] = {
     **_WEB_TOOLS,
     **_DEV_TOOLS,
     **_VERCEL_TOOLS,
+    **_CONTEXT7_TOOLS,
+    **_SEQUENTIAL_THINKING_TOOLS,
 }
+
+
+_WRITE_TOOLS = frozenset({"write_repo_file", "patch_repo_file"})
+_SCOPE_DISCOVERY_TOOLS = frozenset({
+    "read_repo_file", "read_repo_files", "list_repo_files",
+    "search_repo", "semantic_search_repo", "get_repo_structure",
+})
+_EXPLICIT_PATH_RE = re.compile(
+    r"(?:[\w./_-]+/)*[\w._-]+\.(?:jsx|tsx|yaml|toml|html|json|js|ts|py|"
+    r"yml|md|css|sh|env|sql|go|rs|java|kt|swift|rb|php|cs|cpp|hpp|c|h)\b",
+)
+
+
+def _explicit_paths_in_prompt(prompt: str) -> set[str]:
+    """Part C — file paths the user's OWN message named explicitly.
+    Same shape of check as MessageBubble.jsx's FILE_RX on the frontend
+    (deliberately consistent — a path the user typed is always in
+    scope without needing a read first)."""
+    return set(_EXPLICIT_PATH_RE.findall(prompt or ""))
+
+
+def _current_scope(ctx: dict) -> set[str]:
+    scope = set(ctx.get("scope_files") or set())
+    scope |= _explicit_paths_in_prompt(ctx.get("user_prompt") or "")
+    return scope
+
+
+def _check_write_scope(name: str, args: dict, ctx: dict) -> Optional[dict]:
+    """Part C of the 2026-02 context-confusion architecture fix —
+    deterministic, pre-emptive scope boundary at the tool-call layer.
+    Returns a blocked `{"ok": False, ...}` result if this write falls
+    outside the turn's accumulated scope; None to let it proceed."""
+    path = (args or {}).get("path") or ""
+    if not path:
+        return None
+    scope = _current_scope(ctx)
+    if not scope:
+        # Nothing discovered/named yet this turn — no boundary to
+        # enforce against. Preserves every existing single-shot-write
+        # flow where the model already knew its target from the prompt
+        # alone and this same call would otherwise be the FIRST tool
+        # call of the turn.
+        return None
+    if path in scope:
+        return None
+    logger.warning(
+        "Part-C scope gate BLOCKED %s(path=%r) — outside this turn's "
+        "discovered/named scope %r", name, path, sorted(scope)[:10],
+    )
+    return {
+        "ok": False,
+        "error": (
+            f"Tool {name} blocked: `{path}` is outside this turn's "
+            "confirmed scope. Call read_repo_file, list_repo_files, "
+            "or search_repo on that exact path first — a write can "
+            "only target a file this turn has actually discovered or "
+            "that the user explicitly named."
+        ),
+        "error_class": "scope_blocked",
+        "system_signal": "scope_blocked",
+    }
+
+
+def _record_discovered_scope(name: str, args: dict, data, ctx: dict) -> None:
+    """Part C — accumulate every path a successful read/list/search
+    tool call touched this turn into ctx['scope_files']."""
+    scope = ctx.setdefault("scope_files", set())
+    p = (args or {}).get("path")
+    if p:
+        scope.add(p)
+    if not isinstance(data, dict):
+        return
+    for key in ("files", "paths", "results", "matches", "tree"):
+        val = data.get(key)
+        if not isinstance(val, list):
+            continue
+        for item in val:
+            if isinstance(item, str):
+                scope.add(item)
+            elif isinstance(item, dict):
+                for pk in ("path", "file", "filepath"):
+                    if item.get(pk):
+                        scope.add(item[pk])
+                        break
 
 
 async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
@@ -2630,16 +2900,47 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
 
     `ctx["tool_calls"]` is also tracked here so the CitationGuard can
     diff "what was claimed" vs "what was read" in this turn.
+
+    2026-02 — Context-confusion architecture fix, Part C (deterministic
+    scope enforcement). `ctx["scope_files"]` accumulates every path
+    this turn has actually discovered (explicit paths named in the
+    user's own prompt — `ctx["user_prompt"]` already existed for the
+    page-resolver hint, reused here — plus every path a read/list/
+    search tool call has successfully touched). A write tool
+    (`write_repo_file`/`patch_repo_file`) targeting a path OUTSIDE
+    that accumulated scope is blocked HERE, at the tool-call layer,
+    before `fn` ever runs — a pre-emptive boundary in front of the
+    existing post-hoc scope-creep/hallucination content-scanning gate
+    (`cto_projects_helpers.py`'s `_hallucination_reasons` etc, which
+    still runs afterward as a second safety net on the actual diff
+    content). Only enforced once scope is non-empty for this turn —
+    if the model hasn't named or discovered ANY file yet, there's
+    nothing to bound against, so writes proceed exactly as before
+    (this preserves all existing single-shot-write flows where the
+    model already knows the target from the prompt).
     """
     fn = LOCAL_TOOLS.get(name)
     if not fn:
         return None
 
+    if name in _WRITE_TOOLS:
+        from services.interaction_contract import enabled, read_only_request
+        if enabled() and read_only_request(ctx.get("user_prompt") or ""):
+            blocked = {"ok": False, "error_class": "read_only_request",
+                       "error": "Write blocked: the current request permits read-only work."}
+            ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
+            return blocked
+        _blocked = _check_write_scope(name, args, ctx)
+        if _blocked is not None:
+            return _blocked
+
     # Track every dispatch (used by CitationGuard + audit log)
-    ctx.setdefault("tool_calls", []).append({
+    dispatch_started = time.monotonic()
+    dispatch_record = {
         "tool": name,
         "args": args or {},
-    })
+    }
+    ctx.setdefault("tool_calls", []).append(dispatch_record)
 
     from .tool_executor import execute as _tx_execute
 
@@ -2647,7 +2948,27 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
         return await fn(ctx, args or {})
 
     out = await _tx_execute(name, _runner)
+    from services.interaction_contract import enabled as interaction_enabled
+    if interaction_enabled():
+        from services.task_chain_logging import redact_secrets
+        data = out.get("data") if isinstance(out.get("data"), dict) else {}
+        failed = out.get("ok") is False or data.get("ok") is False
+        # This dispatch, not the list tail: parallel calls finish out of order.
+        dispatch_record.update({
+            "ok": not failed,
+            "error": redact_secrets(str(data.get("error") or out.get("error_message") or ""))[:200] if failed else None,
+            "error_class": data.get("error_class") or out.get("error_class"),
+            "elapsed_ms": int((time.monotonic() - dispatch_started) * 1000),
+            "timestamp": time.time(),
+        })
+        if failed and out.get("ok"):
+            ctx.setdefault("system_signals", []).append({
+                "signal": data.get("system_signal") or "unknown_error",
+                "severity": "error", "tool": name,
+            })
     if out.get("ok"):
+        if name in _SCOPE_DISCOVERY_TOOLS:
+            _record_discovered_scope(name, args, out.get("data"), ctx)
         return out["data"]
 
     # Failed — capture typed signal for the frontend banner.

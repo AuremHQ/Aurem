@@ -62,6 +62,7 @@ from typing import Optional
 import httpx
 
 from services.http import ext_client
+from services.retry_guard import call_with_retry, BreakerOpenError
 import jwt  # PyJWT 2.10.0
 
 from services.github_app_config import (
@@ -216,11 +217,33 @@ async def get_installation_token(installation_id: int) -> tuple[str, float]:
 
     # Mint fresh
     url = f"{GITHUB_API}/app/installations/{installation_id}/access_tokens"
+    # 2026-09-12 — founder-reported (root-cause investigation): this was
+    # a single-shot HTTP call with NO retry — any transient network
+    # blip (dropped packet, momentary DNS hiccup, brief GitHub 5xx)
+    # immediately surfaced as a hard "GitHub unreachable" to the user,
+    # even though the rest of the app has a perfectly good retry +
+    # circuit-breaker layer (services/retry_guard.py) that "github" is
+    # even registered in — this call just never went through it
+    # (confirmed: zero `breaker_events` rows for dep="github" ever,
+    # vs 46 for "openrouter", proving this path bypassed the breaker
+    # entirely). Retrying transient network errors here — never HTTP
+    # status errors, which are real signals — lets a single blip
+    # self-heal in under a second instead of flashing "unreachable"
+    # to every poller of /cto/projects/connection-status, AND reduces
+    # false failures during `verify_installation_for_repo()`'s
+    # onboarding repo-access check (same root cause as the "gate
+    # re-shows after install" reports — both hit this exact call).
     async with ext_client(
         "github",
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
     ) as client:
-        r = await client.post(url, headers=_headers_app())
+        async def _mint():
+            return await client.post(url, headers=_headers_app())
+        r = await call_with_retry(
+            "github", _mint,
+            max_retries=2, base_delay=0.3, max_delay=2.0,
+            retry_on=(httpx.TimeoutException, httpx.NetworkError),
+        )
     if r.status_code == 404:
         # Installation was deleted or suspended — evict any stale
         # cache row and raise so the caller can propagate a clean 410.
@@ -344,11 +367,22 @@ async def get_repo_via_installation(
     """
     token, _ = await get_installation_token(installation_id)
     url = f"{GITHUB_API}/repos/{owner}/{repo}"
+    # 2026-09-12 — same transient-network-retry fix as
+    # get_installation_token() above; this is the exact call
+    # `verify_installation_for_repo()` (the onboarding "connect a
+    # repo" gate) hits right after a fresh App install, when GitHub's
+    # own permission propagation is most likely to still be settling.
     async with ext_client(
         "github",
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
     ) as client:
-        r = await client.get(url, headers=_headers_bearer(token))
+        async def _get():
+            return await client.get(url, headers=_headers_bearer(token))
+        r = await call_with_retry(
+            "github", _get,
+            max_retries=2, base_delay=0.3, max_delay=2.0,
+            retry_on=(httpx.TimeoutException, httpx.NetworkError),
+        )
     r.raise_for_status()
     return r.json() or {}
 
@@ -407,9 +441,18 @@ async def verify_installation_for_repo(
             f"access to {owner}/{repo}."
         )
     except httpx.RequestError as _e:
+        # httpx.TimeoutException / NetworkError are RequestError
+        # subclasses — this is the "retries inside get_repo_via_
+        # installation() were already exhausted" case, i.e. a
+        # genuinely sustained issue, not a single blip.
         return False, "installation_probe_request_error", (
             f"Couldn't reach GitHub to verify installation access "
             f"({type(_e).__name__}). Try again in a moment."
+        )
+    except BreakerOpenError as _e:
+        return False, "installation_probe_request_error", (
+            "GitHub looks unreachable right now — the connection has "
+            "been retried automatically. Try again in a moment."
         )
     return True, None, None
 
@@ -573,13 +616,54 @@ HANDLED_WEBHOOK_EVENTS = ("installation", "installation_repositories", "meta", "
 SUBSCRIBABLE_WEBHOOK_EVENTS = ("pull_request",)
 
 
-async def webhook_fence_status(recent_limit: int = 15) -> dict:
+# 2026-09-22 — founder-reported alert-flap fix. `ok` used to be
+# `(not missing) and (not failing)` — ANY single failing delivery
+# in the last `recent_limit` window flipped this to False. Since
+# GitHub's delivery list is a live, continuously-shifting window (not
+# a fixed snapshot), one stale/transient failure can sit "in the last
+# 15" for many minutes as newer deliveries slowly push it toward the
+# edge, then age back out — flipping this boolean red→green→red on
+# its own even though nothing about webhook health actually changed.
+# health_notifier.py's existing 2-consecutive-tick confirm (see
+# `_advance_candidate`) does NOT fix this, because the same single
+# failure can easily persist across 2+ ticks before it ages out —
+# that debounce catches transient POLLING noise, not this window-
+# content churn.
+#
+# Fix: require the FAILURE RATE over the window to exceed a real
+# threshold, not just be non-zero — same "don't flip on a single
+# borderline reading" principle as the mode-router hysteresis
+# (services/semantic_mode_router.py). A single 1/15 (6.7%) blip no
+# longer trips red; a real degradation (>20%) still does, in either
+# direction (recovery uses the identical threshold/computation, so
+# there's no separate "easier to go red than to recover" asymmetry).
+FENCE_FAILURE_RATE_THRESHOLD = 0.20
+
+
+async def webhook_fence_status(
+    recent_limit: int = 15,
+    *,
+    event_filter: Optional[str] = None,
+    scan_limit: int = 15,
+) -> dict:
     """Live read-only health check for the GitHub App webhook pipeline
     (R5c "App Fence Tile"). Reports which content events the App is
     actually subscribed to on GitHub's side right now, the last N real
     delivery attempts with success/fail, and one overall verdict.
     Never raises — a broken webhook pipeline must not break the tile
-    that reports it."""
+    that reports it.
+
+    2026-09-16 — `event_filter` (founder-reported real incident:
+    rebecca@millingtonstudio.com's GitHub-side install never showed up
+    in our DB). The default (unfiltered) view is dominated by
+    high-frequency CI noise (`workflow_job` fires many times per run) —
+    the last 15 deliveries can be 100% `workflow_job` with zero
+    `installation` events visible, even when an install genuinely
+    happened minutes ago, making this tile useless for diagnosing an
+    install-specific incident. `event_filter` (e.g. "installation")
+    scans up to `scan_limit` pages of 100 (GitHub's per-page max) and
+    returns only matching deliveries, so an admin can actually find the
+    real delivery attempt for one incident instead of it being buried."""
     if not is_configured():
         return {
             "ok": False, "configured": False,
@@ -596,12 +680,31 @@ async def webhook_fence_status(recent_limit: int = 15) -> dict:
             r_app.raise_for_status()
             subscribed_events = list(r_app.json().get("events") or [])
 
-            r_del = await client.get(
-                f"{GITHUB_API}/app/hook/deliveries?per_page={recent_limit}",
-                headers=_headers_app(),
-            )
-            r_del.raise_for_status()
-            deliveries = r_del.json() or []
+            deliveries: list[dict] = []
+            if event_filter:
+                # Scan multiple pages (100/page, GitHub's max) looking
+                # for matches, capped at `scan_limit` pages so one
+                # rare event type can't turn this into an unbounded
+                # API-quota-burning loop.
+                url = f"{GITHUB_API}/app/hook/deliveries?per_page=100"
+                matches: list[dict] = []
+                pages = 0
+                while url and pages < scan_limit and len(matches) < recent_limit:
+                    r_del = await client.get(url, headers=_headers_app())
+                    r_del.raise_for_status()
+                    page = r_del.json() or []
+                    matches.extend(d for d in page if d.get("event") == event_filter)
+                    link = r_del.headers.get("link", "")
+                    url = _next_link(link)
+                    pages += 1
+                deliveries = matches[:recent_limit]
+            else:
+                r_del = await client.get(
+                    f"{GITHUB_API}/app/hook/deliveries?per_page={recent_limit}",
+                    headers=_headers_app(),
+                )
+                r_del.raise_for_status()
+                deliveries = r_del.json() or []
     except Exception as e:                                        # noqa: BLE001
         return {
             "ok": False, "configured": True,
@@ -623,15 +726,194 @@ async def webhook_fence_status(recent_limit: int = 15) -> dict:
         for d in deliveries
     ]
     failing = [d for d in recent if not d["success"]]
+    failing_rate = (len(failing) / len(recent)) if recent else 0.0
     return {
-        "ok":                   (not missing) and (not failing),
+        "ok":                   (not missing) and (failing_rate <= FENCE_FAILURE_RATE_THRESHOLD),
         "configured":           True,
         "subscribed_events":    subscribed_events,
         "missing_subscriptions": missing,
         "recent_deliveries":    recent,
         "failing_count":        len(failing),
+        "failing_rate":         round(failing_rate, 4),
+        "event_filter":         event_filter,
         "checked_at":           time.time(),
     }
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 6. Installation upsert + reconciliation (moved here 2026-09-16 from
+#    routers/github_app.py so both the webhook/callback handlers AND
+#    the new admin reconciliation tooling share ONE persistence path —
+#    see reconcile_installations() below for why this exists.
+# ═════════════════════════════════════════════════════════════════════
+
+def _now_utc_epoch() -> float:
+    from datetime import datetime, timezone as _tz
+    return datetime.now(_tz.utc).timestamp()
+
+
+async def upsert_installation(
+    db, installation_id: int, meta: dict,
+    *, user_id: Optional[str] = None,
+    delivery_id: Optional[str] = None,
+    repositories: Optional[list[dict]] = None,
+) -> dict:
+    """Idempotent upsert into `github_installations`.
+
+    * `$setOnInsert`: `installed_at` (immutable install-time epoch)
+    * `$set`: everything mutable (auth data, active flag, updated_at,
+              optionally user_id / repositories / last_webhook_delivery)
+
+    `user_id=None` is a valid, intentional call shape — it persists an
+    unlinked "ghost" row (GitHub confirms the install exists; we don't
+    yet know which Aurem account it belongs to) so the installation is
+    at minimum VISIBLE and admin-actionable, instead of silently
+    discarded. See routers/github_app.py::install_callback's "truly
+    orphaned" branch and reconcile_installations() below — both call
+    this specifically to avoid that discard.
+    """
+    now = _now_utc_epoch()
+    account = meta.get("account") or {}
+    set_doc: dict = {
+        "installation_id":       installation_id,
+        "github_login":          account.get("login") or "",
+        "github_account_type":   account.get("type") or "",
+        "github_account_id":     account.get("id"),
+        "target_type":           meta.get("target_type") or "",
+        "repository_selection":  meta.get("repository_selection") or "",
+        "permissions":           meta.get("permissions") or {},
+        "events":                meta.get("events") or [],
+        "active":                True,
+        "suspended_at":          None,
+        "deleted_at":            None,
+        "updated_at":            now,
+    }
+    if user_id:
+        set_doc["user_id"]   = user_id
+        set_doc["linked_at"] = now
+    if repositories is not None:
+        set_doc["repositories"] = repositories
+    if delivery_id:
+        set_doc["last_webhook_delivery"] = delivery_id
+
+    return await db.github_installations.find_one_and_update(
+        {"installation_id": installation_id},
+        {
+            "$set":         set_doc,
+            "$setOnInsert": {"installed_at": now},
+        },
+        upsert=True,
+        return_document=True,     # pymongo ReturnDocument.AFTER equivalent
+    )
+
+
+async def reconcile_installations(db) -> dict:
+    """Poll-based fallback for GitHub's push-based webhook (founder-
+    reported incident, 2026-09-16: rebecca@millingtonstudio.com's
+    GitHub-side install never showed up in Aurem's DB — no
+    reconciliation existed to catch a webhook Aurem missed).
+
+    Lists EVERY installation of our App directly from GitHub
+    (App-JWT, ground truth — bypasses our DB and webhook pipeline
+    entirely) and upserts any `installation_id` missing from
+    `github_installations` as an unlinked ghost row (`user_id=None`),
+    plus refreshes `active`/`suspended_at` for ones GitHub now reports
+    as suspended that we still show active. Never links a row to a
+    user — that requires a human (self-serve `/claim` or an admin
+    `POST /admin/github/installations/{id}/link`) since GitHub's API
+    has no user-identity concept, only the GitHub account login.
+
+    Deliberately does NOT fetch each ghost row's repo list here — a
+    real App with dozens of installations turned that into dozens of
+    sequential GitHub round-trips inside one request (measured live:
+    tripped the `github` circuit breaker after 5 consecutive
+    timeouts on install #40+, and the admin HTTP call itself risked
+    an upstream-idle-timeout abort). The row existing + being
+    linkable is what matters for visibility; once an admin links it
+    to a user, `/github/app/status`'s existing short-TTL self-heal
+    already live-fetches and persists repos on the user's next poll —
+    no need to duplicate that here.
+
+    Returns `{ok, checked, added, resynced, errors}`. Best-effort —
+    one installation's DB write failing never aborts the whole pass.
+    """
+    try:
+        live = await list_installations()
+    except Exception as e:                                       # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:200],
+                "checked": 0, "added": 0, "resynced": 0, "errors": []}
+
+    live_ids = [int(inst["id"]) for inst in live if inst.get("id")]
+    existing_rows = await db.github_installations.find(
+        {"installation_id": {"$in": live_ids}},
+        {"_id": 0, "installation_id": 1, "suspended_at": 1},
+    ).to_list(len(live_ids) or 1)
+    existing_by_id = {r["installation_id"]: r for r in existing_rows}
+
+    added, resynced, errors = [], [], []
+    for inst in live:
+        iid = inst.get("id")
+        if not iid:
+            continue
+        iid = int(iid)
+        try:
+            existing = existing_by_id.get(iid)
+            if existing is None:
+                # Missing entirely — webhook + callback BOTH missed
+                # this one. No repo-list fetch here (see docstring) —
+                # `repositories` stays unset until the row is linked
+                # and the user's own next /status poll self-heals it.
+                await upsert_installation(db, iid, inst)
+                added.append(iid)
+            else:
+                # Present — reconcile the active/suspended flag only
+                # (never touches user_id/repositories here; the
+                # webhook handler already owns that on live events).
+                gh_suspended = bool(inst.get("suspended_at"))
+                if bool(existing.get("suspended_at")) != gh_suspended:
+                    await db.github_installations.update_one(
+                        {"installation_id": iid},
+                        {"$set": {
+                            "suspended_at": _now_utc_epoch() if gh_suspended else None,
+                            "active":       not gh_suspended,
+                            "updated_at":   _now_utc_epoch(),
+                        }},
+                    )
+                    resynced.append(iid)
+        except Exception as e:                                    # noqa: BLE001
+            errors.append({"installation_id": iid, "error": f"{type(e).__name__}: {e}"[:200]})
+
+    return {
+        "ok": True, "checked": len(live),
+        "added": added, "resynced": resynced, "errors": errors,
+    }
+
+
+async def schedule_github_installation_reconcile(db_getter, interval_s: int = 1800) -> None:
+    """Background cron for `reconcile_installations()` — the poll-
+    based fallback the founder asked for explicitly (2026-09-16):
+    "GitHub's push-based webhook should not be the only source of
+    truth with no fallback poll/reconciliation." Runs every
+    `interval_s` (default 30 min), best-effort — a failed tick is
+    logged and retried next interval, never crashes the loop. Same
+    `db_getter` scheduler shape as `schedule_payment_reconciliation`.
+    """
+    import asyncio
+    await asyncio.sleep(180)  # let the app finish booting + App config hydrate first
+    while True:
+        try:
+            db = db_getter()
+            if db is not None and is_configured():
+                result = await reconcile_installations(db)
+                if result.get("ok") and (result.get("added") or result.get("resynced")):
+                    logger.info(
+                        "[github-reconcile] checked=%s added=%s resynced=%s errors=%s",
+                        result.get("checked"), result.get("added"),
+                        result.get("resynced"), len(result.get("errors") or []),
+                    )
+        except Exception:                                          # noqa: BLE001
+            logger.exception("[github-reconcile] tick crashed")
+        await asyncio.sleep(interval_s)
 
 
 __all__ = [
@@ -646,6 +928,9 @@ __all__ = [
     "verify_webhook_signature",
     "install_url",
     "webhook_fence_status",
+    "upsert_installation",
+    "reconcile_installations",
+    "schedule_github_installation_reconcile",
     "HANDLED_WEBHOOK_EVENTS",
     "SUBSCRIBABLE_WEBHOOK_EVENTS",
 ]

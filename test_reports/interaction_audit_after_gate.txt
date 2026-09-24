@@ -1,0 +1,31 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..................                                                       [100%]
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+-------- generated xml file: /app/test_reports/interaction/backend.xml ---------
+18 passed, 1 warning in 0.54s
+yarn run v1.22.22
+$ /app/frontend/node_modules/.bin/vitest run src/utils/__tests__/interactionReliability.test.jsx --reporter=default --reporter=junit --outputFile.junit=/app/test_reports/interaction/frontend.xml
+
+ RUN  v3.2.7 /app/frontend
+
+stderr | src/utils/__tests__/interactionReliability.test.jsx > interaction reliability contract (baseline, expected to fail pre-fix) > MessageBubble must not infer review badge from provider/council without interaction evidence
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ ✓ src/utils/__tests__/interactionReliability.test.jsx (3 tests) 51ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  21:26:44
+   Duration  1.82s (transform 211ms, setup 41ms, collect 759ms, tests 51ms, environment 349ms, prepare 230ms)
+
+JUNIT report written to /app/test_reports/interaction/frontend.xml
+Done in 2.25s.

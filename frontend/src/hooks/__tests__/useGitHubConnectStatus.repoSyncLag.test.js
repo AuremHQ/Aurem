@@ -36,6 +36,14 @@ describe("Bug-2/Bug-3 shared root — installation_active vs state===connected",
   it("t_no_false_denied_when_installation_active_but_repos_still_empty", async () => {
     const popup = fakePopup();
     vi.spyOn(window, "open").mockReturnValue(popup);
+    // Initial mount: nothing installed yet (this is the FIRST time
+    // this session — 2026-09-09-c's new-or-changed diff needs a
+    // realistic "before" snapshot, i.e. nothing existed before
+    // startConnect() was called, otherwise it can't tell this apart
+    // from a stale pre-existing installation from a past session).
+    api.get.mockResolvedValueOnce({
+      data: { installation_active: false, state: "pending", installations: [] },
+    });
     // First poll tick: install succeeded, but GitHub's repo list is
     // still empty (real production case — can last well over an
     // hour). The popup already auto-closed (bridge closes in 400ms).
@@ -81,6 +89,15 @@ describe("Bug-2/Bug-3 shared root — installation_active vs state===connected",
       await Promise.resolve();
     });
 
+    // 2026-09-12 — grace window fix: a closed popup no longer declares
+    // denial on the very next tick — it spends ~2s re-checking first
+    // (2 re-checks, 1s apart) in case the backend's webhook was just
+    // still catching up. Still truly nothing installed here, so it
+    // must still correctly end in `denied` once that grace window
+    // elapses with no change.
+    expect(result.current.denied).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2200); });
+
     expect(result.current.denied).toBe(true);
     expect(trackFunnel).toHaveBeenCalledWith(
       "app_install_denied", "wizard", { reason: "popup_closed" },
@@ -93,10 +110,11 @@ describe("Bug-2/Bug-3 shared root — installation_active vs state===connected",
     let call = 0;
     api.get.mockImplementation(async () => {
       call += 1;
-      if (call <= 2) {
-        return { data: { installation_active: true, state: "pending", installations: [] } };
-      }
-      return { data: { installation_active: true, state: "connected", installations: [] } };
+      if (call === 1) return { data: { installation_active: false, state: "pending", installations: [] } };
+      return { data: {
+        installation_active: true, state: call === 2 ? "pending" : "connected",
+        installations: [{ installation_id: 1, repositories: call === 2 ? [] : [{ full_name: "org/repo" }] }],
+      } };
     });
 
     const { result } = renderHook(() => useGitHubConnectStatus());

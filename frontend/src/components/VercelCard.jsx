@@ -153,7 +153,7 @@ export default function VercelCard() {
           background: "rgba(148,163,184,0.06)",
           border: "1px solid rgba(148,163,184,0.18)",
         }}>
-          {status?.reason || "Vercel integration is off. Set VERCEL_API_TOKEN to enable ORA-side deployments."}
+          {status?.reason || "Vercel not connected yet. Connect it to enable ORA-side deployments."}
         </div>
       )}
 

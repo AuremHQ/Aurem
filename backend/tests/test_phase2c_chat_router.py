@@ -311,7 +311,7 @@ class TestChatTaskFollowup:
         fake_db.chat_sessions.rows.append({
             "session_id": "s1", "user_id": "u1", "turns": [],
         })
-        with patch("routers.chat.misc.call_llm_with_meta",
+        with patch("services.chat_helpers.call_llm_with_meta",
                   AsyncMock(return_value={"content": "✅ Done — button added."})):
             r = client.post("/api/aurem-dev/chat/task-followup", headers=AUTH,
                             json=self._body())

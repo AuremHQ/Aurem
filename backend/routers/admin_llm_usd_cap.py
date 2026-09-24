@@ -16,14 +16,17 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from cto_services.auth import require_admin
+from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import get_db
 from services import llm_rate_table, llm_usd_cap
 
-router = APIRouter(prefix="/admin/llm", tags=["Admin · LLM Settings"])
+router = APIRouter(
+    prefix="/admin/llm", tags=["Admin · LLM Settings"],
+    dependencies=[Depends(require_admin_dep)],
+)
 
 
 class RateTableBody(BaseModel):

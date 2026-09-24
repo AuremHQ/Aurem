@@ -329,11 +329,19 @@ async def apply_finding_fix(
     # exposed yet — defaults to safe branch mode for everyone).
     from services.github_api_writer import commit_files
     from services.loop_safety import (
-        aurem_branch_name, create_or_reuse_branch, open_draft_pr,
+        aurem_branch_name, create_or_reuse_branch, open_or_reuse_pr,
     )
     rule_id  = finding.get("rule_id") or finding.get("rule") or "fix"
     title    = finding.get("title")   or finding.get("message") or rule_id
-    fix_branch = aurem_branch_name("fix", rule_id)
+    # 2026-09-17 fix (Bug 1 — 389 duplicate PRs on one connected repo).
+    # Fold `path` into the branch identity, not just `rule_id` — two
+    # different files tripping the SAME rule must NOT collide onto
+    # one branch (that would silently overwrite one fix with
+    # another's patch). Combined with `aurem_branch_name` no longer
+    # appending a timestamp, the SAME (rule_id, path) now always maps
+    # to the SAME branch — re-running this fix updates the existing
+    # PR instead of forking a new one.
+    fix_branch = aurem_branch_name("fix", f"{rule_id}-{path}")
     ok_branch, branch_err = await create_or_reuse_branch(
         owner=owner, repo=repo, base_branch=branch,
         new_branch=fix_branch, token=token,
@@ -400,10 +408,39 @@ async def apply_finding_fix(
         if full_sha else ""
     )
 
+    # 2026-09-17 (bug 6 round 2) — This is a THIRD real-commit path
+    # (auto-fix from a scan finding), separate from the one-shot
+    # workers (`_run_task_with_git` / `_run_task_via_api`) that already
+    # got the post-commit graph refresh. Founder-reported repro used
+    # this exact "fix the critical issues" flow right before checking
+    # graph staleness — this path never scheduled a refresh at all.
+    # Deliberately refresh against `branch` (the project's actual base
+    # branch the Graph tab displays), NOT `commit_target` — a
+    # branch-per-fix commit hasn't landed on `branch` yet, so
+    # refreshing there would just re-confirm no visible change; only
+    # refresh `commit_target` state once/if this lands on `branch`
+    # (covered by the `commit_target == branch` fallback case below).
+    try:
+        from services.graph_builder import refresh_graph_after_commit
+        import asyncio
+        asyncio.create_task(refresh_graph_after_commit(
+            db=db, project_id=project_id, user_id=user_id,
+            gh_token=token, gh_owner=owner, gh_repo=repo,
+            branch=branch,
+        ))
+    except Exception as e:                                # noqa: BLE001
+        logger.warning("post-fix graph refresh scheduling failed: %r", e)
+
     # Open a draft PR if we committed to a branch.
+    # 2026-09-17 fix (Bug 1) — "look before you create": a second run
+    # targeting the SAME (rule_id, path) now reuses the SAME branch
+    # (see above). 2026-09-18 (Bug 1 round 2) — the reuse-or-create
+    # PR logic itself is now centralized in `open_or_reuse_pr()` so
+    # this call site can't silently drift out of sync with the other
+    # 3 PR-opening call sites the way it did before (see loop_safety.py).
     if commit_target != branch:
         try:
-            pr_url, pr_err = await open_draft_pr(
+            result = await open_or_reuse_pr(
                 owner=owner, repo=repo,
                 head_branch=commit_target, base_branch=branch,
                 title=f"fix({rule_id}): {title}",
@@ -419,12 +456,20 @@ async def apply_finding_fix(
                     f"merging._"
                 ),
                 token=token,
+                update_comment=(
+                    f"**AUREM auto-fix — updated.** New commit "
+                    f"`{short_sha}` re-applies the `{rule_id}` fix "
+                    f"to `{path}` (re-validated — the finding no "
+                    f"longer triggers).\n\n"
+                    f"_Reusing this PR instead of opening a "
+                    f"duplicate — same rule, same file._"
+                ),
             )
-            opened_pr_url = pr_url
-            if pr_err:
-                logger.warning("open_draft_pr soft-failed: %s", pr_err)
+            opened_pr_url = result.get("pr_url")
+            if not result.get("ok"):
+                logger.warning("open_or_reuse_pr soft-failed: %s", result.get("error"))
         except Exception as e:                            # noqa: BLE001
-            logger.warning("open_draft_pr unexpected err: %r", e)
+            logger.warning("PR reuse/open unexpected err: %r", e)
 
     # Persist a fix-history record so the UI can dim resolved findings.
     try:

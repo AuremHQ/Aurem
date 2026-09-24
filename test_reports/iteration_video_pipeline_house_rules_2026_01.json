@@ -1,0 +1,54 @@
+{
+  "summary": "Frontend E2E verification of the new multi-avatar LIBRARY + admin-configurable Video house rules (block / rewrite) feature. All 6 review-request scenarios PASS. Admin Settings shows the new 'Video house rules' card with two radio modes (block default, rewrite), textarea (placeholder mentions 'guaranteed'), Save disabled-until-dirty behavior, Upload .txt client-side FileReader wiring (verified: uploading a .txt with 'Upload payload text ABC.' immediately fills the textarea, no network roundtrip), and persistence across full page reload. ORA Chat drawer -> Video tab renders VideoGenPanel with the new avatar library UI: two uploaded 2x2 PNGs both appear as thumbnails (data-testid='video-gen-avatar-item-{id}'), the most-recently-uploaded is auto-selected (Check icon present on it, absent on the other), clicking the OTHER thumbnail moves the check badge cleanly, and clicking the trash icon on one avatar removes it from the library within ~2s. Generate button correctly disables on empty script, enables with script+avatar, re-disables on clear. HOUSE-RULES BLOCK path (real live Claude call via app's OpenRouter integration): with rules 'Never say the word guaranteed or promise specific revenue numbers.' saved in block mode and a violating script 'We GUARANTEED you will make $50k this month with our tool!' — job was blocked in 3.0s (well under the 5s target, NOT after minutes of TTS/lip-sync polling) with the exact real-LLM reason surfaced via data-testid='video-gen-error-text' and starting with the 🛑 stop emoji: '🛑 Blocked by house rules: Script uses the word \\'guaranteed\\' and promises a specific revenue number of $50k.' Non-violation path with the SAME rules active and clean script 'We just shipped a new feature for our users today.' — job WAS accepted past the house-rules gate (proof: it appears in 'Recent generations' as a real job with status 'failed', which only happens if POST /admin/video/jobs returned 202 and pollJob ran to a terminal state; a 422 house-rules block never creates a job doc). It then correctly failed downstream (fake Deepgram key), which is the expected behavior per the review request. Chat<->Video tab regression: both toggles work (ora-chat-input reappears on Chat mode, video-gen-panel re-appears on Video mode).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "tests_executed": {
+    "admin_house_rules_card_visible": "PASS",
+    "admin_house_rules_default_mode_block": "PASS",
+    "admin_house_rules_placeholder_mentions_guaranteed": "PASS",
+    "admin_house_rules_save_disabled_initially": "PASS",
+    "admin_house_rules_save_enables_on_change": "PASS",
+    "admin_house_rules_save_persists_across_reload": "PASS",
+    "admin_house_rules_file_upload_fills_textarea_client_side": "PASS (FileReader path, no HTTP upload)",
+    "admin_house_rules_second_save_ok": "PASS",
+    "ora_drawer_open_from_admin_settings": "PASS",
+    "ora_drawer_switch_to_video_mode": "PASS (needs ora-picker-new dismissal first — picker overlay intercepts pointer events; not a bug, just test flow)",
+    "video_panel_renders": "PASS",
+    "avatar_library_empty_state_then_upload_two_PNGs": "PASS (2 avatars, library visible)",
+    "avatar_auto_select_most_recent": "PASS (checkmark on second uploaded)",
+    "avatar_click_switch_selection": "PASS (checkmark moves to clicked)",
+    "avatar_delete_removes_from_library": "PASS",
+    "generate_btn_disabled_empty_script": "PASS",
+    "generate_btn_enabled_with_avatar_and_script": "PASS",
+    "generate_btn_redisabled_after_clearing_script": "PASS",
+    "house_rules_BLOCK_real_llm_call": "PASS (blocked in 3.0s with real Claude reason starting with 🛑, exact text: 'Blocked by house rules: Script uses the word \\'guaranteed\\' and promises a specific revenue number of $50k.')",
+    "house_rules_NON_VIOLATION_passes_block_gate": "PASS (non-violating script became a real job — visible in Recent generations as failed = downstream Deepgram auth fail, exactly as expected)",
+    "regression_chat_mode_after_video": "PASS (ora-chat-input restored)",
+    "regression_video_mode_after_chat": "PASS (video-gen-panel restored)"
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/vhr_admin.png",
+    "/app/test_reports/screenshots/vhr_block.png",
+    "/app/test_reports/screenshots/vhr_nonvio.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "VideoGenPanel.jsx generate() catch-block only sets houseRulesBlocked=true when err.response.status === 422 — matches routers/admin_video_pipeline.py which returns 422 on block. Good.",
+    "MINOR UI polish (not a bug): after a house-rules block, if the user then re-submits a clean script, the previous '🛑 Blocked...' status text remains visible for the ~1-3s duration of the api.post() await before setJob({queued}) fires. Consider clearing job state at the top of generate() (setJob(null) BEFORE the await) so the stale block reason doesn't linger next to the newly-typed script. This is what caused a false-positive 'wrongly_blocked' in the automated test detector; the underlying pipeline behavior is correct (job was actually created, appeared in Recent generations).",
+    "AdminSettingsPage.jsx VideoHouseRulesCard: file upload accept='.txt,.md,text/plain,text/markdown' and slices to 4000 chars — matches textarea maxLength. Good.",
+    "AdminSettingsPage.jsx VideoHouseRulesCard uses a top-level <div data-testid='video-house-rules-card'> wrapping the <Card> — correct so the testid survives Card component internals.",
+    "OraChatDrawer opens the session picker on first drawer-open which fully covers the tab bar and intercepts clicks on ora-chat-mode-video-btn — recommend either auto-closing the picker on outside-tap or moving the picker below the tab bar (z-index/positional). Currently users have to click 'New chat' or a session to dismiss it before switching to Video mode. Founder may find this surprising."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only round, backend already curl-verified by main agent)", "frontend": "100% (22/22 scenarios PASS)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview, from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Saved video house rules: mode='block', rules_text='Never say the word guaranteed or promise specific revenue numbers.' Uploaded 2 test PNG avatars during the run and deleted 1 (left 1 remaining for future rounds). Deepgram key remains the fake 'dg_test_key_12345' from the previous round. A handful of jobs created during test (all failed at deepgram_auth_failed after passing the house-rules gate, or 422-blocked at the gate as designed).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "House rules stored in admin_settings doc key video_pipeline_house_rules. Current preview state: mode=block, rules_text as above. To re-exercise the block path with a fresh LLM call, just submit a script containing 'guaranteed' — real Claude call responds in ~2-3s. To test rewrite mode, flip the radio, save, and submit a violating script — job should be accepted (post-rewrite) rather than 422'd. Two prior rounds and this one are all green: iteration_video_pipeline_admin_ui_2026_01.json, iteration_video_pipeline_deepgram_only_2026_01.json, iteration_video_pipeline_house_rules_2026_01.json.",
+  "rca of the issue": "N/A — feature works end-to-end. Only observation is the minor UX polish noted above about clearing stale job state at the start of generate() so the previous block reason doesn't briefly render alongside a freshly-typed script during the api.post() await."
+}

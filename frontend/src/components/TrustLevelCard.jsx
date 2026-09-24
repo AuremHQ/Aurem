@@ -11,7 +11,7 @@
 import React, { useEffect, useState } from "react";
 import { ShieldCheck, ShieldAlert, Bot } from "lucide-react";
 import { api } from "../lib/api";
-import { toast } from "sonner";
+import { toast } from "../lib/toastApi";
 
 const LEVELS = [
   {

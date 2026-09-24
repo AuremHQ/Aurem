@@ -24,6 +24,7 @@ export const ADMIN_NAV = [
   { id: "qa_health",       label: "QA Health",            route: "/admin/qa",             group: "MONITOR" },
   { id: "maintenance",     label: "Maintenance",          route: "/admin/maintenance",    group: "MONITOR" },
   { id: "arch",            label: "Architecture",         route: "/admin/architecture",   group: "MONITOR" },
+  { id: "onboarding_funnel", label: "Onboarding Funnel",  route: "/admin/onboarding-funnel", group: "USERS" },
   { id: "bin_tracker",     label: "BIN Tracker",          route: "/admin/bin-tracker",    group: "USERS" },
   { id: "github_bulk_revoke", label: "GitHub Bulk Revoke", route: "/admin/github-bulk-revoke", group: "USERS" },
   { id: "visibility_kit",  label: "Visibility Kit",       route: "/admin/visibility-kit", group: "USERS" },
@@ -45,6 +46,7 @@ export const ADMIN_NAV = [
   { id: "tasks",           label: "Tasks",                route: "/admin/tasks",          group: "SYSTEM" },
   { id: "agent_perf",      label: "Agent Performance",    route: "/admin/agent-performance", group: "SYSTEM" },
   { id: "mcp",             label: "MCP Usage",            route: "/admin/mcp-usage",      group: "SYSTEM" },
+  { id: "failure_patterns", label: "Failure Patterns",    route: "/admin/failure-patterns", group: "SYSTEM" },
   { id: "reliability",     label: "Reliability",          route: "/admin/reliability",    group: "SYSTEM" },
   { id: "settings",        label: "Settings",             route: "/admin/settings",       group: "SYSTEM" },
 ];

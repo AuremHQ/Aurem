@@ -219,12 +219,9 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
     }
   }, [loopId, onRollbackStarted]);
 
-  const rollbackLabel =
-    phase === "submitting"  ? "Rolling back…"
-    : phase === "handed-off"? "Rolling back — see history"
-    : phase === "completed" ? "Rolled back — view history"
-    : phase === "failed"    ? "Retry rollback"
-    : "Rollback";
+  // P2-D (this round) — the button label is now derived by the shared
+  // ShipApproveCard via useShipState/shipStatus.js (canonical "Rolling
+  // back…" / "Rolled back" wording), not a local ternary.
 
   // Visibility Kit Phase A / A5 (2026-08-28) — "moment of delight" nudge.
   // Ship only fires after scan passes, so a successful ShippedRow render
@@ -245,6 +242,7 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
     <div
       data-testid={`loop-shipped-row-${ship.shortSha}`}
       data-rollback-phase={phase}
+      data-canonical-ship-status={toCanonicalShipStatus(phase)}
       style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "6px 0 3px 0",
@@ -332,48 +330,29 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
         </a>
       )}
       <span style={{ flex: 1 }} />
-      <button
-        type="button"
-        data-testid={`loop-shipped-rollback-btn-${ship.shortSha}`}
-        aria-label="Rollback loop"
-        disabled={phase === "submitting" || phase === "handed-off"}
-        onPointerDown={(e) => {
-          // Iter 342 — pointerdown fires synchronously at press, before
-          // any SSE-driven remount can replace the node and eat `click`.
-          // (e.button is undefined in jsdom PointerEvent polyfills.)
+      {/* P2-D (this round) — physical merge into the shared ship
+          card/hook, per founder's explicit ask to unify all 3 ship
+          surfaces. Iter-342's pointerdown race-safety (fires before
+          an SSE-driven remount can eat the click) is preserved via
+          the dedicated onRollbackPointerDown prop; the legacy
+          testid (`loop-shipped-rollback-btn-{sha}`) is preserved via
+          testidOverrides so no existing selector breaks. */}
+      <ShipApproveCard
+        testidPrefix={`loop-shipped-${ship.shortSha}`}
+        status={phase === "idle" ? "shipped" : phase}
+        onRollback={(e) => { e?.stopPropagation?.(); triggerRollback("click"); }}
+        onRollbackPointerDown={(e) => {
           if (e.button !== undefined && e.button !== 0) return;
           e.stopPropagation();
           triggerRollback("pointerdown");
         }}
-        onClick={(e) => {
-          // Keyboard (Enter/Space) fallback — swallowed by the 800ms
-          // lastFire guard when a pointerdown already handled it.
-          e.stopPropagation();
-          triggerRollback("click");
+        onRetry={(e) => { e?.stopPropagation?.(); triggerRollback("click"); }}
+        testidOverrides={{
+          rollback: `loop-shipped-rollback-btn-${ship.shortSha}`,
+          retry:    `loop-shipped-rollback-btn-${ship.shortSha}`,
+          status:   `loop-shipped-rollback-status-${ship.shortSha}`,
         }}
-        style={{
-          appearance: "none",
-          background: "transparent",
-          color:      "#f87171",
-          border:     "1px solid #EF4444",
-          borderRadius: 6,
-          padding: "3px 10px",
-          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-          fontSize: 10.5,
-          fontWeight: 500,
-          letterSpacing: "0.04em",
-          cursor: (phase === "submitting" || phase === "handed-off")
-            ? "wait" : "pointer",
-          opacity: (phase === "submitting" || phase === "handed-off")
-            ? 0.6 : 1,
-          display: "inline-flex", alignItems: "center", gap: 4,
-          textTransform: "uppercase",
-          transition: "background 120ms ease, color 120ms ease, border-color 120ms ease",
-        }}
-      >
-        <RotateCcw size={9} strokeWidth={2.5} />
-        {rollbackLabel}
-      </button>
+      />
       {phase === "failed" && error && (
         <span
           data-testid="loop-shipped-rollback-error"
@@ -437,7 +416,7 @@ import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from "react";
 import {
-  Check, AlertTriangle, AlertOctagon, Loader2, ExternalLink, RotateCcw,
+  Check, AlertTriangle, AlertOctagon, Loader2, ExternalLink,
   ChevronDown, ChevronUp, GitPullRequest, Info,
 } from "lucide-react";
 import { rollbackLoop, getLoopStatus } from "../lib/loopApi";
@@ -445,6 +424,9 @@ import OperationHistory from "./OperationHistory";
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import { PreferredSourceButton } from "./PreferredSourceButton";
 import { sanitizeErrorMessage } from "../lib/sanitizeError";
+import { toCanonicalShipStatus } from "../lib/useShipState";
+import ShipApproveCard from "./ShipApproveCard";
+import ThinkingLoader from "./ThinkingLoader";
 
 // ── Tone → icon + colour ────────────────────────────────────────────
 const TONE_STYLES = {
@@ -698,15 +680,19 @@ function NarrationLine({ line, nowEpoch }) {
         animation: "narration-fade-in 220ms ease-out",
       }}
     >
-      <Icon
-        size={12}
-        strokeWidth={2.5}
-        style={{
-          color: iconColor,
-          flexShrink: 0,
-          animation: style.spin && !isStalled ? "narration-spin 1s linear infinite" : "none",
-        }}
-      />
+      {style.spin && !isStalled ? (
+        <ThinkingLoader size={16} aria-label="step in progress" />
+      ) : (
+        <Icon
+          size={12}
+          strokeWidth={2.5}
+          style={{
+            color: iconColor,
+            flexShrink: 0,
+            animation: "none",
+          }}
+        />
+      )}
       <span
         data-testid={`loop-narration-text-${line.key}`}
         style={{ flex: 1, color: line.tone === "pending" ? "#c9cbcf" : "#e6ebf3" }}

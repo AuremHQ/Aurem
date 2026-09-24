@@ -28,7 +28,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends
 
 from cto_services.auth import require_admin_dep
 from services.health_registry import all_checks, get_check, run_check_safely

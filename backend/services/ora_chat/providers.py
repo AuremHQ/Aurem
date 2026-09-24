@@ -37,11 +37,11 @@ def _key() -> str:
     return os.getenv("OPENROUTER_API_KEY", "")
 
 
-def _headers() -> dict:
+def _headers(feature: Optional[str] = None) -> dict:
     return {
         "Authorization": f"Bearer {_key()}",
-        "HTTP-Referer": os.getenv("APP_URL", "https://auremcto.com"),
-        "X-Title": "AUREM ORA Chat",
+        "HTTP-Referer": "https://auremcto.com",
+        "X-Title": f"AUREM - {feature}" if feature else "AUREM - ORA Chat",
         "Content-Type": "application/json",
     }
 
@@ -70,7 +70,8 @@ async def stream_call(*,
                       temperature: float,
                       top_p: float,
                       presence_penalty: float,
-                      max_tokens: int) -> AsyncIterator[dict]:
+                      max_tokens: int,
+                      feature: Optional[str] = None) -> AsyncIterator[dict]:
     """Yield event dicts from an OpenRouter streaming completion.
 
     Never raises — errors are yielded as `{"type": "error", ...}` so
@@ -89,7 +90,7 @@ async def stream_call(*,
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as c:
             async with c.stream("POST", OPENROUTER_URL,
-                                headers=_headers(), json=body) as r:
+                                headers=_headers(feature), json=body) as r:
                 if r.status_code != 200:
                     txt = ""
                     try:
@@ -147,7 +148,8 @@ async def one_shot(*,
                    temperature: float,
                    top_p: float,
                    presence_penalty: float,
-                   max_tokens: int) -> tuple[str, dict, Optional[str]]:
+                   max_tokens: int,
+                   feature: Optional[str] = None) -> tuple[str, dict, Optional[str]]:
     """Non-streaming call. Returns (content, usage_dict, error_or_none).
 
     Used for short deterministic responses (slash-command explanations,
@@ -161,7 +163,7 @@ async def one_shot(*,
                     max_tokens=max_tokens, stream=False)
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as c:
-            r = await c.post(OPENROUTER_URL, headers=_headers(), json=body)
+            r = await c.post(OPENROUTER_URL, headers=_headers(feature), json=body)
             if r.status_code != 200:
                 return "", {}, f"http_{r.status_code}: {r.text[:200]}"
             j = r.json()

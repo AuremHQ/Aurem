@@ -30,6 +30,7 @@ import { shouldHide } from "./GlobalHelpFAB";
 import { useActiveProject } from "./TabBar";
 import { Z_FLOATING_GUIDE } from "../lib/zIndex";
 import { toast } from "./Toast";
+import { SLASH_COMMANDS } from "./SlashCommandMenu";
 
 // 2026-08-23 — founder direction: the "ORA GUIDE" suggestions card that
 // used to live pinned in the Ask Advisor sidebar now lives HERE instead.
@@ -81,16 +82,40 @@ function markShownThisSession(group) {
 
 const POLL_MS = 15000;
 
+// 2026-09-09 — founder ticket Part 0 (round 2): three separate
+// floating nudges (this mascot's own stage bubble, the standalone
+// "Try a task"/"Connect repo" EngagementNudge badge, and the
+// standalone FirstScanNudge banner) were all circled in one
+// screenshot as the same clutter problem — "don't show anything
+// twice... only one, through the robot." All three now render
+// through this single component. `secondaryNudge` holds whichever
+// of the OTHER two (post_skip/post_scan from EngagementNudge via the
+// `aurem:external-nudge` event, or first_scan computed here) is
+// currently eligible; it only ever auto-opens when the stage system
+// above has nothing to say (`autoGroup` null) — never simultaneously.
+const FIRST_SCAN_DISMISS_KEY = (pid) => `aurem_first_scan_nudge_dismissed_${pid}`;
+
 export default function OraGuideMascot() {
   const { pathname } = useLocation();
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem("aurem_token"));
   const [open, setOpen] = useState(false);
   const [autoGroup, setAutoGroup] = useState(null);  // stage-triggered bubble
-  const [panelMode, setPanelMode] = useState("stage"); // "stage" | "general" | "suggestions" | "escalating" | "escalated"
+  const [panelMode, setPanelMode] = useState("stage"); // "stage" | "external" | "first_scan" | "general" | "suggestions" | "escalating" | "escalated"
   const pollRef = useRef(null);
   const activeProject = useActiveProject();
   const effectiveProjectId = activeProject?.project_id || null;
   const [projectSuggestions, setProjectSuggestions] = useState(FALLBACK_SUGGESTIONS);
+  // 2026-09-09 — Part 0 round 2: the two other floating nudges
+  // (EngagementNudge's post_skip/post_scan, FirstScanNudge) now
+  // report their eligibility HERE instead of rendering their own
+  // badge/banner. Only one can be true at a time in practice
+  // (post_skip needs zero projects, first_scan needs a project with
+  // no scan ever run, post_scan needs a scan to already exist) —
+  // `secondaryNudge` holds whichever arrives, and only auto-opens
+  // when the stage bubble above has nothing pending.
+  const [secondaryNudge, setSecondaryNudge] = useState(null);
+  const [hasUserMessage, setHasUserMessage] = useState(false);
+  const firstScanCheckedForRef = useRef(null); // project_id already checked, so remounts don't re-fire
 
   useEffect(() => {
     setLoggedIn(!!localStorage.getItem("aurem_token"));
@@ -114,6 +139,9 @@ export default function OraGuideMascot() {
         const group = stageToGroup(r.data?.stage);
         if (group && !alreadyShownThisSession(group)) {
           markShownThisSession(group);
+          // Stage bubble always wins — drop any secondary nudge so
+          // the two can never show at once (founder ticket Part 0).
+          setSecondaryNudge(null);
           setAutoGroup(group);
           setPanelMode("stage");
           setOpen(true);
@@ -128,7 +156,23 @@ export default function OraGuideMascot() {
     tick();
     const intervalId = setInterval(tick, POLL_MS);
     pollRef.current = intervalId;
-    return () => { cancelled = true; clearInterval(intervalId); };
+    // 2026-09-09 — bug fix (founder-reported, screenshot): a user who
+    // connects a repo DIRECTLY (no skip) still saw the stale
+    // "One step left — pick a repo…" bubble for up to POLL_MS
+    // afterward, because it was left over from a tick that ran BEFORE
+    // the connect finished and this poll hadn't refired yet.
+    // NewUserWizard now dispatches this the instant a project is
+    // created (fresh connect, scaffold, or picking an already-
+    // connected repo) — re-check the live stage right away instead
+    // of waiting up to 15s, so a just-connected user never gets
+    // asked to connect again.
+    const onProjectConnected = () => tick();
+    window.addEventListener("aurem:project-connected", onProjectConnected);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      window.removeEventListener("aurem:project-connected", onProjectConnected);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hidden, pathname]);
 
@@ -152,20 +196,109 @@ export default function OraGuideMascot() {
     return () => { cancelled = true; };
   }, [effectiveProjectId]);
 
+  // "post_skip" / "post_scan" — reported by the now-headless
+  // EngagementNudge (its own backend caps + eligibility unchanged),
+  // handed off here instead of rendering its own badge.
+  useEffect(() => {
+    function onExternalNudge(e) {
+      const d = e?.detail;
+      if (!d?.variant) return;
+      setSecondaryNudge({ kind: "external", ...d });
+      setOpen((wasOpen) => {
+        if (wasOpen || autoGroup) return wasOpen; // never preempt what's already showing
+        setPanelMode("external");
+        return true;
+      });
+    }
+    window.addEventListener("aurem:external-nudge", onExternalNudge);
+    return () => window.removeEventListener("aurem:external-nudge", onExternalNudge);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoGroup]);
+
+  // "the user typed anything" — reported by ChatPanel (has no
+  // access to it otherwise). Clears the first_scan nudge the moment
+  // it's no longer true, same as the original FirstScanNudge's
+  // `hasUserMessage` prop gate.
+  useEffect(() => {
+    function onUserMessage() {
+      setHasUserMessage(true);
+      setSecondaryNudge((prev) => {
+        if (prev?.kind !== "first_scan") return prev;
+        setOpen((wasOpen) => (panelMode === "first_scan" ? false : wasOpen));
+        return null;
+      });
+    }
+    window.addEventListener("aurem:user-message-sent", onUserMessage);
+    return () => window.removeEventListener("aurem:user-message-sent", onUserMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelMode]);
+
+  // "first_scan" — folded in from the removed standalone
+  // FirstScanNudge banner: shown once a repo's connected but no scan
+  // has EVER run for it, and the user hasn't typed anything yet.
+  useEffect(() => {
+    if (!effectiveProjectId || effectiveProjectId === "home" || hasUserMessage) return undefined;
+    if (firstScanCheckedForRef.current === effectiveProjectId) return undefined;
+    let dismissed = false;
+    try { dismissed = !!localStorage.getItem(FIRST_SCAN_DISMISS_KEY(effectiveProjectId)); } catch { /* ignore */ }
+    if (dismissed) return undefined;
+    firstScanCheckedForRef.current = effectiveProjectId;
+    let cancelled = false;
+    api.get("/onboarding/first-scan/status", { params: { project_id: effectiveProjectId } })
+      .then((r) => {
+        if (cancelled || r?.data?.status !== "skipped") return;
+        setSecondaryNudge({
+          kind: "first_scan",
+          message: "New here? Start with a quick scan of your site — I'll tell you what to fix first.",
+          actionLabel: "Scan my site",
+        });
+        setOpen((wasOpen) => {
+          if (wasOpen || autoGroup) return wasOpen;
+          setPanelMode("first_scan");
+          return true;
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveProjectId, hasUserMessage]);
+
   if (hidden) return null;
 
   function toggleOpen() {
     if (open) { setOpen(false); return; }
     // Manual click shows the onboarding stage bubble if one's still
-    // pending; otherwise, once a project is active, shows project
-    // suggestions/issues; otherwise the generic help menu.
-    setPanelMode(autoGroup ? "stage" : (effectiveProjectId ? "suggestions" : "general"));
+    // pending; else a secondary nudge if one's eligible; otherwise
+    // once a project is active, project suggestions/issues; else the
+    // generic help menu.
+    setPanelMode(autoGroup ? "stage" : (secondaryNudge ? secondaryNudge.kind : (effectiveProjectId ? "suggestions" : "general")));
     setOpen(true);
   }
 
   function dismiss() {
     setOpen(false);
     setAutoGroup(null);
+    if (panelMode === "first_scan" && effectiveProjectId) {
+      try { localStorage.setItem(FIRST_SCAN_DISMISS_KEY(effectiveProjectId), "1"); } catch { /* ignore */ }
+    }
+    if (panelMode === "external" || panelMode === "first_scan") setSecondaryNudge(null);
+  }
+
+  // Primary action for the secondary (post_skip / post_scan /
+  // first_scan) nudge — same handoffs the removed standalone
+  // components used (starter-pick prefill, `/scan` prefill, or the
+  // connect wizard via the same window-event pattern `aurem:ora-open`
+  // already uses for Advisor).
+  function actSecondaryNudge() {
+    if (!secondaryNudge) return;
+    if (secondaryNudge.variant === "post_skip") {
+      window.dispatchEvent(new Event("aurem:open-connect-wizard"));
+    } else if (secondaryNudge.kind === "first_scan") {
+      window.dispatchEvent(new CustomEvent("aurem:run-scan", { detail: { commandId: "scan" } }));
+    } else if (secondaryNudge.prefillTask) {
+      window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt: secondaryNudge.prefillTask } }));
+    }
+    dismiss();
   }
 
   function openAdvisor() {
@@ -179,6 +312,19 @@ export default function OraGuideMascot() {
   function pickSuggestion(example) {
     try {
       window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt: example } }));
+    } catch { /* noop */ }
+    dismiss();
+  }
+
+  // 2026-09-21 — one-click real scan trigger for the chips below.
+  // Unlike pickSuggestion above (which only prefills text the user
+  // still has to send), this dispatches straight to ChatPanel's
+  // aurem:run-scan listener, which calls the SAME runSlashCommand()
+  // a real "/bug-hunt" dropdown pick uses — the scan actually runs
+  // and the user sees real issues, not just a prefilled prompt.
+  function runScan(commandId) {
+    try {
+      window.dispatchEvent(new CustomEvent("aurem:run-scan", { detail: { commandId } }));
     } catch { /* noop */ }
     dismiss();
   }
@@ -231,6 +377,12 @@ export default function OraGuideMascot() {
             borderRadius: 12, padding: "14px 16px",
             boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
             animation: "oraGuideBubbleIn 180ms ease-out",
+            // 2026-09-21 — the "suggestions" panel now also lists the
+            // 5 scan commands below the project suggestions; cap the
+            // height so it scrolls instead of overflowing the
+            // viewport on shorter screens.
+            maxHeight: panelMode === "suggestions" ? "min(70vh, 560px)" : undefined,
+            overflowY: panelMode === "suggestions" ? "auto" : undefined,
           }}
         >
           <div style={{
@@ -254,6 +406,25 @@ export default function OraGuideMascot() {
                 <button data-testid="ora-guide-something-wrong" type="button"
                         onClick={reportSomethingWrong} style={linkBtnStyle}>
                   Something's wrong
+                </button>
+              </div>
+            </>
+          )}
+
+          {(panelMode === "external" || panelMode === "first_scan") && secondaryNudge && (
+            <>
+              <div data-testid="ora-guide-secondary-message"
+                   style={{ fontSize: 13, color: "#f8fafc", lineHeight: 1.55, marginBottom: 12 }}>
+                {secondaryNudge.message}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <button data-testid="ora-guide-secondary-action" type="button"
+                        onClick={actSecondaryNudge} style={primaryBtnStyle}>
+                  {secondaryNudge.actionLabel || "Try it"}
+                </button>
+                <button data-testid="ora-guide-secondary-dismiss" type="button"
+                        onClick={dismiss} style={linkBtnStyle}>
+                  Dismiss
                 </button>
               </div>
             </>
@@ -323,6 +494,32 @@ export default function OraGuideMascot() {
                   );
                 })}
               </div>
+              <div data-testid="ora-guide-scan-intro"
+                   style={{ fontSize: 11, color: "#9aa0aa", marginBottom: 6,
+                            textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+                Or scan for real issues
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {SLASH_COMMANDS.map(({ id, label, description, icon: Icon, trigger }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    data-testid={`ora-guide-scan-${id}`}
+                    onClick={() => runScan(id)}
+                    title={`Run ${trigger} now`}
+                    style={suggestionBtnStyle}
+                  >
+                    <Icon size={12} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 2, color: "#ffb37a" }} />
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#f8fafc" }}>{label}</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#9aa0aa", fontStyle: "italic",
+                                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {description}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <button data-testid="ora-guide-open-advisor" type="button" onClick={openAdvisor} style={linkBtnStyle}>
                   Open Advisor
@@ -355,7 +552,7 @@ export default function OraGuideMascot() {
           width: 38, height: 38, borderRadius: "50%",
           background: "linear-gradient(135deg, #ff6608, #ff9d5c)",
           border: "none", cursor: "pointer", position: "relative",
-          boxShadow: autoGroup && !open
+          boxShadow: (autoGroup || secondaryNudge) && !open
             ? "0 4px 20px rgba(255,102,8,0.5), 0 0 0 3px rgba(255,102,8,0.25)"
             : "0 4px 16px rgba(0,0,0,0.4)",
           animation: "oraGuideFloat 3s ease-in-out infinite",

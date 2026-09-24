@@ -53,10 +53,46 @@ class StreamState:
     t_start: float = 0.0
     hard_timeout_s: float = 180.0
     soft_timeout_s: float = 48.0
+    # INTERACTION_CONTRACT_V1 P1 — 4-clock timeout tracker (see
+    # services/timeout_clocks.py). None when the flag is OFF; the
+    # legacy hard/soft-timeout pair above stays the sole mechanism in
+    # that case, unchanged. Also used as the durable ledger's request
+    # identity carrier so watchdog.py can record a terminal ledger
+    # state without needing extra params threaded through it.
+    timeout_clocks: Optional[Any] = None
+    interaction_request_id: str = ""
 
     # ── worker.py output, read by sse_stream.py's cost-logging call
     # after the worker completes ──
     sys_for_advisor: str = ""
+    # Part B3 — required_read_gate (services/required_tool_gate.py).
+    # 2026-02 round-4 — set at the very TOP of worker.py's run_worker(),
+    # BEFORE any of its mode-dispatch branches (Mode D/E/B/F/ORA-panel/
+    # orchestrator) run, so it's populated no matter which branch ends
+    # up producing `state.result` (confirmed live: the exact incident
+    # message can non-deterministically land in either Mode D's debug
+    # session or the general orchestrator path — both must be covered).
+    # Read by stream.py's own enforce_required_read_gate() call AFTER
+    # run_confidence_gate / apply_output_guards / business_voice_filter
+    # — mirrors turn.py's identical last-step placement (worker.py's
+    # OWN enforcement call runs too early, before those 3 guards,
+    # which can undo it).
+    required_read_gate: Optional[dict] = None
+
+    # 2026-02 — Context-Confusion fix Part A. Set alongside
+    # `_pre = await resolve_pre_llm(...)` in worker.py's tool-cascade
+    # entry function, read by `_run_tools_cascade`'s own downstream
+    # tool-orchestrator call further down in the same file so Part
+    # C's scope-gate is seeded even on the streaming path (not only
+    # turn.py's non-streaming /chat/send).
+    task_state: Optional[dict] = None
+
+    # Trust & Verification round — Enhancement 5 (pre-execution scope
+    # confirmation). Stashed by _mode_broadcast() in worker.py so the
+    # gate that runs right after it can read the SAME classify_intent_v2
+    # confidence/needs_confirm signal that was already computed for the
+    # "mode" SSE badge, instead of recomputing it a second time.
+    mode_confidence: Optional[dict] = None
 
     # ── watchdog.py output, read by sse_stream.py after the queue-
     # consumption loop ends ──

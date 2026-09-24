@@ -38,7 +38,6 @@ Plus one extra layer here:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from services.vanguard_scanner import scan_file_blocks
 from services.scaffold_llm import _path_is_safe

@@ -2,7 +2,7 @@
 (Self-contained context module. System map: file 01. Services: file 04.)
 
 ## STACK
-FastAPI on port 8001 (supervisor-managed). Entry point: `backend/main.py` (all 55 `include_router` calls). Request flow: **Router → Core (Parliament) → Services → External APIs**.
+FastAPI on port 8001 (supervisor-managed). Entry point: `backend/main.py` (all 102 `include_router` calls). Request flow: **Router → Core (Parliament) → Services → External APIs**.
 
 ## CORE — `backend/core/` (the "Parliament" brain)
 | Module | Function |
@@ -14,7 +14,7 @@ FastAPI on port 8001 (supervisor-managed). Entry point: `backend/main.py` (all 5
 | `quality_monitor.py` | Response quality scoring (writes `quality_scores`) |
 | `observability.py` | Tracing/observability hooks |
 
-## ROUTERS — `backend/routers/` (55 files)
+## ROUTERS — `backend/routers/` (~120 files, 102 registered in `main.py`)
 | Category | Files |
 |---|---|
 | Auth & Identity | `auth.py`, `oauth.py`, `github_oauth.py`, `mfa.py`, `onboarding.py` |
@@ -28,6 +28,7 @@ FastAPI on port 8001 (supervisor-managed). Entry point: `backend/main.py` (all 5
 | Business | `payments.py`, `usage.py`, `founder_offer.py`, `unlock.py`, `feature_window.py`, `engagement.py`, `notify_interest.py`, `trust.py`, `trust_level.py`, `shipwall.py`, `wrapped.py`, `suggestions.py` |
 | Admin | `admin.py`, `admin_vanguard.py`, `admin_bin.py` |
 | QA / Findings | `qa_probe.py` (Iter 212m-190 Promptfoo internal QA) |
+| Trust & Verification *(2026-09-23)* | `verification.py` — task verification levels, retroactive downgrade/report-issue/re-verify, `GET /admin/trust-calibration` |
 | Misc | `automations.py`, `support.py`, `upload.py`, `vault.py`, `version.py` |
 
 ## KEY ENDPOINTS

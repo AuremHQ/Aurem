@@ -1,3 +1,61 @@
+---
+# USER-FIRST "FIRST-EXPERIENCE WAVE" (2026-09-03, same fork, later same day)
+
+Founder directive: fix the first-time-user journey (landing→signup→connect
+repo→first scan→first chat→first "Approve the fix") BEFORE Phase 3/R8/
+migration. Confirmed via ask_human: jargon sweep scoped to first-10-min
+flow only; verify-already-done items live rather than rebuild; fresh
+throwaway account OK for screenshots; batch fixes then one testing_agent
+pass.
+
+**Already done (verified live, not rebuilt):** P2-A/B banner declutter
+(exactly 1 hero banner on a 0-project account, FinishSetupBanner already
+dead-removed), P2-E user notification bell (already wired in TopBar,
+persistent-until-read).
+
+**Built this round:**
+- P2-F: `ChatPanel.jsx` empty-chat greeting rewritten plain-English
+  ("I'm ORA, by Aurem. I can scan your site for issues and fix them for
+  you...").
+- P2-C (scoped to first-10-min surfaces): `ConnectRepoBanner.jsx`
+  "indexing"→"scanning your site"; `NewUserWizard.jsx` added a
+  `wizard-repo-explainer` one-liner, removed "PAT"/"plaintext"/"write
+  commits" jargon from the disconnected-panel copy and robot message.
+- P2-D/G: `LoopLiveFeed.jsx`'s `ShippedRow` merged into the shared
+  `ShipApproveCard`/`useShipState` (see F17 above) — all 3 ship surfaces
+  now physically unified.
+- **Real bug found+fixed (live, not pre-planned):** `business_voice_filter.py`
+  had a double-substitution bug — adjacent jargon words ("GitHub repo")
+  each got independently substituted, producing garbled duplicate text a
+  real user saw in a real reply. Root-caused to sequential per-entry
+  `.sub()` calls letting one substitution's output collide with a later
+  entry's pattern. Fixed structurally: rewrote to a SINGLE combined-
+  alternation regex pass (longest-term-first), plus remapped
+  "repo"/"repository"/"github repo"/"github repository" from the
+  plural-sounding "website's pages" to singular-safe "website" (fixed a
+  subject-verb-agreement bug the first fix attempt missed).
+  testing_agent confirmed CLEAN on 2 rounds (`iteration_first_experience_
+  wave_p2wave_verify_2026_09_03.json` caught the residual bug,
+  `iteration_business_voice_fix_v2_retest_2026_09_03.json` confirmed the
+  v2 fix). 5/5 new tests
+  (`test_business_voice_github_repo_doublesub_2026_09_03.py`).
+
+**Found, NOT fixed, flagged for founder review (out of scope this round):**
+On the `R2-live-drill-ora-grounding` project, a fresh unrelated chat
+request ("add a comment to README and ship it") returned a STALE,
+WRONG recalled answer about an unrelated old GitHub-App-404 bug
+(preceded by "ORA recalled 2 similar past answers"), not a real answer
+to the actual request. Looks like a memory/RAG-recall subsystem
+short-circuiting fresh generation with irrelevant history on a heavily
+-reused test project. Needs its own dedicated investigation — flagged as
+the top next-action item.
+
+Full frontend suite: 516/528 (12 pre-existing failures, all confirmed
+unrelated — 8 known getToken-mock gap in 2 untouched files, 4 in
+untouched `PreviewPanel.live_url_fallback.test.jsx`). Backend: 35/35 on
+the touched files. No production changes.
+
+
 # OVERNIGHT LOG — T1→T8 unattended run (started 2026-08-28)
 
 Format: `time | item | status(done/blocked/skipped) | proof-ref`
@@ -45,4 +103,33 @@ Format: `time | item | status(done/blocked/skipped) | proof-ref`
 2026-09T | R8 3-P0 clean-state re-check | re-confirmed clean, testing_agent evidence stands | Prior round's `testing_agent` run (`iteration_overnight_r0_r6_p1_p0_verify_2026_01.json`, 100%/100%) already live-verified all 3. This round only touched ChatPanel.jsx/ShipConfirmModal.jsx for the R6 retry feature (not the P0 approve/delete/countdown code paths) — re-ran `ShipPendingCard.test.jsx` (11/11) + `ShipPendingCard.large_plan.test.jsx` (4/4) to confirm no drift from the R6 edit. No new testing_agent round needed for this specific re-check.
 2026-09T | R9 webhook-fence + PIN status | webhook UNCHANGED (still blocked), PIN CONFIRMED LIVE | `GET /admin/github-webhook-fence` this round: `ok:false, subscribed_events:[], error: 401 Unauthorized on https://api.github.com/app` — identical to the R2/R5 finding last round, unchanged (still waiting on FOUNDER-A). `GET /admin/github-app-diagnostics`: `list_installations` still 401. `/ora` per-user PIN (P1-1): confirmed live via testing_agent last round + this round's new second-teammate test — both pass.
 
+
+
+---
+# ROUND (R5e/R2/R8/R9 founder-gated + R3-1/R6 prep-and-build)
+CLARITY | GitHub App 401 location | answered in report | 401 is in PREVIEW (this pod, app_id 4541725/aurem-devops) — production is healthy (founder-confirmed 45 installs). Founder must paste the key into THIS preview pod's Admin → Settings → GitHub App Config (not prod's admin), since each preview fork has its own local Mongo config copy that doesn't inherit prod's.
+R5e/R2/R8/R9 | PREP done, execution BLOCKED on founder's key (J1) + prod-flip GO (J3) | Nothing to build code-wise — the diagnostics endpoints (`/admin/github-app-diagnostics`, `/admin/github-webhook-fence`) already exist and are ready to re-run the instant the key lands. Re-confirmed still 401/blocked, unchanged from last round (see R4 below). No real GitHub PR drill or real-model K-bug re-test attempted — explicitly founder-gated, would be fabrication otherwise.
+R3-1 repo quick-switch | ALREADY DONE in an earlier, undocumented-to-me round — no new backend endpoint needed | Discovered mid-round: `dashboard/v2/ProjectSwitcher.jsx` (header comment: "R3 (Repo Quick-Switch)") already implements exactly this — dropdown next to TopBar breadcrumb, real owner/repo label, project-name-above-repo (R7 comment), live "repo unreachable" warning via `GET /cto/projects/connection-status` polling, disabled-click on unreachable projects, `aurem:project-changed` shared event. My first attempt this round wrongly targeted the legacy, no-longer-mounted `TabBar.jsx` — testing_agent caught this (HIGH priority finding), I reverted that edit (`git checkout -- TabBar.jsx`, removed the now-invalid test) rather than leave dead-code clutter. `ProjectSwitcher.r3.test.jsx` re-run: 6/6 pass, confirming it's healthy and live.
+R6 ship-UI unification | done, tested, live-verified by testing_agent | Confirmed (not rebuilt) that `RollbackConfirmModal` is ALREADY the single shared confirm-dialog across all 3+1 ship surfaces (MessageBubble/TaskProgressCard, LoopLiveFeed, ShipConfirmModal) — satisfies "ONE approve/rollback pattern" genuinely, from an earlier P2-B round. Completed the canonical-label rollout (`lib/shipStatus.js`) to the 4th surface, `TaskProgressCard.jsx` (was still saying "Reverted"/"reverting…", now says "Rolled back"/"Rolling back…" like the other 3). New `PrMiniGuide.jsx` — self-contained, localStorage-backed, dismissible 3-step "what happens next" guide — wired into `ShipDialog.jsx` (pre-approve) and `ShipConfirmModal.jsx` (confirm phase). 5 new tests (Toast string-shorthand ×2, PrMiniGuide ×3, TaskProgressCard label ×2, ChatPanel retry-toast ×3) = all pass. testing_agent (`iteration_r3_1_r6_ship_ui_verify_2026_01.json`) confirmed PrMiniGuide/labels/Retry buttons all live-verified working; only flagged the TabBar issue (already fixed by revert above).
+R6-small (from last round) | re-confirmed unaffected | Ship-failure toast Retry + `ShipConfirmModal` error-phase Retry button both re-confirmed live-working by this round's testing_agent. Second-teammate self-serve PIN was tested+passed last round (`test_r6_second_teammate_ora_pin_2026.py`), not touched this round.
+R4 webhook re-confirm | UNCHANGED, still 401 | `GET /admin/github-webhook-fence` this round: identical `ok:false, subscribed_events:[]` — waiting on FOUNDER-A (J1).
+R1 ledger | F1-F18 confirmed present and readable | re-grepped ROADMAP.md this round: F1 through F18 all present and readable (F19/F22/F23 remain the pre-existing, intentionally-undocumented gap from earlier rounds — no wording was ever supplied for those 3 IDs).
+
+
+---
+# R1a -> R2 -> R3 -> R4 -> R8 EXECUTION ROUND (2026-09-03, this fork, founder-approved plan)
+
+R1 ledger | F19/F20 note added, F1-F20 confirmed readable | `ROADMAP.md`: F19 marked as a reserved placeholder (its content genuinely lives at F20/F21 already, not duplicated, per the pre-existing note); F20 gained a "confirmed present+readable this round" tag. Re-read the full F1-F21 table — all present and readable.
+
+R2 live PR drill | AUDITED — PASS (all 9 artifacts, not re-run) | Founder reported the GitHub App private key was re-pasted in Preview. Audited the 9 JSON artifacts already captured under `/app/e2e-proof/R2-live-drill-ora-grounding/` (00 through 09 + pr_numbers.txt) rather than re-running a fresh live drill (per founder's explicit choice this round). All internally consistent: real installation `152797252`/`polarisbuiltinc-wq/ora-grounding`; ship 1 landed via a real `auremcto/ship-*` PR branch (not direct push), PR #3, GPG-signed merge commit `198572db05c3f24cdb84f58748a5f384c9a177f0` — matches the new main HEAD (`05b_main_after_merge.json`); ship 2 (PR #4) closed unmerged + branch confirmed deleted (`07_branch_deleted.json`: 404). `08_webhook_delivery.json`: `pull_request` subscribed, `failing_count:0`, real 200 deliveries timestamped to match the drill. `09_post_state.json`: `rollback_left_no_residue:true`. One note (not a bug): `AUREM_R2_DRILL.md` remains on `main` as the real, intentional proof of the merged ship — left in place, not cleaned up (cleanup would need a 3rd commit, out of this round's literal scope).
+
+R4 webhook re-confirm | RE-CHECKED LIVE (current endpoint, not cached) — PASS | `GET /admin/github-webhook-fence` called fresh this round (not the drill's cached artifact): `ok:true`, `subscribed_events:["pull_request","workflow_job"]`, `missing_subscriptions:[]`, `failing_count:0`, fresh `checked_at` timestamp ~7 min after the R2 drill. Preview-only evidence, not production.
+
+R3 P1-5 physical ship-UI unification | DONE for 2 of 3 surfaces, 1 surface explicitly scoped-out (documented, not skipped) | `ShipDialog.jsx` (chat-inline) and `ShipConfirmModal.jsx` (standalone modal) now BOTH physically render the one shared `<ShipApproveCard/>` (built on new `useShipState()`/`lib/useShipState.js`) for their approve/cancel/rollback/retry rows — old bespoke buttons + duplicate PrMiniGuide/Vanguard-badge markup removed. `LoopLiveFeed.jsx`'s `ShippedRow` deliberately NOT merged — its pointerdown + module-registry rollback-race-safety code has fixed 3 real historical production incidents (Iter 329/342/362); merging it into a generic card risked reintroducing exactly those bugs. It only gained a passive `data-canonical-ship-status` attribute (via the shared `toCanonicalShipStatus()` mapper) so the canonical vocabulary is still genuinely shared at the label-mapping layer. New source-scan test `ShipUIUnification.r3_physical.test.jsx` (7/7) locks the physical wiring + absence of the old duplicate testids. Updated 1 source-scan test (`ChatPanel.r6_ship_retry_toast.test.jsx`) + 2 already-broken-pre-existing MessageBubble testid references to match. Full component-test sweep: 516/528 passing, 12 failures all confirmed pre-existing/unrelated (8 = known missing-getToken-mock in 2 untouched-by-this-round files, 4 = PreviewPanel.live_url_fallback.test.jsx, also untouched). `testing_agent` (`iteration_r3_physical_ship_ui_2026_01.json`): 19/19 unit + live browser E2E on the ShipConfirmModal dispatch flow, 0 action items, `retest_needed:false`.
+
+R8 real-model retest | NOT STARTED this round | Correctly gated on R2 being confirmed green — R2 passed only at the end of this same round's audit, and the founder's plan places R8 last. Not attempted this round; no model/config changes made, no real-model spend incurred.
+
+R7 small items (retry-toast, second-teammate PIN) | RE-CONFIRMED, not rebuilt | Per founder instruction, only confirmed via existing tests — no changes. `Toast.r6_string_shorthand`/`ChatPanel.r6_ship_retry_toast`/`test_r6_second_teammate_ora_pin_2026` suites untouched and still passing (retry-toast tests updated only for the R3 testid relocation, behavior unchanged).
+
+**STOP per plan — reporting to founder now.**
 

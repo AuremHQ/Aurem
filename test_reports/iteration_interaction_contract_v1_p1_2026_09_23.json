@@ -1,0 +1,52 @@
+{
+  "summary": "Verified INTERACTION_CONTRACT_V1 activation + P1 sub-gaps (4-clock timeouts / idempotent retry replay / stream_state enum). Backend curl-based E2E on the live preview confirms: (a) real /chat/stream turn completes with a populated `interaction` envelope + `request_id` on both meta and done, (b) a follow-up POST carrying `retry_of_request_id=<completed-rid>` short-circuits in 157ms, returns `replayed_from_retry:true` on both `meta` and `done`, identical PONG content, no new LLM invocation (tokens_remaining unchanged), (c) a fresh new prompt with NO retry_of_request_id is correctly NOT replayed (real 2.5s LLM call, different content BANANA), (d) chat/send fallback unchanged, (e) multi-turn context works (session recalled '42'). New unit suites all green: 13/13 timeout_clocks + 10/10 chat_reliability + 6/6 stream_golden_regression. Cross-tenant/tool-failure suites re-verified passing (per main-agent context). UI-level retry-replay could NOT be exercised through the browser because the only available test project (p_demo_a) is disconnected and every UI /chat/stream POST short-circuits with 'connection isn't available' before reaching a real LLM — not caused by this round but blocks live browser proof; backend curl proof is definitive.  The one open question main agent flagged (client-kill mid-stream leaving ledger row stuck at status='started') IS REPRODUCIBLE and STILL OPEN in this preview.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/aurem-dev/chat/stream (client-disconnect path)",
+        "issue": "When the HTTP client is killed mid-stream (repro: `timeout 1 curl -N ... /chat/stream`), the chat_request_ledger row is durably written with status='started' BUT never transitions to 'cancelled' even 35+ seconds later. The CancelledError/GeneratorExit except-block at stream.py:820-855 that would call record_cancelled() is not being reached. Matches main agent's own live observation. Likely an ASGI/uvicorn disconnect-signal propagation quirk in this preview environment (worker keeps running past client disconnect); durability guarantee (#4 'task not silently lost') is intact, but positive `cancelled` state resolution is not happening from real network drops. Verified ledger row `5ffde96706174ba5b635bbaaf6bc8499` remained at status='started' 35s after client-kill."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Dashboard chat via ChatPanel /chat/stream in preview",
+        "issue": "The only auto-selected project scope on the dashboard (p_demo_a / aurem-demo/frontend@main) is disconnected, so 100% of UI-initiated /chat/stream requests short-circuit inside the backend before real LLM work with the 'connection to your website's code isn't available' message. Pre-existing environment state (NOT caused by this round). Blocks browser-level demonstration of retry-replay UX; backend curl was used to prove the plumbing works instead.",
+        "affected_selectors": ["[data-testid=chat-send]", "[data-testid=chat-input]"]
+      },
+      {
+        "flow": "/ora public chat page (OraDirect.jsx)",
+        "issue": "Uses a DIFFERENT endpoint (/api/aurem-dev/ora-chat/message), NOT /chat/stream, and returns 'No chat model is configured yet — the founder needs to activate one in Admin Settings → Models & LLM.' This endpoint is a separate subsystem that did NOT receive the INTERACTION_CONTRACT_V1 treatment and, per review scope, was explicitly out-of-scope. Called out here only so nobody mistakes /ora for the live production path this round wired.",
+        "affected_selectors": ["[data-testid=ora-send]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_chat_reliability_idempotent_retry_2026_09.py",
+    "/app/backend/tests/test_timeout_clocks_p1_2026_09.py",
+    "/app/backend/tests/test_stream_golden_regression.py"
+  ],
+  "action_items": [
+    "OPEN QUESTION STILL OPEN: investigate why client-kill mid-stream does NOT reach the CancelledError/GeneratorExit handler in backend/routers/chat/stream.py (line 820) — the code path exists and is correct, but uvicorn/ASGI in this env is not surfacing the disconnect. Possible next step: enable uvicorn's `--loop=asyncio` disconnect polling, or add an explicit request.is_disconnected() poll inside the yield loop, or add a periodic ledger-reconciler (find_stale_started) as a safety net.",
+    "(Environmental, not code-fix) To exercise retry-replay end-to-end through the real browser, either fix the p_demo_a project connection state in the preview seed or add a working demo project scope selectable from the Dashboard chip."
+  ],
+  "critical_code_review_comments": [
+    "ChatPanel.jsx's user-facing 'Retry' actions (retryLastFix / retryFailedTurn / regenerate / continueTurn on lines 3207-3246) all route through send(), which resets lastRequestIdRef.current=null on line 3195 BEFORE calling runTurn(). That is INTENTIONAL and correct for user-clicked redo (a genuine new turn should NOT idempotently replay a stale result), but it means the only reachable trigger for a `retry_of_request_id` POST from the real UI is the auto-idle-watchdog performRetry() path (line 2551, fires after 90s of silence) or the inline 'Retry now' button that manualRetryRef binds (line 2653). Worth an explicit docstring noting this design decision so a future reviewer doesn't 'fix' it by wiring user-Retry buttons through the ledger and accidentally re-serving stale content on a manual retry.",
+    "The chat/send handler in turn.py accepts retry_of_request_id in ChatBody but does NOT wire it into any ledger check — documented as out-of-scope. Fine for this round; flag for next round if /chat/send ever becomes a live production path again."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "97% (all claimed plumbing verified via live curl + 29/29 new unit tests green; 1 open env-level issue on cancelled-state transition)",
+    "frontend": "N/A (retry-replay UI could not be exercised due to broken demo project scope in preview; backend-side verification is definitive)"
+  },
+  "test_credentials": "test@aurem.dev / AuremTest2026! (founder, unlimited tokens, MOCK_LLM=false — real cost per call)",
+  "seed_data_creation": "None. Only test-marked data (session_ids prefixed TEST_multiturn_..., TEST_bug2_ui_...) were written to the chat_request_ledger and chat history collections during verification.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Live verification artifacts: (1) request_id `edccfae0936a4a6ab7b4c358332d6368` — completed real turn ('PONG'), retried in 157ms with replayed_from_retry:true. (2) request_id `459722340d494a769b914ccd12c1536d` — real multi-turn session TEST_multiturn_* recalled remembered value '42'. (3) request_id `5ffde96706174ba5b635bbaaf6bc8499` — client-kill repro, ledger row still status='started' 35s later (STILL OPEN). Use /app/backend/tests/conftest.py's env-loading pattern + `db.chat_request_ledger.find_one({request_id: ...})` to inspect. UI dashboard chat is blocked by disconnected p_demo_a project — do NOT interpret 'connection isn't available' messages there as a regression; it's pre-existing preview seed state.",
+  "rca of the issue": "Client-kill mid-stream not transitioning ledger row from 'started' to 'cancelled': the reactive code path (stream.py:820 except CancelledError/GeneratorExit → record_cancelled) is correct and reachable — it depends on uvicorn/starlette signaling a task-level cancel when the TCP peer closes. In this preview environment, uvicorn appears not to abort the running SSE task when the client TCP FINs; the worker continues to completion instead. The ledger design already anticipates this (find_stale_started() reconciler exists in chat_reliability.py) but no scheduled sweeper is calling it, so stale 'started' rows linger. Mitigation options in priority order: (a) periodic background sweep every ~30-60s calling find_stale_started(older_than=hard_deadline_s) and marking them 'unknown' or 'cancelled'; (b) add explicit `await request.is_disconnected()` polls at each yield in the SSE generator; (c) tune uvicorn cancellation propagation (`--timeout-graceful-shutdown` / ASGI lifespan wiring)."
+}

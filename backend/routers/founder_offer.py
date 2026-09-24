@@ -27,6 +27,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import time
+
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from pymongo.write_concern import WriteConcern
@@ -168,11 +170,38 @@ def _days_since(ts) -> Optional[float]:
     return None
 
 
+# 2026-09-08 deploy-log fix: `/status` is a public, unauthenticated
+# homepage-widget endpoint polled repeatedly (confirmed in prod
+# access logs) and previously did TWO real Mongo round-trips
+# (find-many reap + find_one_and_update upsert) on every single hit
+# with no caching — unlike `/maintenance/status`'s established
+# "answer from an in-memory cache, no DB round-trip on the hot path"
+# pattern. Under Atlas (not local Mongo), that extra per-request
+# latency widens the window during which an impatient caller (LB/
+# uptime-probe with a short client timeout) can disconnect mid-
+# response, which is what surfaces as Starlette's "RuntimeError: No
+# response returned" / anyio.EndOfStream race seen in prod deploy
+# logs on this exact path. A short TTL cache removes the DB round
+# trip from the hot path for repeat polls while staying accurate to
+# within a few seconds (the counter itself only moves on real
+# claim/cancel actions, which explicitly bust this cache below).
+_STATUS_CACHE_TTL_S = 8.0
+_status_cache: dict = {"data": None, "expires_at": 0.0}
+
+
+def _bust_status_cache() -> None:
+    _status_cache["expires_at"] = 0.0
+
+
 # ── Public endpoints ─────────────────────────────────────────────────
 @router.get("/status")
 async def offer_status() -> dict:
     """Public — returns the global counter so the UI can render the
     'X spots remaining' badge without auth."""
+    now = time.monotonic()
+    cached = _status_cache["data"]
+    if cached is not None and now < _status_cache["expires_at"]:
+        return cached
     db = get_db()
     if db is None:
         return {"remaining": 0, "total": TOTAL_SPOTS, "is_active": False}
@@ -180,11 +209,14 @@ async def offer_status() -> dict:
     doc = await _ensure_singleton(db)
     remaining = max(0, int(doc.get("total_spots", TOTAL_SPOTS)) -
                        int(doc.get("spots_claimed", 0)))
-    return {
+    result = {
         "remaining": remaining,
         "total":     int(doc.get("total_spots", TOTAL_SPOTS)),
         "is_active": bool(doc.get("is_active", True)),
     }
+    _status_cache["data"] = result
+    _status_cache["expires_at"] = now + _STATUS_CACHE_TTL_S
+    return result
 
 
 @router.get("/user-status")
@@ -285,6 +317,7 @@ async def claim_offer(
         # Either inactive or sold out — return a uniform "soft no" so
         # the frontend can hide the card without showing an angry error.
         return {"success": False, "action": "sold_out"}
+    _bust_status_cache()
 
     # ── Insert claim row ─────────────────────────────────────────
     claim_id = f"claim_{uuid.uuid4().hex[:12]}"
@@ -427,6 +460,7 @@ async def cancel_offer(
         {"_id": SINGLETON_ID, "spots_claimed": {"$gt": 0}},
         {"$inc": {"spots_claimed": -1}},
     )
+    _bust_status_cache()
     return {"success": True}
 
 

@@ -176,11 +176,37 @@ async def funnel_stats(
     since = datetime.now(timezone.utc) - timedelta(days=days)
     match = {"created_at": {"$gte": since}}
 
+    # 2026-09-22 · Revenue Recovery audit — events tied to a real
+    # user_id can be checked against the synthetic-account filter
+    # (services/synthetic_filter.py) so QA/e2e traffic doesn't inflate
+    # "real" conversion numbers. Anonymous pre-signup events (cta_click,
+    # oauth_redirect before signup) carry no user_id and can't be
+    # classified this way — left in, matching production reality where
+    # there is no synthetic anonymous traffic.
+    from services.synthetic_filter import is_synthetic
+    user_ids = await db.github_funnel_events.distinct(
+        "user_id", {"created_at": {"$gte": since}, "user_id": {"$ne": None}},
+    )
+    synthetic_ids: set[str] = set()
+    if user_ids:
+        cur = db.dev_users.find(
+            {"user_id": {"$in": user_ids}}, {"_id": 0, "user_id": 1, "email": 1},
+        )
+        async for u in cur:
+            if is_synthetic(u.get("email")):
+                synthetic_ids.add(u["user_id"])
+
     # Unique sessions that reached each stage — the funnel measure.
     per_stage: dict[str, int] = {s: 0 for s in STAGES}
     per_source_stage: dict[str, dict[str, int]] = {
         src: {s: 0 for s in STAGES} for src in SOURCES
     }
+    # Failure-rate-by-stage — the actual "is OAuth the blocker?" signal.
+    # `callback_received` is the one stage with multiple outcomes; every
+    # other stage is binary (reached it or not), so only that stage needs
+    # a reason breakdown.
+    callback_outcomes: dict[str, int] = {}
+    excluded_synthetic_events = 0
 
     pipeline = [
         {"$match": match},
@@ -188,17 +214,28 @@ async def funnel_stats(
         # same stage twice (e.g. rapid double-click) doesn't inflate.
         {"$group": {
             "_id":    {"session_id": "$session_id", "stage": "$stage",
-                       "source": "$source"},
+                       "source": "$source", "user_id": "$user_id"},
             "count":  {"$sum": 1},
+            "reasons": {"$push": "$meta.reason"},
+            "outcomes": {"$push": "$meta.outcome"},
         }},
     ]
     async for row in db.github_funnel_events.aggregate(pipeline):
-        stage  = row["_id"]["stage"]
-        source = row["_id"]["source"]
+        stage   = row["_id"]["stage"]
+        source  = row["_id"]["source"]
+        uid     = row["_id"].get("user_id")
+        if uid and uid in synthetic_ids:
+            excluded_synthetic_events += 1
+            continue
         if stage in per_stage:
             per_stage[stage] += 1
         if source in per_source_stage and stage in per_source_stage[source]:
             per_source_stage[source][stage] += 1
+        if stage == "callback_received":
+            outcome = row.get("outcomes", [None])[0]
+            reason  = row.get("reasons", [None])[0]
+            key = reason if (outcome and outcome != "success" and reason) else (outcome or "success")
+            callback_outcomes[key] = callback_outcomes.get(key, 0) + 1
 
     # Compute stage-to-stage conversion %.
     conversions: list[dict] = []
@@ -214,6 +251,12 @@ async def funnel_stats(
             "conv_pct": round(pct, 1),
         })
 
+    callback_total = sum(callback_outcomes.values())
+    callback_failure_rate = (
+        round((callback_total - callback_outcomes.get("success", 0)) / callback_total * 100.0, 1)
+        if callback_total else 0.0
+    )
+
     return {
         "ok":              True,
         "window_days":     days,
@@ -222,4 +265,9 @@ async def funnel_stats(
         "conversions":     conversions,
         "by_source":       per_source_stage,
         "total_events":    sum(per_stage.values()),
+        # Granular OAuth failure visibility — answers "is OAuth actually
+        # the activation blocker?" by reason, not just success/fail.
+        "callback_outcomes":      callback_outcomes,
+        "callback_failure_rate_pct": callback_failure_rate,
+        "excluded_synthetic_sessions": excluded_synthetic_events,
     }

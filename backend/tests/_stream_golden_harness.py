@@ -35,17 +35,36 @@ from main import app
 import routers.chat as chat_mod
 
 _TIMING_FIELDS = {"thinking_s", "elapsed_s", "t_started", "elapsed"}
+# INTERACTION_CONTRACT_V1 P1 (chat_reliability idempotent-retry follow-
+# up) — `request_id` is a fresh random hex on every request (used so
+# the frontend's "Retry" action can reference THIS exact attempt; see
+# services/chat_reliability.py). Non-deterministic by design, so it
+# is stripped from comparison exactly like the timing fields above —
+# NOT zeroed (0 would still be a key-presence mismatch against the
+# pre-2026-09 golden fixtures, which predate this field existing).
+_NONDETERMINISTIC_KEYS = {"request_id"}
 
 
 def normalize_events(events: list) -> list:
-    """Zero out wall-clock-derived fields so the comparison is exact
-    on everything that actually reflects behavior."""
+    """Zero out wall-clock-derived fields, and DROP fields that are
+    non-deterministic by design (never existed in the pre-refactor
+    golden capture), so the comparison stays exact on everything that
+    actually reflects behavior."""
     out = []
     for ev in events:
         ev = dict(ev)
         for k in list(ev.keys()):
             if k in _TIMING_FIELDS:
                 ev[k] = 0
+            elif k in _NONDETERMINISTIC_KEYS:
+                del ev[k]
+        # INTERACTION_CONTRACT_V1's `interaction` envelope carries its
+        # OWN nested `request_id` (services/interaction_contract.py's
+        # `finalize()`) — also random per run, also stripped for the
+        # same reason as the top-level one above.
+        if isinstance(ev.get("interaction"), dict) and "request_id" in ev["interaction"]:
+            ev["interaction"] = dict(ev["interaction"])
+            del ev["interaction"]["request_id"]
         out.append(ev)
     return out
 

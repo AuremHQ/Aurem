@@ -204,3 +204,88 @@ export function trackShipRenderFailed({ message_id, model, has_fence } = {}) {
     return false;
   }
 }
+
+// ================================================================
+// OpenAI (ChatGPT) Ads Measurement Pixel — 2026-09
+// ----------------------------------------------------------------
+// The oaiq() queue stub + oaiq("init", {pixelId}) call is injected
+// in index.html (deferred, same pattern as the gtag/fbq stubs
+// above). These helpers fire the three conversion events, using the
+// EXACT event names + payload shapes confirmed live in Ads Manager
+// when the three conversion actions were created there (base event
+// dropdown + generated snippet), tied to concrete backend
+// confirmations — never a click alone — matching the Meta Pixel
+// discipline: silent no-op when window.oaiq is unavailable
+// (ad-blocker, SSR, pre-init).
+//
+//   openaiRegistrationCompleted()      — after /auth/signup success
+//   openaiGithubRepoConnected(id)      — after /cto/projects/add success
+//   openaiSubscriptionCreated(v,c,sid,t) — after /payments/status = "paid"
+//
+// `event_id` mirrors the Meta `eventID` dedup convention so a future
+// server-side Conversions API hop can dedupe against this browser
+// event without double-counting.
+// ================================================================
+
+function _oaiq(eventName, params = {}, options = undefined) {
+  try {
+    if (typeof window === "undefined" || typeof window.oaiq !== "function") {
+      return false;
+    }
+    window.oaiq("measure", eventName, params, options);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Fire "registration_completed" once per successful account creation
+ * (email/password signup). `userId` (if available) doubles as the
+ * dedup key for a future server-side Conversions API hop.
+ */
+export function openaiRegistrationCompleted(userId = null) {
+  const opts = userId ? { event_id: String(userId) } : undefined;
+  return _oaiq("registration_completed", { type: "customer_action" }, opts);
+}
+
+/**
+ * Fire the custom "github_repo_connected" event once per confirmed
+ * repo connection (successful `/cto/projects/add`). Custom events go
+ * through the base event "custom" with `custom_event_name` in the
+ * options object. CONFIRMED live/active in Ads Manager (2026-09,
+ * screenshot-verified by the founder) — "github_connected" is an
+ * ARCHIVED/inactive event and must NOT be used; firing it sends
+ * events into a void with no error surfaced anywhere.
+ */
+export function openaiGithubRepoConnected(projectId = null) {
+  const opts = { custom_event_name: "github_repo_connected" };
+  if (projectId) opts.event_id = String(projectId);
+  return _oaiq("custom", { type: "custom" }, opts);
+}
+
+/**
+ * Fire "subscription_created" ONLY when the backend has confirmed a
+ * paid Stripe checkout (`payment_status === "paid"`), mirroring the
+ * metaPurchase guardrail above: skip entirely on unknown/zero value
+ * rather than send a $0/unknown conversion. `amount` is reported in
+ * minor currency units (cents); `tier` becomes `plan_id` (e.g.
+ * "starter_monthly") per the Ads Manager-generated shape. `sid`
+ * (Stripe checkout session id) doubles as the dedup key.
+ */
+export function openaiSubscriptionCreated(value, currency, sid = null, tier = null) {
+  if (value == null || Number.isNaN(Number(value)) || Number(value) <= 0) {
+    return false;
+  }
+  if (!currency || typeof currency !== "string") {
+    return false;
+  }
+  const params = {
+    type: "plan_enrollment",
+    amount: Math.round(Number(value) * 100),
+    currency,
+  };
+  if (tier) params.plan_id = `${tier}_monthly`;
+  const opts = sid ? { event_id: String(sid) } : undefined;
+  return _oaiq("subscription_created", params, opts);
+}

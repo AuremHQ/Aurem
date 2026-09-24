@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from cto_services.auth import current_dev
 from cto_services.crypto import encrypt, decrypt, is_vault_available
 from cto_services.db import require_db
+from services.http.client import ext_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/deploy", tags=["AUREM Deploy"])
@@ -291,7 +292,7 @@ async def _verify_and_capture(user_id: str, run_id: str, project_id: str | None,
         return
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with ext_client("deploy_verify", timeout=httpx.Timeout(15.0), follow_redirects=True) as client:
             resp = await client.get(url)
         status_ok = 200 <= resp.status_code < 400
     except Exception as e:

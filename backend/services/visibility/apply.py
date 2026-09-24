@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import time
 
-from services.github_api_writer import commit_files, fetch_file
+from services.github_api_writer import commit_files, fetch_file, find_html_entry_path
 from services.git_identity import resolve_git_identity
-from services.loop_safety import create_or_reuse_branch, open_draft_pr, ship_branch_name
+from services.loop_safety import create_or_reuse_branch, open_or_reuse_pr, ship_branch_name
 from services.visibility import robots as robots_gen
 from services.visibility import schema as schema_gen
 from services.visibility import sitemap as sitemap_gen
@@ -80,24 +80,76 @@ async def apply_visibility_kit(
 
     if "ai_crawler_policy" in to_apply:
         existing = await fetch_file(owner, repo, "robots.txt", base_branch, token)
-        if existing and robots_gen._START not in existing and not force:
-            item_conflicts["ai_crawler_policy"] = "robots.txt already exists without an AUREM block"
-        else:
-            files["robots.txt"] = robots_gen.apply_managed_block(existing, bot_policy)
+        # 2026-09-06 — founder-reported: robots.txt exists on virtually
+        # EVERY real site (framework/SEO-plugin default), so the old
+        # "conflict if marker missing" gate fired on every real repo,
+        # every time, blocking the one item it should never have
+        # blocked. `apply_managed_block()` is a proven-safe
+        # read-modify-write (robots.py R5/R6 docstring): it preserves
+        # every existing line byte-for-byte and only APPENDS our block
+        # when no marker is present, or replaces it in place on
+        # re-apply. There is no destructive-overwrite risk here (unlike
+        # llms_txt below, which fully regenerates the file and DOES
+        # need its conflict gate) — so this item never needs to block.
+        files["robots.txt"] = robots_gen.apply_managed_block(existing, bot_policy)
+
+    # 2026-09-06 — resolve the real HTML entry path ONCE, shared by
+    # structured_data + preferred_sources. The old code hardcoded
+    # "index.html" at repo ROOT only — this repo's actual entry is
+    # `audit-repro/index.html`; other real repos commonly use
+    # `public/index.html`, `client/index.html`, etc. A missing root
+    # index.html always produced a false "not found in this repo"
+    # conflict even when a perfectly good entry file existed nested
+    # elsewhere. Falls back to a git-tree search (find_html_entry_path)
+    # ONLY when root index.html 404s, so the common case (root
+    # index.html present) costs no extra API call.
+    html_path = "index.html"
+    html_probe: str | None = None
+    if "structured_data" in to_apply or "preferred_sources" in to_apply:
+        html_path = site_meta.get("html_entry_path") or "index.html"
+        html_probe = await fetch_file(owner, repo, html_path, base_branch, token)
+        if html_probe is None:
+            found = await find_html_entry_path(owner, repo, base_branch, token)
+            if found:
+                html_path = found
+                html_probe = await fetch_file(owner, repo, html_path, base_branch, token)
+
+    # 2026-09-20 — real bug fix (KeyError crash — both a solo
+    # structured_data apply AND bulk apply, since bulk runs all 5
+    # items through this SAME function call before anything commits).
+    # Nothing anywhere in this codebase ever writes
+    # `site_meta["schema"]` — no scan/detect step populates it — so
+    # it was ALWAYS `{}` for every real project. `structured_data`
+    # used UNSAFE `site_meta["schema"]` access (unlike
+    # `preferred_sources`/`llms_txt` just below, which already used
+    # the safe `.get()` + project-field-fallback pattern) and crashed
+    # with `KeyError('schema')` before a single file was written —
+    # which is exactly why bulk apply failed too: one unhandled
+    # exception here aborts the whole call before commit_files() /
+    # open_or_reuse_pr() ever run for the other 4 items.
+    # Resolve a real schema dict from what we already know about this
+    # project (name, preview_url/live_url) instead of trusting a
+    # field nothing ever writes.
+    schema = dict(site_meta.get("schema") or {})
+    schema.setdefault("name", project.get("name") or repo or "this site")
+    resolved_url = (schema.get("url") or site_meta.get("domain")
+                    or project.get("preview_url") or project.get("live_url"))
 
     if "structured_data" in to_apply:
-        html_path = site_meta.get("html_entry_path") or "index.html"
-        existing_html = await fetch_file(owner, repo, html_path, base_branch, token)
+        existing_html = html_probe
         if existing_html is None:
             item_conflicts["structured_data"] = f"{html_path} not found in this repo"
+        elif not resolved_url:
+            item_conflicts["structured_data"] = "no site URL/domain on file — cannot build valid JSON-LD"
         elif schema_gen._START not in existing_html and "</head>" not in existing_html and not force:
             item_conflicts["structured_data"] = f"{html_path} has no </head> to inject into"
         else:
+            schema["url"] = resolved_url
             if "</head>" in existing_html and schema_gen._START not in existing_html:
-                block = schema_gen.render_json_ld(site_meta["schema"])
+                block = schema_gen.render_json_ld(schema)
                 new_html = existing_html.replace("</head>", block + "</head>", 1)
             else:
-                new_html = schema_gen.apply_managed_block(existing_html, site_meta["schema"])
+                new_html = schema_gen.apply_managed_block(existing_html, schema)
             files[html_path] = new_html
 
     if "sitemap_auto" in to_apply:
@@ -105,10 +157,9 @@ async def apply_visibility_kit(
         files["sitemap.xml"] = sitemap_gen.merge_lastmod(existing_sitemap, scan_urls, scan_date)
 
     if "preferred_sources" in to_apply:
-        html_path = site_meta.get("html_entry_path") or "index.html"
-        existing_html_ps = files.get(html_path) or await fetch_file(owner, repo, html_path, base_branch, token)
-        domain = site_meta.get("domain") or _domain_from_url((site_meta.get("schema") or {}).get("url"))
-        site_name = (site_meta.get("schema") or {}).get("name")
+        existing_html_ps = files.get(html_path) or html_probe
+        domain = site_meta.get("domain") or _domain_from_url(resolved_url)
+        site_name = schema.get("name")
         if existing_html_ps is None:
             item_conflicts["preferred_sources"] = f"{html_path} not found in this repo"
         elif not domain:
@@ -120,8 +171,8 @@ async def apply_visibility_kit(
 
     if "llms_txt" in to_apply:
         existing_llms = await fetch_file(owner, repo, "llms.txt", base_branch, token)
-        site_name = (site_meta.get("schema") or {}).get("name") or (site_meta.get("domain") or "this site")
-        site_url = (site_meta.get("schema") or {}).get("url") or site_meta.get("domain") or ""
+        site_name = schema.get("name") or "this site"
+        site_url = resolved_url or ""
         llms_content, llms_full_content, conflict = llms_gen.apply_llms_files(
             existing_llms, site_name, site_url, scan_urls,
         )
@@ -136,7 +187,14 @@ async def apply_visibility_kit(
         return {"ok": False, "error": "all_conflicted", "conflicts": conflicts,
                 "advisory_skipped": advisory_skipped, "not_implemented": not_implemented}
 
-    branch = ship_branch_name(f"visibility-kit-{scan_date.replace('-', '')}")
+    # 2026-09-18 fix (Bug 1 round 2 — confirmed source of the reported
+    # "Visibility Kit x5" duplicates). This used to key on a
+    # date-stamped slug AND `ship_branch_name` itself appended a live
+    # timestamp internally — so literally every apply call, even
+    # back-to-back same-day re-runs, minted a brand-new branch. Keying
+    # on `project_id` alone means repeated Kit applies for the SAME
+    # project land as new commits on the SAME open PR until merged.
+    branch = ship_branch_name(f"visibility-kit-{project_id}")
     ok, err = await create_or_reuse_branch(
         owner=owner, repo=repo, base_branch=base_branch, new_branch=branch, token=token,
     )
@@ -152,17 +210,22 @@ async def apply_visibility_kit(
     )
 
     body = _render_pr_body(applied_names, advisory_skipped, list(files.keys()), branch)
-    pr_url, pr_err = await open_draft_pr(
+    pr_result = await open_or_reuse_pr(
         owner=owner, repo=repo, head_branch=branch, base_branch=base_branch,
         title=f"Visibility Kit ({', '.join(applied_names)}) — by AUREM",
         body=body, token=token,
+        update_comment=(
+            f"**AUREM Visibility Kit — updated.** New commit re-applies "
+            f"{', '.join(applied_names)}.\n\n"
+            f"_Reusing this PR instead of opening a duplicate — same "
+            f"project, still open._"
+        ),
     )
+    pr_url = pr_result.get("pr_url")
     if not pr_url:
-        return {"ok": False, "error": f"pr_open_failed_{pr_err}", "branch": branch}
+        return {"ok": False, "error": f"pr_open_failed_{pr_result.get('error')}", "branch": branch}
 
-    pr_number = None
-    if pr_url and "/pull/" in pr_url:
-        pr_number = int(pr_url.rsplit("/", 1)[-1])
+    pr_number = pr_result.get("pr_number")
 
     now = time.time()
     for item_key in applied_names:

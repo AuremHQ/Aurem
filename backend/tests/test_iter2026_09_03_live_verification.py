@@ -109,7 +109,17 @@ def test_regression_plain_greetings_are_casual(founder_token):
         assert tier == "casual", f"greeting {msg!r} misclassified as {tier}: {out!r}"
 
 
-# ── Root 4: gated upgrade offer for free-tier ───────────────────────
+# ── Root 4 (SUPERSEDED 2026-09-12): founder confirmed the previous
+# "every free-tier edit hits an honest upgrade offer" design was a
+# real business-logic bug, not intended — it blocked 100% of edit
+# attempts regardless of the account's real 10-tasks/month quota,
+# leaving the free tier with zero working fallback and no way to
+# ever see the product actually work before being asked to pay. The
+# gate is now the REAL quota (services/usage.py::assert_has_task_
+# budget) — a free account keeps running real edits, on Swift, until
+# it actually uses its 10 free tasks for the month; only THEN does it
+# see an upgrade message (the quota-exceeded one, which also mentions
+# Pro/upgrade). See routers/chat_pre_llm.py's 2026-09-12 note.
 @pytest.mark.parametrize(
     "prompt",
     [
@@ -118,20 +128,29 @@ def test_regression_plain_greetings_are_casual(founder_token):
         "correct our address",
     ],
 )
-def test_free_tier_edit_request_shows_honest_upgrade_offer(free_token, prompt):
-    """A free-tier account making a real edit request on Swift default
-    mode gets an honest upgrade offer (mentions Pro/upgrade), NOT a
-    silent switch and NOT a 'nothing pending' dead-end."""
-    session_id = f"free-gate-{uuid.uuid4().hex[:12]}"
+def test_free_tier_edit_with_quota_remaining_gets_a_real_attempt(free_token, prompt):
+    """A free-tier account making a real edit request, WITH quota
+    remaining, must get an actual attempt at the edit — never a
+    premature upgrade/paywall wall, and never a silent 'nothing
+    pending' dead-end. (This is the exact founder-reported repro: a
+    fresh account with 0/10 tasks used hit an immediate paywall
+    instead of being allowed to use its free tasks.)"""
+    session_id = f"free-realattempt-{uuid.uuid4().hex[:12]}"
     r = _send(free_token, prompt, session_id)
     reply = (r.get("content") or "").lower()
     assert reply.strip(), f"empty reply for {prompt!r}"
+    assert r.get("provider") not in ("edit-tier-upgrade-offer", "fix-quota-exceeded"), (
+        f"free-tier account with quota remaining was blocked with "
+        f"provider={r.get('provider')!r} for {prompt!r}: {reply!r}"
+    )
     assert reply.strip() != NO_PENDING_FIX_MESSAGE.lower(), (
         f"free-tier edit hit the 'nothing pending' dead end for {prompt!r}: {reply!r}"
     )
-    # Must actually mention an upgrade / Pro plan.
-    assert "upgrade" in reply or "pro plan" in reply or "pro" in reply, (
-        f"free-tier reply did not mention upgrade/pro for {prompt!r}: {reply!r}"
+    # The old unconditional upgrade-offer's distinctive phrase must
+    # never appear while quota remains.
+    assert "set up that upgrade" not in reply, (
+        f"free-tier account with quota remaining still saw the old "
+        f"upgrade-offer wall for {prompt!r}: {reply!r}"
     )
     assert not contains_orphan_confirm(reply)
     assert not contains_no_edit_deadend(reply)

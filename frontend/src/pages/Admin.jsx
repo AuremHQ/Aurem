@@ -10,7 +10,7 @@ import {
   Cpu, CreditCard, Network as SitemapIcon, Settings as SettingsIcon,
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
-  Menu, X, Wrench, KeyRound, Sparkles, Bug,
+  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell,
 } from "lucide-react";
 import { api } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -30,6 +30,7 @@ import AdminRobotGuide from "../components/AdminRobotGuide";  // Iter 212m-187
 import AdminBINTracker from "./AdminBINTracker";               // Iter 212m-171
 import AdminGithubBulkRevoke from "./AdminGithubBulkRevoke";    // 2026-08-30
 import AdminVisibilityKit from "./AdminVisibilityKit";          // 2026-08-30
+import AdminOnboardingFunnel from "./AdminOnboardingFunnel";    // 2026-09-08
 import AdminFeatureFlags from "./AdminFeatureFlags";           // Iter 212m-171
 import { LLMCreditMonitor } from "./AdminLLMCredits";          // Iter 212m-171
 import { ParliamentLivePanel } from "./AdminParliamentLive";   // Iter 212m-171
@@ -94,14 +95,14 @@ export function Badge({ children, color }) {
   );
 }
 
-export function Card({ children, style }) {
+export function Card({ children, style, ...rest }) {
   return (
     <div style={{
       background: "var(--panel-2)",
       border: "1px solid var(--border)",
       borderRadius: 4,
       ...style,
-    }}>
+    }} {...rest}>
       {children}
     </div>
   );
@@ -232,6 +233,12 @@ function UsersList({ onSelect }) {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(() => new Set());
   const [composerOpen, setComposerOpen] = useState(false);
+  // 2026-09-21 — in-app notification composer (distinct from the
+  // email-offer composer above): shows up live in the target user's
+  // dashboard bell instead of their inbox. `notifyTargetAll` picks
+  // between "just the selected users" and "every user".
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyTargetAll, setNotifyTargetAll] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
   const load = useCallback(async (s, w) => {
@@ -300,16 +307,36 @@ function UsersList({ onSelect }) {
         </h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {selected.size > 0 && (
-            <button
-              data-testid="admin-users-send-offer"
-              className="btn-primary"
-              style={{ fontSize: 12, padding: "6px 14px" }}
-              onClick={() => setComposerOpen(true)}
-            >
-              <Mail size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
-              Send offer email ({selected.size})
-            </button>
+            <>
+              <button
+                data-testid="admin-users-send-offer"
+                className="btn-primary"
+                style={{ fontSize: 12, padding: "6px 14px" }}
+                onClick={() => setComposerOpen(true)}
+              >
+                <Mail size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                Send offer email ({selected.size})
+              </button>
+              <button
+                data-testid="admin-users-notify-selected"
+                className="btn-secondary"
+                style={{ fontSize: 12, padding: "6px 14px" }}
+                onClick={() => { setNotifyTargetAll(false); setNotifyOpen(true); }}
+              >
+                <Bell size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                Notify ({selected.size})
+              </button>
+            </>
           )}
+          <button
+            data-testid="admin-users-notify-all"
+            className="btn-secondary"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={() => { setNotifyTargetAll(true); setNotifyOpen(true); }}
+          >
+            <Bell size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+            Notify all users
+          </button>
           <input
             data-testid="admin-users-search"
             value={search}
@@ -449,6 +476,18 @@ function UsersList({ onSelect }) {
           onSent={() => {
             setComposerOpen(false);
             setSelected(new Set());
+          }}
+        />
+      )}
+      {notifyOpen && (
+        <NotificationComposer
+          all={notifyTargetAll}
+          userIds={Array.from(selected)}
+          recipientCount={notifyTargetAll ? users.length : selected.size}
+          onClose={() => setNotifyOpen(false)}
+          onSent={() => {
+            setNotifyOpen(false);
+            if (!notifyTargetAll) setSelected(new Set());
           }}
         />
       )}
@@ -605,6 +644,118 @@ function EmailOfferComposer({ userIds, recipients, onClose, onSent }) {
   );
 }
 
+// 2026-09-21 — In-app notification composer. Same modal shell as
+// EmailOfferComposer above, but posts to /admin/users/notify
+// (services/notifications.py → db.notifications), so the message
+// shows up live in the target user's dashboard bell (UserNotification
+// Bell.jsx) instead of their inbox. Confirm-before-send guard mirrors
+// the email composer's — an "all users" broadcast can't be fat-
+// fingered either.
+function NotificationComposer({ all, userIds, recipientCount, onClose, onSent }) {
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+
+  async function send() {
+    if (!message.trim()) return;
+    const target = all ? "ALL users" : `${recipientCount} user(s)`;
+    if (!window.confirm(`Send this notification to ${target}? This cannot be undone.`)) {
+      return;
+    }
+    setSending(true);
+    try {
+      const r = await api.post("/admin/users/notify", {
+        ...(all ? { all: true } : { user_ids: userIds }),
+        message: message.trim(),
+      });
+      toast({ message: `Sent to ${r.data?.sent ?? 0} user(s)`, kind: "success" });
+      onSent();
+    } catch (e) {
+      toast({
+        message: e?.response?.data?.detail || "Send failed",
+        kind: "error",
+      });
+    } finally { setSending(false); }
+  }
+
+  return (
+    <div
+      data-testid="admin-notify-composer"
+      style={{
+        position: "fixed", inset: 0,
+        background: "rgba(0,0,0,0.65)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9000,
+        padding: 24,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1, #0a0e1a)",
+          border: "1px solid var(--line, rgba(255,255,255,0.08))",
+          borderRadius: 12,
+          width: "min(560px, 100%)",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          padding: 22,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between",
+                       alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontSize: 14, margin: 0 }}>Send in-app notification</h3>
+          <button onClick={onClose}
+                  style={{ background: "none", border: "none",
+                           color: "var(--text-faint)", cursor: "pointer", fontSize: 18 }}>
+            ×
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 14,
+                       fontFamily: "'JetBrains Mono', monospace" }}>
+          Recipients: {all ? "ALL users" : `${recipientCount} selected`} · Shows up live in their notification bell
+        </div>
+
+        <label style={{ fontSize: 11, color: "var(--text-faint)", display: "block",
+                         marginBottom: 4, fontFamily: "'JetBrains Mono', monospace",
+                         textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          Message
+        </label>
+        <textarea
+          data-testid="admin-notify-message"
+          className="input"
+          value={message}
+          onChange={(e) => setMessage(e.target.value.slice(0, 2000))}
+          rows={5}
+          placeholder="Heads up: we're doing scheduled maintenance tonight…"
+          style={{ width: "100%", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
+        />
+        <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-faint)", textAlign: "right" }}>
+          {message.length}/2000
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button
+            onClick={onClose}
+            className="btn-secondary"
+            disabled={sending}
+            style={{ fontSize: 12 }}>
+            Cancel
+          </button>
+          <button
+            data-testid="admin-notify-send"
+            onClick={send}
+            disabled={sending || !message.trim()}
+            className="btn-primary"
+            style={{ fontSize: 12 }}>
+            {sending ? "Sending…" : `Send to ${all ? "all" : recipientCount}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UserDetail({ user, onBack }) {
   const [d, setD] = useState(user);
   const [busy, setBusy] = useState(false);
@@ -612,6 +763,13 @@ function UserDetail({ user, onBack }) {
   const [grantTokens, setGrantTokens] = useState("");
   const [grantReason, setGrantReason] = useState("");
   const [granting, setGranting] = useState(false);
+  // 2026-09-20 — per-user "Notify" button. The in-app notification
+  // composer (NotificationComposer, above) previously only had two
+  // entry points, both from the bulk UsersList view: "Notify (N
+  // selected)" and "Notify all users". There was no way to notify a
+  // single user from THEIR OWN detail page next to Suspend/Grant
+  // tokens/Email user — founder screenshot flagged the visible gap.
+  const [notifyOpen, setNotifyOpen] = useState(false);
 
   useEffect(() => {
     api.get(`/admin/users/${user.user_id}`).then((r) => setD(r.data)).catch(() => {});
@@ -725,7 +883,7 @@ function UserDetail({ user, onBack }) {
             <div><b>User ID:</b> <code style={{ fontSize: 11 }}>{d.user_id}</code></div>
             <div><b>Tier:</b> {d.tier || "free"}</div>
             <div><b>Status:</b> <Badge color={STATUS_COLOR[d.status || "active"]}>{d.status || "active"}</Badge></div>
-            <div><b>Tokens remaining:</b> {fmt(d.tokens_remaining || 0)}</div>
+            <div><b>Tokens remaining:</b> {fmt((d.usage ? d.usage.remaining : d.tokens_remaining) || 0)}</div>
             {d.usage && (
               <div data-testid="admin-user-usage" style={{ marginTop: 6, padding: "6px 8px",
                 background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
@@ -737,7 +895,21 @@ function UserDetail({ user, onBack }) {
               </div>
             )}
             <div><b>Joined:</b> {ago(d.created_at)}</div>
-            <div><b>Projects:</b> {d.project_count ?? 0} · <b>Tasks:</b> {d.task_count ?? 0} · <b>Sessions:</b> {d.session_count ?? 0}</div>
+            <div data-testid="admin-user-counts-row">
+              <b>Projects:</b> {d.project_count ?? 0} ·{" "}
+              <b title="Actual work items the orchestrator created (cto_tasks documents) — NOT the same as a nudge-task-sent signal below.">
+                Tasks created:
+              </b> {d.task_count ?? 0} ·{" "}
+              <b>Sessions:</b> {d.session_count ?? 0}
+              {(d.nudge_task_sent_count ?? 0) > 0 && (
+                <>
+                  {" · "}
+                  <b title="Fires the moment a real message arrives, BEFORE the orchestrator decides whether it becomes a task, a plain answer, or nothing — an intent signal, distinct from Tasks created above.">
+                    Nudge replies sent:
+                  </b> {d.nudge_task_sent_count}
+                </>
+              )}
+            </div>
           </div>
           <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
@@ -766,6 +938,16 @@ function UserDetail({ user, onBack }) {
               onClick={emailUser}
               title={`Compose email to ${d.email}`}>
               Email user
+            </button>
+            <button
+              data-testid="admin-user-notify-open"
+              className="btn-ghost"
+              style={{ padding: "6px 12px", fontSize: 11,
+                       borderColor: "rgba(168,85,247,0.35)", color: "#a855f7",
+                       display: "inline-flex", alignItems: "center", gap: 5 }}
+              onClick={() => setNotifyOpen(true)}
+              title={`Send an in-app notification to ${d.email}`}>
+              <Bell size={11} /> Notify
             </button>
           </div>
           {grantOpen && (
@@ -1151,6 +1333,16 @@ function UserDetail({ user, onBack }) {
           ])}
         />
       </Card>
+
+      {notifyOpen && (
+        <NotificationComposer
+          all={false}
+          userIds={[user.user_id]}
+          recipientCount={1}
+          onClose={() => setNotifyOpen(false)}
+          onSent={() => setNotifyOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1283,12 +1475,35 @@ function TokenPnL() {
   if (!d) return <div style={{ padding: 24, color: "var(--text-faint)" }}>Loading…</div>;
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 18 }}>
-        <MCard label="Revenue (mo)" value={fmtMoney(d.revenue_month)} sub="Stripe pending" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 12 }}>
+        <MCard label="Revenue (mo)" value={fmtMoney(d.revenue_month)} sub="real Stripe transactions" />
         <MCard label="AI cost (mo)" value={fmtMoney(d.ai_cost_month)} accent="var(--danger)" />
         <MCard label="Net profit" value={fmtMoney(d.net_profit)}
                 accent={d.net_profit >= 0 ? "var(--ok)" : "var(--danger)"} />
         <MCard label="Tasks done (mo)" value={d.tasks_done_month} sub={`${d.tasks_done_today} today`} />
+      </div>
+      {/* 2026-09-11 — founder-directed fix: never blend this with
+          Revenue above. This is the NOMINAL plan value from live
+          Stripe subscription objects (same figure Cockpit/Financials/
+          Personal Track show) — it can be >$0 while Revenue is
+          legitimately $0 (e.g. Stripe test mode, no real charges).
+          Deliberately styled apart (dashed border, own row) so it
+          never reads as a 5th peer metric to Revenue/AI cost/Profit. */}
+      <div data-testid="token-pnl-assigned-plan-value"
+           style={{ padding: "10px 16px", marginBottom: 18, borderRadius: 8,
+                    border: "1px dashed var(--border)", display: "flex",
+                    alignItems: "baseline", gap: 10 }}>
+        <span style={{ fontSize: 10, letterSpacing: "0.1em",
+                       color: "var(--text-faint)", textTransform: "uppercase" }}>
+          Assigned plan value (mo) — NOT real revenue
+        </span>
+        <span style={{ fontSize: 15, fontWeight: 600,
+                       fontFamily: "'JetBrains Mono', monospace" }}>
+          {fmtMoney(d.assigned_plan_value_month)}
+        </span>
+        <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
+          nominal Stripe subscription MRR — only "Revenue (mo)" above is real settled cash
+        </span>
       </div>
       {d._note && (
         <Card style={{ padding: 12, fontSize: 12, color: "var(--text-dim)" }}>
@@ -1410,6 +1625,315 @@ function McpUsagePage() {
           No MCP keys yet. Users mint keys from Settings → MCP keys.
         </Card>
       )}
+    </div>
+  );
+}
+
+// 2026-09-08 — "Failure Patterns" admin tab (self-improving loop).
+// Simple group-by stats over /admin/failure-patterns (task_chains
+// collection, see services/task_chain_logging.py). Click a failed
+// task-type row to load its recent failure samples + the truncated
+// reasoning text (only ever persisted on failure).
+//
+// 2026-09-21 — Failure-Patterns audit (Part 1.1/1.3/3):
+//   - infra failures (rate-limit/5xx) now reported separately, never
+//     blended into "top failed" buckets — see infra_failures below.
+//   - patterns below the confidence threshold show an explicit "not
+//     enough data yet" note instead of a silent drop.
+//   - every pattern row now carries first/last seen + an open/fixed
+//     status with a manual mark-fixed action (no auto deploy-link
+//     exists yet — see backend mark_failure_pattern_fixed()).
+function _fmtWhen(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+function StatusCell({ row, kind, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const fixed = row.status === "fixed";
+  const act = (next) => {
+    setBusy(true);
+    api.post("/admin/failure-patterns/mark-fixed", { kind, value: row.value ?? row.tool_sequence, status: next })
+      .then(() => { toast({ message: next === "fixed" ? "Marked fixed" : "Re-opened", kind: "success" }); onChanged(); })
+      .catch(() => toast({ message: "Failed to update status", kind: "error" }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {fixed ? (
+        <Badge color="var(--ok)">fixed on {_fmtWhen(row.fixed_on).split(",")[0]}</Badge>
+      ) : (
+        <Badge color="var(--text-faint)">open</Badge>
+      )}
+      <button
+        data-testid={`failure-pattern-mark-${fixed ? "open" : "fixed"}-${(row.value ?? row.tool_sequence ?? "").toString().slice(0, 24)}`}
+        className="btn btn-ghost" disabled={busy}
+        style={{ fontSize: 10, padding: "2px 8px" }}
+        onClick={(e) => { e.stopPropagation(); act(fixed ? "open" : "fixed"); }}>
+        {fixed ? "Re-open" : "Mark fixed"}
+      </button>
+    </div>
+  );
+}
+
+function FailurePatternsPage() {
+  const [d, setD] = useState(null);
+  const [days, setDays] = useState(14);
+  const [selectedType, setSelectedType] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((win, taskType) => {
+    setLoading(true);
+    api.get("/admin/failure-patterns", { params: { days: win, task_type: taskType || undefined } })
+      .then((r) => {
+        setD(r.data);
+        setSelectedType(r.data?.sample_task_type || null);
+      })
+      .catch(() => setD({}))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(days, null); }, [days, load]);
+  const refresh = useCallback(() => load(days, selectedType), [load, days, selectedType]);
+
+  if (loading && !d) {
+    return <div style={{ padding: 24, color: "var(--text-faint)" }}><Loader2 size={14} className="spin" /> Loading…</div>;
+  }
+  const data = d || {};
+  const failedTypes = data.top_failed_task_types || [];
+  const successTypes = data.top_success_task_types || [];
+  const failedPatterns = data.top_failed_prompt_patterns || [];
+  const successPatterns = data.top_success_prompt_patterns || [];
+  const toolSeqRates = data.tool_sequence_rates || [];
+  const suggestions = data.suggestions || [];
+  const lowConfidence = data.low_confidence_patterns || [];
+  const infra = data.infra_failures || { total: 0, by_reason: [] };
+  const samples = data.sample_failures || [];
+
+  return (
+    <div style={{ padding: 24 }} data-testid="admin-failure-patterns-page">
+      <div style={{ display: "flex", justifyContent: "space-between",
+                     alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
+        <h3 style={{ fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase",
+                      color: "var(--text-faint)", margin: 0 }}>
+          Failure Patterns — self-improving loop
+        </h3>
+        <select
+          data-testid="admin-failure-patterns-window"
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="input" style={{ width: 140 }}>
+          <option value={1}>Last 24 h</option>
+          <option value={7}>Last 7 days</option>
+          <option value={14}>Last 14 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+        </select>
+      </div>
+
+      <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 16 }}>
+        Every ORA turn logs a structured, truncated record (task type, prompt pattern,
+        tool sequence, success/fail) to <code>task_chains</code>. On failure only, the
+        model's reasoning text is also attached (truncated, secrets redacted) so you can
+        see WHY it failed, not just that it revised. Use this to spot which prompts need
+        rewording. Infra failures (rate limits / provider 5xx) are excluded from every
+        "failed" bucket below — they're a provider problem, not a bad-prompt one.
+      </div>
+
+      {infra.total > 0 && (
+        <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(148,163,184,0.35)" }}
+              data-testid="admin-failure-patterns-infra">
+          <h4 style={{ fontSize: 12, margin: "0 0 8px", color: "var(--text-faint)" }}>
+            Infra failures (excluded above) — {infra.total} in this window
+          </h4>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 6 }}>{infra.note}</div>
+          {(infra.by_reason || []).map((r) => (
+            <div key={r.reason} style={{ fontSize: 12, color: "var(--text-dim)", padding: "3px 0" }}>
+              <Badge color="var(--text-faint)">{r.reason}</Badge> × {r.count}
+              {" · "}first {_fmtWhen(r.first_seen)} · last {_fmtWhen(r.last_seen)}
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {suggestions.length > 0 && (
+        <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(234,179,8,0.35)" }}
+              data-testid="admin-failure-patterns-suggestions">
+          <h4 style={{ fontSize: 12, margin: "0 0 8px", color: "#eab308" }}>
+            Prompt improvement suggestions
+          </h4>
+          {suggestions.map((s, i) => (
+            <div key={i} style={{ fontSize: 12, color: "var(--text-dim)", padding: "4px 0" }}>
+              → {s}
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {lowConfidence.length > 0 && (
+        <Card style={{ padding: 14, marginBottom: 16, borderColor: "rgba(148,163,184,0.25)" }}
+              data-testid="admin-failure-patterns-low-confidence">
+          <h4 style={{ fontSize: 12, margin: "0 0 8px", color: "var(--text-faint)" }}>
+            Watching, not enough data yet
+          </h4>
+          {lowConfidence.map((r, i) => (
+            <div key={i} style={{ fontSize: 12, color: "var(--text-faint)", padding: "4px 0" }}>
+              "{r.pattern}" — {r.fail}/{r.total} failed · {r.note}
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top failed task types (reasoning failures only)
+          </h4>
+          <Card>
+            {failedTypes.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 12, color: "var(--text-faint)" }}>No failures logged yet.</div>
+            ) : failedTypes.map((row) => (
+              <div
+                key={row.value}
+                data-testid={`admin-failed-task-type-${row.value}`}
+                onClick={() => load(days, row.value)}
+                style={{
+                  padding: "8px 14px", display: "flex", justifyContent: "space-between",
+                  alignItems: "center", gap: 10, flexWrap: "wrap",
+                  borderBottom: "1px solid var(--border)", cursor: "pointer", fontSize: 12,
+                  background: selectedType === row.value ? "var(--bg-elev)" : "transparent",
+                }}>
+                <span>{row.value}</span>
+                <div style={{ fontSize: 10, color: "var(--text-faint)" }}>
+                  first {_fmtWhen(row.first_seen)} · last {_fmtWhen(row.last_seen)}
+                </div>
+                <Badge color="var(--danger)">{row.count}</Badge>
+                <StatusCell row={row} kind="task_type" onChanged={refresh} />
+              </div>
+            ))}
+          </Card>
+        </div>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top successful task types
+          </h4>
+          <Card>
+            {successTypes.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 12, color: "var(--text-faint)" }}>No successes logged yet.</div>
+            ) : successTypes.map((row) => (
+              <div key={row.value} style={{
+                padding: "8px 14px", display: "flex", justifyContent: "space-between",
+                borderBottom: "1px solid var(--border)", fontSize: 12,
+              }}>
+                <span>{row.value}</span>
+                <Badge color="var(--ok)">{row.count}</Badge>
+              </div>
+            ))}
+          </Card>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top failed prompt patterns (reasoning failures only)
+          </h4>
+          <Card>
+            <Table
+              cols={["Pattern (first word)", "Fails", "First / last seen", "Status"]}
+              rows={failedPatterns.map((row) => [
+                row.value,
+                row.count,
+                <span key="w" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+                  {_fmtWhen(row.first_seen)} → {_fmtWhen(row.last_seen)}
+                </span>,
+                <StatusCell key="s" row={row} kind="prompt_pattern" onChanged={refresh} />,
+              ])}
+            />
+          </Card>
+        </div>
+        <div>
+          <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                        color: "var(--text-faint)", margin: "0 0 8px" }}>
+            Top successful prompt patterns
+          </h4>
+          <Card>
+            <Table
+              cols={["Pattern (first word)", "Successes"]}
+              rows={successPatterns.map((row) => [row.value, row.count])}
+            />
+          </Card>
+        </div>
+      </div>
+
+      <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                    color: "var(--text-faint)", margin: "0 0 8px" }}>
+        Tool-sequence success/fail rates
+      </h4>
+      <Card style={{ marginBottom: 16 }}>
+        <Table
+          cols={["Tool sequence", "Attempts", "Success rate", "First / last seen", "Status"]}
+          rows={toolSeqRates.map((row) => [
+            <span key="seq" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+              {row.tool_sequence || "(no tools)"}
+            </span>,
+            row.count,
+            <Badge key="rate" color={row.success_rate >= 0.7 ? "var(--ok)" : row.success_rate >= 0.4 ? "var(--warn)" : "var(--danger)"}>
+              {Math.round(row.success_rate * 100)}%
+            </Badge>,
+            <span key="w" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+              {_fmtWhen(row.first_seen)} → {_fmtWhen(row.last_seen)}
+            </span>,
+            <StatusCell key="s" row={row} kind="tool_sequence" onChanged={refresh} />,
+          ])}
+        />
+      </Card>
+
+      <h4 style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
+                    color: "var(--text-faint)", margin: "0 0 8px" }}>
+        Click-through — recent failures{selectedType ? ` for "${selectedType}"` : ""}
+      </h4>
+      <Card data-testid="admin-failure-patterns-samples">
+        {samples.length === 0 ? (
+          <div style={{ padding: 16, fontSize: 12, color: "var(--text-faint)" }}>
+            Click a failed task type above to see recent examples.
+          </div>
+        ) : samples.map((s, i) => (
+          <div key={i} data-testid={`admin-failure-sample-${i}`}
+               style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>
+              <b>Prompt:</b> {s.user_prompt}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              failure_reason: <Badge color="var(--danger)">{s.failure_reason || "unknown"}</Badge>
+              {" · "}tools: {(s.tool_sequence || []).join(", ") || "none"}
+            </div>
+            {(s.failure_thoughts_truncated || []).length > 0 ? (
+              <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6,
+                            padding: "8px 10px", background: "rgba(255,255,255,0.03)",
+                            borderRadius: 6, fontFamily: "'JetBrains Mono', monospace",
+                            whiteSpace: "pre-wrap" }}>
+                {s.failure_thoughts_truncated.map((t, j) => (
+                  <div key={j} style={{ marginBottom: j < s.failure_thoughts_truncated.length - 1 ? 8 : 0 }}>
+                    {j + 1}. {t}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div data-testid={`admin-failure-sample-no-cot-${i}`}
+                   style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6,
+                            fontStyle: "italic" }}>
+                No sequential-thinking reasoning captured for this turn (the
+                model didn't use that tool here, or the turn failed before
+                any reasoning step ran).
+              </div>
+            )}
+          </div>
+        ))}
+      </Card>
     </div>
   );
 }
@@ -1769,6 +2293,7 @@ const NAV = buildGroupedAdminNav({
   bin_tracker: Users,
   github_bulk_revoke: ShieldAlert,
   visibility_kit: Sparkles,
+  onboarding_funnel: Filter,
   users: Users,
   support: Mail,
   suggestions: MessageCircle,   // Iter 212m-193
@@ -1787,6 +2312,7 @@ const NAV = buildGroupedAdminNav({
   tasks: ListChecks,
   agent_perf: Activity,
   mcp: Plug,
+  failure_patterns: TrendingDown,
   reliability: ShieldAlert,
   settings: SettingsIcon,
 });
@@ -1939,6 +2465,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "bin_tracker":    return <AdminBINTracker />;
       case "github_bulk_revoke": return <AdminGithubBulkRevoke />;
       case "visibility_kit": return <AdminVisibilityKit />;
+      case "onboarding_funnel": return <AdminOnboardingFunnel />;
       case "feature_flags":  return <AdminFeatureFlags />;
       case "dash":           return <Dashboard />;
       case "users":          return <UsersList onSelect={setSelectedUser} />;
@@ -1947,6 +2474,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "tokens":         return <TokenPnL />;
       case "agent_perf":     return <AgentPerformancePage />;
       case "mcp":            return <McpUsagePage />;
+      case "failure_patterns": return <FailurePatternsPage />;
       case "reliability":    return <ReliabilityPage />;
       case "payments":       return <AdminFinancialsLazy />;
       case "support":        return <AdminSupportPageLazy />;

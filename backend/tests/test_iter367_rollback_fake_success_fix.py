@@ -204,16 +204,10 @@ async def test_revert_last_ship_calls_real_run_rollback(monkeypatch):
     # separate wrapper that re-imports pat_vault's function fresh on
     # every call — patching it never touched what `get_repo_token`
     # actually calls). Patch the real target.
-    async def _decrypt_pat(uid, enc):
-        return "ghp_REAL_TOKEN"
-    async def _user_gh_token(uid):
-        return None
-    monkeypatch.setattr(
-        "services.pat_vault._decrypt_pat", _decrypt_pat
-    )
-    monkeypatch.setattr(
-        "routers.cto_projects._user_gh_token", _user_gh_token
-    )
+    # 2026-06 PAT removal — App-only; stub the installation-token mint.
+    async def _get_repo_token(project):
+        return "ghs_REAL_TOKEN"
+    monkeypatch.setattr("services.pat_vault.get_repo_token", _get_repo_token)
     # Capture what run_rollback is called with.
     # 2026-08-23 audit fix — the production background-task call site
     # (routers/user_rollback.py) imports `run_rollback_bg`, a
@@ -255,7 +249,7 @@ async def test_revert_last_ship_calls_real_run_rollback(monkeypatch):
     # Execute the background task synchronously to prove wiring
     await bg.tasks[0]()
     assert calls.get("loop_id") == "l1"
-    assert calls.get("user_token") == "ghp_REAL_TOKEN"
+    assert calls.get("user_token") == "ghs_REAL_TOKEN"
     assert calls.get("commit_sha") == "abc1234deadbeef1234567890"
 
 
@@ -314,16 +308,10 @@ async def test_execute_rollback_resolves_sha_to_loop_and_fires(monkeypatch):
     # test_revert_last_ship_calls_real_run_rollback above: patch
     # pat_vault's own `_decrypt_pat`, the actual target `get_repo_token`
     # calls, not the separate `routers.cto_projects` wrapper.
-    async def _decrypt_pat(uid, enc):
-        return "ghp_TOKEN2"
-    async def _user_gh_token(uid):
-        return None
-    monkeypatch.setattr(
-        "services.pat_vault._decrypt_pat", _decrypt_pat
-    )
-    monkeypatch.setattr(
-        "routers.cto_projects._user_gh_token", _user_gh_token
-    )
+    # 2026-06 PAT removal — App-only; stub the installation-token mint.
+    async def _get_repo_token(project):
+        return "ghs_TOKEN2"
+    monkeypatch.setattr("services.pat_vault.get_repo_token", _get_repo_token)
     # 2026-08-23 audit fix — same stale-mock-target issue as
     # test_revert_last_ship_calls_real_run_rollback above: production
     # calls the `run_rollback_bg` wrapper, not `run_rollback` directly.
@@ -363,7 +351,7 @@ async def test_execute_rollback_resolves_sha_to_loop_and_fires(monkeypatch):
     assert len(bg.tasks) == 1
     await bg.tasks[0]()
     assert calls.get("loop_id") == "l2"
-    assert calls.get("user_token") == "ghp_TOKEN2"
+    assert calls.get("user_token") == "ghs_TOKEN2"
 
 
 @pytest.mark.asyncio

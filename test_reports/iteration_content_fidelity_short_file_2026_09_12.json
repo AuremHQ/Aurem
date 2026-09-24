@@ -1,0 +1,48 @@
+{
+  "summary": "Backend-only verification of the content-fidelity short-file hallucination fix (change of skip-threshold in _hallucination_reasons from `< 10 non-blank lines` to `== 0`, plus diff-derived commit message construction in worker_api.py and worker_git.py). Reviewed the code diff for correctness, sanity-checked the updated assertion in test_phase2c_cto_projects_router.py (NOT gamed — it now asserts the flag IS raised for a short file whose rewrite keeps 0% of the original lines), and ran the full three-file regression suite. Result: 196 passed, 1 failed. The single failure is TestSubmitTask::test_rate_limited, which the review_request explicitly flags as a KNOWN pre-existing unrelated failure (confirmed via git-stash bisection before this change). No new regressions introduced. Fix looks solid to ship.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_phase2c_cto_projects_router.py::TestSubmitTask::test_rate_limited", "issue": "Known pre-existing unrelated failure — explicitly called out in review_request as NOT a new regression. Not caused by this change."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "code_review_findings": {
+    "_hallucination_reasons (cto_projects_helpers.py:376-381)": "Correct: `_olines` is now derived after stripping blanks and the skip is `== 0`, which only exempts genuinely empty originals (also avoids ZeroDivisionError on `_kept / len(_olines)`). Short files with 1-9 non-blank lines are now protected.",
+    "test_phase2c_cto_projects_router.py::test_hallucination_reasons_short_original_still_flagged": "NOT GAMED. It supplies a 2-line original ('one\\ntwo') and a 1-char rewrite ('a') that keeps zero of the original lines, then asserts `len(out) == 1` and `'x.py' in out[0]`. This is the exact assertion the fix is designed to satisfy — previously (under `< 10` skip) this would have returned `[]` and the test would fail. Two neighboring tests (`test_hallucination_reasons_empty_original_skipped`, `test_hallucination_reasons_short_original_high_keep_ratio_no_flag`) correctly cover the two negative cases (empty original still skipped; short original with high keep-ratio not flagged) so the fix isn't over-broad.",
+    "commit message construction (worker_api.py:1102-1114, worker_git.py:430-438)": "Correct: `_commit_msg = f\"AUREM: update {_changed} — {task}\"[:120]` where `_changed` is `\", \".join(sorted(edits.keys())[:4])` (plus `(+N more)` overflow). The message now leads with the FACTUAL, diff-derived file list (impossible for the model to lie about — it's the keys of the edits dict actually being written) and appends the task text only as secondary context. This directly addresses the live-observed misrepresentation (`AUREM: In README.md, append exactly ...` when the diff was a full rewrite). String is always non-empty as long as at least one file is edited, and truncated to 120 chars to keep git log tidy. No breaking change to the gh_api_commit / `git commit -m` call sites — both still pass a plain string commit message."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_2026_09_12_content_fidelity_short_file_hallucination.py",
+    "/app/backend/tests/test_phase2c_cto_projects_router.py",
+    "/app/backend/tests/test_cto_worker_safety_pipeline_2026_09_08.py",
+    "/app/test_reports/pytest/content_fidelity_2026_09_12.xml"
+  ],
+  "test_results": {
+    "total": 197,
+    "passed": 196,
+    "failed": 1,
+    "failed_tests": ["tests/test_phase2c_cto_projects_router.py::TestSubmitTask::test_rate_limited (KNOWN pre-existing, unrelated)"],
+    "new_regression_test_file_all_pass": true,
+    "new_regression_tests_passed": [
+      "test_short_file_full_rewrite_now_caught_and_retried",
+      "test_short_file_still_bad_after_retry_blocks_the_commit",
+      "test_faithful_small_edit_passes_without_any_retry"
+    ]
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is minimal, correct, and well-scoped. Threshold change to `== 0` is the right choice (protects short files, preserves the div-by-zero guard, and doesn't fire on legitimate empty-file creates).",
+    "The 3-test regression file explicitly exercises the shared _run_hallucination_gate end-to-end (not just the pure helper), including the retry-success and retry-still-bad branches — good coverage.",
+    "Commit-message fix is a proper structural fix (leads with actual changed files) rather than a validation band-aid; the task text remains for readability but no longer solely drives the message.",
+    "Consider also emitting a warning log line when _run_hallucination_gate triggers a retry, so future prod incidents leave a breadcrumb (currently only visible if you enable DEBUG on the module)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "99.5% (196/197, 1 pre-existing unrelated failure)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "N/A — pytest-only backend verification, no auth flows exercised.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix for content-fidelity short-file hallucination is verified solid at the pytest level. Do NOT re-run live prod ship tests against auremcto.com for this specific fix (already done in iteration_fresh_ship_verify_2026_01_urgent.json — that's what surfaced the bug). Per the review_request, the decision to flip `kit_apply_enabled` (Visibility Kit feature flag) is SEPARATE and pending on the founder's side — this fix being solid is a necessary but not sufficient precondition. The known pre-existing failure `test_rate_limited` remains untouched and is unrelated.",
+  "rca of the issue": "Original bug: `_hallucination_reasons` skipped the keep-ratio check whenever `len(non-blank-lines-of-original) < 10`, so a short README (3 non-blank lines) fully replaced by a 10-line generic template kept 0/3 of the original lines but was silently exempted. Compounded by the commit message being built purely from the raw task/intent string (`f\"AUREM: {task[:60]}\"`), so git log falsely claimed 'append exactly <marker>' while the diff was a full-file rewrite. Fix: (1) narrow the skip to genuinely empty originals only (`== 0`), so any file with >=1 non-blank line is subject to the keep-ratio check + retry + abort pipeline; (2) construct the commit message from the actual `edits.keys()` file list first, keeping the task text only as trailing context — factual by construction. Verified by 3 new end-to-end tests against the real `_run_hallucination_gate` (retry-succeeds, retry-still-bad-aborts, faithful-edit-no-retry) plus the updated pure-helper test in test_phase2c."
+}

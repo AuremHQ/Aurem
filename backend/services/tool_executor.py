@@ -121,6 +121,16 @@ async def execute(
             # Neutral message the LLM is allowed to relay verbatim:
             "llm_facing":    f"Tool {tool_name} could not complete.",
         }
+    from services.interaction_contract import enabled
+    if enabled() and isinstance(result, dict) and result.get("ok") is False:
+        return {
+            "ok": False, "tool": tool_name, "data": result,
+            "system_signal": result.get("system_signal") or "unknown_error",
+            "severity": "error", "http_status": result.get("http_status"),
+            "error_class": result.get("error_class") or "tool_failed",
+            "error_message": str(result.get("error") or "Tool returned a failed outcome")[:240],
+            "llm_facing": f"Tool {tool_name} could not complete.",
+        }
     return {"ok": True, "tool": tool_name, "data": result}
 
 

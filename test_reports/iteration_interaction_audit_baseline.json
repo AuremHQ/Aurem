@@ -1,0 +1,108 @@
+{
+  "summary": "Baseline-only interaction reliability audit completed by adding intentionally strict regression tests (no production fixes). Backend baseline: 18 tests run, 11 failed (expected contract gaps). Frontend baseline: 3 tests run, 3 failed. Outputs saved to interaction_audit_before_*.txt.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "internal:services/chat_helpers.run_rendering_pipeline",
+        "issue": "Content-fidelity regression: substantive tokens/paths are rewritten (e.g., 'src/header.py:12'/'Mode D' mutated), and secret token remained unredacted in tested path.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "internal:services/chat_helpers._persist_turn",
+        "issue": "Missing optional interaction object contract (signature has no interaction parameter).",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "internal:services/mode_b_council.is_council_request",
+        "issue": "Status question 'What is the status of the decision council?' still classified as council request.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "internal:services/chat_helpers.classify_intent",
+        "issue": "Numbered factual status list with audit/error/council terms routes into B/D/E path (expected non-heavy factual route under interaction contract).",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "/api/.../chat/send",
+        "issue": "No pre-LLM contradictory-instruction guard wiring detected in router source (no request_conflict call before model/tool path).",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "internal:services/regression_backlog_cron + services/task_chain_logging",
+        "issue": "Recurring failed tool signatures are not flagged when turns are terminal-success; scanner still only aggregates failure_reason.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "ci/deploy gate wiring",
+        "issue": "scripts/interaction_gate.sh missing; .github/workflows/interaction-reliability.yml missing; no blocking predeploy invocation.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MessageBubble",
+        "issue": "Review badge infers 'double-checked' from provider/council flags without interaction-backed review evidence.",
+        "selector": "data-testid='council-badge-{idx}'",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Interaction contract chips",
+        "issue": "extractSuggestions(content, interaction) ignores interaction contract object and still emits quote-derived chips when suggested_actions is empty.",
+        "affected_selectors": [
+          "frontend/src/utils/chatTextUtils.js::extractSuggestions"
+        ]
+      },
+      {
+        "flow": "History turn mapping",
+        "issue": "mapHistoryTurn does not preserve interaction object nor snake_case turn_state/continue_available/failure_mode fields.",
+        "affected_selectors": [
+          "frontend/src/utils/dateDividers.js::mapHistoryTurn"
+        ]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_interaction_reliability_contract.py",
+    "/app/frontend/src/utils/__tests__/interactionReliability.test.jsx",
+    "/app/test_reports/interaction_audit_before_backend.txt",
+    "/app/test_reports/interaction_audit_before_frontend.txt",
+    "/app/test_reports/pytest/interaction_audit_baseline_backend.xml"
+  ],
+  "action_items": [
+    "Implement INTERACTION_CONTRACT_V1-gated interaction contract in backend+frontend without breaking legacy default-off paths.",
+    "Add pre-LLM request_conflict guard to /chat/send and ensure provider/tool spies remain untouched on conflict rejection.",
+    "Introduce optional interaction persistence and round-trip mapping in history API/UI state.",
+    "Add tool_failure_signatures persistence + recurrence scan path independent of turn success/failure and beyond first-10 tool calls.",
+    "Add blocking scripts/interaction_gate.sh and reusable workflow wiring in predeploy/deploy workflows."
+  ],
+  "critical_code_review_comments": [
+    "backend/services/chat_helpers.py:264-291 — output/business-owner passes mutate technical literals; observed rewrite of 'src/header.py:12' and 'Mode D' during baseline run.",
+    "backend/services/chat_helpers.py:_persist_turn signature (lines ~756+) has no interaction arg; cannot store v1 interaction envelope as requested.",
+    "backend/services/mode_b_council.py:95-97 + patterns at 43-47 — council keyword still triggers factual-status phrase containing 'decision council'.",
+    "backend/services/chat_helpers.py:624-642 — classify_intent B-patterns include generic 'decision council' phrase; factual status list can be misrouted.",
+    "frontend/src/components/MessageBubble.jsx:1418-1429 — review badge gate uses `(m.council || m.provider==='mode-b-council')` instead of interaction evidence.",
+    "frontend/src/utils/chatTextUtils.js:120-137 — extractSuggestions has no interaction parameter handling.",
+    "frontend/src/utils/dateDividers.js:94-112 — mapHistoryTurn drops interaction and snake_case turn-state fields.",
+    "scripts/predeploy_gate.sh:1-110 — no interaction gate invocation; /app/scripts/interaction_gate.sh absent; reusable workflow file missing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_interaction_reliability_contract.py",
+    "/app/frontend/src/utils/__tests__/interactionReliability.test.jsx",
+    "/app/test_reports/iteration_interaction_audit_baseline.json"
+  ],
+  "success_rate": {
+    "backend": "39%",
+    "frontend": "0%"
+  },
+  "seed_data_creation": "No customer data mutation by these new tests; temporary task_chains rows were inserted and cleaned up in test scope.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Baseline contract tests are now present and failing by design against current implementation. Re-run: `PYTHONPATH=/app/backend pytest /app/backend/tests/test_interaction_reliability_contract.py -q --tb=short` and `cd /app/frontend && npx vitest run src/utils/__tests__/interactionReliability.test.jsx`. Compare output files under /app/test_reports/interaction_audit_before_*.txt.",
+  "rca of the issue": "Observed failures align with contract gaps rather than flaky infra: (1) rendering pipeline still allows semantic rewriting of technical literals and did not redact provided secret pattern in this path; (2) interaction envelope is not first-class in persistence/history mapping; (3) council/intent routing still has keyword-trigger ambiguity for factual-status prompts; (4) reviewer badge is inferred from provider/council metadata rather than explicit review evidence; (5) recurring failure scanner is tied to failure_reason and misses tool-failure telemetry on successful turns; (6) interaction deploy gate wiring artifacts are absent."
+}

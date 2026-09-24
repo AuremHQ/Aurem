@@ -18,8 +18,10 @@
  *     modal WITHOUT firing the POST.
  *   • Once `markRollbackTerminal(loopId)` is called (simulating the
  *     OperationHistory stream landing a terminal rollback event),
- *     the ShippedRow button label transitions from
- *     "Rolling back — see history" to "Rolled back — view history".
+ *     the ShippedRow button label transitions from "Rolling back…"
+ *     to "Rolled back" (P2-D, this round: canonical wording via the
+ *     shared ShipApproveCard — was locally "...— see history"/
+ *     "...— view history" before the 3-surface ship-UI merge).
  *   • The button's `data-rollback-phase` attribute reflects the
  *     lifecycle: idle → submitting → handed-off → completed.
  */
@@ -167,7 +169,11 @@ describe("Iter 362 · Bug C — rollback button label resets after terminal", ()
 
     // Post-POST — handed off.
     expect(row.getAttribute("data-rollback-phase")).toBe("handed-off");
-    expect(btn().textContent).toContain("Rolling back — see history");
+    // P2-D (this round) — canonical "Rolling back…" wording via the
+    // shared ShipApproveCard/shipStatus.js (was the row-local
+    // "Rolling back — see history" string; founder explicitly asked
+    // for ONE canonical label across all 3 ship surfaces).
+    expect(btn().textContent).toContain("Rolling back");
 
     // Bug C fix — OperationHistory's stream signals terminal completion.
     // ShippedRow's polling effect must transition phase → "completed"
@@ -180,7 +186,7 @@ describe("Iter 362 · Bug C — rollback button label resets after terminal", ()
       () => expect(row.getAttribute("data-rollback-phase")).toBe("completed"),
       { timeout: 1500 },
     );
-    expect(btn().textContent).toContain("Rolled back — view history");
+    expect(btn().textContent).toContain("Rolled back");
     // Contract 3c — button is NO LONGER stuck at "Rolling back...".
     expect(btn().textContent).not.toContain("Rolling back");
   });
@@ -202,6 +208,6 @@ describe("Iter 362 · Bug C — rollback button label resets after terminal", ()
     // Advance real time a bit to prove the polling doesn't auto-flip.
     await new Promise((r) => setTimeout(r, 800));
     expect(row.getAttribute("data-rollback-phase")).toBe("handed-off");
-    expect(btn().textContent).toContain("Rolling back — see history");
+    expect(btn().textContent).toContain("Rolling back");
   });
 });

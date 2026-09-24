@@ -1,0 +1,31 @@
+{
+  "summary": "Independent re-verification of the 2-gap ticket (self-bug tool_error detection + project brain memory finding). All 11 new dedicated tests pass, full targeted regression suite passes (157/157), 5 pre-existing out-of-scope failures reproduce with the same signatures as pre-fix baseline, live-pipeline direct-DB repro fires new tool_error rows with correct sources for BOTH incidents (internal_directive_guard + handoff_diff_safety_guard), Part A regression via /chat/send (exec_usage/injection_scanner prompt) returns cleanly with leak_stripped=true and no leaked directive text, dead_end_leak sibling category unaffected, Part B live HTTP repro confirms brain updated_at is UNCHANGED after a no-keyword-match turn and correctly bumps + adds redis/django tech_stack + new decision row after a decision-phrase turn on p_r10_testbed_e2e, benign /chat/send turn creates ZERO false-positive tool_error entries. Documented pre-existing asymmetry (turn.py has no update_brain_from_conversation call) grep-confirmed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "services/chat_helpers.py:73", "issue": "RuntimeWarning 'coroutine emit was never awaited' when apply_output_guards is called with no running loop (expected fallback branch), cosmetic only — test_no_running_loop_never_raises still passes and the guard's rewrite return value is unaffected"}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_2026_02_self_bug_tool_error_wiring.py",
+    "/app/backend/tests/test_2026_02_project_brain_gap2_finding.py",
+    "/app/test_reports/scripts/part_a_direct_pipeline_repro.py",
+    "/app/test_reports/scripts/part_b_http_repro.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fire-and-forget self_bug.emit() wiring in apply_output_guards() is correctly wrapped in try/except and swallows RuntimeError when no event loop is running — preserves the 'never break the real turn' contract.",
+    "_SOURCE_CAUSES precise mapping preserves self_bug.py's 'no-invented-cause' discipline (unrelated sources fall back to generic tool_error cause).",
+    "Documented (out-of-scope) asymmetry: routers/chat/turn.py (/chat/send) reads brain context but never writes; frontend uses /chat/stream so not the live user path — grep-confirmed unchanged this round. Worth revisiting in a follow-up if any non-frontend caller ever uses /chat/send.",
+    "Narrow keyword/decision-phrase gate in update_brain_from_conversation is by design (lightweight, no LLM) — a QA-heavy conversation history may never trigger it. Consider a low-cost follow-up: capture rough per-project 'no-write turns count' so the admin panel can distinguish 'no brain data because conversation didn't match triggers' from 'no brain data because wiring is broken' without needing to grep code."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (all 11 dedicated + 157 targeted regression tests pass; live proofs A and B both green)", "frontend": "n/a (backend-only ticket)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (admin/founder tier) — from ticket, verified working. /app/memory/test_credentials.md not consulted (backend-only ticket, credentials supplied in ticket).",
+  "seed_data_creation": "Live pipeline proof added 2 NEW real ora_self_bugs rows (source=internal_directive_guard session=qa-indep-part-a-1-*, source=handoff_diff_safety_guard session=qa-indep-part-a-2-*) — real code path, not raw insert. Live HTTP Part B added tech_stack entries 'redis','django' and a new decisions row on project p_r10_testbed_e2e's project_brains doc via the real /chat/stream path.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both gaps are verified fixed/documented-as-designed and independently reproducible. If you re-run the direct-pipeline script, ora_self_bugs tool_error count will keep growing (each run appends 2 rows, dedup key is signature not context.session_id). The 5 pre-existing out-of-scope failures (test_confirm_execution_2026_09_04::test_t_no_duplicate_guard_wiring, test_admin_llm_settings_e2e::TestMockOverride::test_ora_chat_message_returns_mock, test_iter2026_08_27_ora_chat_v2_p1_p5::test_mock_llm_turn_yields_state_deltas_and_final, test_iter2026_08_28_ora_chat_v2_e2e::TestMockLLMTurn::test_mock_llm_stream_delivers_final and ::test_tokens_persisted_on_transcript) are unrelated to this ticket — do not attempt to fix. F39 business-voice word-map duplication is a known, separate open item.",
+  "rca of the issue": "Gap 1: apply_output_guards() had two most-recent guards (strip_leaked_tool_directives, strip_stray_code_blocks_near_handoff) that actively rewrote content but never invoked self_bug.emit('tool_error', ...) — nothing anywhere else emitted tool_error either. Fix added a fire-and-forget _fire_self_bug() call immediately after each guard actually mutates content, threading session_id/user_id kwargs from both real call sites (turn.py, stream.py). Precise per-source cause text added to services/self_bug.py's new _SOURCE_CAUSES dict. Verified live: 2 new rows appear with correct source/session/confidence/severity, benign turns create no rows. Gap 2: not a bug — read/write both key on the same plain-string project_id in the same project_brains collection (confirmed via grep and 2 live turns); update_brain_from_conversation only persists on ~28 hardcoded tech/decision keyword patterns, so a mostly-debugging conversation history genuinely never trips it. Live re-verified: a no-keyword-match /chat/stream turn left updated_at completely unchanged (2026-09-14T04:19:44.901000), a decision-phrase turn bumped it to 2026-09-14T04:42:44.206000 and added redis/django to tech_stack plus a new decisions row. Reported as working-as-designed per ticket instruction."
+}

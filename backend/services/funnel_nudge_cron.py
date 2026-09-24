@@ -14,14 +14,22 @@ stage. Dedup + audit reuse the existing `onboarding_emails` collection
 (campaign="funnel_stage_nudge") so admin tooling has one place to look.
 
 Stages (waterfall — most-advanced progress wins):
-    stage3_no_chat          — has a project, never sent a chat message
+    stage3_no_chat          — has a project, never completed a real task
     stage2_project_pending  — GitHub connected (App install or legacy
                               OAuth link), zero projects  (Luke's case)
     stage1_github_started   — clicked "Connect GitHub" but never
                               finished (no install, no project)
     stage4_fully_inactive   — signed up, zero engagement since
 
-Users who completed the funnel (sent a chat) are excluded entirely.
+Users who completed the funnel (shipped a real task — `first_ship_at`
+set) are excluded entirely. Sending one chat message is NOT enough to
+be "done": 2026-09-08 fix — this used to key off `first_chat_at`,
+which silently dropped anyone who chatted but never shipped anything
+out of EVERY stage bucket (invisible to the nudge cron entirely).
+Realigned to `first_ship_at` (real completed loop task,
+`services/loop_engine.py`) to match the more-correct 5-stage model in
+`routers/admin.py::_compute_stage_buckets()`, which already treated
+"sent_message" as its own distinct stuck stage, not "funnel complete".
 Unsubscribed emails (`email_unsubscribes`) are always skipped.
 
 Public surface:
@@ -44,6 +52,17 @@ logger = logging.getLogger(__name__)
 
 CAMPAIGN     = "funnel_stage_nudge"
 STUCK_HOURS  = 24
+# 2026-09-08 — safety throttle added alongside the first_ship_at fix.
+# The fix retroactively surfaces a backlog of ALREADY-stuck users who
+# were silently hidden by the old first_chat_at bug (confirmed: 135 in
+# this sandbox alone). Without a floor + a per-run cap, the very next
+# cron tick after deploy would email that entire backlog in one shot —
+# looks like a spam blast, not a nudge. MIN_NUDGE_STAGE_AGE_HOURS keeps
+# freshly-stuck users (24-72h) off the very first wave; MAX_NUDGES_PER_RUN
+# drains any remaining backlog gradually, oldest-stuck-first, across
+# multiple daily cron ticks instead of one.
+MIN_NUDGE_STAGE_AGE_HOURS = int(os.environ.get("MIN_NUDGE_STAGE_AGE_HOURS", "72"))
+MAX_NUDGES_PER_RUN = int(os.environ.get("MAX_NUDGES_PER_RUN", "50"))
 PUBLIC_BASE  = os.environ.get("PUBLIC_APP_URL", "https://auremcto.com").rstrip("/")
 SIGNOFF      = "— Tejinder Sandhu, Founder, Aurem"
 
@@ -76,7 +95,7 @@ BODIES = {
         "click Continue to finish connecting it."
     ),
     "stage3_no_chat": (
-        "Your repo is connected and indexed — but you haven't sent ORA a "
+        "Your repo is connected and indexed — but you haven't completed a "
         "task yet.\n\n"
         "Try your first task: ask ORA to fix a bug, add a small feature, or "
         "just explain a file. Takes seconds to see it work."
@@ -306,10 +325,10 @@ async def current_stage_for_user(db, user_id: str) -> Optional[str]:
     """
     u = await db.dev_users.find_one(
         {"user_id": user_id},
-        {"_id": 0, "user_id": 1, "first_chat_at": 1, "github": 1,
+        {"_id": 0, "user_id": 1, "first_ship_at": 1, "github": 1,
          "is_admin": 1, "is_unlimited": 1, "tier": 1},
     )
-    if not u or u.get("first_chat_at"):
+    if not u or u.get("first_ship_at"):
         return None
     if u.get("is_admin") or u.get("is_unlimited") or u.get("tier") == "founder":
         return None
@@ -353,12 +372,21 @@ async def classify_users(db) -> dict[str, list[dict]]:
     candidates = await db.dev_users.find(
         {"email": {"$exists": True, "$ne": ""}},
         {"_id": 0, "user_id": 1, "email": 1, "name": 1, "created_at": 1,
-         "first_chat_at": 1, "is_admin": 1, "is_unlimited": 1, "tier": 1,
+         "first_ship_at": 1, "is_admin": 1, "is_unlimited": 1, "tier": 1,
          "github": 1},
     ).to_list(length=10_000)
+    # 2026-09-22 · Revenue Recovery audit — this classifier feeds BOTH
+    # the nudge-email send pipeline and the /admin/onboarding-funnel
+    # dashboard. It excluded internal accounts (is_admin/is_unlimited/
+    # founder) but never QA/e2e synthetic accounts, so every dashboard
+    # count and the eligible-for-nudge cohort were inflated by test
+    # traffic (services/synthetic_filter.py already exists and is used
+    # elsewhere, e.g. admin_analytics.py, but was never wired in here).
+    from services.synthetic_filter import is_synthetic
     candidates = [
         u for u in candidates
         if not (u.get("is_admin") or u.get("is_unlimited") or u.get("tier") == "founder")
+        and not is_synthetic(u.get("email"))
     ]
     ids = [u["user_id"] for u in candidates if u.get("user_id")]
     if not ids:
@@ -433,8 +461,8 @@ async def classify_users(db) -> dict[str, list[dict]]:
     buckets: dict[str, list[dict]] = {s: [] for s in STAGES}
     for u in candidates:
         uid = u["user_id"]
-        if u.get("first_chat_at"):
-            continue  # funnel complete — no nudge needed
+        if u.get("first_ship_at"):
+            continue  # funnel complete — real task shipped, no nudge needed
 
         has_project = uid in users_with_project
         has_github  = uid in active_installs or bool((u.get("github") or {}).get("login"))
@@ -458,21 +486,30 @@ async def classify_users(db) -> dict[str, list[dict]]:
             continue  # not stuck long enough yet
 
         u["_stage"] = stage
+        u["_stuck_since"] = stuck_since
         buckets[stage].append(u)
     return buckets
 
 
 async def eligible_users(db) -> list[dict]:
-    """Flat list across all 4 stages, minus already-sent / unsubscribed."""
+    """Flat list across all 4 stages, minus already-sent / unsubscribed
+    / not-stuck-long-enough-for-a-FIRST-wave-email yet. Sorted oldest-
+    stuck-first so a backlog (e.g. right after a classifier fix) drains
+    fairly instead of in creation-order or randomly."""
     buckets = await classify_users(db)
+    now_epoch = _now().timestamp()
+    min_age_seconds = MIN_NUDGE_STAGE_AGE_HOURS * 3600
     out: list[dict] = []
     for stage, users in buckets.items():
         for u in users:
+            if (now_epoch - (u.get("_stuck_since") or 0)) < min_age_seconds:
+                continue  # too fresh for a first nudge wave
             if await _has_been_sent(db, u["user_id"], stage):
                 continue
             if await _is_unsubscribed(db, u.get("email", "")):
                 continue
             out.append(u)
+    out.sort(key=lambda u: u.get("_stuck_since") or 0)
     return out
 
 
@@ -508,9 +545,14 @@ async def send_stage_nudge(user: dict, *, dry_run: bool = False) -> dict:
 
 async def run_nudge_batch(db, *, dry_run: bool = False) -> dict:
     summary = {"ok": True, "dry_run": bool(dry_run), "sent": 0, "skipped": 0,
-               "failed": 0, "recipients": [], "errors": []}
+               "failed": 0, "recipients": [], "errors": [], "deferred_to_next_run": 0}
     cohort = await eligible_users(db)
-    for u in cohort:
+    # eligible_users() is already oldest-stuck-first — capping here
+    # sends the most-overdue users first and lets the rest drain over
+    # the next daily tick(s) instead of one mass simultaneous blast.
+    to_send, deferred = cohort[:MAX_NUDGES_PER_RUN], cohort[MAX_NUDGES_PER_RUN:]
+    summary["deferred_to_next_run"] = len(deferred)
+    for u in to_send:
         res = await send_stage_nudge(u, dry_run=dry_run)
         summary["recipients"].append({
             "user_id": res.get("user_id"), "email": res.get("email"),

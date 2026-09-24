@@ -1,0 +1,41 @@
+{
+  "summary": "Follow-up frontend + backend spot-check verifying the pivot from the old RunPod-based ORA Chat Video-mode design to the new Deepgram-only (fal.ai LatentSync via Emergent Universal Key) design. All 5 review-request scenarios PASS. AdminSettings 'Video generation keys' card is now Deepgram-only (no runpod fields in DOM or text); Save with fake 'dg_test_key_12345' flips badge to 'ready' and state to 'configured (……2345)'; Cancel closes form without persisting. ORA Chat drawer video mode: keys-missing banner correctly hidden now that Deepgram is set, Generate button correctly disabled without script and enabled with (deepgram+avatar+script). POST /admin/video/jobs returns 202 (NOT 409) and job progresses through real stage 'Generating voice (Deepgram Aura-2)…' before failing with 'deepgram_auth_failed' — expected since key is fake, proves readiness gate is now Deepgram-only. Backend spot-checks: 401 without auth (GET+PUT), 400 with empty body ('Provide a Deepgram API key to update'). No RunPod / MuseTalk textual references anywhere on the card or panel.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "tests_executed": {
+    "admin_card_no_runpod_fields": "PASS (all 4 old runpod testids absent, card html contains no 'runpod' substring)",
+    "admin_card_deepgram_only_input": "PASS (video-pipeline-deepgram-input type=password visible when Add key clicked)",
+    "admin_card_initial_not_configured_badge": "PASS ('not configured' shown initially)",
+    "admin_card_cancel_closes_form": "PASS (cancel closes form, no save)",
+    "admin_card_save_flips_to_ready": "PASS (badge='ready', state='configured (……2345)' after saving 'dg_test_key_12345')",
+    "backend_get_secrets_no_auth_401": "PASS",
+    "backend_put_secrets_no_auth_401": "PASS",
+    "backend_put_empty_body_400": "PASS (detail='Provide a Deepgram API key to update')",
+    "ora_drawer_default_chat_mode": "PASS (ora-chat-input visible on open)",
+    "ora_drawer_mode_toggle_video": "PASS (video-gen-panel renders on click)",
+    "video_panel_no_runpod_musetalk_text": "PASS (neither string appears in panel)",
+    "keys_missing_banner_absent_after_deepgram": "PASS (banner not in DOM once deepgram configured)",
+    "avatar_preview_persists_from_prev_round": "PASS (previous R2 avatar still shown)",
+    "generate_btn_disabled_without_script": "PASS",
+    "generate_btn_enabled_with_deepgram_avatar_script": "PASS",
+    "post_video_jobs_returns_202_not_409": "PASS (202, job_id returned)",
+    "job_status_shows_real_stage_transition": "PASS (transitions through 'Generating voice (Deepgram Aura-2)…' then 'deepgram_auth_failed — check the API key in Admin Settings' — EXPECTED failure with fake key, proves readiness gate is deepgram-only)",
+    "chat_mode_regression_after_video": "PASS (ora-chat-input restored on chat tab click)"
+  },
+  "test_report_links": ["/app/test_reports/screenshots/vpk2_card_saved.png", "/app/test_reports/screenshots/vpk2_final.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routers/admin_video_pipeline.py PUT /secrets is now Deepgram-only-mandatory (raises 400 if deepgram_api_key falsy) — this is correct for the new design, but note that secrets_store.set_secrets still tolerates None and just no-ops if key is None. Fine as long as the only caller is this router; worth a code comment.",
+    "services/video_pipeline/secrets_store.py get_secrets swallows EncryptionNotConfigured silently and returns {'deepgram_api_key': None} — pipeline.py should verify this and surface a clearer error than a downstream deepgram_auth_failed if the Fernet key itself is missing. Minor.",
+    "VideoGenPanel.jsx `ready = keys && keys.deepgram_configured` — correct simplification. Previously the panel would also gate on runpod_configured; that field is gone from the API response and any lingering reference has been removed.",
+    "The 409 message in routers/admin_video_pipeline.py create_job says 'Add your Deepgram key in Admin Settings → Video generation keys first' and no longer mentions RunPod — verified in code. Could not exercise the 409 path live because Deepgram was already configured mid-test, but the code path is unambiguous."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (3/3 spot-checks: 401x2, 400x1)", "frontend": "100% (15/15 scenarios)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview, from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Saved deepgram_api_key='dg_test_key_12345' (fake, sandbox) to admin_settings via UI. Left the pre-existing test avatar in R2 (uploaded in prev round). Created 1 video-pipeline job that failed at deepgram_auth_failed as expected.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Deepgram key on test@aurem.dev in this preview pod is still the fake 'dg_test_key_12345' (last 4: 2345). If you need a fresh 'not configured' state to exercise the 409 path, delete the admin_settings doc with _id='video_pipeline_secrets' first (or clear the deepgram_api_key_enc field). The 15/15 UI checks from iteration_video_pipeline_admin_ui_2026_01.json plus this round's Deepgram-only pivot are both green.",
+  "rca of the issue": "N/A — no bugs found. Pivot from RunPod → fal.ai LatentSync (Emergent Universal Key) is cleanly implemented at both API surface (secrets_store, admin_video_pipeline router) and UI (VideoPipelineKeysCard, VideoGenPanel). Readiness gate correctly changed from Deepgram+RunPod to Deepgram-only."
+}

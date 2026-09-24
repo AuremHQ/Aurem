@@ -48,13 +48,42 @@ def last_heartbeat_iso() -> str:
 
 
 def _git_sha() -> str:
+    """2026-09-11 — real deploy-log bug: on Emergent prod pods there is
+    no `git` binary AND no `.git/` folder, so the old `subprocess`-only
+    implementation ALWAYS fell through to `os.getenv("BUILD_HASH",
+    "unknown")` — and since Emergent doesn't inject `BUILD_HASH` yet
+    (see main.py::_resolve_build_hash's own docstring), every single
+    production boot recorded `sha="unknown"`. That broke
+    `_classify_boot_reason`'s change-detection (`sha != prev["sha"]`
+    can never be true when both sides are always "unknown"), so a
+    perfectly normal multi-pod restart during a Kubernetes rolling
+    deploy was misclassified as `crash_or_kill` instead of
+    `deploy_new_code` — tripping a FALSE "RESTART LOOP DETECTED"
+    CRITICAL incident/banner on deploys that never actually had a
+    crash loop at all. Mirrors main.py's `_resolve_build_hash`
+    priorities 1–2 (env var, then the checked-in `backend/.build_info`
+    file) so this module sees the same real SHA prod already has.
+    """
+    env_h = (os.getenv("BUILD_HASH") or os.getenv("GIT_COMMIT")
+             or os.getenv("VERCEL_GIT_COMMIT_SHA"))
+    if env_h:
+        return env_h[:7]
+    try:
+        info_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".build_info")
+        if os.path.exists(info_path):
+            with open(info_path, "r", encoding="utf-8") as fh:
+                baked = fh.read().strip()
+            if baked:
+                return baked[:7]
+    except Exception:
+        pass
     try:
         import subprocess
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], cwd="/app",
             stderr=subprocess.DEVNULL, timeout=3).decode().strip()
     except Exception:
-        return os.getenv("BUILD_HASH", "unknown")
+        return "unknown"
 
 
 async def _classify_boot_reason(db, sha: str) -> str:
@@ -126,9 +155,24 @@ async def record_boot(db, *, reason: str = "supervisor_start") -> dict:
             {"ts": {"$gte": window_start}})
         summary["boots_in_window"] = boots_in_window
 
-        if boots_in_window >= LOOP_THRESHOLD:
+        # 2026-09-09 — false "RESTART LOOP DETECTED" CRITICAL incident
+        # fix. This counted EVERY boot in the window toward the trip
+        # threshold, including `deploy_new_code`/`clean_restart` (an
+        # intentional rolling deploy or a platform-managed restart —
+        # not a crash at all). `recovery_status()` already made this
+        # exact crash-only distinction below for the health-score
+        # metric (see its 2026-08-23 doc comment) but the actual
+        # alert-tripping check here was never updated to match, so 3
+        # legitimate deploys inside LOOP_WINDOW_S (routine during an
+        # active dev/ship session) opened a G20 "hard boot failure
+        # masked" incident even though nothing crashed. Mirrors the
+        # same `reason == "crash_or_kill"` filter.
+        crash_boots_in_window = await db.process_boots.count_documents(
+            {"ts": {"$gte": window_start}, "reason": "crash_or_kill"})
+
+        if crash_boots_in_window >= LOOP_THRESHOLD:
             summary["loop_detected"] = True
-            await _trip_loop(db, boots_in_window, doc["sha"])
+            await _trip_loop(db, crash_boots_in_window, doc["sha"])
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[G19] record_boot best-effort failure: %r", e)
     return summary
@@ -239,8 +283,13 @@ async def resolve_if_stable(db) -> bool:
     if db is None:
         return False
     try:
+        # 2026-09-09 — same crash-only fix as record_boot() above:
+        # only `crash_or_kill` boots should gate resolution, so a
+        # deploy-triggered alert clears the moment boots stop, not
+        # only once the RAW (deploy-inclusive) count ages out.
         boots = await db.process_boots.count_documents(
-            {"ts": {"$gte": time.time() - LOOP_WINDOW_S}})
+            {"ts": {"$gte": time.time() - LOOP_WINDOW_S},
+             "reason": "crash_or_kill"})
         if boots < LOOP_THRESHOLD:
             res = await db.topup_alerts.update_many(
                 {"integration_id": "process_recovery", "status": "active"},

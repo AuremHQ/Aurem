@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only verification of the round-2 fix for the GitHub connect fresh-install isolation bug (reconfigure-one-org leaking siblings). Ran all 4 vitest tests in useGitHubConnectStatus.freshIsolation.test.js plus adjacent regression suites (repoSyncLag, claimFallback, NewUserWizard.connectRefinement) = 15/15 pass. Verified autoComplete='off' is present on both wizard-repo-input and wizard-branch-input in NewUserWizard.jsx (lines 1043, 1052). Live E2E via GitHub SSO round-trip was NOT feasible in the sandbox (real GitHub popup can't complete), same limitation as round 1 — relying on unit coverage as intended.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.freshIsolation.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.repoSyncLag.test.js",
+    "/app/frontend/src/hooks/__tests__/useGitHubConnectStatus.claimFallback.test.js",
+    "/app/frontend/src/components/__tests__/NewUserWizard.connectRefinement.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix logic in useGitHubConnectStatus.js (lines 198-204) is correct: preConnectIdsRef is a Map(id -> repoCount) snapshotted at startConnect(); newOrChangedIds filters current ids where either (a) id is not in snapshot (brand new install) OR (b) current repo count != snapshotted repo count. An untouched sibling org (same id, same repo count) is correctly NOT marked fresh.",
+    "New test t_reconfiguring_one_existing_org_does_not_leak_other_unrelated_orgs is meaningful (not tautological): it seeds TWO pre-existing installs (auravw id=10 with 1 repo, VeroCapper id=20 with 1 repo), triggers startConnect(), then resolves the poll with auravw grown to 2 repos and VeroCapper byte-for-byte unchanged. Asserts freshInstallIds === ['10'] and explicitly not-contains '20'. Would fail under the round-1 fallback (which marked ALL currently-active as fresh when no new id appeared).",
+    "Minor observation: the poll-success `.find(...)` inside `.filter(...)` (line 202) is O(n^2) on installation count. Acceptable at n<=50 orgs which is realistic; noting for future micro-refactor if a user ever has hundreds of GitHub App installations."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only round)", "frontend": "100% (15/15 vitest)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (not used — live E2E skipped due to sandbox GitHub SSO limitation)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Round-2 fix for freshInstallIds leak (reconfiguring one existing org used to promote all pre-existing installs to 'fresh'). Fix: snapshot repo COUNT per id (Map) in preConnectIdsRef, mark fresh only if id is new OR repo count changed. All 4 freshIsolation tests + 11 adjacent tests pass. autoComplete='off' verified on wizard-repo-input/wizard-branch-input inputs. Live GitHub OAuth E2E remains infeasible in sandbox.",
+  "rca of the issue": "Round 1 poll-diff fallback (invoked when GitHub's postMessage doesn't arrive — common for reconfigure-existing-org since no new installation_id is minted) treated 'no new id' as 'mark all currently-active installations fresh'. On an account with multiple prior installs, this promoted every unrelated sibling org (e.g. VeroCapper) into freshInstallIds when the user only reconfigured one org (e.g. auravw). Round-2 fix snapshots per-installation repo-count in a Map before startConnect(), and post-poll only marks an installation fresh if its id is brand-new OR its repo grant count changed vs snapshot. Untouched siblings retain matching count → never marked fresh. Verified by the new regression-lock test."
+}

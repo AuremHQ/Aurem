@@ -1,0 +1,34 @@
+{
+  "summary": "Full E2E happy-path proof for GitHub App connect + Add Project wizard on THIS preview pod. Logged in as test@aurem.dev (founder), opened /projects, clicked Add Project, wizard Step 1 rendered real repo picker instantly (no 'Checking your GitHub connection...' spinner, no 'Connection didn't finish' error) fed by useGitHubConnectStatus polling /api/aurem-dev/github/app/status. All 8 expected polarisbuiltinc-wq repos rendered as data-testid=add-wizard-repo-{full_name} buttons (Aurem, claude-ai-mcp, developer-dashboard-design, ora-grounding, auremdev-update, aurem-rollback-testbed, aurem-push-proof-disposable, Aurem-1). Clicked polarisbuiltinc-wq/Aurem-1 -> instantly advanced to wizard-step-2 with 'Access to polarisbuiltinc-wq/Aurem-1 verified · Connected via GitHub App · @polarisbuiltinc-wq' and pre-filled project name 'Aurem-1'. Clicked Save & Open Chat -> navigated to /dashboard within ~2s, toast 'Connected polarisbuiltinc-wq/Aurem-1 — opening chat...' shown, top nav updated to 'polarisbuiltinc-wq/Aurem-1 › main', ORA chat greeting rendered, scope pill 'Aurem-1 · polarisbuiltinc-wq/Aurem-1@main' shown. Backend /api/aurem-dev/github/app/status confirmed installation_active:true, state:connected, 8 repos — the exact endpoint the wizard polls is healthy and NOT stuck. Founder's reported 'Connection didn't finish' issue is NOT reproducible on this preview pod; the flow works end-to-end as designed. Consistent with prior finding that the bug is production (auremcto.com) specific — likely GitHub-App-config mismatch on prod, not a code defect on this pod.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/cto/projects/list", "issue": "Returned empty projects array immediately post-save even though the new project persisted (chat loaded it correctly, top bar shows it). Likely a tier/scope filter or eventual-consistency read; not blocking wizard flow but worth a look."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots/e2e_01_projects.png",
+    "/app/test_reports/screenshots/e2e_02_wizard_open.png",
+    "/app/test_reports/screenshots/e2e_03_repo_picker.png",
+    "/app/test_reports/screenshots/e2e_04_step2.png",
+    "/app/test_reports/screenshots/e2e_05_dashboard.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "GitHub App connect flow code on this preview pod is sound and behaves as spec'd — no code-level fix required here. If the founder is still seeing the stuck state on production (auremcto.com), investigation should focus on: (a) the GitHub App's Callback/Setup URL configured under github.com/settings/apps/... pointing to the correct prod host, (b) the GITHUB_APP_* env vars on prod matching the App's actual client_id/private_key/webhook_secret, (c) prod DB actually receiving the /api/aurem-dev/github/app/callback hit (currently zero DB entries for RrootsBeauty in preview which is expected — need to confirm on prod pod).",
+    "Minor: repo picker 'add-wizard-repo-picker' outer container also matches the selector prefix add-wizard-repo- — harmless but consider renaming the wrapper testid to add-wizard-repo-picker-container to avoid future test ambiguity."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (founder tier, admin, unlimited)",
+  "seed_data_creation": "Created 1 project via the wizard on this preview pod: polarisbuiltinc-wq/Aurem-1 for the test_admin_001 user (via the actual UI flow, not seeded).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Full E2E happy-path proof captured. If retesting: (1) the founder's account (RrootsBeauty) does NOT exist on this preview pod, only test@aurem.dev with the polarisbuiltinc-wq installation does. (2) All 8 polarisbuiltinc-wq repos are now 'free-ish' — after this run polarisbuiltinc-wq/Aurem-1 is connected as a project owned by test_admin_001, so next repo-picker E2E should pick one of the other 7. (3) /api/cto/projects/list returning [] for this account is worth a separate investigation but did not block the wizard flow.",
+  "rca of the issue": "Founder-reported 'Connection didn't finish — please try again' cannot be reproduced on this preview pod. Root cause is environment-specific to production (auremcto.com): the founder's GitHub install callback likely never reached the prod backend (or reached a stale deployment), OR the prod GitHub App is configured with a Callback URL pointing to a different host than the current prod pod. This preview pod's callback code path (verified via curl in a prior round) and the full UI flow (verified in this round) both work correctly end-to-end. Mitigation for prod: (a) verify GitHub App Setup URL / Callback URL in github.com/settings/apps/ points to the current auremcto.com prod host, (b) inspect prod backend logs around the founder's recording timestamp for any /api/aurem-dev/github/app/callback GET, (c) confirm GITHUB_APP_ID / private key / webhook secret env vars on prod match the actual App."
+}

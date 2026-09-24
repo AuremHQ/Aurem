@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import os
-import asyncio
 import re
 import time
 from datetime import datetime, timezone, timedelta
@@ -31,17 +30,14 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin_dep
+from cto_services.auth import require_admin_dep
 from cto_services.db import get_db, require_db
-from services.usage import get_usage
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
 from services.admin_analytics_cache import (
-    cached_agg,
     invalidate as _cache_invalidate,
-    mongo_swr_cache,
     stats as _cache_stats,
 )
 
@@ -849,15 +845,155 @@ async def admin_github_app_diagnostics(
 @router.get("/github-webhook-fence")
 async def admin_github_webhook_fence(
     authorization: Optional[str] = Header(None),
+    event_filter: Optional[str] = None,
+    recent_limit: int = 15,
+    scan_limit: int = 15,
 ):
     """R5c — App Fence Tile. Live read-only check of the GitHub App's
     webhook pipeline: which content events are actually subscribed on
-    GitHub's side, plus the last 15 real delivery attempts with
+    GitHub's side, plus the last N real delivery attempts with
     success/fail. Feeds the "GitHub Webhook Fence" card on
-    AdminSystemHealth. Safe to poll."""
+    AdminSystemHealth. Safe to poll.
+
+    2026-09-16 — `event_filter` (e.g. "installation") lets an admin cut
+    through high-frequency noise (`workflow_job` fires many times per
+    CI run and can fill the entire unfiltered window) to find the real
+    delivery attempt for an install-specific incident report."""
     await _require_admin(authorization)
     from services import github_app as _ga
-    return await _ga.webhook_fence_status()
+    return await _ga.webhook_fence_status(
+        recent_limit=max(1, min(100, recent_limit)),
+        event_filter=event_filter,
+        scan_limit=max(1, min(30, scan_limit)),
+    )
+
+
+# ────────────────────────────────────────────────────────────────────
+# Unlinked GitHub installations — 2026-09-16 (founder-reported
+# incident: rebecca@millingtonstudio.com's GitHub-side App install +
+# 7-repo selection succeeded — confirmed live against GitHub's own
+# API — but Aurem's DB had zero record of it, and there was no poll-
+# based fallback to GitHub's push-only webhook. Three tools:
+#   1. GET  /admin/github/installations/reconcile-status — reconcile
+#      now (pulls the live truth from GitHub, backfills any missing
+#      row as an unlinked "ghost"), then list every unlinked row.
+#   2. POST /admin/github/installations/reconcile — same reconcile
+#      pass, no listing (used by the background cron + a manual
+#      "Reconcile now" button).
+#   3. POST /admin/github/installations/{id}/link — admin manually
+#      attaches an unlinked installation to a user by email, once
+#      they've confirmed (via step 1's live GitHub data) which
+#      account it actually is.
+# ────────────────────────────────────────────────────────────────────
+
+class GithubInstallLinkBody(BaseModel):
+    email: str
+
+
+@router.get("/github/installations/unlinked")
+async def github_installations_unlinked(
+    authorization: Optional[str] = Header(None),
+    reconcile_first: bool = True,
+):
+    """Lists every `github_installations` row with no `user_id` —
+    i.e. GitHub confirms the App is installed, but no Aurem account
+    is attached to it yet. `reconcile_first=True` (default) runs a
+    live reconciliation pass against GitHub first, so a genuinely
+    NEW orphan (webhook missed entirely) shows up immediately instead
+    of waiting for the next cron tick."""
+    await _require_admin(authorization)
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+
+    from services import github_app as _ga
+    reconcile_result = None
+    if reconcile_first:
+        reconcile_result = await _ga.reconcile_installations(db)
+
+    rows = await db.github_installations.find(
+        {"$or": [{"user_id": None}, {"user_id": {"$exists": False}}]},
+        {"_id": 0},
+    ).sort("installed_at", -1).to_list(200)
+    for r in rows:
+        for k in ("installed_at", "updated_at"):
+            v = r.get(k)
+            if isinstance(v, (int, float)):
+                from datetime import datetime as _dt, timezone as _tz
+                try:
+                    r[k] = _dt.fromtimestamp(v, tz=_tz.utc).isoformat()
+                except (ValueError, OSError, OverflowError):
+                    pass
+    return {"ok": True, "rows": rows, "reconcile": reconcile_result}
+
+
+@router.post("/github/installations/reconcile")
+async def github_installations_reconcile(
+    authorization: Optional[str] = Header(None),
+):
+    """On-demand trigger for the same reconciliation pass the
+    background cron runs — lists every installation directly from
+    GitHub (App-JWT, ground truth) and backfills any `installation_id`
+    missing from `github_installations`. Read-mostly: only writes
+    ghost rows for installs GitHub knows about that we don't, and
+    resyncs the active/suspended flag — never touches user_id."""
+    await _require_admin(authorization)
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+    from services import github_app as _ga
+    return await _ga.reconcile_installations(db)
+
+
+@router.post("/github/installations/{installation_id}/link")
+async def github_installation_link(
+    installation_id: int,
+    body: GithubInstallLinkBody,
+    authorization: Optional[str] = Header(None),
+):
+    """Manually attach an unlinked installation to a user by email —
+    the admin-side resolution for an orphan the self-serve `/claim`
+    window (15 min) already expired for. Refuses to relink an
+    installation that already belongs to a DIFFERENT user (must be
+    unlinked first via GitHub-side uninstall/reinstall) — this tool
+    only fills in a MISSING link, never overwrites an existing one."""
+    admin = await _require_admin(authorization)
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+
+    row = await db.github_installations.find_one({"installation_id": int(installation_id)})
+    if not row:
+        raise HTTPException(404, "installation_not_found")
+    if row.get("user_id"):
+        raise HTTPException(409, detail={
+            "error": "already_linked",
+            "message": f"installation {installation_id} is already linked to a user "
+                       "— unlink on GitHub's side first if this is wrong.",
+        })
+
+    user = await db.dev_users.find_one({"email": body.email.strip().lower()})
+    if not user:
+        raise HTTPException(404, "user_not_found_for_email")
+
+    now = time.time()
+    await db.github_installations.update_one(
+        {"installation_id": int(installation_id)},
+        {"$set": {"user_id": user["user_id"], "linked_at": now}},
+    )
+    try:
+        await db.admin_audit.insert_one({
+            "ts": datetime.now(timezone.utc),
+            "actor": admin.get("email") or admin.get("user_id"),
+            "action": "manual_github_install_link",
+            "installation_id": int(installation_id),
+            "linked_user_id": user["user_id"],
+            "linked_email": body.email,
+        })
+    except Exception:
+        pass
+    return {"ok": True, "installation_id": int(installation_id),
+            "linked_user_id": user["user_id"], "email": body.email}
 
 
 class HouseRulesPayload(BaseModel):

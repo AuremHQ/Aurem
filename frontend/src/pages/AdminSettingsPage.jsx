@@ -190,6 +190,21 @@ export default function AdminSettingsPage() {
           (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL) when nothing's active. */}
       <LlmSettingsCard />
 
+      {/* 2026-09-10 — founder-reported bug: the Admin ORA Chat's
+          daily token cap was a hardcoded env var with no way to edit
+          it here, unrelated to the $ balance shown in that chat's
+          header — hitting it while $ balance was fine looked like a
+          bug. Editable now, same "wins over env var, no restart"
+          pattern as the provider configs above. */}
+      <OraChatLimitsCard />
+
+      {/* 2026-09-10 — ORA Chat "Video generation" mode (Deepgram
+          Aura-2 TTS + RunPod MuseTalk lip-sync). Deepgram/RunPod keys
+          live in Mongo (Fernet-encrypted, same store as the LLM
+          provider configs), never in backend/.env — paste once here,
+          the pipeline picks them up immediately. */}
+      <VideoPipelineKeysCard />
+
       {/* Iter 158 — thinking-hint manager (tier-aware upsell pills
           shown next to the chat spinner). Full CRUD + global toggle
           + delay slider. */}
@@ -918,6 +933,269 @@ function LlmSettingsCard() {
             </button>
             <button data-testid="admin-llm-form-cancel" className="btn-secondary"
                     style={{ fontSize: 12, padding: "6px 14px" }} onClick={cancelForm}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </Card>
+    </div>
+  );
+}
+
+function OraChatLimitsCard() {
+  const [limits, setLimits] = useState(null);
+  const [form, setForm] = useState({ rate_limit_per_hour: "", daily_token_cap: "" });
+  const [saving, setSaving] = useState(false);
+
+  async function refresh() {
+    try {
+      const r = await api.get("/admin/llm/ora-chat-limits");
+      setLimits(r.data);
+      setForm({
+        rate_limit_per_hour: String(r.data.rate_limit_per_hour),
+        daily_token_cap: String(r.data.daily_token_cap),
+      });
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Could not load ORA Chat limits", kind: "error" });
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const r = await api.put("/admin/llm/ora-chat-limits", {
+        rate_limit_per_hour: Number(form.rate_limit_per_hour),
+        daily_token_cap: Number(form.daily_token_cap),
+      });
+      setLimits(r.data);
+      toast({ message: "ORA Chat limits saved — takes effect immediately, no restart.", kind: "success" });
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Could not save ORA Chat limits", kind: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (limits === null) return null;
+
+  return (
+    <Card data-testid="ora-chat-limits-card" style={{ padding: 18, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <Brain size={14} style={{ color: "var(--accent, #ff8a2a)" }} />
+        <h3 style={{ fontSize: 13, margin: 0 }}>ORA Chat limits</h3>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 14, lineHeight: 1.5 }}>
+        Caps how much the <strong>Admin ORA Chat</strong> (the chat panel in this
+        admin area) can be used per admin — a separate, token-count limit,
+        <strong> unrelated to your $ balance</strong> shown in that chat's header.
+        Hitting this shows "Stream error: daily_token_cap" even with $ left.
+        Set either field to <code>0</code> for unlimited. Saves instantly, no restart.
+      </div>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 180 }}>
+          <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)",
+                          textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            Messages / hour
+          </label>
+          <input
+            data-testid="ora-chat-limits-rate-input"
+            className="input"
+            type="number" min="0"
+            value={form.rate_limit_per_hour}
+            onChange={(e) => setForm({ ...form, rate_limit_per_hour: e.target.value })}
+            style={{ width: "100%" }} />
+        </div>
+        <div style={{ minWidth: 180 }}>
+          <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)",
+                          textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            Daily token cap
+          </label>
+          <input
+            data-testid="ora-chat-limits-cap-input"
+            className="input"
+            type="number" min="0"
+            value={form.daily_token_cap}
+            onChange={(e) => setForm({ ...form, daily_token_cap: e.target.value })}
+            style={{ width: "100%" }} />
+        </div>
+      </div>
+      <button
+        data-testid="ora-chat-limits-save-btn"
+        className="btn-primary"
+        onClick={save}
+        disabled={saving}
+        style={{ marginTop: 14, fontSize: 12 }}>
+        {saving ? "Saving…" : "Save"}
+      </button>
+    </Card>
+  );
+}
+
+function VideoPipelineKeysCard() {
+  const [data, setData] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [deepgramInput, setDeepgramInput] = useState("");
+  const [falInput, setFalInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [removingFal, setRemovingFal] = useState(false);
+  const [saveResult, setSaveResult] = useState(null);
+
+  async function refresh() {
+    try {
+      const r = await api.get("/admin/video/secrets");
+      setData(r.data);
+    } catch (e) {
+      setData({ error: e?.response?.data?.detail || "Could not load video generation keys" });
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  function startEdit() {
+    setDeepgramInput("");   // never pre-fill secrets
+    setFalInput("");        // never pre-fill secrets
+    setSaveResult(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    const deepgram = deepgramInput.trim();
+    const fal = falInput.trim();
+    if (!deepgram && !fal) {
+      toast({ message: "Paste a Deepgram and/or fal.ai key to save.", kind: "warning" });
+      return;
+    }
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      const body = {};
+      if (deepgram) body.deepgram_api_key = deepgram;
+      if (fal) body.fal_api_key = fal;
+      await api.put("/admin/video/secrets", body);
+      const msg = "Saved — the video pipeline picks this up on the next generate, no restart.";
+      toast({ message: msg, kind: "success" });
+      setSaveResult({ ok: true, message: msg });
+      setEditing(false);
+      setDeepgramInput("");
+      setFalInput("");
+      await refresh();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      const msg = typeof d === "string" ? d : "Save failed.";
+      toast({ message: msg, kind: "error" });
+      setSaveResult({ ok: false, message: `Save failed: ${msg}` });
+    } finally { setSaving(false); }
+  }
+
+  async function removeFalKey() {
+    setRemovingFal(true);
+    try {
+      await api.delete("/admin/video/secrets/fal-key");
+      toast({ message: "fal.ai key removed — lip-sync now falls back to your Universal Key.", kind: "success" });
+      await refresh();
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Could not remove key.", kind: "error" });
+    } finally { setRemovingFal(false); }
+  }
+
+  if (!data) {
+    return (
+      <Card style={{ padding: 18, marginTop: 16 }}>
+        <div style={{ color: "var(--text-faint)", fontSize: 12 }}>Loading video generation keys…</div>
+      </Card>
+    );
+  }
+
+  const ready = data.deepgram_configured;
+
+  return (
+    <div data-testid="video-pipeline-keys-card">
+    <Card style={{ padding: 18, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Cpu size={14} style={{ color: "var(--accent, #ff8a2a)" }} />
+          <h3 style={{ fontSize: 13, margin: 0 }}>Video generation keys</h3>
+          <Badge color={ready ? "var(--ok)" : "var(--warn)"}>
+            {ready ? "ready" : "not configured"}
+          </Badge>
+        </div>
+        {!editing && (
+          <button data-testid="video-pipeline-keys-edit" className="btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 14px" }} onClick={startEdit}>
+            {ready ? "Rotate / add keys" : "Add keys"}
+          </button>
+        )}
+      </div>
+
+      {saveResult && (
+        <div style={{ padding: "8px 12px", marginBottom: 10,
+                      background: saveResult.ok ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+                      border: `1px solid ${saveResult.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+                      borderRadius: 8, fontSize: 12,
+                      color: saveResult.ok ? "#86efac" : "#fca5a5" }}>
+          {saveResult.message}
+        </div>
+      )}
+
+      {!editing && (
+        <>
+          <div style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 14, lineHeight: 1.5 }}>
+            Powers the ORA Chat <strong>Video</strong> mode (Deepgram Aura-2 TTS + fal.ai
+            LatentSync lip-sync). Deepgram is required. fal.ai is optional — leave it unset
+            and lip-sync bills through your existing Universal Key automatically; add your
+            own fal.ai key to bill your own Fal account instead. Both are Fernet-encrypted
+            in Mongo, never in backend/.env — only a last-4 fingerprint is shown after saving.
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, alignItems: "center" }}>
+            <div>Deepgram: <strong data-testid="video-pipeline-deepgram-state">
+              {data.deepgram_configured ? `configured (${data.deepgram_key_hint})` : "not set"}
+            </strong></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              fal.ai: <strong data-testid="video-pipeline-fal-state">
+                {data.fal_configured ? `BYOK (${data.fal_key_hint})` : "Universal Key fallback"}
+              </strong>
+              {data.fal_configured && (
+                <button data-testid="video-pipeline-fal-remove" onClick={removeFalKey} disabled={removingFal}
+                        style={{ background: "none", border: "none", color: "#9ca3af",
+                                  fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                  {removingFal ? "removing…" : "remove"}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {editing && (
+        <div style={{ display: "grid", gap: 12, maxWidth: 440 }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              Deepgram API key
+            </label>
+            <input data-testid="video-pipeline-deepgram-input" className="input" type="password"
+                   placeholder={data.deepgram_configured ? "•••• leave blank to keep current" : "paste key"}
+                   value={deepgramInput}
+                   onChange={(e) => setDeepgramInput(e.target.value)}
+                   style={{ width: "100%" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>
+              fal.ai API key (optional — BYOK, falls back to Universal Key if left blank)
+            </label>
+            <input data-testid="video-pipeline-fal-input" className="input" type="password"
+                   placeholder={data.fal_configured ? "•••• leave blank to keep current" : "paste key, or leave blank"}
+                   value={falInput}
+                   onChange={(e) => setFalInput(e.target.value)}
+                   style={{ width: "100%" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button data-testid="video-pipeline-keys-save" className="btn-primary" onClick={save}
+                    disabled={saving} style={{ fontSize: 12 }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button data-testid="video-pipeline-keys-cancel" className="btn-secondary"
+                    onClick={() => setEditing(false)} style={{ fontSize: 12 }}>
               Cancel
             </button>
           </div>

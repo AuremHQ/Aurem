@@ -1,0 +1,56 @@
+{
+  "status": 201,
+  "body": {
+    "content": {
+      "name": "AUREM_R2_DRILL.md",
+      "path": "AUREM_R2_DRILL.md",
+      "sha": "635d556761c29f2acf7b0271f47a354c1867930e",
+      "size": 59,
+      "url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/contents/AUREM_R2_DRILL.md?ref=auremcto/ship-r2drill-merge-1788412174-1788412174",
+      "html_url": "https://github.com/polarisbuiltinc-wq/ora-grounding/blob/auremcto/ship-r2drill-merge-1788412174-1788412174/AUREM_R2_DRILL.md",
+      "git_url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/blobs/635d556761c29f2acf7b0271f47a354c1867930e",
+      "download_url": "https://raw.githubusercontent.com/polarisbuiltinc-wq/ora-grounding/auremcto/ship-r2drill-merge-1788412174-1788412174/AUREM_R2_DRILL.md",
+      "type": "file",
+      "_links": {
+        "self": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/contents/AUREM_R2_DRILL.md?ref=auremcto/ship-r2drill-merge-1788412174-1788412174",
+        "git": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/blobs/635d556761c29f2acf7b0271f47a354c1867930e",
+        "html": "https://github.com/polarisbuiltinc-wq/ora-grounding/blob/auremcto/ship-r2drill-merge-1788412174-1788412174/AUREM_R2_DRILL.md"
+      }
+    },
+    "commit": {
+      "sha": "4efbd16d09bbc337ec54198f14ba5a628e4faee3",
+      "node_id": "C_kwDOTduUZNoAKDRlZmJkMTZkMDliYmMzMzdlYzU0MTk4ZjE0YmE1YTYyOGU0ZmFlZTM",
+      "url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/commits/4efbd16d09bbc337ec54198f14ba5a628e4faee3",
+      "html_url": "https://github.com/polarisbuiltinc-wq/ora-grounding/commit/4efbd16d09bbc337ec54198f14ba5a628e4faee3",
+      "author": {
+        "name": "aurem-devops[bot]",
+        "email": "315173472+aurem-devops[bot]@users.noreply.github.com",
+        "date": "2026-09-03T05:09:35Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-09-03T05:09:35Z"
+      },
+      "tree": {
+        "sha": "bb26a358d7bc6d5d0aa49e5adde4d09f9c116a3b",
+        "url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/trees/bb26a358d7bc6d5d0aa49e5adde4d09f9c116a3b"
+      },
+      "message": "ship: AUREM R2 live drill (merge path)",
+      "parents": [
+        {
+          "sha": "a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca",
+          "url": "https://api.github.com/repos/polarisbuiltinc-wq/ora-grounding/git/commits/a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca",
+          "html_url": "https://github.com/polarisbuiltinc-wq/ora-grounding/commit/a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca"
+        }
+      ],
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJqmQEPCRC1aQ7uu5UhlAAAAL0QAAW1qRuE8g5OO6W32C1xNGFz\nQxTBfI7vvWL5s73WOlQ/LWQfEwCKgUgYqj0Q8bcmK3kT2UGpagjCuGWPI/w0GQos\nkS31xyj+A9JNT4Tq/g22XMcx3kzUS9+iJdv8KdG8uo/Sb68iBMqWHeBolh8bnuLm\n+FtL+q4q59XoXU8iBmTOru1htmWCvCcdo/4q78CcVKkgWRke4w7taxP3LAbB9mIj\nyAGgGSjNiwXeq9jLLOrP3pjm/6RRpt1BGKoKCd2wXw8ODVWSATjjw6B9jwGV/KPi\ni7hypJ7WlyNtqpNobdr3nGDi4wDjHXJamuCaunDyPTSOTxjqgou5mZOKylbybwsX\nkbZQk7jOCx2R8o9xkmUxTtMNja2V3fvoUuXZsxE3VVO0NT+b+GcQA3wlIow0/562\n22S6HRquuQQ1OQ4RqLcH0MNQBX9J7wHnY8KWFZRWmUF6chvgKcL/NSrGbo7Bed+2\nO2/qT26RLo2zWNiEK62PZeRKrvAZ1Z00Oz41mwoDl8nJvDSrIhFZn+qaVRCCmWMT\nqPaF4+hnCrv76C0YibcOzRKd2kCM0JMPGjiqKsptKdn3fcCgkovYyAVOG9nceX37\njLDx6Gyd/POwEoF5RyEMcjtfzxasnjqbrs/GQeBnEZIZMOTRKZ8n4A/76UY52gjg\ncTF7EzxbHyv5chs9k5th\n=+6V3\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree bb26a358d7bc6d5d0aa49e5adde4d09f9c116a3b\nparent a717b0eaf3dd3aaeb9edb0e0f14c5da90faaadca\nauthor aurem-devops[bot] <315173472+aurem-devops[bot]@users.noreply.github.com> 1788412175 +0000\ncommitter GitHub <noreply@github.com> 1788412175 +0000\n\nship: AUREM R2 live drill (merge path)",
+        "verified_at": "2026-09-03T05:09:36Z"
+      }
+    }
+  }
+}

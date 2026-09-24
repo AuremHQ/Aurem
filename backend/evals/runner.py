@@ -43,10 +43,13 @@ from evals.harness import (   # noqa: E402
     ScoreResult, aggregate,
     completeness_scorer, passivity_scorer, leak_scorer,
     chain_scorer, hallucination_scorer, refusal_scorer, scope_scorer,
+    multistep_scorer,
     PASS, FAIL, PARTIAL, HARD, SOFT,
 )
 from evals.prompts_quality import QUALITY_PROMPTS, SYNTHETIC_REPO_CONTEXT  # noqa: E402
 from evals.prompts_security import SECURITY_PROMPTS  # noqa: E402
+from evals.prompts_agent_behavior import MULTISTEP_PROMPTS  # noqa: E402
+from services.input_normalizer import check_golden_set as _check_normalizer_golden_set  # noqa: E402
 
 
 MAX_LLM_CALLS = int(os.getenv("EVALS_MAX_LLM_CALLS", "25"))
@@ -77,6 +80,8 @@ def _dispatch_scorers(prompt_spec: dict, response: dict) -> list[ScoreResult]:
             out.append(hallucination_scorer(reply, **kwargs))
         elif name == "refusal":
             out.append(refusal_scorer(reply, **kwargs))
+        elif name == "multistep":
+            out.append(multistep_scorer(reply, **kwargs))
         else:
             out.append(ScoreResult(
                 scorer=name, status=PARTIAL, severity=SOFT,
@@ -194,8 +199,24 @@ async def _project_scoping_isolation_test() -> dict:
          "repo": "userB/secret-repo",  "github_pat": "ghp_BBB_test"},
     ])
     try:
-        # Case 1: user A asking for their own project — legit.
-        await get_repo_context(user_a, proj_a)
+        # Case 1: user A asking for their own project — legit ownership
+        # match. This synthetic fixture has no real GitHub App
+        # installation (that would need live GitHub creds this eval
+        # harness doesn't have), so the ownership-scoped Mongo lookup
+        # inside get_repo_context() succeeds and correctly proceeds to
+        # mint a token — which then legitimately raises
+        # GithubAppAuthError for THIS non-connected synthetic project.
+        # That's expected here and orthogonal to what this test is
+        # actually verifying (cross-user isolation, cases 2/3 below,
+        # which return "" from the ownership-scoped query BEFORE ever
+        # reaching the token-minting step) — catch it narrowly so a
+        # real security regression doesn't get masked by an unrelated
+        # "no live GitHub install" crash.
+        from services.pat_vault import GithubAppAuthError
+        try:
+            await get_repo_context(user_a, proj_a)
+        except GithubAppAuthError:
+            pass
 
         # Case 2: user A trying to read user B's project — MUST be empty.
         ctx_a_to_b = await get_repo_context(user_a, proj_b)
@@ -241,6 +262,110 @@ async def _project_scoping_isolation_test() -> dict:
     }
 
 
+# ── Backend input normalizer golden set (offline, spec 15.1) ──────────
+
+async def _input_normalizer_golden_set_test() -> dict:
+    """2026-09-22 Section 15.1 spec: 'runs in the eval suite on every
+    deploy.' No LLM cost — pure deterministic round-trip check against
+    services.input_normalizer.GOLDEN_ROUND_TRIP_SET."""
+    report = _check_normalizer_golden_set()
+    if report["failures"]:
+        scorer = ScoreResult(
+            scorer="normalizer_golden_set", status=FAIL, severity=HARD,
+            evidence=f"{len(report['failures'])}/{report['total']} golden-set cases regressed",
+            details={"failures": report["failures"]},
+        )
+    else:
+        scorer = ScoreResult(
+            scorer="normalizer_golden_set", status=PASS, severity=HARD,
+            evidence=f"all {report['total']} golden-set cases round-tripped correctly",
+        )
+    return {
+        "id":         "N1_input_normalizer_golden_set",
+        "category":   "input_normalizer",
+        "prompt":     "(offline) round-trip GOLDEN_ROUND_TRIP_SET through normalize_input()",
+        "scorers":    [scorer.as_dict()],
+        "hard_fails": 1 if scorer.is_hard_fail() else 0,
+        "soft_fails": 0,
+    }
+
+
+# ── Routing misclassification regression test (offline-ish) ───────────
+
+async def _routing_misclassification_test() -> dict:
+    """2026-09 P0 Bug 2 regression guard. Reproduces the exact
+    founder-reported hijack: a message that only MENTIONS
+    'error'/'audit' as transport-layer noise — not actually asking to
+    debug anything — must not get force-routed into the expensive
+    Mode D pipeline.
+
+    Two sub-checks:
+      1. `routing_keyword_baseline` (SOFT — informational, not deploy-
+         blocking) — documents today's live-default keyword router's
+         real behaviour on this message. It is a KNOWN, tracked gap
+         while the semantic router is canary-only; marking it HARD
+         would permanently block every deploy on an already-accepted,
+         in-progress rollout.
+      2. `routing_semantic_gate` (HARD — the actual production gate)
+         — only runs when SEMANTIC_MODE_ROUTER_ENABLED=1. Forces this
+         ONE call into the canary bucket (pct=100 for the duration of
+         this call only, restored immediately after) so the result
+         reflects the semantic router's real behaviour regardless of
+         the live canary percentage on any given deploy."""
+    import os as _os
+    from services.chat_helpers import classify_intent
+    from services import semantic_mode_router as _smr
+
+    adversarial_msg = (
+        "That last message failed to deliver (Cloudflare origin error). "
+        "Retrying: please audit the repo for unused dependencies and "
+        "recommend which ones to drop."
+    )
+
+    keyword_mode = classify_intent(adversarial_msg, None, None)
+    scorers = [ScoreResult(
+        scorer="routing_keyword_baseline",
+        status=(FAIL if keyword_mode == "D" else PASS),
+        severity=SOFT,
+        evidence=f"keyword classifier returned mode={keyword_mode!r} for "
+                 f"an audit-intent message that mentions 'error' in passing",
+        details={"mode": keyword_mode},
+    )]
+
+    if _smr.is_enabled():
+        pct_before = _os.environ.get("SEMANTIC_MODE_ROUTER_CANARY_PCT")
+        _os.environ["SEMANTIC_MODE_ROUTER_CANARY_PCT"] = "100"
+        try:
+            result = await _smr.classify_mode_semantic(
+                adversarial_msg, None, None,
+                f"eval_routing_{int(time.time() * 1000)}",
+            )
+        finally:
+            if pct_before is None:
+                _os.environ.pop("SEMANTIC_MODE_ROUTER_CANARY_PCT", None)
+            else:
+                _os.environ["SEMANTIC_MODE_ROUTER_CANARY_PCT"] = pct_before
+        sem_mode = result.get("mode")
+        scorers.append(ScoreResult(
+            scorer="routing_semantic_gate",
+            status=(FAIL if sem_mode == "D" else PASS),
+            severity=HARD,
+            evidence=f"semantic router returned mode={sem_mode!r} "
+                     f"(source={result.get('source')}, "
+                     f"confidence={result.get('confidence')})",
+            details=result,
+        ))
+
+    return {
+        "id":         "R1_transport_error_not_debug_hijack",
+        "category":   "routing_regression",
+        "prompt":     adversarial_msg[:160],
+        "scorers":    [s.as_dict() for s in scorers],
+        "hard_fails": sum(1 for s in scorers if s.is_hard_fail()),
+        "soft_fails": sum(1 for s in scorers if s.status == FAIL and s.severity == SOFT),
+    }
+
+
 # ── Top-level orchestration ────────────────────────────────────────────
 
 async def run(quick: bool = False) -> dict:
@@ -251,7 +376,10 @@ async def run(quick: bool = False) -> dict:
         "max_llm_calls": MAX_LLM_CALLS,
         "quality":  [],
         "security": [],
+        "agent_behavior": [],
         "project_scoping": None,
+        "routing_regression": None,
+        "input_normalizer": None,
     }
 
     # Bootstrap Mongo for script context — main.py's lifespan never runs
@@ -286,6 +414,17 @@ async def run(quick: bool = False) -> dict:
     for spec in QUALITY_PROMPTS:
         report["quality"].append(await _run_prompt(spec, budget))
 
+    # ── 2026-09 P0 bug-brief item 5: agent-behavior regression ─────
+    # Runs even in --quick mode — this is the deploy-blocking category
+    # for the four specific bugs this brief was about, not optional
+    # coverage. Cheap: 3 prompts, no security-battery LLM volume.
+    for spec in MULTISTEP_PROMPTS:
+        report["agent_behavior"].append(await _run_prompt(spec, budget))
+    report["routing_regression"] = await _routing_misclassification_test()
+    # 2026-09-22 Section 15.1 — offline, no LLM cost, runs even in
+    # --quick mode (same reasoning as agent_behavior above).
+    report["input_normalizer"] = await _input_normalizer_golden_set_test()
+
     # ── System 2: Security (LLM portion) ───────────────────────────
     if not quick:
         for spec in SECURITY_PROMPTS:
@@ -296,12 +435,18 @@ async def run(quick: bool = False) -> dict:
 
     # ── Aggregate ──────────────────────────────────────────────────
     all_scores: list[ScoreResult] = []
-    for section in ("quality", "security"):
+    for section in ("quality", "security", "agent_behavior"):
         for entry in report[section]:
             for s in entry.get("scorers", []):
                 all_scores.append(ScoreResult(**s))
+    if report.get("input_normalizer"):
+        for s in report["input_normalizer"].get("scorers", []):
+            all_scores.append(ScoreResult(**s))
     if report.get("project_scoping"):
         for s in report["project_scoping"].get("scorers", []):
+            all_scores.append(ScoreResult(**s))
+    if report.get("routing_regression"):
+        for s in report["routing_regression"].get("scorers", []):
             all_scores.append(ScoreResult(**s))
 
     summary = aggregate(all_scores)

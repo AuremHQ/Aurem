@@ -1,0 +1,157 @@
+{
+  "/admin/cockpit": {
+    "main_len": 1831,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | COCKPIT \u00b7 LIVE | System Overview | loading system-health checks\u2026 | MODE BOARD | env: production | deploy: 3f27cc4b4eb7 | stripe: not-set | TOTAL USERS | 133 | 130 free \u00b7 4 paid | DAU (today) | 0 | REVENUE 30d | $76 | GITHUB CONNECT % | 15.8% | 21 of 133 | PAID UPGRADES 30d | 4 | 5 paid total | Live Business Intelligence | Real Stripe \u00b7 real inference cost from ora_chat_usage + customer_chat_cost \u00b7 Slice ASTRIPE \u00b7 OK \u00b7 LIVE | \u21bb Refresh BI | \ud83e\uddf9 Reconcile Orphans | MRR (LIVE) | ",
+    "widget_count": 5
+  },
+  "/admin/overview": {
+    "main_len": 12383,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | \u21bb Refresh all | DEPENDENCIES | openrouter | deepseek_direct | groq | github | stripe | tavily | firecrawl | vercel | resend | supabase | build | 3f27cc4b4eb7 | \u00b7 | built 2h ago | \u00b7 | production | \u00b7 uptime 162m | NOT DEPLOY-READY | (advisory \u2014 Rule C, cannot block the Deploy button) | sha unknown | CI failure | QG failure | no .git in this runtime \u2014 workspace SHA unknown (production pod) | CI is failure for e27cc49 | Quality Gate is failure for e27cc49 | \ud83d\udea8 | 3 critical integration ",
+    "widget_count": 6
+  },
+  "/admin/suggestions": {
+    "main_len": 555,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | Founder Suggestions | PENDING | APPROVED | REJECTED | ALL | No suggestions in this bucket yet.",
+    "widget_count": 0
+  },
+  "/admin/token-pnl": {
+    "main_len": 895,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | REVENUE (MO) | $0.00 | Stripe pending | AI COST (MO) | $0.16 | NET PROFIT | $-0.16 | TASKS DONE (MO) | 4 | 0 today | Note: Revenue = sum(amount) from cto_payments where payment_status='paid' in the last 30d. Stripe fees are an ESTIMATE at 2.9% + $0.30/txn (US standard) \u2014 not a settlement-accurate figure. AI cost = sum(cost_usd) from customer_chat_cost (real per-call LLM ledger, same source /admin/agent-performance uses) in the last 30d/24h.",
+    "widget_count": 0
+  },
+  "/admin/robot-guide": {
+    "main_len": 1112,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | Robot Guide Messages |  | Customize the ORA robot welcome wording on the signup and login windows. Basic HTML like <strong> and <span class=\"ora-arrow\">\ud83d\udc47</span> works. Leave a field empty to fall back to the default message. |  | Signup window welcome message | Shown to new visitors on /signup before they start typing. | 88/600 | Live preview: | ORA GUIDE | Fastest way: One Click Continue \ud83d\udc47 \u2014 creates your account instantly, no password needed.",
+    "widget_count": 0
+  },
+  "/admin/llm-credits": {
+    "main_len": 878,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | LLM Credits | LLM PROVIDER STATUS | Refresh | 10:58:55 PM | OpenRouter | $10.99 | \u25cfConnected | LongCat (Council A primary) | API OK | \u25cfConnected | DeepSeek (Council C) | API OK | \u25cfvia OpenRouter | GLM-5.2 (Council B + Advisor) | API OK | \u25cfvia OpenRouter | Claude Sonnet 4.5 (CEO Judge) | API OK | \u25cfvia OpenRouter | Groq Llama-3.3-70B (rescue) | API OK | \u25cfFree tier, rate-limited | Alert threshold | Save | Circuit breaker: closed \u00b7 Linters missing: eslint",
+    "widget_count": 6
+  },
+  "/admin/parliament-live": {
+    "main_len": 738,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | Parliament Live | PARLIAMENT LIVE STATUS | 1h | 24h | 7d | LongCat: LIVE \u2713 | COUNCIL | ROLE | PRIMARY | FALLBACK | CALLS | A | Council A (Code Fix) | LongCat | GLM-5.2 | 0 | B | Council B (Analysis) | GLM-5.2 | \u2014 | 0 | C | Council C (Writing) | DeepSeek V3 | \u2014 | 0 | CEO | CEO Judge | Claude Sonnet 4.5 | GLM-5.2 | 0(0 rescues)",
+    "widget_count": 0
+  },
+  "/admin/reliability": {
+    "main_len": 836,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | WARM START \u2014 LAST 24 H / 7 D / 30 D | AVG WARM TIME | \u2014 | Last 100 done jobs \u00b7 30 d | SUCCESS RATE (7 D) | \u2014 | 0/0 jobs | TOTAL JOBS (7 D) | 0 | 7-day window | No data yet. | POST-SCAN ISSUES \u2014 VANGUARD 007 FINDINGS | CRITICAL FINDINGS | 0 | Commit blockers | WARNINGS | 0 | TOTAL SHOWN | 0 | No data yet. | No post-scan findings recorded. Vanguard 007 runs on every commit \u2014 empty here means clean ships.",
+    "widget_count": 0
+  },
+  "/admin/agent-performance": {
+    "main_len": 643,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | AGENT PERFORMANCE \u2014 LAST 30 DAYS (2 MODELS) | MODEL\tCALLS\tTOTAL COST\tAVG INPUT TOK\tAVG OUTPUT TOK | deepseek/deepseek-chat\t255\t$0.0855\t2111\t143 | z-ai/glm-5.2\t34\t$0.0770\t6143\t705",
+    "widget_count": 0
+  },
+  "/admin/feature-flags": {
+    "main_len": 1673,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | Feature Flags | Refresh | 8 flags | GLOBAL FLAGS | new_analytics_v2 | New product analytics dashboard | \u25cf ON | maxx_mode_beta | Maxx dual-model review mode | tiers: pro, team, founder | \u25cf ON | parallel_agents | 3-agent parallel task execution | tiers: pro, team, founder | \u25cf ON | chrome_extension_beta | Chrome extension side panel (beta) | \u25cf ON | integration_health_cron | Periodic integration health probe (default: 10 min). Toggle OFF to pause runtime without a re",
+    "widget_count": 0
+  },
+  "/admin/vanguard": {
+    "main_len": 981,
+    "main_snippet": "\ud83d\udee1\ufe0f VANGUARD AUDIT | Blocked Commits | 1d | 7d | 30d | 90d | Refresh | \u2699 Vanguard verify config | Per-mode severity threshold for the LLM verify-agent. Changes propagate within ~10 s. | \u25cb Disabled | SWIFT | OFF | Disabled \u2014 only regex floor blocks. | CRITICAL | Recommended. Blocks only on critical findings. | HIGH | Strict. Blocks on critical + high. | PRO | OFF | Disabled \u2014 only regex floor blocks. | CRITICAL | Recommended. Blocks only on critical findings. | HIGH | Strict. Blocks on critical + high. | MAXX | OFF | Disabled \u2014 only regex floor blocks. | CRITICAL | Recommended. Blocks only on critical findings. | HIGH | Strict. Blocks on critical + high. | Last changed by bee5a199d2bc4c49b42140fe8af80434 at 2026-08-09T19:54:22.915000 | Discard | Saved | COMMITS BLOCKED \u00b7 LAST 7D | 0 | TOP RULE TRIGGERED | \u2014 | PROJECTS AFFECTED | 0 | CRITICAL FINDINGS | 0 | DAILY VOLUME | No blocks in this window \u2014 your pipeline is clean. \ud83c\udf89 | BY RULE | \u2014 | BY PROJECT | \u2014 | BY SEVERITY | No findings yet.",
+    "widget_count": 0
+  },
+  "/admin/support": {
+    "main_len": 1590,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | SUPPORT INBOX (8 OPEN) | ORA Guide \u2014 stuck at: general | teji.ss1986@gmail.com \u00b7 15d ago | resolved | in_app_guide | ORA Guide \u2014 stuck at: general | admin@reroots.ca \u00b7 15d ago | open | in_app_guide | ORA Guide \u2014 stuck at: general | admin@reroots.ca \u00b7 15d ago | open | in_app_guide | ORA Guide \u2014 stuck at: general | polarisbuiltinc@gmail.com \u00b7 15d ago | open | in_app_guide | ORA Guide \u2014 stuck at: general | polarisbuiltinc@gmail.com \u00b7 15d ago | open | in_app_guide | ORA ",
+    "widget_count": 0
+  },
+  "/admin/system-stats": {
+    "main_len": 1785,
+    "main_snippet": "SYSTEM OBSERVABILITY | Parliament \u00b7 Intent Gateway \u00b7 Quality | Updated 10:59:26 PM \u00b7 auto-refresh 60s | 1h | 24h | 7d | 30d | Refresh | PARLIAMENT RUNS | 0 | COUNCIL SUCCESS RATE | 0.0% | CIRCUIT BREAKER OPENS \u00b7 24H | 0 | AVG WINNER SCORE | 0 | INTENT CONFIDENCE | 0.81 | QUALITY AVG \u00b7 24H | 0.99 | DRIFT ALERTS UNACKED | 0 | MANUAL REVIEW QUEUE | 0 | COUNCIL A \u2014 WINNER DISTRIBUTION | A1-conservative | 0 | A2-balanced | 0 | A3-creative | 0 | INTENT GATEWAY \u2014 TIER DISTRIBUTION | casual | 21 | query | 1 | agentic | 7 | clarify | 3 | LLM fallback rate | 0.0% | TOOL ROUTER \u2014 CALLS BY GROUP | code | 7 | query | 1 | casual | 21 | web | 0 | deploy | 0 | debug | 0 | clarify | 3 | QUALITY MONITOR | Avg score (24h) | 0.99 | Low-score count | 0 | Drift alerts unacked | 0 | SYNTAX GATE (LAST 24H) | Total checks | 0 | Blocked commits | 0 | Block rate | 0.0% | py 0 | ts 0 | js 0 | RAW PAYLOAD | { |   \"ok\": true, |   \"window_hours\": 24, |   \"parliament\": { |     \"total_runs\": 0, |     \"success_rate_pct\": 0, |     \"avg_score\": 0, |     \"council_A_win_by_member\": { |  ",
+    "widget_count": 7
+  },
+  "/admin/system-health": {
+    "main_len": 2129,
+    "main_snippet": "\u2190 Admin | System Health | Live signals \u00b7 refreshes every 30 s \u00b7 last: 10:59:33 PM | \u21bb REFRESH NOW | DEPLOY SYNC | OK | PREVIEW | 3f27cc4b4eb7 | production \u00b7 Deployed 9/5/2026, 8:16:11 PM | PRODUCTION | 3f27cc4b4eb7 | production \u00b7 Deployed 9/5/2026, 8:16:11 PM | FRONTEND BUNDLE | build sha \u00b7 3f27cc4b4eb7 | COUNCIL A | OK | Primary intended | meituan/longcat-2.0 | Primary actual | meituan/longcat-2.0 | Live | YES | Last probe | 9/5/2026, 10:46:22 PM | ORA LEARNING | OK | Layer 1 \u00b7 RAG few-shot | active | 532 / 20 | TF-IDF few-shot retrieval into system prompt | Layer 2 \u00b7 Fine-tune queue | collecting | 532 / 1000 | manual export to OpenAI once threshold hit | Layer 3 \u00b7 Fix recall | phase_1_storage_only | scan/fix outcomes stored; recall into scan prompt = backlog Phase 2 | checked 10:59:32 PM | LOOP METRICS \u2014 PHASE 0 IMPACT | WARMING | data_source \u00b7 launch-pad-237-aurem_dev @ customer-apps.hsevgz.mongodb.net | env \u00b7 production \u00b7 sha 3f27cc4 | SSE RING BUFFER (ITEM 6/9) | act",
+    "widget_count": 0
+  },
+  "/admin/self-bugs": {
+    "main_len": 1699,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | ORA Self-Repair Log |  | Read-only \u2014 bugs ORA found in its OWN UI/replies, not the user's website. Sorted by recurrence, so \"this keeps happening\" bubbles to the top. |  | ALL | BLANK UI | DEAD END LEAK | JARGON LEAK | MISSING BUTTON | STALLED SILENCE | TOOL ERROR | TRUNCATED REPLY | USER REPORTED | Type\tWhat the user saw\tLikely cause\tSeverity\tTimes seen\tLast seen | dead_end_leak\tHere's the full content of **`your homepage`** as it stands: ```jsx /** * ",
+    "widget_count": 0
+  },
+  "/admin/integrations": {
+    "main_len": 2454,
+    "main_snippet": "\u2190 Back to admin | Integration Health Center |  | Real-time probes of every external dependency. Auto-refreshes daily at DIGEST_HOUR_UTC; manual refresh below. |  | TOTAL | 13 | LIVE | 7 | DEGRADED | 2 | BROKEN | 2 | MISSING | 0 | Last refresh: 56s ago \u00b7 Trigger: periodic_cron | Refresh now | Stripe | DEGRADED | TEST mode \u2022 None (charges DISABLED) | Stripe account exists but cannot accept payments. | Fix: Complete onboarding at dashboard.stripe.com/account | id: stripe | 420ms \u00b7 1m ago | GitHub OAuth | LIVE | client_id Ov23liJOw6\u2026 accepted by GitHub | id: github_oauth | 151ms \u00b7 1m ago | Emergent LLM (Claude) | LIVE | Live \u2022 Claude responded (2 chars) | id: emergent_llm | 636ms \u00b7 1m ago | OpenRouter (DeepSeek) | LIVE | $10.99 remaining ($290.01 used) | id: openrouter | 141ms \u00b7 1m ago | E2B Sandbox | LIVE | Live \u2022 sandbox i7ftbqzovhhkdmlcpyrwj executed Python | id: e2b | 414ms \u00b7 1m ago | Tavily Search | LIVE | Live \u2022 returned 1 result(s) | id: tavily | 202ms \u00b7 1m ago | Firecrawl Scrape | ",
+    "widget_count": 0
+  },
+  "/admin/financials": {
+    "main_len": 5246,
+    "main_snippet": "\u2190 Back to admin | Financial Command Center |  | Live MongoDB data \u00b7 USD\u2192CAD rate 1.38 (frankfurter.app (ECB)) \u00b7 MRR source: catalog_projection |  | \u21bb Reload | Live BI (MRR, ARR, inference cost, budget mode, reconcile orphans) now lives in the Cockpit \u2014 one dashboard, one source of truth. | Open Cockpit \u2192 | FREE USERS (LIVE FROM DB) | STARTER ($9) USERS | PRO ($19) USERS | TEAM ($49) USERS | CASH IN BANK (USD) | $ | DEV SALARY (USD/MO) | $ | /MO | Data source: live_db \u00b7 real DB has 134 users \u00b7 1 Maxx tasks this month | MRR | $76 | below break-even | NET PROFIT/MO | -$168.33 | \u2248 C$-232/mo | GROSS MARGIN | 70.6% | tune costs | AI COST/MO | $18.93 | all APIs combined | TOTAL BURN/MO | $244.33 | infra + AI + dev \u00b7 \u2248 C$337 | CASH RUNWAY | 36d | tight | CAC (ORGANIC) | $0 | GitHub + ProductHunt | BREAK-EVEN AT | 145 users | need 11 more Pro | COST PER TASK \u2014 REAL MODEL COSTS | DeepSeek V3 chat (15k in + 1.5k out) | $0.0042 | DeepSeek code task (15k in + 5k out) | $0.0070 | Claude Sonnet",
+    "widget_count": 0
+  },
+  "/admin/payments": {
+    "main_len": 5717,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | \u2190 Back to admin | Financial Command Center |  | Live MongoDB data \u00b7 USD\u2192CAD rate 1.38 (frankfurter.app (ECB)) \u00b7 MRR source: catalog_projection |  | \u21bb Reload | Live BI (MRR, ARR, inference cost, budget mode, reconcile orphans) now lives in the Cockpit \u2014 one dashboard, one source of truth. | Open Cockpit \u2192 | FREE USERS (LIVE FROM DB) | STARTER ($9) USERS | PRO ($19) USERS | TEAM ($49) USERS | CASH IN BANK (USD) | $ | DEV SALARY (USD/MO) | $ | /MO | Data source:",
+    "widget_count": 0
+  },
+  "/admin/architecture": {
+    "main_len": 1770,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | LOOP INTENT GATE \u00b7 LAST 24H | \u2014 | chat redirects 0 \u00b7 loops triggered 0 \u00b7 plan timeouts 0 | EXTERNAL SERVICES | MongoDB | live | 4ms | GitHub API | live | 487ms | OpenRouter | live | 468ms | Sentry ingest | live | 195ms | Stripe API | live | 428ms | INTEGRATIONS | mongodb \u00b7 OK | github_oauth \u00b7 OK | openrouter (deepseek) \u00b7 OK | emergent_llm (maxx) \u00b7 OK | anthropic (claude maxx) \u00b7 missing | cloudflare_purge \u00b7 missing | vercel_deploy_hook \u00b7 missing | sentry_dsn \u00b7 OK | stripe \u00b7 OK | rese",
+    "widget_count": 1
+  },
+  "/admin/settings": {
+    "main_len": 5530,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | Upgrade your plan | MONTHLY | Free | $0/mo | Current baseline | Starter | $9/mo | Upgrade \u2192 Starter | Pro | $19/mo | Upgrade \u2192 Pro | Team | $49/mo | Upgrade \u2192 Team | ANNUAL \u00b7 20% OFF | Starter | $86.40/yr | Upgrade \u2192 Starter annual | Pro | $182.40/yr | Upgrade \u2192 Pro annual | Team | $470.40/yr | Upgrade \u2192 Team annual | Token limits per plan | Free | Starter | Pro | Team | Pricing ($/mo) | Free | Starter | Pro | Team | Save settings | Two-factor authentication | \u26a0 Not enabled \u2014 your admin account i",
+    "widget_count": 2
+  },
+  "/admin/house-rules": {
+    "main_len": 2354,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | House Rules | LIVE |  | Set a global instruction block that ORA reads before its own persona, tool catalog, and project context. These rules take the highest priority over every other instruction. Use the toggles below to choose exactly where the rules apply. |  | PROMPT | 3735 / 8000 chars | last updated 8/29/2026, 11:38:20 PM by bee5a199d2bc4c49b42140fe8af80434 | APPLY TO | ORA Chat | Main chat at /chat/stream + /chat/send. Mode toggles below ",
+    "widget_count": 0
+  },
+  "/admin/ops": {
+    "main_len": 3352,
+    "main_snippet": "back to admin | Ops recipes |  | Server-side operations AUREM can't run on your infra (we don't have SSH to your boxes). Copy-paste runbooks below for the most common issues. ORA links here when you ask things like \"restart supervisor\" or \"free disk space\". |  | Restart supervisor (services aren't running) | When: Backend/frontend showing 502 \u00b7 supervisor process died \u00b7 after deploy | sudo systemctl status supervisor | First check if supervisor itself is alive | sudo systemctl restart supervisor | Restart the whole daemon | sudo supervisorctl status | Confirm all services show RUNNING | sudo supervisorctl restart backend frontend | If supervisor is alive but services crashed | sudo tail -n 100 /var/log/supervisor/supervisord.log | Read here if restart fails | Escalate: If `systemctl status` shows 'Failed' for 3+ consecutive restarts, message auremcto.com/support with the last 100 lines of /var/log/supervisor/supervisord.",
+    "widget_count": 0
+  },
+  "/admin/dashboard": {
+    "main_len": 2370,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | USERS | 136 | 40 projects | TASKS TODAY | 1 | 52.4% success | DONE / FAILED | 86/71 | CHAT SESSIONS | 204 | lifetime | RECENT TASKS | TASK\tUSER\tSTATUS\tCOMMIT\tTIME |  | In `frontend/src/platform/AuremHomepage.jsx`, inside the main return block, immediately after the opening `<div className=\"aurem-home\" data-testid=\"aurem-homepage\">` (around line 540) and before the `<SEO ... />` tag, add a new top banner element: `<div style={{ textAlign: \"center\", paddi",
+    "widget_count": 0
+  },
+  "/admin/tasks": {
+    "main_len": 54864,
+    "main_snippet": "AUREM | ADMIN PANEL | Cockpit | MONITOR | Overview | LLM Credits | Parliament Live | QA Health | Maintenance | Architecture | USERS | BIN Tracker | GitHub Bulk Revoke | Visibility Kit | Users (Legacy) | Support | Suggestions | Self-Repair Log | Audit Log | CONFIG | Feature Flags | House Rules V2 | Robot Guide | API Keys | BUSINESS | Payments & Revenue | Token P&L | SYSTEM | Dashboard | Projects | Tasks | Agent Performance | MCP Usage | Reliability | Settings | teji.ss1986@gmail.com | back to app | Personal Track ops | ORA Chat | sign out | \ud83d\udd14 | 23 | TASKS (100) | All | Done | Failed | Running | Queued | TASK ID\tTASK\tUSER\tSTATUS\tCOMMIT\tCREATED | t_6791b6a1da\t | In `frontend/src/platform/AuremHomepage.jsx`, inside the main return block, immediately after the opening `<div className=\"aurem-home\" data-testid=\"aurem-homepage\">` (around line 540) and before the `<SEO ... />` tag, add a new top banner element: `<div style={{ textAlign: \"center\", padding: \"8px\", background: \"#FF6B00\", color: \"#",
+    "widget_count": 1
+  },
+  "/admin/system-map": {
+    "main_len": 2712,
+    "main_snippet": "\u2190 Back to dashboard | ORA System Internals | ADMIN \u00b7 PLATFORM | Refresh | Live scan \u00b7 9/5/2026, 11:00:23 PM | 522 | ROUTES | 135 | COMPONENTS | 69 | PAGES | 165 | COLLECTIONS | 24 | TOOLS | GitHub PAT + OAuth | MCP server (4 tools) | VS Code extension v0.2.0 | Tavily web search | Firecrawl scrape | Stripe payments | Resend email | Sentry monitoring | Groq emergency fallback | DeepSeek direct | OpenRouter (Claude / GLM) | E2B sandbox | Ollama / LM Studio | /diagram Mermaid | MODES | Swift | live | meituan/longcat-2.0 via OpenRouter | starter+ \u00b7 $9 | Pro | live | meituan/longcat-2.0 \u2192 Claude Sonnet 4.5 fallback | pro+ \u00b7 $19 | Maxx | live | meituan/longcat-2.0 draft + Claude review | team+ \u00b7 $49 | Local | not_built | Ollama / LM Studio | any \u00b7 free | TOOLS | \u00b7 24 TOTAL | 10 repo tools | 10 dev skills | 5 web skills | VANGUARD SECURITY | 25 | PATTERNS TOTAL | 15 | SECRET PATTERNS | 10 | DANGEROUS CODE | 3 | CHAIN RULES | + 13 rules in services/vanguard_scanner.py + sibling routers/security_scan.py | Two-round s",
+    "widget_count": 5
+  },
+  "/admin/qa": {
+    "main_len": 29834,
+    "main_snippet": "QA Health | Live from `/api/admin/qa/status` \u2014 generated 11:00:28 PM \u00b7 1144ms | Refresh | TEST COUNTS | grand total: 4203 | 3938 | backend (460 files) | 645 | vitest (124 files) | 15 | playwright (7 files) | 18 | reasoning evals | TEST-STYLE RATIO (ITER289 GUARD) | analyser unavailable | tests_dir_missing | A11Y BASELINE | charter L3 burn-down | COMPONENTS | unavailable | JOURNEYS | unavailable | CI STATUS (GITHUB ACTIONS) | run 33809952984 \u00b7 e27cc49 | \u201caFix indentation on flow check\u201d | frontend-vitest | FAIL | invariants | FAIL | visual-regression | FAIL | test-style-guard | SKIPPED (PR-ONLY GATE) | bug-fix-discipline | SKIPPED (PR-ONLY GATE) | open workflow run \u2192 | LATEST AUTO-QA REPORT | auto-qa-agent job output | No report yet \u2014 auto-qa-agent job has not run | LOOP MODE KILL-SWITCH | 0 beta users \u00b7 0 active loops \u00b7 0 stuck (10m) | \ud83d\udfe2 Loop Mode enabled per tier gate | DB flag drives this \u2014 env override empty | \ud83d\udea8 Kill Loop Mode | Gate Parity \u2014 /loop/start vs /chat/stream (",
+    "widget_count": 0
+  },
+  "/admin/audit_interact": {
+    "tabs_visible": [
+      " Cockpit",
+      " Overview",
+      " LLM Credits",
+      " Parliament Live",
+      " QA Health",
+      " Maintenance",
+      " Architecture",
+      " BIN Tracker",
+      " GitHub Bulk Revoke",
+      " Visibility Kit",
+      " Users (Legacy)",
+      " Support",
+      " Suggestions",
+      " Self-Repair Log",
+      " Audit Log",
+      " Feature Flags",
+      " House Rules V2",
+      " Robot Guide",
+      " API Keys",
+      " Payments & Revenue"
+    ],
+    "pre_rows": 100
+  }
+}

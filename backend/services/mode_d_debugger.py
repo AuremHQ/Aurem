@@ -15,8 +15,6 @@ errors fall through to a strict 500-token DeepSeek diagnosis.
 
 from __future__ import annotations
 import re
-import json
-from datetime import datetime, timezone
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.llm import call_llm_with_meta
@@ -228,6 +226,252 @@ def is_debug_request(message: str) -> bool:
     if SOFT_DEBUG_PATTERN.search(msg) and DEBUG_ACTION_PATTERN.search(msg):
         return True
     return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-09-21 — Bug C fix (live QA report). A message like "list the bug
+# hunt findings from the scan you just ran and fix the high severity
+# ones" has no HTTP code/stack trace, so it fell straight through to
+# the generic "insufficient signal to diagnose" bail template even
+# though a REAL scan with real findings had just completed in the
+# same session — the conversational path had no way to look that
+# scan back up. This detects a scan/findings reference and, when a
+# recent real scan exists for the project, answers with REAL data
+# (and runs a real fix, capped, when the user asked for one) instead
+# of ever reaching the LLM bail-out.
+# ─────────────────────────────────────────────────────────────────────────────
+_SCAN_REFERENCE_RX = re.compile(
+    r"\b(the scan|that scan|this scan|last scan|previous scan|bug[\s_-]?hunt|"
+    r"health[\s_-]?scan|codebase health|"
+    r"scan (you|we)('ve| have)? (just )?ran|scan results?|"
+    r"findings?|issues? (you )?found)\b",
+    re.IGNORECASE,
+)
+_FIX_VERB_RX = re.compile(r"\bfix\b", re.IGNORECASE)
+_SEVERITY_FILTER_RX = re.compile(r"\b(critical|high|medium|low)\b", re.IGNORECASE)
+# Cap real fixes attempted from a single free-text chat turn — each
+# one is a real LLM patch + real GitHub commit (20-40s+ each), so an
+# unbounded "fix everything" ask must never balloon into dozens of
+# commits from one message, and must stay safely under the SSE hard
+# timeout (routers/chat/stream_state.py, 180s) even sequentially.
+_MAX_CHAT_TRIGGERED_FIXES = 2
+# A scan older than this no longer counts as "the scan you just ran" —
+# falls through to the normal Mode D flow instead of resurrecting a
+# stale result.
+_SCAN_FOLLOWUP_MAX_AGE_SECONDS = 3 * 3600
+
+
+def has_scan_followup_signal(message: str) -> bool:
+    """True iff the message references an already-run scan/findings,
+    as opposed to asking to diagnose a NEW, unscanned symptom."""
+    return bool(_SCAN_REFERENCE_RX.search(message or ""))
+
+
+async def _recent_project_scan(db, user_id: Optional[str],
+                               project_id: Optional[str]) -> Optional[dict]:
+    """Most recent `codebase_health_scans` doc for this project, only
+    if it's fresh enough to plausibly be "the scan you just ran"."""
+    if db is None or not (user_id and project_id):
+        return None
+    import time as _time
+    doc = await db.codebase_health_scans.find_one(
+        {"user_id": user_id, "project_id": project_id},
+        sort=[("created_at", -1)],
+    )
+    if not doc:
+        return None
+    if _time.time() - (doc.get("created_at") or 0) > _SCAN_FOLLOWUP_MAX_AGE_SECONDS:
+        return None
+    return doc
+
+
+async def try_scan_followup_reply(db, *, user_id: Optional[str],
+                                  project_id: Optional[str],
+                                  user_message: str,
+                                  on_fix_progress=None) -> Optional[dict]:
+    """Real-data early exit for Mode D. Returns a `run_debug_session`-
+    shaped dict when the message references a scan that genuinely ran
+    recently for this project; returns None (fall through to the
+    normal flow, unchanged) when there's no such scan or no reference.
+
+    `on_fix_progress`, if given, is called ONCE with the real
+    candidate count right before the fix loop starts — each fix is a
+    real LLM patch + real GitHub commit and can run 20-40s+ on its
+    own, so the caller (routers/chat/worker.py) uses this to seed
+    StreamState.activity with that many heartbeat entries up front —
+    otherwise the SSE watchdog's soft-timeout (routers/chat/
+    watchdog.py, fires while fewer than 2 tool invocations are
+    recorded within its window) preempts this function with an
+    unrelated generic "Model API was slow to respond" message before
+    it ever finishes (confirmed live repro fixing 2 real findings).
+    """
+    if not has_scan_followup_signal(user_message):
+        return None
+    scan_doc = await _recent_project_scan(db, user_id, project_id)
+    if not scan_doc:
+        return None
+
+    sev_match = _SEVERITY_FILTER_RX.search(user_message or "")
+    sev_filter = sev_match.group(1).lower() if sev_match else None
+
+    breakdown = scan_doc.get("breakdown") or {}
+    sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    all_findings: list = []
+    for cat, b in breakdown.items():
+        for f in (b or {}).get("findings") or []:
+            f = dict(f)
+            f["_category"] = cat
+            all_findings.append(f)
+    if sev_filter:
+        all_findings = [f for f in all_findings if f.get("severity") == sev_filter]
+    all_findings.sort(
+        key=lambda f: (sev_rank.get(f.get("severity"), 9),
+                       f.get("file", ""), f.get("line", 0)),
+    )
+
+    wants_fix = bool(_FIX_VERB_RX.search(user_message or ""))
+
+    if not wants_fix:
+        # List path — deterministic, zero LLM cost, zero hallucination
+        # risk: every line is a real finding from the real scan doc.
+        lines = [
+            f"Here's what the last scan ({scan_doc.get('summary', '')}) "
+            f"actually found"
+            + (f", filtered to **{sev_filter}** severity" if sev_filter else "")
+            + f" — {len(all_findings)} finding(s):",
+            "",
+        ]
+        for f in all_findings[:15]:
+            lines.append(
+                f"- `{f.get('file', '?')}:{f.get('line', '?')}` "
+                f"[{f.get('severity', 'n/a')}] {f.get('title') or f.get('message', '')}"
+            )
+        if len(all_findings) > 15:
+            lines.append(f"- …and {len(all_findings) - 15} more.")
+        if not all_findings:
+            lines.append("_No findings match that filter._")
+        reply = "\n".join(lines)
+    else:
+        # Fix path — reuse the SAME quota-gated, tested pipeline the
+        # "Fix this" button on /codebase-health calls
+        # (services.finding_fix_applier.apply_finding_fix), sourced
+        # from cto_open_findings (the real open-findings backlog the
+        # Advisor counter also reads) so results write back the same
+        # resolved-status trail a UI-driven fix would.
+        candidates = [f for f in all_findings
+                      if f.get("severity") in ("critical", "high")][:_MAX_CHAT_TRIGGERED_FIXES]
+        if not candidates:
+            reply = (
+                "No critical/high findings"
+                + (f" at **{sev_filter}** severity" if sev_filter else "")
+                + " to fix from that scan — fixable findings are "
+                  "critical/high only from chat; open the findings "
+                  "page for medium/low."
+            )
+        else:
+            from services.scan_fix_quota import assert_can_fix, record_scan_fixes
+            from services.finding_fix_applier import apply_finding_fix
+            from fastapi import HTTPException
+            try:
+                await assert_can_fix({"user_id": user_id}, "health-scan",
+                                     count=len(candidates))
+            except HTTPException as e:
+                detail = e.detail if isinstance(e.detail, dict) else {}
+                reply = (
+                    detail.get("message")
+                    or "Can't fix right now — check your plan's fix quota."
+                )
+            else:
+                # Seed the heartbeat with the FULL candidate count up
+                # front (not one-per-iteration): the soft-timeout
+                # check only stops firing once its recorded-invocation
+                # count is >1, and a single `apply_finding_fix` call
+                # alone (real LLM patch + real GitHub commit) can
+                # already exceed the 48s soft-timeout window on its
+                # own — incrementing by one per completed fix would
+                # still let the FIRST one get preempted.
+                if on_fix_progress is not None:
+                    try:
+                        on_fix_progress(len(candidates))
+                    except Exception:                          # noqa: BLE001
+                        pass
+                results = []
+                for f in candidates:
+                    finding = {
+                        "id": f.get("id") or "",
+                        "file": f.get("file"),
+                        "rule_id": f.get("rule_id") or f.get("rule"),
+                        "severity": f.get("severity"),
+                        "line": f.get("line"),
+                        "title": f.get("title"),
+                        "message": f.get("message"),
+                        "fix_hint": f.get("fix_hint"),
+                    }
+                    r = await apply_finding_fix(
+                        db=db, user={"user_id": user_id},
+                        project_id=project_id, finding=finding,
+                    )
+                    results.append((f, r))
+                    if r.get("ok"):
+                        try:
+                            await record_scan_fixes(user_id, "health-scan", 1)
+                        except Exception:                      # noqa: BLE001
+                            pass
+                lines = [f"Fixed {sum(1 for _, r in results if r.get('ok'))} "
+                         f"of {len(results)} finding(s):", ""]
+                for f, r in results:
+                    if r.get("ok"):
+                        lines.append(
+                            f"- ✅ `{f.get('file')}:{f.get('line', '?')}` — "
+                            f"commit `{r.get('commit_sha')}`"
+                            + (f" ({r.get('pr_url')})" if r.get("pr_url") else "")
+                        )
+                    else:
+                        lines.append(
+                            f"- ❌ `{f.get('file')}:{f.get('line', '?')}` — "
+                            f"{r.get('error', 'fix failed')}"
+                        )
+                if len(all_findings) > len(candidates):
+                    lines.append(
+                        f"\n_{len(all_findings) - len(candidates)} more "
+                        f"finding(s) from this scan weren't attempted — "
+                        f"ask again or use the findings page to continue._"
+                    )
+                reply = "\n".join(lines)
+
+    try:
+        await log_conversational(
+            db=db, mode="D", user_message=user_message, ora_reply=reply,
+            user_id=user_id, project_id=project_id,
+        )
+    except Exception:                                       # noqa: BLE001
+        pass
+
+    # For CitationGuard (services/citation_guard.py): every file path in
+    # `reply` comes straight from a real, persisted scan record, not
+    # LLM guesswork — surface them as "already verified this turn" so
+    # the guard's unsourced-path check doesn't trigger a needless
+    # (and, worse, actually-narrating) re-read + rewrite pass on text
+    # that was already 100% grounded.
+    files_referenced = sorted({f.get("file") for f in all_findings[:15] if f.get("file")})
+
+    return {
+        "diagnosis": {
+            "cause": "Answered from the real last scan for this project",
+            "severity": sev_filter or "high",
+            "needs_commit": wants_fix,
+            "files_to_check": [],
+        },
+        "ora_reply": reply,
+        "can_auto_fix": False,
+        "commit_task": "",
+        "files_to_read": [],
+        "files_referenced": files_referenced,
+        "severity": sev_filter or "high",
+        "error_count": len(all_findings),
+        "fast_path_used": True,
+        "clarify": False,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -558,6 +802,17 @@ async def run_debug_session(
       "severity": str,
     }
     """
+    # 2026-09-21 — Bug C fix (live QA report): the scan-followup
+    # short-circuit for THIS exact scenario now lives one layer up
+    # (routers/chat/worker.py::_scan_followup_check), BEFORE mode
+    # classification even runs — see that function's docstring for
+    # why: Mode D's own is_debug_request() classifier requires a
+    # "fix the"/"debug"/etc verb, so a bare "list the findings" ask
+    # never reaches Mode D (or this function) at all otherwise.
+    # try_scan_followup_reply() (defined above in this module) is the
+    # shared implementation both call sites would use; nothing calls
+    # it from inside run_debug_session anymore to avoid two
+    # dispatchers claiming the same message.
 
     # 1. Parse error context
     if f12_payload:

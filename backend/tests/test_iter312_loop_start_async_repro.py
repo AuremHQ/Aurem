@@ -208,7 +208,8 @@ def test_regression_a_start_response_shape_preserved():
     )
     assert return_blocks, "start_loop must return a dict"
     normal_returns = [
-        rb for rb in return_blocks if '"redirect_to_chat"' not in rb
+        rb for rb in return_blocks
+        if '"redirect_to_chat"' not in rb and '"needs_clarification"' not in rb
     ]
     assert normal_returns, (
         "start_loop must keep a non-redirect return dict "

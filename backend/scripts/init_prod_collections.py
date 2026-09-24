@@ -302,8 +302,24 @@ _BOOTSTRAP_SPEC: list[tuple[str, list[tuple[list, dict]]]] = [
         ([("acquired_at", 1)], {"expireAfterSeconds": 7 * 24 * 3600}),
     ]),
     ("loop_failures", [
-        ([("project_id", 1), ("user_id", 1), ("occurred_at", -1)], {}),
-        ([("occurred_at", 1)], {"expireAfterSeconds": 7 * 24 * 3600}),
+        # 2026-09-08 deploy-log fix: production Atlas already has this
+        # exact key pattern under a hand-picked name `ix_loop_fail_window`
+        # (predates this script using auto-generated names). Without an
+        # explicit matching `name` here, every boot's create_index call
+        # collides with it (Mongo error code 85, "Index already exists
+        # with a different name") — caught as a harmless no-op, but it
+        # fires on every single boot. Naming it explicitly makes the
+        # call genuinely idempotent against Atlas. (Local sandbox Mongo
+        # has no pre-existing index here, so this never reproduced there.)
+        ([("project_id", 1), ("user_id", 1), ("occurred_at", -1)],
+         {"name": "ix_loop_fail_window"}),
+        # Same class of name mismatch as above — Atlas/this sandbox's
+        # existing TTL index here is named `ttl_occurred_at`, not the
+        # auto-generated `occurred_at_1` the retry-drop fallback below
+        # assumes, so that fallback was failing with "index not found"
+        # every boot too. Naming it explicitly fixes both at once.
+        ([("occurred_at", 1)],
+         {"expireAfterSeconds": 7 * 24 * 3600, "name": "ttl_occurred_at"}),
     ]),
     ("loop_sessions", [
         ([("loop_id", 1)], {"unique": True, "sparse": True}),

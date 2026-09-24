@@ -22,6 +22,7 @@ import MessageBubble from "../MessageBubble.jsx";
 
 vi.mock("../../lib/api", () => ({
   api: { get: vi.fn(() => Promise.resolve({ data: {} })), post: vi.fn(() => Promise.resolve({ data: {} })) },
+  getToken: () => null,
 }));
 vi.mock("../Toast", () => ({ toast: vi.fn() }));
 
@@ -50,7 +51,7 @@ describe("W2-B — Approve button renders for a fence targeting a repo-ROOT file
         />
       </MemoryRouter>,
     );
-    const btn = screen.getByTestId("ship-cto-btn-0");
+    const btn = screen.getByTestId("ship-cto-0-approve-btn");
     expect(btn).toBeInTheDocument();
     expect(btn.textContent).toMatch(/Approve the fix/i);
     // The honest "didn't load" fallback must NOT ALSO fire once the
@@ -76,7 +77,7 @@ describe("W2-B — Approve button renders for a fence targeting a repo-ROOT file
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId("ship-cto-btn-1")).toBeInTheDocument();
+    expect(screen.getByTestId("ship-cto-1-approve-btn")).toBeInTheDocument();
   });
 
   it("t_generic_prose_without_a_real_file_token_still_rejected: a bare word that happens to contain a dot is NOT a false positive", () => {
@@ -98,7 +99,7 @@ describe("W2-B — Approve button renders for a fence targeting a repo-ROOT file
         />
       </MemoryRouter>,
     );
-    expect(screen.queryByTestId("ship-cto-btn-2")).toBeNull();
+    expect(screen.queryByTestId("ship-cto-2-approve-btn")).toBeNull();
   });
 
   it("other common repo-root filenames also now qualify (package.json, requirements.txt is NOT in the ext list on purpose — only known-code/config exts)", () => {
@@ -119,6 +120,6 @@ describe("W2-B — Approve button renders for a fence targeting a repo-ROOT file
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId("ship-cto-btn-3")).toBeInTheDocument();
+    expect(screen.getByTestId("ship-cto-3-approve-btn")).toBeInTheDocument();
   });
 });

@@ -1,25 +1,25 @@
 # 🗺️ AUREM CODEBASE — Full Structural Map
 
-**Generated:** 2026-07-17 (Iter 212m-252)  ·  **Auto-computed from live index**  ·  **Source of truth:** this file + files under `/app/memory/architecture/`
+**Generated:** 2026-07-17 (Iter 212m-252) · **Counts refreshed:** 2026-09-23 · **Auto-computed from live index** · **Source of truth:** this file + files under `/app/memory/architecture/`
 
 ---
 
-## 📊 Repo scale (live counts)
+## 📊 Repo scale (live counts — refreshed 2026-09-23)
 
 | Layer | Count | Path |
 |---|---|---|
-| Backend routers | **55** | `backend/routers/*.py` |
-| Backend services | **108** | `backend/services/*.py` |
-| ORA Chat subpackage | **9** modules | `backend/services/ora_chat/` |
-| Backend core (Parliament) | **6** | `backend/core/*.py` |
-| Backend templates (stacks) | **30** files across **4** stacks | `backend/templates/stacks/` |
-| Backend tests | **330** files | `backend/tests/` |
-| Frontend pages (root) | **42** | `frontend/src/pages/*.jsx` |
-| Frontend pages — personal/ | **7** | `frontend/src/pages/personal/` |
-| Frontend pages — admin/ | **2** | `frontend/src/pages/admin/` |
-| Frontend components (non-ui) | **81** | `frontend/src/components/*.jsx` |
+| Backend routers | **102** registered (`include_router`), ~120 files (incl. modular subpackages) | `backend/routers/*.py` |
+| Backend services | **345** total (287 top-level + 8 subpackages) | `backend/services/*.py` |
+| ORA Chat subpackage | **18** modules | `backend/services/ora_chat/` |
+| Backend core (Parliament) | **7** | `backend/core/*.py` |
+| Backend templates (stacks) | **40** files across **4** stacks | `backend/templates/stacks/` |
+| Backend tests | **885** files | `backend/tests/` |
+| Frontend pages | **88** total | `frontend/src/pages/**/*.jsx` |
+| Frontend components (non-ui) | **279** | `frontend/src/components/**/*.jsx` |
 | Shadcn UI components | **~40** | `frontend/src/components/ui/` |
-| **Total indexed source files** | **803** | `/app/backend` + `/app/frontend/src` |
+| MongoDB collections | **150+** | live index of `db.<collection>` references |
+
+*The Iter 212m-252 per-subsystem/per-category breakdowns below (SUBSYSTEM MAP, page/router/service groupings) predate this refresh and have NOT been re-audited file-by-file — the headline counts above are current; the detailed groupings may undercount newer additions (e.g. Trust & Verification, Interaction Reliability — see entry #11 below and `memory/architecture/03_backend_core_and_routers.md` / `04_backend_services.md` for the currently-accurate categorized listing.*
 
 ---
 
@@ -32,21 +32,21 @@
                            │ HTTPS (auremcto.com prod / preview.emergentagent.com dev)
 ┌──────────────────────────▼──────────────────────────────────┐
 │         FRONTEND — React SPA (Port 3000, Vite/CRA)           │
-│   42 root pages · 7 personal · 2 admin · 81 components       │
+│   88 pages · 279 components                                  │
 │   Tailwind + Shadcn UI + Context API + SSE streaming         │
 └──────────────────────────┬──────────────────────────────────┘
                            │ /api/* (Kubernetes ingress)
 ┌──────────────────────────▼──────────────────────────────────┐
 │              BACKEND — FastAPI (Port 8001)                   │
-│   55 Routers → Parliament Core → 108 Services → External     │
+│   102 Routers → Parliament Core → 345 Services → External    │
 │   Entry: backend/main.py (all include_router calls)          │
 └──────┬───────────┬───────────┬───────────┬──────────────────┘
        │           │           │           │
    ┌───▼───┐  ┌────▼─────┐ ┌───▼────┐ ┌────▼──────────────┐
-   │MongoDB│  │GitHub API│ │ Stripe │ │ LLM Providers     │
-   │(Motor)│  │(PAT/OAuth│ │Payments│ │ • OpenRouter      │
-   └───────┘  └──────────┘ └────────┘ │ • Anthropic (Emrg)│
-                                       │ • DeepSeek/Sonar  │
+   │MongoDB│  │GitHub App│ │ Stripe │ │ LLM Providers     │
+   │(Motor)│  │(install- │ │Payments│ │ • OpenRouter      │
+   └───────┘  │ based)   │ └────────┘ │ • Anthropic (Emrg)│
+              └──────────┘            │ • DeepSeek/Sonar  │
                                        │ • Perplexity      │
                                        │ • GLM             │
                                        └───────────────────┘
@@ -119,9 +119,16 @@
 - **Repo scan roots:** `/app/backend`, `/app/frontend/src`
 - **Skip dirs:** `node_modules`, `.git`, `__pycache__`, `.pytest_cache`, `build`, `dist`, `.next`, `.venv`, `venv`
 
+### 1️⃣1️⃣ Trust & Verification + Interaction Reliability *(2026-09-23, added after this doc's original snapshot)*
+- **Router:** `verification.py`
+- **Services:** `verification.py` (shared ledger), `task_independent_verifier.py`, `task_downgrade.py`, `trust_calibration.py`, `trust_calibration_cron.py`, `scope_confirmation.py`, `timeout_clocks.py`, `chat_reliability.py`
+- **Frontend:** `VerificationLevelBadge.jsx`, `ScopeConfirmCard.jsx`
+- **Collections:** `task_verifications`, `trust_calibration_snapshots`, `scope_confirmation_proposals`, `chat_request_ledger`
+- **Status:** sandbox/preview-verified (unit + live-endpoint tests), NOT yet production-verified end-to-end
+
 ---
 
-## 🗂️ FRONTEND — All 51 Pages (grouped)
+## 🗂️ FRONTEND — Pages (88 total as of 2026-09-23; grouping below is the original Iter 212m-252 breakdown, kept for reference)
 
 ### Public / Marketing
 `Landing.jsx`, `Pricing.jsx`, `Demo.jsx`, `VsDevin.jsx`, `WhyOra.jsx`, `PolicyPage.jsx`
@@ -155,7 +162,7 @@
 
 ---
 
-## 🔌 BACKEND — All 55 Routers (grouped by responsibility)
+## 🔌 BACKEND — Routers (102 registered as of 2026-09-23; grouping below is the original Iter 212m-252 breakdown — see `memory/architecture/03_backend_core_and_routers.md` for the current categorized list incl. Trust & Verification)
 
 ### Auth & Identity (5)
 `auth.py` · `oauth.py` · `github_oauth.py` · `mfa.py` · `onboarding.py`
@@ -198,7 +205,7 @@
 
 ---
 
-## ⚙️ BACKEND — Services taxonomy (108 modules, grouped)
+## ⚙️ BACKEND — Services taxonomy (345 modules total as of 2026-09-23; grouping below is the original 108-module Iter 212m-252 breakdown — see `memory/architecture/04_backend_services.md` for the current categorized list incl. Trust & Verification + Interaction Reliability)
 
 ### 🧠 AI / LLM plumbing (12)
 `llm.py`, `llm_router.py`, `llm_file_parser.py`, `agents.py`, `code_reviewer.py`, `advisor_vision.py`, `error_translator.py`, `mode_classifier.py`, `mode_b_council.py`, `mode_d_debugger.py`, `mode_e_auditor.py`, `mode_f_engage.py`
@@ -241,7 +248,7 @@ See section 4️⃣ above.
 
 ---
 
-## 🧪 TEST COVERAGE — 330 files under `backend/tests/`
+## 🧪 TEST COVERAGE — 885 files under `backend/tests/` (was 330 at Iter 212m-252)
 
 Key modules (recently added):
 - ORA Chat suite: **4 files, 104 tests** (test_ora_chat.py, deep_research, codebase, pin_login)
@@ -284,7 +291,7 @@ Run all ORA suite: `cd /app/backend && python -m pytest tests/test_ora_chat*.py 
 | **Anthropic (Emergent)** | Claude Sonnet 4.5 (Council primary) | `EMERGENT_LLM_KEY` (universal) |
 | **Anthropic direct (future)** | Claude Haiku 4.5 native web_search+web_fetch | `ANTHROPIC_API_KEY` (not set yet) |
 | **Stripe** | Subscriptions + credits | `STRIPE_API_KEY` |
-| **GitHub REST + OAuth** | Repo access + PRs + org PAT | `GITHUB_CLIENT_ID/SECRET`, per-user PAT |
+| **GitHub App installation** (preferred) + legacy PAT (fallback) | Repo access + PRs | `installation_id` wins when both set; `github_token` (PAT) still fully supported — see `routers/cto_projects/management.py` |
 | **Vercel** | Personal Track deploys | `VERCEL_API_TOKEN` |
 | **Supabase** | User-provisioned Postgres | User's `SUPABASE_ACCESS_TOKEN` |
 | **Sentry** | Error tracking | `SENTRY_DSN` |
@@ -353,8 +360,10 @@ Environment variables live in `backend/.env` and `frontend/.env` per environment
 | 250 | Plaster background image | `OraDirect.jsx` |
 | 251 | Chat width 50% → 40% | `OraDirect.jsx` (1-line) |
 | 252 | THIS DOC — codebase mapping refresh | `memory/CODEBASE_MAP.md` (NEW), `memory/architecture/{01,02,03,04}.md` counts refresh |
+| 2026-09-23 | INTERACTION_CONTRACT_V1 activated + Trust & Verification 6-part build (sandbox-verified, not production-verified) | +`timeout_clocks.py`, +`chat_reliability.py`, +`verification.py`, +`task_independent_verifier.py`, +`task_downgrade.py`, +`trust_calibration.py`, +`trust_calibration_cron.py`, +`scope_confirmation.py`, +`routers/verification.py`, +`VerificationLevelBadge.jsx`, +`ScopeConfirmCard.jsx` |
+| 2026-09-23 | Doc sync — README.md + this file + `memory/architecture/*.md` counts and branding refreshed to match live repo (routers 55→102, services 108→345, pages 51→88, components 81→279); README title "ORA by Aurem CTO" corrected to "ORA by Aurem" (matches `frontend/src/lib/siteConfig.js` and `index.html`) | `README.md`, `memory/CODEBASE_MAP.md`, `memory/architecture/01,02,03,04,05.md` |
 
-See `/app/memory/PRD.md` for the fuller history (12,961 lines, 250+ iterations).
+See `/app/memory/PRD.md` for current state/backlog and `/app/memory/CHANGELOG.md` for the full dated history (600+ KB, hundreds of iterations).
 
 ---
 
@@ -383,4 +392,4 @@ cd /app/backend && python -c "import asyncio; from services.ora_chat import code
 
 ---
 
-*This document is the single source of truth for the current codebase state. Regenerate any time the count of files changes materially — for now, this Iter 212m-252 snapshot is fresh. See files 02-07 under `/app/memory/architecture/` for deeper per-layer detail.*
+*This document is the single source of truth for the current codebase state. Regenerate any time the count of files changes materially — this Iter 212m-252 structural snapshot's headline counts were refreshed 2026-09-23; the detailed per-subsystem breakdowns above still date to the original snapshot except where marked otherwise. See files 02-07 under `/app/memory/architecture/` for deeper per-layer detail.*

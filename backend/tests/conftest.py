@@ -264,3 +264,24 @@ def reset_in_memory_rate_limit_buckets():
     reset_buckets_for_tests()
     yield
 
+
+# ── 2026-09-12 — same fix, for services.retry_guard's breakers ──────
+#
+# get_installation_token() / get_repo_via_installation() /
+# validate_github_token() started routing through call_with_retry()
+# (root-cause fix for the "GitHub unreachable" false-positive
+# investigation), which means they now touch the SAME process-wide
+# `_BREAKERS["github"]` singleton other retry_guard callers already
+# used. A test that intentionally simulates repeated GitHub network
+# failures can trip that breaker OPEN for its 60s cooldown and
+# cascade BreakerOpenError into unrelated tests later in this same
+# pytest session — identical failure class to the rate-limiter fix
+# directly above.
+@_pytest.fixture(autouse=True)
+def reset_circuit_breakers():
+    """AUTOUSE — reset every services.retry_guard breaker to `closed`
+    before every test."""
+    from services.retry_guard import reset_breakers_for_tests
+    reset_breakers_for_tests()
+    yield
+

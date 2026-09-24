@@ -11,10 +11,17 @@
  * D2 — an already-connected repo redirects to the existing project
  * instead of dead-ending.
  *   t_already_added_shows_open_existing_project
+ *
+ * 2026-09-04 — one-click connect (founder-reported friction: GitHub
+ * popup -> pick repo AGAIN in our own list -> click a SEPARATE
+ * "Continue" button). When status resolves to exactly one granted
+ * repo, the wizard now auto-submits immediately — no manual
+ * "wizard-next" click required. Updated to trigger via the mount
+ * itself instead of a synthetic click, same outcomes asserted.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 
 vi.mock("../../lib/api", () => ({
   api: { get: vi.fn(), post: vi.fn() },
@@ -58,6 +65,13 @@ function setupHook() {
     startConnect: vi.fn(),
     retry: vi.fn(),
     refresh: vi.fn().mockResolvedValue(HOOK_STATUS),
+    // 2026-09-09 — full-isolation fix: NewUserWizard now only auto-
+    // selects/auto-submits repos from installations confirmed FRESH
+    // in this session (see useGitHubConnectStatus's freshInstallIds).
+    // These tests are asserting behaviour AFTER a connect already
+    // happened, so installation_id 1 (matching HOOK_STATUS above) is
+    // fresh here — this is not simulating the stale-history bug case.
+    freshInstallIds: ["1"],
   });
 }
 
@@ -70,25 +84,21 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
-async function mountAndSelectRepo() {
-  const onComplete = vi.fn();
+// 2026-09-04 — with exactly one granted repo, mounting alone is
+// enough to trigger connect: no button click needed anymore.
+async function mountAndAutoConnect(onComplete = vi.fn()) {
   render(<NewUserWizard onComplete={onComplete} />);
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-  await waitFor(() => expect(screen.getByTestId("wizard-next")).toBeTruthy());
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   return onComplete;
 }
 
 describe("D3 — connect success beat, not a 12s block", () => {
   it("t_connect_shows_success_beat_then_lands", async () => {
     api.post.mockResolvedValue({ data: { project_id: "px1" } });
-    const onComplete = await mountAndSelectRepo();
+    const onComplete = await mountAndAutoConnect();
 
-    fireEvent.click(screen.getByTestId("wizard-next"));
-    await act(async () => { await Promise.resolve(); });
-
-    // Beat shows immediately — project already lands (active project
-    // set) while the beat is visible.
-    expect(screen.getByTestId("wizard-success-beat")).toBeTruthy();
+    // Auto-submitted on mount (single granted repo) — no click needed.
+    await waitFor(() => expect(screen.getByTestId("wizard-success-beat")).toBeTruthy());
     expect(mockSetActiveProjectId).toHaveBeenCalledWith("px1");
     expect(onComplete).not.toHaveBeenCalled();
 
@@ -98,11 +108,9 @@ describe("D3 — connect success beat, not a 12s block", () => {
 
   it("t_no_12s_blocking_interstitial", async () => {
     api.post.mockResolvedValue({ data: { project_id: "px2" } });
-    const onComplete = await mountAndSelectRepo();
+    const onComplete = await mountAndAutoConnect();
 
-    fireEvent.click(screen.getByTestId("wizard-next"));
-    await act(async () => { await Promise.resolve(); });
-
+    await waitFor(() => expect(screen.getByTestId("wizard-success-beat")).toBeTruthy());
     // Well under the old 12s hold — the standard beat lands fast.
     await act(async () => { vi.advanceTimersByTime(1500); });
     expect(onComplete).toHaveBeenCalledTimes(1);
@@ -119,15 +127,14 @@ describe("D2 — already-connected redirect", () => {
         project_name: "mine",
       } } },
     });
-    const onComplete = await mountAndSelectRepo();
+    const onComplete = await mountAndAutoConnect();
 
-    fireEvent.click(screen.getByTestId("wizard-next"));
     const panel = await screen.findByTestId("wizard-already-connected");
     expect(panel.textContent).toMatch(/already your project/i);
     expect(panel.textContent).toMatch(/mine/);
     expect(screen.queryByTestId("wizard-success-beat")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("wizard-open-existing-project-btn"));
+    act(() => { screen.getByTestId("wizard-open-existing-project-btn").click(); });
     expect(mockSetActiveProjectId).toHaveBeenCalledWith("p_existing9");
     expect(onComplete).toHaveBeenCalledTimes(1);
   });

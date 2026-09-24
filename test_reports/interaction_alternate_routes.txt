@@ -1,0 +1,65 @@
+backend/routers/ora_chat.py:62:def _valid_tz(tz: Optional[str]) -> Optional[str]:
+backend/routers/ora_chat.py:82:def _needs_tree(query: str, labels: Optional[list] = None) -> bool:
+backend/routers/ora_chat.py:92:async def _codebase_context(query: str,
+backend/routers/ora_chat.py:114:@router.post("/sessions")
+backend/routers/ora_chat.py:115:async def create_session(body: NewSessionBody,
+backend/routers/ora_chat.py:122:@router.get("/sessions")
+backend/routers/ora_chat.py:123:async def list_sessions(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:129:@router.get("/sessions/{session_id}")
+backend/routers/ora_chat.py:130:async def get_session(session_id: str,
+backend/routers/ora_chat.py:146:@router.post("/slash")
+backend/routers/ora_chat.py:147:async def run_slash(body: SlashBody,
+backend/routers/ora_chat.py:286:@router.post("/message")
+backend/routers/ora_chat.py:287:async def send_message(body: MessageBody,
+backend/routers/ora_chat.py:350:@router.post("/action/approve")
+backend/routers/ora_chat.py:351:async def approve_action(body: ApproveActionBody,
+backend/routers/ora_chat.py:385:@router.post("/action/reject")
+backend/routers/ora_chat.py:386:async def reject_action(body: RejectActionBody,
+backend/routers/ora_chat.py:406:@router.get("/actions/recent")
+backend/routers/ora_chat.py:407:async def list_recent_actions(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:421:@router.get("/usage")
+backend/routers/ora_chat.py:422:async def usage(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:427:@router.get("/config")
+backend/routers/ora_chat.py:428:async def config(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:443:@router.get("/house-rules")
+backend/routers/ora_chat.py:444:async def get_house_rules(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:456:@router.put("/house-rules")
+backend/routers/ora_chat.py:457:async def put_house_rules(body: HouseRulesBody,
+backend/routers/ora_chat.py:467:@router.get("/house-rules/history")
+backend/routers/ora_chat.py:468:async def get_house_rules_history(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:474:@router.post("/house-rules/restore/{version}")
+backend/routers/ora_chat.py:475:async def restore_house_rules(version: int,
+backend/routers/ora_chat.py:485:@router.post("/house-rules/reset")
+backend/routers/ora_chat.py:486:async def reset_house_rules(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:535:def _ora_ip_allowed(ip: str) -> bool:
+backend/routers/ora_chat.py:545:async def _resolve_ora_founder(db) -> Optional[dict]:
+backend/routers/ora_chat.py:567:@router.post("/pin-login")
+backend/routers/ora_chat.py:568:async def pin_login(body: PinLoginBody,
+backend/routers/ora_chat.py:693:@router.post("/pin/set")
+backend/routers/ora_chat.py:694:async def set_ora_pin(body: SetOraPinBody,
+backend/routers/ora_chat.py:715:@router.get("/pin/status")
+backend/routers/ora_chat.py:716:async def get_ora_pin_status(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:753:@router.get("/hallucination-patterns")
+backend/routers/ora_chat.py:754:async def hallucination_patterns_list(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:762:@router.post("/hallucination-patterns/classify-now")
+backend/routers/ora_chat.py:763:async def hallucination_patterns_classify(force: bool = True,
+backend/routers/ora_chat.py:771:@router.post("/hallucination-patterns/approve")
+backend/routers/ora_chat.py:772:async def hallucination_patterns_approve(body: ApprovePatternBody,
+backend/routers/ora_chat.py:787:@router.post("/hallucination-patterns/reject")
+backend/routers/ora_chat.py:788:async def hallucination_patterns_reject(body: RejectPatternBody,
+backend/routers/ora_chat.py:803:@router.post("/canary/run-now")
+backend/routers/ora_chat.py:804:async def canary_run_now(authorization: Optional[str] = Header(None)):
+backend/routers/ora_chat.py:815:@router.get("/canary/runs")
+backend/routers/ora_chat.py:816:async def canary_runs(limit: int = 10,
+backend/routers/ora_chat.py:851:@router.post("/preview-scan")
+backend/routers/ora_chat.py:852:async def preview_scan(body: PreviewScanBody,
+backend/routers/ora_chat.py:914:    # Decisions API). See intent_router.py's classify_intent_jev() for
+backend/routers/ora_chat.py:919:@router.post("/intent-classify")
+backend/routers/ora_chat.py:920:async def intent_classify(body: IntentClassifyBody,
+backend/routers/ora_chat.py:936:    verdict = await ora_intent.classify_intent(
+backend/routers/ora_chat.py:967:@router.post("/upload")
+backend/routers/ora_chat.py:968:async def ora_upload(
+backend/routers/ora_chat.py:1164:@router.post("/image-generate")
+backend/routers/ora_chat.py:1165:async def image_generate(body: ImageGenBody,
+backend/routers/ora_chat.py:1239:@router.get("/image-status")
+backend/routers/ora_chat.py:1240:async def image_status(request: Request,

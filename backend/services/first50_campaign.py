@@ -160,7 +160,7 @@ def render_stage(stage: int, user: dict, *,
             "Noticed you haven't kicked off an ORA task yet. Most people who "
             "get stuck at this step just don't know what to ask first.\n\n"
             f"{video_line_text}"
-            "Simplest first prompt that always works:\n"
+            "Simplest first prompt to try:\n"
             "  \"Scan my repo for security issues and open a PR to fix "
             "the top one.\"\n\n"
             "Paste that in and ORA does the rest.\n\n"
@@ -175,7 +175,7 @@ def render_stage(stage: int, user: dict, *,
             f'people who get stuck at this step just don\'t know what to '
             f'ask first.</p>'
             f'{video_line_html}'
-            f'<p>Simplest first prompt that always works:</p>'
+            f'<p>Simplest first prompt to try:</p>'
             f'<pre style="background:#f5f5f5;padding:12px;border-radius:6px;'
             f'font-family:monospace;font-size:13px">Scan my repo for '
             f'security issues and open a PR to fix the top one.</pre>'

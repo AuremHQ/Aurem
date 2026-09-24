@@ -18,7 +18,6 @@ migrations have run on the current DB.
 """
 from __future__ import annotations
 
-import dataclasses
 import hashlib
 import importlib.util
 import inspect
@@ -30,7 +29,6 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 from .base import Migration
 

@@ -23,8 +23,8 @@
   "deployment": "publishing",
   "markdown": "text",
   "markup": "layout",
-  "repo": "website's pages",
-  "repository": "website's pages",
+  "repo": "website",
+  "repository": "website",
   "codebase": "website",
   "frontend": "website",
   "backend": "behind-the-scenes system",
@@ -45,6 +45,8 @@
   "your code": "your content",
   "files": "pages",
   "file": "page",
+  "github repository": "website",
+  "github repo": "website",
   "github issue": "task",
-  "github": "your website's connection"
+  "github": "website's connection"
 }

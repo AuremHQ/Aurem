@@ -1,0 +1,64 @@
+{
+  "summary": "Frontend-only live verification of the 'First-Experience Wave' P2 batch on preview using the fresh throwaway account fresh-p2wave-0903@aurem.dev plus a real-model chat probe on the admin account for the business_voice double-substitution regression check. Most copy/UI changes verified LIVE and PASS. The core business_voice_map fix (P2 bug) does NOT hold up live: a fresh chat message that mentions 'GitHub repo' still produces grammar-mangled output in the reply, and the fresh account's own chat history still shows the exact reported 'your Your website's connection website's pages' string.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "business_voice_filter (post-generation word-substitution filter)",
+        "issue": "REGRESSION NOT FULLY FIXED. Live chat probe on fresh account (fresh-p2wave-0903@aurem.dev) sent 'what can you do with my GitHub repo?' and received a real-model reply containing clearly-broken word-substitution artifacts: 'publish fixes straight to your Website's connection', 'no website's pages is connected to this chat', 'Settings → Website's connection', 'Add website's pages'. The reported fix only added entries for the ADJACENT phrases 'github repo'/'github repository', but individual-word substitutions ('github' → \"website's connection\", 'repo' → \"website's pages\") STILL run on words the model uses on their own, producing broken grammar (subject-verb mismatch: 'no website's pages IS connected') and nonsense button labels ('Settings → Website's connection'). Additionally, the fresh account's chat history still displays the pre-fix reply verbatim: 'I can help fix issues in your Your website's connection website's pages—just point me to a problem…' — i.e. the exact double-sub artifact the fix was supposed to eliminate, still user-visible in the UI.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "First-chat greeting (P2-F) — cannot be verified live for THIS fresh account because it already has chat history (2 turns) from a previous session, so the empty-state WELCOME bubble does not render. Static-source verification via ChatPanel.jsx line 112-117 CONFIRMS the new plain-English WELCOME string is what will render for a genuinely-empty new chat / new user. To re-verify live, main agent should either (a) provision a brand-new account with zero chat history OR (b) programmatically clear the fresh account's chat history and re-load the dashboard.",
+        "affected_selectors": []
+      }
+    ],
+    "design_issues": []
+  },
+  "verified_pass": [
+    "P2-A/B — Single banner: exactly ONE banner ([data-testid=connect-repo-banner]) rendered above chat on the fresh 0-project account, plus a separate dismissible ORA guide bubble (not a banner). Zero competing banners. Screenshot: p2wave_fresh_dash.png.",
+    "P2-C banner copy — 'connect-repo-banner-steps' now reads: 'Click Connect repo → above to install the Aurem GitHub App — one click, no tokens to manage. Choose which repositories to grant access to, and Aurem will start scanning your site immediately.' Contains 'scanning your site' (PASS), does NOT contain 'indexing' (PASS).",
+    "P2-C wizard explainer — Opening NewUserWizard shows the new one-liner right under the 'Connect your GitHub repo' heading: 'A \"repo\" is just where your website's code lives on GitHub.' ([data-testid=wizard-repo-explainer] present). Screenshot: fresh_wizard.png.",
+    "P2-C wizard jargon removal — Wizard text does NOT contain: 'no PAT needed', ' PAT ', 'plaintext', 'write commits', 'read your repos, write commits'. All jargon strings scrubbed on the 'choosing' branch of the wizard.",
+    "P2-E notification bell — [data-testid=user-notification-bell-trigger] present on TopBar for a fresh non-admin account. Clicking opens a dropdown panel with 'NOTIFICATIONS' header and 'No notifications yet.' empty state (screenshot p2wave_fresh_dash.png shows the dropdown open). Not admin-only, not broken.",
+    "P2-F greeting (source-verified only, see integration_issues note) — ChatPanel.jsx line 112-117 WELCOME constant contains the exact new plain-English string: \"I'm ORA, by Aurem. I can scan your site for issues and fix them for you — just tell me what's wrong, or ask me to look for problems. What would you like me to check first?\" The old jargon strings 'sovereign engineering co-pilot' and 'what are we shipping today' are not present anywhere on the page."
+  ],
+  "not_directly_verified": [
+    "P2-C softened disconnected-panel copy ('no password or access key', 'access key in plain text', 'opening a request to approve') — the fresh account already has an active GitHub App installation state (ghStatus === 'choosing' with installations pending selection), so the disconnected-panel branch (ghStatus === 'disconnected') does not render in this session. Static-source verification of NewUserWizard.jsx lines 584-589 + buildRobotMessage lines 1121-1136 confirms the softened copy exists ('see your website's code (your \"repo\"), make changes, and open a request for you to approve before anything goes live. We never store your access key in plain text.' and 'no password or access key to manage.'). To re-verify live, main agent should provision an account with NO installations attached, or programmatically clear installations for this account.",
+    "P2-D/G (LoopLiveFeed ShippedRow → ShipApproveCard merge) — as flagged in the review request itself, hard to trigger live without an active loop run. Fresh account has 0 projects (cannot start a loop). Admin account requires a healthy connected project; the review notes 'test@aurem.dev's other projects have intentionally-revoked tokens'. Component-test evidence (4/4 files, 44/44 tests per review request) is accepted as primary proof."
+  ],
+  "additional_observations": [
+    "Confirmed the out-of-scope memory/RAG-recall short-circuit issue the review request pre-flagged: while logged in as test@aurem.dev, chat on the ora-grounding project returned unrelated stale answers (12+ 'Loop cancelled at plan phase' history rows plus a persistent 'GitHub access revoked' banner atop the chat pane — screenshot admin_dash.png). Not fixed by this round; noted for the founder's dedicated investigation.",
+    "Admin account chat pane also shows a top warning banner '12 projects point to deleted or unreachable repos — click to clean up' — matches the review request's note about pre-existing test debris. Not a new bug."
+  ],
+  "test_report_links": [
+    "/app/test_reports/screenshots/p2wave_fresh_dash.png (fresh account dashboard w/ single banner + open bell dropdown)",
+    "/app/test_reports/screenshots/fresh_wizard.png (wizard w/ new repo explainer + jargon-scrubbed copy)",
+    "/app/test_reports/screenshots/fresh_github_repo_reply.png (LIVE chat reply on fresh account showing STILL-broken word-substitution artifacts: 'your Website's connection', 'no website's pages is connected', 'Settings → Website's connection')",
+    "/app/test_reports/screenshots/admin_dash.png (admin account showing pre-existing revoked-repo/12-projects-warning test debris)"
+  ],
+  "action_items": [
+    "HIGH — Business voice filter regression is NOT fully fixed. The single-word substitutions 'github' → \"website's connection\" and 'repo' → \"website's pages\" produce grammatically-broken output even in replies that DON'T contain the adjacent 'GitHub repo' phrase. Either (a) narrow those single-word entries so they only match in safe contexts, or (b) drop the single-word entries entirely and rely on longer-phrase entries + prompt-side voice guidance. Also: the fresh account's existing chat history still stores the pre-fix double-sub reply — consider whether stored replies need a one-time re-render/back-fill or should just age out.",
+    "MEDIUM — P2-F WELCOME greeting could not be verified in a live empty-chat state on the provided fresh account because that account has 2 turns of history already. Either provision a truly-empty account for this round's verification, or add a smoke test that clears history and re-checks the WELCOME bubble."
+  ],
+  "critical_code_review_comments": [
+    "backend/config/business_voice_map.json — the SCOPE of the plain-English substitution is too broad. Substituting single tokens like 'github' and 'repo' in ANY position produces broken sentences ('no website's pages is connected', 'Settings → Website's connection'). A word-level replacement filter is a fragile mechanism for non-technical-language rewrites; consider moving voice guidance into the system prompt instead so grammar stays coherent.",
+    "ChatPanel.jsx — file continues to grow (>2000 LOC based on browsing). The 'WELCOME' constant is a good candidate to move into a small dedicated module for i18n readiness."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "not_tested_this_round (frontend-only per request; main agent already ran 33/33 pytest)",
+    "frontend": "6/7 verifiable items PASS live · 1 item (business voice fix) FAILS live"
+  },
+  "test_credentials": "fresh-p2wave-0903@aurem.dev / FreshWave2026! (fresh throwaway, 0 projects, 2 chat turns of history). test@aurem.dev / AuremTest2026! (admin, has connected + revoked projects — used only for the out-of-scope memory-recall confirmation).",
+  "seed_data_creation": "None. Used the fresh account provided in the review request.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After the business_voice filter is re-scoped, re-run the same probe: log in as fresh-p2wave-0903@aurem.dev, send a NEW chat message 'what can you do with my GitHub repo?' and confirm the reply reads cleanly with normal grammar — specifically NO instances of 'Website's connection', 'website's pages is', or 'Settings → Website's connection'. Also start a completely fresh chat session (clear history first) to verify the P2-F WELCOME empty-state bubble renders the exact new plain-English text.",
+  "rca of the issue": "business_voice_filter.py applies its substitution map to model output post-hoc. The v2026-09-03 map fix added 'github repo' as a longer-phrase entry (matched first) to collapse the adjacent-phrase double-sub, but retained the BARE single-word entries 'github' → \"website's connection\" and 'repo' → \"website's pages\". Any reply that mentions 'GitHub' or 'repo' individually (which is common — the model uses these tokens in button labels, subject nouns, prepositional phrases) still gets each token independently rewritten, producing broken grammar ('no website's pages is connected' where the model wrote 'no repo is connected'). Reproduction: log in as fresh-p2wave-0903@aurem.dev, send 'what can you do with my GitHub repo?'. Reply contains 'straight to your Website's connection', 'no website's pages is connected', 'Settings → Website's connection'. Mitigation: either narrow the single-word rules to a specific context (e.g. only when the preceding token is 'your'/'my') or move voice-shaping to system-prompt guidance so the model produces coherent copy natively without a post-hoc regex sweep."
+}

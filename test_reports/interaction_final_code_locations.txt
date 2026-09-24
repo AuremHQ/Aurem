@@ -1,0 +1,117 @@
+backend/services/regression_backlog_cron.py:54:async def scan_and_flag_recurring_failure_reasons(db, lookback_days: int = LOOKBACK_DAYS) -> dict:
+backend/services/regression_backlog_cron.py:98:async def _reconcile_one(db, failure_reason: str, real_count: int) -> bool:
+backend/services/regression_backlog_cron.py:153:async def regression_backlog_cron(db_getter=None) -> None:
+backend/services/business_voice_filter.py:81:def _load_map() -> dict[str, str]:
+backend/services/business_voice_filter.py:87:def _combined_pattern() -> re.Pattern:
+backend/services/business_voice_filter.py:103:def _replace_term(match: re.Match) -> str:
+backend/services/business_voice_filter.py:110:def _humanize_filename(match: re.Match) -> str:
+backend/services/business_voice_filter.py:122:def _preserve_case(original: str, replacement: str) -> str:
+backend/services/business_voice_filter.py:141:def _fix_a_an(text: str) -> str:
+backend/services/business_voice_filter.py:145:    def _repl(m: re.Match) -> str:
+backend/services/business_voice_filter.py:211:def filter_for_business_owner(text: str) -> str:
+backend/services/business_voice_filter.py:222:    def _stash_code(m: re.Match) -> str:
+backend/services/business_voice_filter.py:226:    def _stash_url(m: re.Match) -> str:
+backend/services/business_voice_filter.py:230:    def _stash_label(m: re.Match) -> str:
+backend/services/business_voice_filter.py:249:def apply_business_voice(ora_panel: bool, content: str) -> str:
+backend/services/business_voice_filter.py:260:async def apply_business_owner_guards(
+backend/services/tool_failure_evidence.py:7:def failure_signatures(calls: list | None) -> list[str]:
+backend/services/chat_helpers.py:30:def _detect_mode(prompt: str) -> str:
+backend/services/chat_helpers.py:47:def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) -> str:
+backend/services/chat_helpers.py:67:def _fire_self_bug(event_type: str, evidence: str, ctx: dict, *, source: str) -> None:
+backend/services/chat_helpers.py:88:def apply_output_guards(
+backend/services/chat_helpers.py:187:def enforce_turn_completion_signal(content: str) -> str:
+backend/services/chat_helpers.py:217:async def run_rendering_pipeline(
+backend/services/chat_helpers.py:247:    def _record(name: str, before: str, after: str) -> None:
+backend/services/chat_helpers.py:324:async def _deduct_tokens(user_id: str, reply: str) -> int:
+backend/services/chat_helpers.py:383:def is_fix_confirmation(message: str) -> bool:
+backend/services/chat_helpers.py:390:def _safe_provenance() -> dict:
+backend/services/chat_helpers.py:421:def detect_prompt_injection(message: str) -> str | None:
+backend/services/chat_helpers.py:438:def _f12_signal_belongs_to_project(url: str, project_id: Optional[str]) -> bool:
+backend/services/chat_helpers.py:456:def _f12_has_real_signal(payload: dict, project_id: Optional[str] = None) -> bool:
+backend/services/chat_helpers.py:511:def _is_transient_proxy_error(status: int, body) -> bool:
+backend/services/chat_helpers.py:575:def references_environment_signal(message: str) -> bool:
+backend/services/chat_helpers.py:586:def classify_intent(message: str, f12_payload: Optional[dict], project_id: Optional[str] = None) -> str:
+backend/services/chat_helpers.py:673:async def _generate_title(first_user_msg: str) -> str:
+backend/services/chat_helpers.py:693:async def _maybe_set_title(user_id: str, session_id: str,
+backend/services/chat_helpers.py:723:async def _regenerate_without_recall(
+backend/services/chat_helpers.py:766:def _strip_council_block(extra_sys: str, council_block: str) -> str:
+backend/services/chat_helpers.py:776:async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
+backend/services/chat_helpers.py:916:def _build_failed_followup(
+backend/services/chat_helpers.py:958:def _build_blocked_followup(
+backend/services/chat_helpers.py:988:def _build_done_fallback(original: str, summary: str,
+backend/services/chat_helpers.py:1021:async def _generate_done_followup(original: str, summary: str,
+backend/services/interaction_rendering.py:18:def render_safe_content(content: str, guard) -> tuple[str, bool]:
+backend/services/interaction_contract.py:20:def enabled() -> bool:
+backend/services/interaction_contract.py:24:def _instructions(prompt: str) -> str:
+backend/services/interaction_contract.py:31:def factual_lookup(prompt: str) -> bool:
+backend/services/interaction_contract.py:44:def request_conflict(prompt: str) -> None:
+backend/services/interaction_contract.py:66:def read_only_request(prompt: str) -> bool:
+backend/services/interaction_contract.py:70:def finalize(result: dict, content: str, *, prompt: str, session_id: str,
+backend/services/interaction_contract.py:103:def new_request_id() -> str:
+frontend/src/utils/interactionState.js:2:export function hasVerifiedReview(interaction) {
+frontend/src/utils/interactionState.js:3:  const evidence = interaction?.review_evidence;
+frontend/src/utils/interactionState.js:4:  return interaction?.version === 1 && evidence?.status === "passed" &&
+frontend/src/utils/interactionState.js:5:    !!evidence?.review_id && !!interaction?.content_hash &&
+frontend/src/utils/interactionState.js:6:    evidence.content_hash === interaction.content_hash &&
+frontend/src/utils/interactionState.js:7:    evidence.request_id === interaction.request_id;
+frontend/src/utils/interactionState.js:10:export function interactionFields(payload) {
+frontend/src/utils/interactionState.js:11:  const interaction = payload?.interaction;
+frontend/src/utils/interactionState.js:13:    ...(interaction ? { interaction } : {}),
+frontend/src/utils/interactionState.js:14:    turnState: interaction?.turn_state ?? payload?.turn_state ?? null,
+frontend/src/utils/interactionState.js:15:    continueAvailable: interaction?.continue_available ?? payload?.continue_available ?? false,
+frontend/src/utils/interactionState.js:16:    failureMode: interaction?.failure_mode ?? payload?.failure_mode ?? null,
+frontend/src/utils/interactionState.js:17:    recoveryAction: interaction?.recovery_action ?? payload?.recovery_action ?? null,
+frontend/src/utils/interactionState.js:18:    turn_state: interaction?.turn_state ?? payload?.turn_state ?? null,
+frontend/src/utils/interactionState.js:19:    continue_available: interaction?.continue_available ?? payload?.continue_available ?? false,
+frontend/src/utils/interactionState.js:20:    failure_mode: interaction?.failure_mode ?? payload?.failure_mode ?? null,
+frontend/src/utils/dateDividers.js:17:import { interactionFields } from "./interactionState";
+frontend/src/utils/dateDividers.js:112:    ...interactionFields(t),
+frontend/src/utils/chatTextUtils.js:120:export function extractSuggestions(content, interaction) {
+frontend/src/utils/chatTextUtils.js:121:  if (interaction?.version === 1) {
+frontend/src/utils/chatTextUtils.js:123:    if (interaction.turn_state !== "success") return [];
+frontend/src/utils/chatTextUtils.js:124:    const actions = Array.isArray(interaction.suggested_actions) ? interaction.suggested_actions : [];
+frontend/src/utils/chatTextUtils.js:127:        action.request_id === interaction.request_id && action.evidence_count > 0 &&
+frontend/src/components/MessageBubble.jsx:16:import { hasVerifiedReview } from "../utils/interactionState";
+frontend/src/components/MessageBubble.jsx:1391:              if (m.interaction?.version === 1) {
+frontend/src/components/MessageBubble.jsx:1392:                reviewer = hasVerifiedReview(m.interaction) ? m.interaction.review_evidence.reviewer : null;
+frontend/src/components/MessageBubble.jsx:1425:          {!m.streaming && <InteractionStatus interaction={m.interaction} index={idx} />}
+frontend/src/components/MessageBubble.jsx:1426:          {!m.streaming && m.content && (m.interaction?.version === 1 ? hasVerifiedReview(m.interaction) :
+frontend/src/components/MessageBubble.jsx:1698:          (m.interaction?.version !== 1 || hasVerifiedReview(m.interaction)) && (
+backend/services/tool_executor.py:124:    from services.interaction_contract import enabled
+backend/services/task_chain_logging.py:253:        from services.interaction_contract import enabled
+backend/services/local_tools.py:2754:            "TRY the interaction and report what really happened, don't "
+backend/services/local_tools.py:2927:        from services.interaction_contract import enabled, read_only_request
+backend/services/local_tools.py:2928:        if enabled() and read_only_request(ctx.get("user_prompt") or ""):
+backend/services/local_tools.py:2929:            blocked = {"ok": False, "error_class": "read_only_request",
+backend/services/local_tools.py:2951:    from services.interaction_contract import enabled as interaction_enabled
+backend/services/local_tools.py:2952:    if interaction_enabled():
+frontend/src/components/ChatPanel.jsx:117:import { interactionFields } from "../utils/interactionState";
+frontend/src/components/ChatPanel.jsx:3045:              ...interactionFields(d),
+frontend/src/components/ChatPanel.jsx:5262:            ? extractSuggestions(m.content, m.interaction)
+backend/routers/chat/worker.py:136:    from services.interaction_contract import enabled, factual_lookup
+backend/routers/chat/worker.py:138:        _mode, _sem_source = "A", "interaction-factual-boundary"
+backend/routers/chat/turn.py:163:    from services.interaction_contract import request_conflict, finalize, new_request_id
+backend/routers/chat/turn.py:164:    request_conflict(body.prompt)
+backend/routers/chat/turn.py:165:    interaction_request_id = new_request_id()
+backend/routers/chat/turn.py:685:    interaction = finalize(result, content, prompt=body.prompt,
+backend/routers/chat/turn.py:686:                           session_id=body.session_id or "", request_id=interaction_request_id,
+backend/routers/chat/turn.py:688:    if interaction:
+backend/routers/chat/turn.py:689:        result["turn_state"] = interaction["turn_state"]
+backend/routers/chat/turn.py:695:                        bin_ctx=bin_ctx, interaction=interaction)
+backend/routers/chat/turn.py:773:        **({"interaction": interaction, "turn_state": interaction["turn_state"],
+backend/routers/chat/turn.py:774:            "continue_available": interaction["continue_available"]} if interaction else {}),
+backend/routers/chat/stream.py:128:    from services.interaction_contract import request_conflict, finalize, new_request_id
+backend/routers/chat/stream.py:129:    request_conflict(body.prompt)
+backend/routers/chat/stream.py:130:    interaction_request_id = new_request_id()
+backend/routers/chat/stream.py:438:                session_id=body.session_id or "", request_id=interaction_request_id,
+backend/routers/chat/stream.py:447:                interaction=clarification_contract,
+backend/routers/chat/stream.py:449:            yield f"data: {_j.dumps({'done': True, 'content': _clarify_text, **({'interaction': clarification_contract} if clarification_contract else {})})}\n\n"
+backend/routers/chat/stream.py:908:                        interaction=finalize(
+backend/routers/chat/stream.py:911:                            request_id=interaction_request_id,
+backend/routers/chat/stream.py:1167:        interaction = finalize(result, content, prompt=body.prompt,
+backend/routers/chat/stream.py:1168:                               session_id=body.session_id or "", request_id=interaction_request_id,
+backend/routers/chat/stream.py:1170:        if interaction:
+backend/routers/chat/stream.py:1171:            result["turn_state"] = interaction["turn_state"]
+backend/routers/chat/stream.py:1172:            result["continue_available"] = interaction["continue_available"]
+backend/routers/chat/stream.py:1180:                            bin_ctx=bin_ctx, interaction=interaction)
+backend/routers/chat/stream.py:1241:            **({"interaction": interaction} if interaction else {}),

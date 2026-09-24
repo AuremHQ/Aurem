@@ -16,6 +16,7 @@ import {
   Send, Loader2, Square, Paperclip, Github, Zap,
   Eye, EyeOff, Trash2, ShieldCheck, History, X,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api, streamChat, API_BASE, getToken, getUser, isAdminOrFounder } from "../lib/api";
 import { toast, dismissToast } from "./Toast";
 import PreviewPanel from "./PreviewPanel";
@@ -54,11 +55,12 @@ const SHIP_SUPPRESSED_NOTE = {
 };
 
 import LoopStatusChip from "./LoopStatusChip";        // Iter 309 · Batch-2 aftermath — sticky loop-status chip
-import RevokedRepoBanner from "./RevokedRepoBanner";   // 2026-08-20 — in-chat revoked-access banner
 import PaymentFailedBanner from "./PaymentFailedBanner"; // 2026-08-22 — in-chat "update your card" banner
 import LoopLiveFeed from "./LoopLiveFeed";
 import OperationHistory from "./OperationHistory";
 import PlanApprovalCard from "./PlanApprovalCard";
+import VisualBugAnalysisCard from "./VisualBugAnalysisCard";  // 2026-09-12 — Visual Bug-Fix Phase 1+2
+import VisualDiffWorkbench from "./VisualDiffWorkbench";      // 2026-09-12 — Visual Bug-Fix Phase 3+4
 // Iter 212m-65 — Phase D wiring: Self-heal indicator + paused-loop
 // User Action card (powered by the real /loop/* SSE stream).
 import { SelfHealIndicator, UserActionCard, LoopExpiredCard } from "./LoopActionCards";
@@ -78,6 +80,8 @@ import {
   confirmShip, getLoopStatus,
 } from "../lib/loopApi";
 import { getChatBgTint } from "../utils/chatBgTint";        // Iter 212m-30 PR-2
+import { computeDateDividers, sortMessagesByTimestamp, mapHistoryTurn } from "../utils/dateDividers"; // 2026-09 — chat date dividers
+import { DateDivider } from "./chat/DateDivider";             // 2026-09 — chat date dividers
 // Iter 140 — extracted chat hooks. ChatPanel.jsx grew past 1500 lines;
 // the hooks below ring-fence message-list mutations, session network
 // calls, and SSE stream control so each concern can be unit-tested
@@ -87,6 +91,7 @@ import { getChatBgTint } from "../utils/chatBgTint";        // Iter 212m-30 PR-2
 import { useChatMessages } from "../hooks/useChatMessages";
 import { useChatSession } from "../hooks/useChatSession";
 import { useChatStream } from "../hooks/useChatStream";
+import { useGithubConnectionStatus } from "../hooks/useGithubConnectionStatus";
 
 // Iter 212m-153 — leaf components + pure helpers extracted from
 // ChatPanel.jsx into focused files.  Behaviour is identical; the
@@ -98,7 +103,7 @@ import StreamHealthPill  from "./chat/StreamHealthPill";
 import RepoHelpDialog    from "./chat/RepoHelpDialog";
 import ScanStatusStrip, { markScanJustCompleted } from "./ScanStatusStrip";        // Iter 212m-190 · Session 3
 import FindingsTeaserStrip from "./FindingsTeaserStrip";                            // 2026-08-23 · Findings-to-fix bridge
-import SlashCommandMenu, { matchSlashCommands } from "./SlashCommandMenu";         // Iter 212m-190 · Session 3
+import SlashCommandMenu, { matchSlashCommands, SLASH_COMMANDS } from "./SlashCommandMenu";         // Iter 212m-190 · Session 3
 import CharCounter from "./CharCounter";                                             // Iter 388f — live char counter for 20k cap
 import { sanitizeErrorMessage } from "../lib/sanitizeError";                          // R3 P1-3 — no raw backend error ever reaches a toast
 import {
@@ -107,12 +112,14 @@ import {
   extractCodeBlocks,
   estimateTokenCount,
   detectsLoopOptIn,
+  preventSmartPunctuation,
 } from "../utils/chatTextUtils";
+import { interactionFields } from "../utils/interactionState";
 
 const WELCOME = {
   role: "assistant",
   content:
-    "I'm ORA — developers choice, by Aurem — your sovereign engineering co-pilot. Ask me to plan a feature, write code, or debug an error. What are we shipping today?",
+    "I'm ORA, by Aurem. I can scan your site for issues and fix them for you — just tell me what's wrong, or ask me to look for problems. What would you like me to check first?",
   provider: "system",
 };
 
@@ -190,7 +197,7 @@ function _markTaskPopupSeen(taskId) {
   } catch { /* private mode / quota — silent */ }
 }
 
-export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
+export default function ChatPanel({ sessionId, onTurnSaved, activeProject, readyToTrackOpen = true }) {
   // Iter 140 — Phase-1 hook wiring. Each hook is REAL and live:
   //   • useChatMessages — exposes a setMessages-equivalent updater
   //     and the WELCOME constant; we use its updater wherever the
@@ -206,8 +213,27 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   const chatMsgs = useChatMessages();
   const chatSession = useChatSession({ sessionId, onTurnSaved });
   const chatStream = useChatStream();
+  // 2026-09-21 — Bug B fix (live QA report): "Review findings →" used
+  // to hard-navigate via window.location.assign, a full page reload
+  // that (a) destroyed all in-memory chat state and (b) never told
+  // /codebase-health WHICH project was just scanned. SPA navigation
+  // preserves the app shell and lets us pass project_id explicitly.
+  const navigate = useNavigate();
   const [messages, setMessages] = useState([WELCOME]);
   const [input, setInput] = useState("");
+  // 2026-09-09 — founder ticket Part 0 (round 2): the removed
+  // FirstScanNudge banner used a local `messages.some(role==="user")`
+  // check to hide itself the moment the user typed anything. That
+  // nudge's logic now lives inside OraGuideMascot (single floating
+  // entry point, bottom-right) instead of a second banner here —
+  // this event is the only way it can still know "the user just
+  // sent a real message", since the mascot has no access to this
+  // component's local `messages` state.
+  useEffect(() => {
+    if (messages.some((m) => m.role === "user")) {
+      try { window.dispatchEvent(new Event("aurem:user-message-sent")); } catch { /* noop */ }
+    }
+  }, [messages]);
   // Iter 212m-190 · Session 3 — Chat-native scan commands. Slash-menu
   // is a controlled popover triggered by inputs starting with "/", and
   // ScanStatusStrip surfaces scan lifecycle events above the composer.
@@ -221,6 +247,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // Updated when an SSE `intent` frame arrives during a chat turn.
   const [lastIntentTier, setLastIntentTier] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 2026-09-12 — founder-reported P2 (same root cause as the
+  // AbortError fix above): the Send button toggles to "Stop" the
+  // instant `busy` flips true, in the exact same screen position.
+  // A normal impatient double-click's 2nd click therefore lands on
+  // Stop and self-cancels the message the user just sent. Debounce
+  // the Stop button for a short window after it first appears so an
+  // accidental double-click can't register as "Stop" — a deliberate
+  // Stop click a beat later still works instantly.
+  const [stopArmed, setStopArmed] = useState(false);
+  const STOP_ARM_DELAY_MS = 350;
+  useEffect(() => {
+    if (!busy) { setStopArmed(false); return undefined; }
+    setStopArmed(false);
+    const t = setTimeout(() => setStopArmed(true), STOP_ARM_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [busy]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   // Iter 212m-19 — Live step floating card. Tracks the steps + model
   // + token estimate emitted during the current chat turn. Hidden
@@ -268,6 +310,70 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // by the no-repo warning pill above the composer and by clicking the
   // red GH status indicator in the toolbar.
   const [showRepoHelp, setShowRepoHelp] = useState(false);
+  // 2026-09-12 — GitHub connection health (connected / unreachable /
+  // disconnected + reason). Drives the toggle's color + click action
+  // below; see the file-level comment in useGithubConnectionStatus.js
+  // for why this replaced the standalone revoked/unreachable banners.
+  const githubConn = useGithubConnectionStatus(activeProject);
+  // 2026-09-12 — "popup blocked" is action feedback for a user-
+  // initiated reconnect click, not a passive connection-status
+  // banner — a one-shot toast fits the spec without reintroducing
+  // a persistent banner.
+  useEffect(() => {
+    if (!githubConn.popupBlocked) return;
+    toast({ message: "Popup blocked — please allow popups for this site and try again.", kind: "error" });
+    githubConn.setPopupBlocked(false);
+  }, [githubConn.popupBlocked, githubConn.setPopupBlocked]);
+  // 2026-09-12 — single source of truth for the toggle's 3-color
+  // signal + tooltip + click action. `hasRepo` = project has
+  // github_owner/repo set at all (never-connected case, distinct
+  // from a previously-working repo that's now revoked/unreachable).
+  const ghHasRepo = !!(activeProject?.github_owner && activeProject?.github_repo);
+  const ghDisplay = useMemo(() => {
+    if (!ghHasRepo) {
+      return {
+        color: "red",
+        title: "GitHub: not connected — click to configure",
+        onClick: () => setShowRepoHelp(true),
+      };
+    }
+    if (githubConn.status === "unreachable") {
+      return {
+        color: "amber",
+        title: "GitHub: temporary network issue — retrying automatically",
+        onClick: null, // transient, self-resolving — nothing to click
+      };
+    }
+    if (githubConn.status === "disconnected") {
+      const label = githubConn.suspended
+        ? "GitHub App access paused"
+        : githubConn.neverConnected
+          ? "GitHub App not connected"
+          : githubConn.appLevel
+            ? "GitHub App installation removed"
+            : "GitHub access revoked";
+      const suffix = githubConn.reasonLabel ? ` (${githubConn.reasonLabel})` : "";
+      return {
+        color: "red",
+        title: githubConn.reconnecting
+          ? "Reconnecting…"
+          : `${label}${suffix} — click to reconnect`,
+        onClick: (githubConn.suspended && githubConn.installationId)
+          ? () => window.open(
+              `https://github.com/settings/installations/${githubConn.installationId}`,
+              "_blank",
+            )
+          : githubConn.reconnect,
+      };
+    }
+    // "connected" or not-yet-loaded — treat as healthy.
+    return {
+      color: "green",
+      title: `GitHub: connected — ${activeProject.github_owner}/${activeProject.github_repo}`,
+      onClick: null, // passive once healthy — sidebar handles switching
+    };
+  }, [ghHasRepo, activeProject, githubConn]);
+  const GH_DOT_COLOR = { green: "#22c55e", amber: "#f59e0b", red: "#ef4444" };
   // Iter 154 — legacy `maxxMode` boolean is now derived from `chatMode`.
   // The standalone Maxx toggle button has been removed from the toolbar
   // (redundant with ModeSelector's Maxx pill). Backend payload still
@@ -287,6 +393,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   const openDeployTab = useCallback(() => {
     setPreviewInitialMode("deploy");
     setPreviewOpen(true);
+    setGraphOpen(false); // 2026-09-11 — same panel-stacking fix
     try { localStorage.setItem(PREVIEW_KEY, "1"); } catch { /* noop */ }
   }, []);
   const [usage, setUsage] = useState(null);  // {used, effective_limit, remaining, pct_used, is_exhausted}
@@ -332,6 +439,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             provider: "ora",
             kind: "task_followup",
             task_id: taskId,
+            // 2026-09-20 — defense-in-depth alongside the history-map
+            // fix above: give this a real timestamp so IF the dedupe
+            // check above is ever bypassed for some other reason, the
+            // message sorts into its true chronological slot instead
+            // of unconditionally landing at the end of the array.
+            ts: Date.now() / 1000,
           },
         ];
       });
@@ -354,9 +467,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // composer actually mounts, closing the "connected repo but no
   // signal at all past repo_selected" blind spot for the activation
   // funnel. Best-effort — a failed call here must never block chat.
+  //
+  // 2026-09-22 — gated on `readyToTrackOpen` (defaults to true for any
+  // caller that doesn't pass it, so behavior is unchanged everywhere
+  // except Dashboard.jsx, which now waits until the mandatory
+  // repo-connect gate is actually resolved — connected OR explicitly
+  // skipped — before this fires. Previously ChatPanel mounted UNDER the
+  // gate overlay and fired this immediately, making a user still stuck
+  // on the gate look identical to one who'd reached real, usable chat.
+  // Guarded with a ref so a flip from false->true only fires once, not
+  // on every re-render while true.
+  const chatOpenedFiredRef = useRef(false);
   useEffect(() => {
+    if (!readyToTrackOpen || chatOpenedFiredRef.current) return;
+    chatOpenedFiredRef.current = true;
     api.post("/chat/opened", { project_id: activeProject?.project_id || null }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readyToTrackOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ora:prefill — fired by BrainDump's "Show diff →" buttons and any
   // other surface that wants to drop the user into chat with a primed
@@ -369,6 +495,26 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     window.addEventListener("ora:prefill", handler);
     return () => window.removeEventListener("ora:prefill", handler);
   }, []);
+
+  // 2026-09-21 — aurem:run-scan: fired by OraGuideMascot's scan
+  // suggestion chips (and the existing first-scan nudge, which used
+  // to just PREFILL the literal text "/scan" via ora:prefill above —
+  // that never actually ran a scan, since slash-command detection
+  // only fires from real typing (onChange), not a programmatic
+  // setInput; sending "/scan" as a plain message has no backend
+  // interception at all, per SlashCommandMenu.jsx's own docstring).
+  // This calls the SAME runSlashCommand() a real dropdown pick uses,
+  // so a click here ACTUALLY runs the scan and shows real findings.
+  useEffect(() => {
+    const handler = (e) => {
+      const id = e?.detail?.commandId;
+      const cmd = SLASH_COMMANDS.find((c) => c.id === id);
+      if (cmd) runSlashCommand(cmd);
+    };
+    window.addEventListener("aurem:run-scan", handler);
+    return () => window.removeEventListener("aurem:run-scan", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.project_id]);
 
   // Iter 42 — F12 error capture + mode classifier
   const f12 = useF12Errors();
@@ -414,6 +560,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   const lastF12PayloadRef = useRef(null);
   const endRef = useRef(null);
   const abortRef = useRef(null);
+  // INTERACTION_CONTRACT_V1 P1 — the `request_id` of the MOST RECENT
+  // /chat/stream attempt for the turn currently in flight. Captured
+  // off that attempt's own `meta` frame; sent back as
+  // `retry_of_request_id` on the NEXT retry so the backend can replay
+  // an already-completed original instead of re-running the
+  // provider/tools a second time (services/chat_reliability.py).
+  // Reset to null at the start of every genuinely NEW user message.
+  const lastRequestIdRef = useRef(null);
   // Iter 212m-43 — stuck-thinking auto-recovery watchdog. If the SSE
   // stream goes silent (no token / heartbeat / step / mode update)
   // for IDLE_TIMEOUT_MS, we abort the stream and silently retry the
@@ -479,6 +633,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   //  markdown: string, error?: string}
   const [attachments, setAttachments] = useState([]);
   const [dragOver, setDragOver] = useState(false);
+  // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1+2). Raw File blobs
+  // for image attachments, keyed by pill id — `attachments` above
+  // only ever stores the CONVERTED markdown description, never the
+  // original bytes, so this is the only place the real file lives
+  // long enough for the "Find & fix" action to re-upload it.
+  const imageFilesRef = useRef({});
+  // {status: 'uploading'|'analyzing'|'done'|'error', name, imageUrl,
+  //  visual_defects, extracted_strings, inferred_dom_elements,
+  //  suggested_patterns, candidate_files, error}
+  const [visualBugAnalysis, setVisualBugAnalysis] = useState(null);
+  const [workbenchReportId, setWorkbenchReportId] = useState(null);   // 2026-09-12 — Visual Bug-Fix Phase 3+4
   // Iter 114 — Live task popup state. Set when a CTO task is dispatched
   // (onTaskHandoff). Auto-dismisses on success after 5s, persists on
   // failure until the user closes it manually, vanishes immediately on
@@ -1174,6 +1339,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     setPreviewOpen((v) => {
       const next = !v;
       localStorage.setItem(PREVIEW_KEY, next ? "1" : "0");
+      // 2026-09-11 — real QA repro: Preview and Graph used to be
+      // fully independent booleans, so opening one never closed the
+      // other — clicking Preview → Graph stacked THREE panels
+      // (Chat + Diff/Preview + Codebase Graph) on top of each other
+      // instead of replacing. Only one full-width panel should ever
+      // be open at once.
+      if (next) setGraphOpen(false);
       // Iter 145 — notify Dashboard so the top-right button label stays
       // in sync (button is the only visible entrypoint now).
       try {
@@ -1193,6 +1365,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         const next = typeof desired === "boolean" ? desired : !cur;
         try { localStorage.setItem(PREVIEW_KEY, next ? "1" : "0"); }
         catch { /* ignore */ }
+        // 2026-09-11 — see togglePreview's comment above — same
+        // mutual-exclusivity fix for this second entrypoint.
+        if (next) setGraphOpen(false);
         return next;
       });
     };
@@ -1212,13 +1387,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   // on the user's currently-active project. The same event is
   // also fired by the sidebar Codebase Graph link.
   useEffect(() => {
-    const open = () => setGraphOpen(true);
+    // 2026-09-11 — see togglePreview's comment above (same
+    // panel-stacking fix): opening Graph must close Preview too.
+    const open = () => { setGraphOpen(true); setPreviewOpen(false); };
     const close = () => setGraphOpen(false);
     const toggle = (e) => {
       const d = e?.detail || {};
       if (d.open === true) open();
       else if (d.open === false) close();
-      else setGraphOpen((v) => !v);
+      else setGraphOpen((v) => {
+        const next = !v;
+        if (next) setPreviewOpen(false);
+        return next;
+      });
     };
     window.addEventListener("aurem:toggle-graph", toggle);
     return () => window.removeEventListener("aurem:toggle-graph", toggle);
@@ -1298,6 +1479,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       if (form) form.requestSubmit();
     }, 0);
   }, [busy, sessionId]);
+
+  // 2026-09 — WhatsApp/Telegram-style chat date dividers. Recomputed
+  // whenever `messages` changes (new send, history load, session
+  // switch). Cheap (O(n) single pass) so no debouncing needed.
+  const dateDividers = useMemo(() => computeDateDividers(messages), [messages]);
 
   // Auto-extract code blocks from the latest *completed* assistant reply
   const latestAssistant = useMemo(() => {
@@ -1450,7 +1636,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
 
     return () => {
       aborted = true;
-      try { ctrl.abort(); } catch { /* ignore */ }
+      try { ctrl.abort("component_cleanup"); } catch { /* ignore */ }
     };
   }, [latestAssistant?.shipped_task_id]);
 
@@ -1500,28 +1686,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           // session (server returned OK with no turns). Never on error.
           setMessages([WELCOME]);
         } else {
-          setMessages(turns.map((t) => ({
-            role: t.role,
-            content: t.content,
-            provider: t.provider,
-            // Iter 161 — preserve review_mode across reload so the
-            // agent chip stays accurate after a page refresh.
-            reviewMode: t.review_mode || null,
-            watchdog: t.watchdog,
-            feedback: t.feedback,
-            shipped_task_id: t.shipped_task_id,
-            // Chat UX #4 (Tier 1) — hydrate the persisted "📖 Reading
-            // repo… ✍️ Writing files…" step trail so it survives a
-            // page refresh instead of vanishing (MessageBubble already
-            // renders `m.steps` via <StepCards/> when non-empty).
-            steps: Array.isArray(t.steps) && t.steps.length > 0 ? t.steps : undefined,
-            // 2026-08-22 — these were missing from the reload map, so
-            // the low-confidence badge / ship-suppressed note (both
-            // rendered off these two flags) silently disappeared on a
-            // page refresh even though they were persisted server-side.
-            low_confidence: t.low_confidence || false,
-            ship_suppressed: t.ship_suppressed || false,
-          })));
+          // 2026-09-11 — see sortMessagesByTimestamp's docstring: a
+          // Loop turn-pair can be $push'd (appended) well AFTER other
+          // genuinely newer turns if the loop was paused for human
+          // approval — raw array order stops matching real
+          // chronological order. Sort by `ts` (stable — ties/missing
+          // values keep their original relative position) so reload
+          // always renders in the same order the live session did.
+          // 2026-09-20 — the per-field mapping used to be inlined here.
+          // Extracted to utils/dateDividers.js::mapHistoryTurn so it's
+          // unit-testable as real behaviour (see that function's
+          // docstring for the "old task-followup re-appended at the
+          // bottom" bug this fixes) instead of only checkable by
+          // reading source text.
+          setMessages(sortMessagesByTimestamp(turns.map(mapHistoryTurn)));
           // Iter 212m-44 — the user has prior turns in this session
           // (reloaded mid-conversation), so the chrome (top tabs +
           // sidebar) should be auto-hidden as if they had just sent
@@ -1571,16 +1749,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     // hook-owned controller covers any future stream() call we route
     // through useChatStream, while abortRef stays in service of the
     // existing inline streamChat path.
-    chatStream.abort();
+    chatStream.abort("user_stopped");
     if (abortRef.current) {
-      abortRef.current.abort();
+      // 2026-09-12 — pass an explicit reason so a rapid-click AbortError
+      // reads as "user_stopped" in traces instead of the default,
+      // confusing "signal is aborted without reason".
+      abortRef.current.abort("user_stopped");
       abortRef.current = null;
     }
     manualRetryRef.current = null;
     // Iter 212m-65 — also abort any active Loop Mode SSE stream so a
     // user Stop click reliably cancels mid-pipeline.
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("user_stopped"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     // Iter 283 — also send an explicit /loop/{id}/cancel to the
@@ -1708,6 +1889,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         status: "uploading",
         markdown: "",
       }]);
+      // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1): stash the raw
+      // File blob for image attachments so the "Find & fix this bug"
+      // action (rendered on the pill once ready — see attachments.map
+      // below) can re-upload the ORIGINAL bytes to the purpose-built
+      // /visual-bugfix/upload endpoint without asking the user to
+      // re-pick the file. Fully separate from the markdown-description
+      // flow above — zero changes to that existing, working path.
+      if (isImage) imageFilesRef.current[pillId] = f;
 
       try {
         let mdBody;
@@ -1765,6 +1954,75 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     }
   }
 
+  // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1+2). Separate from
+  // handleFiles() above: uploads the ORIGINAL image bytes to the
+  // purpose-built /visual-bugfix endpoints (persisted via object
+  // storage, unlike the ephemeral markdown-description flow), runs
+  // ONE Gemini vision call, then correlates against the connected
+  // project's repo. Phase 3 (patch generation + preview) is not
+  // built yet — this only surfaces the analysis + candidate files.
+  async function handleVisualBugAnalyze(pillId, fileName) {
+    const file = imageFilesRef.current[pillId];
+    if (!file) {
+      toast({ message: "That image is no longer available — try attaching it again.", kind: "error" });
+      return;
+    }
+    setVisualBugAnalysis({ status: "uploading", name: fileName });
+    try {
+      const token = getToken();
+      const form = new FormData();
+      form.append("file", file);
+      if (activeProject?.project_id) form.append("project_id", activeProject.project_id);
+      const uploadRes = await fetch(`${API_BASE}/visual-bugfix/upload`, {
+        method: "POST",
+        signal: AbortSignal.timeout(60000),
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      if (!uploadRes.ok) {
+        const errBody = await uploadRes.json().catch(() => ({}));
+        throw new Error(errBody?.detail || `Upload failed (${uploadRes.status})`);
+      }
+      const uploaded = await uploadRes.json();
+
+      setVisualBugAnalysis({ status: "analyzing", name: fileName, imageId: uploaded.id });
+      const analyzeRes = await fetch(`${API_BASE}/visual-bugfix/${uploaded.id}/analyze`, {
+        method: "POST",
+        signal: AbortSignal.timeout(120000),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          bug_description: input || "Find and explain the visual bug in this screenshot.",
+          project_id: activeProject?.project_id,
+        }),
+      });
+      const analysis = await analyzeRes.json().catch(() => ({}));
+      if (!analyzeRes.ok || !analysis.ok) {
+        throw new Error(analysis?.error || analysis?.detail || `Analysis failed (${analyzeRes.status})`);
+      }
+      setVisualBugAnalysis({
+        ...analysis,
+        status: "done",
+        name: fileName,
+        imageId: uploaded.id,
+        imageUrl: `${API_BASE}/visual-bugfix/${uploaded.id}/image?auth=${encodeURIComponent(token || "")}`,
+      });
+    } catch (e) {
+      setVisualBugAnalysis({ status: "error", name: fileName, error: e?.message || String(e) });
+    }
+  }
+
+  // 2026-09-12 — Bug 2 fix (critical-diff cancel bug). Symmetric to
+  // the backend's own bare-confirmation detector
+  // (services/orchestrator.py `_CONFIRM_RX` — "go" / "ship it" after
+  // a handoff fence = ship shortcut). This is the rejection mirror:
+  // an explicit stop/cancel/don't-apply intent anywhere in the new
+  // message invalidates any still-pending "Approve the fix" button
+  // instead of leaving it live and clickable.
+  const CANCEL_SHIP_RX = /\b(stop|cancel|abort)\b|\bdon'?t\s+(apply|do|ship|approve|commit)\b|\bdo\s+not\s+(apply|do|ship|approve|commit)\b|\bnever\s*mind\b/i;
+
   async function send(e, opts = {}) {
     e?.preventDefault();
     // Iter 212m-58 — optional loop-phase override. Called with
@@ -1773,6 +2031,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     // session with the execute phase.
     const loopPhaseHint = opts.loopPhase || null;
     const promptOverride = opts.promptOverride || null;
+    const scopeConfirmedProposalId = opts.scopeConfirmedProposalId || null;
     const text = promptOverride != null ? promptOverride : input.trim();
     // Pull ready attachments (uploading ones get skipped silently —
     // user can re-send if they were too slow). Also keep errored ones
@@ -1816,6 +2075,67 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       || (busy && !isLoopQueueAttempt)
       || !sessionId
     ) return;
+    // 2026-09-11 — real QA repro (TC-C): the textarea's `maxLength`
+    // attribute only stops NATIVE keyboard/paste typing — it does
+    // NOTHING against a programmatically-set value (devtools, a
+    // scripted stress test, or a paste event a browser doesn't gate).
+    // Previously the only enforcement was server-side (Pydantic's
+    // `max_length=20000` on ChatBody.prompt, a 422), which fired
+    // AFTER the optimistic user bubble was already appended — so an
+    // over-limit send looked exactly like a normal "sent" message in
+    // the chat, then a separate, disconnected error bubble appeared.
+    // Block it here, before anything is appended, with an immediate,
+    // clear toast — the exact same limit the server enforces, just
+    // surfaced instantly instead of round-tripping to find out.
+    if (text.length > 20000) {
+      toast({
+        message: `Message is too long (${text.length.toLocaleString()} / 20,000 characters max). Please shorten it and try again.`,
+        kind: "error",
+      });
+      return;
+    }
+    // 2026-09-12 — Bug 2 fix (critical-diff cancel bug). Founder
+    // repro: after seeing a dangerous auto-generated diff, typing
+    // "STOP - do not apply this... Cancel this." left the earlier
+    // "Approve the fix" button live and clickable — no mechanism
+    // ever invalidated it from a LATER message. Detect the rejection
+    // intent here and immediately disable EVERY currently-pending
+    // (not yet shipped, not yet cancelled) handoff in this session —
+    // erring toward cancelling all of them rather than guessing which
+    // one the user meant, since a destructive action must never stay
+    // reachable after an explicit "stop". Best-effort persisted so
+    // the button stays gone after a refresh; the local setMessages
+    // update below is what actually disables the button right now,
+    // synchronously, regardless of whether the persist call succeeds.
+    if (promptOverride == null && CANCEL_SHIP_RX.test(text)) {
+      const isPendingHandoff = (msg) => (
+        msg.role === "assistant"
+        && !msg.shipped_task_id
+        && !msg.ship_cancelled
+        && typeof msg.content === "string"
+        && msg.content.includes("```aurem-handoff")
+      );
+      const turnIndicesToCancel = [];
+      messages.forEach((msg, mi) => {
+        if (isPendingHandoff(msg)) {
+          turnIndicesToCancel.push(
+            messages.slice(0, mi + 1)
+              .filter((mm) => mm.provider !== "system").length - 1,
+          );
+        }
+      });
+      if (turnIndicesToCancel.length) {
+        setMessages((m) => m.map((msg) => (
+          isPendingHandoff(msg) ? { ...msg, ship_cancelled: true } : msg
+        )));
+        turnIndicesToCancel.forEach((turnIndex) => {
+          api.post("/chat/turn/ship-cancelled",
+            { session_id: sessionId, turn_index: turnIndex })
+            .catch(() => { /* local state already reflects the cancel */ });
+        });
+        toast({ message: "Cancelled the pending fix — it will not be applied.", kind: "info" });
+      }
+    }
     // Set the ref lock AFTER passing the input-validity guard so a
     // legitimately-blocked send (empty text, no session, busy in
     // non-loop mode) doesn't spuriously arm the lock and starve the
@@ -1877,7 +2197,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       const userBubble = text;
       setMessages((m) => [
         ...m,
-        { role: "user", content: userBubble },
+        { role: "user", content: userBubble, ts: Date.now() / 1000 },
         { role: "assistant", content: "", streaming: true,
           diagramPending: true },
       ]);
@@ -1958,7 +2278,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       const userBubble = text;
       setMessages((m) => [
         ...m,
-        { role: "user", content: userBubble },
+        { role: "user", content: userBubble, ts: Date.now() / 1000 },
         { role: "assistant", content: "", streaming: true,
           podShellPending: true },
       ]);
@@ -2033,20 +2353,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     ) {
       if (isLoopUnlockedSync()) {
         handleExecModeChange(EXEC_MODES.LOOP);
-        import("sonner").then(({ toast }) => {
-          toast.info("Detected \u201crun as a loop\u201d \u2014 switching to Loop mode", {
-            id: "loop-opt-in-auto-switch",
-          });
-        }).catch(() => {});
+        toast({
+          message: "Detected \u201crun as a loop\u201d \u2014 switching to Loop mode",
+          kind: "info", id: "loop-opt-in-auto-switch",
+        });
         await runLoopPlan(text, readyAttachments, opts);
         return;
       }
-      import("sonner").then(({ toast }) => {
-        toast.warning(
-          "Loop mode needs Pro or Maxx \u2014 switch above to run this as a guided pipeline. Continuing as a normal chat message for now.",
-          { id: "loop-opt-in-not-entitled", duration: 6000 },
-        );
-      }).catch(() => {});
+      toast({
+        message: "Loop mode needs Pro or Maxx \u2014 switch above to run this as a guided pipeline. Continuing as a normal chat message for now.",
+        kind: "warn", id: "loop-opt-in-not-entitled", duration: 6000,
+      });
       // not entitled — fall through to the normal chat path below
     }
 
@@ -2138,7 +2455,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       ...m,
       ...(opts.skipUserBubble
         ? []
-        : [{ role: "user", content: displayContent }]),
+        : [{ role: "user", content: displayContent, ts: Date.now() / 1000 }]),
       { role: "assistant", content: "", streaming: true, maxxMode, councilRecalled: 0 },
     ]);
     setBusy(true);
@@ -2153,10 +2470,30 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     // the console/network error data — exactly the "I can't see your
     // DevTools, paste the HAR manually" symptom. Prefer the staged payload
     // when one exists; only flush fresh for a normal (non-F12-confirm) send.
-    const f12Payload = lastF12PayloadRef.current
-      || ((typeof window !== "undefined" && window.__auremF12)
-          ? window.__auremF12.flush()
-          : null);
+    // 2026-02 — SECOND, independently-confirmed instance of the SAME bug
+    // class (founder QA, "Retry" button hijack): retryFailedTurn() /
+    // retryLastFix() / continueTurn() all call this exact send() with
+    // `promptOverride` set to re-submit a KNOWN, already-typed prompt —
+    // they are never a fresh interactive compose. But this drain used to
+    // run unconditionally, so ANY stray browser console/network noise
+    // that happened to fire during the wait (a stray 404 fetch, an
+    // unrelated console error elsewhere on the page — completely
+    // plausible across a 48s+ timeout window) got silently attached to
+    // the RETRY of an unrelated prior request, and the backend treated
+    // that incidental F12 payload as the higher-priority thing to
+    // address instead of the user's actual retry intent. `promptOverride`
+    // is already the established, reliable signal this exact function
+    // uses to skip every OTHER fresh-compose-only side-effect (see
+    // `promptOverride == null` guards a few lines below for slash
+    // commands, ship-cancel detection, session-start, input-clearing) —
+    // extending that same guard here for consistency, not inventing a
+    // new mechanism.
+    const f12Payload = promptOverride != null
+      ? null
+      : (lastF12PayloadRef.current
+          || ((typeof window !== "undefined" && window.__auremF12)
+              ? window.__auremF12.flush()
+              : null));
     lastF12PayloadRef.current = null;
 
     // Iter 212m-19 — fresh floating-card session: clear any leftover
@@ -2224,7 +2561,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       // never silently no-op just because the auto-retry already
       // used its one shot.
       function performRetry(idleFor, { manual }) {
-        try { ctrl.abort(); } catch { /* ignore */ }
+        try { ctrl.abort(manual ? "manual_retry" : "idle_watchdog_retry"); } catch { /* ignore */ }
         abortRef.current = null;
         if (manual) retryAttemptRef.current = 0;
         if (retryAttemptRef.current < MAX_RETRIES) {
@@ -2329,6 +2666,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       mode: chatMode,              // Iter 153: swift / pro / maxx review
       executionMode: execMode,     // Iter 212m-58: prompt / loop
       f12Payload,                  // iter 42: console/network/stack errors
+      // INTERACTION_CONTRACT_V1 P1 — set on every call INCLUDING the
+      // first: null on a genuinely fresh turn (lastRequestIdRef is
+      // reset before runTurn's first invocation — see below), the
+      // PRIOR attempt's own id on a retry re-invocation of runTurn.
+      retryOfRequestId: lastRequestIdRef.current,
+      scopeConfirmedProposalId,
       signal: ctrl.signal,
       onMode: (m) => {
         bumpActivity();
@@ -2413,6 +2756,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       },
       onMeta: (m) => {
         bumpActivity();
+        // INTERACTION_CONTRACT_V1 P1 — capture this attempt's own
+        // request_id so a FOLLOWING retry (if one is needed) can
+        // reference it. See lastRequestIdRef's declaration comment.
+        if (m && m.request_id) lastRequestIdRef.current = m.request_id;
         // Iter 141 — first real progress milestone. The meta frame
         // confirms the server accepted the request and routed it to
         // the orchestrator. Anchor the bar at 15% so the user gets
@@ -2497,7 +2844,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       onIntent: (intent) => {
         if (intent && intent.tier) setLastIntentTier(intent.tier);
       },
-      onThinking: (elapsed, activity, invocations) => {
+      onThinking: (elapsed, activity, invocations, slowNotice) => {
         bumpActivity();
         // Iter 167 — fan out file paths from tool invocations so the
         // KnowledgeGraph drawer can glow the nodes ORA is touching
@@ -2543,6 +2890,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               // thinking bar so the user sees what AUREM is doing right
               // now (read_repo_file, search_repo, execute_bash, etc.).
               ...(Array.isArray(invocations) ? { invocations } : {}),
+              // 2026-09-08 — Turn-Completion Contract stream-idle
+              // notice: flips true once elapsed crosses the
+              // STREAM_SLOW_NOTICE_S threshold with little/no tool
+              // progress — was previously silent until the full 48s
+              // soft-timeout message landed, which read as a
+              // confusing surprise rather than an expected escalation.
+              ...(typeof slowNotice === "boolean" ? { slowNotice } : {}),
             };
           }
           return copy;
@@ -2698,6 +3052,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               // made this turn, shown as before/after swatches on the
               // bubble (see components/PaletteNudgeBubble.jsx).
               paletteNudges: Array.isArray(d.palette_nudges) ? d.palette_nudges : [],
+              // 2026-09-08 — Turn-Completion Contract. A turn now always
+              // carries one of three explicit states so MessageBubble
+              // never has to guess from absence of data whether
+              // something silently died.
+              turnState: d.turn_state || "success",
+              continueAvailable: !!d.continue_available,
+              failureMode: d.failure_mode || null,
+              recoveryAction: d.recovery_action || null,
+              turnError: d.error || null,
+              // Trust & Verification round — Enhancement 5. Pinned so
+              // MessageBubble can render <ScopeConfirmCard> instead of
+              // the raw text when this turn stopped to ask for scope
+              // confirmation rather than executing.
+              awaitingScopeConfirmation: !!d.awaiting_scope_confirmation,
+              scopeConfirmationProposalId: d.scope_confirmation_proposal_id || null,
+              scopeConfirmationPrompt: d.awaiting_scope_confirmation ? finalPrompt : null,
+              ...interactionFields(d),
             };
           }
           return copy;
@@ -2783,6 +3154,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               ...last, content: `⚠ ${errText}`, error: true, streaming: false,
             };
           }
+          // 2026-09-11 — real QA repro (TC-C): the user bubble sent
+          // just before this failed assistant turn stayed looking
+          // exactly like a normal, successfully-delivered message —
+          // no visual difference from any other sent bubble — while
+          // a DISCONNECTED error bubble appeared separately below it.
+          // Defense-in-depth alongside the client-side length guard
+          // above: for ANY send failure (network error, 500, expired
+          // session, etc.), mark the preceding user bubble as not
+          // delivered instead of leaving it looking sent.
+          const userIdx = copy.length - 2;
+          if (userIdx >= 0 && copy[userIdx]?.role === "user") {
+            copy[userIdx] = { ...copy[userIdx], sendFailed: true };
+          }
           return copy;
         });
         setBusy(false);
@@ -2799,7 +3183,34 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       },
     });
     };
-    await runTurn();
+    // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
+    // reproducible): `runTurn()` calls `streamChat()`, whose initial
+    // `fetch(...)` (lib/api.js) has no try/catch of its own — if the
+    // AbortController fires while that fetch is still in flight (a
+    // 2nd/3rd rapid click after the 1st already aborted), the
+    // rejection propagates all the way up through this `await` with
+    // nothing to catch it, surfacing as an uncaught
+    // "AbortError: signal is aborted without reason" in the console.
+    // The streamChat() reader-loop's OWN catch already handles this
+    // same error correctly once the body starts streaming (Iter
+    // 212m-57) — this is purely the earlier, pre-stream window. An
+    // AbortError here is always the user's own Stop click or the idle
+    // watchdog, never a real failure — swallow it silently; anything
+    // else is truly unexpected and worth a console.warn.
+    try {
+      // INTERACTION_CONTRACT_V1 P1 — this is a genuinely NEW user
+      // turn (not a retry re-invocation of runTurn), so there is no
+      // prior attempt to reference yet.
+      lastRequestIdRef.current = null;
+      await runTurn();
+    } catch (e) {
+      const name = e?.name || "";
+      const msg = (e?.message || "").toLowerCase();
+      const isAbort = name === "AbortError" || msg.includes("aborted");
+      if (!isAbort) {
+        console.warn("send(): unexpected error outside streamChat's own handling", e);
+      }
+    }
   }
 
   function regenerate() {
@@ -2820,6 +3231,47 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser || busy) return;
     send(null, { promptOverride: lastUser.content });
+  }
+
+  // 2026-09-08 — Turn-Completion Contract, EXPLICIT PARTIAL recovery.
+  // "Continue" is a real, working action — not a text-only dead end —
+  // exactly like retryLastFix() above, just sending a continuation
+  // prompt instead of resending the same one. `busy` already guards
+  // against a double-click double-firing this (button disables while
+  // a turn is in flight).
+  function continueTurn() {
+    if (busy) return;
+    send(null, { promptOverride: "Please continue from where you left off." });
+  }
+
+  // 2026-09-08 — Turn-Completion Contract, EXPLICIT FAILURE recovery.
+  // Distinct from continueTurn/retryLastFix: resends the ORIGINAL
+  // prompt (not a continuation) for a turn that ended in a real error.
+  function retryFailedTurn() {
+    if (busy) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    send(null, { promptOverride: lastUser.content });
+  }
+
+  // Trust & Verification round — Enhancement 5. "Confirm and
+  // proceed" on a <ScopeConfirmCard> resends the EXACT original
+  // prompt (mirrors retryLastFix()'s established pattern) with
+  // `scopeConfirmedProposalId` set — the backend gate
+  // (services/scope_confirmation.confirm_proposal) only honours it
+  // when it matches the proposal's stored prompt verbatim.
+  function confirmScopeProposal(proposalId, originalPrompt) {
+    if (busy || !proposalId || !originalPrompt) return;
+    send(null, { promptOverride: originalPrompt, scopeConfirmedProposalId: proposalId });
+  }
+
+  // "Cancel"/"Change scope" just tell the backend so the proposal
+  // doesn't linger as pending — no re-send, no new tool execution.
+  async function cancelScopeProposal(proposalId) {
+    if (!proposalId) return;
+    try {
+      await api.post(`/verification/scope-confirm/${proposalId}/cancel`);
+    } catch { /* best-effort — the 15-min TTL expires it anyway */ }
   }
 
   function onKeyDown(e) {
@@ -2897,22 +3349,73 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       const r = await api.post("/codebase-health/scan", {
         project_id: projectId,
         categories: cmd.categories || null,
+        session_id: sessionId,
       });
       // Success — clear any lingering rate-limit toast from the retry
       // path and record the summary for the strip.
       if (opts.retryToastId != null) {
         try { dismissToast(opts.retryToastId); } catch { /* ignore */ }
       }
-      const summary = r.data?.summary || {};
-      const bySev   = summary.by_severity || {};
-      const crit    = bySev.critical || 0;
-      const high    = bySev.high || 0;
+      // 2026-09-17 fix — this used to read `r.data.summary.by_severity`,
+      // but `summary` is a plain string on this endpoint (e.g. "3
+      // issues found across 1 categories — 1 critical."); `bySev`
+      // always fell back to `{}`, so `crit`/`high` were silently 0
+      // on every scan regardless of real findings, and the "clean"
+      // toast below could fire even when the scan wasn't clean. The
+      // real counts are per-category in `breakdown[cat].counts`.
+      const breakdown = r.data?.breakdown || {};
+      let crit = 0, high = 0;
+      for (const cat of Object.keys(breakdown)) {
+        crit += breakdown[cat]?.counts?.critical || 0;
+        high += breakdown[cat]?.counts?.high || 0;
+      }
       markScanJustCompleted({
         critical:    crit,
         high:        high,
         projectId,
         projectName: activeProject?.github_repo || projectId,
       });
+      // 2026-09-17 — Bug 6 fix (live QA report): a scan result used to
+      // ONLY ever reach the user as this toast — invisible to anyone
+      // who reopens the chat, and to the audit trail. The backend now
+      // ALSO persists it as a real chat message when `session_id` is
+      // passed (see routers/codebase_health.py); mirror that into the
+      // visible transcript immediately here so the user doesn't have
+      // to reload to see it. The toast still fires too — it's a
+      // notification ON TOP of the durable record, never instead of it.
+      if (r.data?.summary) {
+        const lines = [`**Scan complete — ${cmd.label}**`, "", r.data.summary];
+        // 2026-09-21 — Bug E fix (live QA report): list EVERY category
+        // that was actually scanned (cmd.categories, falling back to
+        // whatever keys the response has), not just the ones with a
+        // non-zero total — the header above always counts categories
+        // RUN, so skipping 0-finding ones here made the header and
+        // body disagree (e.g. "...across 4 categories" with only 3
+        // lines under it).
+        const ranCats = cmd.categories || Object.keys(breakdown);
+        for (const cat of ranCats) {
+          const b = breakdown[cat] || { total: 0, counts: {} };
+          lines.push(
+            `- \`${cat}\`: ${b.total || 0} finding(s) (critical ${b.counts?.critical || 0}, high ${b.counts?.high || 0})`,
+          );
+        }
+        // 2026-09-21 — Bug A fix (live QA report): the backend now
+        // durably persists this exact message into db.chat_sessions
+        // (see routers/codebase_health.py) instead of a disconnected
+        // collection the real chat never reads, so a later GET
+        // /chat/history reload will return it verbatim. Give the
+        // optimistic local copy the same `ts`/`kind`/`provider` shape
+        // the server turn has so a hydration replace never looks like
+        // a jump or a duplicate.
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant", content: lines.join("\n"),
+            provider: "scan-result", kind: "scan_result",
+            ts: Date.now() / 1000,
+          },
+        ]);
+      }
       // 2026-08-20 — a clean scan previously showed NOTHING at all,
       // identical to a silent failure. Confirm success explicitly so
       // "clean" and "broken" are never visually indistinguishable.
@@ -3028,7 +3531,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     if (!sessionId) return;
     // Cancel any prior loop session (defensive — should be a no-op).
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     setLoopId(null);
@@ -3068,7 +3571,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       // bubble BEFORE inserting the new one so at most ONE
       // "Generating plan…" placeholder exists at any moment.
       ...m.filter((row) => !(row.role === "assistant" && row.loopPending)),
-      ...(opts?.skipUserBubble ? [] : [{ role: "user", content: displayContent }]),
+      ...(opts?.skipUserBubble ? [] : [{ role: "user", content: displayContent, ts: Date.now() / 1000 }]),
       { role: "assistant", content: "", streaming: true, loopPending: true },
     ]);
     setBusy(true);
@@ -4033,7 +4536,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
 
   function openLoopStream(lid) {
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
     }
     // Iter 275 — reset the live-feed on every fresh open so a
     // reconnect / new run doesn't inherit the previous run's ring.
@@ -4261,7 +4764,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
       catch { /* engine already cleaned up */ }
     }
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     // Iter 316 · Fix A — cancel fallback poll on user cancel.
@@ -4297,7 +4800,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
   async function handleRestartLoop() {
     const targetLoopId = loopId;
     if (loopAbortRef.current) {
-      try { loopAbortRef.current.abort(); } catch { /* swallow */ }
+      try { loopAbortRef.current.abort("loop_cancelled"); } catch { /* swallow */ }
       loopAbortRef.current = null;
     }
     setLoopExpired(null);
@@ -4360,15 +4863,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
     function onRouteToLoop() {
       if (isLoopUnlockedSync()) {
         handleExecModeChange(EXEC_MODES.LOOP);
-        import("sonner").then(({ toast }) => {
-          toast.info("Switched to Loop mode — send your request again to ship it.", {
-            id: "route-to-loop-from-blocked",
-          });
-        }).catch(() => {});
+        toast({
+          message: "Switched to Loop mode — send your request again to ship it.",
+          kind: "info", id: "route-to-loop-from-blocked",
+        });
       } else {
-        import("sonner").then(({ toast }) => {
-          toast.error("Loop mode isn't available on your plan yet.");
-        }).catch(() => {});
+        toast({ message: "Loop mode isn't available on your plan yet.", kind: "error" });
       }
     }
     window.addEventListener("aurem:route-to-loop", onRouteToLoop);
@@ -4515,14 +5015,16 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         }}
       />
 
-      {/* 2026-08-20 — Revoked-Repo Banner. Founder's explicit ask:
-          defense-in-depth so a revoked GitHub connection is unmissable
-          right inside the chat pane, regardless of what else (sidebar
-          dot, cleanup banner) also catches it. */}
-      <RevokedRepoBanner activeProject={activeProject} />
+      {/* 2026-09-12 — Founder's clarified spec: GitHub connection
+          state (revoked / unreachable / disconnected) must NEVER
+          surface as a banner — the ONLY signal is the color of the
+          GitHub toggle in the composer (below). The former
+          RevokedRepoBanner's polling + reconnect logic now lives in
+          useGithubConnectionStatus() and drives that toggle
+          directly; see githubConn below. */}
 
-      {/* 2026-08-22 — Payment-Failed Banner. Same defense-in-depth
-          pattern as above, for a failed recurring Stripe charge. */}
+      {/* 2026-08-22 — Payment-Failed Banner. Unrelated to GitHub
+          connection status (Stripe billing) — kept as-is. */}
       <PaymentFailedBanner />
 
       {/* Iter 212m-49 — "⚡ free mode" pill. Surfaces when the most
@@ -4807,10 +5309,18 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
             i === messages.length - 1
           );
           const suggestions = isLastAssistant
-            ? extractSuggestions(m.content)
+            ? extractSuggestions(m.content, m.interaction)
             : [];
           return (
             <React.Fragment key={i}>
+              {/* 2026-09 — WhatsApp/Telegram-style chat history date
+                  divider. Pure render concern: computeDateDividers()
+                  (utils/dateDividers.js) maps message index -> label,
+                  derived from each message's LOCAL-timezone calendar
+                  day. Scrolls with the list (a normal Fragment child,
+                  not pinned/sticky). Renders nothing when no divider
+                  belongs at this index. */}
+              <DateDivider text={dateDividers.get(i)} />
               {/* 2026-08-27 — P3a "ORA remembers this" (D5, "Show the
                   Outcome, Never the Engine"). On the explain-branch
                   surface (plainEnglishContractActive), the recall
@@ -4951,6 +5461,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                 m={m}
                 onRegenerate={regenerate}
                 onRetryFix={retryLastFix}
+                onContinueTurn={continueTurn}
+                onRetryFailedTurn={retryFailedTurn}
+                onConfirmScope={confirmScopeProposal}
+                onCancelScope={cancelScopeProposal}
                 sessionId={sessionId}
                 activeProject={activeProject}
                 exhausted={exhausted}
@@ -5354,7 +5868,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
         projectId={activeProject?.project_id}
         scanState={scanState}
         projectName={activeProject?.github_repo || ""}
-        onReviewFindings={() => window.location.assign("/codebase-health")}
+        onReviewFindings={() => navigate(
+          `/codebase-health?project_id=${encodeURIComponent(activeProject?.project_id || "")}`,
+        )}
       />
 
       {/* 2026-08-21 — founder request: hide the "Agent is running…"
@@ -5482,7 +5998,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                       <button
                         type="button"
                         data-testid={`chat-attach-remove-${a.id}`}
-                        onClick={() => setAttachments((arr) => arr.filter((x) => x.id !== a.id))}
+                        onClick={() => {
+                          delete imageFilesRef.current[a.id];
+                          setAttachments((arr) => arr.filter((x) => x.id !== a.id));
+                        }}
                         style={{
                           background: "none", border: "none",
                           color: colour, cursor: "pointer",
@@ -5491,11 +6010,67 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                         aria-label={`Remove ${a.name}`}
                       >×</button>
                     )}
+                  {/* 2026-09-12 — Visual Bug-Fix pipeline entry point.
+                      Only for a ready image pill; fires the SEPARATE
+                      purpose-built upload+analyze flow (never touches
+                      the existing markdown-description attachment
+                      above it). */}
+                  {a.kind === "image" && a.status === "ready" && (
+                    <button
+                      type="button"
+                      data-testid={`visual-bug-analyze-btn-${a.id}`}
+                      title="Find & explain this visual bug"
+                      onClick={() => handleVisualBugAnalyze(a.id, a.name)}
+                      disabled={visualBugAnalysis?.status === "uploading" || visualBugAnalysis?.status === "analyzing"}
+                      style={{
+                        background: "none", border: "none",
+                        color: "var(--accent)", cursor: "pointer",
+                        padding: 0, lineHeight: 1, fontSize: 13,
+                        opacity: (visualBugAnalysis?.status === "uploading" || visualBugAnalysis?.status === "analyzing") ? 0.4 : 1,
+                      }}
+                      aria-label={`Find and fix bug in ${a.name}`}
+                    >🔍</button>
+                  )}
                 </span>
               );
             })}
           </div>
         )}
+
+        {visualBugAnalysis && !workbenchReportId && (
+          <VisualBugAnalysisCard
+            result={visualBugAnalysis}
+            onDismiss={() => setVisualBugAnalysis(null)}
+            onGenerateFix={() => setWorkbenchReportId(visualBugAnalysis.imageId)}
+          />
+        )}
+
+        {workbenchReportId && (
+          <VisualDiffWorkbench
+            reportId={workbenchReportId}
+            token={getToken()}
+            onClose={() => {
+              const t = getToken();
+              fetch(`${API_BASE}/visual-bugfix/${workbenchReportId}/discard`, {
+                method: "POST",
+                signal: AbortSignal.timeout(30000),
+                headers: t ? { Authorization: `Bearer ${t}` } : {},
+              }).catch(() => { /* best-effort — closing the card matters more than the API call succeeding */ });
+              setWorkbenchReportId(null);
+              setVisualBugAnalysis(null);
+            }}
+            onTokenLimit={(detail) => {
+              window.dispatchEvent(new CustomEvent("aurem:token-limit-reached", {
+                detail: {
+                  kind: detail?.error || "monthly_task_limit_reached",
+                  message: detail?.message || "You've used your free fixes this month — upgrade to continue.",
+                  upgrade_url: detail?.upgrade_url || "/pricing",
+                },
+              }));
+            }}
+          />
+        )}
+
 
         {/* 2026-02-18 — Active project chip.
             Replaces the legacy `[Working on project: …]` prompt-preamble
@@ -5609,6 +6184,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           className="composer-input-bare"
           maxLength={20000}
           value={input}
+          spellCheck={false}
+          autoCorrect="off"
+          onBeforeInput={preventSmartPunctuation}
           onChange={(e) => {
             const v = e.target.value;
             setInput(v);
@@ -5701,7 +6279,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
           {activeProject?.project_id && activeProject.project_id !== "home" && (
             <ToolButton
               testid="ops-history-toggle-btn"
-              title="Ops history — ship / rollback timeline (click to show/hide)"
+              title="Ship history — what shipped and what was rolled back (click to show/hide)"
               onClick={() => setOpsHistoryOpen((v) => !v)}
               Icon={History}
               active={opsHistoryOpen}
@@ -5731,27 +6309,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               from the Projects page). Red dot = no repo configured.
               Click routes to Projects so the user can wire one up — we
               no longer expose AUREM-owned PAT pushes to end users. */}
+          {/* 2026-09-12 — GitHub connection toggle is now the ONLY
+              UI signal for connection state, per the founder's
+              clarified spec (no banners of any kind for this
+              category — see ghDisplay above + useGithubConnectionStatus).
+              green = connected & healthy, amber = transient issue /
+              retrying, red = disconnected / never connected / failed. */}
           <button
             type="button"
             data-testid="chat-github-status"
-            title={
-              activeProject?.github_owner && activeProject?.github_repo
-                ? `GitHub: connected — ${activeProject.github_owner}/${activeProject.github_repo}`
-                : "GitHub: not connected — click to configure"
-            }
-            onClick={() => {
-              // Iter 212m-199 — Founder request: clicking the connected
-              // GitHub toggle used to `window.location.href = "/projects"`
-              // which threw users into the legacy Projects page (with the
-              // old sidebar). That felt like a regression back to the V1
-              // interface. When the repo is already connected we now
-              // treat this toggle as a passive status indicator — the
-              // tooltip already exposes owner/repo, and the sidebar
-              // handles switching. Only the disconnected state still
-              // opens the in-place RepoHelpDialog.
-              const connected = !!(activeProject?.github_owner && activeProject?.github_repo);
-              if (!connected) setShowRepoHelp(true);
-            }}
+            title={ghDisplay.title}
+            onClick={() => { if (ghDisplay.onClick) ghDisplay.onClick(); }}
             style={{
               position: "relative",
               display: "inline-flex",
@@ -5762,17 +6330,16 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               borderRadius: 8,
               background: "transparent",
               border: "1px solid var(--border, rgba(255,200,120,0.16))",
-              // Iter 212m-199 — connected state is passive → default
-              // cursor so the button doesn't over-promise interaction.
-              cursor: (activeProject?.github_owner && activeProject?.github_repo)
-                ? "default"
-                : "pointer",
+              cursor: ghDisplay.onClick ? "pointer" : "default",
               color: "var(--text-dim)",
             }}
           >
             <Github size={15} />
             <span
               aria-hidden="true"
+              data-testid="chat-github-status-dot"
+              data-status={ghDisplay.color}
+              className={ghDisplay.color === "amber" ? "animate-pulse" : undefined}
               style={{
                 position: "absolute",
                 top: 4,
@@ -5780,12 +6347,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                 width: 6,
                 height: 6,
                 borderRadius: 999,
-                background: (activeProject?.github_owner && activeProject?.github_repo)
-                  ? "#22c55e"
-                  : "#ef4444",
-                boxShadow: (activeProject?.github_owner && activeProject?.github_repo)
-                  ? "0 0 6px rgba(34,197,94,0.7)"
-                  : "0 0 6px rgba(239,68,68,0.7)",
+                background: GH_DOT_COLOR[ghDisplay.color],
+                boxShadow: `0 0 6px ${GH_DOT_COLOR[ghDisplay.color]}b3`,
               }}
             />
           </button>
@@ -5890,8 +6453,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               )}
               <button
                 type="button" data-testid="chat-stop"
-                onClick={stop}
-                title="Stop streaming"
+                onClick={stopArmed ? stop : undefined}
+                disabled={!stopArmed}
+                title={stopArmed ? "Stop streaming" : "Stopping available in a moment…"}
+                aria-label="Stop generation"
                 style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                   width: 38, height: 38, borderRadius: "50%",
@@ -5899,8 +6464,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
                   background: "rgba(255,102,8,0.18)",
                   border: "1px solid rgba(255,102,8,0.45)",
                   color: "#FF6608",
-                  cursor: "pointer",
-                  transition: "background 140ms, transform 100ms",
+                  cursor: stopArmed ? "pointer" : "default",
+                  opacity: stopArmed ? 1 : 0.5,
+                  transition: "background 140ms, transform 100ms, opacity 200ms",
                 }}
               >
                 <Square size={14} strokeWidth={2.5} />
@@ -5933,6 +6499,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject }) {
               //   5. Use `aria-disabled` for SR users instead of
               //      the native `disabled` attribute.
               aria-disabled={!input.trim() || !sessionId || exhausted}
+              aria-label="Send message"
               onPointerDown={(e) => {
                 // Native pointer event fires BEFORE click — if any
                 // overlay is at z-index above this button, this is

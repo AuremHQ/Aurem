@@ -6,6 +6,7 @@ import os
 import time
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -18,6 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()  # MUST run before importing routers/services that read env at module load
 
 # Routers
+from routers.architect import router as architect_router
 from routers.deploy import router as deploy_router
 from routers.vault import router as vault_router
 from routers.stacks import router as stacks_router
@@ -53,12 +55,15 @@ from routers.admin_users import router as admin_users_router  # 2026-02-11 — P
 from routers.admin_projects_brain import router as admin_projects_brain_router  # 2026-02-11 — Phase 2 split: /admin/projects, /project-brain, /architecture
 from routers.admin_ops_config import router as admin_ops_config_router  # 2026-02-11 — Phase 2 split: /admin/cache, /feature-flags, /integrations, /settings, /github-app-config
 from routers.admin_llm_config import router as admin_llm_config_router  # 2026-08-27 — Admin self-serve LLM Settings
+from routers.admin_ora_chat_limits import router as admin_ora_chat_limits_router  # 2026-09-10 — editable daily token cap / rate limit
+from routers.admin_video_pipeline import router as admin_video_pipeline_router  # 2026-09-10 — ORA Chat video generation (Deepgram + MuseTalk)
 from routers.admin_llm_usd_cap import router as admin_llm_usd_cap_router  # 2026-08-28 — R6 USD cap
 from routers.notifications_bell import router as notifications_bell_router  # 2026-08-28 — P2-A user-facing bell
 from routers.admin_analytics import router as admin_analytics_router  # 2026-02-11 — Phase 2 split: /admin/dashboard, /audit, /loop-metrics, /council, /skills
 from routers.admin_bi import router as admin_bi_router  # Slice A · BI Cockpit — /admin/bi/{stripe,inference,summary}
 from routers.admin_health_score import router as admin_health_score_router  # 2026-08-23 — Codebase Health Score widget
 from routers.admin_deploy_readiness import router as admin_deploy_readiness_router  # 2026-08-24 — Deploy Readiness card (Option A)
+from routers.admin_context_bridge import router as admin_context_bridge_router  # 2026-09-09 — Chrome extension → ORA chat context bridge
 from routers.founder_summary import router as founder_summary_router  # 2026-08-24 — Pillar 6, founder-language translation layer
 from routers.rollback_v2 import router as rollback_v2_router  # 2026-06 — Pillar 1, snapshot-based two-phase rollback + drill
 from routers.github_auth_migration import router as github_auth_migration_router  # 2026-06 — PAT→App migration
@@ -90,7 +95,10 @@ from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 
 from routers.fix_pipeline import router as fix_pipeline_router      # Iter 212m-121 bulk + SSE fix pipeline
 from routers.repo_status import router as repo_status_router        # Iter 212m-125 live repo connection ping
 from routers.codebase_health import router as codebase_health_router # Iter 212m-72 5-category health scanner
+from routers.evidence import router as evidence_router  # 2026-09-20 — pointer+preview resolver (scan / loop_run)
+from routers.verification import router as verification_router  # Trust & Verification round
 from routers.scaffold import router as scaffold_router                # Iter 212m-231 Personal Track blank-slate
+from routers.visual_bugfix import router as visual_bugfix_router      # 2026-09-12 Multimodal Visual Bug-Fix Phase 1+2
 from routers.managed_db import router as managed_db_router            # Iter 212m-233 Personal Track shared DB
 from routers.supabase   import router as supabase_router              # Iter 212m-234 Personal Track paid-tier Supabase
 from routers.personal_track import router as personal_track_router    # Iter 212m-237 Personal Track activation events
@@ -99,6 +107,7 @@ from routers.findings      import router as findings_router         # Iter 212m-
 from routers.suggestions   import router as suggestions_router      # Iter 212m-193 founder suggestion box
 from routers.self_bugs_admin import router as self_bugs_admin_router  # Item 3 (2026-08-31) self-repair dashboard
 from routers.admin_connect_diagnostic import router as admin_connect_diagnostic_router  # Connect-flow investigation (2026-09-01)
+from routers.admin_onboarding_funnel import router as admin_onboarding_funnel_router  # Onboarding Funnel dashboard (2026-09-08)
 from routers.version       import router as version_router          # Iter 212m-205 build info + system health
 from routers.advisor_context import router as advisor_ctx_router     # Iter 212m-209 advisor read layer
 from routers.qa_probe      import router as qa_probe_router         # Iter 212m-190 QA-only chat-probe
@@ -108,7 +117,7 @@ from routers.feature_window import router as feature_window_router  # Iter 212m-
 from services.codebase_indexer import router as codebase_router
 from services.daily_digest import schedule_daily_digest
 # Iter 328 · #5 — periodic integration_health probe cron
-from services.integration_health_cron import schedule_integration_health_cron
+from services.integration_health_cron import schedule_integration_health_cron, _startup_jitter_s
 # 2026-08-26 — periodic SLO-breach founder-alert cron (approved
 # Stage-1 follow-up, reuses services/slo_metrics.py + founder_alerts.py)
 from services.slo_alert_cron import schedule_slo_alert_cron
@@ -260,7 +269,7 @@ if _SENTRY_DSN:
 # Iter 45 — slowapi rate limiting (per-IP). Hand-rolled to avoid
 # decorator/dep-injection collision.
 from services.rate_limiter import (
-    check_rate_limit, check_rate_limit_async, client_ip_from_request,
+    check_rate_limit_async, client_ip_from_request,
     in_memory_bucket_count,
 )
 
@@ -281,6 +290,25 @@ START_TIME = time.time()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("AUREM starting...")
+    # 2026-09-09 — fixes the intermittent, recurring "Emergent LLM Key
+    # / E2B Sandbox probe timeout after 20.0s" incidents (founder QA
+    # report: recurs every 15-70 min, self-resolves in 7-14 min). Root
+    # cause: every blocking-SDK call in this app (Stripe, E2B sandbox
+    # boot, the LLM-key health probe, GitHub calls, etc.) goes through
+    # `asyncio.to_thread(...)`, which — with NO executor configured —
+    # all draw from Python's single PROCESS-WIDE default
+    # ThreadPoolExecutor, sized `min(32, os.cpu_count()+4)`. On a
+    # container with few visible vCPUs that's a handful of workers
+    # shared by every real user's live E2B/Stripe/LLM call PLUS the
+    # periodic integration_health cron probes — under a real
+    # concurrent-traffic burst the pool runs dry and queued calls miss
+    # the probes' 20s timeout, even though each individual call is
+    # fast once it actually gets a thread. Giving the loop's default
+    # executor real headroom (independent of the container's visible
+    # CPU count, since every one of these calls is I/O-bound network
+    # wait, not CPU-bound work) removes the contention at its source.
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=48, thread_name_prefix="aurem-io"))
     # Iter 127 — cold-start fix. uvicorn doesn't bind port 8001 until the
     # lifespan.startup phase completes, so any awaited work here blocks
     # the entire HTTP listener. The previous flow ran a synchronous
@@ -491,6 +519,33 @@ async def lifespan(app: FastAPI):
         long_lived=True,
     )
 
+    # 2026-09-22 · INTERACTION_CONTRACT_V1 P1 — chat_request_ledger
+    # stale-`started`-row reconciler (see services/chat_reliability.py's
+    # module comment above chat_ledger_reconciler_loop for why this
+    # exists: a real client TCP disconnect while a turn is still
+    # waiting on the worker does not reliably raise CancelledError
+    # into the SSE generator in every ASGI/uvicorn environment, which
+    # would otherwise leave a `started` ledger row unresolved forever).
+    from services.chat_reliability import chat_ledger_reconciler_loop
+    app.state.chat_ledger_reconciler_task = _supervise(
+        chat_ledger_reconciler_loop(),
+        name="chat_ledger_reconciler",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09 — Trust & Verification round, Enhancement 4 (trust-
+    # calibration metric). Idempotent scheduled snapshot; a missed
+    # tick just means the next one recomputes the window from
+    # scratch off the durable task_verifications ledger.
+    from services.trust_calibration_cron import trust_calibration_cron
+    app.state.trust_calibration_cron_task = _supervise(
+        trust_calibration_cron(),
+        name="trust_calibration_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
     # 2026-08-19 · G7 guards-audit fix — `run_reconciliation()` existed
     # since it was written but was never actually scheduled anywhere,
     # so the Stripe-vs-local payment guard sat gray forever. Wired in
@@ -499,6 +554,18 @@ async def lifespan(app: FastAPI):
     app.state.payment_reconciliation_task = _supervise(
         schedule_payment_reconciliation(lambda: app.state.db),
         name="payment_reconciliation",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-22 · Revenue Recovery — weekly CASL consent-expiry digest.
+    # Same weekday/hour scheduler shape as funnel_digest_cron above;
+    # makes the excluded-count visible every week without anyone having
+    # to remember to hit the read-only casl-screen admin endpoint first.
+    from services.casl_consent import schedule_casl_weekly_digest
+    app.state.casl_digest_task = _supervise(
+        schedule_casl_weekly_digest(),
+        name="casl_weekly_digest",
         db_getter=lambda: app.state.db,
         long_lived=True,
     )
@@ -512,6 +579,36 @@ async def lifespan(app: FastAPI):
     app.state.idle_spend_guard_task = _supervise(
         schedule_idle_spend_guard(lambda: app.state.db),
         name="idle_spend_guard",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-16 · founder-reported incident (rebecca@millingtonstudio.com
+    # — GitHub-side App install + repo selection succeeded, confirmed
+    # live against GitHub's own API, but Aurem's DB had zero record of
+    # it, and GitHub's push-only webhook had no poll-based fallback).
+    # Every 30 min, cross-checks GitHub's own `GET /app/installations`
+    # (ground truth) against `github_installations` and backfills any
+    # installation the webhook + callback both missed as an unlinked
+    # ghost row — see services/github_app.py::reconcile_installations.
+    from services.github_app import schedule_github_installation_reconcile
+    app.state.github_reconcile_task = _supervise(
+        schedule_github_installation_reconcile(lambda: app.state.db),
+        name="github_installation_reconcile",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-17 · Bug 1 fix — runaway duplicate bot PRs (389 open on
+    # one connected repo). Safety-net reaper: closes superseded
+    # Aurem-fix PRs hourly and tracks `bot_open_prs_count` with a
+    # founder alert above 10. The root fix (deterministic branch
+    # names + check-before-create) stops NEW duplicates; this catches
+    # the existing backlog and anything that slips through a race.
+    from services.bot_pr_reaper import schedule_bot_pr_reaper_cron
+    app.state.bot_pr_reaper_task = _supervise(
+        schedule_bot_pr_reaper_cron(lambda: app.state.db),
+        name="bot_pr_reaper",
         db_getter=lambda: app.state.db,
         long_lived=True,
     )
@@ -624,64 +721,105 @@ async def lifespan(app: FastAPI):
     # housekeeping task's first tick run first and stamp a FRESH
     # heartbeat, making the "gap" always read ~0s regardless of the
     # real downtime — outages were silently never detected.
-    try:
-        from services.maintenance import (
-            load_maintenance_state as _maint_load,
-            read_last_heartbeat as _maint_last_beat,
-            record_boot_gap_incident as _maint_record_gap,
-            write_heartbeat as _maint_beat_now,
+    #
+    # 2026-09-17 fix — this whole chain (maintenance gap-detect →
+    # loop_housekeeping task creation → G19 record → G6 dedup indexes)
+    # used to run AWAITED directly here, before `yield`. It's the
+    # FIRST real Mongo touch in the entire lifespan (everything above
+    # it is `_supervise(...)`-scheduled, non-blocking). Motor connects
+    # lazily, so on a genuinely cold Atlas connection (a fresh prod
+    # deploy pod) `_maint_load()` pays the full first-connection cost —
+    # exactly the class of bug the Iter 127 fix above exists to
+    # prevent for every OTHER Mongo-dependent boot step. Reproduced the
+    # reported "nginx upstream timed out reading response header for
+    # /health" readiness-probe failure this way. Wrapped in ONE
+    # `create_task` (no artificial delay) so it starts running the
+    # instant it's scheduled, preserving every internal ordering
+    # guarantee described above exactly (still runs sequentially,
+    # still finishes its heartbeat write before the housekeeping
+    # task's first tick) — it just no longer blocks Uvicorn's port
+    # bind while doing so.
+    async def _boot_maintenance_g19_g6():
+        try:
+            # 2026-09-18 fix — nginx /health STILL timed out intermittently
+            # (4x across ~20s on a real prod boot) even after this chain
+            # was moved off the blocking pre-yield path. Root cause this
+            # round: ~8 background boot tasks (this one + loop_safety
+            # indexes + fix_jobs orphan sweep + github_app indexes + ora
+            # learning indexes + visual_bugfix_storage warm-up + 3 bare
+            # health-score index creates) ALL fired with ZERO delay,
+            # piling every one of their Mongo round-trips + one real
+            # outbound HTTP call into the SAME instant — under this
+            # deploy's documented "prod 500m CPU cap" (see the codebase
+            # index warm-up comment below), that's enough concurrent
+            # CPU/IO demand to starve the event loop long enough for
+            # nginx's upstream read to time out, even though uvicorn
+            # already has the port bound and /health itself is a
+            # microsecond handler. A small stagger (this file already
+            # uses 30/45/60/75s staggers for the lower-priority ones)
+            # spreads the burst instead of leaving it all at T+0.
+            await _asyncio.sleep(2)
+            from services.maintenance import (
+                load_maintenance_state as _maint_load,
+                read_last_heartbeat as _maint_last_beat,
+                record_boot_gap_incident as _maint_record_gap,
+                write_heartbeat as _maint_beat_now,
+            )
+            _maint_state = await _maint_load(app.state.db)
+            _last_beat_ts = await _maint_last_beat(app.state.db)
+            _boot_ts = time.time()
+            if _last_beat_ts:
+                _gap_s = _boot_ts - _last_beat_ts
+                _threshold = _maint_state.get("outage_threshold_s", 30)
+                if _gap_s > _threshold:
+                    from datetime import datetime as _dt, timezone as _tz
+                    await _maint_record_gap(
+                        app.state.db,
+                        gap_s=_gap_s,
+                        last_beat_iso=_dt.fromtimestamp(_last_beat_ts, tz=_tz.utc).isoformat(),
+                        boot_iso=_dt.fromtimestamp(_boot_ts, tz=_tz.utc).isoformat(),
+                    )
+            await _maint_beat_now(app.state.db)
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[maintenance] boot-gap detection failed: %r", _e)
+
+        app.state.loop_housekeeping_task = _supervise(
+            _loop_housekeeping(),
+            name="loop_housekeeping",
+            db_getter=lambda: app.state.db,
+            long_lived=True,
         )
-        _maint_state = await _maint_load(app.state.db)
-        _last_beat_ts = await _maint_last_beat(app.state.db)
-        _boot_ts = time.time()
-        if _last_beat_ts:
-            _gap_s = _boot_ts - _last_beat_ts
-            _threshold = _maint_state.get("outage_threshold_s", 30)
-            if _gap_s > _threshold:
-                from datetime import datetime as _dt, timezone as _tz
-                await _maint_record_gap(
-                    app.state.db,
-                    gap_s=_gap_s,
-                    last_beat_iso=_dt.fromtimestamp(_last_beat_ts, tz=_tz.utc).isoformat(),
-                    boot_iso=_dt.fromtimestamp(_boot_ts, tz=_tz.utc).isoformat(),
-                )
-        await _maint_beat_now(app.state.db)
-    except Exception as _e:                                  # noqa: BLE001
-        logger.warning("[maintenance] boot-gap detection failed: %r", _e)
 
-    app.state.loop_housekeeping_task = _supervise(
-        _loop_housekeeping(),
-        name="loop_housekeeping",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+        # Iter 362 · Guard 19 — record this boot + detect restart loops.
+        try:
+            from services.process_recovery import record_boot as _g19_record
+            _g19_boot = await _g19_record(app.state.db)
+            if _g19_boot.get("loop_detected"):
+                logger.error("[G19] boot recorded INSIDE a restart loop: %s", _g19_boot)
+            else:
+                logger.info("[G19] boot recorded: %s", _g19_boot)
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[G19] record_boot failed: %r", _e)
 
-    # Iter 362 · Guard 19 — record this boot + detect restart loops.
-    try:
-        from services.process_recovery import record_boot as _g19_record
-        _g19_boot = await _g19_record(app.state.db)
-        if _g19_boot.get("loop_detected"):
-            logger.error("[G19] boot recorded INSIDE a restart loop: %s", _g19_boot)
-        else:
-            logger.info("[G19] boot recorded: %s", _g19_boot)
-    except Exception as _e:                                  # noqa: BLE001
-        logger.warning("[G19] record_boot failed: %r", _e)
-
-    # G6 · Iter 366 — DB dedup unique indexes. Central + idempotent.
-    try:
-        from services.db_indexes import ensure_dedup_indexes
-        _g6_res = await ensure_dedup_indexes(app.state.db)
-        ok = sum(1 for r in _g6_res if r.get("ok"))
-        logger.info("[G6] dedup indexes ensured: %d ok / %d total",
-                    ok, len(_g6_res))
-    except Exception as _e:                                  # noqa: BLE001
-        logger.warning("[G6] ensure_dedup_indexes failed: %r", _e)
+        # G6 · Iter 366 — DB dedup unique indexes. Central + idempotent.
+        try:
+            from services.db_indexes import ensure_dedup_indexes
+            _g6_res = await ensure_dedup_indexes(app.state.db)
+            ok = sum(1 for r in _g6_res if r.get("ok"))
+            logger.info("[G6] dedup indexes ensured: %d ok / %d total",
+                        ok, len(_g6_res))
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[G6] ensure_dedup_indexes failed: %r", _e)
+    _asyncio.create_task(_boot_maintenance_g19_g6())
 
     # Iter 212m-115 safety — Create the unique index for the
     # concurrent-loop lock collection so we can never have two active
     # loops on the same {project_id, user_id}.
     async def _ensure_loop_safety_indexes():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(4)
             if app.state.db is None:
                 return
             from services.loop_safety import ensure_loop_lock_index
@@ -706,6 +844,9 @@ async def lifespan(app: FastAPI):
     # the user stare at a hung "Fix in progress" forever.
     async def _orphan_running_fix_jobs():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(6)
             if app.state.db is None:
                 return
             from services.fix_job_manager import mark_running_orphaned
@@ -734,6 +875,9 @@ async def lifespan(app: FastAPI):
     # downstream falls back to full-scan behaviour without breaking.
     async def _github_app_indexes():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(8)
             if app.state.db is None:
                 return
             # github_installations — source of truth for App installs.
@@ -865,6 +1009,9 @@ async def lifespan(app: FastAPI):
     # pipelines now write to (`ora_fix_learning`, `ora_scan_learning`).
     async def _ensure_ora_learning_indexes():
         try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(11)
             if app.state.db is None:
                 return
             from services.ora_fix_learning import ensure_indexes
@@ -874,6 +1021,26 @@ async def lifespan(app: FastAPI):
         except Exception as e:                            # noqa: BLE001
             logger.warning("ora_fix_learning indexes failed: %r", e)
     _asyncio.create_task(_ensure_ora_learning_indexes())
+
+    # Trust & Verification round — shared verification ledger,
+    # trust-calibration snapshots, and scope-confirmation proposals.
+    async def _ensure_trust_verification_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(32)
+            from services import verification as _v
+            from services import trust_calibration as _tc
+            from services import scope_confirmation as _sc
+            await _v.ensure_indexes(app.state.db)
+            await _tc.ensure_indexes(app.state.db)
+            await _sc.ensure_indexes(app.state.db)
+            logger.info("📚 Trust & Verification indexes ensured "
+                        "(task_verifications, trust_calibration_snapshots, "
+                        "scope_confirmation_proposals)")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("Trust & Verification indexes failed: %r", e)
+    _asyncio.create_task(_ensure_trust_verification_indexes())
 
     # Iter 272 — held-out verification + outcomes indexes.
     async def _ensure_iter272_indexes():
@@ -931,11 +1098,43 @@ async def lifespan(app: FastAPI):
             # timeout + middleware "No response returned").
             await _asyncio.sleep(45)
             from services.ora_chat import codebase_index as _cb
-            r = await _cb.build_index(force=True)
+            # 2026-09-21 — live-reproduced regression: a real user's
+            # first ORA chat message right after boot ALSO triggers
+            # this exact walk via `_ensure_fresh()` (there's no boot-
+            # stagger protection on that path — it can't know when a
+            # human will type). When that happens, THIS deferred task
+            # was still unconditionally force-rebuilding 15-min-TTL-
+            # fresh data ~25s later — a second, fully redundant
+            # CPU-heavy walk stacked right on top of the first one.
+            # Confirmed via /var/log/supervisor/backend.err.log: this
+            # exact boot showed the walk running TWICE (+7s from a
+            # real request, +32s from this task) where every other
+            # recent boot only ran it once — and the second run's
+            # ~1.1s window lines up exactly with a burst of nginx
+            # "/health upstream timed out" + "client disconnected
+            # `build_index()` (default `force=False`) already has the
+            # same TTL check internally — calling it here instead of
+            # `build_index(force=True)` makes this task a no-op
+            # whenever a real request already warmed the cache first.
+            r = await _cb.build_index()
             logger.info("📁 ORA codebase index warm: %s", r)
         except Exception as e:                              # noqa: BLE001
             logger.warning("ORA codebase index warm failed: %r", e)
     _asyncio.create_task(_warm_codebase_index())
+    # 2026-09-12 — Visual Bug-Fix pipeline: mint the object-storage
+    # key eagerly so the FIRST real upload isn't the one paying for
+    # the init round-trip. Best-effort — put_object()/get_object()
+    # already lazy-init + retry on their own if this hasn't finished
+    # (or failed) yet.
+    async def _warm_visual_bugfix_storage():
+        # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+        # above for the full root-cause writeup) — this one makes a
+        # REAL outbound HTTP call (objstore /init), so it's the
+        # highest-value one to keep out of the T+0 burst.
+        await _asyncio.sleep(14)
+        from services.visual_bugfix_storage import warm_up as _storage_warm_up
+        await _storage_warm_up()
+    _asyncio.create_task(_warm_visual_bugfix_storage())
     # 2026-08-20 — retired the old single-message "connect a repo"
     # nudge (services/onboarding_email.py). It only knew "0 projects"
     # and couldn't tell a user who never touched GitHub apart from one
@@ -957,6 +1156,42 @@ async def lifespan(app: FastAPI):
             logger.warning("funnel_nudge_cron not started: %r", e)
     else:
         app.state.nudge_task = None
+    if os.environ.get("ENABLE_ONBOARDING_NUDGE", "1").lower() in ("1", "true", "yes"):
+        try:
+            from routers.admin_onboarding_funnel import funnel_snapshot_cron as _funnel_snapshot_cron
+            app.state.funnel_snapshot_task = _supervise(
+                _funnel_snapshot_cron(86400),
+                name="onboarding_funnel_snapshot",
+                db_getter=lambda: app.state.db,
+                long_lived=True,
+            )
+            logger.info("📈 onboarding-funnel daily snapshot cron enabled")
+        except Exception as e:
+            app.state.funnel_snapshot_task = None
+            logger.warning("funnel_snapshot_cron not started: %r", e)
+    else:
+        app.state.funnel_snapshot_task = None
+    # 2026-09-22 — fast "stuck at the repo-connect gate" nudge (hourly,
+    # hours-scale window). Separate from the daily funnel_stage_nudge
+    # above: this targets ONE narrow case (started GitHub connect,
+    # neither finished nor explicitly skipped) surfaced by real
+    # activity-log review. Same opt-out flag as the other onboarding
+    # nudges — set ENABLE_ONBOARDING_NUDGE=0 to disable all of them.
+    if os.environ.get("ENABLE_ONBOARDING_NUDGE", "1").lower() in ("1", "true", "yes"):
+        try:
+            from services.gate_stuck_nudge import gate_stuck_nudge_cron as _gate_stuck_nudge_cron
+            app.state.gate_stuck_nudge_task = _supervise(
+                _gate_stuck_nudge_cron(3600),
+                name="gate_stuck_nudge",
+                db_getter=lambda: app.state.db,
+                long_lived=True,
+            )
+            logger.info("🪧 gate-stuck nudge cron enabled (hourly)")
+        except Exception as e:
+            app.state.gate_stuck_nudge_task = None
+            logger.warning("gate_stuck_nudge_cron not started: %r", e)
+    else:
+        app.state.gate_stuck_nudge_task = None
     # Track 3 (item #31) — hourly cron to auto-downgrade First-50 promo
     # users whose 30-day Pro grant has expired. Idempotent, safe to
     # skip cycles. Same env-flag opt-out as the nudge cron.
@@ -1099,6 +1334,30 @@ async def lifespan(app: FastAPI):
     else:
         app.state.rollback_drill_task = None
 
+    # 2026-09-22 — Section 15.7 spec (Feedback Loop): Failure Patterns
+    # was aggregate-only with no automatic feedback into a regression
+    # backlog. Daily scan, flags any task_chains failure_reason that's
+    # crossed the "Rule of Three" into the SAME self-repair review
+    # pipeline every other self-bug type already uses.
+    if os.environ.get("ENABLE_REGRESSION_BACKLOG_SCAN", "1").lower() in ("1", "true", "yes"):
+        try:
+            from services.regression_backlog_cron import regression_backlog_cron, SCAN_INTERVAL_SECONDS as _RBL_INT
+            app.state.regression_backlog_task = _supervise(
+                regression_backlog_cron(db_getter=lambda: app.state.db),
+                name="regression_backlog_scan",
+                db_getter=lambda: app.state.db,
+                long_lived=True,
+            )
+            logger.info(
+                "🔁 regression-backlog scan cron enabled (every %ds ≈ %.1f days)",
+                _RBL_INT, _RBL_INT / 86400,
+            )
+        except Exception as e:
+            app.state.regression_backlog_task = None
+            logger.warning("regression backlog scan cron not started: %r", e)
+    else:
+        app.state.regression_backlog_task = None
+
     # 2026-08-24 — CI ingest heartbeat (Pillar 3, Production-Readiness).
     # G1/G15's registry checks only ever looked at the CONTENT of the
     # last synthetic_checks row, never its age — a silently-stopped
@@ -1125,18 +1384,23 @@ async def lifespan(app: FastAPI):
     # so the Performance-category sampler (added above) never grows
     # unbounded; plain indexes on the other two new collections so
     # services/health_score.py's "latest doc" lookups stay cheap.
-    try:
-        _asyncio.create_task(app.state.db.health_endpoint_latency.create_index(
-            "ts", expireAfterSeconds=14 * 86400,
-        ))
-        _asyncio.create_task(app.state.db.health_test_coverage_runs.create_index(
-            "generated_at",
-        ))
-        _asyncio.create_task(app.state.db.architecture_review_log.create_index(
-            "date",
-        ))
-    except Exception as e:
-        logger.warning("health-score index creation not started: %r", e)
+    async def _ensure_health_score_indexes():
+        try:
+            # 2026-09-18 boot-stagger fix (see _boot_maintenance_g19_g6
+            # above for the full root-cause writeup).
+            await _asyncio.sleep(9)
+            await app.state.db.health_endpoint_latency.create_index(
+                "ts", expireAfterSeconds=14 * 86400,
+            )
+            await app.state.db.health_test_coverage_runs.create_index(
+                "generated_at",
+            )
+            await app.state.db.architecture_review_log.create_index(
+                "date",
+            )
+        except Exception as e:
+            logger.warning("health-score index creation failed: %r", e)
+    _asyncio.create_task(_ensure_health_score_indexes())
 
 
     # Iter 264 Fix D — nightly ORA grounding canary (default OFF).
@@ -1465,14 +1729,55 @@ async def lifespan(app: FastAPI):
                 "stripe boot hydration failed (falls back to env): %r", _e,
             )
 
-        # ── 2026-02-10 — GitHub App config boot loader ───────────────
-        # Hydrate the runtime GitHub App credentials (app_id, app_slug,
-        # private_key PEM, webhook_secret) from
-        # `admin_settings._id="github_app_config"` in EVERY worker.
-        # Same multi-worker-safe pattern as the Stripe hydrator above.
-        # Fail-open: if the doc is missing or Mongo is down, the
-        # integration reports `not configured` and the (future)
-        # install / webhook / install-token code paths short-circuit.
+        # Iter 328 — SYSTEM_INVENTORY auto-append (Ripple miss #3 close-out).
+        # On every boot (which happens after every Emergent auto-commit), scan
+        # the last commit range for inventory-worthy additions (new routers,
+        # env vars, loop_run_log kinds, services) and append them to
+        # /app/memory/SYSTEM_INVENTORY.md. Idempotent — the scripts helper
+        # uses HTML-comment markers so re-boots never double-append.
+        # Fail-open: any scan/git/write failure is swallowed and logged at
+        # debug so it CAN NEVER block boot or slow the app.
+        try:
+            from services.inventory_service import record_from_git_async
+            import os as _os
+            iter_num = int((_os.environ.get("AUREM_ITER_NUM") or "0").strip() or "0")
+            _asyncio.create_task(
+                record_from_git_async("HEAD~1", "HEAD", iter_num=iter_num)
+            )
+            logger.info("📚 SYSTEM_INVENTORY auto-append scheduled (HEAD~1..HEAD)")
+        except Exception as _e:                               # noqa: BLE001
+            logger.debug(f"inventory auto-append schedule failed: {_e!r}")
+
+    # 2026-09-04 · R10 FOCUS MODE fix — GitHub App config hydration was
+    # previously the LAST step inside `_bg_bootstrap()`, which starts
+    # with a deliberate `await asyncio.sleep(10)` (Iter 336 boot stagger,
+    # kept so /health serves cleanly first) followed by several more
+    # awaited steps. Net effect: `is_configured()` stayed False for
+    # 9-11+ seconds after "Application startup complete" on EVERY
+    # restart/deploy. Any chat turn against a github_app-connected repo
+    # landing in that window got a fast, WRONG "connection unavailable"
+    # 403 even though valid credentials sit in Mongo (confirmed via
+    # live repro: boot log showed "Application startup complete" at
+    # T, "GitHub App config hydrated" at T+9.3s to T+11.7s across 4
+    # consecutive restarts).
+    #
+    # 2026-09-17 fix — this got moved to run AWAITED directly in
+    # `lifespan()`, BEFORE the `yield` — on the (correct, locally) idea
+    # that "a single fast Mongo find_one" can't hurt. It can: Motor's
+    # client (created just above) connects LAZILY, so on a genuinely
+    # COLD Atlas connection (exactly what a fresh prod deploy pod has)
+    # this find_one() pays the FULL first-connection cost — TLS
+    # handshake + SRV DNS + replica-set discovery, up to
+    # `serverSelectionTimeoutMS`. Uvicorn does not bind port 8001 (and
+    # therefore cannot answer ANY request, including /health) until
+    # everything before `yield` returns — reproducing the exact
+    # "nginx upstream timed out reading response header for /health"
+    # readiness-probe failure the Iter 127 fix above was written to
+    # prevent for every OTHER Mongo-dependent boot step. Fire-and-forget
+    # via `create_task` (no artificial delay, unlike the other deferred
+    # tasks below) keeps the "warm within ~1s on a normal boot" intent
+    # while never blocking the port bind on a slow/cold one.
+    async def _hydrate_github_app_config():
         try:
             from services.github_app_config import (
                 set_runtime_github_app_config, REQUIRED_FIELDS,
@@ -1496,25 +1801,7 @@ async def lifespan(app: FastAPI):
                 "github_app boot hydration failed (integration will report "
                 "not configured until admin re-pastes): %r", _e,
             )
-
-        # Iter 328 — SYSTEM_INVENTORY auto-append (Ripple miss #3 close-out).
-        # On every boot (which happens after every Emergent auto-commit), scan
-        # the last commit range for inventory-worthy additions (new routers,
-        # env vars, loop_run_log kinds, services) and append them to
-        # /app/memory/SYSTEM_INVENTORY.md. Idempotent — the scripts helper
-        # uses HTML-comment markers so re-boots never double-append.
-        # Fail-open: any scan/git/write failure is swallowed and logged at
-        # debug so it CAN NEVER block boot or slow the app.
-        try:
-            from services.inventory_service import record_from_git_async
-            import os as _os
-            iter_num = int((_os.environ.get("AUREM_ITER_NUM") or "0").strip() or "0")
-            _asyncio.create_task(
-                record_from_git_async("HEAD~1", "HEAD", iter_num=iter_num)
-            )
-            logger.info("📚 SYSTEM_INVENTORY auto-append scheduled (HEAD~1..HEAD)")
-        except Exception as _e:                               # noqa: BLE001
-            logger.debug(f"inventory auto-append schedule failed: {_e!r}")
+    _asyncio.create_task(_hydrate_github_app_config())
 
     app.state.bootstrap_task = _asyncio.create_task(_bg_bootstrap())
 
@@ -1681,6 +1968,131 @@ async def lifespan(app: FastAPI):
                 )
     _asyncio.create_task(_probe_loop_linters())
 
+    async def _probe_chromium():
+        """2026-09-13 — CRITICAL bug fix follow-up. Founder-reported:
+        ORA Chat's web_inspect tool failed with "Chromium executable
+        unavailable" against a REACHABLE URL.
+
+        Root cause (confirmed directly, two layers):
+          1. `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` (checked FIRST by
+             `web_inspect.py` / `deploy_verify.py` / `browser_tools.py`)
+             is a convenience symlink maintained OUTSIDE this repo —
+             by the platform's own preview-pod base image — pointing
+             at whichever Chromium build happens to be installed
+             under `PLAYWRIGHT_BROWSERS_PATH`. It goes stale
+             independently of this app whenever that build gets
+             replaced (e.g. a `playwright` pip version bump expects a
+             newer build revision than what's on disk).
+          2. Playwright's OWN default bundled-browser resolution
+             (used when the override above is unset/broken) checks
+             `PLAYWRIGHT_BROWSERS_PATH` if set, else `~/.cache/
+             ms-playwright` — which was found completely EMPTY for
+             the actual supervisor-spawned backend process in this
+             pod (that env var is only exported in interactive
+             shells here, not passed through supervisor's controlled
+             environment).
+        Both `web_inspect.py` and `deploy_verify.py` now retry once
+        without the executable_path override if it's what failed
+        (2026-09-13 fix) before degrading — this probe mirrors that
+        EXACT same fallback chain (not just Playwright's raw default)
+        so it accurately reflects what the real tool will do, and
+        self-heals path #2 via `playwright install chromium` if
+        BOTH resolution paths are broken. Mirrors the result onto
+        `app.state.chromium_status` / `/api/health` so a future
+        staleness episode is visible on the dashboard immediately.
+
+        2026-02 — deployment-health fix. Production evidence: this
+        self-heal warning fired TWICE ~14s apart during a fresh
+        deploy (two uvicorn workers each independently hitting their
+        own 45s-delayed copy of this task, each downloading/
+        extracting the SAME ~150MB Chromium build), while nginx's
+        `/health` proxy (1s tolerance) timed out repeatedly in that
+        same window — the identical class of cold-start-burst-inside-
+        the-deploy-health-check-window bug already root-caused and
+        fixed for `integration_health_cron` (150s -> 300s, see that
+        module). 45s is far inside that window. Raised to 300s here
+        too, offset +30s from that cron's base so the two heaviest
+        boot tasks don't land in the same instant, PLUS the same
+        PID-seeded `_startup_jitter_s()` used there — which doubles
+        as install de-duplication: by the time a second worker wakes
+        from its (independently jittered) sleep, `_try_launch` above
+        will usually already succeed off the FIRST worker's install
+        (shared filesystem), skipping the second `playwright install`
+        entirely instead of running it twice."""
+        await _asyncio.sleep(330 + _startup_jitter_s())
+        import subprocess
+
+        def _try_launch(use_override: bool) -> Optional[str]:
+            try:
+                from playwright.sync_api import sync_playwright
+                kwargs = {"headless": True}
+                exe = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
+                if use_override and exe:
+                    kwargs["executable_path"] = exe
+                with sync_playwright() as pw:
+                    b = pw.chromium.launch(**kwargs)
+                    b.close()
+                return None
+            except Exception as e:                                # noqa: BLE001
+                return str(e)[:400]
+
+        # Mirror the app's real resolution order: override first,
+        # then Playwright's own bundled-browser fallback.
+        err = await _asyncio.to_thread(_try_launch, True)
+        via = "executable_path override"
+        if err is not None:
+            err2 = await _asyncio.to_thread(_try_launch, False)
+            if err2 is None:
+                err, via = None, "bundled resolution (override was stale)"
+
+        if err is None:
+            app.state.chromium_status = {"ok": True, "self_healed": False, "via": via}
+            logger.info("✅ Chromium OK (%s) — web_inspect / deploy_verify can render pages.", via)
+            return
+
+        if "executable doesn't exist" not in err.lower():
+            # Some other launch failure (missing shared libs, etc.) —
+            # not the staleness case this probe self-heals; surface
+            # it plainly and stop, no point retrying blindly.
+            app.state.chromium_status = {"ok": False, "self_healed": False, "error": err}
+            logger.warning("⚠️  Chromium launch failed (non-missing-binary "
+                            "error) — web_inspect/deploy_verify will degrade "
+                            "to browser-free fallback: %s", err)
+            return
+
+        logger.warning("⚠️  Chromium binary missing/stale on BOTH resolution "
+                        "paths at boot (%s) — attempting self-heal via "
+                        "`playwright install chromium`...", err[:200])
+        try:
+            proc = await _asyncio.wait_for(
+                _asyncio.to_thread(
+                    subprocess.run,
+                    ["python", "-m", "playwright", "install", "chromium"],
+                    capture_output=True, text=True,
+                ),
+                timeout=180.0,
+            )
+        except Exception:                                          # noqa: BLE001
+            proc = None
+
+        reprobe_err = await _asyncio.to_thread(_try_launch, False)
+        if reprobe_err is None:
+            app.state.chromium_status = {"ok": True, "self_healed": True,
+                                          "via": "bundled resolution (freshly installed)"}
+            logger.info("✅ Chromium self-healed at boot — "
+                        "`playwright install chromium` fixed it.")
+        else:
+            app.state.chromium_status = {
+                "ok": False, "self_healed": False,
+                "error": reprobe_err,
+                "install_rc": (proc.returncode if proc else None),
+                "install_stderr": (proc.stderr[:300] if proc and proc.returncode != 0 else None),
+            }
+            logger.warning("⚠️  Chromium STILL unavailable after self-heal "
+                            "attempt — web_inspect/deploy_verify will degrade "
+                            "to browser-free fallback: %s", reprobe_err)
+    _asyncio.create_task(_probe_chromium())
+
     # Iter 212m-172 — Awaiting-confirmation stale sweeper.
     # Iter 309 · Phase 0.1 — Awaiting-confirmation sweeper was previously
     # a SECOND background task defined at this block. It has been
@@ -1729,7 +2141,10 @@ app = FastAPI(
     description=(
         "AUREM — Autonomous AI engineer that reads your GitHub repo, "
         "writes code, ships commits. Authenticate with Bearer token from "
-        "/api/aurem-dev/auth/login."
+        "/api/aurem-dev/auth/login. Versioning & deprecation policy: "
+        "https://auremcto.com/policies/api-versioning — deprecated "
+        "endpoints carry RFC 8594 Deprecation/Sunset headers at least "
+        "30 days before removal."
     ),
 )
 
@@ -1774,6 +2189,52 @@ app.add_middleware(
 )
 
 
+# 2026-09-12 · is-agentic.com agent-readiness fix — "Scoped
+# permissions" check. We deliberately did NOT stand up a full OAuth
+# 2.0 authorization server (founder's explicit call — JWT bearer
+# auth stays as-is). This declares the SAME logical access scopes our
+# API already enforces informally as a named, machine-readable
+# securityScheme in the OpenAPI spec (satisfies the check's own
+# stated alternative: "named OAuth scopes in your OpenAPI security
+# schemes, or scopes_supported in RFC 9728 protected-resource
+# metadata" — we do BOTH; see frontend/public/.well-known/
+# oauth-protected-resource for the RFC 9728 side). This is honest
+# documentation of real access levels, not a claim of a full OAuth
+# authorization-code flow.
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+    schema = get_openapi(
+        title=app.title, version=app.version,
+        description=app.description, routes=app.routes,
+    )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": (
+            "Bearer JWT from POST /api/aurem-dev/auth/login. AUREM "
+            "does not run a separate OAuth 2.0 authorization server "
+            "— this is a direct credential exchange, not an "
+            "authorization-code flow. The token's effective access "
+            "level maps to these named scopes: `read:repo` (read a "
+            "connected repo's files/scan results), `write:repo` "
+            "(propose file edits), `ship:commit` (commit an approved "
+            "edit to GitHub), `admin` (admin-only endpoints under "
+            "/admin-ops, /admin-analytics, etc). See "
+            "/.well-known/oauth-protected-resource for the "
+            "machine-readable scopes_supported list (RFC 9728)."
+        ),
+    }
+    schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
+
+
 # Iter 123g — GZip compression for every non-trivial response.
 # JSON payloads (admin endpoints, /usage/me, /shipwall, code-surface)
 # shrink 5–10× on the wire. minimum_size=512 skips tiny responses where
@@ -1789,7 +2250,7 @@ app.add_middleware(
 # SSE clients (axios wrappers, @microsoft/fetch-event-source) send
 # Accept: */* or application/json and would silently bypass the skip.
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import Message, Receive, Scope, Send
 
 
 class SSEAwareGZipMiddleware(GZipMiddleware):
@@ -1880,6 +2341,7 @@ _DEFAULT_MAX_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
 _BODY_LIMIT_BYPASS_PREFIXES = (
     "/api/aurem-dev/uploads",
     "/api/aurem-dev/cto-projects/repo/upload",
+    "/api/aurem-dev/visual-bugfix/upload",  # 2026-09-12 — screenshot upload, up to 10MB (own check in the route)
 )
 
 
@@ -2077,11 +2539,12 @@ async def _security_headers(request, call_next):
     # later iteration once the chat preview pane is on its own iframe.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://auremcto.com; "
+        "script-src 'self' 'unsafe-inline' https://auremcto.com https://bzrcdn.openai.com; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
         "connect-src 'self' https://auremcto.com wss://auremcto.com "
-        "https://openrouter.ai https://api.github.com; "
+        "https://openrouter.ai https://api.github.com "
+        "https://bzrcdn.openai.com https://bzr.openai.com; "
         "frame-src 'self' blob:; "
         "font-src 'self' data:;"
     )
@@ -2346,6 +2809,27 @@ _GLOBAL_RL_PER_MIN = int(os.getenv("GLOBAL_RATE_LIMIT_PER_MIN", "300"))
 _HEALTH_PROBE_EXACT_PATHS = frozenset({"/health", "/healthz", "/ping"})
 
 
+# 2026-09-08 deploy-log fix: every `call_next()`-wrapping middleware
+# below already catches `(Exception, BaseExceptionGroup)` so the app
+# never actually crashes on this — but they were all logging it at
+# `logger.error`, which makes a routine, expected client-disconnect
+# race (K8s probe / LB / uptime-monitor with a short timeout hanging
+# up mid-response) look identical to a real bug in prod logs. This
+# mirrors `_security_headers`'s existing CancelledError-vs-everything-
+# else split, but widened to also recognize `anyio.EndOfStream` and a
+# `BaseExceptionGroup` wrapping either — the exact shapes seen in the
+# reported "RuntimeError: No response returned." traceback — so the
+# SAME benign race logs at INFO everywhere instead of ERROR, while any
+# genuinely unexpected exception still logs at ERROR as before.
+def _is_benign_disconnect_race(exc: BaseException) -> bool:
+    import asyncio as _aio
+    import anyio as _anyio
+    _benign = (_aio.CancelledError, _anyio.EndOfStream, RuntimeError)
+    if isinstance(exc, BaseExceptionGroup):
+        return all(_is_benign_disconnect_race(e) for e in exc.exceptions)
+    return isinstance(exc, _benign)
+
+
 @app.middleware("http")
 async def _global_rate_limit_guard(request, call_next):
     # 2026-08-19 deploy-log fix, round 2: the round-1 fix (catching
@@ -2381,11 +2865,18 @@ async def _global_rate_limit_guard(request, call_next):
         # propagated up as an unhandled ASGI error. Catching
         # `BaseExceptionGroup` explicitly here closes that gap.
         except (Exception, BaseExceptionGroup) as _e:
-            logger.error(
-                "rate_limit_guard: downstream raised on skip path %s %s — %r",
-                request.method, request.url.path, _e,
-                exc_info=True,
-            )
+            if _is_benign_disconnect_race(_e):
+                logger.info(
+                    "rate_limit_guard: client disconnected mid-response on "
+                    "skip path %s %s — %r",
+                    request.method, request.url.path, _e,
+                )
+            else:
+                logger.error(
+                    "rate_limit_guard: downstream raised on skip path %s %s — %r",
+                    request.method, request.url.path, _e,
+                    exc_info=True,
+                )
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Internal server error"},
@@ -2432,13 +2923,20 @@ async def _global_rate_limit_guard(request, call_next):
             },
             headers={
                 "Retry-After": "60",
-                # 2026-08-30 · public-site fixes (P2 #10). Standard
-                # RFC-shaped rate-limit headers — see
+                # 2026-08-30 · public-site fixes (P2 #10). Legacy
+                # X-RateLimit-* headers — see
                 # services/rate_limiter.in_memory_bucket_count for the
                 # single-pod-exact / multi-pod-approximate tradeoff.
                 "X-RateLimit-Limit": str(_GLOBAL_RL_PER_MIN),
                 "X-RateLimit-Remaining": "0",
                 "X-RateLimit-Reset": str(int(time.time()) + 60),
+                # 2026-09-12 · is-agentic.com agent-readiness fix.
+                # IETF draft-ietf-httpapi-ratelimit-headers standard
+                # names, alongside (not replacing) the legacy ones
+                # above so existing integrations keep working.
+                "RateLimit-Limit": str(_GLOBAL_RL_PER_MIN),
+                "RateLimit-Remaining": "0",
+                "RateLimit-Reset": "60",
             },
         )
     # THE FIX for "RuntimeError: No response returned" at deploy time.
@@ -2455,34 +2953,50 @@ async def _global_rate_limit_guard(request, call_next):
     try:
         resp = await call_next(request)
         resp.headers["X-RateLimit-Limit"] = str(_GLOBAL_RL_PER_MIN)
-        resp.headers["X-RateLimit-Remaining"] = str(max(
+        _remaining = max(
             0, _GLOBAL_RL_PER_MIN - in_memory_bucket_count(f"global-ip:{ip}"),
-        ))
+        )
+        resp.headers["X-RateLimit-Remaining"] = str(_remaining)
         resp.headers["X-RateLimit-Reset"] = str(int(time.time()) + 60)
+        # 2026-09-12 · is-agentic.com agent-readiness fix — IETF
+        # standard header names alongside the legacy ones above.
+        resp.headers["RateLimit-Limit"] = str(_GLOBAL_RL_PER_MIN)
+        resp.headers["RateLimit-Remaining"] = str(_remaining)
+        resp.headers["RateLimit-Reset"] = "60"
         return resp
     # 2026-08-19 deploy-log fix: widened to also catch BaseExceptionGroup
     # (see matching comment on the skip-path branch above for the exact
     # anyio/CancelledError mechanics this closes).
     except (Exception, BaseExceptionGroup) as _e:                    # noqa: BLE001
-        logger.error(
-            "rate_limit_guard: downstream raised on %s %s — %r",
-            request.method, request.url.path, _e,
-            exc_info=True,
-        )
+        _benign = _is_benign_disconnect_race(_e)
+        if _benign:
+            logger.info(
+                "rate_limit_guard: client disconnected mid-response on "
+                "%s %s — %r",
+                request.method, request.url.path, _e,
+            )
+        else:
+            logger.error(
+                "rate_limit_guard: downstream raised on %s %s — %r",
+                request.method, request.url.path, _e,
+                exc_info=True,
+            )
         # Surface to Sentry (if wired) so we don't lose signal — the
         # global exception handler normally does this but it can't
         # see the exception once it's been mangled by the ExceptionGroup
-        # unwind.
-        try:
-            if SENTRY_ACTIVE:
-                import sentry_sdk
-                with sentry_sdk.push_scope() as scope:
-                    scope.set_tag("kind", "middleware_call_next_crash")
-                    scope.set_tag("path", request.url.path)
-                    scope.set_tag("method", request.method)
-                    sentry_sdk.capture_exception(_e)
-        except Exception:                                          # noqa: BLE001
-            pass
+        # unwind. Skip benign disconnect races — those aren't actionable
+        # bugs and would just be Sentry noise.
+        if not _benign:
+            try:
+                if SENTRY_ACTIVE:
+                    import sentry_sdk
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_tag("kind", "middleware_call_next_crash")
+                        scope.set_tag("path", request.url.path)
+                        scope.set_tag("method", request.method)
+                        sentry_sdk.capture_exception(_e)
+            except Exception:                                          # noqa: BLE001
+                pass
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},
@@ -2529,10 +3043,16 @@ async def _health_latency_sampler_mw(request, call_next):
         try:
             return await call_next(request)
         except (Exception, BaseExceptionGroup) as _e:                # noqa: BLE001
-            logger.error(
-                "health_latency_sampler: downstream raised on skip path "
-                "%s %s — %r", request.method, path, _e, exc_info=True,
-            )
+            if _is_benign_disconnect_race(_e):
+                logger.info(
+                    "health_latency_sampler: client disconnected mid-response "
+                    "on skip path %s %s — %r", request.method, path, _e,
+                )
+            else:
+                logger.error(
+                    "health_latency_sampler: downstream raised on skip path "
+                    "%s %s — %r", request.method, path, _e, exc_info=True,
+                )
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Internal server error"},
@@ -2541,10 +3061,16 @@ async def _health_latency_sampler_mw(request, call_next):
     try:
         response = await call_next(request)
     except (Exception, BaseExceptionGroup) as _e:                     # noqa: BLE001
-        logger.error(
-            "health_latency_sampler: downstream raised on %s %s — %r",
-            request.method, path, _e, exc_info=True,
-        )
+        if _is_benign_disconnect_race(_e):
+            logger.info(
+                "health_latency_sampler: client disconnected mid-response "
+                "on %s %s — %r", request.method, path, _e,
+            )
+        else:
+            logger.error(
+                "health_latency_sampler: downstream raised on %s %s — %r",
+                request.method, path, _e, exc_info=True,
+            )
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},
@@ -2926,7 +3452,17 @@ async def health():
     # to the legacy resolvers if the deploy_event row hasn't hydrated
     # yet (first-boot race or migration lag).
     _dep = getattr(app.state, "deploy_event", None)
-    build_hash_val = (_dep or {}).get("commit_sha") or _resolve_build_hash()
+    # 2026-09-20 — deploy-health fix. `_resolve_build_hash()` falls
+    # through to an UNGUARDED `subprocess.check_output(["git", ...],
+    # timeout=2)` when neither the env var nor `.build_info` resolve
+    # it (was called synchronously, no `to_thread`) — same bug class
+    # as the already-fixed `_backup_tools_snapshot()` below, and this
+    # is `/api/health` itself, one of the two endpoints probes hit
+    # repeatedly. Offloading keeps this request from ever blocking
+    # the loop for other concurrent requests, regardless of whether
+    # the git call resolves fast or slow in a given container.
+    build_hash_val = (_dep or {}).get("commit_sha") \
+        or await asyncio.to_thread(_resolve_build_hash)
     built_at_val   = (_dep or {}).get("boot_ts_iso") or _resolve_built_at()
 
     return {
@@ -2948,6 +3484,13 @@ async def health():
         # dashboards can show a "Verify phase degraded" pill when the
         # pod is missing ruff / eslint.
         "loop_linters_missing": getattr(app.state, "loop_linters_missing", None),
+        # 2026-09-13 — surface Chromium/Playwright health so a stale
+        # or version-mismatched browser binary (which silently
+        # degrades ORA Chat's web_inspect tool + deploy_verify's full
+        # checks to a browser-free HTTP-only fallback) shows up on
+        # the dashboard instead of only being discovered when a
+        # founder happens to ask ORA to inspect a URL.
+        "chromium_status": getattr(app.state, "chromium_status", None),
         # Iter 212m-172 — live model routing surface.
         "council_a_model":  council_a_model,
         "longcat_live":     longcat_live,
@@ -3286,6 +3829,7 @@ async def diag_memory(authorization: str | None = Header(None)):
 
 # ── Routers ──
 app.include_router(deploy_router,       prefix="/api/aurem-dev")
+app.include_router(architect_router,    prefix="/api/aurem-dev")  # 2026-09-13 — Phase 4, "What I set up" panel
 app.include_router(vault_router,        prefix="/api/aurem-dev")
 app.include_router(stacks_router,       prefix="/api/aurem-dev")
 app.include_router(domain_router,       prefix="/api/aurem-dev")
@@ -3322,11 +3866,14 @@ app.include_router(admin_projects_brain_router, prefix="/api/aurem-dev")  # 2026
 app.include_router(admin_ops_config_router,     prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_llm_config_router,     prefix="/api/aurem-dev")  # 2026-08-27 — Admin self-serve LLM Settings
 app.include_router(admin_llm_usd_cap_router,    prefix="/api/aurem-dev")  # 2026-08-28 — R6 USD cap
+app.include_router(admin_ora_chat_limits_router, prefix="/api/aurem-dev")  # 2026-09-10 — editable ORA Chat token cap / rate limit
+app.include_router(admin_video_pipeline_router, prefix="/api/aurem-dev")  # 2026-09-10 — ORA Chat video generation (Deepgram + MuseTalk)
 app.include_router(notifications_bell_router,   prefix="/api/aurem-dev")  # 2026-08-28 — P2-A user-facing bell
 app.include_router(admin_analytics_router,      prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_bi_router,             prefix="/api/aurem-dev")  # Slice A · BI Cockpit
 app.include_router(admin_health_score_router,   prefix="/api/aurem-dev")  # 2026-08-23 — Codebase Health Score
 app.include_router(admin_deploy_readiness_router, prefix="/api/aurem-dev")  # 2026-08-24 — Deploy Readiness (Option A)
+app.include_router(admin_context_bridge_router, prefix="/api/aurem-dev")  # 2026-09-09 — /admin/ora/context-bridge (Chrome extension)
 app.include_router(founder_summary_router,      prefix="/api/aurem-dev")  # 2026-08-24 — Pillar 6
 app.include_router(rollback_v2_router,          prefix="/api/aurem-dev")  # 2026-06 — Pillar 1
 app.include_router(github_auth_migration_router, prefix="/api/aurem-dev")  # 2026-06 — PAT→App migration
@@ -3345,6 +3892,7 @@ app.include_router(wrapped_router,       prefix="/api/aurem-dev")
 app.include_router(hosted_deploy_router, prefix="/api/aurem-dev")
 app.include_router(codebase_router,      prefix="/api/aurem-dev")
 app.include_router(scaffold_router,      prefix="/api/aurem-dev")  # Iter 212m-231
+app.include_router(visual_bugfix_router, prefix="/api/aurem-dev")  # 2026-09-12
 app.include_router(managed_db_router,    prefix="/api/aurem-dev")  # Iter 212m-233
 app.include_router(supabase_router,      prefix="/api/aurem-dev")  # Iter 212m-234 Phase 5 paid-tier
 app.include_router(personal_track_router, prefix="/api/aurem-dev")  # Iter 212m-237 activation events
@@ -3365,10 +3913,13 @@ app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline
 app.include_router(repo_status_router,    prefix="/api/aurem-dev")  # Iter 212m-125 live repo connection ping
 app.include_router(codebase_health_router, prefix="/api/aurem-dev")  # Iter 212m-72 5-cat health
+app.include_router(evidence_router, prefix="/api/aurem-dev")  # 2026-09-20 — evidence pointer resolver
+app.include_router(verification_router, prefix="/api/aurem-dev")  # Trust & Verification round
 app.include_router(findings_router,        prefix="/api/aurem-dev")  # Iter 212m-190 backlog + dismiss
 app.include_router(suggestions_router,     prefix="/api/aurem-dev")  # Iter 212m-193 founder suggestions
 app.include_router(self_bugs_admin_router, prefix="/api/aurem-dev")  # Item 3 (2026-08-31) self-repair dashboard
 app.include_router(admin_connect_diagnostic_router, prefix="/api/aurem-dev")  # Connect-flow investigation (2026-09-01)
+app.include_router(admin_onboarding_funnel_router, prefix="/api/aurem-dev")  # Onboarding Funnel dashboard (2026-09-08)
 app.include_router(version_router)                                  # Iter 212m-205 (already prefixed inside)
 app.include_router(advisor_ctx_router)                              # Iter 212m-209 (already prefixed inside)
 app.include_router(qa_probe_router,        prefix="/api/aurem-dev")  # Iter 212m-190 QA-only probe

@@ -19,7 +19,8 @@ logger = logging.getLogger("aurem.notifications")
 # — stays PERSISTENT like the other 3, unread until the user acts.
 PERSISTENT_TYPES = {"payment_failed", "ship_failed", "repo_revoked", "verify_failed",
                      "upgrade_eligible"}
-VALID_TYPES = PERSISTENT_TYPES | {"scan_done", "ship_done", "offer_claimed", "kit_live"}
+VALID_TYPES = PERSISTENT_TYPES | {"scan_done", "ship_done", "offer_claimed", "kit_live",
+                                   "admin_message"}
 
 
 async def emit_notification(db, *, user_id: str, type: str, text: str,

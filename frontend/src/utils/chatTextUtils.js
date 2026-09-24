@@ -117,7 +117,17 @@ export const SUGGESTION_RX = new RegExp(
   "gi",
 );
 
-export function extractSuggestions(content) {
+export function extractSuggestions(content, interaction) {
+  if (interaction?.version === 1) {
+    // No fallback to quoted prose: a quote is neither an action nor evidence.
+    if (interaction.turn_state !== "success") return [];
+    const actions = Array.isArray(interaction.suggested_actions) ? interaction.suggested_actions : [];
+    return actions
+      .filter((action) => action && typeof action === "object" && action.type === "reply" &&
+        action.request_id === interaction.request_id && action.evidence_count > 0 &&
+        typeof action.label === "string" && action.label.trim().length > 0 && action.label.length <= 80)
+      .map((action) => action.label).slice(0, 4);
+  }
   if (!content || typeof content !== "string") return [];
   const seen = new Set();
   const out = [];
@@ -143,4 +153,22 @@ export function extractSuggestions(content) {
 export function estimateTokenCount(text) {
   if (!text) return 0;
   return Math.ceil(text.split(/\s+/).filter(Boolean).length * 1.3);
+}
+
+
+// ── Smart-punctuation guard — 2026-09 founder bug report ─────────────
+// Safari (macOS/iOS) silently substitutes literal "--" -> en-dash and
+// straight quotes -> curly quotes as the user types, even inside a
+// plain <textarea>. This corrupts CLI flags ("--force"), code, and
+// SQL pasted/typed into chat before it ever reaches the backend.
+// `spellCheck={false}` + `autoCorrect="off"` on the element (WebKit
+// gates smart punctuation behind the same internal flag as spell
+// checking) handles most cases, but Safari can still fire a native
+// `beforeinput` event with `inputType: "insertReplacementText"` for
+// the substitution — this handler blocks that specific event so the
+// literal character the user typed lands instead of the swap.
+export function preventSmartPunctuation(e) {
+  if (e.inputType === "insertReplacementText") {
+    e.preventDefault();
+  }
 }

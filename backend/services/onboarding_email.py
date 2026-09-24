@@ -19,12 +19,10 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 
-import httpx
 
 from cto_services.db import get_db   # re-exported so tests can patch us
 

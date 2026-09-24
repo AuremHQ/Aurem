@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from cto_services.auth import require_admin, create_token
+from cto_services.auth import require_admin, create_token, is_admin_or_founder
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 from services.ora_chat import cost_tracker, session as ora_session
 from services.ora_chat import house_rules as ora_house_rules
@@ -909,13 +909,18 @@ async def preview_scan(body: PreviewScanBody,
 # response.  Admin-only.
 class IntentClassifyBody(BaseModel):
     text: str = Field(..., min_length=0, max_length=8000)
+    # 2026-09-19 — opt-in Jev benchmarking. "llm" (default, unchanged)
+    # or "jev" (services.llm.jev_client, TypeSafe Jev via OpenRouter's
+    # Decisions API). See intent_router.py's classify_intent_jev() for
+    # the real before/after numbers this shipped with.
+    classifier: str = Field("llm", pattern="^(llm|jev)$")
 
 
 @router.post("/intent-classify")
 async def intent_classify(body: IntentClassifyBody,
                           request: Request,
                           authorization: Optional[str] = Header(None)):
-    """Two-layer intent classify (regex pre-filter → LLM fallback).
+    """Two-layer intent classify (regex pre-filter → LLM/Jev fallback).
 
     Returns `{intent, source, matches, meta}`. `intent` is one of
     `PREVIEW_ONLY`, `CODE_CHANGE`, or `UNKNOWN`.  See
@@ -929,7 +934,7 @@ async def intent_classify(body: IntentClassifyBody,
     if not await check_rate_limit_async(f"ora_chat:intent:{user['user_id']}:{ip}", 60):
         raise HTTPException(429, "Rate limit — slow down for a minute.")
     verdict = await ora_intent.classify_intent(
-        body.text or "", one_shot_fn=one_shot,
+        body.text or "", one_shot_fn=one_shot, classifier=body.classifier,
     )
     return {"ok": True, **verdict}
 
@@ -986,8 +991,7 @@ async def ora_upload(
         if not await check_rate_limit_async(f"ora_chat:upload:{user['user_id']}:{ip}", 10):
             raise HTTPException(429, "Upload rate limit — slow down for a minute.")
     tier = (user.get("tier") or "").strip().lower()
-    is_founder = bool(user.get("is_founder") or user.get("is_admin")
-                       or tier == "founder")
+    is_founder = is_admin_or_founder(user)
     if not is_founder and tier not in _ORA_UPLOAD_ALLOWED_TIERS:
         # 402 (structured) — same shape the /message endpoint uses for
         # budget stops so the frontend can render both with one branch.
@@ -1170,8 +1174,7 @@ async def image_generate(body: ImageGenBody,
     if not await check_rate_limit_async(f"ora_chat:img-gen:{user['user_id']}:{ip}", 6):
         raise HTTPException(429, "Image generation rate limit — try again in a minute.")
     tier = (user.get("tier") or "").strip().lower()
-    is_founder = bool(user.get("is_founder") or user.get("is_admin")
-                       or tier == "founder")
+    is_founder = is_admin_or_founder(user)
     if not is_founder:
         # Explicit founder gate (per 2026-02-08 scope narrow). Pro /
         # Team refused with a structured 402 so the eventual expansion

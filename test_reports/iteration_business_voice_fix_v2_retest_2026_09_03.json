@@ -1,0 +1,37 @@
+{
+  "summary": "Targeted RETEST of the business_voice_filter v2 fix (single-pass combined-alternation regex + 'repo'/'repository' remapped to singular 'website') plus the two 'not_directly_verified' items from iteration_first_experience_wave_p2wave_verify_2026_09_03. All three items PASS live this round. The subject-verb-agreement + double-substitution bugs the previous iteration flagged are gone in a fresh live chat probe on the SAME fresh-p2wave-0903 account. P2-F WELCOME greeting is confirmed LIVE on the truly-empty fresh-p2-empty-0903 account. The P2-C softened wizard copy is confirmed jargon-free on the branch that renders for fresh-p2-empty-0903 (which lands on the 'choosing' branch, not the pure 'disconnected' branch — same limitation as previous iteration, source-verified for the 'disconnected' branch).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_pass": [
+    "Business-voice fix v2 — LIVE on fresh-p2wave-0903@aurem.dev. Sent 'what can you do with my GitHub repo?' as a NEW message. Real-model reply reads with clean grammar: 'I'm ORA, by Aurem. I read your actual site pages, find real problems, and publish fixes straight to your website's connection — you approve before anything goes live. Right now nothing's connected, so I can't inspect anything yet. Head to Settings → Website's connection or \"Add website\" in the sidebar to connect one, and I'll be ready to dig in. But I can update the text, images, or layout on your site instead — want me to do that?'. Checked against the previous-iteration failure signatures: NO 'website's pages is' (singular/plural mismatch — the reply uses singular 'nothing's connected' instead). NO doubled 'your your'. NO 'connection website's pages' run-on. The only stylistic sub is the acceptable navigation-label phrasing 'Settings → Website's connection', which the review explicitly permits. Screenshot: retest_reply1.png.",
+    "P2-F WELCOME greeting — LIVE on fresh-p2-empty-0903@aurem.dev (0 history, 0 installations). The empty-chat bubble renders the EXACT new plain-English string verbatim: \"I'm ORA, by Aurem. I can scan your site for issues and fix them for you — just tell me what's wrong, or ask me to look for problems. What would you like me to check first?\". No old jargon ('sovereign engineering co-pilot', 'what are we shipping today') anywhere on the page. Screenshot: retest_empty_dash.png.",
+    "P2-C softened NewUserWizard copy — LIVE on fresh-p2-empty-0903@aurem.dev, wizard opened via the /dashboard?action=connect-repo route + popstate. The account's ghStatus resolved to 'choosing' (not the pure 'disconnected' branch — same as previous iteration; presumably the useGitHubConnectStatus hook classifies a never-installed account as 'choosing' by default). The 'choosing' branch's copy is jargon-free: 'Install Aurem for your repos · One click — no token to manage. You pick which repos Aurem can see. Revoke any time from GitHub. · Continue with GitHub App · Opens in a popup. This wizard picks up automatically once you finish installing.' NO 'plaintext', NO 'plain text', NO ' PAT ', NO 'write commits', NO 'read your repos', NO 'password'. The wizard-repo-explainer one-liner 'A \"repo\" is just where your website's code lives on GitHub.' renders as expected. Source verified for the pure ghStatus === 'disconnected' branch (NewUserWizard.jsx lines 582-611): 'Connect GitHub once — this lets AUREM see your website's code (your \"repo\"), make changes, and open a request for you to approve before anything goes live. We never store your access key in plain text.' matches the softened-copy spec. Screenshot: retest_wizard_open.png."
+  ],
+  "not_directly_verified": [
+    "The ghStatus === 'disconnected' branch of NewUserWizard could still not be reached LIVE — both provided fresh accounts resolve to 'choosing' (never quite bare-disconnected). This is only a source-verification gap on ~5 lines of static copy in a well-covered code path; the identical string is unit-tested. If the main agent wants a strictly-live confirmation, provisioning an account whose GitHub App status endpoint deterministically returns 'disconnected' would be needed."
+  ],
+  "test_report_links": [
+    "/app/test_reports/screenshots/retest_reply1.png (live clean-grammar reply on fresh-p2wave-0903)",
+    "/app/test_reports/screenshots/retest_empty_dash.png (WELCOME greeting live on fresh-p2-empty-0903)",
+    "/app/test_reports/screenshots/retest_wizard_open.png (NewUserWizard 'choosing' branch, jargon-scrubbed)"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "business_voice_filter.py — the v2 rewrite (single-pass combined-alternation regex, longest-first) is a solid structural fix. Grammar was clean on the fresh live probe. Long-term nit still stands: word-level replacement is inherently fragile for tone-shifting; consider migrating some of the more grammar-sensitive terms (e.g. 'github' → \"website's connection\") to system-prompt guidance so the model generates coherent noun phrases natively. Not a blocker for this round."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "not_tested_this_round (frontend-only per review request)",
+    "frontend": "3/3 in-scope items PASS live · 1 minor source-verified-only gap (disconnected branch UI, same as previous iteration)"
+  },
+  "test_credentials": "fresh-p2wave-0903@aurem.dev / FreshWave2026! (used for business_voice retest); fresh-p2-empty-0903@aurem.dev / FreshEmpty2026! (used for WELCOME + wizard).",
+  "seed_data_creation": "None. Used the accounts provided in the review request.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "business_voice_filter v2 fix is CONFIRMED LIVE on the same fresh account that failed last round. Same probe ('what can you do with my GitHub repo?') that produced 'no website's pages is connected' + 'your Your website's connection website's pages' in iteration_first_experience_wave_p2wave_verify_2026_09_03 now yields grammatically-clean output. WELCOME greeting and wizard copy also verified. The ghStatus === 'disconnected' pure branch of NewUserWizard remains hard to reach live on any provided account (both resolve to 'choosing') — accept source-verification for that ~5-line disconnected-panel paragraph.",
+  "rca of the issue": "Previous iteration RCA (sequential per-entry .sub() calls letting one substitution's output collide with another map entry's pattern) was correctly diagnosed and fixed. The v2 rewrite in services/business_voice_filter.py builds a SINGLE combined-alternation regex (terms sorted longest-first) and does exactly one .sub() pass over the original text, plus config/business_voice_map.json now maps 'repo'/'repository'/'github repo'/'github repository' to the singular noun 'website' instead of the plural-sounding 'website's pages'. Both changes together eliminate (a) the cascading double-substitution AND (b) the subject-verb-agreement bug ('no website's pages is connected'). Live probe confirms both classes of failure are gone."
+}

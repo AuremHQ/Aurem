@@ -1,0 +1,28 @@
+{
+  "summary": "Verified frontend-only fix for duplicate task-followup messages reappearing at bottom of chat after reload. mapHistoryTurn extracted into utils/dateDividers.js now preserves kind/task_id/ts; ChatPanel.jsx history-load effect calls sortMessagesByTimestamp(turns.map(mapHistoryTurn)); live-append path stamps ts. Ran 3 relevant vitest files (22/22 tests pass) plus full ChatPanel test dir (24/24 pass). Live browser smoke on preview: logged in as test@aurem.dev, opened aurem-demo/frontend chat session, snapshotted messages before/after page reload — 2 msgs before, 2 msgs after, zero duplicates, same date divider '13 September 2026' preserved, last message identical.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/utils/__tests__/mapHistoryTurn.test.js",
+    "/app/frontend/src/components/__tests__/ChatPanel.task_followup_dedupe_survives_reload_2026_09_20.test.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "mapHistoryTurn correctly preserves kind + task_id + all previously-fixed reload fields; dedupe predicate in triggerTaskFollowup unchanged and now works after hydration.",
+    "Defense-in-depth ts stamp on live-append followup is applied and covered by the source-level lock-in test.",
+    "sortMessagesByTimestamp still applied post-map, so the 2026-09-11 loop-turn-pair ordering fix continues to hold.",
+    "Note: unrelated pre-existing app-level toast in top bar shows '1 console error' — traced to a benign 403 on a resource load (not introduced by this change, present before the fix)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (backend not tested per request)", "frontend": "100% (22/22 targeted tests + 24/24 ChatPanel suite + live reload smoke pass)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Fix is a pure frontend hydration change (mapHistoryTurn export + call-site swap in ChatPanel history-load + ts stamp on live-append). Full repro from the bug report cannot be manufactured in preview without a stale multi-day-old completed Mode C task with a persisted task_followup turn, but the unit-test file mapHistoryTurn.test.js contains an end-to-end simulation covering that exact scenario (Sept 13 push + Sept 16 failure + today's gibberish exchange) and its control test proves the OLD mapper would have let the duplicate through — so the assertion is not vacuous. Live smoke confirmed reload-preservation of ts/date-dividers on a real session and no new console errors.",
+  "rca of the issue": "GET /chat/history returned kind/task_id on task-followup turns; ChatPanel's inline turns.map() literal in the history-load effect never copied those fields into local `messages` state. After any reload, the client-side dedupe guard inside triggerTaskFollowup (`msgs.some(mm => mm.kind === 'task_followup' && mm.task_id === taskId)`) could no longer recognise already-delivered followups. On remount, each old completed task's MessageBubble terminal-status poll re-fired onTaskCompleted -> POST /chat/task-followup returned cached text -> guard missed -> duplicate object with NO ts pushed to end of `messages` array, landing after the real last exchange regardless of chronology. Fix: extract to real testable pure function mapHistoryTurn (preserves kind/task_id and every other reload field), swap call-site to setMessages(sortMessagesByTimestamp(turns.map(mapHistoryTurn))), plus stamp ts on live-append as defense-in-depth."
+}

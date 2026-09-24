@@ -69,11 +69,23 @@ def test_chat_composer_has_matching_amber_side_borders():
     assert "borderBottomRightRadius: 12" in src
 
 
-def test_homepage_renders_founder_offer_pill():
+def test_homepage_no_longer_renders_founder_offer_pill_in_hero():
+    """2026-09-22 · Founder-reported bug — the SEO-fix pill and the
+    First-50 promo chip competed for attention in the same hero,
+    diluting both. FounderOfferPill's real audience (signed-up,
+    repo-not-connected users) is already served by ConnectRepoBanner
+    + this same pill on Projects.jsx — removed from the anonymous
+    Landing hero. Supersedes the old iter212m-34 assertion that it
+    must render here."""
     src = open("/app/frontend/src/pages/Landing.jsx").read()
-    assert ("import FounderOfferPill from "
-            "\"../components/FounderOfferPill\"") in src
-    assert "<FounderOfferPill />" in src
+    assert 'import FounderOfferPill' not in src, (
+        "FounderOfferPill must not be imported/rendered on Landing.jsx "
+        "anymore — it now lives only in the authenticated Projects.jsx "
+        "context where the offer is actually actionable."
+    )
+    assert "<FounderOfferPill" not in src
+    # The single remaining hero offer must still be present.
+    assert 'data-testid="hero-promo-chip"' in src
 
 
 def test_founder_offer_pill_unchanged_endpoint_and_link():

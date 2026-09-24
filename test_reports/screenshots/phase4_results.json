@@ -1,0 +1,35 @@
+{
+  "timing": {
+    "login_form_visible_ms": 1020,
+    "suspense_loading_seen_early": false
+  },
+  "panels": {
+    "Coffee Shop Booking (demo)": {
+      "variant_testid": "architect-blueprint-panel",
+      "type_a_section_present": true,
+      "type_b_section_present": true,
+      "screenshot_path": "/app/test_reports/screenshots/phase4_coffeeshop_ACTUAL.png",
+      "screenshot_exists": true,
+      "screenshot_bytes": 200672,
+      "inner_text": "WHAT I SET UP\nfrom: \u201ca coffee shop booking app where customers reserve a table for a specific time slot\u201d\nDECIDED AUTOMATICALLY\nauth type: email/password\nStandard authentication method sufficient for initial version.\ncache: enabled\nNeeded for real-time table availability checks.\nbackground jobs: enabled\nRequired for sending notifications and reminders.\nnotification channels: email, sms\nBasic notification methods for reservation updates.\nWAITING ON YOUR INPUT\npayment provider\nUsing safe default for now: placeholder checkout button\nPENDING"
+    },
+    "CSV to JSON Tool (demo)": {
+      "variant_testid": "architect-blueprint-panel",
+      "type_a_section_present": true,
+      "type_b_section_present": false,
+      "screenshot_path": "/app/test_reports/screenshots/phase4_csvtool_ACTUAL.png",
+      "screenshot_exists": true,
+      "screenshot_bytes": 178736,
+      "inner_text": "WHAT I SET UP\nfrom: \u201ca single-page tool that converts CSV to JSON\u201d\nDECIDED AUTOMATICALLY\nauth: none\nNo user accounts or ownership required for a stateless converter.\ndata persistence: client-side only\nNo need for server-side storage of conversion data.\ninfra complexity: minimal (static hosting only)\nThe tool can be deployed as a static single-page application."
+    },
+    "Live Leaderboard (demo)": {
+      "variant_testid": "architect-blueprint-panel",
+      "type_a_section_present": true,
+      "type_b_section_present": false,
+      "screenshot_path": "/app/test_reports/screenshots/phase4_leaderboard_ACTUAL.png",
+      "screenshot_exists": true,
+      "screenshot_bytes": 182193,
+      "inner_text": "WHAT I SET UP\nfrom: \u201can app where thousands of people might check the same live leaderboard at once\u201d\nDECIDED AUTOMATICALLY\nauth: none\nPublic leaderboard does not require authentication.\ncache_or_redis: enabled\nHigh read concurrency necessitates caching.\ndata_model.entities: LeaderboardEntry with id, name, score, rank, timestamp\nMinimal fields needed for a live leaderboard.\nconcurrency: high read, low write\nThousands of reads, occasional writes for score updates."
+    }
+  }
+}

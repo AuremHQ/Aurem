@@ -306,7 +306,7 @@ export default function OraPreviewPanel({ code = "", lang = "", onClose }) {
         <div data-testid="ora-preview-scanning"
              style={bannerStyle("#EEF0F6", "#3B4E7A")}>
           <Loader2 size={12} className="animate-spin" />
-          Vanguard scanning preview payload…
+          Checking your preview for problems…
         </div>
       )}
       {/* HIGH-severity findings require a click-through ack before

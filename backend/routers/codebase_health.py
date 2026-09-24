@@ -32,26 +32,15 @@ category — just 4× more CPU on the user's static analysis.
 # arch: allow-http — GitHub tree walk (calls _gh_get service) (iter 212m-225)
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import JSONResponse
 
 from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
-from services.http import ext_client
-from routers.security_scan import (
-    _list_repo_tree, _list_repo_tree_with_sha, _fetch_file,
-    _MAX_FILES, _MAX_BYTES_PER_FILE, _SCAN_EXTS, _SKIP_DIRS,
-    _CONCURRENT_FETCHES,
-)
-from services.scan_cache import (
-    get_cached_text_cache, put_cached_text_cache,
-)
 from services.feature_flags import is_enabled
 
 router = APIRouter(prefix="/codebase-health", tags=["Codebase Health"])
@@ -75,14 +64,8 @@ logger = logging.getLogger(__name__)
 # behaviour is unchanged, only the ownership moved.
 # ──────────────────────────────────────────────────────────────────────
 from services.codebase_health_core import (                # noqa: E402
-    _is_dockerfile, _scan_security, _scan_performance,
-    _scan_code_quality, _scan_dependencies, _scan_database,
-    _scan_docker_cis, SCANNERS, _norm_sev, _score_for_findings,
+    SCANNERS, _score_for_findings,
     _category_label,
-)
-from services.scanner_utils import (                       # noqa: E402
-    is_scanner_rule_file as _is_scanner_rule_file,
-    _SCANNER_RULE_FILES,
 )
 
 
@@ -94,114 +77,9 @@ from services.scanner_utils import (                       # noqa: E402
 # implementations — nothing below this point was changed.
 
 
-async def _build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
-    """Walk the repo tree + fetch every scannable file.  Cached for the
-    duration of a single /scan request so all 5 categories share the
-    same fetch budget.
-
-    Iter 212m-79 — also checks Redis for a previously-built bundle
-    keyed on `owner/repo@tree_sha`.  Cross-pod cache hits skip the
-    ~50-600 GitHub calls entirely (~60 s saved on large repos).  TTL
-    24 h; key invalidates automatically on the next commit because the
-    tree SHA changes.
-
-    Iter 212m-221 — Two hardening changes to root-cause the
-    intermittent 1.3s Cloudflare 502 on prod:
-      * Explicit `Timeout(45)` on the outer `AsyncClient` — the old
-        default-None meant a single stalled GH connection could hold
-        the pod's event loop indefinitely, triggering Cloudflare's
-        origin-idle-timeout intercept.
-      * Structured latency log on every call (`scan.text_cache
-        owner=… repo=… sha=… hit=… files=… ms=…`) so a future 502
-        can be traced from the log stream alone.
-    """
-    import time as _time
-    _t0 = _time.time()
-    _hit  = False
-    _files = 0
-
-    _timeout = httpx.Timeout(45.0, connect=6.0, read=15.0)
-    async with ext_client("github", timeout=httpx.Timeout(45.0, connect=6.0, read=15.0)) as client:
-        blobs, tree_sha = await _list_repo_tree_with_sha(
-            client, owner, repo, pat,
-        )
-
-        # ── Redis-backed dedup lookup ──────────────────────────────
-        if tree_sha:
-            cached = await get_cached_text_cache(owner, repo, tree_sha)
-            if cached is not None:
-                # Hit — skip GitHub entirely.  Re-apply the path
-                # candidate filter in case _SCAN_EXTS changed between
-                # writes (cheap; pure-Python loop over keys).
-                filtered: dict[str, str] = {}
-                for path, txt in cached.items():
-                    if not path:
-                        continue
-                    if any(p in _SKIP_DIRS for p in path.split("/")):
-                        continue
-                    lower = path.lower()
-                    if not (any(lower.endswith(ext) for ext in _SCAN_EXTS)
-                            or lower.endswith("requirements.txt")
-                            or lower.endswith("package.json")
-                            or _is_dockerfile(lower)):
-                        continue
-                    filtered[path] = txt
-                _hit  = True
-                _files = len(filtered)
-                logger.info(
-                    "scan.text_cache owner=%s repo=%s sha=%s hit=1 "
-                    "files=%d ms=%d",
-                    owner, repo, tree_sha[:7], _files,
-                    int((_time.time() - _t0) * 1000),
-                )
-                return filtered
-
-        text_cache: dict[str, str] = {}
-        candidates: list[dict] = []
-        for b in blobs:
-            path = b.get("path", "")
-            if not path:
-                continue
-            if any(p in _SKIP_DIRS for p in path.split("/")):
-                continue
-            lower = path.lower()
-            if not (any(lower.endswith(ext) for ext in _SCAN_EXTS)
-                    or lower.endswith("requirements.txt")
-                    or lower.endswith("package.json")
-                    or _is_dockerfile(lower)):
-                continue
-            if b.get("size", 0) > _MAX_BYTES_PER_FILE:
-                continue
-            candidates.append(b)
-            if len(candidates) >= _MAX_FILES:
-                break
-
-        sem = asyncio.Semaphore(_CONCURRENT_FETCHES)
-
-        async def _one(blob):
-            async with sem:
-                t = await _fetch_file(client, owner, repo, blob["path"], pat)
-            if t:
-                text_cache[blob["path"]] = t
-
-        await asyncio.gather(*[_one(b) for b in candidates])
-
-        # ── Best-effort write-back; never blocks the response ─────
-        if tree_sha and text_cache:
-            try:
-                await put_cached_text_cache(owner, repo, tree_sha, text_cache)
-            except Exception as e:
-                logger.debug("scan_cache put_cached failed: %r", e)
-
-    _files = len(text_cache)
-    logger.info(
-        "scan.text_cache owner=%s repo=%s sha=%s hit=0 files=%d "
-        "candidates=%d ms=%d",
-        owner, repo, (tree_sha or "-")[:7], _files, len(candidates),
-        int((_time.time() - _t0) * 1000),
-    )
-    return text_cache
-
+# Text-cache builder lives in services/repo_text_cache.py (2026-09-07
+# extraction); kept importable here under its historical name.
+from services.repo_text_cache import build_text_cache as _build_text_cache  # noqa: E402
 
 @router.get("/cache-stats")
 async def cache_stats(authorization: Optional[str] = Header(None)) -> dict:
@@ -271,12 +149,13 @@ async def scan(
     proj = await db.cto_projects.find_one(
         {"project_id": project_id, "user_id": user_id},
         {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,
-         "auth_method": 1, "installation_id": 1, "user_id": 1},
+         "github_branch": 1, "auth_method": 1, "installation_id": 1, "user_id": 1},
     )
     if not proj:
         raise HTTPException(404, "Project not found")
     owner = proj.get("github_owner") or ""
     repo  = proj.get("github_repo") or ""
+    branch = proj.get("github_branch") or "main"
     # 2026-02-11 · Phase 3b (Bug 2 fix) — dual-auth token resolver.
     from services.pat_vault import get_repo_token, GithubAppAuthError
     # 2026-09-09 fix — this call had ZERO exception handling: any
@@ -353,8 +232,40 @@ async def scan(
     overall_score = _score_for_findings(all_findings)
     label, tone = _category_label(overall_score)
     total = sum(b["total"] for b in breakdown.values())
+    # 2026-09-21 — report-identity fix (see services/health_reporter.py
+    # module docstring): the original mis-attribution incident this
+    # follows up on was a human reading a pasted report with no repo
+    # identity and assuming it was AUREM's own code, when it was really
+    # a connected customer repo. Best-effort — a failed SHA lookup must
+    # never block the scan response.
+    from services.local_tools import _repo_head_sha
+    from services.health_reporter import format_identity_header
+    try:
+        head_sha = await _repo_head_sha(owner, repo, branch, pat)
+    except Exception:                                       # noqa: BLE001
+        head_sha = None
+    identity_header = format_identity_header(owner, repo, branch, head_sha, "customer")
+    # 2026-09-21 — Bug D fix (live QA report): this manual scan path
+    # (chat slash-commands + the /codebase-health page) never wrote
+    # into `cto_open_findings`, so the Advisor sidebar's "N open
+    # findings" counter (routers/advisor_context.py, reads ONLY that
+    # collection) stayed frozen across every /bug-hunt or /health-scan
+    # run — it only ever moved from Loop's full-scan or the one-time
+    # onboarding scan. Reuse the SAME writer those two paths already
+    # use (upsert keyed on user+project+finding_id, critical/high
+    # only, exposure-count capped) so a manual scan's real findings
+    # actually reach the real backlog the counter reads from.
+    try:
+        from services.loop_full_scan import persist_findings_to_backlog
+        await persist_findings_to_backlog(
+            db, user_id=user_id, project_id=project_id,
+            findings=all_findings, scan_source="codebase_health_manual",
+        )
+    except Exception as e:                                 # noqa: BLE001
+        logger.debug("open-findings backlog persist failed: %r", e)
     payload = {
         "ok":            True,
+        "identity_header": identity_header,
         "score":         overall_score,
         "label":         label,
         "tone":          tone,
@@ -373,12 +284,13 @@ async def scan(
     # ring can read the most-recent score via GET /last without paying
     # the full scan cost on every page mount.  Best-effort: a Mongo
     # failure must NEVER block the user-visible scan response.
+    scan_record_id: Optional[str] = None
     try:
         # Iter 212m-177 — P1-5: a scan that read ZERO files scores 100
         # trivially and later contradicts real scans (PROD showed
         # 100-HEALTHY vs 0-CRITICAL for the same repo). Never persist it.
         if len(text_cache) > 0:
-            await db.codebase_health_scans.insert_one({
+            _ins = await db.codebase_health_scans.insert_one({
                 "user_id":       user_id,
                 "project_id":    project_id,
                 "score":         overall_score,
@@ -391,6 +303,11 @@ async def scan(
                 "breakdown":     breakdown,
                 "created_at":    time.time(),
             })
+            # 2026-09-20 — evidence pointer: capture the record's OWN
+            # primary key at insert time so the scan-result chat
+            # message below can point back at THIS exact document
+            # instead of only carrying aggregate prose.
+            scan_record_id = str(_ins.inserted_id)
     except Exception as e:
         logger.debug("codebase_health_scans persist failed: %r", e)
     # Iter 212m-129 — Learning hook: persist a per-rule histogram of
@@ -423,6 +340,115 @@ async def scan(
         logger.debug("learning scan-run hook (health) soft-failed: %r", _e)
     # Iter 212m-75 — surface remaining quota per category in a header so
     # callers can render an inline counter without parsing the body.
+    # 2026-09-17 — Bug 6 fix (live QA report): slash-command scan
+    # results (`/security-scan` etc.) only ever reached the user as a
+    # transient toast — nothing landed in the durable chat transcript,
+    # unlike every other agent action. That's invisible to anyone who
+    # reopens the chat, and to the audit trail — which matters more
+    # here than almost anywhere else, since these are security-
+    # relevant results. Best-effort, same pattern as the two persist
+    # hooks above: a failure here must never break the scan response
+    # the user is waiting on.
+    session_id = (body or {}).get("session_id")
+    if session_id:
+        try:
+            cats_label = ", ".join(categories)
+            headline = f"**Scan complete — {cats_label}**"
+            body_lines = [payload["summary"]]
+            # 2026-09-21 — Bug E fix (live QA report): list EVERY
+            # scanned category, including 0-finding ones. The old
+            # code skipped a category here whenever `b["total"]` was
+            # falsy, but the header above always counts
+            # `len(categories)` (categories RUN, not categories WITH
+            # findings) — so a 4-category health-scan where one
+            # category came back clean showed "...across 4
+            # categories" with only 3 lines underneath, looking like
+            # a miscount. Header and body now always agree.
+            for cat in categories:
+                b = breakdown.get(cat) or {
+                    "total": 0, "counts": {"critical": 0, "high": 0},
+                }
+                body_lines.append(
+                    f"- `{cat}`: {b['total']} finding(s) "
+                    f"(critical {b['counts']['critical']}, "
+                    f"high {b['counts']['high']})"
+                )
+            evidence_ref = None
+            if scan_record_id:
+                # 2026-09-20 — pointer + preview (services/evidence_
+                # pointer.py). Preview items are REAL findings pulled
+                # straight from `all_findings` — never invented —
+                # capped to 5 so the message stays a preview, with a
+                # stable pointer back to the full scan document for
+                # anyone who reopens this chat later.
+                from services.evidence_pointer import build_evidence_message
+                sev_rank = {"critical": 0, "high": 1, "medium": 2,
+                            "low": 3, "info": 4}
+                ordered = sorted(
+                    all_findings,
+                    key=lambda f: (sev_rank.get(f.get("severity"), 9),
+                                   f.get("file", ""), f.get("line", 0)),
+                )
+                preview_items = [
+                    f"`{f.get('file', '?')}:{f.get('line', '?')}` — "
+                    f"{f.get('title') or f.get('message', '')[:80]}"
+                    for f in ordered[:5]
+                ]
+                msg = build_evidence_message(
+                    kind="scan", record_id=scan_record_id,
+                    headline=headline, body_lines=body_lines,
+                    preview_items=preview_items, preview_total=total,
+                )
+                content = msg["text"]
+                evidence_ref = msg["evidence_ref"]
+            else:
+                content = "\n".join([headline, ""] + body_lines)
+            # 2026-09-21 — Bug A root-cause fix (live QA report, real
+            # repro against p_64987820ec/Aurem-1): this used to call
+            # services.ora_chat.session.append_message(), which
+            # writes into `ora_chat_sessions` — a completely separate
+            # collection the REAL product chat never reads. The live
+            # UI's GET /chat/history reads db.chat_sessions ONLY
+            # (written by services/chat_helpers.py::_persist_turn and
+            # routers/chat/misc.py's task-followup writer). Confirmed
+            # live: append_message() also has no upsert, so for every
+            # real session_id the UI actually uses (which never
+            # exists as an ora_chat_sessions doc) the write was a
+            # silent no-op — matched_count stayed 0. Net effect: the
+            # scan-complete bubble the frontend adds to LOCAL state
+            # (ChatPanel.jsx _executeSlashScan) was NEVER durably
+            # saved anywhere the real UI could re-fetch it from, so
+            # the next GET /chat/history (reload, tab remount, the
+            # "Review findings" full-page nav) always came back
+            # without it — it visually "vanished" / the chat
+            # "reverted". Fix: push directly into db.chat_sessions.
+            # turns with the SAME shape + upsert the durable regular-
+            # turn writer (_persist_turn) uses, so it is actually
+            # there on every future read, same as any other message.
+            now = time.time()
+            new_turn = {
+                "role":     "assistant",
+                "content":  content,
+                "ts":       now,
+                "provider": "scan-result",
+                "kind":     "scan_result",
+            }
+            if evidence_ref:
+                new_turn["evidence_ref"] = evidence_ref
+            await db.chat_sessions.update_one(
+                {"session_id": session_id, "user_id": user_id},
+                {
+                    "$setOnInsert": {
+                        "session_id": session_id, "user_id": user_id,
+                        "created_at": now, "project_id": project_id,
+                    },
+                    "$set": {"updated_at": now, "last_message": content[:120]},
+                    "$push": {"turns": {"$each": [new_turn], "$slice": -200}},
+                },
+                upsert=True,
+            )
+        except Exception as e:                              # noqa: BLE001
+            logger.debug("scan-result chat persist failed: %r", e)
     headers = {
         "X-Scan-Remaining": str(min(remaining.values()) if remaining else 0),
         "X-Scan-Remaining-Per-Category": ",".join(
@@ -720,6 +746,7 @@ async def request_fix(
         "finding_line":    line,
         "commit_sha":      res["full_sha"],
         "html_url":        res["html_url"],
+        "pr_url":          res.get("pr_url"),
         "created_at":      _time.time(),
         "completed_at":    _time.time(),
         "tokens_charged":  tokens_cost,
@@ -730,6 +757,14 @@ async def request_fix(
         "commit_sha":      res["commit_sha"],
         "full_sha":        res["full_sha"],
         "html_url":        res["html_url"],
+        # 2026-09-18 fix — found while live-verifying the Bug 1
+        # duplicate-PR fix against a real connected repo
+        # (polarisbuiltinc-wq/Aurem-1): `apply_finding_fix()` has
+        # always returned `pr_url`, but this endpoint's response
+        # silently dropped it — a caller had no way to know a PR was
+        # even opened, let alone link to it, unless they went digging
+        # in server logs.
+        "pr_url":          res.get("pr_url"),
         "tokens_charged":  tokens_cost,
         "new_balance":     new_balance,
         "message":         res["message"],

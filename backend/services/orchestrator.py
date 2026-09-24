@@ -232,7 +232,179 @@ def build_timeout_message(
 
 
 
-def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
+# ─── 2026-09-08 — Turn-Completion Contract ─────────────────────────
+# ROOT FIX (not a symptom patch): three separately-reported bugs this
+# round — (1) "scan the whole repo" ending on "Let me grab the
+# remaining directories..." with no file list delivered, (2) the
+# Approve button silently not loading, (3) a 48s silent wait ending in
+# a confusing partial — all trace back to one root cause: a turn can
+# transition from "working" to "idle" without ever confirming the work
+# actually completed or explicitly failed.
+#
+# This block fixes bug (1)'s class directly: a turn may only end in
+# one of three states — SUCCESS (a real result was delivered),
+# EXPLICIT FAILURE (`error` set, with a retry path), or EXPLICIT
+# PARTIAL (`turn_state="partial"` + `continue_available=True`, so the
+# user sees "I did this much — continue?" instead of silence). An
+# intent statement ("Let me grab X...") is a STEP ANNOUNCEMENT, never
+# a valid final answer on its own.
+_INTENT_LEAD_RE = re.compile(
+    r"^(let me|i'll|i will|i'm going to|i am going to|"
+    r"next,?\s+i(?:'ll|\s+will)|now,?\s+i(?:'ll|\s+will)|going to|"
+    r"checking|verifying|looking|investigating|digging|reviewing|"
+    r"analyzing|analysing|confirming|examining|scanning|searching|"
+    r"inspecting|working on)\b",
+    re.IGNORECASE,
+)
+
+# 2026-09-09 — founder-reported production repro (screenshot: chat
+# stalled forever, no spinner, no reply, "we fixed this before" — this
+# IS the Turn-Completion Contract's exact bug class from 2026-09-08,
+# just with a phrasing the original regex didn't cover): "Checking
+# the Inter font imports now—stand by one moment while I verify the
+# actual CSS and JS bundles. (No reply needed yet; I'll update when I
+# have the concrete answer.)" opens with a gerund ("Checking") that
+# _INTENT_LEAD_RE didn't match at all, so the whole contract never
+# tripped and the turn was allowed to close silently on it. Rather
+# than whack-a-mole one more opener onto the list (the model can phrase
+# a stall in unbounded ways), this adds a SEPARATE, stronger signal:
+# explicit stall-language the model itself uses to say "this isn't a
+# final answer yet" — "stand by", "no reply needed", "I'll update
+# when", "hang tight", "give me a moment" — regardless of how the
+# sentence opens. A model that tells you outright not to expect a
+# reply yet is, by definition, not delivering one.
+_STALL_TELL_RE = re.compile(
+    r"(stand by|no reply (?:is )?needed|i'll update (?:you )?when|"
+    r"hang tight|give me (?:a|one) moment|one moment(?:,|\s+please)?|"
+    r"bear with me|hold on(?:\s+a\s+(?:sec|second|moment))?)",
+    re.IGNORECASE,
+)
+
+
+def _is_intent_only_announcement(content: str) -> bool:
+    """True when `content` is a bare STEP ANNOUNCEMENT — e.g. "Let me
+    grab the remaining top-level directories I haven't scanned yet."
+    or "Checking the Inter font imports now—stand by one moment..." —
+    masquerading as a final answer, with no actual delivered result.
+
+    Trips on EITHER of two independent signals: (a) the reply opens
+    with an intent/progressive-tense lead phrase, OR (b) the reply
+    contains explicit stall-language ("stand by", "no reply needed
+    yet", etc.) — the model announcing outright that this isn't done.
+    Either way, still gated by (c) no code fence or a real delivered
+    list (3+ items), AND (d) the whole reply is short — a genuine
+    answer that happens to open with "I'll walk you through X" before
+    actually delivering X runs far longer than a bare announcement.
+    """
+    text = (content or "").strip()
+    if not text:
+        return False
+    if not (_INTENT_LEAD_RE.match(text) or _STALL_TELL_RE.search(text)):
+        return False
+    if "```" in text:
+        return False
+    list_items = len(re.findall(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+\S", text))
+    if list_items >= 3:
+        return False
+    return len(text) < 220
+
+
+# 2026-09 — P0 bug-brief Bug 3: "Multi-step instructions silently
+# truncated." Founder repro: a message with 4 explicit numbered steps
+# got step 1 done, then the turn closed on the generic max_iters
+# fallback ("Want me to continue?") without even attempting steps
+# 2-4, despite being told explicitly to complete all steps without
+# stopping to ask. Root cause: `max_iters` (default 4) is sized for
+# INVENTORY/EXECUTE-mode single-asks; an explicitly enumerated
+# multi-step request needs proportionally more tool-call budget, and
+# the fallback message when budget IS exhausted didn't re-state which
+# of the ORIGINAL requested steps were even attempted.
+#
+# Fix is intentionally NOT a fabricated per-step done/not-done verdict
+# — this codebase's whole culture (CitationGuard, verify_llm_findings,
+# business_voice_filter, etc.) is "never claim something without real
+# evidence", and algorithmically guessing "step 2: done" without
+# grounding would be exactly that kind of fabrication. Instead:
+#   1. Detect the explicit step list and give the turn MORE iteration
+#      budget up front, proportional to step count (capped), so a
+#      modest 3-4 step ask actually gets the room to finish instead
+#      of hitting a budget sized for a single-ask turn.
+#   2. If budget is STILL exhausted (a genuinely large task), the
+#      fallback message explicitly RESTATES the full original step
+#      list (grounded — it's the user's own text) so the user can see
+#      exactly what's outstanding, instead of a generic "I did some
+#      things, want me to continue?" that silently drops the scope.
+_STEP_LIST_RE = re.compile(
+    r"(?m)^\s*(?:(\d{1,2})[.)]\s+|(?:step\s*\d{1,2}\s*[:.)]\s*))(\S.+)$"
+)
+# Inline enumeration on one line: "1) X 2) Y 3) Z" (the brief's own
+# example). Matches each `N) ...` or `N. ...` segment up to the next
+# one or end of string.
+_INLINE_STEP_RE = re.compile(r"\d{1,2}[.)]\s*([^0-9]+?)(?=\s*\d{1,2}[.)]|$)")
+
+
+def _detect_explicit_multistep(prompt: str) -> Optional[list[str]]:
+    """Returns the list of step descriptions when `prompt` contains an
+    explicit ENUMERATED multi-step request (2+ numbered/"step N"
+    items) — either one per line, or inline on a single line (the
+    brief's exact test shape: "1) X 2) Y 3) Z"). Returns None
+    otherwise. Deliberately simple/regex-only — this only needs to
+    detect "the user explicitly enumerated steps", not understand
+    them; correctness of what each step MEANS is left entirely to the
+    LLM, same as today."""
+    text = (prompt or "").strip()
+    if not text:
+        return None
+    line_matches = _STEP_LIST_RE.findall(text)
+    if len(line_matches) >= 2:
+        return [desc.strip() for _, desc in line_matches if desc.strip()][:12]
+    inline_matches = _INLINE_STEP_RE.findall(text)
+    cleaned = [m.strip(" .,:;") for m in inline_matches if m.strip(" .,:;")]
+    if len(cleaned) >= 2:
+        return cleaned[:12]
+    return None
+
+
+class TurnCompletionViolation(Exception):
+    """Raised when a turn would close in a state outside the three
+    allowed states (SUCCESS / EXPLICIT FAILURE / EXPLICIT PARTIAL).
+    Structural guard for the Turn-Completion Contract. In production
+    this should never actually raise — `_wrap_as_explicit_partial` +
+    the mid-loop nudge below prevent the violating state from ever
+    being constructed — it exists so the contract is ASSERTED, not
+    just documented, and is directly unit-testable in isolation."""
+
+
+def assert_turn_completion_contract(content: str, result: dict) -> None:
+    """Raises TurnCompletionViolation if `result` would close a turn
+    on intent-only text with no result, no error, and no
+    continue-prompt attached — the exact silent-idle failure class
+    this contract exists to make structurally impossible."""
+    has_error = bool(result.get("error"))
+    has_continue = bool(result.get("continue_available")) or result.get("turn_state") == "partial"
+    if _is_intent_only_announcement(content) and not has_error and not has_continue:
+        raise TurnCompletionViolation(
+            "turn closed on intent-only text with no result/error/"
+            f"continue-prompt attached: {content[:120]!r}"
+        )
+
+
+def _wrap_as_explicit_partial(content: str, invocations: list[dict], prompt: str,
+                               explicit_steps: Optional[list[str]] = None) -> str:
+    """Wraps a bare intent announcement into an EXPLICIT-PARTIAL reply:
+    what's been done so far (from tool history, if any) + a direct
+    continue question — never a silent "idle" ending."""
+    summary = _synthesise_max_iters_summary(prompt, invocations, explicit_steps) if invocations else ""
+    return (
+        content.rstrip()
+        + "\n\n_That was my next planned step, not a finished result."
+        + (f" So far: {summary}" if summary else "")
+        + " Want me to continue?_"
+    )
+
+
+def _synthesise_max_iters_summary(prompt: str, invocations: list[dict],
+                                   explicit_steps: Optional[list[str]] = None) -> str:
     """Fallback closing message when the orchestrator hits its iter
     or per-turn time budget.
 
@@ -248,7 +420,24 @@ def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
     founder gets a real answer instead of "rephrase".  Trimmed to
     stay within a reasonable size budget so a huge search result
     doesn't blow up the reply.
+
+    2026-09 — P0 bug-brief Bug 3: `explicit_steps`, when the caller
+    detected an explicitly enumerated multi-step request (see
+    `_detect_explicit_multistep`), is RESTATED verbatim at the top —
+    grounded in the user's own text, never a fabricated per-step
+    done/not-done verdict — so a partial turn never silently drops
+    the original scope.
     """
+    lines: list[str] = []
+    step_preamble: list[str] = []
+    if explicit_steps:
+        step_preamble.append(
+            f"You asked for {len(explicit_steps)} steps — restating so "
+            "nothing gets silently dropped:"
+        )
+        for i, step in enumerate(explicit_steps, 1):
+            step_preamble.append(f"{i}. {step[:200]}")
+        step_preamble.append("")
     seen_paths: list[str] = []
     seen_tools: list[str] = []
     web_search_content: list[str] = []
@@ -334,7 +523,7 @@ def _synthesise_max_iters_summary(prompt: str, invocations: list[dict]) -> str:
             )
     if seen_tools:
         lines.append(f"_Context loaded via: {', '.join(seen_tools)}._")
-    return "\n\n".join(lines)
+    return "\n\n".join(step_preamble + lines)
 
 
 def _is_same_tool_call(a: dict, b: dict) -> bool:
@@ -353,6 +542,49 @@ def _is_same_tool_call(a: dict, b: dict) -> bool:
                json.dumps(b.get("args") or {}, sort_keys=True)
     except Exception:
         return False
+
+
+# 2026-09-21 — Failure-patterns audit fix (Part 1.2). `_is_same_tool_call`
+# above only catches BYTE-IDENTICAL repeats (same tool + same args). It
+# does NOT catch the live pattern reported from /admin/failure-patterns
+# tool-sequence data: `search_repo` called 6 times in a row with
+# DIFFERENT queries each time, 0% success — same tool, genuinely no
+# progress, just varying args so the exact-match guard never trips.
+_MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS = 4
+
+# 2026-09-22 — Section 15.4 spec (P0 blueprint): a HARD per-tool call
+# cap, independent of the shared max_iters budget AND independent of
+# the "no progress" streak logic above. `_consecutive_same_tool_no_progress`
+# only counts a CONSECUTIVE FAILURE streak — one incidental success
+# resets it to 0, so a tool that succeeds trivially once every few
+# calls (success != useful) could still loop far past any reasonable
+# count. This is the unconditional backstop: no more than
+# `_MAX_CALLS_PER_TOOL_PER_TURN` calls to the exact same tool NAME in
+# one turn, success or failure, full stop.
+_MAX_CALLS_PER_TOOL_PER_TURN = 3
+
+
+def _tool_call_counts(invocations: list[dict]) -> dict:
+    from collections import Counter
+    return Counter(inv.get("tool") for inv in (invocations or []) if inv.get("tool"))
+
+
+def _consecutive_same_tool_no_progress(invocations: list[dict], tool_name: str) -> int:
+    """Walking backward from the end of `invocations`, count how many
+    in a row are calls to `tool_name` that did NOT succeed (`ok`
+    is not True). Stops at the first invocation that is either a
+    different tool, or a successful call to this same tool (success
+    means it DID make progress that time, so the streak resets)."""
+    if not tool_name:
+        return 0
+    streak = 0
+    for inv in reversed(invocations or []):
+        if inv.get("tool") != tool_name:
+            break
+        if inv.get("ok") is True:
+            break
+        streak += 1
+    return streak
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -398,6 +630,7 @@ _STEP_LABELS = {
     "firecrawl_crawl_site":     "📖 Crawling web…",
     # Write tools → ✍️
     "write_repo_file":          "✍️ Writing files…",
+    "patch_repo_file":          "✍️ Patching file…",
     "write_file":               "✍️ Writing files…",
     "edit_file":                "✍️ Writing files…",
     "create_file":              "✍️ Writing files…",
@@ -420,7 +653,7 @@ def _step_label_for_tool(tool_name: str) -> str:
 # tool. The others stay for compatibility with any external tools that
 # may register under these names.
 _WRITE_TOOL_NAMES: frozenset = frozenset({
-    "write_repo_file",
+    "write_repo_file", "patch_repo_file",
     "write_file", "edit_file", "push_fix", "create_file", "patch_file",
 })
 
@@ -617,7 +850,32 @@ _TOOL_HELP_TEMPLATE = (
     "    • fetch_url          — read clean text of a public URL (or up to 5)\n"
     "    • firecrawl_scrape   — JS-rendered scrape when fetch_url returns thin\n"
     "    • firecrawl_crawl_site — crawl multiple pages of a domain\n"
-    "    • find_package_docs  — npm or PyPI package metadata + latest version\n\n"
+    "    • find_package_docs  — npm or PyPI package metadata + latest version\n"
+    "    • get_library_docs   — CURRENT, version-aware Context7 docs for a\n"
+    "      third-party library/framework (React, FastAPI, Express, Prisma,\n"
+    "      Tailwind, Django, etc). Different from find_package_docs (which\n"
+    "      only gives version/license metadata, not doc content).\n\n"
+    "  RULE — get_library_docs is OPT-IN, not forced: before writing code\n"
+    "  that uses an EXTERNAL library or framework, call get_library_docs\n"
+    "  (libraryName, query) to get the CURRENT docs for the version the\n"
+    "  user's project uses, so you use the CURRENT API, not a stale one\n"
+    "  from training. Do NOT call it for stdlib-only code, the user's OWN\n"
+    "  project code, or trivial code with no third-party dependency — only\n"
+    "  call it when you're about to write code that uses a third-party\n"
+    "  package/framework.\n\n"
+    "  THINKING (2026-09 · Master Plan S2 — only in your toolbox on a\n"
+    "  genuinely complex, multi-file / multi-step debugging turn):\n"
+    "    • sequential_thinking — record one numbered thought at a time\n"
+    "      (thought, thought_number, total_thoughts, next_thought_needed)\n"
+    "      BEFORE committing to a fix, so you trace the ROOT cause across\n"
+    "      every file involved instead of patching the first plausible\n"
+    "      one. You can revise a prior thought (is_revision,\n"
+    "      revises_thought) or branch an alternate hypothesis\n"
+    "      (branch_from_thought, branch_id). If this tool is NOT in your\n"
+    "      catalog this turn, the request wasn't classified as complex —\n"
+    "      do not ask for it, just answer directly. When it IS available,\n"
+    "      it's still OPT-IN: a complex-classified turn that's actually\n"
+    "      simple to resolve doesn't need forced extra thought steps.\n\n"
     "  BROWSER (2026-09 · REAL interaction, not guessing from code):\n"
     "    • browser — visits a PUBLIC page and can navigate/click/fill/submit,\n"
     "      returning REAL evidence: accessibility snapshot (text tree — your\n"
@@ -836,6 +1094,15 @@ AUREM_CTO_PERSONA = (
     "concepts, status pings, or anything from CONVERSATIONAL mode. "
     "The fence is ONLY for real, concrete file mutations the worker "
     "can actually execute.\n"
+    "      DO NOT emit the fence when you investigated and concluded "
+    "there is NOTHING to fix (code is already correct, already "
+    "production-ready, already handles the case, passes review as-"
+    "is, etc.) — that is a real, valid, common outcome, not a "
+    "failure. Just say so in plain prose and STOP. The frontend "
+    "treats ANY fence in your reply as a promise that a real change "
+    "is coming; emitting one for a no-op conclusion makes the "
+    "Approve button area show a false error to the user even though "
+    "you did nothing wrong.\n"
     "      ⚠ ABSOLUTE NEGATIVES — the fence MUST NOT be emitted if "
     "ANY of these are true:\n"
     "        (a) Contains permission-asking phrases: 'Would you like', "
@@ -1569,6 +1836,19 @@ async def chat_with_tools(
                                         # entry point; no component below this
                                         # boundary may re-fetch user/project/PAT
                                         # from the DB directly.
+    task_state_scope_files: Optional[list] = None,  # 2026-02 — Context-
+                                        # Confusion fix Part A/C: file(s)
+                                        # already known from the turn's
+                                        # explicit current_task_state (e.g.
+                                        # a pending action's own target
+                                        # file on a "yes go ahead" confirm,
+                                        # where the confirmation message
+                                        # itself names no path at all).
+                                        # Seeds local_ctx["scope_files"]
+                                        # so Part C's write-scope gate in
+                                        # local_tools.py has this BEFORE
+                                        # the model makes its first tool
+                                        # call, not only after a read.
 ) -> dict:
     """Run the LLM tool-call loop until final answer (no more tool calls)
     or `max_iters` cap is hit.  Every tool call goes through `tools_bridge`
@@ -1579,6 +1859,18 @@ async def chat_with_tools(
     context. After answering, the new prompt + reply are persisted back
     into `chat_sessions` by the chat router (see `_persist_turn`).
     """
+    # 2026-09 — P0 bug-brief Bug 3 fix. `max_iters=4` is sized for a
+    # single-ask turn (see the comment on the param above); an
+    # explicitly enumerated multi-step request ("1) X 2) Y 3) Z", or
+    # one "N." per line) needs proportionally more tool-call budget
+    # or it hits the cap partway through and falls back to a generic
+    # "want me to continue?" without even attempting the later steps.
+    # Bumped proportional to step count, capped at 12 so a huge/fake
+    # step list can't blow the per-turn wall-clock budget instead
+    # (that separate guard, `ORCH_PER_TURN_BUDGET_S`, is untouched).
+    explicit_steps = _detect_explicit_multistep(prompt)
+    if explicit_steps and len(explicit_steps) >= 2:
+        max_iters = max(max_iters, min(len(explicit_steps) * 2 + 2, 12))
     # iter 322fk-4 (fix 14B): load prior conversation from `chat_sessions`
     # (where chat.py:_persist_turn writes turns). The legacy code looked
     # at `aurem_cto_sessions` and required an explicit `mongo_client` arg
@@ -1615,6 +1907,10 @@ async def chat_with_tools(
         ),
         "system_signals": [],
         "tool_calls":    [],
+        # 2026-02 — Context-Confusion fix Part A/C (see
+        # task_state_scope_files param doc above): seed scope BEFORE
+        # the first tool call, not only after a read this turn.
+        "scope_files":   set(task_state_scope_files or []),
     }
     history_lines: list[str] = []
     session_summary: str = ""
@@ -2263,7 +2559,7 @@ async def chat_with_tools(
                 "(%.1fs elapsed of %ds budget) — synthesising summary",
                 iters, _elapsed, int(_ORCH_BUDGET_S),
             )
-            clean = _synthesise_max_iters_summary(prompt, invocations) or (
+            clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps) or (
                 "I started on this and gathered some context but couldn't "
                 "wrap the answer in one turn.  Rephrase with the specific "
                 "file, function, or line range you want and I'll reply "
@@ -2284,6 +2580,12 @@ async def chat_with_tools(
                 "web_sources": _dedupe_sources(
                     [s for inv in invocations for s in (inv.get("web_sources") or [])]
                 ),
+                # 2026-09-08 — Turn-Completion Contract: a budget-hit
+                # summary is always genuinely partial, never silent.
+                "turn_state": "partial",
+                "continue_available": True,
+                "tool_calls": invocations or local_ctx.get("tool_calls") or [],
+                "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
             }
         iters += 1
         # Iter 36: surface activity to the SSE stream so the UI can show
@@ -2294,7 +2596,19 @@ async def chat_with_tools(
                 activity_hook(f"working on it (iter {iters}/{max_iters})…")
             except Exception:
                 pass
-        meta = await call_llm_with_meta(
+        _r10_llm_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
+        # 2026-09-22 — Section 16 cost-efficiency fix. From iter 2
+        # onward, `followup_iter_system` (or its FINAL-ANSWER-ROUND
+        # variant on the last iter, which still shares the SAME
+        # prefix) is byte-identical to what was just sent last
+        # iteration — a genuine, safe "same static block resent every
+        # call" case, scoped to just this turn (no cross-turn/cross-
+        # session staleness risk). `session_id` is always passed too
+        # so DeepSeek/GLM's automatic caching can benefit from sticky
+        # routing even when the flag/hint doesn't apply cache_control.
+        from services.llm._state import prompt_cache_context
+        async with prompt_cache_context(session_id=session_id, cache_system=(iters >= 2)):
+            meta = await call_llm_with_meta(
             first_iter_system if iters == 1 else (
                 # Iter 388k — Bug 12 fix.  Last-iter guard.  If we're
                 # about to enter the FINAL allowed round, hard-inject a
@@ -2335,6 +2649,12 @@ async def chat_with_tools(
             review_mode=(mode if mode in {"swift", "pro", "maxx"} else None),
             step_hook=step_hook,
         )
+        logger.info(
+            "R10_TIMING llm_call iter=%d/%d dur=%.2fs use_code_model=%s "
+            "llm_mode=%s provider=%s",
+            iters, max_iters, time.monotonic() - _r10_llm_t0,
+            use_code_model, llm_mode, meta.get("provider"),
+        )
         content = meta.get("content") or ""
         final_provider = meta.get("provider") or final_provider
         for p in meta.get("fallback_chain") or []:
@@ -2349,17 +2669,38 @@ async def chat_with_tools(
         # This prevents the 90s wall-clock timeout that fires when the
         # LLM keeps re-requesting `read_repo_files` with overlapping
         # paths instead of producing a final answer.
+        #
+        # 2026-09-21 — Part 1.2 fix: also trip on a broader "same tool,
+        # varying args, no success" streak (see
+        # _consecutive_same_tool_no_progress docstring) — the
+        # exact-args check alone misses e.g. `search_repo` called 6x
+        # with 6 different queries, all failing.
         if calls and invocations:
             recent = invocations[-len(calls):] if len(invocations) >= len(calls) else invocations
-            if all(
+            exact_repeat = all(
                 any(_is_same_tool_call(c, prior) for prior in recent)
                 for c in calls
-            ):
+            )
+            same_tool_stuck = any(
+                _consecutive_same_tool_no_progress(invocations, c.get("tool"))
+                >= _MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS
+                for c in calls
+            )
+            # 2026-09-22 — hard per-tool cap (Section 15.4), unconditional
+            # on success/failure — see _MAX_CALLS_PER_TOOL_PER_TURN above.
+            _tool_counts = _tool_call_counts(invocations)
+            hard_capped_tool = next(
+                (c.get("tool") for c in calls
+                 if _tool_counts.get(c.get("tool"), 0) >= _MAX_CALLS_PER_TOOL_PER_TURN),
+                None,
+            )
+            if exact_repeat or same_tool_stuck or hard_capped_tool:
                 logger.info(
-                    "tool-loop guard tripped at iter %d/%d — synthesising summary",
-                    iters, max_iters,
+                    "tool-loop guard tripped at iter %d/%d "
+                    "(exact_repeat=%s same_tool_stuck=%s hard_capped_tool=%s) — synthesising summary",
+                    iters, max_iters, exact_repeat, same_tool_stuck, hard_capped_tool,
                 )
-                clean = _synthesise_max_iters_summary(prompt, invocations)
+                clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps)
                 return {
                     "ok": True,
                     "content": clean,
@@ -2372,9 +2713,16 @@ async def chat_with_tools(
                     "council":   council_letter,
                     "task_type": task_type,
                     "tool_loop_break": True,
+                    "hard_tool_cap_tripped": hard_capped_tool,
                     "web_sources": _dedupe_sources(
                         [s for inv in invocations for s in (inv.get("web_sources") or [])]
                     ),
+                    # 2026-09-08 — Turn-Completion Contract: a stuck
+                    # tool-loop synthesis is genuinely partial, never silent.
+                    "turn_state": "partial",
+                    "continue_available": True,
+                    "tool_calls": invocations or local_ctx.get("tool_calls") or [],
+                    "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
                 }
 
         if not calls:
@@ -2401,6 +2749,36 @@ async def chat_with_tools(
                     "chat_with_tools: empty completion on iter %d/%d "
                     "(%d invocation(s) so far) — retrying instead of "
                     "returning blank content", iters, max_iters, len(invocations),
+                )
+                continue
+
+            # 2026-09-08 — Turn-Completion Contract. A bare intent
+            # announcement ("Let me grab the remaining top-level
+            # directories I haven't scanned yet.") is a STEP
+            # ANNOUNCEMENT, never a valid final answer — production
+            # repro: "scan the whole repo and list every file" ended
+            # the turn on exactly this kind of sentence with no file
+            # list ever delivered. Same pattern as the blank-content
+            # retry just above: give the model ONE forced extra
+            # iteration with a stronger nudge before ever letting the
+            # turn close on it silently.
+            if _is_intent_only_announcement(content) and iters < max_iters:
+                logger.info(
+                    "chat_with_tools: intent-only announcement at iter "
+                    "%d/%d (%r) — forcing continuation instead of "
+                    "ending the turn", iters, max_iters, content[:80],
+                )
+                transcript += (
+                    "\n\n=== TURN-COMPLETION CONTRACT ===\n"
+                    f"Your previous reply only announced an action "
+                    f"(\"{content[:100]}\") without doing it — that is "
+                    "not a valid final answer. Either actually finish "
+                    "the work now (call whatever tool(s) you need and "
+                    "complete it), or if it genuinely can't finish "
+                    "this turn, state exactly what you've completed "
+                    "so far and end with a direct question asking "
+                    "whether to continue. Do not repeat a bare intent "
+                    "statement."
                 )
                 continue
 
@@ -2509,6 +2887,7 @@ async def chat_with_tools(
             # flaky reviewer can never break the chat path.
             agent_meta: dict = {}
             if use_code_model and content and mode in ("swift", "pro", "maxx"):
+                _r10_review_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
                 try:
                     from .agents import CoordinatorAgent
                     coord = CoordinatorAgent(mode=mode)
@@ -2532,6 +2911,11 @@ async def chat_with_tools(
                         )
                 except Exception as _re:
                     logger.warning("agents: review tail failed: %r", _re)
+                finally:
+                    logger.info(
+                        "R10_TIMING review_tail dur=%.2fs mode=%s",
+                        time.monotonic() - _r10_review_t0, mode,
+                    )
             # Iter 212m-14 — runtime hallucination guard. Post-processes
             # the final content: when the LLM makes a credential/auth
             # status claim ("PAT appears unauthorized", "401 forbidden",
@@ -2560,6 +2944,20 @@ async def chat_with_tools(
                 except Exception:
                     pass
 
+            # 2026-09-08 — Turn-Completion Contract, defense-in-depth.
+            # If the model STILL produced a bare intent announcement
+            # after exhausting the mid-loop nudge above (or hit
+            # max_iters exactly on the nudged iteration), never let it
+            # close as a plain "success" — wrap it into an explicit
+            # partial with a real continue action instead of silence.
+            _turn_state = "success"
+            if _is_intent_only_announcement(content):
+                content = _wrap_as_explicit_partial(content, invocations, prompt, explicit_steps)
+                _turn_state = "partial"
+            assert_turn_completion_contract(content, {
+                "turn_state": _turn_state, "continue_available": _turn_state == "partial",
+            })
+
             return {
                 "ok": meta.get("ok", True),
                 "content": content,
@@ -2587,7 +2985,23 @@ async def chat_with_tools(
                 # Iter 210 — typed tool-failure signals + per-turn tool
                 # calls (consumed by SystemSignalBanner + CitationGuard).
                 "system_signals": local_ctx.get("system_signals") or [],
-                "tool_calls":     local_ctx.get("tool_calls") or [],
+                # Part B1 — prefer `invocations` (this function's own
+                # rich per-call list: ok/error/elapsed_ms/timestamp,
+                # see `entry` above) over the thinner
+                # `local_ctx["tool_calls"]` stub that `invoke_local_tool`
+                # appends (name+args only). Both used to diverge — the
+                # router's `log_task_chain` call only ever saw the
+                # thin one, so `tool_call_records` persisted with
+                # every ok/error/timestamp field null. `invocations`
+                # is a superset built across this whole turn.
+                "tool_calls":     invocations or local_ctx.get("tool_calls") or [],
+                # Part B2 — "verified via X" tool-name claims the
+                # CitationGuard caught with no matching real tool call
+                # this turn. Surfaced here so the router layer can
+                # persist `unverified_tool_claim_blocked` events
+                # (services/task_chain_logging.py doesn't have `db`
+                # access from this deep in the call stack).
+                "unverified_tool_claims_blocked": local_ctx.get("unverified_tool_claims_blocked") or [],
                 # Item 2 (2026-08-31) — palette nudges made this turn,
                 # surfaced to chat.py so the owner SEES the before/after
                 # (see services/contrast_guard.py::describe_nudge).
@@ -2597,6 +3011,17 @@ async def chat_with_tools(
                 # reliable teaser instead of depending on the fragile
                 # aurem-handoff fence to bundle+offer a fix.
                 "findings_saved_this_turn": local_ctx.get("findings_saved_this_turn") or [],
+                # 2026-09-08 — Turn-Completion Contract state (see
+                # module-level docstring above _is_intent_only_announcement).
+                "turn_state": _turn_state,
+                "continue_available": _turn_state == "partial",
+                # 2026-09-08 — Chain-of-thought pattern analysis (see
+                # services/task_chain_logging.py). Raw thought TEXT
+                # only ever leaves this dict when the caller decides
+                # the turn failed — the metadata-only
+                # `sequential_thinking_calls` row is already written
+                # unconditionally by the tool itself.
+                "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
                 **agent_meta,
             }
 
@@ -2629,6 +3054,12 @@ async def chat_with_tools(
                 "elapsed_ms": None,
                 "error":      None,
                 "web_sources": [],
+                # Part B1 (tool-call observability) — real absolute
+                # wall-clock timestamp at invocation start. `elapsed_ms`
+                # below already gives duration; this gives ordering/
+                # correlation across calls in the same turn once this
+                # flows into task_chains via log_task_chain.
+                "timestamp":  time.time(),
                 # Iter 388s — Bug 18 root fix.  Store the actual tool
                 # RESULT alongside the invocation record so the
                 # synthesiser has real content to inline in the
@@ -2661,6 +3092,15 @@ async def chat_with_tools(
             # was killed at ~125s. Hard-cap every tool call at 45s and
             # surface a typed timeout the LLM can react to on the next
             # iteration instead of hanging.
+            # R16 (2026-09-05) — per-tool duration logging. Traced a
+            # reproducible "approve button didn't load" + 60-90s stall
+            # report to search_repo hitting this exact 45s cap on a
+            # repo whose snapshot tarball was unusually large (264MB) —
+            # see local_tools.py::search_repo's own 25s inner budget
+            # for the actual fix. Kept as permanent visibility (same
+            # pattern as R10_TIMING) so a repeat of this class of
+            # per-tool stall shows up immediately in logs.
+            _t0_tool = time.monotonic()
             try:
                 res = await asyncio.wait_for(
                     invoke_local_tool(tool_name, tool_args, local_ctx),
@@ -2671,14 +3111,22 @@ async def chat_with_tools(
                         invoke_tool(tool_name, tool_args, jwt_token),
                         timeout=45.0,
                     )
+                logger.info("R10_TIMING tool=%s dur=%.2fs ok=%s", tool_name,
+                            time.monotonic() - _t0_tool, (res or {}).get("ok"))
             except asyncio.TimeoutError:
-                logger.warning("orchestrator: tool %s timed out (>45s)", tool_name)
+                logger.warning("orchestrator: tool %s timed out (>45s) — dur=%.2fs",
+                                tool_name, time.monotonic() - _t0_tool)
                 res = {"ok": False,
                        "error": f"{tool_name} timed out after 45s — try a "
                                 f"narrower query (add a `path` or `ext`).",
                        "timed_out": True}
             entry["elapsed_ms"] = res.get("elapsed_ms")
             entry["error"]      = res.get("error")
+            entry["ok"]         = bool(res.get("ok")) if res else False
+            # Part B1 — this was permanently stuck at "running" (never
+            # reassigned after the tool actually finished), so
+            # task_chains' persisted result status was always stale.
+            entry["status"]     = "ok" if entry["ok"] else "error"
             # Iter 388s — Bug 18 root fix.  Store a trimmed copy of the
             # tool result so `_synthesise_max_iters_summary` can inline
             # actual content (file bytes, web-search snippets, PR
@@ -2746,7 +3194,13 @@ async def chat_with_tools(
                 })
             return {"tool": tool_name, "result": res}
 
+        _r10_tool_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
         results_for_llm = await asyncio.gather(*[_run_one(c) for c in calls])
+        logger.info(
+            "R10_TIMING tool_batch iter=%d n_tools=%d dur=%.2fs tools=%s",
+            iters, len(calls), time.monotonic() - _r10_tool_t0,
+            [c.get("tool") for c in calls],
+        )
 
         # iter 323ad — per-tool truncation (was: total 4000 chars cut
         # across ALL results → ORA half-results dekh ke wrong conclusions).
@@ -2810,8 +3264,22 @@ async def chat_with_tools(
     #     I ran out of iterations" answer.
     clean = strip_tool_calls(content)
     if not clean.strip():
-        clean = _synthesise_max_iters_summary(prompt, invocations)
+        clean = _synthesise_max_iters_summary(prompt, invocations, explicit_steps)
 
+    # 2026-09-08 — Turn-Completion Contract. This exit is reached when
+    # the model was STILL queuing tool calls right up to max_iters, so
+    # it never passed through the `if not calls:` nudge above — a
+    # dangling intent-only sentence left behind by strip_tool_calls()
+    # (e.g. "Let me grab the remaining directories..." next to a tool
+    # call that never got to run) must still never close the turn
+    # silently.
+    _turn_state_mx = "success"
+    if _is_intent_only_announcement(clean):
+        clean = _wrap_as_explicit_partial(clean, invocations, prompt, explicit_steps)
+        _turn_state_mx = "partial"
+    assert_turn_completion_contract(clean, {
+        "turn_state": _turn_state_mx, "continue_available": _turn_state_mx == "partial",
+    })
 
     # Same verified_paths computation as the happy path — at max-iters
     # we still want the UI guard to know which files were actually read.
@@ -2843,10 +3311,16 @@ async def chat_with_tools(
         "web_sources": _dedupe_sources(
             [s for inv in invocations for s in (inv.get("web_sources") or [])]
         ),
+        # 2026-09-08 — Turn-Completion Contract state.
+        "turn_state": _turn_state_mx,
+        "continue_available": _turn_state_mx == "partial",
         # Iter 210 — propagate even on max-iter hit so users still get
         # the typed banner instead of a generic timeout.
         "system_signals": local_ctx.get("system_signals") or [],
-        "tool_calls":     local_ctx.get("tool_calls") or [],
+        "tool_calls":     invocations or local_ctx.get("tool_calls") or [],
+        "unverified_tool_claims_blocked": local_ctx.get("unverified_tool_claims_blocked") or [],
         "findings_saved_this_turn": local_ctx.get("findings_saved_this_turn") or [],
         "palette_nudges": local_ctx.get("palette_nudges") or [],
+        # 2026-09-08 — see matching comment on the sibling exit path above.
+        "sequential_thoughts": local_ctx.get("sequential_thoughts") or [],
     }

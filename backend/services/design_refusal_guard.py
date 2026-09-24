@@ -118,6 +118,9 @@ def strip_design_refusal(text: str) -> str:
     spirit but matches neither regex). Gating on the FULL compliance
     check closes that gap — the same function the unit tests already
     treat as the guarantee is now actually wired as the gate."""
+    from services.interaction_contract import enabled
+    if enabled():
+        return text  # Style compliance cannot authorize replacing the user's task.
     if not text:
         return text
     if not is_compliant_design_reply(text):

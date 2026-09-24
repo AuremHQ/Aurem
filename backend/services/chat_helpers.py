@@ -57,6 +57,22 @@ def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) 
     return "\n".join(parts)
 
 
+# 2026-02 — Gap 1 fix (see apply_output_guards' own comment below for
+# full context): fire-and-forget self_bug.emit(), since
+# apply_output_guards is sync and must not force its 2 production
+# call sites (turn.py/stream.py) to start awaiting it just to log a
+# guard hit. self_bug.emit() already treats a logging failure as
+# non-fatal by design (see services/self_bug.py's own docstring); this
+# only adds "don't block the real turn on it either."
+def _fire_self_bug(event_type: str, evidence: str, ctx: dict, *, source: str) -> None:
+    try:
+        import asyncio
+        from services import self_bug
+        asyncio.create_task(self_bug.emit(event_type, evidence, ctx, source=source))
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("self_bug emit (tool_error/%s) skipped: %r", source, e)
+
+
 # 2026-09-04 · confirm-execution round — DRY: the 4 near-identical
 # output-guard blocks in routers/chat.py (chat_send + chat_stream,
 # each running the same 4 guards in the same order) are now ONE
@@ -72,6 +88,7 @@ def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) 
 def apply_output_guards(
     user_message: str, content: str, prior_fix_signal: bool,
     retrieved_context: str, *, skip: bool = False, tool_calls_run: int = 0,
+    session_id: str = "", user_id: str = "",
 ) -> str:
     # 2026-09-05 · Commit-Boundary — runs even when the rest of the
     # chain is skipped (a deterministic completion message never
@@ -79,9 +96,39 @@ def apply_output_guards(
     # it); the real target is a raw model reply that slipped a
     # "ready when you approve?" question in AFTER a real
     # ```aurem-handoff fence (see services/commit_boundary.py).
+    #
+    # 2026-02 — Gap 1 fix (founder-confirmed: /admin/self-bugs'
+    # TOOL_ERROR category had zero entries despite real incidents).
+    # Root cause: services/self_bug.emit() is the ONE shared write
+    # path into ora_self_bugs (confirmed dead_end_leak/truncated_reply
+    # work correctly via business_voice_filter.py's
+    # apply_business_owner_guards — that's the reference pattern this
+    # follows), but nothing ANYWHERE in the codebase ever called
+    # emit("tool_error", ...) — not a matching-rules gap, not a
+    # silent-write-failure, the classifier simply never ran on
+    # tool-call-related content at all. This function's two most
+    # recent guards (added same engagement) are exactly the two
+    # confirmed real tool_error incidents: an internal self-instruction
+    # leaking verbatim (internal_directive_guard), and a
+    # diff-scope-creep marked "clean" by the ship gate
+    # (handoff_diff_safety_guard/commit_boundary). Wired the SAME
+    # self_bug.emit call these two guards' sibling functions already
+    # use — one pipeline, two more real trigger sites, not a second
+    # pipeline. Fired via asyncio.create_task (fire-and-forget,
+    # matching self_bug.emit's own "never break the real turn"
+    # contract) since this function is sync and its two existing
+    # production call sites (turn.py/stream.py) must not have to
+    # start awaiting it.
+    ctx = {"session_id": session_id, "user_id": user_id}
     if content:
         from services.commit_boundary import strip_false_confirm_promise
         content = strip_false_confirm_promise(content)
+    if content:
+        from services.commit_boundary import strip_stray_code_blocks_near_handoff
+        before = content
+        content = strip_stray_code_blocks_near_handoff(content)
+        if content != before:
+            _fire_self_bug("tool_error", before[:300], ctx, source="handoff_diff_safety_guard")
     if skip or not content:
         return content
     try:
@@ -109,7 +156,169 @@ def apply_output_guards(
         content = apply_live_content_claim_guard(content, tool_calls_run)
     except Exception as e:                                # noqa: BLE001
         logger.debug("live_content_claim guard skipped: %r", e)
+    try:
+        from services.internal_directive_guard import strip_leaked_tool_directives
+        before = content
+        content = strip_leaked_tool_directives(content)
+        if content != before:
+            _fire_self_bug("tool_error", before[:300], ctx, source="internal_directive_guard")
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("internal_directive guard skipped: %r", e)
     return content
+
+
+# 2026-02 — Context-Confusion fix Part D: single rendering-pipeline
+# owner. Root cause: `apply_output_guards` -> `strip_machinery_leak` /
+# `enforce_length_cap` -> `apply_business_owner_guards` was the exact
+# same 3-stage, strictly-ordered sequence hand-copied into BOTH
+# routers/chat/turn.py and routers/chat/stream.py — two independent
+# call sites that could silently drift out of order/sync (that's
+# precisely how the earlier business_voice_filter overwrite bugs
+# — ".that page", the generic "file"->"page" mapping stomping valid
+# filename humanization — went unnoticed for as long as they did: no
+# single place recorded what each pass actually changed). This
+# function is now the ONE place both routers call, and it returns a
+# `trace` list recording, per pass, whether it fired and the
+# before/after length — real input/output traceability, not just a
+# comment claiming an order.
+_TURN_PARTIAL_MARKER = "That was my next planned step"
+
+
+def enforce_turn_completion_signal(content: str) -> str:
+    """Final safety net for the Turn-Completion Contract, applied at the
+    ONE render pipeline every reply goes through.
+
+    2026-09-22 — live repro (post-#1-fix): "implement Jev-based intent
+    detection" closed the turn on exactly "Let me find the real
+    intent-classification page with narrower searches." — a bare stated
+    intention, no result, no visible incomplete signal. The
+    orchestrator (chat_with_tools) enforces this internally, but some
+    executor paths return the raw model reply without that wrapping.
+    A reply that is ONLY a stated intention must never render as a
+    finished answer: append a visible not-finished/continue marker so
+    the user is never left thinking a stated-but-unexecuted intention
+    was a completed result. Idempotent (won't re-wrap an already-wrapped
+    reply)."""
+    if not content or _TURN_PARTIAL_MARKER in content:
+        return content
+    try:
+        from services.orchestrator import _is_intent_only_announcement
+    except Exception:                                       # noqa: BLE001
+        return content
+    if _is_intent_only_announcement(content):
+        return (
+            content.rstrip()
+            + "\n\n_That was my next planned step, not a finished result — "
+            "want me to continue?_"
+        )
+    return content
+
+
+async def run_rendering_pipeline(
+    user_message: str, content: str, prior_fix_signal: bool,
+    retrieved_context: str, *, skip: bool, tool_calls_run: int,
+    session_id: str, user_id: str, plain_english_active: bool,
+    ora_panel: bool,
+) -> tuple[str, dict]:
+    """Runs the full post-model content-rendering sequence in the one
+    fixed order every response must go through, and returns
+    `(final_content, trace)` where `trace["passes"]` is an ordered
+    list of `{"pass": name, "changed": bool, "len_before": int,
+    "len_after": int}` — auditable per-pass evidence, independent of
+    what any individual pass's own internal logic decides to do."""
+    trace: list[dict] = []
+
+    from services.interaction_contract import enabled as interaction_enabled
+    if interaction_enabled():
+        from services.interaction_rendering import render_safe_content
+        rendered, blocked = render_safe_content(content, lambda text: apply_output_guards(
+            user_message, text, prior_fix_signal, retrieved_context,
+            skip=skip, tool_calls_run=tool_calls_run,
+            session_id=session_id, user_id=user_id,
+        ))
+        rendered = enforce_turn_completion_signal(rendered)
+        return rendered, {
+            "passes": [{"pass": "interaction_contract", "changed": rendered != content,
+                        "len_before": len(content), "len_after": len(rendered)}],
+            "leak_stripped": rendered != content, "length_capped": False,
+            "output_guard_ref_id": None, "interaction_blocked": blocked,
+        }
+
+    def _record(name: str, before: str, after: str) -> None:
+        trace.append({
+            "pass": name, "changed": after != before,
+            "len_before": len(before or ""), "len_after": len(after or ""),
+        })
+
+    before = content
+    content = apply_output_guards(
+        user_message, content, prior_fix_signal, retrieved_context,
+        skip=skip, tool_calls_run=tool_calls_run,
+        session_id=session_id, user_id=user_id,
+    )
+    _record("apply_output_guards", before, content)
+
+    # The two guards below never touch `aurem-handoff` fences — that
+    # fence is structured ship-pipeline machinery the frontend parses
+    # for the real file path (Approve/ShipDialog), not prose.
+    #
+    # 2026-09-21 — `skip` now ALSO gates this block, not just
+    # apply_output_guards() above. Previously a caller setting
+    # `_skip_output_guards: True` (confirm-executor, pending_action —
+    # both explicitly deterministic, already-correct completion text)
+    # still had that text run through strip_machinery_leak/business_
+    # voice_filter, which the file docstring above already documents
+    # as having stomped valid filenames before ("the generic
+    # 'file'->'page' mapping"). Real repro: a scan-followup reply
+    # listing exact `file:line` findings came back as "a project
+    # page/a project page" — the SAME documented failure mode, hit by
+    # a new deterministic-content caller. `skip=True` now means what
+    # its name says for the whole pipeline, not just the first stage.
+    leak_stripped = False
+    length_capped = False
+    output_guard_ref_id = None
+    if content and not skip and "aurem-handoff" not in content:
+        try:
+            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
+            from core.errors import new_ref_id
+            before = content
+            content, leak_stripped = strip_machinery_leak(
+                content, universal_only=not plain_english_active,
+                user_named_files=extract_named_files(user_message),
+            )
+            _record("output_guard_leak_strip", before, content)
+            before = content
+            if plain_english_active:
+                content, length_capped = await enforce_length_cap(content)
+                _record("output_guard_length_cap", before, content)
+            if leak_stripped or length_capped:
+                output_guard_ref_id = new_ref_id()
+        except Exception as _og_exc:                       # noqa: BLE001
+            logger.debug("output_guard skipped (rendering_pipeline): %r", _og_exc)
+
+        try:
+            from services.business_voice_filter import apply_business_owner_guards
+            before = content
+            content = await apply_business_owner_guards(
+                ora_panel, content, user_message,
+                session_id=session_id, user_id=user_id,
+            )
+            _record("apply_business_owner_guards", before, content)
+        except Exception as _bvf_e:                         # noqa: BLE001
+            logger.debug("business_voice filter skipped (rendering_pipeline): %r", _bvf_e)
+
+    # 2026-09-22 — Turn-Completion Contract, final safety net (every
+    # reply passes through here regardless of which executor produced
+    # it). A bare stated intention must never render as a finished
+    # answer with no continue signal. Idempotent + records its own pass.
+    before = content
+    content = enforce_turn_completion_signal(content)
+    _record("turn_completion_signal", before, content)
+
+    return content, {
+        "passes": trace, "leak_stripped": leak_stripped,
+        "length_capped": length_capped, "output_guard_ref_id": output_guard_ref_id,
+    }
 
 
 async def _deduct_tokens(user_id: str, reply: str) -> int:
@@ -221,7 +430,30 @@ def detect_prompt_injection(message: str) -> str | None:
     return None
 
 
-def _f12_has_real_signal(payload: dict) -> bool:
+import re as _re_f12_project
+
+_URL_PROJECT_ID_RE = _re_f12_project.compile(r"/projects/([A-Za-z0-9_\-]+)")
+
+
+def _f12_signal_belongs_to_project(url: str, project_id: Optional[str]) -> bool:
+    """2026-09-04 · R10 (core-flow hang round) — REAL BUG, live-
+    reproduced: a captured browser network error from a DIFFERENT,
+    previously-visited project (e.g. a stale `/cto/projects/p_demo_a/
+    warm-start` 403 sitting in the F12 capture buffer) was hijacking
+    an UNRELATED chat turn on the CURRENT project into Mode D
+    ("check my page" on project X got answered as if debugging a
+    GitHub-auth error on project Y). If the URL names a specific
+    project and it isn't the one we're actually chatting about, this
+    error is stale noise, not a real signal for THIS turn."""
+    if not project_id:
+        return True  # no current project to compare against — can't filter
+    m = _URL_PROJECT_ID_RE.search(url or "")
+    if not m:
+        return True  # URL doesn't name a project — treat as still relevant
+    return m.group(1) == project_id
+
+
+def _f12_has_real_signal(payload: dict, project_id: Optional[str] = None) -> bool:
     """Iter 50 — guards against fishing-expedition Mode D triggers when the
     F12 buffer holds only noise (aborted/200 network entries, no stack
     traces, no real console.error messages).
@@ -232,11 +464,16 @@ def _f12_has_real_signal(payload: dict) -> bool:
     Mode D on the user's very first chat message, producing the spammy
     "Files to check: (unknown — error context too thin)" bailout.
 
+    2026-09-04 · R10 — `project_id`, when given, additionally drops any
+    network error whose URL names a DIFFERENT project (see
+    `_f12_signal_belongs_to_project`).
+
     Returns True only when the payload contains something a debugger
     can actually use:
       * A console error with a non-trivial message (>5 chars)
       * A network error with HTTP status in 400-599 AND a real URL AND
-        NOT a transient proxy/gateway code with an HTML body
+        NOT a transient proxy/gateway code with an HTML body AND
+        (no project_id filter, or the URL belongs to THIS project)
       * Any stack trace
     """
     if not isinstance(payload, dict):
@@ -250,6 +487,8 @@ def _f12_has_real_signal(payload: dict) -> bool:
         if not (isinstance(st, int) and 400 <= st < 600 and ne.get("url")):
             continue
         if _is_transient_proxy_error(st, ne.get("response_body", "")):
+            continue
+        if not _f12_signal_belongs_to_project(ne.get("url"), project_id):
             continue
         return True
     if payload.get("stack_traces"):
@@ -299,11 +538,60 @@ def _is_transient_proxy_error(status: int, body) -> bool:
     return ("<!doctype html" in bl) or ("<html" in bl) or ("cloudflare" in bl)
 
 
-def classify_intent(message: str, f12_payload: Optional[dict]) -> str:
+# 2026-02 — Context Confusion architectural fix (Part B). Root cause,
+# confirmed via 2 independently-reported live incidents this
+# engagement (a fresh message AND the Retry action both hijacked by
+# a captured browser/network error unrelated to what the user
+# actually asked): `classify_intent` used to force Mode D purely
+# because `_f12_has_real_signal(...)` was True — with ZERO check of
+# whether the user's ACTUAL message referenced that error at all.
+# `_f12_has_real_signal` filters NOISE (stale/proxy/wrong-project
+# errors) but was never a relevance-to-THIS-message check.
+#
+# `is_debug_request` (used a few lines below as the no-payload
+# fallback) is too STRICT to reuse here — it requires a soft term
+# ("error"/"broken"/...) paired with a specific action verb, and
+# deliberately returns False for exactly the phrasing this ticket's
+# own examples use ("check that error", "what's wrong") since it's
+# tuned to avoid over-triggering the expensive Mode D pipeline on a
+# bare passing mention. The RIGHT question here is different and
+# more permissive: "does this message reference the captured signal
+# AT ALL", not "is this unambiguously a debug request". A captured
+# F12 signal must stay purely informational (visible in the UI badge,
+# never forced into the model's reasoning) unless the user's own
+# words point at it.
+_ENV_SIGNAL_REFERENCE_TERMS = [
+    r"\berror\b", r"\bbug\b", r"\bbroken\b", r"\bbroke\b", r"\bcrash(ing|ed)?\b",
+    r"\bfailing\b", r"\bexception\b", r"\bnot working\b",
+    r"\bdoesn'?t work\b", r"\bwrong\b", r"\bissue\b", r"\bproblem\b",
+    r"\bwhat happened\b", r"\bwhy (is|did|does)\b", r"\bdiagnose\b",
+    r"\blook (at|into) (that|this|it)\b", r"\bcheck (that|this|it)\b",
+    r"\bfix (that|this|it)\b", r"\bconsole\b", r"\bnetwork tab\b",
+    r"\bthat error\b", r"\bthis error\b",
+]
+_ENV_SIGNAL_REFERENCE_RE = _re_mode.compile("|".join(_ENV_SIGNAL_REFERENCE_TERMS), _re_mode.IGNORECASE)
+
+
+def references_environment_signal(message: str) -> bool:
+    """True iff the user's own message plausibly points at a captured
+    browser/network error — the explicit classification step Part B
+    of the context-confusion architecture fix requires. Deliberately
+    broader than `is_debug_request` (see comment above) since the
+    cost of a false positive here is small (the signal was captured
+    for a reason, worth surfacing) while the cost of a false negative
+    is the exact hijack bug this fixes."""
+    return bool(_ENV_SIGNAL_REFERENCE_RE.search(message or ""))
+
+
+def classify_intent(message: str, f12_payload: Optional[dict], project_id: Optional[str] = None) -> str:
     """Returns one of: 'A','B','C','D','E','F'. Order matters."""
     from services.mode_d_debugger import is_debug_request
     from services.mode_e_auditor  import is_audit_request
     from services.mode_f_engage   import is_engage_request
+
+    from services.interaction_contract import enabled, factual_lookup
+    if enabled() and factual_lookup(message):
+        return "A"
 
     # Iter 50 — greeting wins over stale F12 noise. We still SHOW the
     # captured errors to the user via the F12 badge; we just don't
@@ -312,7 +600,15 @@ def classify_intent(message: str, f12_payload: Optional[dict]) -> str:
     if _GREETING.match(msg):
         return "A"
 
-    if f12_payload and _f12_has_real_signal(f12_payload):
+    # 2026-02 — the payload merely EXISTING and being "real" (not
+    # noise) is no longer sufficient on its own — the user's actual
+    # message must also reference it. See references_environment_signal
+    # docstring above for why this is a separate, more permissive
+    # check than is_debug_request.
+    if (
+        f12_payload and _f12_has_real_signal(f12_payload, project_id)
+        and (references_environment_signal(message) or is_debug_request(message))
+    ):
         return "D"
     if is_debug_request(message):
         return "D"
@@ -485,7 +781,10 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         steps: Optional[list] = None,
                         low_confidence: bool = False,
                         ship_suppressed: bool = False,
-                        bin_ctx=None) -> None:
+                        bin_ctx=None,
+                        interrupted: bool = False,
+                        interaction: Optional[dict] = None,
+                        stream_state: Optional[str] = None) -> None:
     """Append user+assistant turns to db.chat_sessions, capped at 40 turns.
     Tags the session with the project it belongs to (None == Home/global).
     Iter 51 — when `shipped_task_id` is set (e.g. Mode D→C auto-handoff),
@@ -496,16 +795,31 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
     assistant turn too so GET /chat/history returns it verbatim and a
     page refresh keeps the "📖 Reading repo… ✍️ Writing files…" progress
     trail visible instead of it vanishing (it previously lived only in
-    the in-memory `messages` state)."""
+    the in-memory `messages` state).
+    2026-09-08 — Turn-Completion Contract, Section 5: `interrupted=True`
+    marks a turn that was cut short by a genuine mid-stream client drop
+    (see stream.py's token-emission try/finally). GET /chat/history
+    round-trips this flag verbatim so a page reload renders the partial
+    with an "interrupted" badge + retry, never as if it were a normal
+    complete answer."""
     db = get_db()
     if db is None or not session_id:
         return
     now = time.time()
     preview = (assistant_reply or "").strip()[:120] or (user_prompt or "")[:120]
+    if interaction is None:
+        from services.interaction_contract import finalize, new_request_id
+        interaction = finalize(
+            {"turn_state": "partial" if interrupted else "success"}, assistant_reply or "",
+            prompt=user_prompt or "", session_id=session_id,
+            request_id=new_request_id(), low_confidence=low_confidence,
+        )
     assistant_turn = {
         "role": "assistant", "content": assistant_reply,
         "ts": now, "provider": provider,
     }
+    if interaction is not None:
+        assistant_turn["interaction"] = interaction
     if watchdog:
         assistant_turn["watchdog"] = watchdog
     if shipped_task_id:
@@ -525,6 +839,15 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
     # generic low_confidence flag, see services/response_confidence.py.
     if ship_suppressed:
         assistant_turn["ship_suppressed"] = True
+    if interrupted:
+        assistant_turn["interrupted"] = True
+    # INTERACTION_CONTRACT_V1 P1 — started/streaming/complete/cancelled/
+    # unknown enum (see services/chat_reliability.py). Additive field;
+    # None (omitted) when the caller didn't pass one — e.g. the flag
+    # is OFF, or a legacy call site never updated — so existing
+    # readers of `interrupted` are completely unaffected.
+    if stream_state:
+        assistant_turn["stream_state"] = stream_state
     set_on_insert = {
         "session_id": session_id,
         "user_id": user_id,

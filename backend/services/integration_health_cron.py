@@ -163,7 +163,11 @@ async def schedule_integration_health_cron() -> None:
     # C2 · 2026-08-26 — + a bounded per-worker jitter (0-60s) so a
     # 2-worker prod pod doesn't run this cron in perfect lockstep
     # across both workers forever (see _startup_jitter_s docstring).
-    await asyncio.sleep(150 + _startup_jitter_s())
+    # 2026-02 — raised 150 → 300 s. Fresh-boot `_PROBE_CACHE` is
+    # empty, so tick 1 always runs the full uncached, heaviest burst
+    # (Stripe's 8 calls + a real E2B round-trip) — the confirmed
+    # /health 110-timeout trigger (integration_health.py "round 3").
+    await asyncio.sleep(300 + _startup_jitter_s())
 
     while True:
         try:

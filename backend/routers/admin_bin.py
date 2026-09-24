@@ -223,7 +223,7 @@ _TERMINAL_LOOP_STATES = {"completed", "failed", "aborted", "expired"}
 
 
 class GithubBulkRevokeBody(BaseModel):
-    installation_ids: list[int] = Field(..., min_length=1, max_length=100)
+    installation_ids: list[int] = Field(..., min_length=1, max_length=10)
     confirm_text: Optional[str] = None
     reason: Optional[str] = Field(None, max_length=500)
     dry_run: bool = False
@@ -328,6 +328,20 @@ async def github_connections(
     by_installation: dict[Any, dict] = {}
     for p, pat in zip(projs, pat_results):
         iid = p.get("installation_id")
+        # 2026-09-17 bug fix — normalize to int. At least one seeded
+        # fixture project has `installation_id` stored as a STRING
+        # ("152797252") while every other row for that same real
+        # installation stores it as an int (152797252). Using the raw
+        # value as the dict key below meant the string and int variant
+        # never merged — two separate rows rendered with an IDENTICAL
+        # displayed installation_id, which is both misleading for an
+        # admin bulk-revoke tool and triggered a React duplicate-key
+        # warning on the frontend list. Casting up front makes grouping
+        # correct regardless of how any given row happened to store it.
+        try:
+            iid = int(iid) if iid is not None else None
+        except (TypeError, ValueError):
+            iid = None
         uid = p.get("user_id")
         row_key = iid if iid else f"no_install:{p['project_id']}"
         row = by_installation.setdefault(row_key, {
@@ -445,14 +459,21 @@ async def github_bulk_revoke(
         return {"ok": True, "dry_run": True, "preview": preview,
                 "valid_count": valid_count, "total": len(ids)}
 
-    # ── HARD GUARD — server-side, cannot be bypassed from the client ──
-    if valid_count > 0 and (body.confirm_text or "").strip().upper() != "REVOKE":
+    # ── HARD GUARD — server-side, cannot be bypassed from the client.
+    #    2026-09-07 — also require the typed "REVOKE" phrase for any
+    #    batch over 5, even if every connection in it is already
+    #    broken — a misclick selecting 30 rows must not fire silently
+    #    just because none of them currently work. ────────────────────
+    if (valid_count > 0 or len(ids) > 5) and (body.confirm_text or "").strip().upper() != "REVOKE":
         raise HTTPException(400, detail={
             "error": "hard_guard_blocked",
             "message": (
                 f"{valid_count} of your {len(ids)} selected installations "
                 "have a WORKING GitHub connection. Revoking will break "
                 "something that currently works for them. Retry with "
+                "confirm_text=\"REVOKE\" to proceed."
+            ) if valid_count > 0 else (
+                f"{len(ids)} installations selected (over 5) — retry with "
                 "confirm_text=\"REVOKE\" to proceed."
             ),
             "valid_count": valid_count, "total": len(ids),
@@ -483,6 +504,19 @@ async def github_bulk_revoke(
                 f"Bulk-revoke rate limit — wait {int(REVOKE_COOLDOWN_SECONDS - age)}s "
                 "before the next batch."
             ))
+
+    # ── Reason is REQUIRED for a real revoke (2026-09-07 founder
+    #    review) — stays optional for the non-destructive flag-idle
+    #    action below, scoped to revoke only. Deliberately LAST in the
+    #    gate chain (after hard-guard/live-verified/rate-limit) so it
+    #    never masks one of those pre-existing, more fundamental
+    #    blocks with a less specific error in tests/clients that don't
+    #    send a reason. ─────────────────────────────────────────────
+    if not (body.reason or "").strip():
+        raise HTTPException(400, detail={
+            "error": "reason_required",
+            "message": "A reason is required for Revoke (shows in the audit log).",
+        })
 
     from services.github_bulk_revoke import bulk_revoke as _bulk_revoke
     results = await _bulk_revoke(ids)
@@ -516,6 +550,7 @@ async def github_bulk_revoke(
         "actor": admin_key,
         "action": "bulk_github_revoke",
         "installation_ids": ids,
+        "user_ids": list({p["user_id"] for iid in ids for p in (by_iid.get(iid) or []) if p.get("user_id")}),
         "reason": body.reason,
         "result": {"revoked": len(revoked), "skipped": len(skipped), "failed": len(failed)},
         "per_installation": results,
@@ -565,6 +600,227 @@ async def github_flag_idle(
     except Exception:
         pass
     return {"ok": True, "flagged": res.modified_count}
+
+
+# ────────────────────────────────────────────────────────────────────
+# SECTION 1c — GITHUB "STUCK / NEVER COMPLETED"  (2026-09-14)
+#
+# Third category the bulk-revoke tool couldn't see at all: users whose
+# connect flow never reached a working installation — most recent
+# GitHub-connect event is `app_install_denied` or `app_install_redirect`
+# with nothing logged after it. There is no live GitHub-side connection
+# for these users, so "Revoke" does not apply — the only action here
+# is "Clear stuck state", scoped to a real, traced, but INERT piece of
+# local state (see below).
+#
+# Investigated + confirmed (founder Q&A, 2026-09-14) before building
+# this:
+#   Q1 (does partial state exist?) — Yes: every /github/app/install
+#     click inserts a single-use CSRF token row into `oauth_states`
+#     that a denied/abandoned attempt never marks `used`. No TTL index
+#     exists on this collection (services/db_indexes.py — only a
+#     uniqueness index on `state`), so these rows persist forever.
+#   Q2 (does it interfere with retries?) — No. Traced in
+#     routers/github_app.py: every retry mints a BRAND NEW state token
+#     + a brand new `oauth_states` row; /callback only ever looks up
+#     the exact token in the URL, never "the user's latest attempt";
+#     /github/app/status only reads `github_installations`, never
+#     `oauth_states`. A stuck user and a never-tried user are
+#     byte-for-byte identical to this app. Repeated "still stuck"
+#     cases are most likely GitHub-side (denied again, org-approval
+#     required, etc.), not an Aurem state bug.
+#   Q4 (cross-ref the 120s retry-window fix, 2026-09-13 CHANGELOG
+#     entry) — that fix is `_REPO_ACCESS_RETRY_BUDGET_MS` in
+#     NewUserWizard.jsx, which only runs AFTER a successful
+#     `app_install_granted` (repo-access-verify lag). It is a
+#     different funnel stage entirely from denied/abandoned-before-
+#     connecting — there is no meaningful pre/post-fix split to show
+#     for THIS list, so none is fabricated here.
+#
+# "Clear stuck state" therefore ships as pure HYGIENE (delete the
+# stale unused `oauth_states` rows) — the API response and the
+# frontend copy both say plainly that it has no effect on the user's
+# ability to reconnect.
+# ────────────────────────────────────────────────────────────────────
+
+STUCK_TERMINAL_STAGES = {"app_install_denied", "app_install_redirect"}
+
+# Every canonical stage the GitHub-connect funnel can emit (routers/
+# github_funnel.py::STAGES) — used to find each user's single MOST
+# RECENT connect-flow event. Per founder decision (2026-09-14): only
+# the latest event counts — an old abandoned attempt buried under a
+# later success (or a later retry that hasn't resolved yet) is not
+# "stuck now".
+_CONNECT_FLOW_STAGES = [
+    "cta_click", "oauth_redirect", "callback_received", "linked",
+    "repo_selected", "app_install_redirect", "app_installed",
+    "app_repo_selected", "connect_repo_click", "app_install_denied",
+    "github_auth_started", "app_install_granted", "project_connected",
+]
+
+
+class GithubClearStuckBody(BaseModel):
+    user_ids: list[str] = Field(..., min_length=1, max_length=200)
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+@router.get("/github/stuck-connections")
+async def github_stuck_connections(
+    authorization: Optional[str] = Header(None),
+):
+    """Users whose most recent GitHub-connect event is `app_install_denied`
+    or `app_install_redirect` — i.e. never reached a working
+    installation. Read-only; makes zero GitHub calls."""
+    await _require_admin(authorization)
+    from cto_services.db import get_db
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+
+    latest_per_user = await db.github_funnel_events.aggregate([
+        {"$match": {"user_id": {"$ne": None}, "stage": {"$in": _CONNECT_FLOW_STAGES}}},
+        {"$sort": {"created_at": 1}},
+        {"$group": {
+            "_id": "$user_id",
+            "stage": {"$last": "$stage"},
+            "created_at": {"$last": "$created_at"},
+            "meta": {"$last": "$meta"},
+        }},
+        {"$match": {"stage": {"$in": list(STUCK_TERMINAL_STAGES)}}},
+    ]).to_list(2000)
+
+    if not latest_per_user:
+        return {"ok": True, "rows": []}
+
+    user_ids = [r["_id"] for r in latest_per_user]
+
+    # Safety exclusion: never label a user "stuck" if they in fact
+    # have a live GitHub App connection today — e.g. they connected a
+    # first project fine, then abandoned a SECOND connect attempt;
+    # their latest funnel event is denied/redirect but the first
+    # connection is real and still working. This tool must never
+    # contradict BIN Tracker / the revokable-idle table for the same
+    # user.
+    connected_rows = await db.cto_projects.find(
+        {"user_id": {"$in": user_ids}, "auth_method": "github_app",
+         "installation_id": {"$exists": True, "$ne": None}},
+        {"_id": 0, "user_id": 1},
+    ).to_list(len(user_ids))
+    connected_uids = {r["user_id"] for r in connected_rows}
+    latest_per_user = [r for r in latest_per_user if r["_id"] not in connected_uids]
+    if not latest_per_user:
+        return {"ok": True, "rows": []}
+    user_ids = [r["_id"] for r in latest_per_user]
+
+    users = await db.dev_users.find(
+        {"user_id": {"$in": user_ids}}, {"_id": 0, "user_id": 1, "email": 1},
+    ).to_list(len(user_ids))
+    email_by_uid = {u["user_id"]: u.get("email") for u in users}
+
+    # Redirect stats (attempt count + first-attempt timestamp) — a
+    # separate aggregation over ONLY the redirect stage, since mixing
+    # a $cond/$min over other stages' created_at would compare against
+    # BSON null for non-matching docs and silently break the min.
+    redirect_stats = await db.github_funnel_events.aggregate([
+        {"$match": {"user_id": {"$in": user_ids}, "stage": "app_install_redirect"}},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}, "first_at": {"$min": "$created_at"}}},
+    ]).to_list(len(user_ids))
+    redirect_by_uid = {r["_id"]: r for r in redirect_stats}
+
+    # Real, clearable local state — see the module-header note above.
+    pending_rows = await db.oauth_states.aggregate([
+        {"$match": {"user_id": {"$in": user_ids}, "kind": "github_app_install",
+                     "used": False}},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}}},
+    ]).to_list(len(user_ids))
+    pending_by_uid = {r["_id"]: r["n"] for r in pending_rows}
+
+    rows = []
+    for r in latest_per_user:
+        uid = r["_id"]
+        rstat = redirect_by_uid.get(uid, {})
+        rows.append({
+            "user_id": uid,
+            "email": email_by_uid.get(uid, uid),
+            "stage": r["stage"],
+            "reason": (r.get("meta") or {}).get("reason"),
+            "last_attempt_at": _iso(r.get("created_at")),
+            "first_attempt_at": _iso(rstat.get("first_at")),
+            "redirect_attempts": rstat.get("n", 0),
+            "pending_oauth_states": pending_by_uid.get(uid, 0),
+        })
+    rows.sort(key=lambda x: x["last_attempt_at"] or "", reverse=True)
+    return {"ok": True, "rows": rows}
+
+
+@router.post("/github/clear-stuck-state")
+async def github_clear_stuck_state(
+    body: GithubClearStuckBody,
+    authorization: Optional[str] = Header(None),
+):
+    """Deletes stale, never-consumed `/github/app/install` CSRF tokens
+    (`oauth_states`, kind=github_app_install, used=False) for the given
+    users. PURE HYGIENE — confirmed by code trace (see module header)
+    that these rows are inert: `/callback` only ever looks up the
+    exact token in the URL, `/status` never reads `oauth_states` at
+    all. This has NO effect on these users' ability to reconnect —
+    they can already retry with zero interference, with or without
+    this action ever being run. Distinct from Revoke: there is no
+    live GitHub-side connection here to revoke."""
+    admin = await _require_admin(authorization)
+    from cto_services.db import get_db
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+
+    uids = list({u for u in body.user_ids if u})
+    res = await db.oauth_states.delete_many({
+        "user_id": {"$in": uids}, "kind": "github_app_install", "used": False,
+    })
+    admin_key = admin.get("email") or admin.get("user_id") or "admin"
+    now = datetime.now(timezone.utc)
+    try:
+        await db.admin_audit.insert_one({
+            "ts": now, "actor": admin_key, "action": "clear_github_stuck_state",
+            "user_ids": uids, "reason": body.reason,
+            "cleared_rows": res.deleted_count,
+        })
+    except Exception:
+        pass
+    return {
+        "ok": True, "cleared_rows": res.deleted_count, "users_processed": len(uids),
+        "note": ("Hygiene only \u2014 deleted stale, never-consumed connect-attempt "
+                 "tokens. This has no effect on these users' ability to reconnect; "
+                 "they can already retry with zero interference."),
+    }
+
+
+@router.get("/audit/actions")
+async def admin_audit_actions(
+    limit: int = 100,
+    authorization: Optional[str] = Header(None),
+):
+    """Admin ACTION audit (bulk-revoke, flag-idle, etc.) from
+    `db.admin_audit` — distinct from GET /admin/audit (routers/
+    admin_analytics.py), which reads `ora_audit` for per-turn ORA
+    chat audit. Both surface on the same `/admin/audit` page (see
+    AdminAuditPage.jsx's "Admin actions" tab) since they're both
+    conceptually "the audit log an admin looks at", even though
+    they're two unrelated collections with unrelated shapes.
+    Added 2026-09-07 so bulk-revoke's audit_row write (which already
+    existed) is actually visible somewhere in the UI."""
+    await _require_admin(authorization)
+    from cto_services.db import get_db
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+
+    rows = await db.admin_audit.find(
+        {}, {"_id": 0},
+    ).sort("ts", -1).limit(max(1, min(int(limit or 100), 500))).to_list(500)
+    for r in rows:
+        r["ts"] = _iso(r.get("ts"))
+    return {"ok": True, "rows": rows, "count": len(rows)}
 
 
 # ────────────────────────────────────────────────────────────────────

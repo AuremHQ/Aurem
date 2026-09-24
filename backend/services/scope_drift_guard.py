@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import logging
 from datetime import datetime, timezone
-from typing import Iterable, Optional
+from typing import Iterable
 
 logger = logging.getLogger("aurem.scope_drift_guard")
 

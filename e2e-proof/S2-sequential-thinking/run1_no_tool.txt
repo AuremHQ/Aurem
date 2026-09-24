@@ -1,0 +1,74 @@
+Our /admin/github/bulk-revoke endpoint intermittently lets a real revoke through even when the admin never typed the REVOKE confirmation phrase. It only happens sometimes, not every time, and only in production traffic, never in our test suite. Two files are involved: routers/admin_bin.py (the hard-guard check) and services/feature_flags.py (the live-verified flag lookup, which is backed by a 5-second in-memory cache with a background refresh task). The obvious first guess is a bug in the hard-guard boolean logic itself in admin_bin.py. What is the ROOT CAUSE and what's the fix? Be specific about which file and why.
+
+---ANSWER---
+
+## Root Cause: `services/feature_flags.py` — Cache Race Condition
+
+The bug is **not** in the boolean logic of `admin_bin.py`. The intermittent, production-only, never-reproducible-in-tests pattern rules that out immediately. A logic bug would be deterministic.
+
+### What's Actually Happening
+
+The feature flag service uses a **5-second in-memory cache with a background refresh task**. The race condition is:
+
+1. Background refresh task fetches the flag value and begins writing the new value to the cache dict/object
+2. The request handler reads the cache **mid-write**, during a window where the cache entry is either:
+   - **Transiently `None`/falsy** (key deleted before new value inserted), OR
+   - **Stale in a torn-read** if the cache update is non-atomic across multiple fields
+3. Your hard-guard in `admin_bin.py` almost certainly does something like:
+
+```python
+# admin_bin.py
+flag = feature_flags.get("require_revoke_confirmation")
+if flag and confirmation != "REVOKE":
+    abort(403)
+```
+
+When `flag` reads as `None` or `False` during the refresh window, the guard is skipped entirely.
+
+### Why Tests Never Catch It
+
+Tests call `get()` synchronously with no background thread running. The race window (microseconds wide) only opens under real concurrent production traffic hitting the cache exactly during its refresh cycle.
+
+### The Fix — `services/feature_flags.py`
+
+**Use a lock around cache reads/writes, and default to the SAFE value on cache miss, not the permissive one:**
+
+```python
+import threading
+
+_cache_lock = threading.RLock()
+_cache = {}
+
+def _refresh():
+    new_values = _fetch_from_source()  # your existing fetch
+    with _cache_lock:
+        _cache.update(new_values)  # atomic swap, not delete-then-insert
+
+def get(flag_name: str, default=None):
+    with _cache_lock:
+        return _cache.get(flag_name, default)
+```
+
+**Critical secondary fix — the call site in `admin_bin.py`:**
+
+```python
+# Change this:
+flag = feature_flags.get("require_revoke_confirmation")
+if flag and confirmation != "REVOKE":
+    abort(403)
+
+# To this (fail-CLOSED, not fail-open):
+flag_enabled = feature_flags.get("require_revoke_confirmation", default=True)
+if flag_enabled and confirmation != "REVOKE":
+    abort(403)
+```
+
+### Summary of Fixes
+
+| File | Fix |
+|---|---|
+| `services/feature_flags.py` | Wrap cache reads AND writes in an `RLock`; use `dict.update()` not delete+insert |
+| `services/feature_flags.py` | Never let the cache return `None` for a safety-critical flag during refresh |
+| `admin_bin.py` | Default to `True` (safe/restrictive) if flag lookup returns `None` |
+
+The lock fixes the race. The `default=True` is defense-in-depth so that **any** future cache failure mode fails closed, not open.

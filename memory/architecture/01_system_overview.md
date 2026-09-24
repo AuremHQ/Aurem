@@ -1,5 +1,5 @@
 # 01 — SYSTEM OVERVIEW & CORE DESIGN PATTERNS
-(Load this FIRST in every session. High-level map — read before touching any layer. Files 02–06 cover each layer in depth.)
+(Load this FIRST in every session. High-level map — read before touching any layer. Files 02–07 cover each layer in depth.)
 
 ## HIGH-LEVEL ARCHITECTURE
 
@@ -11,20 +11,20 @@
 ┌──────────────────────────▼──────────────────────────────────┐
 │              FRONTEND — React SPA (Port 3000)                │
 │   Tailwind + Shadcn UI + Context API + SSE Streaming         │
-│   51 pages (42 root + 7 personal + 2 admin), 81 components   │
+│   88 pages, 279 components                                   │
 └──────────────────────────┬──────────────────────────────────┘
                            │ /api/* (Kubernetes Ingress)
 ┌──────────────────────────▼──────────────────────────────────┐
 │              BACKEND — FastAPI (Port 8001)                   │
-│   55 Routers → Core (Parliament) → 108 Services → External   │
+│   102 Routers → Core (Parliament) → 345 Services → External  │
 │   Entry: backend/main.py (all include_router calls live here)│
 └──────────┬───────────────┬───────────────┬──────────────────┘
            │               │               │
      ┌─────▼─────┐   ┌─────▼──────┐  ┌─────▼──────────────┐
-     │  MongoDB  │   │ GitHub API │  │ LLM Providers       │
-     │ (Motor)   │   │ (PAT/OAuth)│  │ OpenRouter/Groq/    │
-     └───────────┘   └────────────┘  │ Anthropic (Emergent)│
-                                     │ Council A primary:  │
+     │  MongoDB  │   │ GitHub App │  │ LLM Providers       │
+     │ (Motor)   │   │ (install-  │  │ OpenRouter/Groq/    │
+     │           │   │  based)    │  │ Anthropic (Emergent)│
+     └───────────┘   └────────────┘  │ Council A primary:  │
                                      │ claude-sonnet-4.5   │
                                      └─────────────────────┘
 ```
@@ -32,12 +32,12 @@
 ## LAYER RESPONSIBILITIES (one line each)
 - **Frontend**: React SPA — chat UI, dashboards, wizards, admin suite, Personal Track (T0-T4), ORA Chat (`/ora`). Talks to backend only via `/api/*` using `REACT_APP_BACKEND_URL`. → file 02
 - **Backend Core ("Parliament")**: intent classification + multi-agent routing (`backend/core/`). → file 03
-- **Backend Routers**: 55 HTTP endpoint groups (`backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, Personal Track, ORA Chat, Supabase, managed DB. → file 03
-- **Backend Services**: 108 modules + 9 in `services/ora_chat/` (`backend/services/`) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing, Personal Track scaffolding, Supabase provisioning. → file 04
+- **Backend Routers**: 102 `include_router` registrations (~120 router files, `backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, Personal Track, ORA Chat, Supabase, managed DB, trust & verification. → file 03
+- **Backend Services**: 345 modules (`backend/services/`, incl. `ora_chat/`, `ora_chat_v2/`, `seo/`, `actions/`, `http/`, `llm/`, `video_pipeline/`, `visibility/` subpackages) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing, Personal Track scaffolding, Supabase provisioning, trust & verification. → file 04
 - **Data Layer**: MongoDB via Motor — users, projects, tasks, fixed-findings ledger, ORA sessions, house rules, audit logs. → file 05
-- **External Integrations**: GitHub REST, LLM providers (OpenRouter/Anthropic/DeepSeek/Sonar), Google Auth, Stripe, Vercel, Supabase, Meta Pixel, SSE. → file 05
+- **External Integrations**: GitHub App (installation-based, preferred) with legacy PAT (`github_token`) still supported as fallback — see `routers/cto_projects/management.py`, LLM providers (OpenRouter/Anthropic/DeepSeek/Sonar), Google Auth, Stripe, Vercel, Supabase, Meta Pixel, SSE. → file 05
 - **Business Logic**: tier/quota system (`subscription_tiers.py` + `scan_fix_quota.py`), Personal Track quotas (`personal_track_quotas.py`). → file 06
-- **See also**: `/app/memory/CODEBASE_MAP.md` for a single-file, always-fresh structural snapshot with subsystem-level detail.
+- **See also**: `/app/memory/CODEBASE_MAP.md` for a single-file, always-fresh structural snapshot with subsystem-level detail. `07_demo_drift.md` for the marketing-demo reality contract.
 
 ## THE 5 CORE DESIGN PATTERNS
 (Check which pattern your change touches BEFORE writing code. Follow the existing convention — never invent a parallel one.)

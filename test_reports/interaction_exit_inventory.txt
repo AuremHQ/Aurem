@@ -1,0 +1,16 @@
+backend/routers/chat/stream.py:128:    from services.interaction_contract import request_conflict, finalize, new_request_id
+backend/routers/chat/stream.py:130:    interaction_request_id = new_request_id()
+backend/routers/chat/stream.py:155:            yield f"data: {json.dumps({'done': True, 'provider': 'mock', 'session_id': body.session_id, 'tokens_remaining': None})}\n\n"
+backend/routers/chat/stream.py:436:            yield f"data: {_j.dumps({'done': True, 'content': _clarify_text})}\n\n"
+backend/routers/chat/stream.py:916:                        final_response=_emitted_so_far, turn_state="partial",
+backend/routers/chat/stream.py:1157:        interaction = finalize(result, content, prompt=body.prompt,
+backend/routers/chat/stream.py:1158:                               session_id=body.session_id or "", request_id=interaction_request_id,
+backend/routers/chat/stream.py:1160:        if interaction:
+backend/routers/chat/stream.py:1161:            result["turn_state"] = interaction["turn_state"]
+backend/routers/chat/stream.py:1162:            result["continue_available"] = interaction["continue_available"]
+backend/routers/chat/stream.py:1170:                            bin_ctx=bin_ctx, interaction=interaction)
+backend/routers/chat/stream.py:1178:            _tc_turn_state = "error" if _hard_error else (result.get("turn_state") or "success")
+backend/routers/chat/stream.py:1183:                turn_state=_tc_turn_state, failure_mode=_failure_mode,
+backend/routers/chat/stream.py:1230:            "done": True,
+backend/routers/chat/stream.py:1231:            **({"interaction": interaction} if interaction else {}),
+backend/routers/chat/stream.py:1301:            "turn_state": ("error" if _hard_error else (result.get("turn_state") or "success")),

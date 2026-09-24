@@ -29,7 +29,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import FounderOfferPill from "../components/FounderOfferPill";
+import { pageTitle } from "../lib/siteConfig";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
 // Iter 212m-200 — Interactive animated walkthrough embed. Same
@@ -737,8 +737,17 @@ export default function Landing() {
   };
 
   // SEO/AEO title + description sync (preserved from Iter 175).
+  // 2026-09-17 — Bug 7 fix: this used to hardcode a THIRD, different
+  // title string ("developers choice") and never restored it on
+  // unmount, so it stuck on every OTHER page you navigated to next
+  // that didn't set its own title — the exact "flips between two
+  // titles across navigations" bug report. Now uses the one shared
+  // `pageTitle()` (matching index.html's static default byte-for-
+  // byte) and restores whatever was there before, like every other
+  // page in the app already does.
   useEffect(() => {
-    document.title = "ORA by Aurem — developers choice";
+    const prevTitle = document.title;
+    document.title = pageTitle();
     const desc =
       "ORA by Aurem — AI engineer that reads your GitHub repo and " +
       "commits production code directly. No IDE. Flat $9/month.";
@@ -749,6 +758,7 @@ export default function Landing() {
       document.head.appendChild(tag);
     }
     tag.setAttribute("content", desc);
+    return () => { document.title = prevTitle; };
   }, []);
 
   return (
@@ -873,17 +883,23 @@ export default function Landing() {
               <span className="live-dot"></span>
               <span><b>10 free tasks</b> — no credit card required · 30-second signup</span>
             </div>
-            {/* Iter 212m-34 — Founder offer pill on the homepage. Lives
-                directly under the "10 free tasks" indicator so it's
-                visible above the fold without breaking the existing
-                hero rhythm. Auto-hides when the offer sells out. */}
-            <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
-              <FounderOfferPill />
-            </div>
+            {/* 2026-09-22 · Founder-reported bug — the FounderOfferPill
+                ("X/500 free SEO fixes") used to render right here too,
+                stacked directly under the First-50 promo chip above the
+                headline AND the "10 free tasks" pill. Two competing
+                offers in the same hero diluted both messages. Removed
+                from here: the SEO-fix offer's real audience is signed-up
+                users who haven't connected a repo yet, and it already
+                correctly targets exactly that audience via
+                ConnectRepoBanner.jsx (Dashboard, 0 projects) and this
+                same FounderOfferPill on Projects.jsx's header (logged-in,
+                not yet claimed) — an anonymous visitor here can't act on
+                a repo-connect offer anyway. First-50 (a pre-signup
+                incentive) stays the single, clear hero offer. */}
             {/* Trust badge — Canadian entity + SOC 2 signal. Links to
                 /security so enterprise buyers can drill in without
                 asking us. Kept minimal so it doesn't compete with
-                the FounderOfferPill for attention. */}
+                the First-50 promo chip for attention. */}
             <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
               <Link
                 to="/security"
@@ -1016,6 +1032,7 @@ export default function Landing() {
             {[
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/3nop2ow4_ora%20compariso%20video.mp4",
+                webmSrc: "/videos/ora-comparison.webm",
                 tint:  "tinted-amber",
                 badge: "featured",
                 badgeText: "vs Copilot",
@@ -1024,6 +1041,7 @@ export default function Landing() {
               },
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/yp58fz0r_prectical%20workflow%20tool%20ora%20.mp4",
+                webmSrc: "/videos/ora-workflow.webm",
                 tint:  "tinted-orange",
                 badge: "",
                 badgeText: "Workflow",
@@ -1036,6 +1054,7 @@ export default function Landing() {
               // "plain English → code" beat via the workflow tile above.
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/rhq9ed86_reliable%20ORA%20video.mp4",
+                webmSrc: "/videos/ora-reliable.webm",
                 tint:  "tinted-blue",
                 badge: "",
                 badgeText: "Reliable",
@@ -1044,6 +1063,7 @@ export default function Landing() {
               },
               {
                 src:   "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/52yyaahf_ora%20video%202%20.mp4",
+                webmSrc: "/videos/ora-overview.webm",
                 tint:  "tinted-purple",
                 badge: "",
                 badgeText: "Overview",
@@ -1056,14 +1076,18 @@ export default function Landing() {
                     until the card scrolls into view (rootMargin 200px)
                     with preload="none" so the ~10 MB file is only
                     fetched on tap. On Slow 4G mobile this reclaims
-                    ~5 s of LCP time. */}
+                    ~5 s of LCP time.
+                    2026-09-22 · webmSrc is a locally-hosted VP9
+                    fallback (frontend/public/videos/) for the browsers
+                    that reject the H.264 MP4 outright — see
+                    LazyVideo.jsx for the full root-cause writeup. */}
                 {v.badge && (
                   <span className={`video-badge ${v.badge}`} style={{ position: "absolute", zIndex: 2 }}>{v.badgeText}</span>
                 )}
                 {!v.badge && (
                   <span className="video-badge" style={{ position: "absolute", zIndex: 2 }}>{v.badgeText}</span>
                 )}
-                <LazyVideo src={v.src} tint={v.tint} />
+                <LazyVideo src={v.src} webmSrc={v.webmSrc} tint={v.tint} />
                 <div className="video-info">
                   <div className="video-title">{v.title}</div>
                   <div className="video-desc">{v.desc}</div>
@@ -1547,6 +1571,16 @@ export default function Landing() {
           </div>
 
           <div>
+            <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Developers</div>
+            <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+              <Link to="/developers" data-testid="footer-developers">Developer Portal</Link>
+              <a href="/api/docs" data-testid="footer-api-docs">API Docs</a>
+              <a href="/api/openapi.json" data-testid="footer-openapi">OpenAPI Spec</a>
+              <a href="/llms.txt" data-testid="footer-llms-txt">llms.txt</a>
+            </div>
+          </div>
+
+          <div>
             <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Legal</div>
             <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
               <Link to="/privacy"         data-testid="footer-privacy">Privacy Policy</Link>
@@ -1561,6 +1595,7 @@ export default function Landing() {
           <div>
             <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Trust</div>
             <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+              <Link to="/about"              data-testid="footer-about">About</Link>
               <Link to="/ai-code-processing" data-testid="footer-ai-disclosure">AI &amp; Code Processing</Link>
               <Link to="/subprocessors"      data-testid="footer-subprocessors">Subprocessors</Link>
               <Link to="/security"           data-testid="footer-security">Security</Link>

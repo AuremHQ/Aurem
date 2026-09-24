@@ -34,12 +34,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 
-from cto_services.auth import require_admin
+from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import require_db
 
-router = APIRouter(prefix="/admin/connect-diagnostic", tags=["Admin — Connect Flow"])
+router = APIRouter(
+    prefix="/admin/connect-diagnostic", tags=["Admin — Connect Flow"],
+    dependencies=[Depends(require_admin_dep)],
+)
 
 
 def _iso(v):

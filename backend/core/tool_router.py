@@ -27,7 +27,7 @@ TOOL_GROUPS: dict[str, list[str]] = {
         "patch_repo_file", "get_repo_structure", "list_repo_files",
         "search_repo", "semantic_search_repo", "execute_bash",
         "validate_syntax", "find_usages", "get_dependencies",
-        "detect_framework", "get_commit_diff",
+        "detect_framework", "get_commit_diff", "get_library_docs",
     ],
     "query": [
         "read_repo_file", "get_repo_structure", "list_repo_files",
@@ -82,6 +82,32 @@ TASK_SIGNALS: dict[str, list[str]] = {
     ],
 }
 
+# ── Master Plan S2 — Sequential Thinking gate ─────────────────────────
+# Keyword-heuristic only (microseconds, zero LLM cost — same
+# philosophy as pick_group above). `sequential_thinking` is appended
+# to the tool list ONLY when the request itself carries multi-file /
+# multi-step / whole-system debugging signals. A trivial one-line ask
+# ("change the button color to blue") must NEVER see this tool — it
+# would just burn tokens on a scratchpad the model doesn't need.
+COMPLEX_SIGNALS: list[str] = [
+    "debug this system", "across the codebase", "across multiple files",
+    "multiple files", "several files", "many files", "whole system",
+    "entire system", "whole codebase", "entire codebase",
+    "step by step", "step-by-step", "systematically", "root cause",
+    "end to end", "end-to-end", "trace through", "investigate why",
+    "intermittent", "intermittently", "race condition", "keeps failing",
+    "multi-step", "several parts", "whole flow", "entire flow",
+    "architecture", "why is this happening", "flaky", "hard to reproduce",
+]
+
+
+def is_complex_request(message: str) -> bool:
+    """True when `message` carries multi-file/multi-step/whole-system
+    debugging signals — the ONLY condition under which
+    `sequential_thinking` is added to the tool catalog for this turn."""
+    message_lower = (message or "").lower()
+    return any(sig in message_lower for sig in COMPLEX_SIGNALS)
+
 
 def pick_group(message: str, tier: str) -> str:
     """Return the single best-matching group name for `message`.
@@ -135,10 +161,17 @@ def get_tools_for_task(message: str, tier: str) -> list[str]:
         for t in TOOL_GROUPS["deploy"]:
             if t not in tools:
                 tools.append(t)
+    # Master Plan S2 — ON only for complex requests, regardless of
+    # which primary group matched (a complex ask can be "code",
+    # "debug", or "query"-shaped). OFF otherwise, so trivial asks
+    # never pay the extra tool-schema tokens for a scratchpad they
+    # won't use.
+    if is_complex_request(message) and "sequential_thinking" not in tools:
+        tools.append("sequential_thinking")
     return tools
 
 
 __all__ = [
-    "TOOL_GROUPS", "TASK_SIGNALS",
-    "pick_group", "get_tools_for_task",
+    "TOOL_GROUPS", "TASK_SIGNALS", "COMPLEX_SIGNALS",
+    "pick_group", "get_tools_for_task", "is_complex_request",
 ]

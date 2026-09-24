@@ -32,6 +32,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  interaction-reliability:
+    uses: ./.github/workflows/interaction-reliability.yml
   validate-aurem-pr:
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'aurem-autofix')
     runs-on: ubuntu-latest
@@ -127,7 +129,7 @@ jobs:
 
   deploy-and-report:
     if: github.event_name == 'push'
-    needs: [gate-on-ci]
+    needs: [gate-on-ci, interaction-reliability]
     runs-on: ubuntu-latest
     env:
       # Iter 306 — `secrets` context is not allowed inside step-level

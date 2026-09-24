@@ -1,0 +1,26 @@
+{
+  "summary": "Backend-only infra fix verification. All 4 fixes verified where locally testable. Pytest suite for G19 crash-only loop-trip fix passes 15/15 including the 2 new regression tests (test_deploy_restarts_never_trip_loop, test_mixed_deploy_and_crash_boots_only_count_crashes). Backend boots cleanly with the new ThreadPoolExecutor(max_workers=48) default executor — no import errors, 'Application startup complete' observed, and 8 concurrent /api/healthz requests all returned 200 (300-400ms). All 8 workflow YAML files parse cleanly with yaml.safe_load; node-version successfully bumped to 22 at all 12 occurrences across 6 workflows (rebaseline-visual.yml correctly untouched — no node-version pin). .dockerignore carve-outs use the correct `dir/*` + `!dir/specific-file` negation idiom for docs/a11y_baseline.json, docs/a11y_journey_baseline.json, and .emergent/latest-qa-report.md. auto-qa.yml's new 'Commit report back to repo' step shell logic is correct (file-exists guard → git config → git add → diff --cached --quiet no-op guard → commit → push with GITHUB_REF stripping). FIX 3 (node bump) and the auto-qa commit-back step cannot be end-to-end confirmed without an actual push to GitHub — flagged as expected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter362_guard19_recovery.py",
+    "/app/test_reports/pytest/iter362.xml"
+  ],
+  "action_items": [
+    "Push to GitHub to confirm FIX 3 (node 22 CI jobs) run green — cannot be verified from sandbox.",
+    "Push to GitHub to confirm FIX 4 (auto-qa commit-back step) actually commits .emergent/latest-qa-report.md and admin QA dashboard's 'Auto-QA report' card starts showing real data."
+  ],
+  "critical_code_review_comments": [
+    "FIX 1 (process_recovery.py): crash-only filter in record_boot's loop-trip check AND resolve_if_stable's auto-resolve check both correctly mirror the pre-existing crash_only pattern in recovery_status(). Tests are meaningful, not tautological (they exercise real record_boot() with FakeDB, mixed reasons, positive+negative paths).",
+    "FIX 2 (main.py): set_default_executor via asyncio.get_event_loop() works but note that asyncio.get_event_loop() is deprecated in Python 3.12+ when no running loop exists. Currently invoked inside lifespan() where a loop IS running, so this is fine, but consider asyncio.get_running_loop() for future-proofing.",
+    "FIX 4 (auto-qa.yml): commit-back step correctly gated on github.event_name == 'push' (avoids double-committing on scheduled runs). GITHUB_TOKEN pushes don't retrigger push workflows so there's no CI loop risk — matches the pattern used elsewhere.",
+    ".dockerignore: negation carve-outs are correctly ordered AFTER their broader excludes (docs/* on line 91, then !docs/... on lines 102-103; .emergent/* on line 17, then !.emergent/latest-qa-report.md on line 24) — required for Docker to honor negations."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "n/a (backend-only round)"},
+  "seed_data_creation": "None — tests use in-memory FakeDB harness.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 362 G19 crash-only filter locked in tests. If touching process_recovery.py again, the 2 new regression tests (test_deploy_restarts_never_trip_loop, test_mixed_deploy_and_crash_boots_only_count_crashes) are the canonical false-positive locks. main.py's set_default_executor(ThreadPoolExecutor(48)) is not unit-tested — verify by checking backend startup logs for a clean startup and that supervisor doesn't restart. FIX 3 and the auto-qa commit-back step (FIX 4 second half) genuinely require a GitHub push to end-to-end verify.",
+  "rca_of_the_issue": "All 4 root causes as described in the review request are consistent with the code changes observed and behave correctly under test: (1) crash-only filter applied to both loop-detection and auto-resolve; (2) larger asyncio default executor set inside lifespan startup; (3) node-version 20→22 across all 12 CI job pins; (4) .dockerignore carve-outs + new commit-back step for the Auto-QA report."
+}

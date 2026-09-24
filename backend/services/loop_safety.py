@@ -49,9 +49,23 @@ async def validate_github_token(
         "User-Agent":    "aurem-loop-preflight",
     }
     try:
-        async with httpx.AsyncClient(timeout=8.0) as cx:
-            r = await cx.get(f"https://api.github.com/repos/{owner}/{repo}",
-                             headers=headers)
+        # 2026-09-12 — root-cause fix: this preflight was a single-shot
+        # call with zero retry, so ANY transient blip during Plan
+        # immediately failed the whole loop run as "network_error"
+        # (surfaced to the user as "GitHub is unreachable right now").
+        # One quick retry (≤~1s added, well within the "fail fast in
+        # <2s" budget this function documents) lets a single dropped
+        # packet self-heal instead of aborting the run.
+        from services.retry_guard import call_with_retry
+        async def _preflight():
+            async with httpx.AsyncClient(timeout=8.0) as cx:
+                return await cx.get(f"https://api.github.com/repos/{owner}/{repo}",
+                                    headers=headers)
+        r = await call_with_retry(
+            "github", _preflight,
+            max_retries=1, base_delay=0.2, max_delay=1.0,
+            retry_on=(httpx.TimeoutException, httpx.NetworkError),
+        )
         if r.status_code == 200:
             return True, None
         if r.status_code == 401:
@@ -69,6 +83,9 @@ async def validate_github_token(
         logger.warning("GitHub preflight network err: %r", e)
         return False, "network_error"
     except Exception as e:                                # noqa: BLE001
+        from services.retry_guard import BreakerOpenError
+        if isinstance(e, BreakerOpenError):
+            return False, "network_error"
         logger.exception("GitHub preflight unexpected err")
         return False, f"unexpected: {e}"
 
@@ -342,15 +359,81 @@ async def is_loop_circuit_open(
 
 # ─── Branch-per-fix utilities ────────────────────────────────────────
 def aurem_branch_name(kind: str, identifier: str) -> str:
-    """Deterministic branch name for fixes/loops.
+    """TRULY deterministic branch name — same (kind, identifier) in ⇒
+    same branch name out, every time, no exceptions.
+
+    2026-09-17 fix (Bug 1 — runaway duplicate PRs, 389 open on one
+    connected repo). This used to append `int(time.time())`, so the
+    docstring claimed "deterministic" but every run of the SAME fix
+    (same rule_id, same file) minted a BRAND NEW branch name, which
+    meant a brand new PR every time instead of updating the existing
+    one — with no reaper, they never stopped accumulating. Removing
+    the timestamp is the root fix: `create_or_reuse_branch()` already
+    handles "branch already exists" as a safe no-op (422 → ok), so a
+    second run of the identical fix now pushes a new commit onto the
+    SAME branch/PR instead of forking a new one. Callers that need
+    per-file uniqueness (e.g. `finding_fix_applier`) must fold the
+    file path into `identifier` themselves — this function only
+    guarantees "same identifier ⇒ same name", it doesn't invent
+    uniqueness on its own.
     Examples:
-      aurem_branch_name("fix", "secret_aws") → "aurem/fix-secret_aws-<unix>"
-      aurem_branch_name("loop", "abc12345")  → "aurem/loop-abc12345-<unix>"
+      aurem_branch_name("fix", "secret_aws") → "aurem/fix-secret_aws"
+      aurem_branch_name("loop", "abc12345")  → "aurem/loop-abc12345"
     """
     import re
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", identifier or "x")[:40].strip("-") or "x"
-    ts = int(time.time())
-    return f"aurem/{kind}-{safe}-{ts}"
+    return f"aurem/{kind}-{safe}"
+
+
+async def find_open_pr_for_branch(
+    *, owner: str, repo: str, head_branch: str, token: str,
+) -> Optional[dict]:
+    """Look up the open PR (if any) whose head is `head_branch`.
+    Returns the raw GitHub PR dict, or None if there isn't one (or
+    the lookup failed — a lookup failure must never be confused with
+    "confirmed no PR exists", so callers should treat None as "fall
+    back to creating one" either way, same as before this existed)."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-pr-helper",
+    }
+    try:
+        r = await github_request_with_retry(
+            "GET", f"https://api.github.com/repos/{owner}/{repo}/pulls",
+            headers=headers,
+            params={"state": "open", "head": f"{owner}:{head_branch}"},
+        )
+        if r.status_code == 200:
+            prs = r.json() or []
+            return prs[0] if prs else None
+        logger.warning(
+            "find_open_pr_for_branch(%s/%s head=%s) HTTP %s",
+            owner, repo, head_branch, r.status_code,
+        )
+    except Exception as e:                                   # noqa: BLE001
+        logger.warning("find_open_pr_for_branch failed: %r", e)
+    return None
+
+
+async def add_pr_comment(
+    *, owner: str, repo: str, pr_number: int, body: str, token: str,
+) -> tuple[bool, Optional[str]]:
+    """Post a comment on a PR/issue. Best-effort — a comment failure
+    must never block a fix that already landed a real commit."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-pr-helper",
+    }
+    r = await github_request_with_retry(
+        "POST",
+        f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments",
+        headers=headers, json={"body": body[:65000]},
+    )
+    if r.status_code in (200, 201):
+        return True, None
+    return False, f"comment_status_{r.status_code}"
 
 
 async def create_or_reuse_branch(
@@ -408,6 +491,78 @@ async def open_draft_pr(
     return None, f"pr_status_{r.status_code}"
 
 
+async def open_or_reuse_pr(
+    *, owner: str, repo: str, head_branch: str, base_branch: str,
+    title: str, body: str, token: str,
+    update_comment: Optional[str] = None,
+) -> dict:
+    """2026-09-18 fix (Bug 1 round 2) — THE one place every PR-opening
+    call site in this codebase must go through from now on. The
+    original round-1 fix (deterministic `aurem_branch_name` +
+    "look before you create") only landed inside
+    `finding_fix_applier.py` itself — nothing stopped a 2nd, 3rd, 4th
+    call site (`loop_engine.py` ship-via-PR, `services/visibility/
+    apply.py`, `services/visual_bugfix_pr.py`) from independently
+    calling `open_draft_pr()` with no reuse check at all, which is
+    exactly how the 371 real duplicate PRs (confirmed: "Visibility
+    Kit x5" traced to `visibility/apply.py`'s branch name including a
+    live timestamp) kept accumulating even after round 1 shipped.
+    Centralizing here means a FUTURE 5th call site gets the dedup
+    behaviour for free instead of needing its own copy-pasted guard
+    that's one missed review away from being forgotten again.
+
+    Looks for an existing OPEN PR on `head_branch` first; if found,
+    reuses it as-is (never re-titles/re-bodies someone's existing PR)
+    and optionally posts `update_comment` so the new commit doesn't
+    land silently. Only calls `open_draft_pr` when no open PR exists.
+
+    Returns {"ok", "pr_url", "pr_number", "reused", "error"}. Never
+    raises — a PR-open/reuse failure must never lose an
+    already-landed commit, callers should treat `ok=False` as
+    "commit succeeded, PR step soft-failed" same as before this
+    existed.
+    """
+    try:
+        existing = await find_open_pr_for_branch(
+            owner=owner, repo=repo, head_branch=head_branch, token=token,
+        )
+    except Exception as e:                                # noqa: BLE001
+        logger.warning("open_or_reuse_pr: existing-PR lookup failed: %r", e)
+        existing = None
+    if existing:
+        pr_number = existing.get("number")
+        if update_comment:
+            ok_comment, comment_err = await add_pr_comment(
+                owner=owner, repo=repo, pr_number=pr_number,
+                body=update_comment, token=token,
+            )
+            if not ok_comment:
+                logger.warning(
+                    "open_or_reuse_pr: update comment soft-failed on "
+                    "existing PR #%s: %s", pr_number, comment_err,
+                )
+        return {
+            "ok": True, "pr_url": existing.get("html_url"),
+            "pr_number": pr_number, "reused": True, "error": None,
+        }
+    pr_url, pr_err = await open_draft_pr(
+        owner=owner, repo=repo, head_branch=head_branch,
+        base_branch=base_branch, title=title, body=body, token=token,
+    )
+    if not pr_url:
+        return {
+            "ok": False, "pr_url": None, "pr_number": None,
+            "reused": False, "error": pr_err,
+        }
+    pr_number = (
+        int(pr_url.rsplit("/", 1)[-1]) if "/pull/" in pr_url else None
+    )
+    return {
+        "ok": True, "pr_url": pr_url, "pr_number": pr_number,
+        "reused": False, "error": None,
+    }
+
+
 # ─── Overnight T7 (Wave 2 · ship-via-PR) — additional primitives ───
 # Everything below is NEW (2026-08-28), additive only. Existing
 # `aurem/fix-*` branches (finding_fix_applier) and the `aurem_branch_name()`
@@ -418,12 +573,29 @@ SHIP_BRANCH_PREFIX = "auremcto/"
 
 
 def ship_branch_name(slug: str) -> str:
-    """Deterministic ship-PR branch name. Always under the
-    `auremcto/` namespace so delete_ship_branch()'s guard applies."""
+    """TRULY deterministic ship-PR branch name — same `slug` in ⇒
+    same branch name out, every time. Always under the `auremcto/`
+    namespace so delete_ship_branch()'s guard applies.
+
+    2026-09-18 fix (Bug 1 round 2 — 371 duplicate PRs, real repo).
+    This used to append `int(time.time())`, so the docstring claimed
+    "deterministic" while every call — even with the IDENTICAL
+    `slug` — minted a brand-new branch name. Combined with the two
+    call sites that keyed `slug` on something that's ALSO always
+    unique per call (`loop_engine.py` passed `self.loop_id`;
+    `visibility/apply.py` passed a date-stamped string), this is the
+    confirmed root cause of the reported "Visibility Kit x5" and
+    Loop-Mode ship-via-PR duplicate PRs — `create_or_reuse_branch`'s
+    existing "branch already exists → ok, no-op" behaviour never got
+    a chance to fire, because no two calls ever produced the same
+    branch name to begin with. Callers must now pass a slug that's
+    STABLE across repeated runs of "the same ongoing piece of work"
+    (e.g. `project_id`, not a fresh loop/run id) — see
+    `open_or_reuse_pr()` below, which is the other half of this fix.
+    """
     import re
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", slug or "x")[:40].strip("-") or "x"
-    ts = int(time.time())
-    return f"{SHIP_BRANCH_PREFIX}ship-{safe}-{ts}"
+    return f"{SHIP_BRANCH_PREFIX}ship-{safe}"
 
 
 async def add_pr_label(
@@ -627,6 +799,37 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                         "context.commit.merge_commit_sha": real_merge_sha,
                     }},
                 )
+                # R10 (2026-09-07) — the outcome row is what the one-click
+                # user rollback reads (`loop_outcomes.commit_sha` was the
+                # PRE-merge head). Persist the landed sha as `merged_sha`.
+                await db.loop_outcomes.update_one(
+                    {"ship_branch": head_ref},
+                    {"$set": {"merged_sha": real_merge_sha,
+                              "merged_at": time.time()}},
+                )
+        elif new_status == "closed":
+            # R10 (d) — cancelled PR: nothing landed on the base branch, so
+            # there is nothing to revert; just remove the throwaway branch.
+            # delete_ship_branch() enforces the `auremcto/` namespace guard.
+            deleted, derr = False, "no_token"
+            try:
+                outcome = await db.loop_outcomes.find_one({"ship_branch": head_ref})
+                project = await db.cto_projects.find_one(
+                    {"project_id": (outcome or {}).get("project_id")}) if outcome else None
+                if project:
+                    from services.pat_vault import get_repo_token
+                    repo_full = (payload.get("repository") or {}).get("full_name") or ""
+                    owner, _, repo = repo_full.partition("/")
+                    token = await get_repo_token(project)
+                    deleted, derr = await delete_ship_branch(
+                        owner=owner, repo=repo, branch=head_ref, token=token)
+            except Exception as e:                            # noqa: BLE001
+                derr = repr(e)
+            await db.loop_outcomes.update_one(
+                {"ship_branch": head_ref},
+                {"$set": {"branch_deleted": deleted, "branch_delete_error": derr,
+                          "nothing_landed": True}},
+            )
         try:
             await db.ship_pr_events.insert_one({
                 "event": f"ship_pr_{new_status}", "pr_url": pr.get("html_url"),
@@ -634,7 +837,8 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
             })
         except Exception:
             pass
-        return {"routed": "ship", "status": new_status, "head_ref": head_ref}
+        return {"routed": "ship", "status": new_status, "head_ref": head_ref,
+                "merged_sha": pr.get("merge_commit_sha") if new_status == "merged" else None}
 
     if kit_labels:
         await db.visibility_kit_pr_events.update_one(
