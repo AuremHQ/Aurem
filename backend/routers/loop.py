@@ -869,6 +869,18 @@ async def loop_status(loop_id: str,
             {"ship_branch": pr_branch}, {"_id": 0, "pr_status": 1},
         )
         doc["pr_status"] = (outcome or {}).get("pr_status") or "open"
+    # 2026-09-26 P0 — `context.ship_pending.token` is a LIVE GitHub App
+    # installation access token (real write access to the connected
+    # repo), minted server-side purely so `confirm_ship()` can perform
+    # the actual commit later in this same process. It has no reason to
+    # ever leave the server — the frontend only needs to know a ship is
+    # pending, not the credential that will perform it. Strip it here,
+    # at the API boundary, on every poll; `doc` is an in-memory dict
+    # from `load_session()` so this never touches what's persisted in
+    # Mongo or what `confirm_ship()` reads from `self.context` server-side.
+    _sp = (doc.get("context") or {}).get("ship_pending")
+    if isinstance(_sp, dict) and "token" in _sp:
+        _sp.pop("token", None)
     return doc
 
 

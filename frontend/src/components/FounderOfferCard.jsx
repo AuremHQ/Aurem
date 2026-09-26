@@ -381,16 +381,65 @@ export default function FounderOfferCard({ projectId }) {
 function PreviewBlock({ preview, loading, onConfirm, onCancel }) {
   const issues = preview?.issues_found ?? 0;
   const files = preview?.files_affected || [];
+  // 2026-09-26 P0 fix — `preview.ok === false` means the scan itself
+  // crashed/short-circuited (e.g. project not connected via the GitHub
+  // App, GitHub API error, etc.) — `_preview_summary()` on the backend
+  // shapes that exactly like a genuine 0-issues result (issues_found: 0,
+  // files_affected: []), which this component used to render identically
+  // to "we scanned and found nothing," with no way to tell the two apart
+  // and no way to proceed. Surface the REAL reason instead.
+  const failed = preview?.ok === false;
+  const realError = failed
+    ? (Array.isArray(preview?.errors) && preview.errors[0]) ||
+      "The scan couldn't run — please try again in a moment."
+    : "";
+
+  if (failed) {
+    return (
+      <div
+        data-testid="founder-offer-preview"
+        style={{ display: "flex", flexDirection: "column", gap: 8 }}
+      >
+        <div
+          data-testid="founder-offer-scan-error"
+          style={{ fontSize: 12, color: "#fca5a5" }}
+        >
+          Couldn&apos;t scan this repo: {realError}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            data-testid="founder-offer-cancel-btn"
+            disabled={loading}
+            onClick={onCancel}
+            className="btn-ghost"
+            style={{ padding: "6px 14px", fontSize: 12 }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid="founder-offer-preview"
       style={{ display: "flex", flexDirection: "column", gap: 8 }}
     >
       <div style={{ fontSize: 12, color: "var(--text-dim, #555)" }}>
-        Found <strong data-testid="founder-offer-issues-count">{issues}</strong>{" "}
-        issue{issues === 1 ? "" : "s"} across{" "}
-        <strong data-testid="founder-offer-files-count">{files.length}</strong>{" "}
-        file{files.length === 1 ? "" : "s"}. Want me to commit these fixes?
+        {issues === 0 ? (
+          <>
+            Good news — this repo has no SEO issues we could find right now.
+          </>
+        ) : (
+          <>
+            Found <strong data-testid="founder-offer-issues-count">{issues}</strong>{" "}
+            issue{issues === 1 ? "" : "s"} across{" "}
+            <strong data-testid="founder-offer-files-count">{files.length}</strong>{" "}
+            file{files.length === 1 ? "" : "s"}. Want me to commit these fixes?
+          </>
+        )}
       </div>
       {files.length > 0 && (
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11,
@@ -404,16 +453,18 @@ function PreviewBlock({ preview, loading, onConfirm, onCancel }) {
         </ul>
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          data-testid="founder-offer-confirm-btn"
-          disabled={loading || issues === 0}
-          onClick={onConfirm}
-          className="btn-primary"
-          style={{ padding: "6px 14px", fontSize: 12 }}
-        >
-          {loading ? "Working…" : (issues === 0 ? "Nothing to commit" : "Commit fixes")}
-        </button>
+        {issues > 0 && (
+          <button
+            type="button"
+            data-testid="founder-offer-confirm-btn"
+            disabled={loading}
+            onClick={onConfirm}
+            className="btn-primary"
+            style={{ padding: "6px 14px", fontSize: 12 }}
+          >
+            {loading ? "Working…" : "Commit fixes"}
+          </button>
+        )}
         <button
           type="button"
           data-testid="founder-offer-cancel-btn"
@@ -422,7 +473,7 @@ function PreviewBlock({ preview, loading, onConfirm, onCancel }) {
           className="btn-ghost"
           style={{ padding: "6px 14px", fontSize: 12 }}
         >
-          Cancel
+          {issues === 0 ? "Close" : "Cancel"}
         </button>
       </div>
     </div>
