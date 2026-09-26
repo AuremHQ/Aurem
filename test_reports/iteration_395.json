@@ -1,0 +1,33 @@
+{
+  "summary": "Re-verification round of the two CRITICAL fixes flagged in iteration_394 (Phase 1 Team RBAC UI + /team/accept-invite SPA fallback). Both bugs are now RESOLVED on preview. Note: incoming review request was truncated (only 'AUREM (ORA) prod…10714 chars truncated…al users can trigger. No mocked integrations in this round's scope.' was legible), so scope was limited to re-verifying the last known critical items from iteration_394. Testing done live against https://bin-context-pat.preview.emergentagent.com using test@aurem.dev.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "fix_verification": [
+    {
+      "bug": "iter394 CRITICAL: /team/accept-invite served static 404 (SPA fallback missing)",
+      "status": "FIXED",
+      "evidence": "curl -o - -w '%{http_code}' https://bin-context-pat.preview.emergentagent.com/team/accept-invite?token=abc123 → HTTP 200 + Vite index.html with React root; browser navigation renders AcceptInvite.jsx correctly (shows 'Invite link is invalid or expired' friendly card for a fake token, as expected)."
+    },
+    {
+      "bug": "iter394 HIGH: nav-team missing from RailShell (owner had no in-app path to Team panel)",
+      "status": "FIXED",
+      "evidence": "RailShell.jsx line 58 now declares { to:'/settings?tab=team', testid:'nav-team', requiresTeamManagement: true } in SETTINGS_ITEMS, filtered in via /api/aurem-dev/team/me (verified live returning is_owner:true, team_management:read_write for test@aurem.dev). Playwright: logged in → clicked rail-icon-settings → nav-team is present and visible with label 'Team'."
+    }
+  ],
+  "test_report_links": [],
+  "action_items": [
+    "Truncated review request: main agent should re-send the full problem statement if there are additional items in this round beyond the two iteration_394 critical fixes — this agent could only see the tail of the statement and cannot know what else was requested."
+  ],
+  "critical_code_review_comments": [
+    "RailShell.jsx line 232-233: canManageTeam is set to true when is_owner OR team_management in ['write','read_write']. Note server returns 'read_write' but code also accepts 'write' which is not in the returned permissions set — harmless but slightly inconsistent with server vocab.",
+    "Consider adding a lightweight backend test for /team/me (currently only frontend-consumed) to lock its contract."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (no backend tests requested; /team/me spot-checked live and returned 200 with correct payload)", "frontend": "100% (2/2 iter394 critical fixes re-verified)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview, from /app/memory/test_credentials.md — no rotation needed)",
+  "seed_data_creation": "None. No test users created this round.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iteration_394's two criticals are resolved. If the truncated request in this round had more scope beyond these fixes, that scope was NOT tested — main agent must re-issue with a non-truncated problem statement. Preview URL: https://bin-context-pat.preview.emergentagent.com. Path to reach Team panel from RailShell: click the gear icon on the left rail (data-testid='rail-icon-settings') → the flyout shows Profile/Plans/Integrations/Vault/IDE/Team; the 'Team' entry (data-testid='nav-team') is gated on /team/me returning is_owner:true or team_management ∈ {write, read_write}.",
+  "rca of the issue": "n/a — this was a re-verification round; both root causes from iter394 were addressed in code by main agent between iter394 and this run (SPA fallback for /team/* now returns index.html at the edge; nav-team added to the actually-rendered RailShell with a /team/me permission gate)."
+}
