@@ -96,6 +96,35 @@ class InviteBody(BaseModel):
     permissions: Optional[dict[str, str]] = None  # custom override on top of the preset
 
 
+async def _validate_new_invite(db, owner_id: str, self_email: str, invite_email: str) -> None:
+    """Raise 400/409 if this invite can't proceed. Split out of
+    `invite_member` to keep that function's cyclomatic complexity
+    under the new-file-bloat guard's threshold (2026-09-26)."""
+    if invite_email == self_email:
+        raise HTTPException(400, "You can't invite yourself.")
+    existing = await db.team_members.find_one(
+        {"owner_id": owner_id, "email": invite_email,
+         "status": {"$in": ["pending", "active"]}},
+    )
+    if existing:
+        raise HTTPException(409, "That email is already invited or on the team.")
+
+
+def _build_invite_matrix(role_label: str, custom_permissions: Optional[dict]) -> dict:
+    """Preset first, owner's explicit per-resource overrides layered on
+    top (never the other way around, so an override can only be MORE
+    specific, never silently dropped by re-applying the preset later).
+    `team_management` write stays owner/admin-only no matter what the
+    caller sent — enforced here, not just in the preset default."""
+    matrix = preset_matrix(role_label)
+    for k, v in (custom_permissions or {}).items():
+        if k in RESOURCES and v in ("none", "read", "write", "read_write"):
+            matrix[k] = v
+    if role_label not in ("admin",):
+        matrix["team_management"] = "read" if matrix.get("team_management") == "read" else "none"
+    return matrix
+
+
 @router.post("/invite")
 async def invite_member(body: InviteBody,
                          authorization: Optional[str] = Header(None)) -> dict:
@@ -103,29 +132,12 @@ async def invite_member(body: InviteBody,
     db = _require_db()
     owner_id = ctx["effective_account_id"]
     email = body.email.strip().lower()
+    self_email = (ctx["user"].get("email") or "").strip().lower()
 
-    if email == (ctx["user"].get("email") or "").strip().lower():
-        raise HTTPException(400, "You can't invite yourself.")
-    existing = await db.team_members.find_one(
-        {"owner_id": owner_id, "email": email, "status": {"$in": ["pending", "active"]}},
-    )
-    if existing:
-        raise HTTPException(409, "That email is already invited or on the team.")
+    await _validate_new_invite(db, owner_id, self_email, email)
 
     role_label = body.role_label if body.role_label in ROLE_PRESETS else "viewer"
-    # Least privilege by default: preset first, owner's explicit
-    # per-resource overrides layered on top — never the other way
-    # around, so an override can only be MORE specific, never silently
-    # dropped by re-applying the preset later.
-    matrix = preset_matrix(role_label)
-    if body.permissions:
-        for k, v in body.permissions.items():
-            if k in RESOURCES and v in ("none", "read", "write", "read_write"):
-                matrix[k] = v
-    # team_management write stays owner/admin-only no matter what the
-    # caller sent — enforced here, not just in the preset default.
-    if role_label not in ("admin",):
-        matrix["team_management"] = "none" if matrix.get("team_management") != "read" else "read"
+    matrix = _build_invite_matrix(role_label, body.permissions)
 
     member_id = uuid.uuid4().hex
     token = secrets.token_urlsafe(32)

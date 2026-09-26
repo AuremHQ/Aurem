@@ -18,8 +18,8 @@ import { isValidPhoneNumber } from "libphonenumber-js";
 
 export default function Signup() {
   usePageMeta({
-    title: "Sign up · Claim 1,000 free tokens · ORA by Aurem",
-    description: "Create your AUREM account in 30 seconds. 1,000 tokens free on signup — no credit card required. Bring your own Anthropic, DeepSeek or Gemini key.",
+    title: "Sign up · Claim 10 free tasks · ORA by Aurem",
+    description: "Create your AUREM account in 30 seconds. 10 free tasks on signup — no credit card required. Bring your own Anthropic, DeepSeek or Gemini key.",
     canonical: (typeof window !== "undefined" ? window.location.origin : "") + "/signup",
   });
   const navigate = useNavigate();
@@ -150,7 +150,7 @@ export default function Signup() {
           <span className="eyebrow">sign up</span>
           <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>Start building, production-ready from day one</h1>
           <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            1,000 tokens free. No card required.
+            10 free tasks. No card required.
           </p>
         </div>
 

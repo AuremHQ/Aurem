@@ -54,10 +54,40 @@ _EXEMPT_RE = re.compile(
 )
 
 
+def _repo_root() -> str:
+    """Absolute path to the git repo's top level, independent of the
+    script's own cwd. `git diff --name-only` always returns paths
+    relative to the repo root (standard git behaviour) — but this
+    script runs with `working-directory: backend` in the CI job, so a
+    naive `open(path)` on that repo-root-relative path resolves to a
+    non-existent `backend/backend/...` and raises FileNotFoundError
+    for every single new/modified backend test file. (Found + fixed
+    2026-09-26 — this was NOT a messy-PR/rebase issue; it was
+    deterministic for any PR touching backend/tests/*.py.) We keep the
+    repo-root-relative path for display (it's what a reviewer expects
+    to see in the log) and only resolve to absolute right before
+    opening the file — see `_abs`."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], text=True, timeout=10,
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        print(f"::error::git rev-parse --show-toplevel failed: {e}",
+              file=sys.stderr)
+        sys.exit(2)
+
+
+def _abs(rel_path: str) -> str:
+    """Repo-root-relative path -> absolute, safe to `open()` from any cwd."""
+    return os.path.join(_repo_root(), rel_path)
+
+
 def _git_diff_test_files(base_sha: str, head_sha: str) -> list[str]:
     """Return the list of test_*.py files that were ADDED or MODIFIED
     (not deleted, not renamed to a non-test path) between the two
-    commits. We use --diff-filter=AM to skip deletions."""
+    commits, as repo-root-relative paths (see `_abs` for how callers
+    must resolve these before opening). We use --diff-filter=AM to
+    skip deletions."""
     try:
         raw = subprocess.check_output(
             ["git", "diff", "--name-only", "--diff-filter=AM",
@@ -92,7 +122,7 @@ def _file_exempts_itself(path: str) -> str | None:
     `# static-grep-ok: <reason>` (Python) or `// static-grep-ok: <reason>`
     (JS/TS) marker, return the reason. Else None."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(_abs(path), "r", encoding="utf-8") as f:
             head_lines = "".join(f.readlines()[:40])
     except OSError:
         return None
@@ -103,7 +133,7 @@ def _file_exempts_itself(path: str) -> str | None:
 def _classify_file(path: str) -> dict:
     """Delegate to the analyzer for a single file."""
     from services.test_style_analyzer import analyze_file
-    return analyze_file(path)
+    return analyze_file(_abs(path))
 
 
 def main(argv: list[str]) -> int:

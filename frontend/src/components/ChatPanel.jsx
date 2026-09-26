@@ -98,6 +98,7 @@ import { useGithubConnectionStatus } from "../hooks/useGithubConnectionStatus";
 // imports below replace in-file definitions that previously lived
 // at the top + bottom of this file (~700 LOC).
 import TokenBanner       from "./chat/TokenBanner";
+import UsageLimitModal, { hasUsageLimitModalBeenDismissed } from "./chat/UsageLimitModal";
 import ToolButton        from "./chat/ToolButton";
 import StreamHealthPill  from "./chat/StreamHealthPill";
 import RepoHelpDialog    from "./chat/RepoHelpDialog";
@@ -397,6 +398,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     try { localStorage.setItem(PREVIEW_KEY, "1"); } catch { /* noop */ }
   }, []);
   const [usage, setUsage] = useState(null);  // {used, effective_limit, remaining, pct_used, is_exhausted}
+  // 2026-09-26 — product gap fix: a hard-to-miss one-click-upgrade
+  // modal the MOMENT a Free user hits their 10/10 monthly task cap
+  // (previously the only signal was the thin, easy-to-miss TokenBanner
+  // strip above the composer — see components/chat/UsageLimitModal.jsx).
+  const [showUsageLimitModal, setShowUsageLimitModal] = useState(false);
+  const usageLimitShownRef = useRef(false);
   // Iter 38: agent selector. Persisted in localStorage so the user keeps
   // their pick across reloads. Default "auto" = our existing routing.
   const [agent, setAgent] = useState(
@@ -1251,6 +1258,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     try {
       const r = await api.get("/usage/me");
       setUsage(r.data);
+      if (r.data?.is_blocked && !usageLimitShownRef.current
+          && !hasUsageLimitModalBeenDismissed()) {
+        usageLimitShownRef.current = true;
+        setShowUsageLimitModal(true);
+      }
     } catch (_) { /* non-fatal */ }
   }, []);
 
@@ -5673,6 +5685,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           composer form opens.
       */}
       <TokenBanner usage={usage} />
+      <UsageLimitModal
+        open={showUsageLimitModal}
+        usage={usage}
+        onClose={() => setShowUsageLimitModal(false)}
+      />
 
       {/* Iter 212m-163 — Loop mode pill is now rendered INSIDE the
           composer toolbar (next to the IntentTierIndicator), driven

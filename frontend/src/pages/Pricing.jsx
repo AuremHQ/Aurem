@@ -29,7 +29,7 @@ export default function Pricing() {
   }, []);
 
   return (
-    <Shell>
+    <Shell chromeless>
       <div
         data-testid="pricing-page"
         style={{ maxWidth: 900, margin: "0 auto", padding: "48px 24px" }}
