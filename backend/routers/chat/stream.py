@@ -131,6 +131,7 @@ async def _replay_retry_gen(rec: dict, body: "ChatBody"):
             "done": True, "provider": rec.get("provider") or "aurem-cto",
             "session_id": body.session_id, "tokens_remaining": None,
             "turn_state": rec.get("turn_state") or "success",
+            **(rec.get("scope_confirmation") or {}),
             "replayed_from_retry": True,
             "tool_calls_run": rec.get("tool_calls_run", 0),
         }) + "\n\n"
@@ -188,6 +189,15 @@ async def chat_stream(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                      "Connection": "keep-alive"},
         )
+    # Resume explicit saved consent before ANY fresh intent/context routing.
+    from services.scope_resume import is_scope_confirmation
+    if body.scope_confirmed_proposal_id or is_scope_confirmation(body.prompt):
+        from .scope_resume import scope_resume_stream
+        return await scope_resume_stream(
+            request=request, body=body, user=user,
+            authorization=authorization, db=get_db(),
+        )
+
     # INTERACTION_CONTRACT_V1 P1 — idempotent retry replay. See
     # services/chat_reliability.py's module docstring for the full
     # rationale. Checked BEFORE any budget/rate-limit/provider work —
@@ -940,7 +950,8 @@ async def chat_stream(
         # before falling back to the canned message. Extracted to
         # retries.py (2026-09-08 StreamState refactor) — mechanical
         # move, same side effects now land on `state.*`.
-        content, provider = await run_confidence_gate(state, content, provider)
+        if not result.get("awaiting_scope_confirmation"):
+            content, provider = await run_confidence_gate(state, content, provider)
 
         # 2026-08-28 · NEW P0 Task 2 — final defense-in-depth (see
         # chat_send's identical comment for the full rationale).
@@ -977,7 +988,7 @@ async def chat_stream(
         # attempt to enforce this (right after _run_orchestrator, now
         # removed) ran too early and got overwritten by these same
         # guards. This MUST be the true last word before streaming.
-        if state.required_read_gate:
+        if state.required_read_gate and not result.get("awaiting_scope_confirmation"):
             from services.required_tool_gate import enforce_required_read_gate
             content = enforce_required_read_gate(state.required_read_gate, content)
             # 2026-02 round-4 — see turn.py's identical fix: this
@@ -1337,7 +1348,13 @@ async def chat_stream(
                             low_confidence=state.low_confidence,
                             ship_suppressed=state.ship_suppressed,
                             bin_ctx=bin_ctx, interaction=interaction,
-                            stream_state=_stream_state if _ic_enabled() else None)
+                            stream_state=_stream_state if _ic_enabled() else None,
+                            scope_confirmation={
+                                "proposal_id": result["scope_confirmation_proposal_id"],
+                                "awaiting": True,
+                                "prompt": result.get("scope_confirmation_prompt"),
+                                "summary": result.get("scope_confirmation_summary"),
+                            } if result.get("awaiting_scope_confirmation") else None)
         # INTERACTION_CONTRACT_V1 P1 — ledger terminal state. See
         # services/chat_reliability.py: only a `completed` record with
         # a non-"error" turn_state is ever replayed by a future retry.
@@ -1356,6 +1373,12 @@ async def chat_stream(
                         content=content, provider=provider,
                         tool_calls_run=result.get("tool_calls_run", 0),
                         turn_state=_final_turn_state,
+                        scope_confirmation={
+                            "awaiting_scope_confirmation": True,
+                            "scope_confirmation_proposal_id": result["scope_confirmation_proposal_id"],
+                            "scope_confirmation_prompt": result.get("scope_confirmation_prompt"),
+                            "scope_confirmation_summary": result.get("scope_confirmation_summary"),
+                        } if result.get("awaiting_scope_confirmation") else None,
                     )
             except Exception:
                 logger.debug("chat_reliability ledger record skipped (normal completion)")
@@ -1493,6 +1516,12 @@ async def chat_stream(
             "turn_state": ("error" if _hard_error else (result.get("turn_state") or "success")),
             "continue_available": bool(result.get("continue_available")) and not _hard_error,
             "error": _hard_error,
+            **({
+                "awaiting_scope_confirmation": True,
+                "scope_confirmation_proposal_id": result["scope_confirmation_proposal_id"],
+                "scope_confirmation_prompt": result.get("scope_confirmation_prompt"),
+                "scope_confirmation_summary": result.get("scope_confirmation_summary"),
+            } if result.get("awaiting_scope_confirmation") else {}),
             "failure_mode": _failure_mode,
             "recovery_action": _RECOVERY_ACTION_FOR_MODE.get(_failure_mode) if _failure_mode else None,
         }

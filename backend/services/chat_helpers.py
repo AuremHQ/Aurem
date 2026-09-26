@@ -784,7 +784,8 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         bin_ctx=None,
                         interrupted: bool = False,
                         interaction: Optional[dict] = None,
-                        stream_state: Optional[str] = None) -> None:
+                        stream_state: Optional[str] = None,
+                        scope_confirmation: dict | None = None) -> None:
     """Append user+assistant turns to db.chat_sessions, capped at 40 turns.
     Tags the session with the project it belongs to (None == Home/global).
     Iter 51 — when `shipped_task_id` is set (e.g. Mode D→C auto-handoff),
@@ -848,6 +849,14 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
     # readers of `interrupted` are completely unaffected.
     if stream_state:
         assistant_turn["stream_state"] = stream_state
+    if scope_confirmation:
+        assistant_turn.update({
+            "awaiting_scope_confirmation": bool(scope_confirmation.get("awaiting")),
+            "scope_confirmation_proposal_id": scope_confirmation.get("proposal_id"),
+            "scope_confirmation_prompt": scope_confirmation.get("prompt"),
+            "scope_confirmation_summary": scope_confirmation.get("summary"),
+            "scope_execution": scope_confirmation.get("execution"),
+        })
     set_on_insert = {
         "session_id": session_id,
         "user_id": user_id,
@@ -911,10 +920,11 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
         # guard-based behavior).
         try:
             from services.commit_boundary import propose_from_turn
-            await propose_from_turn(
-                db, session_id=session_id, user_id=user_id, project_id=project_id,
-                provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
-            )
+            if not scope_confirmation:
+                await propose_from_turn(
+                    db, session_id=session_id, user_id=user_id, project_id=project_id,
+                    provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
+                )
         except Exception as e:                             # noqa: BLE001
             logger.debug("pending_action registration skipped: %r", e)
     except Exception as e:

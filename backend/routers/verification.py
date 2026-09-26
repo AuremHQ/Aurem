@@ -157,4 +157,8 @@ async def get_scope_confirmation(
     doc = await _get_live(db, proposal_id, user["user_id"])
     if not doc:
         raise HTTPException(404, "Proposal not found")
+    if doc.get("status") in ("executing", "unknown", "succeeded", "failed"):
+        from services.scope_resume import receipt_for
+        doc["execution_receipt"] = await receipt_for(db, doc)
+        doc["status"] = doc["execution_receipt"]["status"]
     return {"ok": True, "proposal": doc}

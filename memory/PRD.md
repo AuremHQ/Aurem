@@ -1,8 +1,18 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-23. The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`. Historical claims there are not fresh production verification.
+Last updated: 2026-09-26. The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`. Historical claims there are not fresh production verification.
 
-## Current task — false-success incidents #3 and #6, DIAGNOSIS ONLY (2026-09-23)
+## Current task — Issue 3 implementation; PAUSED FOR USER ACCEPTANCE (2026-09-26)
+
+- User explicitly approved implementing **Issue 3 only** in this checkout, isolated testing/local documentation, then pausing for independent verification. No real GitHub commits, production actions or remote-repo documentation writes authorized. Remaining priority: #6 → #2 → #4 → #1 → #5, only after acceptance/approval.
+- Built shared saved-proposal resolution BEFORE normal chat intent/context routing for both button ID and typed `Confirm and proceed`. Original prompt/mode and user/session/project/repo/branch/installation snapshot are preserved; changed/expired/cancelled/ambiguous/read-only scopes rejected. Durable atomic claim dispatches at most once through existing task submission ownership/access/budget/ambiguity checks and awaits the existing worker in the same bounded SSE turn.
+- Fixed initial scope-event forwarding, final/retry/history fields, frontend callback await/failure handling, receipt refresh and typed-confirmation update of the original card. Scope consent gate moved before mode-specific cascade. Task workers retain full commit SHA; success requires actual terminal task push/readback evidence, not generated text. Timeout/disconnect/uncertain writes remain unknown and are not automatically retried. Cancellation reports success only when its atomic update wins.
+- New modules: `backend/services/scope_resume.py`, `backend/routers/chat/scope_resume.py`. Existing integrations/database stack unchanged; runtime APIs are NOT mocked. Tests: `backend/tests/test_scope_resume_issue3.py`, `frontend/src/components/__tests__/ScopeConfirmCard.issue3.test.jsx`, `frontend/src/lib/__tests__/scopeConfirmation.issue3.test.js`.
+- **Evidence:** 28 backend + 13 frontend tests passed (41). Temporary REAL Mongo records with MOCKED provider/task worker/auth/context dependencies. Current compiled UI tested in external browser with ALL API/execution responses MOCKED: button + typed payloads, callback failure, missing receipt, original-card update and responsive receipt wrapping passed. Initial independent browser run was inconclusive; self-test follow-up resolves fixture/control timing gaps without changing platform settings. Build/focused lint passed; no whole-repository lint-clean claim.
+- Reports: `test_reports/iteration_393.json`, `test_reports/iteration_393_followup.json`. Request, scope and user acceptance checklist: `docs/ORA_FIX_REQUEST.md`.
+- **P0 next:** user runs real code-change confirmations (button and typed in separate proposals), independently inspects GitHub full SHA/diff/branch/task record, then approves moving to Issue 6. REAL GITHUB ACCEPTANCE AND PRODUCTION OUTCOME REMAIN UNVERIFIED. Older proposals without scope snapshots require a new proposal. No accounts/passwords changed.
+
+## Prior diagnosis — false-success incidents #3 and #6 (2026-09-23)
 
 User supplied six task-handling bugs with priority 3+6 → 2 → 1+4 → 5. Latest scope explicitly narrowed to **read-only diagnosis and isolated reproductions for #3/#6; NO implementation, real commits or production actions without separate approval**. Application source/config unchanged in this diagnostic round; only diagnostic artifacts/memory written.
 

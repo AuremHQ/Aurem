@@ -21,7 +21,7 @@ from typing import List, Optional
 
 from fastapi import BackgroundTasks, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from services.usage import is_founder_email
 from services.ambiguity_gate import is_ambiguous_task as _is_ambiguous_task
@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 
 class TaskBody(BaseModel):
+    # In-process only; Pydantic never accepts this from an HTTP payload.
+    _scope_proposal: dict | None = PrivateAttr(default=None)
     project_id: str
     task: str
     files: List[str] = []
@@ -176,6 +178,15 @@ async def submit_task(
         # keep as defence-in-depth for legacy code paths.
         raise HTTPException(404, "Project not found")
 
+    if body._scope_proposal:
+        from services.scope_resume import project_scope
+        approval = body._scope_proposal
+        if (approval.get("user_id") != me["user_id"]
+                or approval.get("project_id") != body.project_id
+                or approval.get("repo_scope") != project_scope(proj)
+                or approval.get("prompt") != body.task):
+            raise HTTPException(409, "Approved scope no longer matches this task. Request a new proposal.")
+
     # 2026-08-25 — Priority 2 (ambiguity-gate): a task with no concrete
     # target (no file path, no quoted string, and only vague/generic
     # phrasing) is too under-specified to act on blindly — an LLM will
@@ -226,7 +237,8 @@ async def submit_task(
                 ),
             })
 
-    task_id = f"t_{uuid.uuid4().hex[:12]}"
+    task_id = (f"t_scope_{body._scope_proposal['id']}" if body._scope_proposal
+               else f"t_{uuid.uuid4().hex[:12]}")
     await db.cto_tasks.insert_one({
         "task_id": task_id, "project_id": body.project_id,
         "user_id": me["user_id"], "task": body.task,
@@ -235,6 +247,8 @@ async def submit_task(
         "result": None, "error": None,
         "maxx_mode": bool(body.maxx_mode),
         "created_at": time.time(),
+        **({"scope_proposal_id": body._scope_proposal["id"],
+            "session_id": body._scope_proposal["session_id"]} if body._scope_proposal else {}),
     })
     if proj.get("preview_url"):
         from services.preview_capture import capture_before_snapshot_for_task

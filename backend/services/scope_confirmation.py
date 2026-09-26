@@ -44,11 +44,14 @@ STATUS_EXPIRED = "expired"
 TTL_S = 15 * 60  # 15 min — long enough for a user to notice and click
 
 
-def _scope_summary(prompt: str, project_id: Optional[str]) -> str:
+def _scope_summary(prompt: str, project_id: Optional[str], repo_scope=None) -> str:
     """Short, human-readable interpreted-scope summary. Deliberately
     NOT an LLM call — deterministic, so the summary itself can never
     become an unverified claim; it just echoes back what was asked."""
     target = f"project {project_id}" if project_id else "the connected project"
+    if repo_scope:
+        target = (f"{repo_scope['github_owner']}/{repo_scope['github_repo']} "
+                  f"on branch {repo_scope['branch']}")
     trimmed = (prompt or "").strip()
     if len(trimmed) > 160:
         trimmed = trimmed[:160].rstrip() + "…"
@@ -63,7 +66,7 @@ def _scope_summary(prompt: str, project_id: Optional[str]) -> str:
 async def create_proposal(
     db, *, session_id: str, user_id: str, project_id: Optional[str],
     prompt: str, confidence: Optional[float], threshold: float,
-    would_be_mode: str,
+    would_be_mode: str, repo_scope: dict | None = None,
 ) -> dict:
     now = time.time()
     doc = {
@@ -72,19 +75,19 @@ async def create_proposal(
         "user_id":       user_id,
         "project_id":    project_id,
         "prompt":        prompt,
-        "scope_summary": _scope_summary(prompt, project_id),
+        "scope_summary": _scope_summary(prompt, project_id, repo_scope),
         "confidence":    confidence,
         "threshold":     threshold,
         "would_be_mode": would_be_mode,
+        "repo_scope": repo_scope,
         "status":        STATUS_PENDING,
         "created_at":    now,
         "expires_at":    now + TTL_S,
     }
-    if db is not None:
-        try:
-            await db[COLLECTION].insert_one(dict(doc))
-        except Exception as e:                                # noqa: BLE001
-            logger.warning("scope_confirmation.create_proposal insert failed: %r", e)
+    if db is None:
+        raise RuntimeError("Cannot save a confirmation proposal while storage is unavailable")
+    # Never offer a confirmation ID that was not durably saved.
+    await db[COLLECTION].insert_one(dict(doc))
     return doc
 
 
@@ -138,11 +141,14 @@ async def cancel_proposal(db, *, proposal_id: str, user_id: str,
         return {"ok": False, "error": "proposal_not_found"}
     if doc["status"] != STATUS_PENDING:
         return {"ok": True, "already": True, "status": doc["status"]}
-    await db[COLLECTION].update_one(
-        {"id": proposal_id, "status": STATUS_PENDING},
+    update = await db[COLLECTION].update_one(
+        {"id": proposal_id, "user_id": user_id, "status": STATUS_PENDING},
         {"$set": {"status": STATUS_CANCELLED, "cancel_reason": reason,
                   "cancelled_at": time.time()}},
     )
+    if not update.modified_count:
+        latest = await _get_live(db, proposal_id, user_id)
+        return {"ok": False, "already": True, "status": (latest or {}).get("status", "unknown")}
     return {"ok": True, "already": False, "status": STATUS_CANCELLED}
 
 

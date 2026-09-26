@@ -1036,6 +1036,8 @@ export default function MessageBubble({
             <ScopeConfirmCard
               proposalId={m.scopeConfirmationProposalId}
               prompt={m.scopeConfirmationPrompt}
+              disabled={!!m.streaming}
+              executionReceipt={m.scopeExecution}
               onConfirm={onConfirmScope}
               onCancel={onCancelScope}
             />

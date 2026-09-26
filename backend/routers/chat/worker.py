@@ -1304,32 +1304,27 @@ async def _scope_confirmation_gate(state: StreamState, _mode: str) -> Optional[d
     if not conf or not conf.get("needs_confirm"):
         return None
     db = get_db()
-    proposal_id = getattr(body, "scope_confirmed_proposal_id", None)
-    if proposal_id:
-        from services.scope_confirmation import confirm_proposal
-        res = await confirm_proposal(
-            db, proposal_id=proposal_id, user_id=state.user_id,
-            prompt=body.prompt or "",
-        )
-        if res.get("ok"):
-            # Exact displayed scope, confirmed — proceed exactly once.
-            # A resend of this SAME proposal_id is rejected by
-            # confirm_proposal's own "not_pending" check (it's now
-            # CONFIRMED), never a duplicate execution.
-            return None
-        logger.warning("scope_confirmation gate: confirm rejected (%s)", res.get("error"))
-        # Falls through to re-propose fresh below rather than
-        # silently executing on a rejected/expired confirmation.
+    # Confirmations enter scope_resume_stream BEFORE intent/context routing.
+    # Never consume a confirmation here and fall back into casual classification.
+    from services.scope_resume import project_scope
+    project = await db.cto_projects.find_one(
+        {"project_id": body.project_id, "user_id": state.user_id}, {"_id": 0},
+    ) if db is not None else None
+    if not project:
+        return {"ok": False, "content": "Open a connected project before confirming a code change.",
+                "error": "scope_project_unavailable", "tool_calls_run": 0}
     from services.scope_confirmation import create_proposal
     proposal = await create_proposal(
         db, session_id=body.session_id, user_id=state.user_id,
         project_id=body.project_id, prompt=body.prompt or "",
         confidence=conf.get("confidence"), threshold=0.55, would_be_mode=_mode,
+        repo_scope=project_scope(project),
     )
     try:
         await q.put({"type": "scope_confirmation", "proposal": {
             "id": proposal["id"], "scope_summary": proposal["scope_summary"],
             "expires_at": proposal["expires_at"],
+            "prompt": proposal["prompt"], "repo_scope": proposal["repo_scope"],
         }})
     except Exception:
         pass
@@ -1344,6 +1339,9 @@ async def _scope_confirmation_gate(state: StreamState, _mode: str) -> Optional[d
         "iterations": 0, "tool_calls_run": 0, "tool_invocations": [],
         "mode": _mode, "awaiting_scope_confirmation": True,
         "scope_confirmation_proposal_id": proposal["id"],
+        "scope_confirmation_prompt": proposal["prompt"],
+        "scope_confirmation_summary": proposal["scope_summary"],
+        "turn_state": "blocked", "_skip_output_guards": True,
     }
 
 
@@ -1414,6 +1412,12 @@ async def run_worker(state: StreamState) -> None:
 
         _mode = await _mode_broadcast(state)
 
+        # Check scope before mode-specific/cascade handlers can enqueue tasks.
+        r = await _scope_confirmation_gate(state, _mode)
+        if r is not None:
+            await q.put({"type": "result", "result": r})
+            return
+
         r = await _mode_d_e(state, _mode)
         if r is not None:
             await q.put({"type": "result", "result": r})
@@ -1430,11 +1434,6 @@ async def run_worker(state: StreamState) -> None:
             return
 
         r = await _ora_agent_cascade(state)
-        if r is not None:
-            await q.put({"type": "result", "result": r})
-            return
-
-        r = await _scope_confirmation_gate(state, _mode)
         if r is not None:
             await q.put({"type": "result", "result": r})
             return
