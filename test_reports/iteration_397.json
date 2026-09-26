@@ -1,0 +1,20 @@
+{
+  "summary": "Verified marketing-header consolidation, /why-ora 20-feature audit, and full removal of First-50 promo. 7/7 backend tests pass and all 14 public pages render shared MarketingNav with data-testid='ora-nav', zero promo remnants anywhere. /why-ora renders all 20 feature cards with corrected copy (card 02 parliament proof, card 14 GitHub App re-mint, card 17 Multi-Provider LLM Gateway, card 20 no hardcoded 39-pytests). Cross-page hash-scroll works (Features/Pricing from /why-ora navigate to /#features and /#pricing and land at correct offset). Verify page renders clean generic 'Email verified' / 'Verification failed' with no founder-spot/promo language. Backend /api/health ok:true with build_hash and empty dead[] task list; /api/aurem-dev/promo/first50/status returns 404 (removed); waitlist and admin-first50-campaign endpoints also 404; /api/aurem-dev/auth/resend-verification exists; /api/aurem-dev/unsubscribe still routes (email_link_tokens refactor OK); /api/aurem-dev/auth/verify with invalid token redirects to /verify with a failure param (no 'claimed=' leaked).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_marketing_header_and_first50_removal.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_marketing_header_and_first50_removal.py"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (14/14 pages + verify + hash-nav)"},
+  "test_credentials": "Not required for this scope; verified anonymous public pages + status endpoints only.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Marketing header consolidation via MarketingNav.jsx complete; ora-nav testid present on /, /why-ora, /pricing, /about, /contact, /developers, /demo, /compare, /vs/devin, /vs/cursor, /privacy, /terms, /security, /wall. First-50 promo fully purged (routers, services, admin block, UI). Backend module path for pytest is /app/backend (must cd there because conftest uses `from services...`). Homepage hero shows founder-price $9/month tag with no promo chip.",
+  "rca of the issue": "N/A — this iteration was a validation of completed removal/consolidation work; no bugs found."
+}

@@ -998,3 +998,8 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `services/trust_calibration.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085480Z] <!-- inv:service:services/trust_calibration.py -->
 - `services/trust_calibration_cron.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085503Z] <!-- inv:service:services/trust_calibration_cron.py -->
 - `services/verification.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085523Z] <!-- inv:service:services/verification.py -->
+
+### Iter 0 · 2026-09-26
+
+| `routers/auth_verify.py` | `(none)` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-26T06:37:11.572521Z) | <!-- inv:router:routers/auth_verify.py -->
+- `services/email_link_tokens.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-26T06:37:11.572581Z] <!-- inv:service:services/email_link_tokens.py -->
