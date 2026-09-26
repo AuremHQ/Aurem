@@ -1,0 +1,28 @@
+{
+  "summary": "Team RBAC audit (Task 2, P0 Fix Task List v2) verified end-to-end via 11 automated pytest tests + Mongo-backed invite token retrieval. All acceptance criteria pass: invite/accept flow, viewer blocked on 3 write endpoints with permission_denied body, viewer reads OWNER's real data on 3 read endpoints (fix-pipeline/quota, payments/my-plan, cto/projects/connection-status — no empty own-user bucket), promoting to editor unblocks writes (not permission_denied any more), editor still 403 on team/invite (resource=team_management), account owner regression on 5+ endpoints, and solo (non-team) user unaffected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/aurem-dev/hosted-deploy/connect", "issue": "Pydantic body validation returns 422 BEFORE the RBAC gate runs, so a viewer sending a malformed body sees 422 instead of 403 permission_denied. This is FastAPI's standard ordering (schema-before-handler) and not a security gap — the gate still fires whenever the body is valid — but if you want RBAC-first denial for observability, move check_permission before the Pydantic-body dep. Not blocking."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_team_rbac_audit_2026_01.py",
+    "/app/test_reports/pytest/rbac_audit.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/team_permissions.py: the `isinstance(member_row, dict)` guard against bare AsyncMock() dbs is the correct fix and is well-commented — good defensive design.",
+    "Minor: `require_permission` docstring says level accepts 'read'/'write' but the RESOURCES matrix uses levels 'read'/'read_write' — the _satisfies() helper correctly bridges (read_write satisfies both). Consistent, but could confuse a first-time reader.",
+    "Consider: for write endpoints that use Pydantic-heavy bodies, adding an explicit dependency-order note or moving the permission dep to a FastAPI Depends() so 403s aren't masked by 422s. Non-blocking, aesthetic."
+  ],
+  "updated_files": ["/app/backend/tests/test_team_rbac_audit_2026_01.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "n/a (backend-only task)"},
+  "test_credentials": "Fresh throwaway accounts created via /api/aurem-dev/auth/signup with unique per-run tag (rbaczz<hex>) and cleaned up in module teardown. Same pattern documented in /app/memory/test_credentials.md.",
+  "seed_data_creation": "One owner + one viewer/editor team member + one solo user, all tagged with a per-run uuid and deleted by the module-scoped `db` fixture. No production data touched. No Stripe checkout completed (test only asserts response shape).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reusable regression test lives at backend/tests/test_team_rbac_audit_2026_01.py. Run with `cd /app/backend && python -m pytest tests/test_team_rbac_audit_2026_01.py -v` (must cd into backend/ so conftest.py can resolve the `services` module). Test hits real preview backend + real Mongo for invite-token retrieval. Cleans up its own throwaway accounts on tear-down.",
+  "rca of the issue": "N/A — task was verification only; the main agent's RBAC audit (~19 routers patched with check_permission + effective_account_id swap) is confirmed correct and non-regressing. The one 422-before-403 quirk on hosted-deploy/connect is FastAPI validation ordering, not an RBAC gap."
+}
