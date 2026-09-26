@@ -42,7 +42,9 @@ async def my_usage(authorization: Optional[str] = Header(None)):
       }
     """
     me = await current_dev(authorization)
-    return await get_usage(me["user_id"])
+    from services.team_permissions import check_permission
+    ctx = await check_permission(me, "reports", "read")
+    return await get_usage(ctx["effective_account_id"])
 
 
 # Iter 94 — Maxx-mode (Claude Sonnet) monthly counter, for the UI

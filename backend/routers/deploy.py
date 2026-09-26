@@ -128,6 +128,8 @@ async def _find_cfg(db, user_id: str, project_id: str | None) -> dict | None:
 async def get_config(authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "read", db=db)
     row = await _find_cfg(db, me["user_id"], None)
     return _serialize_cfg(row)
 
@@ -151,6 +153,8 @@ async def save_config(body: DeployConfigBody,
                       authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "write", db=db)
     if not is_vault_available():
         raise HTTPException(503, {
             "code": "vault_unavailable",

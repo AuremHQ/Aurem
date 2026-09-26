@@ -40,6 +40,7 @@ import Landing from "./pages/Landing";
 // the 350KB code-splitting target (they render behind Suspense).
 const Both              = lazy(() => import("./pages/Both"));
 const ResetPassword     = lazy(() => import("./pages/ResetPassword"));
+const AcceptInvite      = lazy(() => import("./pages/AcceptInvite"));  // 2026-02 · Phase 1 team RBAC
 const LoopLiveFeedDemo  = lazy(() => import("./pages/LoopLiveFeedDemo"));
 const ShippedRowHarness = lazy(() => import("./pages/ShippedRowHarness"));
 const VisualFixtures    = lazy(() => import("./pages/VisualFixtures"));
@@ -381,13 +382,25 @@ export default function App() {
           <Route path="/login"           element={<Login />} />
           <Route path="/signup"          element={<Signup />} />
           <Route path="/reset-password"  element={<ResetPassword />} />
+          <Route path="/team/accept-invite" element={<AcceptInvite />} />  {/* 2026-02 · Phase 1 team RBAC — public */}
           <Route path="/verify"          element={<Verify />} />
           <Route path="/support"         element={<Support />} />
           <Route path="/support/thread/:ticketId" element={<SupportThread />} />
           <Route path="/dashboard"       element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           {/* Iter 212m-235 — Personal Track routes.
               Iter 390 — /choose-track removed (developer-only default). */}
-          <Route path="/ora"             element={<PrivateRoute><OraDirect /></PrivateRoute>} />
+          {/* 2026-02 · PIN-gate regression fix — /ora (and /ora/*) is
+              DELIBERATELY public at the router layer. It must stay
+              reachable with ZERO existing app session so the PIN pad
+              inside OraDirect is the only thing standing between a
+              visitor and the chat — wrapping it in <PrivateRoute>
+              (Gap Register #42) silently bounced unauthenticated
+              visitors to /login before the PIN pad could ever render,
+              and let anyone already logged into the main dashboard
+              skip the PIN entirely once redirected back here. See
+              OraDirect.jsx for the actual (now-decoupled) PIN gate. */}
+          <Route path="/ora"             element={<OraDirect />} />
+          <Route path="/ora/*"           element={<OraDirect />} />
           <Route path="/build"           element={<PrivateRoute><BuildHome /></PrivateRoute>} />
           <Route path="/build/:draftId"  element={<PrivateRoute><DraftReview /></PrivateRoute>} />
           <Route path="/build/:draftId/ship"    element={<PrivateRoute><ShipProgress /></PrivateRoute>} />

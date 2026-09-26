@@ -77,9 +77,11 @@ def _payload(domain: str, ip: str, verification: dict | None = None) -> dict:
 @router.get("/config")
 async def get_config(authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
+    from services.team_permissions import check_permission
     db = require_db()
+    ctx = await check_permission(me, "domain", "read", db=db)
     row = await db.aurem_cto_domain_configs.find_one(
-        {"user_id": me["user_id"]}, {"_id": 0},
+        {"user_id": ctx["effective_account_id"]}, {"_id": 0},
     )
     if not row:
         return {"configured": False}
@@ -91,7 +93,10 @@ async def get_config(authorization: str = Header(None)) -> dict[str, Any]:
 async def save_config(body: DomainConfigBody,
                       authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
+    from services.team_permissions import check_permission
     db = require_db()
+    ctx = await check_permission(me, "domain", "write", db=db)
+    account_id = ctx["effective_account_id"]
     dom = body.domain.strip().lower().rstrip(".")
     if not DOMAIN_RE.match(dom):
         raise HTTPException(400, "invalid_domain")
@@ -99,9 +104,9 @@ async def save_config(body: DomainConfigBody,
     if len(ip) < 7 or " " in ip:
         raise HTTPException(400, "invalid_ip")
     await db.aurem_cto_domain_configs.update_one(
-        {"user_id": me["user_id"]},
+        {"user_id": account_id},
         {"$set": {
-            "user_id":    me["user_id"],
+            "user_id":    account_id,
             "domain":     dom,
             "server_ip":  ip,
             "updated_at": _now_iso(),

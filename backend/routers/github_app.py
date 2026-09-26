@@ -950,6 +950,9 @@ async def claim_installation(
 ):
     user = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(user, "repo_connect", "write", db=db)
+    account_id = ctx["effective_account_id"]
 
     row = await db.github_installations.find_one(
         {"installation_id": int(body.installation_id)}
@@ -958,7 +961,7 @@ async def claim_installation(
         raise HTTPException(404, "installation_not_found")
 
     existing_user_id = row.get("user_id")
-    if existing_user_id == user["user_id"]:
+    if existing_user_id == account_id:
         return {"ok": True, "already_linked": True}
     if existing_user_id:
         raise HTTPException(403, "installation_belongs_to_another_user")
@@ -969,12 +972,12 @@ async def claim_installation(
 
     await db.github_installations.update_one(
         {"installation_id": int(body.installation_id)},
-        {"$set": {"user_id": user["user_id"], "linked_at": _now_utc_epoch()}},
+        {"$set": {"user_id": account_id, "linked_at": _now_utc_epoch()}},
     )
     logger.info(
         "GH_CONNECT_CLIENT_CLAIMED installation_id=%s user_id=%s — "
         "client-side claim linked a previously-orphaned installation",
-        body.installation_id, user["user_id"],
+        body.installation_id, account_id,
     )
     return {"ok": True, "already_linked": False}
 
@@ -1022,9 +1025,12 @@ _STATUS_FETCH_CONCURRENCY = 5
 async def connect_status(authorization: Optional[str] = Header(None)):
     user = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(user, "repo_connect", "read", db=db)
+    account_id = ctx["effective_account_id"]
 
     rows = await db.github_installations.find(
-        {"user_id": user["user_id"], "active": True},
+        {"user_id": account_id, "active": True},
     ).to_list(length=50)
 
     if not rows:

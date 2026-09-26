@@ -764,13 +764,17 @@ async def me(authorization: Optional[str] = Header(None)) -> dict:
 
 @router.get("/tokens")
 async def get_tokens(authorization: Optional[str] = Header(None)) -> dict:
-    """Return the current wallet balance for the authenticated user."""
+    """Return the current wallet balance for the authenticated user
+    (the ACCOUNT's balance — team members share the owner's wallet,
+    they never carry their own)."""
+    from services.team_permissions import check_permission
     payload = await current_dev(authorization)
     db = get_db()
     if db is None:
         return {"ok": True, "tokens_remaining": 0}
+    ctx = await check_permission(payload, "billing", "read", db=db)
     u = await db.dev_users.find_one(
-        {"user_id": payload["user_id"]}, {"_id": 0, "tokens_remaining": 1}
+        {"user_id": ctx["effective_account_id"]}, {"_id": 0, "tokens_remaining": 1}
     )
     return {"ok": True, "tokens_remaining": int((u or {}).get("tokens_remaining", 0))}
 

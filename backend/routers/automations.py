@@ -148,15 +148,17 @@ async def create_automation(
     body: dict, authorization: Optional[str] = Header(None),
 ) -> dict:
     me = await current_dev(authorization)
+    db = require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(me, "automations", "write", db=db)
     required = ("name", "repo_full_name", "trigger", "task_template")
     for f in required:
         if not body.get(f):
             raise HTTPException(400, f"{f} required")
     if body["trigger"] not in ("push", "cron", "manual"):
         raise HTTPException(400, "trigger must be push|cron|manual")
-    db = require_db()
     doc = {
-        "user_id":        me["user_id"],
+        "user_id":        ctx["effective_account_id"],
         "name":           body["name"][:80],
         "repo_full_name": body["repo_full_name"].strip().strip("/"),
         "trigger":        body["trigger"],
@@ -178,8 +180,10 @@ async def list_automations(
 ) -> dict:
     me = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(me, "automations", "read", db=db)
     rows = await db.cto_automations.find(
-        {"user_id": me["user_id"]},
+        {"user_id": ctx["effective_account_id"]},
     ).sort("created_at", -1).to_list(50)
     for r in rows:
         r["_id"] = str(r["_id"])

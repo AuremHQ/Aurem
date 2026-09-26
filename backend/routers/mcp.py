@@ -1846,6 +1846,8 @@ async def install_links(
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database unavailable")
+    from services.team_permissions import check_permission
+    await check_permission(user, "integrations", "read", db=db)
 
     # 1. Reuse the newest active API key for this user; else mint one.
     existing = await db.api_keys.find_one(

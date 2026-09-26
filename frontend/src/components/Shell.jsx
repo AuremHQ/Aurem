@@ -12,7 +12,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Rocket, Globe, Settings as Cog, Plug,
   Coins, BarChart3, LogOut, Zap, MessageSquare, Plus, Trash2,
-  ChevronsLeft, ChevronsRight, FolderGit2, Menu, X, Trophy, Gift,
+  ChevronsLeft, ChevronsRight, FolderGit2, Menu, X, Trophy, Gift, Users2,
 } from "lucide-react";
 import { api, getUser, getToken, logout, healthApi, newSessionId, setUser as saveUser } from "../lib/api";
 import { clearUICacheAndReload } from "../lib/cacheCleaner";
@@ -41,16 +41,17 @@ import ThemeToggle from "./ThemeToggle";
 import DeleteChatConfirmModal from "./DeleteChatConfirmModal";
 
 const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
-  { to: "/projects", label: "Projects", icon: FolderGit2, testid: "nav-projects" },
-  { to: "/deploy", label: "Deploy", icon: Rocket, testid: "nav-deploy" },
-  { to: "/domain", label: "Domain", icon: Globe, testid: "nav-domain" },
-  { to: "/integrations", label: "Integrations", icon: Plug, testid: "nav-integrations" },
-  { to: "/tokens", label: "Tokens", icon: Coins, testid: "nav-tokens" },
-  { to: "/analytics", label: "Analytics", icon: BarChart3, testid: "nav-analytics" },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard", resource: "dashboard" },
+  { to: "/projects", label: "Projects", icon: FolderGit2, testid: "nav-projects", resource: "projects" },
+  { to: "/deploy", label: "Deploy", icon: Rocket, testid: "nav-deploy", resource: "deploy" },
+  { to: "/domain", label: "Domain", icon: Globe, testid: "nav-domain", resource: "domain" },
+  { to: "/integrations", label: "Integrations", icon: Plug, testid: "nav-integrations", resource: "integrations" },
+  { to: "/tokens", label: "Tokens", icon: Coins, testid: "nav-tokens", resource: "billing" },
+  { to: "/analytics", label: "Analytics", icon: BarChart3, testid: "nav-analytics", resource: "reports" },
   { to: "/wall", label: "Ship Wall", icon: Trophy, testid: "nav-wall" },
   { to: "/wrapped", label: "Wrapped", icon: Gift, testid: "nav-wrapped" },
-  { to: "/automations", label: "Automations", icon: Zap, testid: "nav-automations" },
+  { to: "/automations", label: "Automations", icon: Zap, testid: "nav-automations", resource: "automations" },
+  { to: "/settings?tab=team", label: "Team", icon: Users2, testid: "nav-team", resource: "team_management" },
   { to: "/settings", label: "Settings", icon: Cog, testid: "nav-settings" },
 ];
 
@@ -113,6 +114,22 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
     // user explicitly toggles via the sidebar control.
     const v = localStorage.getItem(COLLAPSED_KEY);
     return v === null ? true : v === "1";
+  });
+
+  // 2026-02 · Phase 1 (Team RBAC) — a "no access" resource must not
+  // even be visible in the nav. UX only: the backend already enforces
+  // the real gate on every endpoint regardless of what's shown here.
+  // Fails open (shows everything) while loading / on error so this
+  // never blocks navigation for the far-more-common owner account.
+  const [navPermissions, setNavPermissions] = useState(null);
+  useEffect(() => {
+    if (!token) return;
+    api.get("/team/me").then((r) => setNavPermissions(r.data.permissions))
+                        .catch(() => setNavPermissions(null));
+  }, [token]);
+  const visibleNav = NAV.filter((n) => {
+    if (!n.resource || !navPermissions) return true;
+    return navPermissions[n.resource] !== "none";
   });
 
   // Iter 146 — auto-hide on typing.
@@ -704,7 +721,7 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
           )}
 
           {token &&
-            NAV.map((n) => (
+            visibleNav.map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}

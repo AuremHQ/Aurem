@@ -1,7 +1,7 @@
 """
 services/ora_chat_v2/tools.py — Admin ORA Chat rebuild, P5.
 
-The ONLY 8 read-only tools exposed to the model (function calling).
+The ONLY read-only tools exposed to the model (function calling).
 They double as the READ risk-tier of the P4 action catalog — no
 approval needed, they execute instantly. A model attempt to call
 anything not in TOOL_SCHEMAS is rejected here and logged.
@@ -11,6 +11,18 @@ wrapping services.web_inspect (itself a thin wrapper over the
 existing V1 verify engine, L17 reuse-first). Target: ANY external
 http/https URL, no per-project lock. The SSRF/loopback/sandbox fence
 in services.deploy_verify holds even for the admin's own request.
+
+2026-02 · Phase 3.3 — read_source_file / find_source_files /
+search_code_defs / get_repo_tree wire the EXISTING read-only
+`services/ora_chat/codebase_index` module (already used by the
+legacy /slash pipeline) into the actual v2 engine that /message runs
+on. Before this, the v2 tool catalog had zero way to look at real
+source — every code-related answer was a guess dressed up as
+knowledge. `codebase_index` reads straight off `/app/backend` and
+`/app/frontend/src` on disk (15-min in-memory TTL, force-refreshed on
+every call here via `_ensure_fresh()` inside each helper) — there is
+no separate snapshot/copy to fall out of sync; it always reflects
+whatever is currently checked out in this pod.
 """
 from __future__ import annotations
 
@@ -18,6 +30,8 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
+
+from services.ora_chat import codebase_index as _codebase
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +78,25 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string"}, "question": {"type": "string"}},
             "required": ["url", "question"]}}},
+    {"type": "function", "function": {
+        "name": "get_repo_tree",
+        "description": "Top-level directory/file listing of the real AUREM repo (backend + frontend/src), grouped by folder. Filenames only, not content — use read_source_file to see what's actually inside one.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "find_source_files",
+        "description": "Glob-search real repo-relative file paths, e.g. '*Drawer.jsx' or 'services/ora_chat/*.py'. Use this to locate a file before reading it.",
+        "parameters": {"type": "object", "properties": {
+            "pattern": {"type": "string"}}, "required": ["pattern"]}}},
+    {"type": "function", "function": {
+        "name": "read_source_file",
+        "description": "Read the ACTUAL current content of one real source file by its repo-relative path (e.g. 'backend/routers/ora_chat.py'). This is the only way to ground a claim about what code does or contains — never describe a file's contents without calling this first.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"}}, "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "search_code_defs",
+        "description": "Find which real file(s) define a function/class name, e.g. 'run_turn' or 'PrivateRoute'.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"}}, "required": ["name"]}}},
 ]
 
 _KNOWN_TOOLS = {s["function"]["name"] for s in TOOL_SCHEMAS}
@@ -144,6 +177,22 @@ async def web_inspect(db, url: str, question: str, user_id: str = "") -> dict:
     return await run_web_inspect(url, question, db=db, user_id=user_id)
 
 
+async def get_repo_tree(db) -> dict:
+    return {"tree": await _codebase.compact_tree(max_files=150)}
+
+
+async def find_source_files(db, pattern: str) -> dict:
+    return {"pattern": pattern, "matches": await _codebase.find_files(pattern, limit=25)}
+
+
+async def read_source_file(db, path: str) -> dict:
+    return await _codebase.read_file(path, max_lines=200)
+
+
+async def search_code_defs(db, name: str) -> dict:
+    return {"name": name, "results": await _codebase.search_defs(name, limit=15)}
+
+
 _DISPATCH = {
     "get_funnel_stats": get_funnel_stats,
     "get_alerts": get_alerts,
@@ -153,6 +202,10 @@ _DISPATCH = {
     "get_recent_loop_failures": get_recent_loop_failures,
     "web_verify": web_verify,
     "web_inspect": web_inspect,
+    "get_repo_tree": get_repo_tree,
+    "find_source_files": find_source_files,
+    "read_source_file": read_source_file,
+    "search_code_defs": search_code_defs,
 }
 _USER_ID_TOOLS = {"web_verify", "web_inspect"}
 
@@ -166,7 +219,7 @@ async def execute_tool(db, name: str, args: dict, *, user_id: str = "") -> dict:
     fn = _DISPATCH[name]
     try:
         kwargs = {k: v for k, v in (args or {}).items()
-                  if k in ("days", "name", "url", "question")}
+                  if k in ("days", "name", "url", "question", "pattern", "path")}
         if name in _USER_ID_TOOLS:
             kwargs["user_id"] = user_id
         return await fn(db, **kwargs)

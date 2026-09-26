@@ -114,15 +114,62 @@ const ORA_BG_STYLE = {
   backgroundAttachment: "fixed",
 };
 
+// 2026-02 · PIN-gate regression fix — the /ora "session" used to be
+// nothing more than "does *any* app-wide JWT exist in localStorage".
+// That token slot (`aurem_token`) is shared with the REGULAR
+// email/password login (see lib/api.js), so a founder who was simply
+// logged into the main dashboard — which is required just to get past
+// <PrivateRoute> in the first place — arrived here already carrying a
+// token and skipped the PIN pad entirely. It looked like "the PIN gate
+// stopped firing" because, in practice, it always had already been
+// satisfied by the time this component mounted.
+//
+// Fix: track PIN success as its own fact, independent of "a token
+// exists". `ora_pin_token` records the EXACT token value that was
+// active the moment the PIN was last accepted. Only when the token
+// currently in play still matches that recorded value do we consider
+// the PIN gate satisfied — a token minted by the *regular* login form,
+// or a stale marker left over from a since-rotated token, no longer
+// counts. This still honors "session lasts 7 days" (the marker survives
+// refreshes/back-button/new tabs as long as the same token is alive)
+// while closing the bypass.
+const ORA_PIN_TOKEN_KEY = "ora_pin_token";
+function oraPinSatisfied() {
+  const t = getToken();
+  if (!t) return false;
+  try { return localStorage.getItem(ORA_PIN_TOKEN_KEY) === t; }
+  catch { return false; }
+}
+function markOraPinSatisfied(token) {
+  try { localStorage.setItem(ORA_PIN_TOKEN_KEY, token); } catch { /* ignore */ }
+}
+function clearOraPinSatisfied() {
+  try { localStorage.removeItem(ORA_PIN_TOKEN_KEY); } catch { /* ignore */ }
+}
+
 export default function OraDirect() {
-  const [authorized, setAuthed] = useState(!!getToken());
+  const [authorized, setAuthed] = useState(oraPinSatisfied());
+  // Only populated when the visitor already holds a valid app session
+  // (e.g. logged into the main dashboard) but hasn't cleared the PIN
+  // gate yet — lets us offer "set your PIN" instead of asking them to
+  // guess a PIN that was never created (Phase 3.2).
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
 
   useEffect(() => {
-    if (getToken()) {
-      api.get("/auth/me").then(() => setAuthed(true))
-                          .catch(() => setToken(null));
-    }
-  }, []);
+    if (authorized) return; // already satisfied this token — nothing to check
+    const t = getToken();
+    if (!t) return; // truly anonymous visitor — plain PIN pad, no extra probe
+    api.get("/auth/me").then(async () => {
+      // Existing session is valid, but hasn't passed the /ora PIN gate
+      // for THIS token yet. Find out if there's even a personal PIN to
+      // enter, so we don't dead-end the founder on an "invalid PIN"
+      // loop for a PIN that was never set.
+      try {
+        const r = await api.get("/ora-chat/pin/status");
+        if (!r.data?.pin_set) setNeedsPinSetup(true);
+      } catch { /* fall through to the plain PIN pad */ }
+    }).catch(() => { setToken(null); clearOraPinSatisfied(); });
+  }, [authorized]);
 
   // 2026-09-10 — This page is ALWAYS the light-cream theme (hardcoded
   // PAL above), independent of the app-wide Day/Night toggle. But CSS
@@ -144,8 +191,97 @@ export default function OraDirect() {
     };
   }, []);
 
-  return authorized ? <ChatShell onLogout={() => { setToken(null); setAuthed(false); }} />
-                     : <PinPad onSuccess={() => setAuthed(true)} />;
+  if (authorized) {
+    return <ChatShell onLogout={() => {
+      setToken(null); clearOraPinSatisfied(); setAuthed(false);
+    }} />;
+  }
+  if (needsPinSetup) {
+    return <PinSetup onDone={(token) => {
+      markOraPinSatisfied(token); setNeedsPinSetup(false); setAuthed(true);
+    }} />;
+  }
+  return <PinPad onSuccess={(token) => { markOraPinSatisfied(token); setAuthed(true); }} />;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// PIN setup — shown instead of the PIN pad when the visitor already
+// has a valid app session (proved they're the account owner) but has
+// never created a personal /ora PIN yet. Phase 3.2 requirement: never
+// leave /ora reachable with no PIN just because one was never set.
+// ────────────────────────────────────────────────────────────────────
+function PinSetup({ onDone }) {
+  const [pin, setPin] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (busy) return;
+    if (pin.length < 8) { setErr("PIN must be at least 8 characters."); return; }
+    if (pin !== confirm) { setErr("PINs don't match."); return; }
+    setBusy(true); setErr(null);
+    try {
+      await api.post("/ora-chat/pin/set", { pin });
+      onDone(getToken());
+    } catch {
+      setErr("Couldn't save PIN. Try again.");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div data-testid="ora-direct-pin-setup"
+         style={{ minHeight: "100dvh", background: PAL.bg, color: PAL.text,
+                    ...ORA_BG_STYLE,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    padding: "20px 20px 40px",
+                    paddingBottom: "max(40px, env(safe-area-inset-bottom))",
+                    fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" }}>
+      <div style={{ maxWidth: 380, width: "100%", textAlign: "center" }}>
+        <div style={{ width: 56, height: 56, borderRadius: 14, background: PAL.accentBg,
+                        border: `1px solid ${PAL.accent}33`, margin: "0 auto 22px",
+                        display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Lock size={22} color={PAL.accent} strokeWidth={1.8} />
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6,
+                        letterSpacing: -0.5 }}>Set your ORA PIN</div>
+        <div style={{ fontSize: 13, color: PAL.muted, marginBottom: 26 }}>
+          You haven't set a personal PIN yet — create one now so /ora
+          stays protected on every device.
+        </div>
+        <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <input data-testid="pin-setup-input" type="password" autoComplete="new-password"
+                 autoFocus minLength={8} maxLength={32} value={pin} disabled={busy}
+                 onChange={(e) => { setPin(e.target.value); setErr(null); }}
+                 placeholder="New PIN (8+ characters)"
+                 style={{ width: "100%", boxSizing: "border-box", padding: "14px 16px",
+                           fontSize: 16, textAlign: "center", borderRadius: 12,
+                           border: `1px solid ${PAL.border}`, background: PAL.accentBg,
+                           color: PAL.text, outline: "none", fontFamily: "inherit" }} />
+          <input data-testid="pin-setup-confirm-input" type="password" autoComplete="new-password"
+                 minLength={8} maxLength={32} value={confirm} disabled={busy}
+                 onChange={(e) => { setConfirm(e.target.value); setErr(null); }}
+                 placeholder="Confirm PIN"
+                 style={{ width: "100%", boxSizing: "border-box", padding: "14px 16px",
+                           fontSize: 16, textAlign: "center", borderRadius: 12,
+                           border: `1px solid ${PAL.border}`, background: PAL.accentBg,
+                           color: PAL.text, outline: "none", fontFamily: "inherit" }} />
+          {err && <div data-testid="pin-setup-error"
+                        style={{ fontSize: 12, color: "#c94a37" }}>{err}</div>}
+          <button type="submit" data-testid="pin-setup-submit-btn"
+                   disabled={busy || !pin || !confirm}
+                   style={{ padding: "13px 16px", borderRadius: 12, border: "none",
+                             background: (busy || !pin || !confirm) ? PAL.border : PAL.accent,
+                             color: "#fff", fontSize: 15, fontWeight: 600,
+                             cursor: (busy || !pin || !confirm) ? "default" : "pointer",
+                             fontFamily: "inherit" }}>
+            {busy ? "Saving…" : "Save PIN & continue"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -169,7 +305,7 @@ function PinPad({ onSuccess }) {
         ...(identifier.trim() ? { identifier: identifier.trim() } : {}),
       });
       setToken(r.data.token);
-      onSuccess();
+      onSuccess(r.data.token);
     } catch (e) {
       const d = e?.response?.data?.detail || e?.response?.data;
       if (d?.error === "too_many_attempts") setErr(d.message);

@@ -20,6 +20,8 @@ async def audit_log(limit: int = 100,
                      authorization: str = Header(None)) -> dict:
     me = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    await check_permission(me, "settings", "read", db=db)
     limit = max(1, min(int(limit), 500))
     cur = db.aurem_cto_vault_audit_log.find(
         {"user_id": me["user_id"]},

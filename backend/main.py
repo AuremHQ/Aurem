@@ -38,6 +38,7 @@ from routers.github_oauth import router as github_oauth_router
 from routers.google_oauth import router as google_oauth_router
 from routers.github_funnel import router as github_funnel_router  # 2026-08-01 CTA drop-off telemetry
 from routers.github_app import router as github_app_router  # 2026-02-10 · Phase 2 · install router + webhook
+from routers.team_management import router as team_management_router  # 2026-02 · Phase 1 · team RBAC
 from routers.cto_projects import router as cto_projects_router
 from routers.automations import router as automations_router
 from routers.upload import router as upload_router
@@ -3848,6 +3849,7 @@ app.include_router(google_oauth_router, prefix="/api/aurem-dev")
 app.include_router(github_funnel_router, prefix="/api/aurem-dev")  # 2026-08-01 CTA drop-off telemetry
 app.include_router(github_app_router, prefix="/api/aurem-dev")  # 2026-02-10 · Phase 2 · install router + webhook
 app.include_router(cto_projects_router, prefix="/api/aurem-dev")
+app.include_router(team_management_router, prefix="/api/aurem-dev")  # 2026-02 · Phase 1 · team RBAC
 app.include_router(automations_router, prefix="/api/aurem-dev")
 app.include_router(upload_router,        prefix="/api/aurem-dev")
 app.include_router(migrations_admin_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/migrations/*

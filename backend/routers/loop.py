@@ -94,6 +94,8 @@ async def start_loop(body: StartBody,
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB unavailable")
+    from services.team_permissions import check_permission
+    await check_permission(user, "loop", "write", db=db)
     # Iter 364 — Kill switch (env or DB flag) — hard-off for everyone
     # including founders / betas. Instant rollback without a deploy.
     from services import loop_beta as _lb
@@ -457,8 +459,10 @@ async def get_active_loop(
     db = get_db()
     if db is None:
         return {"ok": True, "active": None}
+    from services.team_permissions import check_permission
+    ctx = await check_permission(user, "loop", "read", db=db)
     q = {
-        "user_id":  user["user_id"],
+        "user_id":  ctx["effective_account_id"],
         "state":    {"$in": [
             # Iter 312 · Class 1 — `planning` MUST be included so that
             # the ChatPanel timeout-recovery poll (recovery of the

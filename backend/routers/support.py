@@ -115,10 +115,12 @@ async def create_ticket(
     """Logged-in ticket create. Subject is optional — first line of the
     body becomes the subject if not provided (matches the popup UX
     which is subject-less)."""
+    from services.team_permissions import check_permission
     user = await current_dev(authorization)
+    db = require_db()
+    await check_permission(user, "support", "write", db=db)
     if not (body.body or "").strip():
         raise HTTPException(400, "message body is required")
-    db = require_db()
     ticket_id = await _insert_ticket(
         db,
         user_id=user.get("user_id") or "",
@@ -219,8 +221,10 @@ async def create_ticket_public(payload: CreateTicketPublic, request: Request) ->
 
 @router.get("/tickets")
 async def list_my_tickets(authorization: Optional[str] = Header(None)) -> dict:
+    from services.team_permissions import check_permission
     user = await current_dev(authorization)
     db = require_db()
+    await check_permission(user, "support", "read", db=db)
     tickets = await db.cto_support.find(
         {"user_id": user.get("user_id")},
         {"_id": 0},

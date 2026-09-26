@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, User, KeyRound, Receipt, Plug, ShieldCheck, Coins,
+  ArrowLeft, User, KeyRound, Receipt, Plug, ShieldCheck, Coins, Users2,
 } from "lucide-react";
 import { api, getUser } from "../lib/api";
 import { trackPurchase, metaPurchase, openaiSubscriptionCreated } from "../lib/analytics";
@@ -27,6 +27,7 @@ import DangerZone from "../components/DangerZone";
 import ChangePasswordCard from "../components/ChangePasswordCard";
 import PhoneNumberCard from "../components/PhoneNumberCard";
 import ShipWallOptInCard from "../components/ShipWallOptInCard";
+import TeamManagementPanel from "../components/TeamManagementPanel";
 
 // 2026-08 · Round-2 PR (P0-4, founder ruling D-TRACK) — Personal
 // Track switching is hidden from new users. Component, the
@@ -40,6 +41,7 @@ const TABS = [
   { id: "plans",        label: "Plans & Usage", icon: Receipt },
   { id: "integrations", label: "Integrations",  icon: Plug },
   { id: "vault",        label: "Vault",         icon: KeyRound },
+  { id: "team",         label: "Team",          icon: Users2 },
 ];
 
 export default function Settings() {
@@ -468,6 +470,12 @@ export default function Settings() {
                 </ul>
               )}
             </section>
+          </div>
+        )}
+        {tab === "team" && (
+          <div key="team" style={{ display: "grid", gap: 18, animation: "ds2SettingsIn .22s ease both" }}
+               data-testid="settings-team-tab">
+            <TeamManagementPanel />
           </div>
         )}
       </div>
