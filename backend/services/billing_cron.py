@@ -94,32 +94,44 @@ async def bill_maxx_overages(db) -> dict:
             failed += 1
             logger.warning(f"[overage] {uid} has overage but no Stripe customer")
             continue
-        try:
+        # 2026-09-26 · prod-hang fix (same class as the 2026-08-20 fix
+        # applied to payment_reconciliation.py and integration_health.py's
+        # Stripe probe) — the Stripe SDK is fully synchronous. These 3
+        # sequential HTTP round-trips (InvoiceItem.create + Invoice.create
+        # + Invoice.finalize_invoice), run bare inside this `async def`
+        # and inside a loop over every overaged user, froze the whole
+        # event loop for the entire cron run — the exact cause of the
+        # nginx `/health` upstream timeout (110) pattern seen in
+        # production. Offloaded to a worker thread per user.
+        def _sync_bill(customer_id: str, user_id: str, count: int) -> str:
             stripe.InvoiceItem.create(
-                customer=user["stripe_customer_id"],
+                customer=customer_id,
                 unit_amount=50,            # $0.50 in cents
-                quantity=n,
+                quantity=count,
                 currency="usd",
-                description=f"Maxx-mode overage — {n} task(s) above 100 included ({bucket})",
-                metadata={"aurem_user_id": uid, "bucket": bucket, "type": "maxx_overage"},
+                description=f"Maxx-mode overage — {count} task(s) above 100 included ({bucket})",
+                metadata={"aurem_user_id": user_id, "bucket": bucket, "type": "maxx_overage"},
             )
             invoice = stripe.Invoice.create(
-                customer=user["stripe_customer_id"],
+                customer=customer_id,
                 auto_advance=True,         # collect automatically
                 collection_method="charge_automatically",
-                metadata={"aurem_user_id": uid, "bucket": bucket, "type": "maxx_overage"},
+                metadata={"aurem_user_id": user_id, "bucket": bucket, "type": "maxx_overage"},
             )
             stripe.Invoice.finalize_invoice(invoice.id)
+            return invoice.id
+        try:
+            invoice_id = await asyncio.to_thread(_sync_bill, user["stripe_customer_id"], uid, n)
             # Reset overage AFTER successful invoice creation only.
             await db.cto_maxx_usage.update_one(
                 {"user_id": uid, "month": bucket},
                 {"$set": {"overage_count": 0,
                           "last_billed_at": datetime.now(timezone.utc).isoformat(),
-                          "last_billed_invoice": invoice.id}},
+                          "last_billed_invoice": invoice_id}},
             )
             billed += 1
             total_usd += n * 0.50
-            logger.info(f"[overage] billed {uid} ${n*0.50:.2f} (invoice {invoice.id})")
+            logger.info(f"[overage] billed {uid} ${n*0.50:.2f} (invoice {invoice_id})")
         except Exception as e:
             failed += 1
             logger.warning(f"[overage] {uid} failed: {e!r}")
@@ -165,15 +177,23 @@ async def grant_referral_reward(db, new_user_id: str) -> dict:
 
     stripe = _stripe_client()
     try:
-        sub = stripe.Subscription.retrieve(sub_id)
-        current_end = int(sub.current_period_end or 0)
-        new_end = current_end + 30 * 86400
-        stripe.Subscription.modify(
-            sub_id,
-            trial_end=new_end,
-            proration_behavior="none",
-            metadata={"aurem_referral_reward": referral["_id"]},
-        )
+        # 2026-09-26 · prod-hang fix — same class as above. This function
+        # runs SYNCHRONOUSLY inside the Stripe webhook handler on every
+        # `checkout.session.completed` event (routers/payments.py), so
+        # every real checkout with a pending referral froze the whole
+        # event loop for 2 sequential Stripe round-trips.
+        def _sync_extend() -> int:
+            sub = stripe.Subscription.retrieve(sub_id)
+            current_end = int(sub.current_period_end or 0)
+            new_end = current_end + 30 * 86400
+            stripe.Subscription.modify(
+                sub_id,
+                trial_end=new_end,
+                proration_behavior="none",
+                metadata={"aurem_referral_reward": referral["_id"]},
+            )
+            return new_end
+        new_end = await asyncio.to_thread(_sync_extend)
         await db.referrals.update_one(
             {"_id": referral["_id"]},
             {"$set": {"status": "rewarded",
