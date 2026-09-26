@@ -405,42 +405,20 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
             "kind": "auth", "type": "email_verified",
             "at": used_at, "detail": {},
         })
-    # Promo First-50 claim (from dev_users itself).
-    if user.get("promo_first50_claimed"):
-        claim_ts = user.get("promo_first50_claimed_at")
-        if hasattr(claim_ts, "timestamp"):
-            claim_ts = claim_ts.timestamp()
-        timeline.append({
-            "kind": "offer", "type": "promo_first50_claimed",
-            "at": claim_ts, "detail": {
-                "pro_expires_at": (
-                    user["pro_expires_at"].timestamp()
-                    if hasattr(user.get("pro_expires_at"), "timestamp")
-                    else user.get("pro_expires_at")
-                ),
-            },
-        })
     # Sort merged timeline (drop rows with unusable ts).
     timeline = [t for t in timeline if isinstance(t.get("at"), (int, float))]
     timeline.sort(key=lambda x: x["at"], reverse=True)
     user["activity_timeline"] = timeline[:80]
 
     # (3) Active Offers / Promo Status — single source of truth.
-    now_ts = time.time()
-    pro_exp = user.get("pro_expires_at")
-    pro_exp_epoch = (
-        pro_exp.timestamp() if hasattr(pro_exp, "timestamp") else pro_exp
-    )
-    pro_active = bool(
-        pro_exp_epoch and isinstance(pro_exp_epoch, (int, float))
-        and pro_exp_epoch > now_ts
-    )
     tier = user.get("tier") or "free"
-    # tier_source discriminator — is Pro from promo or a real Stripe sub?
+    # tier_source discriminator — is Pro from a real Stripe sub, founder,
+    # or something else? (2026-09-26 — the First-50 promo branch that
+    # used to sit here was removed along with the rest of the promo;
+    # 0 users had ever claimed it, so this is a clean cut, not a data
+    # migration.)
     if tier == "founder":
         tier_source = "founder"
-    elif user.get("promo_first50_claimed") and pro_active:
-        tier_source = "promo_first50"   # ← don't dangle offers at these users
     elif user.get("stripe_subscription_id") or user.get("subscription_id"):
         tier_source = "paid_subscription"
     elif tier != "free":
@@ -468,20 +446,6 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     user["offers"] = {
         "tier":        tier,
         "tier_source": tier_source,
-        "first50": {
-            "claimed":         bool(user.get("promo_first50_claimed")),
-            "claimed_at":      (
-                user["promo_first50_claimed_at"].timestamp()
-                if hasattr(user.get("promo_first50_claimed_at"), "timestamp")
-                else user.get("promo_first50_claimed_at")
-            ),
-            "pro_expires_at":  pro_exp_epoch,
-            "pro_active":      pro_active,
-            "days_left":       (
-                round((pro_exp_epoch - now_ts) / 86400, 1)
-                if pro_active else None
-            ),
-        },
         "founder_offer": {
             "claim_count":   len(seo_claims),
             "active_claims": [c for c in seo_claims

@@ -197,7 +197,7 @@ async def test_stuck_gate_users_excludes_never_started(fake_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_batch_skips_already_sent(fake_db, monkeypatch):
     from services import gate_stuck_nudge as mod
-    import services.first50_campaign as fc_mod
+    import services.email_link_tokens as fc_mod
     monkeypatch.setattr(mod, "GATE_STUCK_HOURS", 4.0)
     monkeypatch.setattr(fc_mod, "is_unsubscribed", _no_unsub)
     _seed_user(fake_db, "u6", "u6@x.com")
@@ -222,7 +222,7 @@ async def test_run_batch_skips_already_sent(fake_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_batch_sends_to_eligible_user(fake_db, monkeypatch):
     from services import gate_stuck_nudge as mod
-    import services.first50_campaign as fc_mod
+    import services.email_link_tokens as fc_mod
     monkeypatch.setattr(mod, "GATE_STUCK_HOURS", 4.0)
     monkeypatch.setattr(fc_mod, "is_unsubscribed", _no_unsub)
     _seed_user(fake_db, "u7", "u7@x.com")
@@ -244,7 +244,7 @@ async def test_run_batch_sends_to_eligible_user(fake_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_batch_caps_per_run(fake_db, monkeypatch):
     from services import gate_stuck_nudge as mod
-    import services.first50_campaign as fc_mod
+    import services.email_link_tokens as fc_mod
     monkeypatch.setattr(mod, "GATE_STUCK_HOURS", 4.0)
     monkeypatch.setattr(mod, "MAX_NUDGES_PER_RUN", 2)
     monkeypatch.setattr(fc_mod, "is_unsubscribed", _no_unsub)

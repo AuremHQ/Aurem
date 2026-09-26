@@ -862,7 +862,6 @@ function UserDetail({ user, onBack }) {
     if (T === "email_verified")         return { icon: "✓", label: "Email verified", tail: "" };
     if (T === "first_chat")             return { icon: "○", label: "First chat opened", tail: "" };
     if (T === "first_ship")             return { icon: "★", label: "First ship", tail: "" };
-    if (T === "promo_first50_claimed")  return { icon: "🎁", label: "First-50 promo claimed → 30-day Pro", tail: "" };
     if (T === "token_grant")            return { icon: "＋", label: `+${(D.tokens || 0).toLocaleString()} tokens granted`, tail: D.reason ? `— ${D.reason}` : "" };
     if (T.startsWith("task_"))          return { icon: "▸", label: `Task ${T.slice(5)}`, tail: D.task ? `— ${D.task.slice(0, 60)}${D.task.length > 60 ? "…" : ""}` : "" };
     return { icon: "·", label: T || "event", tail: "" };
@@ -1047,61 +1046,15 @@ function UserDetail({ user, onBack }) {
                   Source:{" "}
                   <Badge color={
                     d.offers.tier_source === "founder"           ? "#eab308" :
-                    d.offers.tier_source === "promo_first50"     ? "#a855f7" :
                     d.offers.tier_source === "paid_subscription" ? "#22c55e" :
                     "#64748b"
                   }>
-                    {d.offers.tier_source === "promo_first50"    ? "First-50 promo (not paid)" :
-                     d.offers.tier_source === "paid_subscription" ? "Paid subscription" :
+                    {d.offers.tier_source === "paid_subscription" ? "Paid subscription" :
                      d.offers.tier_source === "founder"          ? "Founder allow-list" :
                      d.offers.tier_source === "paid_or_unknown"  ? "Paid or unknown" :
                      "Free (no active offer)"}
                   </Badge>
                 </div>
-              </div>
-
-              {/* First-50 promo status */}
-              <div data-testid="admin-user-first50-block"
-                   style={{ padding: 10, borderRadius: 8,
-                            background: d.offers.first50?.claimed
-                              ? "rgba(168,85,247,0.10)"
-                              : "rgba(255,255,255,0.03)",
-                            border: d.offers.first50?.claimed
-                              ? "1px solid rgba(168,85,247,0.32)"
-                              : "1px solid transparent" }}>
-                <div style={{ color: "var(--text-faint)", fontSize: 10,
-                              textTransform: "uppercase", letterSpacing: "0.08em",
-                              marginBottom: 4 }}>
-                  First-50 promo
-                </div>
-                {d.offers.first50?.claimed ? (
-                  <>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#a855f7" }}>
-                      🎁 Claimed
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
-                      Claimed {ago(d.offers.first50.claimed_at)}
-                    </div>
-                    {d.offers.first50.pro_active ? (
-                      <div style={{ fontSize: 11, marginTop: 2, color: "var(--ok)" }}>
-                        Pro active · {d.offers.first50.days_left ?? "?"} days left
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 11, marginTop: 2, color: "var(--text-faint)" }}>
-                        Pro window ended
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, color: "var(--text-faint)" }}>
-                    Not claimed
-                    <div style={{ fontSize: 11, marginTop: 4, color: "var(--text-dim)" }}>
-                      {d.email_verified
-                        ? "Email verified — promo may have been full at verify time"
-                        : "Email unverified — promo not yet available"}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Founder offer (SEO fix) */}

@@ -13,6 +13,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 const POLICY_MAP = {
   "privacy":            { file: "privacy-policy.md",        title: "Privacy Policy" },
@@ -56,16 +57,14 @@ export default function PolicyPage({ slug }) {
   }, [meta.file]);
 
   return (
-    <div data-testid={`policy-${key}`} style={{
-      maxWidth: 820, margin: "0 auto", padding: "40px 24px 80px",
-      color: "var(--text, #e8e3d3)",
-      fontFamily: "Inter, system-ui, -apple-system, sans-serif",
-      lineHeight: 1.65,
-    }}>
-      <Link to="/" data-testid="back-home" style={{
-        fontSize: 12, color: "var(--text-dim)", textDecoration: "none",
-      }}>← Back to AUREM</Link>
-
+    <div data-testid={`policy-${key}`}>
+      <MarketingNav />
+      <div style={{
+        maxWidth: 820, margin: "0 auto", padding: "40px 24px 80px",
+        color: "var(--text, #e8e3d3)",
+        fontFamily: "Inter, system-ui, -apple-system, sans-serif",
+        lineHeight: 1.65,
+      }}>
       <h1 data-testid="policy-title" style={{
         fontSize: 32, fontWeight: 500, letterSpacing: "-0.02em",
         margin: "16px 0 24px",
@@ -153,6 +152,7 @@ export default function PolicyPage({ slug }) {
         </button>
         <span>· Questions? <a href="/support" style={{ color: "inherit" }}>auremcto.com/support</a></span>
       </footer>
+      </div>
     </div>
   );
 }

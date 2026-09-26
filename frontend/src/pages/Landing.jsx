@@ -27,20 +27,17 @@
  * Tabs + FAQ + marquees are functional React state. No mocks, no TODOs.
  */
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../lib/api";
 import { pageTitle } from "../lib/siteConfig";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
+import MarketingNav from "../components/marketing/MarketingNav";
 // Iter 212m-200 — Interactive animated walkthrough embed. Same
 // component powers the standalone /demo route so the two paths
 // stay pixel-identical and drift-free.
 import WalkthroughPlayer from "../components/demo/WalkthroughPlayer";
 import { FULL_STEPS } from "../components/demo/demoSteps";
-// Iter 212m-157 — Bug Hunt nav link is now hidden for logged-in
-// non-admin users.  Anonymous + admin still see it (anonymous for
-// marketing, admin for the live scanner shortcut).
-import { getToken, getUser, isAdminOrFounder } from "../lib/api";
 
 // ─── Decorative CSS (scoped to .ora-landing) ───
 const LANDING_CSS = `
@@ -83,31 +80,6 @@ const LANDING_CSS = `
 
 .ora-landing * { box-sizing: border-box; }
 .ora-landing .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
-
-/* Nav */
-.ora-landing .nav {
-  position: sticky; top: 0; z-index: 50;
-  backdrop-filter: blur(18px);
-  background: rgba(10,14,26,0.72);
-  border-bottom: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 32px;
-}
-.ora-landing .nav-left { display: flex; align-items: center; gap: 14px; }
-.ora-landing .logo-img { width: 38px; height: 38px; border-radius: 9px; }
-.ora-landing .logo-text { font-family: var(--font-mono); font-weight: 800; font-size: 22px; letter-spacing: -1px; color: var(--accent); }
-.ora-landing .logo-text span { color: var(--muted-2); font-weight: 400; font-size: 13px; margin-left: 6px; letter-spacing: 0; }
-.ora-landing .nav-links { display: flex; align-items: center; gap: 28px; }
-.ora-landing .nav-link { font-family: var(--font-mono); font-size: 13px; color: var(--muted-1); text-decoration: none; transition: color 0.15s; }
-.ora-landing .nav-link:hover { color: var(--accent); }
-.ora-landing .nav-cta {
-  font-family: var(--font-mono); font-size: 13px;
-  background: var(--accent); color: #000; padding: 9px 18px;
-  border-radius: 8px; text-decoration: none; font-weight: 600;
-  transition: opacity 0.15s, transform 0.08s;
-}
-.ora-landing .nav-cta:hover { opacity: 0.92; }
-.ora-landing .nav-cta:active { transform: translateY(1px); }
 
 /* Edge-to-edge tools strip */
 .ora-landing .topstrip {
@@ -526,9 +498,6 @@ const LANDING_CSS = `
   .ora-landing .tab-content { grid-template-columns: 1fr; }
   .ora-landing .hero-split { grid-template-columns: 1fr; gap: 24px; text-align: center; }
   .ora-landing .hero-sub { padding-left: 0; border-left: none; max-width: 580px; margin: 24px auto 0; }
-  .ora-landing .nav-links { gap: 16px; }
-  .ora-landing .nav-link { display: none; }
-  .ora-landing .nav-link:last-of-type { display: inline; }
 }
 `;
 
@@ -606,7 +575,7 @@ const TEAMS = [
   { icon: "🧠", tag: "UNIQUE · self-learning",
     title: "ORA Learns Your Codebase",
     desc: "ORA Council tracks every interaction across 5 modes (chat, advice, code, debug, audit) and fine-tunes ORA on your specific patterns. The more you use ORA, the better it gets at your codebase." },
-  { icon: "💎", tag: "__PROMO_TAG__",
+  { icon: "💎", tag: "founder price · $9/month flat",
     title: "$9/Month. No Surprises.",
     desc: "No IDE to install. No token meters to watch. No per-seat pricing. Flat pricing: 10/50/300/400 tasks per month across Free/Starter/Pro/Team — 55% cheaper than Copilot. 98% cheaper than Devin." },
 ];
@@ -673,12 +642,6 @@ export default function Landing() {
   // excluded). No hardcoded marketing stats. Section hides if the
   // endpoint is unavailable rather than showing fabricated numbers.
   const [proof, setProof] = useState(null);
-  // Track 3 (item #31) — real-time First-50 signup promo counter.
-  // Was hardcoded "498/500" — now polled from
-  // /api/aurem-dev/promo/first50/status every 30s so the badge on
-  // the pricing card reflects live claims. Null while loading; the
-  // TEAMS card falls back to a neutral tag until data arrives.
-  const [promo, setPromo] = useState(null);
 
   useEffect(() => {
     api.get("/usage/public/stats")
@@ -686,55 +649,17 @@ export default function Landing() {
       .catch(() => {});
   }, []);
 
+  // 2026-09-26 — MarketingNav's Features/Pricing/Reviews links now
+  // point at `/#features` etc. so they work from every other public
+  // page too, not just when you're already on "/". React Router
+  // doesn't scroll for you on a route it's already mounted, so do it
+  // ourselves once the hash is present on load/navigation.
+  const { hash } = useLocation();
   useEffect(() => {
-    let cancelled = false;
-    const fetchPromo = () => {
-      api.get("/promo/first50/status")
-        .then((r) => { if (!cancelled && r.data) setPromo(r.data); })
-        .catch(() => {});
-    };
-    fetchPromo();
-    const id = setInterval(fetchPromo, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
-
-  // Session 5 · 2026-02-09 — hero chip owns the live counter now.
-  // Card tag becomes static "founder price · $9/month flat" so we
-  // don't render two live counters on the same page (single source
-  // of truth). The card still owns the waitlist form when sold out —
-  // the hero chip's sold-out state links back to this section via
-  // the `#promo-waitlist` anchor.
-  const promoSoldOut = Boolean(promo && (!promo.is_active || promo.remaining <= 0));
-  const promoTag = "founder price · $9/month flat";
-  const teamsWithPromo = TEAMS.map((t) =>
-    t.tag === "__PROMO_TAG__" ? { ...t, tag: promoTag } : t
-  );
-
-  // Track 3 · waitlist inline input — only rendered inside the
-  // founder-price feature card when the promo is sold out. Founder-
-  // locked scope: email capture only, no other fields, no automatic
-  // conversion logic. Idempotent upsert on the backend so a repeat
-  // click doesn't spawn dupes.
-  const [waitlistEmail, setWaitlistEmail]   = useState("");
-  const [waitlistState, setWaitlistState]   = useState("idle"); // idle|sending|ok|err
-  const [waitlistError, setWaitlistError]   = useState("");
-  const submitWaitlist = async (e) => {
-    e.preventDefault();
-    if (waitlistState === "sending") return;
-    setWaitlistState("sending");
-    setWaitlistError("");
-    try {
-      await api.post("/promo/first50/waitlist", { email: waitlistEmail.trim() });
-      setWaitlistState("ok");
-    } catch (err) {
-      const msg =
-        err?.response?.data?.detail?.message ||
-        err?.response?.data?.message ||
-        "Something went wrong. Please try again.";
-      setWaitlistError(msg);
-      setWaitlistState("err");
-    }
-  };
+    if (!hash) return;
+    const el = document.querySelector(hash);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [hash]);
 
   // SEO/AEO title + description sync (preserved from Iter 175).
   // 2026-09-17 — Bug 7 fix: this used to hardcode a THIRD, different
@@ -765,30 +690,8 @@ export default function Landing() {
     <div className="ora-landing" data-testid="ora-landing-v184">
       <style>{LANDING_CSS}</style>
 
-      {/* ─── NAV ─── */}
-      <nav className="nav" data-testid="ora-nav">
-        <div className="nav-left">
-          <picture>
-            <source srcSet="/ora-icon.webp 1x, /ora-icon@2x.webp 2x" type="image/webp" />
-            <img src="/ora-icon.png" srcSet="/ora-icon.png 1x, /ora-icon@2x.png 2x" alt="ORA" className="logo-img" width="67" height="67" decoding="async" />
-          </picture>
-          <div className="logo-text">ORA<span> by Aurem</span></div>
-        </div>
-        <div className="nav-links">
-          <a className="nav-link" href="#features" data-testid="nav-features">Features</a>
-          <a className="nav-link" href="#pricing" data-testid="nav-pricing">Pricing</a>
-          <Link className="nav-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
-          <a className="nav-link" href="#reviews" data-testid="nav-reviews">Reviews</a>
-          {/* Iter 212m-157 — Bug Hunt nav link hidden for logged-in
-              non-admin users.  Anonymous visitors keep seeing it for
-              marketing/SEO; admins see it as a live-scanner shortcut. */}
-          {(!getToken() || isAdminOrFounder(getUser())) && (
-            <Link className="nav-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
-          )}
-          <Link className="nav-link" to="/login" data-testid="nav-login">Sign in</Link>
-          <Link className="nav-cta" to="/signup" data-testid="nav-signup-cta">Start free</Link>
-        </div>
-      </nav>
+      {/* ─── NAV (shared component — also used by every other public page) ─── */}
+      <MarketingNav />
 
       {/* ─── Edge-to-edge tools strip ─── */}
       <div className="topstrip" aria-hidden="true">
@@ -803,62 +706,6 @@ export default function Landing() {
 
         {/* ─── HERO ─── */}
         <section className="hero">
-          {promo && (
-            <div style={{ textAlign: "center", marginBottom: 14 }}>
-              {promo.is_active && promo.remaining > 0 ? (
-                <div
-                  data-testid="hero-promo-chip"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "7px 14px",
-                    borderRadius: 999,
-                    background: "rgba(234,179,8,0.08)",
-                    border: "1px solid rgba(234,179,8,0.32)",
-                    color: "#eab308",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    letterSpacing: 0.2,
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >
-                  <span style={{
-                    display: "inline-block", width: 6, height: 6,
-                    borderRadius: 999, background: "#eab308",
-                    boxShadow: "0 0 6px rgba(234,179,8,0.9)",
-                  }}></span>
-                  <span data-testid="hero-promo-chip-text">
-                    First-50 promo · <b>{promo.remaining}/{promo.total}</b> free Pro trials left
-                  </span>
-                </div>
-              ) : (
-                <a
-                  href="#promo-waitlist"
-                  data-testid="hero-promo-chip-soldout"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "7px 14px",
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    color: "#e8e8e8",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    letterSpacing: 0.2,
-                    textDecoration: "none",
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >
-                  <span data-testid="hero-promo-chip-text">
-                    First-50 promo full · Join waitlist ↓
-                  </span>
-                </a>
-              )}
-            </div>
-          )}
           <div style={{ textAlign: "center" }}>
             <div className="hero-badge">▸ Developers Choice</div>
           </div>
@@ -885,21 +732,19 @@ export default function Landing() {
             </div>
             {/* 2026-09-22 · Founder-reported bug — the FounderOfferPill
                 ("X/500 free SEO fixes") used to render right here too,
-                stacked directly under the First-50 promo chip above the
-                headline AND the "10 free tasks" pill. Two competing
-                offers in the same hero diluted both messages. Removed
-                from here: the SEO-fix offer's real audience is signed-up
-                users who haven't connected a repo yet, and it already
-                correctly targets exactly that audience via
-                ConnectRepoBanner.jsx (Dashboard, 0 projects) and this
-                same FounderOfferPill on Projects.jsx's header (logged-in,
-                not yet claimed) — an anonymous visitor here can't act on
-                a repo-connect offer anyway. First-50 (a pre-signup
-                incentive) stays the single, clear hero offer. */}
+                stacked directly under the "10 free tasks" pill. Two
+                competing offers in the same hero diluted both
+                messages. Removed from here: the SEO-fix offer's real
+                audience is signed-up users who haven't connected a
+                repo yet, and it already correctly targets exactly
+                that audience via ConnectRepoBanner.jsx (Dashboard, 0
+                projects) and this same FounderOfferPill on
+                Projects.jsx's header (logged-in, not yet claimed) —
+                an anonymous visitor here can't act on a repo-connect
+                offer anyway. */}
             {/* Trust badge — Canadian entity + SOC 2 signal. Links to
                 /security so enterprise buyers can drill in without
-                asking us. Kept minimal so it doesn't compete with
-                the First-50 promo chip for attention. */}
+                asking us. */}
             <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
               <Link
                 to="/security"
@@ -1331,102 +1176,14 @@ export default function Landing() {
           <h2 className="section-title">Built like a teammate, not a chat bot</h2>
           <p className="section-sub">Six things ORA does that the autocompletes don&apos;t. <b>All shipped, all in production.</b></p>
           <div className="teams-grid">
-            {teamsWithPromo.map((t, i) => {
-              const isPromoCard = t.tag && t.tag.startsWith("founder price");
-              return (
-              <div
-                className="team-card"
-                key={i}
-                id={isPromoCard ? "promo-waitlist" : undefined}
-                data-testid={isPromoCard ? "landing-promo-card" : undefined}
-              >
+            {TEAMS.map((t, i) => (
+              <div className="team-card" key={i}>
                 <div className="team-icon">{t.icon}</div>
-                <div
-                  className="team-tag"
-                  data-testid={isPromoCard ? "landing-promo-tag" : undefined}
-                >{t.tag}</div>
+                <div className="team-tag">{t.tag}</div>
                 <div className="team-title">{t.title}</div>
                 <div className="team-desc">{t.desc}</div>
-                {isPromoCard && promoSoldOut && (
-                  <div
-                    data-testid="landing-waitlist"
-                    style={{ marginTop: 16 }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 12, fontWeight: 600, color: "#eab308",
-                        letterSpacing: 0.6, textTransform: "uppercase",
-                        marginBottom: 8,
-                      }}
-                      data-testid="landing-waitlist-header"
-                    >
-                      First-50 promo full — join the waitlist
-                    </div>
-                    {waitlistState === "ok" ? (
-                      <div
-                        data-testid="landing-waitlist-ok"
-                        style={{
-                          fontSize: 13, color: "#22c55e",
-                          padding: "8px 12px",
-                          background: "rgba(34,197,94,0.08)",
-                          border: "1px solid rgba(34,197,94,0.3)",
-                          borderRadius: 8,
-                        }}
-                      >
-                        You&apos;re on the waitlist. We&apos;ll reach out if a spot opens.
-                      </div>
-                    ) : (
-                      <form
-                        onSubmit={submitWaitlist}
-                        style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
-                      >
-                        <input
-                          type="email"
-                          required
-                          placeholder="your@email.com"
-                          value={waitlistEmail}
-                          onChange={(e) => setWaitlistEmail(e.target.value)}
-                          data-testid="landing-waitlist-input"
-                          style={{
-                            flex: "1 1 200px",
-                            padding: "9px 12px",
-                            background: "rgba(255,255,255,0.03)",
-                            border: "1px solid rgba(234,179,8,0.25)",
-                            borderRadius: 8,
-                            color: "#e8e8e8", fontSize: 13,
-                          }}
-                        />
-                        <button
-                          type="submit"
-                          disabled={waitlistState === "sending"}
-                          data-testid="landing-waitlist-submit"
-                          style={{
-                            padding: "9px 16px",
-                            background: "#eab308", color: "#0b0b0b",
-                            border: "none", borderRadius: 8,
-                            fontWeight: 600, fontSize: 13,
-                            cursor: waitlistState === "sending" ? "wait" : "pointer",
-                          }}
-                        >
-                          {waitlistState === "sending" ? "…" : "Join waitlist"}
-                        </button>
-                        {waitlistState === "err" && (
-                          <div
-                            data-testid="landing-waitlist-err"
-                            style={{
-                              flexBasis: "100%", fontSize: 12, color: "#f87171",
-                            }}
-                          >
-                            {waitlistError}
-                          </div>
-                        )}
-                      </form>
-                    )}
-                  </div>
-                )}
               </div>
-              );
-            })}
+            ))}
           </div>
         </section>
 

@@ -71,13 +71,10 @@ def test_architecture_mongo_status_does_real_ping(admin_session):
 
 
 # ---------- Homepage promo endpoints (write-concern fix) ----------
-def test_promo_first50_status_returns_200():
-    r = requests.get(f"{BASE_URL}/api/aurem-dev/promo/first50/status", timeout=15)
-    assert r.status_code == 200, r.text[:300]
-    data = r.json()
-    assert "total" in data and "claimed" in data
-
-
+# 2026-09-26 — /promo/first50/status test removed: the First-50 promo
+# (and its endpoints) was fully removed from the codebase, 0 users
+# ever claimed it. /founder-offer/status is a DIFFERENT, unrelated
+# offer ("free SEO fixes for founders") and stays.
 def test_founder_offer_status_returns_200():
     r = requests.get(f"{BASE_URL}/api/aurem-dev/founder-offer/status", timeout=15)
     assert r.status_code == 200, r.text[:300]

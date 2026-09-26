@@ -311,10 +311,8 @@ async def signup(body: SignupBody, request: Request) -> dict:
         "signup_ip":  client_ip,
         # Track 3 (item #31) — email verification gate. Founders are
         # auto-verified so their signup UX isn't blocked; everyone else
-        # starts unverified and claims the First-50 promo spot only on
-        # verification click.
+        # starts unverified.
         "email_verified":       bool(is_founder),
-        "promo_first50_claimed": False,
         # Iter 390 — Developer-only rollout. Every new signup defaults
         # to "developer" so /choose-track is no longer needed. Legacy
         # backfill in main.py::_backfill_dev_users_track remains as a

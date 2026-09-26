@@ -13,6 +13,7 @@ import {
   DollarSign,
 } from "lucide-react";
 import { COMPETITORS, LAST_VERIFIED } from "../data/competitors";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 /* ── tiny presentational helpers (unchanged from VsDevin) ─────────── */
 const S = {
@@ -135,6 +136,7 @@ export default function VsPage({ forcedSlug }) {
   return (
     <div data-testid={`vs-${c.slug}-root`} style={S.page}>
       <MetaTags c={c} />
+      <MarketingNav />
 
       <div style={S.shell}>
         {/* 1 ── Hero */}

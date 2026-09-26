@@ -7,6 +7,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import usePageMeta from "../lib/usePageMeta";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 const APP_URL = window.location.origin;
 
@@ -43,11 +44,13 @@ export default function ShipWall() {
   // Ship Wall is a PUBLIC marketing showcase (linked from Landing
   // page CTA "See real ships"). It must NEVER render the internal
   // Shell sidebar, even for logged-in visitors — that leaks the
-  // customer interface to anyone clicking the public CTA. Logged-in
-  // users can still navigate back via the "AUREM" header link.
+  // customer interface to anyone clicking the public CTA. Uses the
+  // same shared MarketingNav as every other public page instead of
+  // its own plain-text "AUREM" link.
   const body = (
     <div style={{ minHeight: "100vh",
                   background: "var(--bg)", paddingBottom: 60 }}>
+      <MarketingNav />
       <div style={{
         borderBottom: "1px solid var(--border)",
         padding: "20px 24px 18px",
@@ -55,10 +58,7 @@ export default function ShipWall() {
         flexWrap: "wrap", gap: 12,
       }}>
         <div>
-          <Link to="/" style={{ textDecoration: "none" }}>
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-dim)" }}>AUREM</span>
-          </Link>
-          <h1 style={{ fontSize: 22, fontWeight: 500, marginTop: 4, color: "var(--text)" }}>Ship Wall</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 500, color: "var(--text)" }}>Ship Wall</h1>
           <p style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 2 }}>
             Real code. Real commits. Shipped by real developers with ORA.
           </p>

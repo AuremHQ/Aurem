@@ -85,9 +85,8 @@ from routers.repo_indexing import router as repo_indexing_router    # Iter 212m-
 from routers.founder_offer import router as founder_offer_router    # Iter 212m-30 PR-2
 from routers.onboarding_first_scan import router as onboarding_first_scan_router  # Onboarding Step 4 · S-B
 from routers.onboarding import router as onboarding_router          # Iter 212m-32 nudge emails
-from routers.promo_first50 import router as promo_first50_router    # Track 3 (item #31) — First-50 signup promo + email verification
+from routers.auth_verify import router as auth_verify_router        # 2026-09-26 — email verification (was routers/promo_first50.py; promo removed, 0 users had ever claimed it)
 from routers.email_unsubscribe import router as email_unsubscribe_router  # 2026-02-12 · CAN-SPAM/GDPR one-click unsubscribe
-from routers.admin_first50_campaign import router as admin_first50_campaign_router  # 2026-02-12 · First-50 drip admin
 from routers.admin_vanguard import router as admin_vanguard_router  # Iter 212m-42 vanguard admin toggle
 from routers.admin_bin import router as admin_bin_router  # Iter 212m-171 admin panel rebuild
 from routers.security_scan import router as security_scan_router    # Iter 212m-55 1-click vuln scanner
@@ -1193,24 +1192,10 @@ async def lifespan(app: FastAPI):
             logger.warning("gate_stuck_nudge_cron not started: %r", e)
     else:
         app.state.gate_stuck_nudge_task = None
-    # Track 3 (item #31) — hourly cron to auto-downgrade First-50 promo
-    # users whose 30-day Pro grant has expired. Idempotent, safe to
-    # skip cycles. Same env-flag opt-out as the nudge cron.
-    if os.environ.get("ENABLE_PROMO_DOWNGRADE_CRON", "1").lower() in ("1", "true", "yes"):
-        try:
-            from routers.promo_first50 import downgrade_cron as _promo_downgrade_cron
-            app.state.promo_downgrade_task = _supervise(
-                _promo_downgrade_cron(3600),
-                name="promo_first50_downgrade",
-                db_getter=lambda: app.state.db,
-                long_lived=True,
-            )
-            logger.info("🕒 promo first50 downgrade cron enabled (hourly)")
-        except Exception as e:
-            app.state.promo_downgrade_task = None
-            logger.warning("promo downgrade cron not started: %r", e)
-    else:
-        app.state.promo_downgrade_task = None
+    # 2026-09-26 — the hourly First-50 promo-expiry downgrade cron that
+    # used to sit here was removed along with the rest of the promo
+    # (0 users had ever claimed it, so there was nothing left to
+    # downgrade — this wasn't a data migration, just dead code removal).
     # Iter 153 — nightly MongoDB backup. Refactored 2026-02-09 (item #5):
     # writes to Cloudflare R2 (offsite, durable), 30-day retention default,
     # 03:00 UTC default. The cron passes `db` on each invocation so the
@@ -3905,9 +3890,8 @@ app.include_router(repo_indexing_router,  prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(founder_offer_router,  prefix="/api/aurem-dev")  # Iter 212m-30 PR-2
 app.include_router(onboarding_first_scan_router, prefix="/api/aurem-dev")  # Onboarding Step 4 · S-B
 app.include_router(onboarding_router,     prefix="/api/aurem-dev")  # Iter 212m-32 nudge emails
-app.include_router(promo_first50_router,  prefix="/api/aurem-dev")  # Track 3 (item #31) — First-50 signup promo + email verification
+app.include_router(auth_verify_router,    prefix="/api/aurem-dev")  # 2026-09-26 — email verification (was promo_first50_router)
 app.include_router(email_unsubscribe_router,        prefix="/api/aurem-dev")  # 2026-02-12 · one-click unsubscribe
-app.include_router(admin_first50_campaign_router,   prefix="/api/aurem-dev")  # 2026-02-12 · First-50 drip admin
 app.include_router(admin_vanguard_router, prefix="/api/aurem-dev")  # Iter 212m-42 vanguard config
 app.include_router(admin_bin_router,      prefix="/api/aurem-dev")  # Iter 212m-171 admin panel rebuild
 app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-55 1-click vuln scanner

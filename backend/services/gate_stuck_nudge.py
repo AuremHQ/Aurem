@@ -197,7 +197,7 @@ async def _finalize_send(db, doc_id, sent_ok: bool, error: str | None) -> None:
 
 
 async def render_text(db, user: dict, *, preview: bool = False) -> str:
-    from services.first50_campaign import unsub_url
+    from services.email_link_tokens import unsub_url
     from services.funnel_nudge_cron import magic_click_url
     first = _first_name(user)
     cta = await magic_click_url(db, user.get("user_id", ""), user.get("email", ""), CAMPAIGN, preview=preview)
@@ -211,7 +211,7 @@ async def render_text(db, user: dict, *, preview: bool = False) -> str:
 
 
 async def render_html(db, user: dict, *, preview: bool = False) -> str:
-    from services.first50_campaign import unsub_url
+    from services.email_link_tokens import unsub_url
     from services.funnel_nudge_cron import magic_click_url
     first = _first_name(user)
     body_html = BODY.replace("\n\n", "<br><br>")
@@ -270,7 +270,7 @@ async def send_gate_stuck_nudge(user: dict, *, dry_run: bool = False) -> dict:
 
 
 async def run_gate_stuck_nudge_batch(db, *, dry_run: bool = False) -> dict:
-    from services.first50_campaign import is_unsubscribed
+    from services.email_link_tokens import is_unsubscribed
 
     summary = {"ok": True, "dry_run": bool(dry_run), "sent": 0, "skipped": 0,
                "failed": 0, "recipients": [], "errors": [], "deferred_to_next_run": 0}

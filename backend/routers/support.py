@@ -35,7 +35,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
-from services.first50_campaign import support_token
+from services.email_link_tokens import support_token
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 
 logger = logging.getLogger(__name__)

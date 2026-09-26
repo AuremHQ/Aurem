@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from cto_services.db import get_db
-from services.first50_campaign import unsub_token
+from services.email_link_tokens import unsub_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Email unsubscribe"])
@@ -41,7 +41,7 @@ async def unsubscribe(t: str = "", e: str = "",
             {"$setOnInsert": {
                 "email":            email,
                 "unsubscribed_at":  datetime.now(timezone.utc),
-                "source":           "first50_drip_footer",
+                "source":           "email_footer_link",
                 "ip":               ip,
             }},
             upsert=True,

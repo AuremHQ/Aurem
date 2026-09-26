@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import Shell from "../components/Shell";
 import PricingCards from "../components/PricingCards";
+import MarketingNav from "../components/marketing/MarketingNav";
 import { api, getToken } from "../lib/api";
 
 export default function Pricing() {
@@ -30,6 +31,7 @@ export default function Pricing() {
 
   return (
     <Shell chromeless>
+      <MarketingNav />
       <div
         data-testid="pricing-page"
         style={{ maxWidth: 900, margin: "0 auto", padding: "48px 24px" }}
