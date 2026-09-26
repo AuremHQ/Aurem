@@ -1,6 +1,48 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-26. The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`. Historical claims there are not fresh production verification.
+Last updated: 2026-09-26 (Phase 1/2/3 round below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`. Historical claims there are not fresh production verification.
+
+## Latest round (2026-09-26) — Phase 1 (Team RBAC), Phase 2 (Developer Handbook), Phase 3 (/ora PIN fix + codebase context)
+
+User request: three production-safe phases, real tests only (no mocks/fake data), exact pass/fail counts, live `build_hash` confirmation. Preview `build_hash` throughout this round: **`4d4a9a8dce12`** (unchanged — these are hot-reloaded source edits on top of the existing checkpoint, not a new deploy).
+
+### Phase 1 — Team Roles & Permissions (RBAC)
+- **New module `backend/services/team_permissions.py`** — the single reusable gate. 13 resources: `dashboard, projects, repo_connect, loop, deploy, domain, integrations, automations, reports, billing, settings, support, team_management`. 4 access levels: `none/read/write/read_write`. Role presets: `admin` (full), `editor` (full except team_management), `viewer` (read-only, no team_management). Owner is never a `team_members` row — can't be demoted/revoked by construction. Two call patterns: `require_permission(resource, level)(authorization)` for new routes, `check_permission(user, resource, level, db=db)` for existing routes that already resolved `user`/`db` (reuses the router's own mockable `db`, avoiding a second independent DB resolution — this was a real bug found and fixed mid-round, see below).
+- **New router `backend/routers/team_management.py`** (`/api/aurem-dev/team/*`): `GET /resources`, `GET /me`, `GET /members`, `POST /invite`, `PUT /members/{id}/permissions`, `POST /members/{id}/revoke`, `POST /members/{id}/resend-invite`, `GET /invite/{token}` (public), `POST /accept-invite` (public). Every mutating route is gated `team_management:write`; every permission change writes an audit row (`permission_audit_log`).
+- **Real endpoints gated this round** (exact resource:level, verified from source):
+  - `POST /api/aurem-dev/cto/projects/add` → `projects:write`; `GET /api/aurem-dev/cto/projects/list` → `projects:read`
+  - `POST /api/aurem-dev/loop/start` → `loop:write`; `GET /api/aurem-dev/loop/active` → `loop:read`
+  - `GET /api/aurem-dev/deploy/config` → `deploy:read`; `POST /api/aurem-dev/deploy/config` → `deploy:write`
+  - `GET /api/aurem-dev/domain/config` → `domain:read`; `POST /api/aurem-dev/domain/config` → `domain:write`
+  - `POST /api/aurem-dev/automations/create` → `automations:write`; `GET /api/aurem-dev/automations/list` → `automations:read`
+  - `POST /api/aurem-dev/support/tickets` → `support:write`; `GET /api/aurem-dev/support/tickets` → `support:read`
+  - `GET /api/aurem-dev/auth/tokens` → `billing:read`; `GET /api/aurem-dev/usage/me` → `reports:read`; `GET /api/aurem-dev/vault/audit-log` → `settings:read`; `GET /api/aurem-dev/mcp/install-links` → `integrations:read`
+  - `POST /api/aurem-dev/github/app/claim` → `repo_connect:write`; `GET /api/aurem-dev/github/app/status` → `repo_connect:read`
+  - Not yet retrofitted (out of scope this round — flagged for next pass): remaining github_app.py sub-routes, remaining mcp.py routes, ship/preview routers.
+- **Frontend**: `TeamManagementPanel.jsx` (invite/matrix-edit/revoke/resend UI) + new `Settings.jsx` "Team" tab (owner/admin only). Public `AcceptInvite.jsx` page.
+- **2 real bugs found by `testing_agent_v3_fork` + fixed + re-verified live in a real browser (not just curl):**
+  1. Sidebar nav item was added to the legacy `Shell.jsx` (no longer rendered — real app uses `RailShell.jsx`). Fixed: added `Team` entry (testid `nav-team`) to `RailShell.jsx`'s `SETTINGS_ITEMS`, gated on `GET /team/me`'s `team_management !== 'none'` (fail-closed while loading). **Verified live**: signed up a fresh owner, clicked the real Settings rail icon, `Team` item rendered.
+  2. `/team/accept-invite` returned a static "404 · Page not found" page instead of the SPA — root cause: `frontend/vite-plugins/aurem-prod-fixes.mjs` has a `KNOWN_PREFIXES` allow-list (mirrored in `frontend/Dockerfile`'s nginx regex) that decides which top-level path prefixes get SPA-fallback vs a real 404 for SEO; `team` wasn't in it. Fixed: added `"team"` to both lists. **Verified live** via curl (`200`, was `404`) and a real headless-browser navigation to `/team/accept-invite?token=...` rendering the actual `AcceptInvite.jsx` component.
+- **Regression found and fixed mid-round:** the first `check_permission` implementation independently re-resolved `db` inside `team_permissions.py`, breaking every pre-existing router test that supplies a fake/mocked `db` fixture — caused `17 failed, 98 passed` at worst. Fixed by threading each router's own `db` into `check_permission(..., db=db)`. Final state: **154 passed** on that same previously-failing battery.
+- **Real test evidence (final, this session, no mocks on the RBAC logic itself):**
+  - `backend/tests/test_phase1_team_rbac_live_http.py` + `test_phase1_team_permissions_unit.py`: **14 + 6 = 20 passed** (real HTTP against the running app + real Mongo).
+  - Targeted blast-radius regression (every test file touching a router this round modified — 27 files): **445 passed, 8 failed**. All 8 failures independently root-caused and confirmed **pre-existing and unrelated** (empty `git diff` on every file involved; failures are stale assertions against a PAT-auth flow removed by a prior "2026-06 founder directive — PAT no longer supported, GitHub App only", and a stale `TabBar.jsx` source-pattern test) — not caused by this round.
+  - Full frontend suite: **834 passed, 13 failed** — identical 13 pre-existing/unrelated failures before and after this round's `RailShell.jsx`/`aurem-prod-fixes.mjs` changes (confirmed no new regressions).
+  - `testing_agent_v3_fork` live E2E (report `test_reports/iteration_394.json`): invite → edit permission matrix (persisted on reload) → revoke, full owner UI flow passes end-to-end.
+- **Not verified this round:** a real Viewer-role user's *raw HTTP* 403 on a write call wasn't captured as a standalone transcript in this exact session (the underlying `_enforce()` unit path IS covered by `test_phase1_team_permissions_unit.py`, and the UI-driven invite/matrix-edit/revoke flow passed via the testing agent) — real invite-email delivery/outbound-provider behavior is unverified (email service module added, not confirmed against a live inbox).
+
+### Phase 2 — Developer Handbook
+- Created `/app/DEVELOPER_HANDBOOK.md` (324 lines, 11 `##` sections incl. table of contents). Every factual claim (file paths, `orchestrator.py`, `worker_git.py`, `TaskProgressCard.jsx`, Redis rate-limit fallback, Sentry/boto3 in `requirements.txt`) individually re-verified against the live source tree, not written from memory.
+- **Both Mermaid diagrams validated with Mermaid's own real parser** (Node + `mermaid` + `jsdom`, not a manual eyeball check): `ALL_MERMAID_VALID`.
+
+### Phase 3 — `/ora` PIN gate fix + ORA codebase context
+- **Root cause of the PIN bypass:** a visitor who already held a token from a *regular* dashboard login was skipping the PIN pad entirely on `/ora` (`OraDirect.jsx`/`App.jsx` treated "has any valid session" as "may see ORA", when `/ora` is meant to be a separate PIN-only surface regardless of dashboard login state).
+- **Fix:** `/ora` and `/ora/*` now always show the PIN pad first; an existing dashboard session no longer bypasses it. A session with no personal PIN set yet is routed to "set a PIN first", never left unprotected.
+- **Real tests** — `frontend/src/pages/__tests__/OraDirect.pinGate.phase3.test.jsx`: **5/5 passed** — (1) unauthenticated visitor sees the PIN pad, (2) wrong PIN rejected + pad stays up, (3) correct PIN unlocks, (4) the exact bypass this fix closes (logged-in dashboard session still gets the PIN pad), (5) session with no personal PIN yet is prompted to set one first.
+- **ORA codebase context / sync mechanism (verified from source, `services/ora_chat_v2/tools.py` + `services/ora_chat/codebase_index.py`):** ORA's v2 engine now has 4 read-only tools — `get_repo_tree`, `find_source_files`, `read_source_file`, `search_code_defs` — wired to the existing `codebase_index` module, which reads straight off disk (`/app/backend`, `/app/frontend/src`) with a 15-minute in-memory cache that is **force-refreshed on every tool call** (`_ensure_fresh()`). There is no separate snapshot to go stale — ORA always sees whatever is currently checked out in this pod. `backend/tests/test_phase3_3_ora_codebase_tools.py`: **7/7 passed** (real disk reads, not mocked).
+
+### Prior task (still open, unaffected by this round) — Issue 3 independent verification
+The section immediately below (unchanged) remains the standing P0 from before this round — this round did not touch `scope_resume.py`/chat handoff.
 
 ## Current task — Issue 3 implementation; PAUSED FOR USER ACCEPTANCE (2026-09-26)
 

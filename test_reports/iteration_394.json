@@ -1,0 +1,42 @@
+{
+  "summary": "Frontend E2E test of Phase 1 (Team RBAC UI), Phase 3 (/ora PIN regression). 7/9 test scenarios PASS. TWO CRITICAL BUGS found: (1) /team/accept-invite/* route returns server-side 404 HTML page (SPA fallback missing at ingress) — invitees CANNOT reach the accept-invite page at all; (2) the required 'nav-team' sidebar entry is not present in the live sidebar (RailShell) — owners have no in-app navigation path to the Team panel from the sidebar. All ORA PIN gate regression scenarios (the most critical fix) work correctly. Team invite → edit permission matrix (persisted on reload) → revoke flow works end-to-end for the owner logged in via UI.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /team/accept-invite?token=... (frontend route, not API)",
+        "issue": "Server returns a hardcoded '404 · Page not found — AUREM' HTML page instead of falling back to index.html so the React Router can render AcceptInvite.jsx. curl -o - -w '%{http_code}' https://<host>/team/accept-invite?token=abc → HTTP 404 with static 'Page not found' HTML. The route IS declared in App.jsx line 385 (`<Route path='/team/accept-invite' element={<AcceptInvite />} />`) and AcceptInvite.jsx exists — but the ingress/backend catch-all for /team/* short-circuits before hitting the SPA. This makes the ENTIRE public invite-acceptance flow unreachable in production.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "nav/RailShell.jsx (live sidebar)",
+        "issue": "The 'Team' sidebar entry (data-testid='nav-team') defined in Shell.jsx does NOT render in the actual UI because pages use `<Shell chromeless>` + `<RailShell>` — RailShell has its own SHIP_ITEMS/INSIGHT_ITEMS/SETTINGS_ITEMS arrays and none of them include a Team item. Result: an owner has no sidebar link to /settings?tab=team; the Team tab is only reachable by manually editing the URL. The problem statement's Shell.jsx NAV addition was made to the LEGACY sidebar that is no longer rendered.",
+        "selector": "[data-testid=\"nav-team\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix ingress/backend SPA fallback for /team/* so /team/accept-invite?token=... serves index.html (React) instead of the static 404 page. Verify with `curl -I https://<host>/team/accept-invite?token=abc` returning 200 + HTML that loads the SPA. This is a blocker for the entire invite-acceptance flow.",
+    "Add a Team nav item to frontend/src/components/nav/RailShell.jsx (likely under SETTINGS_ITEMS or as a top-level group) with data-testid='nav-team' pointing to /settings?tab=team, and gate its visibility on `permissions.team_management !== 'none'` (fetch /team/me the same way Shell.jsx already does). Without this, owners have no in-app path to the Team panel."
+  ],
+  "critical_code_review_comments": [
+    "The Phase 1 UI wiring was added to the legacy Shell.jsx sidebar which is no longer rendered on real routes (all pages use <Shell chromeless> + <RailShell>). Any future nav-visibility logic and any new nav entries must be added to RailShell.jsx, not Shell.jsx.",
+    "The /team/accept-invite route being served as a 404 by the edge/ingress is a SPA-fallback misconfig. It affects any new top-level path added under a route prefix the ingress hasn't been told about. Consider a wildcard SPA fallback for all non-/api paths."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "78% (7/9 scenarios)"},
+  "test_credentials": "Fresh test accounts signed up during run: testowner-<rand>@example.com / TestPass123! (multiple; open signup).",
+  "seed_data_creation": "3 fresh owner accounts created via /signup + 1 pending 'viewer' team_members row per account (revoked at end of run). No cleanup performed on DB; team_members and permission_audit_log will have leftover TEST_ rows.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PASSED scenarios (do not need to re-run unless code changes): (1) anonymous /ora shows PIN pad, no redirect to /login; (2) logged-into-dashboard user visiting /ora STILL sees the PIN pad (the key regression fix — verified working); (3) wrong PIN shows pin-error and keeps PIN pad up; (4) fresh signup → /settings?tab=team → team-management-panel loads for owner; (5) invite viewer via form → row appears with team-status-pending badge; (6) expand matrix, change domain → write, reload page — value persisted as 'write' after re-expanding; (7) revoke button → confirm dialog auto-accepted → row shows team-status-revoked and revoke button disappears; (8) /dashboard, /settings, /projects still load fine for logged-in user (no regression); (9) team-panel-loading transient state observed and resolves quickly. FAILED: nav-team not in DOM (root cause: Shell.jsx sidebar is no longer rendered — RailShell is; RailShell has no Team item); /team/accept-invite server-side 404 (ingress SPA fallback missing).  Note: hit HTTP 429 rate-limit errors when navigating too quickly between authenticated pages — throttle at ~5s between navigations if re-testing.",
+  "rca of the issue": "Bug 1 (nav-team missing): the review request assumed Shell.jsx's NAV array drives the sidebar, but real pages render Shell with `chromeless` and then render `<RailShell>` inside; RailShell defines its own item arrays (SHIP_ITEMS, INSIGHT_ITEMS, SETTINGS_ITEMS in /app/frontend/src/components/nav/RailShell.jsx) which do not include any Team entry. Fix: add a Team entry to the appropriate RailShell item array plus (optionally) the permission-based filter analogous to Shell.jsx lines 124-133. Bug 2 (accept-invite 404): reproduced via `curl -s -o - -w '%{http_code}' https://bin-context-pat.preview.emergentagent.com/team/accept-invite?token=abc` → 404 + static 'Page not found' HTML (not the Vite index.html). App.jsx has the route declared correctly at line 385, and AcceptInvite.jsx exists. Root cause is upstream from React (ingress/backend static-serving layer is intercepting /team/* before SPA fallback). Fix: adjust the edge routing to fall through to index.html for /team/* (or, more generally, for any non-/api path)."
+}

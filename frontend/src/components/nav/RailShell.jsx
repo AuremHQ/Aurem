@@ -52,6 +52,10 @@ const SETTINGS_ITEMS = [
   { to: "/settings?tab=integrations", label: "Integrations",    icon: Plug,     testid: "rail-item-integrations" },
   { to: "/settings?tab=vault",        label: "Vault",           icon: Lock,     testid: "rail-item-vault" },
   { to: "/integrations",              label: "IDE setup (MCP)", icon: Plug,     testid: "rail-item-mcp" },
+  // 2026-02 · Phase 1 (Team RBAC) — filtered out below unless the
+  // caller is the owner or has write/read_write on team_management
+  // (see the /team/me fetch + SETTINGS_ITEMS filtering near renderLinks).
+  { to: "/settings?tab=team",         label: "Team",            icon: UsersIcon, testid: "nav-team", requiresTeamManagement: true },
 ];
 import { findAdminNavItem } from "../../lib/adminNav";
 
@@ -94,6 +98,11 @@ export default function RailShell({
   const [repos, setRepos] = useState(reposProp || []);
   const [sessions, setSessions] = useState([]);
   const [isFounder, setIsFounder] = useState(false);
+  // 2026-02 · Phase 1 (Team RBAC) — controls whether the "Team" item
+  // under Settings is shown at all. `null` = not resolved yet (fail
+  // CLOSED, i.e. hidden, until we know — this is a sensitive area
+  // unlike the other nav items which fail open).
+  const [canManageTeam, setCanManageTeam] = useState(null);
   const wrapRef = useRef(null);
 
   // Feb 2026 · Auto-hide rail on chat typing.
@@ -208,6 +217,22 @@ export default function RailShell({
         setChipV2Enabled(r.data?.workcard_chip_v2_enabled === true);
       })
       .catch(() => {});
+    return () => { dead = true; };
+  }, []);
+
+  // 2026-02 · Phase 1 (Team RBAC) — resolve whether this caller can
+  // manage the team at all before ever showing the nav item for it.
+  useEffect(() => {
+    if (!getToken()) return;
+    let dead = false;
+    api.get("/team/me")
+      .then((r) => {
+        if (dead) return;
+        const perms = r.data?.permissions || {};
+        setCanManageTeam(r.data?.is_owner === true ||
+          ["write", "read_write"].includes(perms.team_management));
+      })
+      .catch(() => { if (!dead) setCanManageTeam(false); });
     return () => { dead = true; };
   }, []);
 
@@ -452,7 +477,7 @@ export default function RailShell({
     if (id === "chat")     return renderChatFlyout();
     if (id === "ship")     return <>{flyoutHeader("Ship")}{renderLinks(SHIP_ITEMS)}</>;
     if (id === "insights") return <>{flyoutHeader("Insights")}{renderLinks(INSIGHT_ITEMS)}</>;
-    if (id === "settings") return <>{flyoutHeader("Settings")}{renderLinks(SETTINGS_ITEMS)}</>;
+    if (id === "settings") return <>{flyoutHeader("Settings")}{renderLinks(SETTINGS_ITEMS.filter((it) => !it.requiresTeamManagement || canManageTeam === true))}</>;
     if (id === "admin")    return <>{flyoutHeader("Admin · founder")}{renderLinks(ADMIN_ITEMS)}</>;
     return null;
   };
