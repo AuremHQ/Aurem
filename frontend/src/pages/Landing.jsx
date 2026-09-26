@@ -613,7 +613,7 @@ const FAQS = [
     a: "You approve first. ORA runs a 5-phase Loop — Plan → Execute → Verify → Scan → Ship — and Ship requires your manual click. Nothing lands in your repo until you press Ship, and every ship generates a real commit (not a force-push) that can be rolled back in one click." },
 
   { q: "How much does ORA cost?",
-    a: "ORA starts at $9/month flat, and there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500 per month. The first 50 verified signups get 30 days of Pro free, no card required — after 30 days, automatically moves to the free tier. Upgrade to $9/month anytime if you want to keep Pro features." },
+    a: "ORA starts at $9/month flat, and there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500 per month." },
 
   { q: "What happens if ORA can't verify a change?",
     a: "ORA self-heals up to 2 times, then fails cleanly — no infinite loop. When the verify step (ruff / eslint / type checks) fails, ORA re-writes the file with the actual lint errors as context; if 2 attempts still fail, the loop terminates and shows you the exact ruff/eslint errors and which files failed so you can either fix manually or send a more specific follow-up prompt." },

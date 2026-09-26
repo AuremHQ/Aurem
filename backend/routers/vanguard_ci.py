@@ -40,6 +40,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.team_permissions import check_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vanguard", tags=["Vanguard CI"])
@@ -200,18 +201,24 @@ async def list_ci_findings(
     per commit per scanner) for the calling user's repos.  Always
     uses the user JWT, never the CI token."""
     user = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2) — was scoped to the caller's own
+    # user_id, so a team member with real "projects" access saw an
+    # empty CI-findings list (their own user_id owns no repos — the
+    # account owner's does) instead of the shared team's real runs.
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    effective_user_id = ctx["effective_account_id"]
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
 
-    # Constrain to repos the caller actually owns — pulled from their
-    # cto_projects rows.  This is a soft auth: if you have the repo
-    # name and a valid JWT we let you see it, but we don't expose
-    # cross-tenant findings.
+    # Constrain to repos the caller's account actually owns — pulled
+    # from their cto_projects rows.  This is a soft auth: if you have
+    # the repo name and a valid JWT we let you see it, but we don't
+    # expose cross-tenant findings.
     own_repos: set[str] = set()
     try:
         async for p in db.cto_projects.find(
-            {"user_id": user["user_id"]},
+            {"user_id": effective_user_id},
             {"_id": 0, "github_owner": 1, "github_repo": 1},
         ):
             o = (p.get("github_owner") or "").strip()

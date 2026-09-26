@@ -48,7 +48,10 @@ describe("ChatPanel.send() — Iter 388-af routing", () => {
 
   it("dispatches chat-session-started BEFORE the LOOP-mode early return", () => {
     const dispatchIdx = src.indexOf('dispatchEvent(new CustomEvent("aurem:chat-session-started"');
-    const loopIdx     = src.indexOf('if (execMode === EXEC_MODES.LOOP && !opts.loopPhase && !opts.forceChat)');
+    // `!isScopeResume &&` was legitimately prefixed onto this
+    // condition later (scope-confirm resends skip the loop-kickoff
+    // branch too) — same routing contract, updated guard clause.
+    const loopIdx     = src.indexOf('if (!isScopeResume && execMode === EXEC_MODES.LOOP && !opts.loopPhase && !opts.forceChat)');
     expect(dispatchIdx).toBeGreaterThan(0);
     expect(loopIdx).toBeGreaterThan(0);
     expect(dispatchIdx).toBeLessThan(loopIdx);

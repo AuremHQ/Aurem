@@ -22,6 +22,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev
+from services.team_permissions import check_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diagram", tags=["Diagram"])
@@ -126,13 +127,18 @@ async def generate_diagram(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     user = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2) — the LLM-budget checks below
+    # were keyed on the caller's own login instead of the shared
+    # account quota every other feature draws from.
+    ctx = await check_permission(user, "loop", "write")
+    user_id = ctx["effective_account_id"]
     # Iter 364 · Phase 3 — token hard-stop (silent-burn hole close).
     # A single diagram call can run 2 LLM invocations (initial + strict
     # retry). Enforce the budget BEFORE dispatch so an exhausted wallet
     # can't drain $ here.
     from services.usage import assert_has_budget, assert_has_task_budget
-    await assert_has_budget(user["user_id"])
-    await assert_has_task_budget(user["user_id"])
+    await assert_has_budget(user_id)
+    await assert_has_task_budget(user_id)
     diagram_type = detect_type(body.prompt, body.diagram_type)
     sys_msg = (
         "You are ORA, an AI system architect.  Your job is to produce "
@@ -149,7 +155,7 @@ async def generate_diagram(
             user=prompt_text,
             max_tokens=800,
             mode="code",
-            user_id=user.get("user_id"),
+            user_id=user_id,
             review_mode="pro",
         )
         return _strip_fences((meta or {}).get("content", ""))

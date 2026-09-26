@@ -54,6 +54,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/findings", tags=["Findings Backlog"])
 logger = logging.getLogger(__name__)
@@ -112,7 +113,12 @@ async def backlog_list(
     authorization: Optional[str] = Header(None),
 ):
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # login, so a team member with real "projects" access to this
+    # project got a false 404/empty backlog instead of the account's
+    # real findings.
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     await _assert_owns_project(db, user_id, project_id)
 
@@ -299,7 +305,8 @@ async def starter_suggestions(
     Prompt Starter panel. Real findings first, generic ones pad the
     rest so the frontend always has a pool to rotate/swap from."""
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     await _assert_owns_project(db, user_id, project_id)
 
@@ -350,7 +357,8 @@ class ExposeBody(BaseModel):
 async def expose_batch(body: ExposeBody,
                        authorization: Optional[str] = Header(None)):
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     await _assert_owns_project(db, user_id, body.project_id)
 
@@ -415,7 +423,8 @@ class DismissBatchBody(BaseModel):
 async def dismiss_batch(body: DismissBatchBody,
                         authorization: Optional[str] = Header(None)):
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     await _assert_owns_project(db, user_id, body.project_id)
 
@@ -458,7 +467,8 @@ class SnoozeBody(BaseModel):
 async def snooze_one(body: SnoozeBody,
                      authorization: Optional[str] = Header(None)):
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     await _assert_owns_project(db, user_id, body.project_id)
 
@@ -497,7 +507,8 @@ class ResolveBody(BaseModel):
 async def resolve_one(body: ResolveBody,
                       authorization: Optional[str] = Header(None)):
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     await _assert_owns_project(db, user_id, body.project_id)
 

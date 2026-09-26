@@ -125,6 +125,20 @@ async def resolve_context_for_user(user: dict, db=None) -> dict:
         )
     except (AttributeError, TypeError):
         member_row = None
+    # 2026-09-26 P0 RBAC fix (Task 2 follow-up) — a bare unittest.mock
+    # `AsyncMock()` db (widely used across this codebase's existing
+    # router tests, predating the team feature) does NOT raise on
+    # `db.team_members.find_one(...)` like the try/except above
+    # anticipated — it silently returns another (truthy) AsyncMock
+    # instance instead of `None`. Without this check that fake object
+    # was treated as a REAL active team-member row, crashing every
+    # such test deep inside `_enforce` (`ctx["permissions"]` ended up
+    # being an unawaited coroutine, not a dict). A real Motor find_one
+    # only ever returns `None` or an actual `dict`, so treating
+    # anything else as "no row" is safe for production and restores
+    # the pre-existing owner-only fallback these tests already rely on.
+    if member_row is not None and not isinstance(member_row, dict):
+        member_row = None
     if member_row:
         return {
             "user":                user,

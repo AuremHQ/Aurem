@@ -38,6 +38,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.team_permissions import check_permission
 
 logger = logging.getLogger("aurem-dev.repo_status")
 router = APIRouter(prefix="/cto/projects", tags=["Repo Status"])
@@ -126,8 +127,13 @@ async def connection_status(authorization: str = Header(None)) -> dict:
     A tiny TTL cache (_CACHE_TTL_S = 8 s) coalesces duplicate polls
     while the user is bouncing between routes.
     """
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # user_id, so a team member with real "projects" access got back
+    # an empty sidebar (their own user_id owns no projects — the
+    # account owner's does) instead of a 403.
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
@@ -289,6 +295,8 @@ async def cleanup_summary(authorization: str = Header(None)) -> dict:
     "broken" set is always fresh and consistent with the red dots.
     """
     user = await current_dev(authorization)
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    effective_user_id = ctx["effective_account_id"]
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
@@ -306,7 +314,7 @@ async def cleanup_summary(authorization: str = Header(None)) -> dict:
     # Hydrate label + branch from the project rows for the banner UI.
     pids = [s["project_id"] for s in broken_ids]
     rows = await db.cto_projects.find(
-        {"user_id": user["user_id"], "project_id": {"$in": pids}},
+        {"user_id": effective_user_id, "project_id": {"$in": pids}},
         {"_id": 0, "project_id": 1, "name": 1, "label": 1,
          "github_owner": 1, "github_repo": 1, "branch": 1},
     ).to_list(100)
@@ -341,8 +349,14 @@ async def cleanup_delete(
     Returns count of rows deleted + an audit_id stamped into the
     `repo_cleanup_audit` collection for traceability.
     """
+    # 2026-09-26 P0 RBAC fix (Task 2) — bulk-delete is destructive;
+    # a "viewer" (read-only) team member must not be able to delete
+    # the account's projects at all, and a "loop"/write member's
+    # delete must target the account's projects, not their own
+    # empty personal set.
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")

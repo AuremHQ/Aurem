@@ -42,6 +42,7 @@ from fastapi.responses import JSONResponse
 from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
 from services.feature_flags import is_enabled
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/codebase-health", tags=["Codebase Health"])
 
@@ -104,7 +105,16 @@ async def scan(
     # change and silently 403'd every real paying customer who
     # clicked "Review findings →" from the chat reminder banner.
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # login for the project-ownership check, rate limit, and
+    # fixed-findings map, so a team member with real "projects"
+    # access got a false 404/empty state instead of the account's
+    # real scan data.
+    ctx = await check_permission(user, "projects", "write", db=db)
+    user_id = ctx["effective_account_id"]
     project_id = (body or {}).get("project_id")
     categories = (body or {}).get("categories") or list(SCANNERS.keys())
     categories = [c for c in categories if c in SCANNERS]
@@ -112,10 +122,6 @@ async def scan(
         raise HTTPException(400, "project_id required")
     if not categories:
         raise HTTPException(400, "At least one category required")
-
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "DB not connected")
 
     # Iter 212m-75 — sliding-window rate limit (10 scans / hour / user / category).
     # Iter 212m-110 — admins, founders and is_unlimited accounts are
@@ -478,7 +484,8 @@ async def last_scan(
     # query below, so relaxing to current_dev can't leak another
     # user's scan data.
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     # Build Prompt v4 · Phase B — computed once, included on every branch
     # below so the frontend always gets a consistent boolean regardless
     # of which return path fires.
@@ -608,7 +615,6 @@ async def request_fix(
     # need Pro+), 1 task per successful fix. No token pricing.
     from services.scan_fix_quota import assert_can_fix, record_scan_fixes
     user = await current_dev(authorization)
-    user_id = user["user_id"]
     project_id  = (body or {}).get("project_id")
     finding_id  = (body or {}).get("finding_id") or ""
     title       = (body or {}).get("title") or "security_issue"
@@ -621,6 +627,13 @@ async def request_fix(
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # login for project lookup + shared task quota, so a team member
+    # with real "projects" write access either got a false 404 or
+    # drew from their own personal quota instead of the account's.
+    ctx = await check_permission(user, "projects", "write", db=db)
+    user_id = ctx["effective_account_id"]
+    effective_user = {**user, "user_id": user_id}
     is_unlimited_user = bool(
         user.get("is_admin")
         or user.get("is_unlimited")
@@ -628,7 +641,7 @@ async def request_fix(
     )
     # Gate BEFORE any work: tool access + 1 task remaining. Raises
     # 403 fix_not_available_on_tier / 402 insufficient_tasks.
-    await assert_can_fix(user, "health-scan", count=1)
+    await assert_can_fix(effective_user, "health-scan", count=1)
     tokens_cost = 0
     me = await db.dev_users.find_one(
         {"user_id": user_id}, {"_id": 0, "tokens_remaining": 1},
@@ -658,7 +671,7 @@ async def request_fix(
     _t_start = _t.time()
     try:
         res = await apply_finding_fix(
-            db=db, user=user, project_id=project_id, finding=finding_payload,
+            db=db, user=effective_user, project_id=project_id, finding=finding_payload,
         )
     except Exception as e:
         logger.exception("health apply_finding_fix raised")

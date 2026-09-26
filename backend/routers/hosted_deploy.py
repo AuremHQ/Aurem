@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from cto_services.crypto import encrypt, decrypt
+from services.team_permissions import check_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/hosted-deploy", tags=["Hosted Deploy"])
@@ -78,16 +79,18 @@ async def connect(body: ConnectBody,
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
+    ctx = await check_permission(user, "deploy", "write", db=db)
+    user_id = ctx["effective_account_id"]
     _validate_hook(body.provider, body.hook_url)
     proj = await db.cto_projects.find_one(
-        {"project_id": body.project_id, "user_id": user["user_id"]},
+        {"project_id": body.project_id, "user_id": user_id},
         {"_id": 0, "project_id": 1},
     )
     if not proj:
         raise HTTPException(404, "Project not found")
     enc = encrypt(body.hook_url.strip())
     await db.cto_projects.update_one(
-        {"project_id": body.project_id, "user_id": user["user_id"]},
+        {"project_id": body.project_id, "user_id": user_id},
         {"$set": {
             "deploy_provider":     body.provider,
             "deploy_hook_enc":     enc,
@@ -104,8 +107,10 @@ async def status(project_id: str,
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
+    ctx = await check_permission(user, "deploy", "read", db=db)
+    user_id = ctx["effective_account_id"]
     proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": user["user_id"]},
+        {"project_id": project_id, "user_id": user_id},
         {"_id": 0, "deploy_provider": 1, "deploy_connected_at": 1,
          "last_deploy_at": 1, "last_deploy_status": 1,
          "last_deploy_response": 1},
@@ -149,8 +154,10 @@ async def ship(body: ShipBody,
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
+    ctx = await check_permission(user, "deploy", "write", db=db)
+    user_id = ctx["effective_account_id"]
     proj = await db.cto_projects.find_one(
-        {"project_id": body.project_id, "user_id": user["user_id"]},
+        {"project_id": body.project_id, "user_id": user_id},
         {"_id": 0, "deploy_provider": 1, "deploy_hook_enc": 1},
     )
     if not proj:
@@ -176,7 +183,7 @@ async def ship(body: ShipBody,
     except Exception as e:
         logger.exception("hosted-deploy/ship: hook POST crashed")
         await db.cto_projects.update_one(
-            {"project_id": body.project_id, "user_id": user["user_id"]},
+            {"project_id": body.project_id, "user_id": user_id},
             {"$set": {"last_deploy_at": time.time(),
                       "last_deploy_status": "error",
                       "last_deploy_response": str(e)[:300]}},
@@ -184,7 +191,7 @@ async def ship(body: ShipBody,
         raise HTTPException(502, f"Deploy provider unreachable: {e}")
 
     await db.cto_projects.update_one(
-        {"project_id": body.project_id, "user_id": user["user_id"]},
+        {"project_id": body.project_id, "user_id": user_id},
         {"$set": {"last_deploy_at": time.time(),
                   "last_deploy_status": "queued" if ok else "error",
                   "last_deploy_response": snippet}},
@@ -211,8 +218,10 @@ async def disconnect(project_id: str,
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
+    ctx = await check_permission(user, "deploy", "write", db=db)
+    user_id = ctx["effective_account_id"]
     r = await db.cto_projects.update_one(
-        {"project_id": project_id, "user_id": user["user_id"]},
+        {"project_id": project_id, "user_id": user_id},
         {"$unset": {"deploy_provider":     "",
                     "deploy_hook_enc":     "",
                     "deploy_connected_at": ""}},

@@ -316,7 +316,8 @@ function DashboardV2Body() {
 
   // 2026-09-22 — chat_opened funnel-event timing fix. ChatPanel below
   // mounts unconditionally (the gate is an overlay ON TOP of it, not a
-  // render gate — see `{showGate && <NewUserWizard asGate .../>}`), so
+  // render gate — see the `showGate` conditional JSX block near the
+  // end of this component that wraps NewUserWizard), so
   // `chat_opened` used to fire the instant a brand-new user landed on
   // /dashboard, even while the mandatory repo-connect gate was actively
   // blocking them. That made "stuck at the gate" users indistinguishable

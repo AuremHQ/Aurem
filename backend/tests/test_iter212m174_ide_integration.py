@@ -6,7 +6,6 @@ frontend /integrations page + VS Code extension migration.
 """
 from __future__ import annotations
 
-import base64
 import json
 import sys
 from pathlib import Path
@@ -86,46 +85,50 @@ def test_install_links_endpoint_registered():
 
 
 def test_install_links_endpoint_shape():
-    """Endpoint must return: endpoint, api_key, config_json, cursor,
-    vscode, claude_code_cli, instructions."""
+    """Endpoint must return: endpoint, api_key, config_json,
+    vscode_config_json, claude_code_cli, instructions.
+
+    2026-09-26 SECURITY FIX — `cursor`/`vscode` deep-link URLs used
+    to be returned here with the raw API key baked into the query
+    string, then rendered as a real `<a href>` — meaning the full key
+    sat in the page's HTML regardless of whether "Reveal" was ever
+    clicked (copyable via "Copy link address", zero interaction).
+    Removed; Cursor/VS Code setup is now manual-config-only via the
+    same masked-then-reveal ConfigBlock pattern already used
+    correctly by Claude Desktop/Claude Code CLI.
+    """
     src = (BACKEND_ROOT / "routers/mcp.py").read_text()
     for k in [
         '"endpoint":', '"api_key":', '"config_json":',
-        '"cursor":', '"vscode":', '"claude_code_cli":', '"instructions":',
+        '"vscode_config_json":', '"claude_code_cli":', '"instructions":',
     ]:
         assert k in src, f"install_links missing return key: {k}"
 
 
-def test_cursor_deeplink_scheme():
-    """The Cursor URL scheme must be cursor://anysphere.cursor-deeplink."""
+def test_install_links_never_returns_a_raw_key_deeplink():
+    """Regression guard — the cursor://…/vscode:mcp/install deep-link
+    schemes (which embedded the unmasked API key directly in a URL)
+    must never be reintroduced into this endpoint. Checks for the
+    actual code constructs, not just a substring, since the docstring
+    above legitimately mentions both scheme names while explaining
+    the fix."""
     src = (BACKEND_ROOT / "routers/mcp.py").read_text()
-    assert "cursor://anysphere.cursor-deeplink/mcp/install" in src
+    assert "cursor_link " not in src
+    assert "vscode_link " not in src
+    assert '"cursor":          cursor_link' not in src
+    assert '"vscode":          vscode_link' not in src
 
 
-def test_vscode_deeplink_scheme():
+def test_vscode_config_json_uses_servers_not_mcpservers_key():
+    """VS Code's real MCP schema top-level key is `servers`, not
+    `mcpServers` (that's the Cursor/Claude Desktop/Claude Code
+    convention) — confirmed against VS Code's own docs, 2026-09.
+    Distinct from `config_json` (used by Cursor/Claude Desktop)."""
     src = (BACKEND_ROOT / "routers/mcp.py").read_text()
-    assert "vscode:mcp/install?" in src
-
-
-def test_cursor_base64_config_shape_is_valid_json():
-    """Simulate building the Cursor config and verify base64 roundtrip
-    yields valid JSON with {type: 'http', url: ..., headers: ...}."""
-    endpoint = "https://auremcto.com/api/aurem-dev/mcp"
-    api_key = "sk-aurem-testkey_xyz"
-    cursor_config = {
-        "type":    "http",
-        "url":     endpoint,
-        "headers": {"Authorization": f"Bearer {api_key}"},
-    }
-    b64 = base64.urlsafe_b64encode(
-        json.dumps(cursor_config, separators=(",", ":")).encode()
-    ).decode().rstrip("=")
-    # Pad and decode
-    pad = "=" * (-len(b64) % 4)
-    decoded = json.loads(base64.urlsafe_b64decode(b64 + pad))
-    assert decoded["type"] == "http"
-    assert decoded["url"] == endpoint
-    assert decoded["headers"]["Authorization"] == f"Bearer {api_key}"
+    idx = src.find("vscode_config_json = {")
+    assert idx != -1, "vscode_config_json block not found"
+    block = src[idx: idx + 300]
+    assert '"servers": {' in block
 
 
 def test_install_links_auto_mints_api_key_when_none_exists():
@@ -180,7 +183,11 @@ def test_shell_sidebar_has_integrations_link():
 
 
 def test_landing_nav_has_integrations_link():
-    src = (FRONTEND_ROOT / "pages/Landing.jsx").read_text()
+    """2026-09-26 — Landing.jsx's nav was extracted into the shared
+    MarketingNav.jsx component (used by every public page); the
+    Integrations link now lives there instead of inline in
+    Landing.jsx."""
+    src = (FRONTEND_ROOT / "components/marketing/MarketingNav.jsx").read_text()
     assert 'to="/integrations"' in src
     assert 'data-testid="nav-integrations"' in src
 

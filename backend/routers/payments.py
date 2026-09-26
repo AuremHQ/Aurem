@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from cto_services.auth import current_dev
 from cto_services.db import require_db
 from services.subscription_tiers import TIER_LIMITS, _coerce
+from services.team_permissions import check_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Payments"])
@@ -400,9 +401,25 @@ async def create_checkout(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     user = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2) — this endpoint changes the
+    # ACCOUNT's real Stripe subscription/plan. It was reachable by
+    # ANY authenticated team member with zero permission check —
+    # a "viewer" role could upgrade/downgrade the whole team's
+    # billing. Now requires real "billing" write access, and the
+    # resulting subscription is always attributed to the account
+    # owner (effective_account_id), never the individual caller.
+    db = require_db()
+    ctx = await check_permission(user, "billing", "write", db=db)
+    owner_id = ctx["effective_account_id"]
+    billing_user = user if ctx["is_owner"] else {
+        **user, "user_id": owner_id,
+        "email": (await db.dev_users.find_one(
+            {"user_id": owner_id}, {"_id": 0, "email": 1},
+        ) or {}).get("email", user.get("email")),
+    }
     plan = (body.plan or body.tier or "").strip().lower()
     origin = (body.origin_url or "").rstrip("/") or _frontend_url() or str(http_request.base_url).rstrip("/")
-    return await create_checkout_session(user, plan, origin)
+    return await create_checkout_session(billing_user, plan, origin)
 
 
 # ── /payments/status — frontend poll after the redirect ─────────────────
@@ -414,8 +431,10 @@ async def payment_status(
     _require_stripe()
     user = await current_dev(authorization)
     db = require_db()
+    ctx = await check_permission(user, "billing", "read", db=db)
+    owner_id = ctx["effective_account_id"]
     pay = await db.cto_payments.find_one({"session_id": session_id})
-    if not pay or pay.get("user_id") != user.get("user_id"):
+    if not pay or pay.get("user_id") != owner_id:
         raise HTTPException(404, "Unknown session")
 
     try:
@@ -789,8 +808,9 @@ async def stripe_webhook(request: Request) -> dict:
 async def my_plan(authorization: Optional[str] = Header(None)) -> dict:
     user = await current_dev(authorization)
     db = require_db()
+    ctx = await check_permission(user, "billing", "read", db=db)
     row = await db.dev_users.find_one(
-        {"user_id": user.get("user_id")},
+        {"user_id": ctx["effective_account_id"]},
         {"tier": 1, "stripe_sub_id": 1, "payment_failed": 1, "_id": 0},
     ) or {}
     tier_str = row.get("tier") or "free"
@@ -815,9 +835,10 @@ async def billing_portal(
     _require_stripe()
     user = await current_dev(authorization)
     db = require_db()
+    ctx = await check_permission(user, "billing", "write", db=db)
     # Iter 212m-70 — projection: only the stripe_sub_id is consumed.
     row = await db.dev_users.find_one(
-        {"user_id": user.get("user_id")},
+        {"user_id": ctx["effective_account_id"]},
         {"_id": 0, "stripe_sub_id": 1},
     )
     sub_id = (row or {}).get("stripe_sub_id")

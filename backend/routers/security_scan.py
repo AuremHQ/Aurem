@@ -43,6 +43,7 @@ from fastapi import APIRouter, HTTPException, Header
 
 from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
+from services.team_permissions import check_permission
 # Iter 212m-66 — two-round deep scanner.
 from services.vanguard_scanner import run_two_round_scan
 
@@ -839,7 +840,6 @@ async def apply_security_fix(
     Starter tier up, 1 task per successful fix, no token pricing."""
     from services.scan_fix_quota import assert_can_fix, record_scan_fixes
     me = await current_dev(authorization)
-    user_id   = me["user_id"]
     project_id = (body or {}).get("project_id") or ""
     finding   = (body or {}).get("finding") or {}
 
@@ -863,6 +863,13 @@ async def apply_security_fix(
     if db is None:
         raise HTTPException(503, "DB not connected")
 
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # login for project lookup + shared task quota, matching the same
+    # gap fixed in codebase_health.py's /fix.
+    ctx = await check_permission(me, "projects", "write", db=db)
+    user_id = ctx["effective_account_id"]
+    effective_me = {**me, "user_id": user_id}
+
     is_unlimited_user = bool(
         me.get("is_admin")
         or me.get("is_unlimited")
@@ -870,7 +877,7 @@ async def apply_security_fix(
     )
 
     # Gate BEFORE any work: tool access + 1 task remaining.
-    await assert_can_fix(me, "vanguard-scan", count=1)
+    await assert_can_fix(effective_me, "vanguard-scan", count=1)
 
     user_row = await db.dev_users.find_one(
         {"user_id": user_id}, {"_id": 0, "tokens_remaining": 1},
@@ -886,7 +893,7 @@ async def apply_security_fix(
     _t_start = _t.time()
     try:
         res = await apply_finding_fix(
-            db=db, user=me, project_id=project_id, finding=finding,
+            db=db, user=effective_me, project_id=project_id, finding=finding,
         )
     except Exception as e:
         logger.exception("apply_finding_fix raised")

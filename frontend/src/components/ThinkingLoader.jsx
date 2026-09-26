@@ -32,7 +32,7 @@
  *                                  // dual-stream legibility threshold)
  *   <ThinkingLoader size={36} />   // dual-particle (>= 28px, tail visible)
  */
-import { useId, useEffect, useState } from "react";
+import React, { useId, useEffect, useState } from "react";
 
 const SINGLE_PARTICLE_BELOW = 28;
 

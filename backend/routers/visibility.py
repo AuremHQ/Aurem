@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/visibility", tags=["Visibility Kit"])
 
@@ -36,9 +37,15 @@ async def get_catalog():
 @router.get("/projects/{project_id}/state")
 async def get_state(project_id: str, authorization: str = Header(None)):
     user = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2) — every handler below used
+    # `user["user_id"]` (the caller's own login) for the ownership
+    # check, so a team member with real "projects" access got a
+    # false 404 instead of the account's real visibility state.
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": user["user_id"]}, {"_id": 0},
+        {"project_id": project_id, "user_id": user_id}, {"_id": 0},
     )
     if not proj:
         raise HTTPException(404, "project_not_found_or_not_yours")
@@ -70,7 +77,7 @@ async def get_state(project_id: str, authorization: str = Header(None)):
         {"project_id": project_id}, {"_id": 0},
     )
     from services.feature_flags import is_enabled as _kit_flag_enabled
-    apply_enabled = await _kit_flag_enabled("kit_apply_enabled", user_id=user["user_id"])
+    apply_enabled = await _kit_flag_enabled("kit_apply_enabled", user_id=user_id)
     return {
         "ok": True, "score": score, "items": rows,
         "bot_policy": (policy or {}).get("training_choice", {}),
@@ -96,9 +103,11 @@ class BotPolicyBody(BaseModel):
 @router.put("/projects/{project_id}/bot-policy")
 async def set_bot_policy(project_id: str, body: BotPolicyBody, authorization: str = Header(None)):
     user = await current_dev(authorization)
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": user["user_id"]}, {"_id": 0, "project_id": 1},
+        {"project_id": project_id, "user_id": user_id}, {"_id": 0, "project_id": 1},
     )
     if not proj:
         raise HTTPException(404, "project_not_found_or_not_yours")
@@ -118,9 +127,12 @@ class ApplyBody(BaseModel):
 @router.post("/projects/{project_id}/apply")
 async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Header(None)):
     user = await current_dev(authorization)
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
+    effective_user = {**user, "user_id": user_id}
     db = get_db()
     proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": user["user_id"]}, {"_id": 0},
+        {"project_id": project_id, "user_id": user_id}, {"_id": 0},
     )
     if not proj:
         raise HTTPException(404, "project_not_found_or_not_yours")
@@ -131,7 +143,7 @@ async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Heade
     # once R9 is proven live on production (a real ship, PR->merge->Live,
     # not just the flag being on). See LOOP-STATE.md R9 carry-forward note.
     from services.feature_flags import is_enabled as _kit_flag_enabled
-    if not await _kit_flag_enabled("kit_apply_enabled", user_id=user["user_id"]):
+    if not await _kit_flag_enabled("kit_apply_enabled", user_id=user_id):
         raise HTTPException(403, {
             "error": "apply_not_yet_enabled",
             "message": "Apply available once ship-via-PR (R9) is proven live on production.",
@@ -139,9 +151,10 @@ async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Heade
 
     # 2026-08-31 — quota gate replaces the old Pro-tier paywall. Free
     # for a limited time: every tier can apply, but it still costs 1
-    # task from the SAME monthly quota chat/scan fixes use.
+    # task from the SAME monthly quota chat/scan fixes use — drawn from
+    # the effective (team-owner) account, not the caller's own login.
     from services.scan_fix_quota import assert_can_fix, record_scan_fixes
-    await assert_can_fix(user, "visibility-kit", count=1)
+    await assert_can_fix(effective_user, "visibility-kit", count=1)
 
     from services.pat_vault import get_repo_token_or_error
     token, _auth_err, _auth_detail = await get_repo_token_or_error(proj)
@@ -162,13 +175,15 @@ async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Heade
     # Deduct ONLY on a real successful PR open — never pre-deduct, and
     # never charge for a request that failed/found nothing to apply.
     if result.get("ok"):
-        await record_scan_fixes(user["user_id"], "visibility-kit", count=1)
+        await record_scan_fixes(user_id, "visibility-kit", count=1)
     return result
 
 
 @router.post("/applications/{application_id}/revert")
 async def revert_application(application_id: str, authorization: str = Header(None)):
     user = await current_dev(authorization)
+    ctx = await check_permission(user, "projects", "write", db=get_db())
+    user_id = ctx["effective_account_id"]
     db = get_db()
     from bson import ObjectId
     try:
@@ -178,7 +193,7 @@ async def revert_application(application_id: str, authorization: str = Header(No
     if not app_doc:
         raise HTTPException(404, "application_not_found")
     proj = await db.cto_projects.find_one(
-        {"project_id": app_doc["project_id"], "user_id": user["user_id"]}, {"_id": 0},
+        {"project_id": app_doc["project_id"], "user_id": user_id}, {"_id": 0},
     )
     if not proj:
         raise HTTPException(404, "project_not_found_or_not_yours")

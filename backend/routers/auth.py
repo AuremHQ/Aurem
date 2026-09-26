@@ -152,6 +152,22 @@ def _email_ci(email: str) -> dict:
     return {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
 
 
+# Deliberately simple RFC-5321-shaped check (local@domain.tld), not a
+# full RFC-5322 grammar — good enough to catch "not-an-email"/missing
+# "@"/missing TLD without rejecting real-world edge-case addresses.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _validate_email_format(email: str) -> None:
+    """2026-09-26 bug fix — signup used to accept ANY string as an
+    email (Pydantic's `email: str` has no format constraint), so
+    "not-an-email" silently became a real account. Onboarding spec
+    Step 1 requires bad email format to be rejected with a clear
+    error, not accepted."""
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(400, "Please enter a valid email address.")
+
+
 def _validate_phone_optional(phone: Optional[str]) -> Optional[str]:
     """Validate + normalize an OPTIONAL signup phone number.
 
@@ -251,6 +267,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
     if db is None:
         raise HTTPException(503, "Database not connected")
     email = body.email.strip().lower()
+    _validate_email_format(email)
     # Iter 365 · signup abuse guards (honeypot / timing / disposable /
     # per-IP rate-limit). Founder emails bypass every guard. Raises
     # HTTPException on any signal — we do NOT insert into dev_users
