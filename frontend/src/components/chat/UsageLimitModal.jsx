@@ -15,6 +15,7 @@
  * session if the user is still blocked.
  */
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import { X, Lock } from "lucide-react";
 import useModalA11y from "../../hooks/useModalA11y";
 import { api } from "../../lib/api";
@@ -62,7 +63,17 @@ export default function UsageLimitModal({ open, onClose, usage }) {
     onClose?.();
   }
 
-  return (
+  // 2026-09-26 — portal straight to <body>. This is deep inside
+  // ChatPanel's tree, and testing found the "Connect GitHub repo"
+  // onboarding modal (NewUserWizard.jsx, z-index 9000, also
+  // unportaled) could still paint above this modal despite our
+  // higher z-index (10001) — a fixed-position element only competes
+  // globally on z-index when NOT trapped inside an ancestor that
+  // creates its own stacking context (transform/filter/etc.), which
+  // is exactly the kind of thing a deep chat UI tree tends to have
+  // somewhere above it. Porting to `document.body` sidesteps that
+  // entirely instead of chasing which ancestor is responsible.
+  return createPortal((
     <div
       data-testid="usage-limit-modal"
       ref={modalRef}
@@ -179,7 +190,7 @@ export default function UsageLimitModal({ open, onClose, usage }) {
         </button>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 export function hasUsageLimitModalBeenDismissed() {
