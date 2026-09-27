@@ -23,6 +23,16 @@ from services.ora_chat_v2.prompt import (  # noqa: F401 — re-exported
     MAX_TOOL_ROUNDS, SYSTEM_PROMPT, _PROPOSE_ACTION_TOOL,
 )
 
+# 2026-09-27 — corrective prompt for the verified empty-content bug
+# (see EMPTY_FINAL_NO_TOOL_CALLS below). Shared by both the mid-loop
+# guard and the round-limit close-out so the model gets one consistent
+# instruction either way.
+_EMPTY_REPLY_RETRY = (
+    "You finished your investigation but did not write a visible answer. "
+    "Based on everything you found so far, write your complete final answer "
+    "now in plain text."
+)
+
 def _history_turns(session: dict) -> list:
     n = int(os.getenv("ORA_CHAT_HISTORY_TURNS", "12"))
     msgs = [m for m in (session.get("messages") or [])
@@ -155,6 +165,54 @@ async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
                 return
 
         if not tool_calls:
+            if not round_text.strip():
+                # 2026-09-27 — VERIFIED root cause (repro'd live against
+                # OpenRouter, model openai/gpt-oss-20b, provider
+                # "Darkbloom"): the model can return
+                # finish_reason="stop" with an EMPTY visible `content`
+                # channel while its real, complete answer sits only in
+                # the separate `reasoning` channel (a Harmony-format
+                # quirk — the model exhausts itself "thinking" and never
+                # copies the conclusion into the final channel). Before
+                # this fix, that empty string was accepted as-is,
+                # producing the exact silent-empty-reply bug reported
+                # in production session 68a32924d106454e83d99fdae7257d82
+                # (message 4cbf1dee1d354b0cb69be9c78ed91c26, content="").
+                # Never accept it (Rule 6) — force one corrective,
+                # tool-free completion asking the model to write out
+                # what it already worked out.
+                logger.warning(
+                    "ora_chat_v2 EMPTY_FINAL_NO_TOOL_CALLS session=%s user=%s "
+                    "round=%s model=%s — forcing corrective completion",
+                    session.get("session_id", ""), admin_id, round_idx, resolved_model)
+                corrective_text = ""
+                corrective_err = None
+                async for r_evt in llm_client.stream_chat(
+                        messages=messages + [{"role": "user", "content": _EMPTY_REPLY_RETRY}],
+                        tools=None, reasoning=think_mode, db=db, user_id=admin_id):
+                    if r_evt["type"] == "delta":
+                        corrective_text += r_evt["content"]
+                    elif r_evt["type"] == "usage":
+                        total_in += r_evt.get("input_tokens", 0)
+                        total_out += r_evt.get("output_tokens", 0)
+                    elif r_evt["type"] == "error":
+                        corrective_err = r_evt.get("error")
+                if corrective_text.strip() and not corrective_err:
+                    round_text = corrective_text
+                else:
+                    logger.warning(
+                        "ora_chat_v2 EMPTY_FINAL_RETRY_ALSO_EMPTY session=%s user=%s "
+                        "model=%s err=%s",
+                        session.get("session_id", ""), admin_id, resolved_model, corrective_err)
+                    await _log_usage(db, admin_id, session.get("session_id", ""),
+                                      total_in, total_out, model=resolved_model,
+                                      config_label=resolved_label)
+                    yield {"type": "error", "error": "empty_model_response",
+                           "detail": "The model finished its investigation without "
+                                     "writing a visible answer. This has been logged "
+                                     "with your session ID — please try again or ask "
+                                     "a narrower question."}
+                    return
             # Final answer for this turn — stream it out for real.
             final_text = round_text
             # 2026 audit Decision 1 — Anti-Fabrication Regen (ported
@@ -282,20 +340,53 @@ async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
                        "browser_available": _browser_available}
             messages.append({"role": "tool", "tool_call_id": call["id"],
                               "content": str(tool_result)[:4000]})
+            # 2026-09-27 — P0-1(a/d): durable server-side log of every
+            # tool round, independent of whether the frontend rendered
+            # the corresponding tool_call/tool_result SSE events. Keyed
+            # on session_id so a founder-reported turn can be traced
+            # round-by-round after the fact.
+            _err = tool_result.get("error") if isinstance(tool_result, dict) else None
+            logger.info(
+                "ora_chat_v2 TOOL_ROUND session=%s user=%s round=%s tool=%s "
+                "args=%s result_size=%s error=%s",
+                session.get("session_id", ""), admin_id, round_idx, call["name"],
+                str(call["arguments"])[:200], len(str(tool_result)), _err)
 
         if is_final_round_attempt:
             # Ran out of rounds with only tool calls pending — force a
             # plain-text close-out instead of silently truncating.
+            forced_text = ""
+            forced_err = None
             async for evt in llm_client.stream_chat(
-                    messages=messages + [{"role": "user",
-                        "content": "Summarize what you found in plain English now."}],
+                    messages=messages + [{"role": "user", "content": _EMPTY_REPLY_RETRY}],
                     tools=None, reasoning=False, db=db, user_id=admin_id):
                 if evt["type"] == "delta":
                     yield evt
                     final_text_parts.append(evt["content"])
+                    forced_text += evt["content"]
                 elif evt["type"] == "usage":
                     total_in += evt.get("input_tokens", 0)
                     total_out += evt.get("output_tokens", 0)
+                elif evt["type"] == "error":
+                    forced_err = evt.get("error")
+            if not forced_text.strip() or forced_err:
+                # Same verified failure mode as EMPTY_FINAL_NO_TOOL_CALLS,
+                # just hit on the round-limit path instead. Never fall
+                # through to yielding an empty `final` (Rule 6).
+                logger.warning(
+                    "ora_chat_v2 ROUND_LIMIT_FORCED_CLOSE_OUT_EMPTY session=%s user=%s "
+                    "model=%s rounds=%s err=%s",
+                    session.get("session_id", ""), admin_id, resolved_model,
+                    MAX_TOOL_ROUNDS, forced_err)
+                await _log_usage(db, admin_id, session.get("session_id", ""),
+                                  total_in, total_out, model=resolved_model,
+                                  config_label=resolved_label)
+                yield {"type": "error", "error": "tool_round_limit_no_answer",
+                       "detail": f"Hit the {MAX_TOOL_ROUNDS}-round tool-call limit "
+                                 "without producing a written answer. This has been "
+                                 "logged with your session ID — please try a "
+                                 "narrower question."}
+                return
 
     full_reply = "".join(final_text_parts)
 

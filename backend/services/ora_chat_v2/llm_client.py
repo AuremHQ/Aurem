@@ -160,8 +160,20 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             return
 
     from openai import AsyncOpenAI
+    # 2026-09-27 — P0-1(e)/P1-7 root cause: this was the one LLM call
+    # site in the codebase with NO HTTP-Referer/X-Title headers and no
+    # `user` field, confirmed by grep against every other call site
+    # (services/llm/openrouter_client.py, openrouter_providers.py,
+    # services/ora_chat/providers.py, advisor_vision.py, etc., which
+    # all set these). That's why the founder's OpenRouter dashboard
+    # rows for /ora (gpt-oss-20b) showed app "Unknown" and no Client
+    # User ID — those rows all came from here.
+    default_headers = {
+        "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://auremcto.com"),
+        "X-Title": "AUREM - ORA Founder Chat",
+    }
     client = AsyncOpenAI(base_url=resolved["base_url"], api_key=resolved["api_key"],
-                          timeout=_TIMEOUT_S)
+                          timeout=_TIMEOUT_S, default_headers=default_headers)
     extra_body: dict = {}
     if reasoning:
         extra_body[os.getenv("LLM_REASONING_PARAM", "enable_thinking")] = True
@@ -176,6 +188,11 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             tool_choice="auto" if tools else None,
             stream=True,
             max_tokens=max_tokens,
+            # `user` is OpenRouter's documented end-user attribution
+            # field (distinct from HTTP-Referer/X-Title, which just
+            # tag the *app*) — this is what populates "Client User ID"
+            # in the OpenRouter dashboard logs the founder was reading.
+            user=user_id or None,
             extra_body=extra_body or None,
         )
         async for chunk in stream:

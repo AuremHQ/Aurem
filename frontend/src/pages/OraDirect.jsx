@@ -806,7 +806,7 @@ function ChatShell({ onLogout }) {
             // responding." Surface it as a visible error bubble.
             const reason = obj.error === "llm_api_key_missing"
               ? "No chat model is configured yet — the founder needs to activate one in Admin Settings → Models & LLM."
-              : `Something went wrong (${obj.error || "unknown error"}). Try again.`;
+              : (obj.detail || `Something went wrong (${obj.error || "unknown error"}). Try again.`);
             setMessages(m => [...m, { role: "assistant", content: reason, isError: true }]);
             setStream({ buf: "", route: null, model: null });
           }

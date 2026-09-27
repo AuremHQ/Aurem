@@ -46,7 +46,7 @@ _SECRET_PATTERN_DEFS = [
      r"""-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----\s*\n[A-Za-z0-9+/=]{20,}""",
      "CRITICAL"),
     ("github_token",
-     r"""(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}""",
+    r"""(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_.\-]{20,}""",
      "CRITICAL"),
     ("slack_token",
      r"""xox[bpors]-[0-9]{10,}-[A-Za-z0-9-]+""",
@@ -412,8 +412,13 @@ _DEEP_PATTERN_DEFS: list[tuple[str, str, str, str]] = [
      r"\bsk-[a-zA-Z0-9]{32,}\b", "CRITICAL",
      "Hardcoded OpenAI / DeepSeek style API key"),
     ("secret_github_pat_deep",
-     r"\bghp_[A-Za-z0-9]{30,}\b", "CRITICAL",
-     "Hardcoded GitHub Personal Access Token"),
+     # 2026-09-27 P0-4 — widened charset too: GitHub's new ghs_
+     # format embeds a JWT (dot-separated, base64url `-`/`_`), which
+     # a plain [A-Za-z0-9] class would truncate-match on the first
+     # dot/hyphen — verified this against a real-shaped synthetic
+     # token before landing this.
+     r"\bgh[psuo]_[A-Za-z0-9_.\-]{20,}\b", "CRITICAL",
+     "Hardcoded GitHub token (PAT / OAuth / App)"),
     ("secret_stripe_live_deep",
      r"\bsk_live_[A-Za-z0-9]{20,}\b", "CRITICAL",
      "Hardcoded Stripe LIVE secret key"),

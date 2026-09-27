@@ -39,7 +39,11 @@ def _now_iso() -> str:
 def _scrub(text: str) -> str:
     if not text:
         return ""
-    text = re.sub(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]+)",
+    # 2026-09-27 P0-4 — widened from ghp_-only, plain-alphanumeric to
+    # also catch bare ghs_/gho_/ghu_ App tokens (GitHub's new
+    # stateless format embeds a dot-separated JWT) not already
+    # caught by the "Authorization: Bearer …" scrub below.
+    text = re.sub(r"(gh[psuo]_[A-Za-z0-9_.\-]{20,}|github_pat_[A-Za-z0-9_]+)",
                   "github_pat_***", text)
     text = re.sub(r"(?i)(authorization:\s*bearer\s+)\S+", r"\1***", text)
     return text[:4000]

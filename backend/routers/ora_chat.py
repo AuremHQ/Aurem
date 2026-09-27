@@ -312,6 +312,7 @@ async def send_message(body: MessageBody,
     async def event_stream():
         db = _get_db_v2()
         final_evt: dict = {}
+        error_evt: dict = {}
         # 2026-09-27 P0 — root-cause fix for "chat responses silently
         # disappear". `_v2_run_turn` is a 270-line generator (state
         # block, catalog rendering, tool execution, anti-fabrication
@@ -343,14 +344,17 @@ async def send_message(body: MessageBody,
                     page_inspection=body.page_inspection):
                 if evt.get("type") == "final":
                     final_evt = evt
+                elif evt.get("type") == "error":
+                    error_evt = evt
                 yield evt
         except Exception as e:                                  # noqa: BLE001
             logger.error(
                 "ora_chat_v2 run_turn crashed mid-stream (session=%s admin=%s): %r",
                 body.session_id, user["user_id"], e, exc_info=True,
             )
-            yield {"type": "error", "error": type(e).__name__,
-                   "detail": str(e)[:200]}
+            error_evt = {"type": "error", "error": type(e).__name__,
+                         "detail": str(e)[:200]}
+            yield error_evt
 
         if final_evt:
             await ora_session.append_message(
@@ -361,6 +365,15 @@ async def send_message(body: MessageBody,
                 output_tokens=final_evt.get("tokens_out", 0),
                 message_id=uuid.uuid4().hex,
             )
+        # NOTE: intentionally NOT persisting anything to session
+        # history when only `error_evt` fired (no `final`) — matches
+        # the existing, already-reviewed contract in
+        # test_ora_chat_v2_stream_exception_boundary.py
+        # (`test_uncaught_exception_in_run_turn_yields_error_event_not_
+        # _silence`): a failed turn must not leave a fake assistant
+        # message in history. The live SSE `error` event still renders
+        # a real, visible error bubble in the UI for that turn (see
+        # OraDirect.jsx) — this only affects what a page refresh shows.
 
     async def sse_events():
         async for evt in event_stream():

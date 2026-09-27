@@ -2048,6 +2048,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     const promptOverride = opts.promptOverride || null;
     const scopeConfirmedProposalId = opts.scopeConfirmedProposalId || null;
     const text = promptOverride != null ? promptOverride : input.trim();
+    // 2026-09-27 P0-2 — second, independent layer against the same
+    // "/bug-hunt went through as a normal chat message" bug class.
+    // `onKeyDown` already intercepts Enter live off the current
+    // input, but `send()` is also reachable directly (e.g. a Send
+    // button click) without going through that keydown handler at
+    // all. Catch a bare, exact slash-command trigger here too so
+    // there is no path left where typing a real command can slip
+    // through to the LLM chat endpoint instead of firing the scan.
+    if (promptOverride == null) {
+      const exactCmd = SLASH_COMMANDS.find(
+        (c) => c.trigger.toLowerCase() === text.trim().toLowerCase(),
+      );
+      if (exactCmd) {
+        runSlashCommand(exactCmd);
+        return;
+      }
+    }
     const isScopeResume = !!scopeConfirmedProposalId || /^confirm\s+and\s+proceed[.!]?$/i.test(text.trim());
     let scopeReceipt = null;
     let scopeSendError = null;
@@ -3324,31 +3341,37 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   }
 
   function onKeyDown(e) {
-    // Iter 212m-190 · Session 3 — Slash-menu key handling. When the
-    // menu is open the arrow keys navigate matches, Enter/Tab picks
-    // the highlighted command (fires the scan), Escape closes it.
-    if (slashOpen) {
-      const matches = matchSlashCommands(input);
-      if (matches.length > 0) {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setSlashIdx((i) => Math.min(i + 1, matches.length - 1));
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setSlashIdx((i) => Math.max(i - 1, 0));
-          return;
-        }
-        if (e.key === "Escape") {
-          setSlashOpen(false);
-          return;
-        }
-        if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
-          runSlashCommand(matches[slashIdx] || matches[0]);
-          return;
-        }
+    // 2026-09-27 P0-2 — decoupled from `slashOpen` (a separate popover
+    // -visibility React state that's only updated on `onChange`, one
+    // render behind the just-typed character). Founder-reported
+    // symptom: typing "/bug-hunt" + Enter sometimes went through as a
+    // normal chat message instead of firing a new scan — i.e. Enter
+    // fired while `slashOpen` hadn't (yet) reflected the latest
+    // keystroke, so this block was skipped entirely and fell through
+    // to `send()` below. Recomputing the match directly off the
+    // CURRENT `input` value at the moment Enter is pressed removes
+    // that whole class of race — it can never be stale, because
+    // there's nothing to be stale.
+    const liveMatches = matchSlashCommands(input);
+    if (liveMatches.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIdx((i) => Math.min(i + 1, liveMatches.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIdx((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        setSlashOpen(false);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        runSlashCommand(liveMatches[slashIdx] || liveMatches[0]);
+        return;
       }
     }
     if (e.key === "Enter" && !e.shiftKey) {

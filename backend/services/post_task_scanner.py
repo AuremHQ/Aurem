@@ -29,8 +29,13 @@ SECRET_PATTERNS: list[tuple[str, str]] = [
      "Exposed API key (looks like OpenAI/Anthropic)"),
     (r'AKIA[0-9A-Z]{16}',
      "AWS Access Key exposed"),
-    (r'ghp_[A-Za-z0-9]{36}',
-     "GitHub Personal Access Token exposed"),
+    # 2026-09-27 P0-4 — was `ghp_[A-Za-z0-9]{36}` (exact length).
+    # GitHub's new stateless token format runs up to ~520 chars for
+    # ghs_/gho_/ghu_ App tokens and embeds a dot-separated JWT
+    # (base64url `-`/`_`) — widened length AND charset so this never
+    # silently stops matching a real leaked credential.
+    (r'gh[psuo]_[A-Za-z0-9_.\-]{20,}',
+     "GitHub token exposed (PAT/OAuth/App)"),
     (r'stripe[_\-]?(secret|sk)[_\-]?(?:key|live|test)?\s*[=:]\s*["\']sk_[A-Za-z0-9_]+["\']',
      "Stripe secret key exposed"),
     (r'(?i)bearer\s+[A-Za-z0-9\-_\.]{40,}',

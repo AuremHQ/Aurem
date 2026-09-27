@@ -205,6 +205,37 @@ async def scan(
             f"github_fetch_crashed: {type(e).__name__}: {str(e)[:200]}",
         )
 
+    # 2026-09-27 P0-2 — VERIFIED root cause of "banner shows 'Scan
+    # running', then no new result card appears": `_build_text_cache`
+    # fetches every candidate file in parallel (asyncio.gather) and
+    # silently drops any that fail — a GitHub secondary rate-limit or
+    # transient network blip hitting most/all of those parallel
+    # fetches at once returns `{}` with NO exception raised anywhere
+    # in this call chain. Before this fix, `{}` flowed straight into
+    # the scoring logic below, which scores an empty finding set as a
+    # perfect "0 issues found — clean" success — a fabricated result
+    # that gets a green toast and a chat message, while the line
+    # further down that refuses to persist a 0-file scan (Iter
+    # 212m-177) correctly skips writing a DB record. Net effect: a
+    # fake "clean" reply with nothing behind it — exactly the reported
+    # "banner ran, no card ever showed up" symptom, and it also means
+    # any PAST scan that silently hit this path told the founder their
+    # repo was clean when nothing was actually scanned. Never claim a
+    # scan succeeded when zero files were read.
+    if not text_cache:
+        logger.warning(
+            "codebase_health.scan read ZERO files — refusing to report a "
+            "fake 'clean' result (user=%s project=%s owner=%s repo=%s branch=%s)",
+            user_id, project_id, owner, repo, branch,
+        )
+        raise HTTPException(502, {
+            "error": "scan_no_files_read",
+            "message": "The scan couldn't read any files from this repository — "
+                        "this is almost always a transient GitHub fetch issue "
+                        "(rate limit or network blip), not an actually-empty repo. "
+                        "Please try again in a moment.",
+        })
+
     breakdown: dict[str, dict] = {}
     all_findings: list[dict] = []
     # Iter 212m-193 — findings already fixed (commits on draft-PR

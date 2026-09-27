@@ -49,7 +49,13 @@ async def _gate(authorization: Optional[str], level: str) -> str:
 # ── Request models ────────────────────────────────────────────────────
 
 class ConnectBody(BaseModel):
-    token: str = Field(..., min_length=10, max_length=512)
+    # 2026-09-27 P0-4 — GitHub's changelog: installation/PAT tokens are
+    # moving to a new stateless format up to ~520 chars (vs. the old
+    # fixed ~40). The old `max_length=512` here would hard-reject a
+    # valid new-format token pasted by a real customer with a 422
+    # before it ever reached GitHub. Generous headroom, no downside —
+    # this is just an opaque string being stored, not parsed.
+    token: str = Field(..., min_length=10, max_length=1024)
     repo:  Optional[str] = Field(None, pattern=r"^[\w.\-]+/[\w.\-]+$")
 
 
