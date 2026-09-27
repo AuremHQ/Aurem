@@ -38,6 +38,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
@@ -943,3 +944,61 @@ async def scanner_feedback(
         "recent":       recent,
         "generated_at": time.time(),
     }
+
+
+# ── 2026-09-27 P0-2 follow-up — Bug Hunt trigger telemetry ──
+# The founder reported "typing/clicking /bug-hunt sometimes fires zero
+# network requests" and I could not reproduce it on this pod (both an
+# Enter-key attempt and two back-to-back menu clicks fired real scan
+# requests every time I tried). Rather than claim it's fixed on a
+# symptom I never actually saw, this logs EVERY bug-hunt trigger
+# attempt server-side — timestamp, how it was triggered (keydown vs
+# click vs the send() fallback guard), and whether the scan POST was
+# actually reached — so the NEXT time the founder reproduces it on
+# production, there's a real, queryable record instead of relying on
+# them having DevTools open at the exact right moment. Deliberately
+# NOT marking P0-2's "zero requests" sub-case as fixed — this is
+# observability for that specific unreproduced symptom, nothing more.
+class BugHuntTriggerEvent(BaseModel):
+    trigger:      str            # "keydown_enter" | "menu_click" | "send_exact_match"
+    request_sent: bool           # did the code actually reach the scan POST call?
+    reason:       Optional[str] = None   # why not, if request_sent is False
+    client_ts:    Optional[float] = None  # client Date.now()/1000, for ordering
+
+
+@router.post("/telemetry/bug-hunt-trigger")
+async def log_bug_hunt_trigger(body: BugHuntTriggerEvent,
+                                authorization: Optional[str] = Header(None)):
+    user = await current_dev(authorization)
+    db = get_db()
+    if db is None:
+        return {"ok": False}
+    event = {
+        "user_id":      user["user_id"],
+        "trigger":      body.trigger,
+        "request_sent": body.request_sent,
+        "reason":       body.reason,
+        "client_ts":    body.client_ts,
+        "server_ts":    time.time(),
+    }
+    await db.bug_hunt_trigger_events.insert_one(event)
+    logger.info(
+        "bug_hunt_trigger user=%s trigger=%s request_sent=%s reason=%s",
+        user["user_id"], body.trigger, body.request_sent, body.reason,
+    )
+    return {"ok": True}
+
+
+@router.get("/telemetry/bug-hunt-triggers")
+async def list_bug_hunt_triggers(limit: int = 100,
+                                  authorization: Optional[str] = Header(None)):
+    """Admin-only — inspect recent trigger events to prove/disprove
+    the "zero requests fired" symptom once it's actually reproduced."""
+    await require_admin(authorization)
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+    cur = db.bug_hunt_trigger_events.find(
+        {}, {"_id": 0},
+    ).sort("server_ts", -1).limit(min(limit, 500))
+    return {"events": [row async for row in cur]}

@@ -2061,8 +2061,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         (c) => c.trigger.toLowerCase() === text.trim().toLowerCase(),
       );
       if (exactCmd) {
-        runSlashCommand(exactCmd);
+        runSlashCommand(exactCmd, "send_exact_match");
         return;
+      }
+      // Telemetry-only, no behavior change: if something that LOOKS
+      // like a bug-hunt trigger reaches this point uncaught (e.g. a
+      // future regression reopens the exact class of bug this batch
+      // fixed), record it so it's provable instead of silently
+      // going to the LLM as a normal chat message again.
+      if (/^\/bug-hunt\b/i.test(text.trim())) {
+        logBugHuntTrigger("send_uncaught_fallthrough", false,
+          `slipped through to normal chat: ${JSON.stringify(text.slice(0, 60))}`);
       }
     }
     const isScopeResume = !!scopeConfirmedProposalId || /^confirm\s+and\s+proceed[.!]?$/i.test(text.trim());
@@ -3370,7 +3379,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        runSlashCommand(liveMatches[slashIdx] || liveMatches[0]);
+        runSlashCommand(liveMatches[slashIdx] || liveMatches[0], "keydown_enter");
         return;
       }
     }
@@ -3380,6 +3389,21 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     }
   }
 
+  // 2026-09-27 P0-2 follow-up — fire-and-forget telemetry so a FUTURE
+  // reproduction of "click/Enter fired zero requests" on production
+  // leaves a real server-side record (timestamp + trigger source +
+  // whether the scan POST was actually reached), instead of relying
+  // on someone having DevTools open at the exact right moment. Never
+  // let this block or throw into the real flow.
+  function logBugHuntTrigger(trigger, requestSent, reason) {
+    try {
+      api.post("/codebase-health/telemetry/bug-hunt-trigger", {
+        trigger, request_sent: requestSent, reason: reason || null,
+        client_ts: Date.now() / 1000,
+      }).catch(() => {});
+    } catch { /* telemetry must never break the real flow */ }
+  }
+
   // Iter 212m-190 · Session 3 — Slash-command scan dispatcher. Maps
   // each command to a category slice of the existing
   // `/codebase-health/scan` endpoint (single source of truth). While
@@ -3387,15 +3411,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // we stash a session-scoped summary via `markScanJustCompleted` so
   // the strip surfaces the critical/high totals (or nothing at all
   // when clean).
-  async function runSlashCommand(cmd) {
+  async function runSlashCommand(cmd, trigger = "unknown") {
     if (!cmd) return;
     setSlashOpen(false);
     setInput("");
     const projectId = activeProject?.project_id;
     if (!projectId) {
+      logBugHuntTrigger(trigger, false, "no_active_project");
       toast({ message: "Connect a repo first — /scan needs a project", kind: "warn" });
       return;
     }
+    logBugHuntTrigger(trigger, true, null);
     await _executeSlashScan(cmd, projectId);
   }
 
@@ -6252,7 +6278,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           <SlashCommandMenu
             matches={matchSlashCommands(input)}
             selectedIndex={slashIdx}
-            onPick={(cmd) => runSlashCommand(cmd)}
+            onPick={(cmd) => runSlashCommand(cmd, "menu_click")}
           />
         )}
         <textarea

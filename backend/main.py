@@ -3,6 +3,7 @@ AUREM Dev — Developer AI Platform
 Clean FastAPI entry point — wired to all routers from aurem_cto
 """
 import os
+import re
 import time
 import asyncio
 import logging
@@ -2314,6 +2315,99 @@ class SSEAwareGZipMiddleware(GZipMiddleware):
 
 
 app.add_middleware(SSEAwareGZipMiddleware, minimum_size=512, compresslevel=5)
+
+
+# ── 2026-09-27 P0-3 follow-up — GitHub token response-body guard ──
+# The /loop/{id}/status leak (fixed 2026-09-26) was a live GitHub App
+# installation token accidentally included in a JSON response body.
+# That specific bug is fixed at the source now, but per the founder's
+# explicit ask: add a standing guard so a FUTURE leak of this shape —
+# here or in any new /loop/* endpoint — is provable or disprovable
+# from logs instead of relying on a one-time code review. Scoped to
+# /api/aurem-dev/loop/* (where the original bug lived) to keep this
+# cheap: only small JSON bodies are buffered/scanned; every other
+# response (SSE, static, non-loop routes, non-JSON) passes straight
+# through untouched. On a hit: redact in place before the bytes leave
+# the server AND log a CRITICAL alert (path + best-effort user_id —
+# NEVER the token value) so this is forensically provable going
+# forward.
+class GithubTokenLeakGuardMiddleware:
+    _TOKEN_RE = re.compile(r"gh[psuo]_[A-Za-z0-9_.\-]{20,}")
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    def _best_effort_user_id(scope) -> str:
+        try:
+            headers = dict(scope.get("headers") or [])
+            auth = headers.get(b"authorization", b"").decode("latin-1")
+            if not auth.lower().startswith("bearer "):
+                return "unknown"
+            import jwt as _jwt
+            from cto_services.auth import JWT_SECRET, JWT_ALGORITHM
+            payload = _jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            return payload.get("user_id", "unknown")
+        except Exception:
+            return "unknown"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/aurem-dev/loop/"):
+            return await self.app(scope, receive, send)
+
+        body_chunks: list[bytes] = []
+        start_message: dict = {}
+        is_json = {"val": False}
+
+        async def _guarded_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                start_message.clear()
+                start_message.update(message)
+                headers = dict(message.get("headers") or [])
+                ct = headers.get(b"content-type", b"").decode("latin-1")
+                is_json["val"] = "application/json" in ct
+                if not is_json["val"]:
+                    return await send(message)
+                return  # defer — decided once the full body is in
+            if message["type"] == "http.response.body":
+                if not is_json["val"]:
+                    return await send(message)
+                body_chunks.append(message.get("body", b""))
+                if message.get("more_body"):
+                    return
+                full_body = b"".join(body_chunks)
+                try:
+                    text = full_body.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = None
+                if text and self._TOKEN_RE.search(text):
+                    logger.critical(
+                        "SECURITY github_token_leak_guard: a github-token-"
+                        "shaped value was found in the outgoing response "
+                        "body for %s (user_id=%s) — redacted before send. "
+                        "This is the exact leak class fixed in "
+                        "/loop/{id}/status on 2026-09-26; if this fires, "
+                        "that leak has recurred or a new one exists.",
+                        scope.get("path"), self._best_effort_user_id(scope),
+                    )
+                    full_body = self._TOKEN_RE.sub(
+                        "[REDACTED_GITHUB_TOKEN]", text).encode("utf-8")
+                    headers = [
+                        (k, v) for k, v in (start_message.get("headers") or [])
+                        if k.lower() != b"content-length"
+                    ]
+                    headers.append((b"content-length", str(len(full_body)).encode()))
+                    start_message["headers"] = headers
+                await send(start_message)
+                await send({"type": "http.response.body", "body": full_body,
+                            "more_body": False})
+                return
+            await send(message)
+
+        await self.app(scope, receive, _guarded_send)
+
+
+app.add_middleware(GithubTokenLeakGuardMiddleware)
 
 
 # ── Iter 212m-55 — LPDoS protection (request body size cap) ──
