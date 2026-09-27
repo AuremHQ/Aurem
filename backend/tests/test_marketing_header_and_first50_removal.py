@@ -66,7 +66,7 @@ def test_unsubscribe_endpoint_exists():
     assert r.status_code != 404, f"unsubscribe endpoint missing (email_link_tokens refactor broken): {r.status_code}"
 
 
-def test_admin_first50_campaign_endpoint_removed():
+def test_first50_admin_endpoints_return_404():
     # The admin campaign router was deleted; any of its paths should be 404
     for path in ("/admin/first50-campaign/status", "/admin/first50/campaign", "/admin/first50-campaign"):
         r = requests.get(f"{API}{path}", timeout=10)
