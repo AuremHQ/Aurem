@@ -312,14 +312,45 @@ async def send_message(body: MessageBody,
     async def event_stream():
         db = _get_db_v2()
         final_evt: dict = {}
-        async for evt in _v2_run_turn(
-                db, admin_id=user["user_id"], session=sess or {},
-                user_message=body.content, think_mode=body.think_mode,
-                advise_only=body.advise_only,
-                page_inspection=body.page_inspection):
-            if evt.get("type") == "final":
-                final_evt = evt
-            yield evt
+        # 2026-09-27 P0 — root-cause fix for "chat responses silently
+        # disappear". `_v2_run_turn` is a 270-line generator (state
+        # block, catalog rendering, tool execution, anti-fabrication
+        # regen) with NO internal exception boundary of its own for
+        # most of that code (only the LLM-call section already
+        # yields a graceful `error` event on failure). Any OTHER
+        # exception in there — e.g. a tool call hitting a broken/
+        # legacy-auth project connection while trying to read the
+        # actual repo — previously propagated straight out of this
+        # generator uncaught: EventSourceResponse just closed the
+        # connection with zero events after that point, the frontend's
+        # `reader.read()` loop saw `done=true` and exited silently
+        # (no exception, no error bubble) — exactly the reported
+        # "thinking… vanishes, nothing renders, no error toast"
+        # symptom. Confirmed via source read: `run_turn`'s only
+        # graceful-error yields are inside `llm_client.stream_chat`;
+        # everything else (build_state_block, catalog_prompt_block,
+        # tools_mod.execute_tool, the regen/grounding block) had no
+        # try/except at all. Fix: catch ANY exception at this single
+        # outer boundary and yield the SAME `{"type":"error"}` event
+        # contract the frontend (OraDirect.jsx) already renders as a
+        # visible error bubble — so no future failure anywhere in the
+        # turn can go silent again.
+        try:
+            async for evt in _v2_run_turn(
+                    db, admin_id=user["user_id"], session=sess or {},
+                    user_message=body.content, think_mode=body.think_mode,
+                    advise_only=body.advise_only,
+                    page_inspection=body.page_inspection):
+                if evt.get("type") == "final":
+                    final_evt = evt
+                yield evt
+        except Exception as e:                                  # noqa: BLE001
+            logger.error(
+                "ora_chat_v2 run_turn crashed mid-stream (session=%s admin=%s): %r",
+                body.session_id, user["user_id"], e, exc_info=True,
+            )
+            yield {"type": "error", "error": type(e).__name__,
+                   "detail": str(e)[:200]}
 
         if final_evt:
             await ora_session.append_message(

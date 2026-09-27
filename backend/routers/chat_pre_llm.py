@@ -346,6 +346,7 @@ async def resolve_pre_llm(
                 _casual_reply_text = await casual_direct_reply(
                     body.prompt, prior_assistant_text=prior_turn_text,
                     session_summary=session_summary,
+                    user_id=user.get("user_id"),
                 )
                 _casual_reply_text = apply_no_false_success_guard(
                     body.prompt or "", _casual_reply_text, prior_fix_signal,

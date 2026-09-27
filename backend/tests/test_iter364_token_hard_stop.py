@@ -1,21 +1,19 @@
 """
-test_iter364_token_hard_stop.py — Iter 364 · Phase 3
+test_iter364_token_hard_stop.py — Iter 364 · Phase 3 (superseded 2026-09-27)
 
-E2E verification of the token hard-stop enforcement fix:
+2026-09-27 — Product decision: the token counter is DECOUPLED from
+customer-facing gating (see services/usage.py module docstring). This
+suite now verifies the NEW contract instead of the original hard-stop:
 
-  1. Free-tier user with tokens_used >= effective_limit → /chat/send
-     must return 402 with error="token_limit_reached", and NO LLM
-     provider call must be made.
-  2. /usage/me must surface is_blocked=true for that same user.
-  3. Admin grants bonus tokens → user can /chat/send again, and
-     is_blocked flips back to false.
-  4. /chat/stream enforces the same gate (streaming path parity).
-  5. Diagram /generate + upload /convert (image branch) also refuse
-     when the wallet is exhausted.
-
-Direct-behavioural tests — no HTTP layer needed for the core assert;
-we call the FastAPI handler function or the underlying gate helper
-directly so we can assert "LLM provider was NEVER called" cleanly.
+  1. `assert_has_budget` never raises, even for an exhausted user — it
+     logs a warning instead (kept for founder cost-visibility).
+  2. `get_usage().is_blocked` no longer reflects token exhaustion —
+     only the flat-fee monthly task-count cap gates real requests.
+  3. `is_exhausted` / `used` / `remaining` are still tracked accurately
+     (tracking kept, only the gate removed).
+  4. Founder / unlimited accounts still bypass everything.
+  5. Task-count enforcement (`assert_has_task_budget`) is untouched —
+     covered by its own existing tests, not duplicated here.
 """
 from __future__ import annotations
 
@@ -79,48 +77,51 @@ async def _cleanup(db, uid: str) -> None:
 # ── Core enforcement ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_assert_has_budget_402_when_exhausted():
-    """assert_has_budget must raise HTTPException(402) for an
-    exhausted user — this is the exact call chat/send now does
-    BEFORE any LLM provider is contacted."""
+async def test_assert_has_budget_no_longer_raises_when_exhausted(caplog):
+    """2026-09-27 — assert_has_budget must NOT raise for an exhausted
+    user anymore (product decision: token count no longer gates real
+    requests). It must instead log a warning so we keep visibility
+    into disproportionate token burn — tracking kept, gating removed."""
     db = _db()
     uid = await _seed_exhausted_user(db, "free")
     try:
-        with pytest.raises(HTTPException) as ei:
-            await assert_has_budget(uid)
-        assert ei.value.status_code == 402
-        assert ei.value.detail["error"] == "token_limit_reached"
-        # Body carries the fields the frontend interceptor + banner
-        # read for the upgrade toast + red-banner disable state.
-        assert "upgrade_url" in ei.value.detail
-        assert "used"  in ei.value.detail
-        assert "limit" in ei.value.detail
+        import logging
+        caplog.set_level(logging.WARNING, logger="services.usage")
+        await assert_has_budget(uid)  # must NOT raise
+        assert any(
+            "TOKEN_BUDGET_WOULD_HAVE_BLOCKED" in rec.message
+            for rec in caplog.records
+        ), "expected a visibility warning to be logged for the exhausted user"
     finally:
         await _cleanup(db, uid)
 
 
 @pytest.mark.asyncio
-async def test_get_usage_exposes_is_blocked_true_on_exhausted():
-    """/usage/me must return is_blocked=True so the TokenBanner
-    disables the send button server-authoritatively. Iter 364 added
-    this field explicitly to prevent client-computed pct drift."""
+async def test_get_usage_is_blocked_false_on_token_exhaustion_alone():
+    """2026-09-27 — token exhaustion ALONE must no longer set
+    is_blocked=True; only the flat-fee task-count cap does. Tracking
+    fields (is_exhausted / used / remaining) stay accurate — only the
+    gate signal changes."""
     db = _db()
     uid = await _seed_exhausted_user(db, "free")
     try:
         u = await get_usage(uid)
-        assert u["is_blocked"] is True, (
-            f"exhausted user must have is_blocked=True, got {u}"
-        )
         assert u["is_exhausted"] is True
         assert u["remaining"] == 0
+        assert u["is_blocked"] is False, (
+            f"token exhaustion alone must not block — task-count cap is "
+            f"the only gate now, got {u}"
+        )
     finally:
         await _cleanup(db, uid)
 
 
 @pytest.mark.asyncio
 async def test_get_usage_is_blocked_false_after_grant():
-    """Admin grants bonus tokens → effective_limit rises → is_blocked
-    flips back to False. Mirrors the recovery path in the E2E script."""
+    """Admin grants bonus tokens → effective_limit rises → is_exhausted
+    flips back to False and remaining usage is restored. is_blocked was
+    already False before the grant (2026-09-27 decouple), so this now
+    checks the tracking fields specifically, not the gate."""
     db = _db()
     uid = await _seed_exhausted_user(db, "free")
     try:
@@ -130,11 +131,12 @@ async def test_get_usage_is_blocked_false_after_grant():
             {"$inc": {"tokens_granted": 500_000}},
         )
         u = await get_usage(uid)
-        assert u["is_blocked"] is False, (
-            "grant should lift the block; usage row still says "
-            f"is_blocked=True: {u}"
+        assert u["is_blocked"] is False
+        assert u["is_exhausted"] is False, (
+            "grant should lift token exhaustion; usage row still says "
+            f"is_exhausted=True: {u}"
         )
-        # And the gate itself must no longer raise.
+        # And the gate itself must still not raise.
         await assert_has_budget(uid)  # must NOT raise
     finally:
         await _cleanup(db, uid)

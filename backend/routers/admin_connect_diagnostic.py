@@ -31,6 +31,8 @@ a mass dump. Same admin gate as every other admin-only endpoint
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -38,6 +40,8 @@ from fastapi import APIRouter, Depends, Header
 
 from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import require_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/admin/connect-diagnostic", tags=["Admin — Connect Flow"],
@@ -216,4 +220,115 @@ async def connect_flow_diagnostic(
         "oauth_states":           oauth_states,
         "funnel_events":          funnel_events,
         "ordered_event_stream":   combined,
+    }
+
+
+@router.get("/audit/stale-github-urls")
+async def stale_github_urls_audit(authorization: Optional[str] = Header(None)):
+    """2026-09-27 P0 — self-service audit: how many `cto_projects` rows
+    have a `github_owner/github_repo` that no longer matches ANY repo
+    our GitHub App installations can currently see. That mismatch is
+    exactly the class of bug behind "my active project points at a
+    repo that no longer exists" (Bug 1) — the repo got transferred or
+    renamed on GitHub and nothing updated the stored record (the
+    webhook handler for `repository` transferred/renamed events did
+    not exist before this same fix — see routers/github_app.py).
+
+    Read-only. For each stale row, makes a best-effort live GitHub API
+    call to `GET /repos/{old_owner}/{old_repo}` using every installation
+    token we hold in turn — GitHub transparently redirects that call to
+    the repo's CURRENT identity as long as SOME token we present has
+    access to it. Reports the real current `full_name` when found, or
+    `not_found_or_no_access` honestly when it isn't — never guesses.
+    """
+    await require_admin(authorization)
+    db = require_db()
+    from services.github_app import list_installations, list_installation_repos, \
+        get_installation_token, GitHubAppNotConfigured
+    import httpx
+
+    try:
+        installations = await list_installations()
+    except GitHubAppNotConfigured:
+        return {"ok": False, "error": "github_app_not_configured"}
+
+    live_full_names: set[str] = set()
+    inst_tokens: list[str] = []
+    inst_sem = asyncio.Semaphore(15)
+
+    async def _fetch_installation(inst: dict):
+        async with inst_sem:
+            try:
+                repos, (tok, _exp) = await asyncio.gather(
+                    list_installation_repos(inst["id"]),
+                    get_installation_token(inst["id"]),
+                )
+                return repos, tok
+            except Exception as e:                            # noqa: BLE001
+                logger.warning("stale_github_urls_audit: installation %s failed: %r",
+                                inst.get("id"), e)
+                return [], None
+
+    for repos, tok in await asyncio.gather(*(_fetch_installation(i) for i in installations)):
+        live_full_names |= {(r.get("full_name") or "").lower() for r in repos}
+        if tok:
+            inst_tokens.append(tok)
+
+    projects = await db.cto_projects.find(
+        {"github_owner": {"$exists": True, "$ne": ""},
+         "github_repo":  {"$exists": True, "$ne": ""}},
+        {"_id": 0, "project_id": 1, "user_id": 1, "name": 1,
+         "github_owner": 1, "github_repo": 1, "github_url": 1},
+    ).to_list(5000)
+
+    candidates = [p for p in projects
+                  if f"{p.get('github_owner','')}/{p.get('github_repo','')}".lower()
+                  not in live_full_names]
+
+    # 2026-09-27 — bounded concurrency (semaphore) + a short per-call
+    # timeout. Doing this sequentially (72 candidates × up to N
+    # installation tokens × an 8s timeout each) made the endpoint take
+    # minutes; a real admin tool needs to answer inside one HTTP
+    # request/UI timeout window.
+    sem = asyncio.Semaphore(10)
+    client = httpx.AsyncClient(timeout=4.0)
+
+    async def _probe(p: dict) -> dict:
+        owner, repo = p.get("github_owner") or "", p.get("github_repo") or ""
+        resolved_to = None
+        async with sem:
+            for tok in inst_tokens:
+                try:
+                    r = await client.get(
+                        f"https://api.github.com/repos/{owner}/{repo}",
+                        headers={"Authorization": f"Bearer {tok}",
+                                 "Accept": "application/vnd.github+json"},
+                    )
+                    if r.status_code == 200:
+                        live_name = (r.json() or {}).get("full_name")
+                        if live_name and live_name.lower() != f"{owner}/{repo}".lower():
+                            resolved_to = live_name
+                        break
+                except Exception:
+                    continue
+        return {
+            "project_id":         p.get("project_id"),
+            "user_id":            p.get("user_id"),
+            "name":               p.get("name"),
+            "stored_url":         p.get("github_url"),
+            "stored_owner_repo":  f"{owner}/{repo}",
+            "github_redirects_to": resolved_to or "not_found_or_no_access",
+        }
+
+    try:
+        stale = await asyncio.gather(*(_probe(p) for p in candidates))
+    finally:
+        await client.aclose()
+
+    return {
+        "ok":                True,
+        "installations_checked": len(installations),
+        "projects_checked":  len(projects),
+        "stale_count":       len(stale),
+        "stale_projects":    stale,
     }

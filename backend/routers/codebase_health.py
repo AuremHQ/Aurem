@@ -279,7 +279,18 @@ async def scan(
         "total_fixed":   total_fixed,
         "scanned_files": len(text_cache),
         "summary":       (
-            f"{total} issues found across {len(categories)} categories — "
+            # 2026-09-27 — wording fix: "categories" here counts which
+            # of the 4 top-level SCANNERS (vanguard/bug_hunt/http/
+            # docker) this particular scan command ran (e.g. /bug-hunt
+            # intentionally runs only the bug_hunt scanner) — it has
+            # NOTHING to do with Bug Hunt's own 4 internal pattern
+            # groups (secrets/vulnerable-code/endpoints/CVE-deps),
+            # which all run correctly inside that one scanner
+            # regardless of this count. The old wording ("across N
+            # categories") was genuinely misread as "only 1 of Bug
+            # Hunt's 4 promised categories ran" — it wasn't; this is
+            # just clearer.
+            f"{total} issues found across {len(categories)} scanner(s) — "
             f"{sum(1 for f in all_findings if f['severity']=='critical')} critical."
             + (f" {total_fixed} already fixed." if total_fixed else "")
         ),

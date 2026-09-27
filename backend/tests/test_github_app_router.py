@@ -588,6 +588,63 @@ class TestWebhook:
         assert {r["id"] for r in repos} == {10}
         assert fake_db.cto_projects.rows[0]["installation_active"] is False
 
+    def test_repository_transferred_updates_stale_project_url(
+        self, configured, client, fake_db,
+    ):
+        """2026-09-27 P0 — repository transferred/renamed events were
+        NOT handled at all before this fix (confirmed by grep: only
+        installation/installation_repositories/meta/pull_request had
+        branches). A transferred repo previously left every stored
+        cto_projects.github_url pointing at the OLD owner/name
+        permanently."""
+        fake_db.cto_projects.rows.append({
+            "project_id": "p-transfer", "user_id": "u",
+            "github_owner": "polarisbuiltinc-wq", "github_repo": "Aurem",
+            "github_url": "https://github.com/polarisbuiltinc-wq/Aurem",
+        })
+        self._post(client, "repository", "d-transfer-1", {
+            "action": "transferred",
+            "repository": {"full_name": "AuremHQ/Aurem", "name": "Aurem"},
+            "changes": {"owner": {"from": {"organization":
+                                            {"login": "polarisbuiltinc-wq"}}}},
+        })
+        row = fake_db.cto_projects.rows[0]
+        assert row["github_owner"] == "AuremHQ"
+        assert row["github_repo"] == "Aurem"
+        assert row["github_url"] == "https://github.com/AuremHQ/Aurem"
+
+    def test_repository_renamed_updates_stale_project_url(
+        self, configured, client, fake_db,
+    ):
+        fake_db.cto_projects.rows.append({
+            "project_id": "p-rename", "user_id": "u",
+            "github_owner": "AuremHQ", "github_repo": "aurem-old-name",
+            "github_url": "https://github.com/AuremHQ/aurem-old-name",
+        })
+        self._post(client, "repository", "d-rename-1", {
+            "action": "renamed",
+            "repository": {"full_name": "AuremHQ/Aurem"},
+            "changes": {"repository": {"name": {"from": "aurem-old-name"}}},
+        })
+        row = fake_db.cto_projects.rows[0]
+        assert row["github_owner"] == "AuremHQ"
+        assert row["github_repo"] == "Aurem"
+        assert row["github_url"] == "https://github.com/AuremHQ/Aurem"
+
+    def test_repository_transferred_no_match_is_a_noop(
+        self, configured, client, fake_db,
+    ):
+        """No cto_projects row references the old identity → nothing
+        to update, and it must not raise (200 either way — GitHub
+        webhooks always get acked)."""
+        r = self._post(client, "repository", "d-transfer-nomatch", {
+            "action": "transferred",
+            "repository": {"full_name": "SomeOrg/unrelated-repo",
+                            "name": "unrelated-repo"},
+            "changes": {"owner": {"from": {"user": {"login": "someone-else"}}}},
+        })
+        assert r.status_code == 200
+
     def test_unknown_event_returns_200(self, configured, client):
         r = self._post(client, "star", "d-star-1", {"action": "created"})
         assert r.status_code == 200

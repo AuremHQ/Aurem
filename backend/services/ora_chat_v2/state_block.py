@@ -55,39 +55,59 @@ async def _funnel_7d(db) -> dict:
 
 async def _alerts_7d(db) -> dict:
     since = datetime.now(timezone.utc) - timedelta(days=7)
-    total = await db.health_notifications.count_documents(
-        {"created_at_dt": {"$gte": since}})
-    by_kind: dict[str, int] = {}
-    cur = db.health_notifications.find(
-        {"created_at_dt": {"$gte": since}}, {"_id": 0, "category": 1})
-    async for row in cur:
-        k = row.get("category") or "other"
-        by_kind[k] = by_kind.get(k, 0) + 1
-    return {"total": total, "by_kind": by_kind}
+    try:
+        total = await db.health_notifications.count_documents(
+            {"created_at_dt": {"$gte": since}})
+        by_kind: dict[str, int] = {}
+        cur = db.health_notifications.find(
+            {"created_at_dt": {"$gte": since}}, {"_id": 0, "category": 1})
+        async for row in cur:
+            k = row.get("category") or "other"
+            by_kind[k] = by_kind.get(k, 0) + 1
+        return {"total": total, "by_kind": by_kind}
+    except Exception:
+        # 2026-09-27 P0 — this and its 3 siblings below were the only
+        # helpers in build_state_block() with NO try/except of their
+        # own (unlike _production_status/_funnel_7d above), even
+        # though build_state_block runs on EVERY turn, before any SSE
+        # event is yielded — a transient Mongo hiccup on any one of
+        # them previously killed the whole turn silently (the
+        # "response just vanishes" bug). Degrade to empty, matching
+        # the sibling pattern, instead of taking the turn down.
+        return {"total": 0, "by_kind": {}}
 
 
 async def _open_blockers(db) -> dict:
-    gh_installs = await db.github_installations.count_documents({"active": True})
-    return {"github_app_installations_active": gh_installs}
+    try:
+        gh_installs = await db.github_installations.count_documents({"active": True})
+        return {"github_app_installations_active": gh_installs}
+    except Exception:
+        return {"github_app_installations_active": 0}
 
 
 async def _parked_backlog(db) -> list:
-    cur = db.ora_backlog_items.find(
-        {"status": {"$in": ["parked", "queued"]}},
-        {"_id": 0, "backlog_id": 1, "title": 1, "status": 1, "note": 1},
-    ).sort("updated_at", -1).limit(10)
-    return [row async for row in cur]
+    try:
+        cur = db.ora_backlog_items.find(
+            {"status": {"$in": ["parked", "queued"]}},
+            {"_id": 0, "backlog_id": 1, "title": 1, "status": 1, "note": 1},
+        ).sort("updated_at", -1).limit(10)
+        return [row async for row in cur]
+    except Exception:
+        return []
 
 
 async def _recent_loop_failures_7d(db) -> dict:
     since = time.time() - 7 * 86400
-    cur = db.loop_sessions.find(
-        {"state": "failed", "updated_at": {"$gte": since}},
-        {"_id": 0, "error_code": 1, "updated_at": 1},
-    ).sort("updated_at", -1).limit(20)
-    rows = [r async for r in cur]
-    last_error = rows[0].get("error_code") if rows else None
-    return {"count": len(rows), "last_error_class": last_error}
+    try:
+        cur = db.loop_sessions.find(
+            {"state": "failed", "updated_at": {"$gte": since}},
+            {"_id": 0, "error_code": 1, "updated_at": 1},
+        ).sort("updated_at", -1).limit(20)
+        rows = [r async for r in cur]
+        last_error = rows[0].get("error_code") if rows else None
+        return {"count": len(rows), "last_error_class": last_error}
+    except Exception:
+        return {"count": 0, "last_error_class": None}
 
 
 async def build_state_block(db) -> str:

@@ -255,6 +255,15 @@ async def call_openrouter_model(
             # cold replica each time. Harmless if the model/provider
             # ignores it.
             payload["session_id"] = _sticky_session_id
+        # 2026-09-27 — OpenRouter's own documented end-user attribution
+        # field (see openrouter.ai/docs/cookbook/administration/user-
+        # tracking). Only set when a real caller tagged the ambient
+        # context via `llm_user_context(...)` — internal guard/health-
+        # check calls with no end-user attached simply omit it.
+        from services.loop_token_ledger import current_ambient_user_id
+        _ambient_user = current_ambient_user_id()
+        if _ambient_user:
+            payload["user"] = _ambient_user
         try:
             async with httpx.AsyncClient(timeout=_timeout_s) as c:
                 r = await c.post(OPENROUTER_URL, headers=headers, json=payload)
@@ -298,6 +307,25 @@ async def call_openrouter_model(
                 logger.debug(
                     "[silent-catch] llm.py:1104 in call_openrouter_model "
                     "— loop_token_ledger.log_llm_usage failed: %r", _e,
+                )
+            # 2026-09-27 P0 — REAL per-user cost ledger. Unconditional
+            # (unlike log_llm_usage above, which is loop-only): every
+            # real OpenRouter call, chat/scan/loop/everything, now
+            # writes its REAL provider-reported cost — this is the
+            # root-cause fix for the token-meter showing "Used: 0"
+            # despite real chat/scan activity.
+            try:
+                from services.loop_token_ledger import log_real_usage
+                await log_real_usage(
+                    candidate,
+                    (data or {}).get("usage") or {},
+                    generation_id=(data or {}).get("id"),
+                    feature=feature,
+                )
+            except Exception as _e:
+                logger.debug(
+                    "[silent-catch] call_openrouter_model — "
+                    "loop_token_ledger.log_real_usage failed: %r", _e,
                 )
             if i > 0:
                 logger.warning(

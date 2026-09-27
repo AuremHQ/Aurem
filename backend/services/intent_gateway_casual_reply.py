@@ -13,7 +13,8 @@ from __future__ import annotations
 
 
 async def casual_direct_reply(prompt: str, prior_assistant_text: str | None = None,
-                               session_summary: str | None = None) -> str:
+                               session_summary: str | None = None,
+                               user_id: str | None = None) -> str:
     """Direct, no-tool LLM reply for casual/clarify tier messages.
     Raises on failure — callers decide the fallback behavior.
 
@@ -75,6 +76,6 @@ async def casual_direct_reply(prompt: str, prior_assistant_text: str | None = No
         pass  # admin rules are an enhancement here, never a hard dependency
     reply = await call_llm(
         [{"role": "user", "content": prompt or ""}],
-        system=system, max_tokens=200, temperature=0.6,
+        system=system, max_tokens=200, temperature=0.6, user_id=user_id,
     )
     return (reply or "").strip() or "Hey! How can I help you ship today?"

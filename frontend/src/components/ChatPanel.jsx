@@ -1340,10 +1340,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     return () => window.removeEventListener("aurem:token-limit-reached", onTokenLimit);
   }, [refreshUsage]);
 
-  // Iter 364 — canonical "actually blocked" flag from the server.
-  // Falls back to legacy is_exhausted on older /usage/me payloads so
-  // the composer disables correctly during the deploy roll.
-  const exhausted = !!(usage?.is_blocked || usage?.is_exhausted);
+  // 2026-09-27 — the token counter was decoupled from gating; only
+  // the flat-fee monthly task-count cap can actually block a send
+  // now. `is_blocked` alone is the server's authoritative signal —
+  // the legacy is_exhausted fallback is REMOVED (it now legitimately
+  // goes true for normal, server-accepted usage and would disable
+  // the composer for users the backend is happily serving).
+  const exhausted = usage?.is_blocked === true;
 
   // Iter 154 — toggleMaxx removed; Maxx is now selected via ModeSelector.
 

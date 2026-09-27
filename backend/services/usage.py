@@ -6,6 +6,7 @@ Single source of truth for "how much has this user burned" and
 
   effective_limit = PLAN_LIMITS[user.tier]  +  user.tokens_granted
   used            = sum(cto_tasks.tokens_used where user_id=X, status=done)
+                     + sum(real_llm_usage.total_tokens where user_id=X)
   remaining       = effective_limit - used
 
 FOUNDER TIER (Iter 30): users with `tier == "founder"` or `is_unlimited == True`
@@ -13,13 +14,35 @@ NEVER hit a token ceiling — every call to `assert_has_budget` short-circuits t
 "OK", and the UI reports an infinite remaining balance via the `is_unlimited`
 flag. This is for the company's own founder accounts (e.g. teji.ss1986@gmail.com)
 so internal usage doesn't consume customer-facing quota.
+
+2026-09-27 — P0 fix (per-user usage tracking gap) + product decision to
+DECOUPLE the token meter from customer-facing gating:
+  • `used` now ALSO sums `real_llm_usage` — a new, always-on ledger
+    (services.loop_token_ledger.log_real_usage) fed by every real
+    OpenRouter call's own reported `usage` object, not just the narrow
+    legacy `cto_tasks.tokens_used` writer. This is the actual fix for
+    the "Used: 0" bug — the legacy writer only covered one call path.
+  • `is_blocked` no longer factors in `is_exhausted` (token count).
+    The ONLY customer-facing gate is the flat-fee MONTHLY_TASK_LIMITS
+    task-count cap (see `assert_has_task_budget`) — this was already
+    the documented pricing model (see module docstring above this
+    note), the token counter just hadn't been decoupled from it yet.
+  • `assert_has_budget` no longer raises HTTP 402. It still computes
+    `is_exhausted` and LOGS a warning when a user crosses their old
+    token ceiling (so we keep visibility into disproportionate token
+    burn vs. plan), but never blocks the request. Tracking is kept;
+    gating is removed. Task-count enforcement (`assert_has_task_budget`)
+    is untouched.
 """
 from __future__ import annotations
+import logging
 import os
 from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from cto_services.db import require_db
+
+logger = logging.getLogger(__name__)
 
 PLAN_LIMITS = {
     "free":    1_000,
@@ -101,7 +124,19 @@ async def get_usage(user_id: str) -> dict:
         {"$match": {"user_id": user_id, "status": "done"}},
         {"$group": {"_id": None, "total": {"$sum": "$tokens_used"}}},
     ]).to_list(1)
-    used = int(agg[0]["total"]) if agg else 0
+    legacy_used = int(agg[0]["total"]) if agg else 0
+    # 2026-09-27 P0 fix — the comprehensive real-usage ledger. Every
+    # real OpenRouter call (chat, loop, scan — everything, not just
+    # the narrow cto_tasks path above) writes here with its OWN
+    # provider-reported token counts. Summed alongside the legacy
+    # aggregate so we don't regress whatever that path already
+    # counted, while the gap that made "Used" read ~0 gets closed.
+    real_agg = await db.real_llm_usage.aggregate([
+        {"$match": {"user_id": user_id}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_tokens"}}},
+    ]).to_list(1)
+    real_used = int(real_agg[0]["total"]) if real_agg else 0
+    used = legacy_used + real_used
 
     # Founders are never exhausted — we still surface a usage number so
     # they can see their own burn, but `is_exhausted` stays False forever.
@@ -182,12 +217,19 @@ async def get_usage(user_id: str) -> dict:
         # Iter 364 · Phase 3 — canonical "actually blocked" flag for
         # the frontend banner. TRUE only when the server WILL refuse
         # a fresh chat/send call. Founders/unlimited never blocked.
-        # This is exactly what assert_has_budget checks below, so
-        # server + banner can't drift.
+        #
+        # 2026-09-27 — Decoupled from token exhaustion (`is_exhausted`)
+        # per product decision: the token counter is now an accurate
+        # internal cost-visibility meter only, not a customer-facing
+        # gate. The ONLY thing that blocks a real request is the
+        # flat-fee monthly task-count cap — exactly what
+        # `assert_has_task_budget` enforces below. `assert_has_budget`
+        # (token gate) never raises anymore; keep this flag in sync
+        # with that so the banner can't drift from what the server
+        # will actually do.
         "is_blocked": bool(
             (not is_unlimited)
-            and (is_exhausted
-                 or (task_cap is not None and tasks_this_month >= task_cap))
+            and (task_cap is not None and tasks_this_month >= task_cap)
         ),
     }
 
@@ -220,25 +262,26 @@ async def assert_has_task_budget(user_id: str) -> None:
 
 
 async def assert_has_budget(user_id: str) -> None:
-    """Raises HTTP 402 if the user is out of tokens.
+    """2026-09-27 — Decoupled (product decision, see module docstring).
 
-    Founders / unlimited accounts are always allowed through — this is the
-    primary enforcement point for the no-token-burn mode.
+    Historically raised HTTP 402 once `used >= effective_limit`. Now
+    NEVER raises — the flat-fee MONTHLY_TASK_LIMITS task-count cap
+    (`assert_has_task_budget`) is the sole customer-facing gate.
+    Tracking is NOT deleted: this still computes real exhaustion state
+    via `get_usage` and logs a warning when a user has crossed their
+    old token ceiling, purely for founder visibility into which users
+    burn disproportionate token cost vs. their plan. Never blocks.
     """
     u = await get_usage(user_id)
     if u.get("is_unlimited"):
         return  # Founder — never billed, never blocked.
     if u["is_exhausted"]:
-        raise HTTPException(402, detail={
-            "error": "token_limit_reached",
-            "used": u["used"],
-            "limit": u["effective_limit"],
-            "upgrade_url": "/pricing",
-            "message": (
-                f"Token limit reached ({u['used']:,}/{u['effective_limit']:,}). "
-                "Upgrade your plan or wait for an admin grant to continue."
-            ),
-        })
+        logger.warning(
+            "TOKEN_BUDGET_WOULD_HAVE_BLOCKED user_id=%s tier=%s used=%s "
+            "effective_limit=%s — gating disabled 2026-09-27, task-count "
+            "cap is the only enforced limit; logged for cost visibility.",
+            user_id, u["tier"], u["used"], u["effective_limit"],
+        )
 
 
 # ── Iter 94: Maxx-mode usage tracking ─────────────────────────────────

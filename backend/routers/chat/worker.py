@@ -1143,6 +1143,7 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
             system=_sys_for_advisor,
             max_tokens=800,
             temperature=0.4,
+            user_id=state.user_id,
         )
         # Belt-and-braces: even a direct call can rarely
         # emit a fence if the model has been heavily

@@ -52,6 +52,29 @@ async def call_llm_with_meta(system: str, user: str,
                               review_mode: Optional[str] = None,
                               step_hook=None,
                               feature: Optional[str] = None) -> dict:
+    """Thin wrapper — sets the ambient `user_id` tag (2026-09-27 P0
+    usage-tracking fix) for the duration of this call so
+    `call_openrouter_model` can (a) tag the real OpenRouter request
+    with it and (b) attribute the real-cost ledger row to it, without
+    threading `user_id` through every intermediate agent/function in
+    the 4-hop chain below. See `services.loop_token_ledger.
+    llm_user_context` for why a contextvar instead of a new parameter
+    everywhere. Full implementation + docstring: `_call_llm_with_meta_impl`."""
+    from services.loop_token_ledger import llm_user_context
+    async with llm_user_context(user_id):
+        return await _call_llm_with_meta_impl(
+            system, user, max_tokens=max_tokens, mode=mode, user_id=user_id,
+            review_mode=review_mode, step_hook=step_hook, feature=feature,
+        )
+
+
+async def _call_llm_with_meta_impl(system: str, user: str,
+                              max_tokens: int = 1500,
+                              mode: str = "chat",
+                              user_id: Optional[str] = None,
+                              review_mode: Optional[str] = None,
+                              step_hook=None,
+                              feature: Optional[str] = None) -> dict:
     """
     Orchestrator-facing entry point.
 

@@ -403,6 +403,7 @@ async def _call_deepseek(messages: list, system: str = "",
         _free_fallback_models, _retryable, _retry_delay, _is_fallback_worthy,
     )
     from .groq_client import _call_groq, _groq_key, _GROQ_MODEL
+    from services.loop_token_ledger import current_ambient_user_id
 
     api_key = _openrouter_key()
     if not api_key:
@@ -456,6 +457,13 @@ async def _call_deepseek(messages: list, system: str = "",
                 "order": _DEEPSEEK_HOSTS,
                 "allow_fallbacks": False,
             }
+        # 2026-09-27 — see matching comment in call_openrouter_model.
+        # Real per-user cost attribution; only set when a caller tagged
+        # the ambient context (llm_user_context) — internal/no-user
+        # callers simply omit it.
+        _amb_u = current_ambient_user_id()
+        if _amb_u:
+            p["user"] = _amb_u
         return p
 
     _LLM_TIMEOUT_S = float(os.getenv("LLM_HTTP_TIMEOUT_S", "25.0"))
@@ -516,6 +524,25 @@ async def _call_deepseek(messages: list, system: str = "",
                                 "[silent-catch] llm.py:738 in _call_deepseek "
                                 "— loop_token_ledger.log_llm_usage failed: %r",
                                 _e,
+                            )
+                        # 2026-09-27 P0 — REAL per-user cost ledger.
+                        # Unconditional (unlike log_llm_usage above,
+                        # which is loop-only) — this is the actual fix
+                        # for "casual"/"advisor" quick-reply chat turns
+                        # (this exact code path) burning real tokens
+                        # that never showed up on the token meter.
+                        try:
+                            from services.loop_token_ledger import log_real_usage
+                            await log_real_usage(
+                                cand_model,
+                                (data or {}).get("usage") or {},
+                                generation_id=(data or {}).get("id"),
+                                feature=feature,
+                            )
+                        except Exception as _e:
+                            logger.debug(
+                                "[silent-catch] _call_deepseek — "
+                                "loop_token_ledger.log_real_usage failed: %r", _e,
                             )
                         break
                     except Exception as e:

@@ -34,13 +34,15 @@ import React from "react";
 export default function TokenBanner({ usage }) {
   if (!usage) return null;
   const pct = usage.pct_used || 0;
-  // Server-authoritative block flag. Falls back to legacy is_exhausted
-  // + pct >= 100% for older /usage/me responses that don't ship
-  // is_blocked yet (safe to remove once the deploy is on Iter 364+).
-  const blocked =
-    usage.is_blocked === true
-    || usage.is_exhausted === true
-    || pct >= 100;
+  // 2026-09-27 — the token counter was decoupled from gating (only
+  // the flat-fee monthly task-count cap blocks real requests now).
+  // `is_blocked` is the server's SOLE authoritative signal for that;
+  // the old is_exhausted/pct>=100 fallback is REMOVED because those
+  // now legitimately go true for normal, unblocked usage (the token
+  // meter is cost-visibility only) — keeping the fallback would show
+  // a false "blocked" banner and disable sending for users the
+  // server is happily serving.
+  const blocked = usage.is_blocked === true;
   if (!blocked && pct < 80) return null;
   const remaining = Math.max(0, usage.remaining || 0);
   const used  = usage.used || 0;

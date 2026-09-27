@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -59,6 +60,42 @@ _USER_ID_CV: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
 _AGENT_LABEL_CV: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "loop_token_ledger.agent_label", default=None,
 )
+
+# 2026-09-27 P0 — usage-tracking root-cause fix. Ambient user tag for
+# ANY LLM call path (chat, scan, loop, agents) — NOT gated to loop
+# mode like `_USER_ID_CV` above. Set once at the single shared funnel
+# (`call_llm_with_meta`) and read at the bottom (`call_openrouter_model`)
+# so every real OpenRouter call can be tagged with the real caller's
+# user_id without threading a new parameter through every intermediate
+# agent/function signature in between (ReaderAgent, CoderAgent, _call,
+# _call_claude/_call_glm/_call_longcat — none of which know about
+# user_id today). Same contextvars pattern already proven by the loop-
+# only context above, just not gated to an active loop.
+_AMBIENT_USER_ID_CV: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "loop_token_ledger.ambient_user_id", default=None,
+)
+
+
+@asynccontextmanager
+async def llm_user_context(user_id: Optional[str]):
+    """General-purpose ambient user tag for ANY LLM call (chat, scan,
+    loop). Read by `call_openrouter_model` to (a) tag the OpenRouter
+    request's `user` field for real per-end-user attribution
+    (OpenRouter's own documented mechanism), and (b) tag the real-cost
+    ledger row (`log_real_usage`, below). Never raises."""
+    t = _AMBIENT_USER_ID_CV.set(user_id or None)
+    try:
+        yield
+    finally:
+        _AMBIENT_USER_ID_CV.reset(t)
+
+
+def current_ambient_user_id() -> Optional[str]:
+    """Prefer the loop-scoped user_id when a loop is active (more
+    specific / already validated), else fall back to the general
+    ambient tag set by `llm_user_context`."""
+    _, _, loop_user = current_loop_context()
+    return loop_user or _AMBIENT_USER_ID_CV.get()
 
 
 @asynccontextmanager
@@ -175,4 +212,53 @@ async def log_llm_usage(model: str, usage: dict,
             "loop_token_ledger.log_llm_usage failed "
             "(loop=%s phase=%s model=%s): %r",
             loop_id, phase_tag, model, e,
+        )
+
+
+# ── 2026-09-27 — REAL (provider-reported) per-user cost ledger ────────
+# Root-cause fix for the "Used: 0" token-meter bug (P0, live evidence
+# on mooreasys@gmail.com). Everything above this line (`log_llm_usage`)
+# is a NO-OP outside of Loop mode, and even inside Loop mode it logs an
+# ESTIMATE (cost_tracker's static $/M-token price table), never the
+# real OpenRouter-billed number. This function is different on both
+# counts: (1) unconditional — fires for every real OpenRouter call,
+# chat/scan/loop/everything, tagged via `current_ambient_user_id()`
+# rather than requiring an active loop context; (2) uses the REAL
+# `usage.cost` OpenRouter returns inline on every chat-completion
+# response (confirmed via OpenRouter's own docs — no separate
+# /generation lookup needed), not a heuristic estimate.
+async def log_real_usage(model: str, usage: dict, *,
+                          generation_id: Optional[str] = None,
+                          feature: Optional[str] = None) -> None:
+    """Called by `call_openrouter_model` immediately after every
+    successful OpenRouter response. Writes one row to
+    `real_llm_usage` tagged with the ambient user_id (or "anonymous"
+    if none is set — e.g. an internal guard/health-check call with no
+    end-user attached). Never raises; a ledger failure must never
+    break the LLM call it's describing."""
+    prompt_tokens     = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    if prompt_tokens == 0 and completion_tokens == 0:
+        return  # No usage reported (e.g. a fallback path) — nothing real to log.
+    real_cost_usd = float(usage.get("cost") or 0.0)
+    user_id = current_ambient_user_id() or "anonymous"
+    try:
+        from cto_services.db import get_db
+        db = get_db()
+        await db.real_llm_usage.insert_one({
+            "user_id":            user_id,
+            "model":              model,
+            "prompt_tokens":      prompt_tokens,
+            "completion_tokens":  completion_tokens,
+            "total_tokens":       prompt_tokens + completion_tokens,
+            "cost_usd":           real_cost_usd,
+            "generation_id":      generation_id,
+            "feature":            feature,
+            "loop_id":            _LOOP_ID_CV.get(),
+            "ts":                 time.time(),
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "loop_token_ledger.log_real_usage failed (user=%s model=%s): %r",
+            user_id, model, e,
         )

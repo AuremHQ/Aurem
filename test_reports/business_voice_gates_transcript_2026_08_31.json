@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can help improve your website by fixing real issues—just share the website and I'll dive in with direct, actionable improvements!",
+      "reply": "I can help improve your website by fixing bugs, optimizing performance, or adding features—just share your website!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -18,19 +18,76 @@
       "tier": "casual",
       "bail_reason": null,
       "ship_suppressed": false
+    },
+    {
+      "turn": 2,
+      "prompt": "please put our opening hours at the top of our main page",
+      "reply": "Got it—I'll find where your hours are currently stored and move them to a more prominent spot on the homepage. Want me to suggest the best placement too?",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "intent-gateway-casual",
+      "tier": "clarify",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 3,
+      "prompt": "9am to 5pm every day",
+      "reply": "Perfect—I'll add those hours right next to your main call-to-action button where visitors will see them immediately. Want me to publish that change now?",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "intent-gateway-casual",
+      "tier": "casual",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 4,
+      "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
+      "reply": "I don't have access to your website files right now—looks like there's a connection issue on my end. But I can still help once that's sorted.\n\nIn the meantime, can you tell me what platform your website is on? (For example: WordPress, Wix, Squarespace, or a custom-built site?) That way I can give you the exact steps to add your phone number yourself if you'd like to do it quickly.",
+      "checks": {
+        "no_jargon": false,
+        "jargon_hits": [
+          "access to",
+          "file"
+        ],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "longcat-2.0",
+      "tier": "agentic",
+      "bail_reason": null,
+      "ship_suppressed": false
     }
   ],
   "gate2": [
     {
       "prompt": "can you redesign our brand identity?",
-      "reply": "Got it — you want a fresher look for your brand and site. I can do a real visual refresh on your site right now: colors, fonts, spacing, and layout — and show you a before/after before anything goes live.\n\nA few directions that could fit: Clean & minimal (lots of white space, one accent color, a big clear headline), Bold & confident (strong color, bold type, sharp contrast), or Warm & friendly (soft colors, relaxed spacing). My top pick would be Clean & minimal to start.\n\nTell me one word for the feel you want — calm, bold, or premium — or just say go and I'll start with my top pick. A brand-new logo or a full brand-strategy book is a bigger project — I can help you start that too, but the site's look I can do right now.",
+      "reply": "I focus on building tasks—I can help with UI/UX implementation if you have design specs, but branding itself is outside my wheelhouse.",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
-        "has_can_do_now": true,
-        "has_concrete_directions": true,
+        "has_can_do_now": false,
+        "has_concrete_directions": false,
         "at_most_one_question": true,
-        "has_scope_line": true,
+        "has_scope_line": false,
         "question_count": 0
       },
       "provider": "intent-gateway-casual",
@@ -38,14 +95,14 @@
     },
     {
       "prompt": "our site looks dated — can you modernize it?",
-      "reply": "Got it — you want a fresher look for your brand and site. I can do a real visual refresh on your site right now: colors, fonts, spacing, and layout — and show you a before/after before anything goes live.\n\nA few directions that could fit: Clean & minimal (lots of white space, one accent color, a big clear headline), Bold & confident (strong color, bold type, sharp contrast), or Warm & friendly (soft colors, relaxed spacing). My top pick would be Clean & minimal to start.\n\nTell me one word for the feel you want — calm, bold, or premium — or just say go and I'll start with my top pick. A brand-new logo or a full brand-strategy book is a bigger project — I can help you start that too, but the site's look I can do right now.",
+      "reply": "Sure! Send me the website link and I'll whip up a fresh design for you—clean, modern, and fast.",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
-        "has_can_do_now": true,
-        "has_concrete_directions": true,
+        "has_can_do_now": false,
+        "has_concrete_directions": false,
         "at_most_one_question": true,
-        "has_scope_line": true,
+        "has_scope_line": false,
         "question_count": 0
       },
       "provider": "intent-gateway-casual",
@@ -83,7 +140,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey there! 👋 Ready to dive into some content?",
+      "reply": "Hey there! 👋 Let’s build something cool.",
       "provider": "intent-gateway-casual",
       "tier": "casual"
     }
