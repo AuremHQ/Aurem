@@ -78,21 +78,25 @@ async def get_deploy_readiness() -> dict:
     # up to ~15s. Offloaded the same way.
     import asyncio
     ws = await asyncio.to_thread(_workspace_state)
-    token = (os.environ.get("GITHUB_ACTIONS_TOKEN")
-             or os.environ.get("GITHUB_TOKEN") or "").strip()
     repo = (os.environ.get("GITHUB_REPO") or "").strip()
 
     reasons: list[str] = []
     remote: dict | None = None
-    if not (token and repo):
-        reasons.append("GitHub not wired (GITHUB_ACTIONS_TOKEN / GITHUB_REPO unset)")
+    if not repo or "/" not in repo:
+        reasons.append("GitHub not wired (GITHUB_REPO unset)")
     else:
-        try:
-            remote = await _remote_state(token, repo)
-        except httpx.HTTPStatusError as exc:
-            reasons.append(f"GitHub API {exc.response.status_code} on {exc.request.url.path}")
-        except Exception as exc:
-            reasons.append(f"GitHub unreachable: {type(exc).__name__}")
+        owner, name = repo.split("/", 1)
+        from services.github_app import get_token_for_repo
+        token, reason = await get_token_for_repo(owner, name)
+        if not token:
+            reasons.append(f"GitHub App has no access to {repo} ({reason})")
+        else:
+            try:
+                remote = await _remote_state(token, repo)
+            except httpx.HTTPStatusError as exc:
+                reasons.append(f"GitHub API {exc.response.status_code} on {exc.request.url.path}")
+            except Exception as exc:
+                reasons.append(f"GitHub unreachable: {type(exc).__name__}")
 
     matches = bool(ws.get("sha") and remote and ws["sha"] == remote["sha"])
     if ws.get("git_available"):

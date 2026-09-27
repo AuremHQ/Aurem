@@ -655,7 +655,7 @@ async def _check_supervised_tasks() -> dict:
 
 async def _check_ci_vs_local_drift() -> dict:
     """Reuses admin_qa.ci_vs_local_drift logic (no HTTP self-call).
-    gray when GITHUB_ACTIONS_TOKEN missing (honest); red when CI
+    gray when the GitHub App has no access to GITHUB_REPO (honest); red when CI
     has failing jobs; green otherwise."""
     # Feb 2026 · prod-hang fix — `_harvest_counts` is a SYNC function
     # that runs `analyze_suite()` (AST parse of every backend test file)
@@ -670,7 +670,7 @@ async def _check_ci_vs_local_drift() -> dict:
     local = (await asyncio.to_thread(_harvest_counts)) or {}
     ci    = await _harvest_ci_status()
     if not ci.get("available"):
-        return result_gray(f"CI unreachable — {ci.get('reason','GITHUB_ACTIONS_TOKEN unset')}")
+        return result_gray(f"CI unreachable — {ci.get('reason', 'GitHub App has no access to GITHUB_REPO')}")
     conclusions = [
         j.get("conclusion") for j in (ci.get("jobs") or {}).values()
         if j.get("conclusion")

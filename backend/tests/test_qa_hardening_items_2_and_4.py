@@ -97,18 +97,23 @@ def test_version_returns_last_github_push_key(client, monkeypatch):
 
 
 def test_last_github_push_populated_when_creds_present(monkeypatch):
-    """Contract check: with creds + a stubbed GitHub API, the
-    resolver returns a dict shaped for the frontend.
+    """Contract check: with a GitHub App installation covering the
+    repo + a stubbed GitHub API, the resolver returns a dict shaped
+    for the frontend.
 
-    Iter arch-2a (2026-08-22) — resolver + cache relocated verbatim
-    to services/github_last_push.py (was a router→raw-httpx boundary
-    violation). Same contract, corrected ownership."""
+    2026-09-26 — migrated off GITHUB_ACTIONS_TOKEN (expired PAT) onto
+    the GitHub App path (Task 6); mock `get_token_for_repo` instead of
+    an env var."""
     from services import github_last_push as glp
+    import services.github_app as gh_app
 
-    monkeypatch.setenv("GITHUB_ACTIONS_TOKEN", "gha_fake_token")
     monkeypatch.setenv("GITHUB_REPO", "owner/repo")
     glp._GH_PUSH_CACHE["value"] = None
     glp._GH_PUSH_CACHE["expires_at"] = 0.0
+
+    async def _fake_get_token_for_repo(owner, repo):
+        return "ghs_fake_installation_token", "github_app_installation:1"
+    monkeypatch.setattr(gh_app, "get_token_for_repo", _fake_get_token_for_repo)
 
     class _Resp:
         status_code = 200

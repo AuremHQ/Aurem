@@ -1245,11 +1245,14 @@ def _harvest_counts() -> dict:
 
 
 # Env contract:
-#   GITHUB_ACTIONS_TOKEN  — a PAT or fine-grained token with `actions:read`
-#                          scope on the repo. Read-only; never mutating.
-#   GITHUB_REPO           — "owner/name" of the repo whose runs to fetch.
-# When either is missing, we return an honest "unavailable" payload
-# instead of faking green statuses.
+#   GITHUB_REPO — "owner/name" of the repo whose runs to fetch. Auth
+#                 goes through the AUREM GitHub App (installation token,
+#                 `actions:read` implied by the App's `actions:write`
+#                 grant) — migrated 2026-09-26 off the now-expired
+#                 GITHUB_ACTIONS_TOKEN PAT.
+# When GITHUB_REPO is missing or the App has no access to it, we
+# return an honest "unavailable" payload instead of faking green
+# statuses.
 _JOB_NAMES_WE_CARE_ABOUT = (
     "bug-fix-discipline",
     "invariants",
@@ -1276,16 +1279,21 @@ _DISPLAY_NAME_TO_JOB_ID = {v: k for k, v in _JOB_DISPLAY_NAMES.items()}
 
 
 async def _harvest_ci_status() -> dict:
-    token = os.environ.get("GITHUB_ACTIONS_TOKEN")
     repo  = os.environ.get("GITHUB_REPO")
-    if not token or not repo:
+    if not repo or "/" not in repo:
         return {
             "available": False,
-            "reason": (
-                "GITHUB_ACTIONS_TOKEN and/or GITHUB_REPO not set. "
-                "Set both in backend/.env to enable live CI status. "
-                "Token needs `actions:read` scope on the repo."
-            ),
+            "reason": "GITHUB_REPO not set.",
+            "jobs": {},
+        }
+    owner, name = repo.split("/", 1)
+    from services.github_app import get_token_for_repo
+    token, reason = await get_token_for_repo(owner, name)
+    if not token:
+        return {
+            "available": False,
+            "reason": (f"GitHub App has no access to {repo} ({reason}). "
+                       "Check the App is installed on this org/repo."),
             "jobs": {},
         }
 

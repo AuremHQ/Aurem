@@ -12,7 +12,7 @@ admin surface must go through this module.
     gray  — check could not run (missing config / credentials /
             setup). NOT a failure — a "not-set-up-yet" signal.
 
-Never collapse gray into red. A missing GITHUB_ACTIONS_TOKEN is
+Never collapse gray into red. A GitHub App with no access to a repo is
 gray; a live GitHub Actions run that failed is red. These are
 categorically different signals to the founder.
 

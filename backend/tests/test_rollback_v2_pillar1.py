@@ -217,8 +217,7 @@ def test_execute_fails_closed(execute_result):
     detail = data.get("detail", "")
     assert "403" in detail, f"expected 403 in detail, got: {detail}"
     # secret non-leakage: token env variable should not appear in detail
-    tok_env = (os.environ.get("AUREM_DRILL_TOKEN", "")
-               or os.environ.get("GITHUB_ACTIONS_TOKEN", ""))
+    tok_env = os.environ.get("AUREM_DRILL_TOKEN", "")
     if tok_env:
         assert tok_env not in detail, "token leaked in error detail"
     # generic ghp_/github_pat_ patterns shouldn't leak

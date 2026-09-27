@@ -11,9 +11,9 @@ Returns a single JSON payload the frontend renders as 4 cards:
     2. Style-classifier ratio (STATIC_GREP % — the iter289 CI-guard)
     3. a11y baseline counts (component + journey)
     4. CI status per job (frontend-vitest, visual-regression, test-style-guard,
-       invariants) — pulled from GitHub Actions API if
-       `GITHUB_ACTIONS_TOKEN` is set + `GITHUB_REPO` is set;
-       otherwise reports `{"available": False, "reason": ...}`
+       invariants) — pulled from GitHub Actions API via the AUREM GitHub
+       App installation token if `GITHUB_REPO` is set and the App has
+       access to it; otherwise reports `{"available": False, "reason": ...}`
        (honest — no fake green statuses).
 
 All counts are computed at request time from the ACTUAL test files
@@ -763,8 +763,8 @@ async def vscode_marketplace_status(
 #   - CI:    `_harvest_ci_status()` (already used by /admin/qa/status)
 # Then we flag `drift_detected: True` when CI's latest conclusion is
 # "failure" — because that alone is proof that the local "everything
-# passing" claim is wrong. Honest-empty when GITHUB_ACTIONS_TOKEN /
-# GITHUB_REPO aren't configured.
+# passing" claim is wrong. Honest-empty when GITHUB_REPO isn't set or
+# the GitHub App has no access to it.
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/ci-vs-local-drift")

@@ -296,7 +296,7 @@ async def get_version(request: Request) -> dict:
         # These were conflated in the AdminSystemHealth Deploy Sync
         # card, letting a stale Save-to-GitHub sit unnoticed for days
         # even though deploys were landing fine. Honest-empty when
-        # GITHUB_ACTIONS_TOKEN / GITHUB_REPO aren't set.
+        # GitHub App has no access to GITHUB_REPO.
         "last_github_push": await fetch_last_github_push(),
     }
 

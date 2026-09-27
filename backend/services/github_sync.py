@@ -9,7 +9,7 @@ user-only platform action, so the repo silently goes stale unless
 something watches it — this is that something.
 
 States:
-  not_wired — GITHUB_ACTIONS_TOKEN / GITHUB_REPO env missing
+  not_wired — GitHub App not configured / has no access to GITHUB_REPO
   in_sync   — GitHub main contains the deployed commit
   behind    — deployed commit missing from GitHub (repo outdated);
               critical=True when the gap exceeds 48h → escalated into
@@ -37,10 +37,22 @@ _GH_API = "https://api.github.com"
 
 
 def _cfg() -> tuple[str, str]:
-    token = (os.environ.get("GITHUB_ACTIONS_TOKEN")
-             or os.environ.get("GITHUB_TOKEN") or "").strip()
+    """DEPRECATED — kept only for the `repo` half. Token resolution now
+    goes through `_resolve_token()` (GitHub App), not this env read."""
     repo = (os.environ.get("GITHUB_REPO") or "").strip()
-    return token, repo
+    return "", repo
+
+
+async def _resolve_token(repo: str) -> tuple[str, str]:
+    """2026-09-26 — migrated off the now-expired `GITHUB_ACTIONS_TOKEN`
+    PAT onto the same GitHub App installation-token path the rest of
+    the product uses (Task 6). `repo` is `"owner/name"`."""
+    if "/" not in repo:
+        return "", "bad_repo_format"
+    owner, name = repo.split("/", 1)
+    from services.github_app import get_token_for_repo
+    token, reason = await get_token_for_repo(owner, name)
+    return token or "", reason
 
 
 def _parse_ts(v: str) -> datetime | None:
@@ -182,9 +194,10 @@ async def _sync_alert(db, data: dict) -> None:
                     "severity": "critical",
                     "summary": summary[:300],
                     "detail": data.get("error", "")[:500],
-                    "fix_hint": ("Check GITHUB_ACTIONS_TOKEN hasn't expired — "
-                                 "fine-grained PATs don't auto-renew. Generate a "
-                                 "new one and update backend/.env."),
+                    "fix_hint": ("Check the AUREM GitHub App installation on "
+                                 "this org still has access to this repo — "
+                                 "Admin → Settings → GitHub App, or GitHub → "
+                                 "Settings → Applications → AUREM DevOps."),
                     "day_key": day,
                     "first_seen": now, "last_seen": now, "seen_count": 1,
                     "status": "active", "email_sent": False,
@@ -216,16 +229,22 @@ async def get_github_sync(build_sha: str, built_at: str, db=None) -> dict:
     now = time.time()
     if _CACHE["data"] is not None and now - _CACHE["ts"] < CACHE_TTL_S:
         return _CACHE["data"]
-    token, repo = _cfg()
-    if not token or not repo:
+    _, repo = _cfg()
+    if not repo:
         data = {"status": "not_wired", "critical": False,
-                "detail": "Set GITHUB_ACTIONS_TOKEN + GITHUB_REPO env vars."}
+                "detail": "Set GITHUB_REPO env var."}
     else:
-        try:
-            data = await _compute(token, repo, build_sha, built_at)
-        except Exception as e:
-            logger.warning("github_sync check failed: %r", e)
-            data = {"status": "error", "critical": False, "error": str(e)[:200]}
+        token, reason = await _resolve_token(repo)
+        if not token:
+            data = {"status": "not_wired", "critical": False,
+                    "detail": f"GitHub App has no access to {repo} ({reason}). "
+                               "Install/configure the AUREM GitHub App on this repo."}
+        else:
+            try:
+                data = await _compute(token, repo, build_sha, built_at)
+            except Exception as e:
+                logger.warning("github_sync check failed: %r", e)
+                data = {"status": "error", "critical": False, "error": str(e)[:200]}
     data["checked_at"] = int(now)
     _CACHE.update(ts=now, data=data)
     if db is not None:
