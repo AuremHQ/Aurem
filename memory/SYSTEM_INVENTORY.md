@@ -1013,3 +1013,5 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `loop_run_log kind='create_or_update'` — auto-detected in backend/routers/admin_ops_config.py (verify) [Iter 0, 2026-09-28T06:21:04.172271Z] <!-- inv:loop_run_log_kind:create_or_update -->
 - `services/admin_audit_log.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172300Z] <!-- inv:service:services/admin_audit_log.py -->
 - `services/user_response_sanitizer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172326Z] <!-- inv:service:services/user_response_sanitizer.py -->
+| `routers/admin_funnel.py` | `/admin` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-28T17:28:42.827581Z) | <!-- inv:router:routers/admin_funnel.py -->
+- `BASE_URL` — auto-detected in backend/tests/test_activation_part3_guided_first_task.py (verify) (default: unset) [Iter 0, 2026-09-28T17:28:42.827638Z] <!-- inv:envvar:BASE_URL -->

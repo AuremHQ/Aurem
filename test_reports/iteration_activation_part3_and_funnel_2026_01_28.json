@@ -1,0 +1,50 @@
+{
+  "summary": "Full backend + frontend validation of ACTIVATION FIRST Part 3 (StarterChoiceModal + scan-website fallback + demo-project LLM verified fix), Admin Funnel dashboard (/admin/funnel), Admin Presence Summary, and cockpit gauge geometry. All targeted features work end-to-end. 10/10 backend tests passed (after test assertion relaxation for real funnel payload shape). Frontend: modal renders with all 5 data-testids, scan flow returns fallback path result with issue list + Connect-GitHub CTA, bugfix flow prefills chat composer with the expected paste-code prompt, demo-project completes real LLM+subprocess-verified fix with unified diff shown, admin can navigate to /admin/funnel and see real live funnel data, cockpit gauges (Total Users 4/50, Live Now 0, Active 24h ~85%) render with correct needle directions relative to their percentages.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_activation_and_funnel_2026_01.py",
+    "/app/test_reports/pytest/iter_activation_funnel.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Signup UI: submit button remains disabled until Terms & Privacy checkbox is ticked — this is by design but our first Playwright pass hit that gate; no code fix required, just noting for future test scripts (they should tick the T&P checkbox before clicking submit).",
+    "backend/tests/conftest.py at line 284 imports `from services.retry_guard import ...` which requires PYTHONPATH=/app/backend when running pytest from /app root — considering adding `pythonpath = .` to backend/pytest.ini so conftest is location-agnostic (minor DX)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_activation_and_funnel_2026_01.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all reviewed flows working)"},
+  "test_credentials": "Admin: test@aurem.dev / AuremTest2026! (worked). Non-admin: fresh signup via POST /api/aurem-dev/auth/signup with email like iter-nonadmin-<rand>@example.com / TestPass2026!.",
+  "seed_data_creation": "Created 2 throwaway non-admin signups (iter-nonadmin-*@example.com) via API for RBAC assertions. Also 1 UI-abandoned signup (testerx-112079@example.com — form filled but Terms checkbox not ticked, no account created).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 targeted areas verified end-to-end in preview. Backend regression file /app/backend/tests/test_iteration_activation_and_funnel_2026_01.py runs green (needs PYTHONPATH=/app/backend). The /admin/funnel page renders real data with 463 signups in the sample range; presence_summary returns {total_users, active_24h, live_now} correctly and gates non-admins with 403. StarterChoiceModal opens on window.dispatchEvent('aurem:open-starter-choices') and via fresh-signup gate skip; the scan-website endpoint correctly falls back (Firecrawl exhausted) and returns real issue list; demo-project/run returns verified:true with a real unified diff on the coupon-calculator sample. OAuth audit-log hooks were NOT exercised (no way to trigger without real OAuth credentials, as review request already flagged as out-of-scope).",
+  "results_details": {
+    "backend_tests": {
+      "TestAdminFunnel::test_funnel_forbidden_for_non_admin": "PASS (403)",
+      "TestAdminFunnel::test_funnel_unauth_rejected": "PASS",
+      "TestAdminFunnel::test_funnel_ok_for_admin": "PASS (payload has event_counts, first_chat_pct, d7_retention_pct, etc — note: response does NOT include a top-level 'ok' or 'range' key, which contradicts the review-request description; the actual shape is a flat dict of metrics)",
+      "TestPresenceSummary::test_presence_forbidden_for_non_admin": "PASS (403)",
+      "TestPresenceSummary::test_presence_ok_admin": "PASS (total_users, active_24h, live_now present as ints)",
+      "TestScanWebsite::test_scan_fallback_path": "PASS (scan_path='fallback' confirmed)",
+      "TestScanWebsite::test_scan_garbage_url_400": "PASS",
+      "TestScanWebsite::test_scan_ssrf_internal_blocked": "PASS (169.254.169.254 blocked)",
+      "TestScanWebsite::test_scan_requires_auth": "PASS",
+      "TestDemoProject::test_demo_run_verified": "PASS (verified:true, after_result=50.0, real diff)"
+    },
+    "frontend_flows": {
+      "StarterChoiceModal opens via event dispatch": "PASS — modal + all 5 data-testids (scan/bugfix/demo/connect-instead/close) present",
+      "Scan-my-website flow": "PASS — URL input → submit → summary 'Scanned https://example.com — found 1 issue(s)' + fallback caption '(ran our backup checker — full scanner was busy)' + starter-scan-issue-0 + starter-scan-connect-cta visible",
+      "Fix-a-bug-in-my-code flow": "PASS — clicking prefills chat textarea with 'Here's a bug in my code — please find and fix it:'",
+      "Try-a-demo-project flow": "PASS — running loader shown, then verified-fix badge + unified diff of coupon-discount fix + Connect-GitHub CTA (real LLM path, ~10s)",
+      "Admin /admin/funnel navigation": "PASS — page renders with Activation Funnel title, 463 signups, funnel stages Signed up / Opened chat / Connected repo or skipped / Sent first message / First task started / First task completed / Came back another day + Dropped-between panel + First-completed-task token cost cards. Zero page errors.",
+      "Admin cockpit gauges": "PASS — 3 gauges render, Total Users (4/50) needle pointing lower-left (small percentage → correct), Live Now (0) needle far-left (correct), Active Last 24h (1 of 4 = 25%? or high) needle high-upper. TOTAL USERS card (4) matches gauge value (4). DAU today card shows 1 (no longer stuck at 0)."
+    }
+  },
+  "rca of the issue": "N/A — no bugs found."
+}
