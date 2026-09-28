@@ -51,15 +51,23 @@ async def build_digest() -> dict:
         {"status": {"$in": ["open", "pending_user"]}}
     )
 
-    # Token + cost (same proxy as Token P&L)
+    # Token + cost (2026-09-28 MASTER TASK fix: this used to be
+    # `(tokens_used/1000)*0.30`, the exact same mislabeled-per-1k bug
+    # already fixed in admin_analytics.py — 0.30 was actually a
+    # per-MILLION rate, inflating this number ~1000x. Now sums the
+    # real `cost_usd` that Part B's task roll-up already writes onto
+    # every `cto_tasks` doc from the one canonical `real_llm_usage`
+    # ledger — same source as /admin/agent-tokens and /admin/token-pnl.)
     pipe = [
         {"$match": {"created_at": {"$gte": day_ago}, "status": "done"}},
-        {"$group": {"_id": None, "tokens": {"$sum": "$tokens_used"}}},
+        {"$group": {"_id": None, "tokens": {"$sum": "$tokens_used"},
+                     "cost": {"$sum": "$cost_usd"}}},
     ]
     tokens_used = 0
+    ai_cost = 0.0
     async for d in db.cto_tasks.aggregate(pipe):
         tokens_used = d.get("tokens") or 0
-    ai_cost = round((tokens_used / 1000) * 0.30, 2)
+        ai_cost = round(d.get("cost") or 0.0, 4)
 
     # 2026-08 hardening — same proxy, real-customers-only (excludes the
     # founder's own admin/QA account + orphaned test IDs). Task 2 cost
@@ -70,9 +78,10 @@ async def build_digest() -> dict:
         pipe[:1] + real_customer_match_stages() + pipe[1:]
     )
     tokens_used_customers_only = 0
+    ai_cost_customers_only = 0.0
     async for d in db.cto_tasks.aggregate(pipe_customers_only):
         tokens_used_customers_only = d.get("tokens") or 0
-    ai_cost_customers_only = round((tokens_used_customers_only / 1000) * 0.30, 2)
+        ai_cost_customers_only = round(d.get("cost") or 0.0, 4)
 
     # Top failed task (if any) — actionable signal for admin
     failed_sample = None

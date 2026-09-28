@@ -32,7 +32,7 @@ from cto_services.auth import create_token, current_dev
 from cto_services.db import get_db
 from services.team_permissions import (
     RESOURCES, ROLE_PRESETS, preset_matrix, require_permission,
-    resolve_context, write_audit_log,
+    resolve_context, team_feature_enabled, write_audit_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,11 +72,18 @@ async def my_team_context(authorization: Optional[str] = Header(None)) -> dict:
     """Used by the frontend nav to hide/disable areas the caller can't
     reach — UX only, the real gate is `require_permission` server-side."""
     ctx = await resolve_context(authorization)
+    db = _require_db()
     return {
         "is_owner":     ctx["is_owner"],
         "role_label":   ctx["role_label"],
         "permissions":  ctx["permissions"],
         "account_id":   ctx["effective_account_id"],
+        # 2026-09-28 MASTER TASK Batch 2 (c) — Team management is a
+        # paid-tier feature (or staff); free/starter/pro accounts get
+        # `False` here regardless of their (trivially-true) `is_owner`
+        # status, so the nav/tab can hide for everyone who isn't
+        # entitled instead of showing a feature they can't use.
+        "team_feature_enabled": await team_feature_enabled(db, ctx["effective_account_id"]),
     }
 
 
@@ -131,6 +138,8 @@ async def invite_member(body: InviteBody,
     ctx = await require_permission("team_management", "write")(authorization)
     db = _require_db()
     owner_id = ctx["effective_account_id"]
+    if not await team_feature_enabled(db, owner_id):
+        raise HTTPException(403, "Team management is a Team-plan feature. Upgrade to invite teammates.")
     email = body.email.strip().lower()
     self_email = (ctx["user"].get("email") or "").strip().lower()
 
@@ -186,6 +195,8 @@ async def update_permissions(member_id: str, body: UpdatePermissionsBody,
     ctx = await require_permission("team_management", "write")(authorization)
     db = _require_db()
     owner_id = ctx["effective_account_id"]
+    if not await team_feature_enabled(db, owner_id):
+        raise HTTPException(403, "Team management is a Team-plan feature. Upgrade to manage teammates.")
     row = await db.team_members.find_one({"member_id": member_id, "owner_id": owner_id})
     if not row:
         raise HTTPException(404, "Team member not found")

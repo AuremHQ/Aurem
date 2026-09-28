@@ -83,6 +83,32 @@ def preset_matrix(role_label: str) -> dict[str, str]:
     return dict(ROLE_PRESETS.get(role_label, ROLE_PRESETS["viewer"]))
 
 
+# ─── Team feature entitlement — 2026-09-28 MASTER TASK Batch 2 (c) ──
+# `resolve_context_for_user` above answers "who can do what WITHIN an
+# account's team" (RBAC) — it has nothing to say about whether the
+# account should have a team at all. Before this fix, every account
+# (free/starter/pro/team) was always `is_owner` of its own solo
+# "team", so every tier could invite members and saw the Team tab —
+# there was no subscription-tier check anywhere in this file. Team
+# management is a paid-tier feature; this is the ONE place that
+# checks it, reused by `/team/me` (UI visibility) and the two
+# write endpoints (server-side enforcement) so neither can drift.
+TEAM_FEATURE_TIERS = ("team",)
+
+
+async def team_feature_enabled(db, owner_user_id: str) -> bool:
+    """True if the ACCOUNT OWNER (not necessarily the caller — a team
+    member should see the same answer as their owner) is on a tier
+    that includes team management, or is staff (admin/founder)."""
+    owner = await db.dev_users.find_one(
+        {"user_id": owner_user_id}, {"_id": 0, "tier": 1, "is_admin": 1, "is_founder": 1})
+    if not owner:
+        return False
+    if owner.get("is_admin") or owner.get("is_founder"):
+        return True
+    return (owner.get("tier") or "").lower() in TEAM_FEATURE_TIERS
+
+
 def _satisfies(have: str, required: str) -> bool:
     if required == "read":
         return have in ("read", "read_write")

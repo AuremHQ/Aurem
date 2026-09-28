@@ -21,6 +21,7 @@ import GitHubCard from "../components/GitHubCard";
 import VercelCard from "../components/VercelCard";
 import PricingCards from "../components/PricingCards";
 import OraWrapped from "../components/OraWrapped";
+import UsageHistoryCard from "../components/UsageHistoryCard";
 import ReferralShare from "../components/ReferralShare";
 import TrustLevelCard from "../components/TrustLevelCard";
 import DangerZone from "../components/DangerZone";
@@ -416,8 +417,15 @@ export default function Settings() {
               }}><Coins size={16} /></span>
               <div>
                 <div className="label-mini" style={{ marginBottom: 2 }}>token wallet</div>
-                <div style={{ fontSize: 18, color: "var(--text)", fontWeight: 600 }}>
-                  {me?.is_unlimited ? "∞ Unlimited" : (me?.tokens_remaining ?? "—")}
+                <div style={{ fontSize: 18, color: "var(--text)", fontWeight: 600 }} data-testid="plans-wallet-remaining">
+                  {/* 2026-09-28 MASTER TASK Batch 2 (b) — was reading
+                      the stale `me.tokens_remaining` DB field, which
+                      could drift from the ledger-derived number the
+                      Profile tab's card already shows correctly a
+                      few tabs over. Same `usage.remaining` source
+                      everywhere now — one number, one place it comes
+                      from. */}
+                  {(usage?.is_unlimited || me?.is_unlimited) ? "∞ Unlimited" : (usage?.remaining != null ? Number(usage.remaining).toLocaleString() : "—")}
                 </div>
               </div>
             </section>
@@ -435,6 +443,8 @@ export default function Settings() {
             <section className="card" data-testid="settings-wrapped">
               <OraWrapped defaultPeriod="this_month" />
             </section>
+
+            <UsageHistoryCard />
           </div>
         )}
 

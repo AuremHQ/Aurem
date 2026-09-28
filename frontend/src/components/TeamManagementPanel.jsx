@@ -51,6 +51,7 @@ export default function TeamManagementPanel() {
 
   const canManage = me?.is_owner || me?.permissions?.team_management === "write" ||
                      me?.permissions?.team_management === "read_write";
+  const entitled = me?.team_feature_enabled === true;
 
   async function invite(e) {
     e.preventDefault();
@@ -108,6 +109,27 @@ export default function TeamManagementPanel() {
     return (
       <div data-testid="team-panel-loading" style={{ padding: 24, color: "var(--muted)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
         <Loader2 size={16} className="animate-spin" /> Loading team settings…
+      </div>
+    );
+  }
+
+  // 2026-09-28 MASTER TASK Batch 2 (c) — checked before the permission
+  // message below: a free/starter/pro account owner IS trivially
+  // `is_owner` of their own solo account (so `canManage` alone would
+  // pass), but Team management itself is a paid-tier feature. Same
+  // `team_feature_enabled` flag the nav link uses to hide itself —
+  // this is the fallback for anyone who reaches this tab by a direct
+  // URL instead of the (already-hidden) nav link.
+  if (!entitled) {
+    return (
+      <div data-testid="team-panel-upgrade-required" className="card" style={{ padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text)", marginBottom: 6 }}>
+          <Shield size={16} />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Team management is a Team-plan feature.</span>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+          Upgrade to the Team plan to invite teammates and control what each person can access.
+        </p>
       </div>
     );
   }

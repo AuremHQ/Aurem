@@ -50,7 +50,7 @@ def db():
 
 
 @pytest.fixture(scope="module")
-def owner():
+def owner(db):
     if not API:
         pytest.skip("No REACT_APP_BACKEND_URL")
     email = f"rbac-owner-{uuid.uuid4().hex[:10]}@example.com"
@@ -61,7 +61,13 @@ def owner():
     assert r.status_code == 200, f"owner signup failed: {r.status_code} {r.text}"
     token = r.json()["token"]
     me = requests.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=10).json()
-    return {"email": email, "token": token, "user_id": me["user"]["user_id"] if "user" in me else me.get("user_id")}
+    user_id = me["user"]["user_id"] if "user" in me else me.get("user_id")
+    # 2026-09-28 MASTER TASK Batch 2 (c) — Team management now also
+    # requires the `team` tier (or staff); this fixture tests the
+    # RBAC role/permission matrix, a separate concern from tier
+    # entitlement, so bump the fresh signup straight to `team` tier.
+    db.dev_users.update_one({"user_id": user_id}, {"$set": {"tier": "team"}})
+    return {"email": email, "token": token, "user_id": user_id}
 
 
 def _auth(token):

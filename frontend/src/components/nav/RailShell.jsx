@@ -21,7 +21,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   MessageSquare, Rocket, BarChart3, Settings as Cog, ShieldCheck,
-  Plus, FolderGit2, Globe, Zap, Trophy, Coins, Gift,
+  Plus, FolderGit2, Globe, Zap, Trophy, Gift,
   Receipt, User as UserIcon, Plug, Lock, KeyRound, LayoutDashboard,
   Users as UsersIcon, Lightbulb, Landmark, X, Menu, LogOut,
 } from "lucide-react";
@@ -44,7 +44,6 @@ const SHIP_ITEMS = [
 ];
 const INSIGHT_ITEMS = [
   { to: "/analytics", label: "Analytics", icon: BarChart3, testid: "rail-item-analytics" },
-  { to: "/tokens",    label: "Tokens",    icon: Coins,     testid: "rail-item-tokens" },
   { to: "/wrapped",   label: "Wrapped",   icon: Gift,      testid: "rail-item-wrapped" },
 ];
 const SETTINGS_ITEMS = [
@@ -232,6 +231,11 @@ export default function RailShell({
 
   // 2026-02 · Phase 1 (Team RBAC) — resolve whether this caller can
   // manage the team at all before ever showing the nav item for it.
+  // 2026-09-28 MASTER TASK Batch 2 (c) — also requires
+  // `team_feature_enabled` (paid Team tier or staff); a free/starter/
+  // pro owner is trivially `is_owner: true` of their own solo account
+  // but shouldn't see a nav item for a feature their plan doesn't
+  // include.
   useEffect(() => {
     if (!getToken()) return;
     let dead = false;
@@ -239,8 +243,9 @@ export default function RailShell({
       .then((r) => {
         if (dead) return;
         const perms = r.data?.permissions || {};
-        setCanManageTeam(r.data?.is_owner === true ||
-          ["write", "read_write"].includes(perms.team_management));
+        const hasRole = r.data?.is_owner === true ||
+          ["write", "read_write"].includes(perms.team_management);
+        setCanManageTeam(hasRole && r.data?.team_feature_enabled === true);
       })
       .catch(() => { if (!dead) setCanManageTeam(false); });
     return () => { dead = true; };

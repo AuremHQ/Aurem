@@ -65,13 +65,19 @@ def owner_token(db):
     if r.status_code == 409:
         r2 = _login(OWNER_EMAIL, PASS)
         assert r2.status_code == 200
-        return r2.json()["token"]
-    data = r.json()
-    tok = data.get("token") or data.get("access_token")
-    if not tok:
-        r2 = _login(OWNER_EMAIL, PASS)
-        assert r2.status_code == 200, r2.text
         tok = r2.json()["token"]
+    else:
+        data = r.json()
+        tok = data.get("token") or data.get("access_token")
+        if not tok:
+            r2 = _login(OWNER_EMAIL, PASS)
+            assert r2.status_code == 200, r2.text
+            tok = r2.json()["token"]
+    # 2026-09-28 MASTER TASK Batch 2 (c) — Team management now also
+    # requires the `team` tier (or staff); this fixture tests the
+    # RBAC role/permission matrix, a separate concern from tier
+    # entitlement.
+    db.dev_users.update_one({"email": OWNER_EMAIL}, {"$set": {"tier": "team"}})
     return tok
 
 

@@ -410,7 +410,13 @@ export default function App() {
           <Route path="/domain"          element={<PrivateRoute><Domain /></PrivateRoute>} />
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/profile"         element={<PrivateRoute><Settings /></PrivateRoute>} />
-          <Route path="/tokens"          element={<PrivateRoute><Tokens /></PrivateRoute>} />
+          {/* 2026-09-28 MASTER TASK Batch 2 (a) — /tokens duplicated
+              the Plans & Usage tab with a stale balance source
+              (`me.tokens_remaining` instead of the ledger-derived
+              `usage.remaining`). Redirect to the one consolidated
+              view instead of maintaining two displays that can drift
+              apart. Page component kept intact, not deleted. */}
+          <Route path="/tokens"          element={<Navigate to="/settings?tab=plans" replace />} />
           {/* 2026-09-28 MASTER TASK R5/Part1#4 — /analytics showed
               company-wide data (DAU/MAU, tokens burned across ALL
               users) to every regular user. Route + nav item hidden
