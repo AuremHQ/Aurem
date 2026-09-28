@@ -1,0 +1,12 @@
+Overnight T6/P1a live E2E proof — /ora-chat/pin-login per-account lockout
+2026-08-28 — 5x wrong PIN from 5 DIFFERENT rotating IPs (X-Forwarded-For 10.9.1.1..10.9.5.5): all 401 invalid_pin
+6th wrong PIN from a BRAND NEW IP (10.9.99.99, zero prior fails on that IP): 429 too_many_attempts
+=> proves account-level lockout closes the IP-rotation bypass gap (previously only IP-keyed, unlimited IP rotation = unlimited attempts against the single shared PIN)
+raw curl transcript:
+401
+401
+401
+401
+401
+{"detail":{"error":"too_many_attempts","message":"Too many wrong PIN attempts. Try again in an hour."}}
+HTTP_CODE:429

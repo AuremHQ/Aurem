@@ -1,0 +1,229 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.................s....................................FF................ [  6%]
+..s.........................s........................................... [ 12%]
+........................................................................ [ 18%]
+........................................................................ [ 24%]
+........................................................................ [ 30%]
+......s............................................................FF... [ 37%]
+..........................................F.F........................... [ 43%]
+..............s................FF.F..................................... [ 49%]
+........................................................................ [ 55%]
+................................................................FFFF..FF [ 61%]
+........................................................................ [ 67%]
+........................................F............................... [ 74%]
+........................................................................ [ 80%]
+.........FFF...........................................................F [ 86%]
+........................................................................ [ 92%]
+.............................................F...F...................... [ 98%]
+.............                                                            [100%]
+=================================== FAILURES ===================================
+/app/backend/tests/test_deploy_verification_discipline.py:64: AssertionError: PRD.md header must point at DEPLOY_VERIFICATION_CHECKLIST.md. Fork agents read PRD.md first — the pointer is the guarantee they hit the checklist before their first deploy.
+/app/backend/tests/test_deploy_verification_discipline.py:79: assert 'DEPLOY_VERIFICATION_CHECKLIST.md' in '# AUREM CTO — Changelog (append-only)\n- **Visibility Kit — "index.html not found" was hardcoded to repo\n  root only...structured_data`/`preferred_sources` failing with\n    "index.html not found in this repo" on a real repo. Root cause:'
+/app/backend/tests/test_iter319_scan_fail_closed.py:50: AssertionError: _run_security_scan not found in loop_engine.py
+/app/backend/tests/test_iter319_scan_fail_closed.py:80: AssertionError: _run_diff_security_scan not found in loop_engine.py
+/app/backend/tests/test_iter352_payments_truth.py:39: assert '@router.post("/payments/reconcile")' in '"""\nrouters/admin.py — Admin panel endpoints.\n\nAll routes require a JWT with `is_admin: true`. The admin user is w...g normally. This is a DISPLAY simulation, not\n#     a real termination, so a founder click never breaks a cron.\n\n\n'
+/app/backend/tests/test_iter352_payments_truth.py:58: assert 'data-testid="reconcile-pending-btn"' in "/**\n * pages/Admin.jsx — AuremCTO Admin Panel\n * Guarded route: only users with is_admin in localStorage 'aurem_use... 212m-238 — floating ORA Chat drawer, available on every admin tab */}\n      <OraChatDrawer />\n    </div>\n  );\n}\n"
+/app/backend/tests/test_iter388y_admin_payments_accuracy.py:173: AssertionError: {"detail":"client disconnected or upstream error"}
+/app/backend/tests/test_iter388y_admin_payments_accuracy.py:208: KeyError: 'revenue_month'
+/app/backend/tests/test_iter388y_admin_payments_accuracy.py:266: KeyError: 'stripe_configured'
+/usr/local/lib/python3.11/unittest/mock.py:1419: AttributeError: <module 'routers.codebase_health' from '/app/backend/routers/codebase_health.py'> does not have the attribute '_list_repo_tree_with_sha'
+/usr/local/lib/python3.11/unittest/mock.py:1419: AttributeError: <module 'routers.codebase_health' from '/app/backend/routers/codebase_health.py'> does not have the attribute '_list_repo_tree_with_sha'
+/usr/local/lib/python3.11/unittest/mock.py:1419: AttributeError: <module 'routers.codebase_health' from '/app/backend/routers/codebase_health.py'> does not have the attribute '_list_repo_tree_with_sha'
+/usr/local/lib/python3.11/unittest/mock.py:1419: AttributeError: <module 'routers.codebase_health' from '/app/backend/routers/codebase_health.py'> does not have the attribute '_list_repo_tree_with_sha'
+/app/backend/tests/test_phase2c_codebase_health_router.py:342: AssertionError: assert {'ok': True, ...abled': False} == {'ok': True, 'score': None}
+/app/backend/tests/test_phase2c_codebase_health_router.py:352: AssertionError: assert {'ok': True, ...abled': False} == {'ok': True, 'score': None}
+/app/backend/tests/test_phase2c_cto_projects_router.py:1097: assert 403 == 429
+/app/backend/tests/test_phase3_codebase_health_migration.py:41: AssertionError: The (45s, 6s, 15s) timeout tuple was tuned in Iter 212m-221 to fix Cloudflare 502s from stalled GH connections holding the pod's event loop. If a future refactor drops the tuple, the 502s come back. RESTORE.
+/app/backend/tests/test_phase3_codebase_health_migration.py:53: AssertionError: codebase_health.py must import ext_client after migration.
+/app/backend/tests/test_phase3_codebase_health_migration.py:75: AssertionError: The Iter 212m-221 rationale reference must survive. It's the breadcrumb that tells a future maintainer why 6s/15s aren't arbitrary.
+/usr/local/lib/python3.11/json/decoder.py:355: json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+/app/backend/tests/test_stripe_price_id_override.py:144: AssertionError: assert '' == 'price_from_db'
+/app/backend/tests/test_subscription_tiers.py:88: AssertionError: assert {<Tier.FOUNDER: 'founder'>: {'brain_memory': True, 'custom_domain': True, 'dedicated_db': True, 'maxx_mode': True, ......ARTER: 'starter'>: {'brain_memory': True, 'custom_domain': False, 'dedicated_db': False, 'maxx_mode': False, ...}, ...} is {<Tier.FOUNDER: 'founder'>: {'brain_memory': True, 'custom_domain': True, 'dedicated_db': True, 'maxx_mode': True, ......ARTER: 'starter'>: {'brain_memory': True, 'custom_domain': False, 'dedicated_db': False, 'maxx_mode': False, ...}, ...}
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+routers/chat/turn.py:94
+  /app/backend/routers/chat/turn.py:94: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("prompt")
+
+routers/chat/turn.py:98
+  /app/backend/routers/chat/turn.py:98: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("task_type")
+
+../../root/.venv/lib/python3.11/site-packages/pydantic/_internal/_fields.py:192
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_fields.py:192: UserWarning: Field name "schema" in "InsertBody" shadows an attribute in parent "BaseModel"
+    warnings.warn(
+
+tests/test_deploy_2026_08_19_health_probe_and_exceptiongroup.py::TestExceptionGroupCaught::test_main_path_catches_exceptiongroup_directly
+  /app/backend/main.py:2547: DeprecationWarning: sentry_sdk.push_scope is deprecated and will be removed in the next major version. Please consult our migration guide to learn how to migrate to the new API: https://docs.sentry.io/platforms/python/migration/1.x-to-2.x#scope-pushing
+    with sentry_sdk.push_scope() as scope:
+
+tests/test_fabrication_learning_loop.py::test_signature_is_stable_regardless_of_order_and_case
+  tests/test_fabrication_learning_loop.py:108: PytestWarning: The test <Function test_signature_is_stable_regardless_of_order_and_case> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_signature_is_stable_regardless_of_order_and_case():
+
+tests/test_fabrication_learning_loop.py::test_fabrication_patterns_endpoint_requires_admin
+  tests/test_fabrication_learning_loop.py:217: PytestWarning: The test <Function test_fabrication_patterns_endpoint_requires_admin> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_fabrication_patterns_endpoint_requires_admin():
+
+tests/test_intent_gateway_points_4_6_2026_01.py::TestAdminInsightsRegression::test_cost_alert_endpoint
+  /usr/local/lib/python3.11/threading.py:248: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    self.acquire = lock.acquire
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_iter212m144_loop_cross_worker_rehydrate.py::test_loop_router_uses_rehydrate_on_confirm
+  tests/test_iter212m144_loop_cross_worker_rehydrate.py:165: PytestWarning: The test <Function test_loop_router_uses_rehydrate_on_confirm> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_loop_router_uses_rehydrate_on_confirm():
+
+tests/test_iter212m178_prod_perf.py::test_bulk_loop_paces_github_mutations
+  tests/test_iter212m178_prod_perf.py:195: PytestWarning: The test <Function test_bulk_loop_paces_github_mutations> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_bulk_loop_paces_github_mutations():
+
+tests/test_iter67_recurring_pattern_fixes.py::test_timeout_message_genuine_loop_at_or_above_three_tool_calls
+  tests/test_iter67_recurring_pattern_fixes.py:47: PytestWarning: The test <Function test_timeout_message_genuine_loop_at_or_above_three_tool_calls> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_timeout_message_genuine_loop_at_or_above_three_tool_calls():
+
+tests/test_iter_cto_projects_worker_coverage_2026_08.py::TestRunTaskViaApiCodegenFailure::test_call_llm_crash_is_caught_and_recorded_as_failed
+  /app/backend/routers/cto_projects/worker_api.py:1380: DeprecationWarning: sentry_sdk.push_scope is deprecated and will be removed in the next major version. Please consult our migration guide to learn how to migrate to the new API: https://docs.sentry.io/platforms/python/migration/1.x-to-2.x#scope-pushing
+    with sentry_sdk.push_scope() as scope:
+
+tests/test_iter_cto_projects_worker_coverage_2026_08.py::TestRunTaskWithGitCloneFailure::test_git_clone_failure_is_caught_and_recorded_as_failed
+  /app/backend/routers/cto_projects/worker_git.py:611: DeprecationWarning: sentry_sdk.push_scope is deprecated and will be removed in the next major version. Please consult our migration guide to learn how to migrate to the new API: https://docs.sentry.io/platforms/python/migration/1.x-to-2.x#scope-pushing
+    with sentry_sdk.push_scope() as scope:
+
+tests/test_phase2c_cto_projects_router.py::TestWarmStart::test_run_warm_agents_outer_crash_marks_job_failed
+  <frozen abc>:123: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_graph' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router.py::TestWarmStart::test_run_warm_agents_outer_crash_marks_job_failed
+  <frozen abc>:123: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_brain' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router.py::TestWarmStart::test_run_warm_agents_outer_crash_marks_job_failed
+  <frozen abc>:123: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_recent' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router.py::TestWarmStart::test_run_warm_agents_outer_crash_marks_job_failed
+  <frozen abc>:123: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_structure' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router.py::TestWarmStart::test_run_warm_agents_outer_crash_marks_job_failed
+  <frozen abc>:123: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_stack' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router_wave2.py::TestGetTaskTrackCheckCrash::test_track_check_crash_is_swallowed_and_task_still_returned
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_core_utils.py:326: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_graph' was never awaited
+    for computed_field in schema.get('computed_fields', ()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router_wave2.py::TestGetTaskTrackCheckCrash::test_track_check_crash_is_swallowed_and_task_still_returned
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_core_utils.py:326: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_brain' was never awaited
+    for computed_field in schema.get('computed_fields', ()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router_wave2.py::TestGetTaskTrackCheckCrash::test_track_check_crash_is_swallowed_and_task_still_returned
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_core_utils.py:326: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_recent' was never awaited
+    for computed_field in schema.get('computed_fields', ()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router_wave2.py::TestGetTaskTrackCheckCrash::test_track_check_crash_is_swallowed_and_task_still_returned
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_core_utils.py:326: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_structure' was never awaited
+    for computed_field in schema.get('computed_fields', ()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_phase2c_cto_projects_router_wave2.py::TestGetTaskTrackCheckCrash::test_track_check_crash_is_swallowed_and_task_still_returned
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_core_utils.py:326: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_stack' was never awaited
+    for computed_field in schema.get('computed_fields', ()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter286_mcp_test_file_lock.py::test_regression_iter286_write_repo_file_blocks_test_files
+  /usr/local/lib/python3.11/threading.py:563: RuntimeWarning: coroutine '_run_warm_agents.<locals>._bounded' was never awaited
+    self._cond = Condition(Lock())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter286_mcp_test_file_lock.py::test_regression_iter286_write_repo_file_blocks_test_files
+  /usr/local/lib/python3.11/threading.py:563: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_graph' was never awaited
+    self._cond = Condition(Lock())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter286_mcp_test_file_lock.py::test_regression_iter286_write_repo_file_blocks_test_files
+  /usr/local/lib/python3.11/threading.py:563: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_stack' was never awaited
+    self._cond = Condition(Lock())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter286_mcp_test_file_lock.py::test_regression_iter286_write_repo_file_blocks_test_files
+  /usr/local/lib/python3.11/threading.py:563: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_structure' was never awaited
+    self._cond = Condition(Lock())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter286_mcp_test_file_lock.py::test_regression_iter286_write_repo_file_blocks_test_files
+  /usr/local/lib/python3.11/threading.py:563: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_recent' was never awaited
+    self._cond = Condition(Lock())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter286_mcp_test_file_lock.py::test_regression_iter286_write_repo_file_blocks_test_files
+  /usr/local/lib/python3.11/threading.py:563: RuntimeWarning: coroutine '_run_warm_agents.<locals>.agent_brain' was never awaited
+    self._cond = Condition(Lock())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_regression_iter290_test_style_analyzer.py::test_analyze_suite_shape_on_current_backend
+tests/test_regression_iter290_test_style_analyzer.py::test_weak_p0_only_ever_contains_static_grep_tests
+  /app/backend/tests/test_iter_feb2026_risk_routing_env_placeholders.py:1: DeprecationWarning: invalid escape sequence '\.'
+    """
+
+tests/test_regression_registry.py::test_regression_patterns_endpoint_requires_admin
+  tests/test_regression_registry.py:101: PytestWarning: The test <Function test_regression_patterns_endpoint_requires_admin> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_regression_patterns_endpoint_requires_admin():
+
+tests/test_regression_registry.py::test_gitignore_policy_matches_documented_hybrid_rule
+  tests/test_regression_registry.py:137: PytestWarning: The test <Function test_gitignore_policy_matches_documented_hybrid_rule> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_gitignore_policy_matches_documented_hybrid_rule():
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_deploy_verification_discipline.py::test_prd_points_to_checklist_at_top
+FAILED tests/test_deploy_verification_discipline.py::test_changelog_header_references_checklist
+FAILED tests/test_iter319_scan_fail_closed.py::test_scan_text_imported_into_run_security_scan
+FAILED tests/test_iter319_scan_fail_closed.py::test_scan_text_imported_into_run_diff_security_scan
+FAILED tests/test_iter352_payments_truth.py::test_reconcile_endpoint_is_admin_gated
+FAILED tests/test_iter352_payments_truth.py::test_payments_page_has_reconcile_button
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_reports_real_revenue_from_paid_only
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_returns_zero_revenue_when_no_paid_rows
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_stripe_configured_reads_env_not_hardcoded
+FAILED tests/test_phase2c_codebase_health_router.py::TestScan::test_success_full_categories_persists_and_rate_limited_headers
+FAILED tests/test_phase2c_codebase_health_router.py::TestScan::test_non_admin_user_is_rate_limited_and_gets_remaining_count
+FAILED tests/test_phase2c_codebase_health_router.py::TestScan::test_rate_limit_429_after_cap
+FAILED tests/test_phase2c_codebase_health_router.py::TestScan::test_github_fetch_crash_returns_502
+FAILED tests/test_phase2c_codebase_health_router.py::TestLastScan::test_no_history_returns_null_score
+FAILED tests/test_phase2c_codebase_health_router.py::TestLastScan::test_zero_score_zero_total_treated_as_no_scan
+FAILED tests/test_phase2c_cto_projects_router.py::TestSubmitTask::test_rate_limited
+FAILED tests/test_phase3_codebase_health_migration.py::test_codebase_health_preserves_45_6_15_timeout_tuple
+FAILED tests/test_phase3_codebase_health_migration.py::test_codebase_health_uses_ext_client_after_migration
+FAILED tests/test_phase3_codebase_health_migration.py::test_codebase_health_docstring_records_migration_rationale
+FAILED tests/test_regression_iter289_track1_lane_a.py::test_backend_coverage_json_written
+FAILED tests/test_stripe_price_id_override.py::TestPaymentsRouterUsesResolver::test_router_reads_from_runtime_override
+FAILED tests/test_subscription_tiers.py::test_payments_loads_subscription_tiers
+22 failed, 1138 passed, 5 skipped, 6218 deselected, 33 warnings in 343.57s (0:05:43)
+exit 1

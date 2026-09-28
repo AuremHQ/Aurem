@@ -1,0 +1,10 @@
+=== gate decision proof ===
+complex message -> is_complex_request: True
+  group: code
+  sequential_thinking in tools: True
+  full tool list: ['read_repo_file', 'read_repo_files', 'write_repo_file', 'patch_repo_file', 'get_repo_structure', 'list_repo_files', 'search_repo', 'semantic_search_repo', 'execute_bash', 'validate_syntax', 'find_usages', 'get_dependencies', 'detect_framework', 'get_commit_diff', 'get_library_docs', 'sequential_thinking']
+
+trivial message -> is_complex_request: False
+  group: code
+  sequential_thinking in tools: False
+  full tool list: ['read_repo_file', 'read_repo_files', 'write_repo_file', 'patch_repo_file', 'get_repo_structure', 'list_repo_files', 'search_repo', 'semantic_search_repo', 'execute_bash', 'validate_syntax', 'find_usages', 'get_dependencies', 'detect_framework', 'get_commit_diff', 'get_library_docs']

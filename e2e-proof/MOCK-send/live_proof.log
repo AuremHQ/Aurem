@@ -1,0 +1,9 @@
+MOCK_LLM=true live proof Mon Sep  7 03:17:08 UTC 2026
+POST /api/aurem-dev/chat/send -> provider=mock, meta.mock=true, iterations=0
+POST /api/aurem-dev/chat/stream -> provider=mock (meta/token/done frames)
+backend.err.log after requests: no chat-completion POST to openrouter/groq (only periodic GET /models catalog probe)
+309253:2026-08-29 19:09:58,556 services.ora_chat_v2.llm_client WARNING llm_client boot: MOCK_LLM=True (read once, immutable for this process)
+462893:2026-09-07 03:16:56,973 services.ora_chat_v2.llm_client WARNING llm_client boot: MOCK_LLM=True (read once, immutable for this process)
+462894:2026-09-07 03:16:57,154 routers.chat.stream INFO R10_TIMING turn_start prompt='hello ORA' session=mock-proof-stream project=None
+362
+(0 chat-completion POSTs in the MOCK window)

@@ -1003,3 +1003,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 | `routers/auth_verify.py` | `(none)` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-26T06:37:11.572521Z) | <!-- inv:router:routers/auth_verify.py -->
 - `services/email_link_tokens.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-26T06:37:11.572581Z] <!-- inv:service:services/email_link_tokens.py -->
+
+### Iter 0 · 2026-09-28
+
+- `services/pricing_table.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T02:39:45.237108Z] <!-- inv:service:services/pricing_table.py -->

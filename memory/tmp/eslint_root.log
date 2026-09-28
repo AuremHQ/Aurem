@@ -1,0 +1,47 @@
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/scripts/react-doctor-fix.js
+  2:1  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/App.js
+  277:3  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/components/GoogleAuthButton.js
+  30:5  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/components/LazyMotionWrapper.js
+  22:3  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/components/MathCaptcha.js
+  92:7  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/components/OptimizeMobileHydration.js
+  22:3  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/components/PromoPopup.js
+  14:5  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/components/common/PhoneInput.js
+  188:5  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/hooks/useAuth.js
+  114:5  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/index.js
+  136:3  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/lib/lazyMotion.js
+  20:3  error  Parsing error: Unexpected token <
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/lib/sentinel.js
+  515:5  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+  518:5  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/lib/useReliableSSE.js
+  162:5  error  Definition for rule 'react-hooks/exhaustive-deps' was not found  react-hooks/exhaustive-deps
+
+/app/.aurem_cache/repo_snapshots/polarisbuiltinc-wq__Aurem-1__main/frontend/src/theme/ThemeContext.js
+  101:5  error  Parsing error: Unexpected token <
+
+✖ 15 problems (12 errors, 3 warnings)
+  0 errors and 3 warnings potentially fixable with the `--fix` option.
+

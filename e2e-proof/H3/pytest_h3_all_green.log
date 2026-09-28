@@ -1,0 +1,134 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts ==============================
+platform linux -- Python 3.11.16, pytest-8.3.0, pluggy-1.6.0 -- /root/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /app/backend
+configfile: pytest.ini
+plugins: timeout-2.4.0, respx-0.23.1, rerunfailures-16.6, asyncio-0.24.0, anyio-4.13.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 41 items
+
+tests/test_h3_loop_repo_pin_2026_08_30.py::test_t_loop_repos_pinned PASSED [  2%]
+tests/test_h3_loop_repo_pin_2026_08_30.py::test_t_loop_pin_blocks_stray_write PASSED [  4%]
+tests/test_h3_loop_repo_pin_2026_08_30.py::test_t_loop_pin_matches_context PASSED [  7%]
+tests/test_h3_b1_direct_task_pin_2026_08_30.py::test_t_direct_ship_pin_mismatch_aborts PASSED [  9%]
+tests/test_h3_b1_direct_task_pin_2026_08_30.py::test_t_direct_ship_pin_matches_context PASSED [ 12%]
+tests/test_h3_b1_direct_task_pin_2026_08_30.py::test_t_direct_ship_clears_not_connected PASSED [ 14%]
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestCommitFilesAuthorIdentityFix::test_resume_edits_ship_resolves_identity_and_commits_clean PASSED [ 17%]
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestCommitFilesAuthorIdentityFix::test_missing_identity_never_reaches_bare_typeerror PASSED [ 19%]
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestInternalCallErrorNeverGoesToLlmTranslator::test_internal_call_error_bypasses_llm_rewrite PASSED [ 21%]
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestInternalCallErrorNeverGoesToLlmTranslator::test_non_internal_error_still_uses_llm_translator PASSED [ 24%]
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestRollbackPersonaRecognizesRevertIntent::test_revert_rollback_undo_are_recognized_mutation_verbs PASSED [ 26%]
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestRollbackPersonaRecognizesRevertIntent::test_dedicated_rollback_guidance_section_present PASSED [ 29%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_topbar_theme_toggle_removed PASSED [ 31%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_dashboard_hardcodes_dark_theme PASSED [ 34%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_chat_focus_event_dispatched_from_composer PASSED [ 36%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_topbar_listens_for_chat_focus_to_hide PASSED [ 39%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_dashboard_auto_collapses_advisor_on_chat_active PASSED [ 41%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_loop_engine_has_manual_ship_pause_and_confirm PASSED [ 43%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_loop_confirm_ship_endpoint_registered PASSED [ 46%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_confirm_ship_approved_runs_commit_and_emits_completed PASSED [ 48%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_confirm_ship_rejected_aborts_no_commit PASSED [ 51%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_ship_pending_card_component_exists PASSED [ 53%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_chat_panel_renders_ship_pending_card_on_awaiting_ship PASSED [ 56%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_loop_api_exposes_confirm_ship_helper PASSED [ 58%]
+tests/test_iter212m177_prod_reliability.py::test_p0_1_double_confirm_ship_pushes_exactly_once PASSED [ 60%]
+tests/test_iter212m177_prod_reliability.py::test_p0_1_route_returns_existing_commit PASSED [ 63%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_list_repo_files_wrapper_maps_tree PASSED [ 65%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_search_repo_wrapper_sends_pattern PASSED [ 68%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_get_repo_structure_wrapper_maps_symbols PASSED [ 70%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_local_list_repo_files_against_real_github_shape PASSED [ 73%]
+tests/test_iter212m177_prod_reliability.py::test_p0_3_ten_writing_prompts_route_to_council_c PASSED [ 75%]
+tests/test_iter212m177_prod_reliability.py::test_p0_3_analysis_routes_to_b_and_code_stays_a PASSED [ 78%]
+tests/test_iter212m177_prod_reliability.py::test_p0_3_chat_endpoints_apply_inference PASSED [ 80%]
+tests/test_iter212m177_prod_reliability.py::test_p0_4_hallucination_gate_flags_invented_rewrite PASSED [ 82%]
+tests/test_iter212m177_prod_reliability.py::test_p0_4_task_text_paths_are_read_first PASSED [ 85%]
+tests/test_iter212m177_prod_reliability.py::test_p0_4_no_done_status_without_edits PASSED [ 87%]
+tests/test_iter212m177_prod_reliability.py::test_p1_5_get_repo_health_skips_zero_file_scans PASSED [ 90%]
+tests/test_iter212m177_prod_reliability.py::test_p1_5_zero_file_scans_never_persisted_and_last_filtered PASSED [ 92%]
+tests/test_iter212m177_prod_reliability.py::test_p1_6_all_pre_gen_awaits_have_hard_timeouts PASSED [ 95%]
+tests/test_iter212m177_prod_reliability.py::test_p1_7_stream_replays_mongo_last_event_without_local_engine PASSED [ 97%]
+tests/test_iter212m177_prod_reliability.py::test_p1_7_frontend_restores_and_reconnects PASSED [100%]
+
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests/test_h3_b1_direct_task_pin_2026_08_30.py::test_t_direct_ship_pin_mismatch_aborts
+  /usr/local/lib/python3.11/re/_parser.py:523: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    sourcematch = source.match
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_h3_b1_direct_task_pin_2026_08_30.py::test_t_direct_ship_clears_not_connected
+  /root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:1587: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    with _MongoClientErrorHandler(self, server, session) as err_handler:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestCommitFilesAuthorIdentityFix::test_resume_edits_ship_resolves_identity_and_commits_clean
+  /root/.venv/lib/python3.11/site-packages/pymongo/synchronous/collection.py:1665: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    self._delete_retryable(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestCommitFilesAuthorIdentityFix::test_missing_identity_never_reaches_bare_typeerror
+  /root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:2091: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    s = self._ensure_session(session)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_chat_panel_renders_ship_pending_card_on_awaiting_ship
+  /root/.venv/lib/python3.11/site-packages/bson/__init__.py:1173: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    return _decode_all(data, codec_options)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_iter212m177_prod_reliability.py::test_p0_2_list_repo_files_wrapper_maps_tree
+  /app/backend/routers/mcp.py:255: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    {
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_ten_writing_prompts_route_to_council_c
+  tests/test_iter212m177_prod_reliability.py:277: PytestWarning: The test <Function test_p0_3_ten_writing_prompts_route_to_council_c> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_ten_writing_prompts_route_to_council_c():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_analysis_routes_to_b_and_code_stays_a
+  tests/test_iter212m177_prod_reliability.py:288: PytestWarning: The test <Function test_p0_3_analysis_routes_to_b_and_code_stays_a> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_analysis_routes_to_b_and_code_stays_a():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_chat_endpoints_apply_inference
+  tests/test_iter212m177_prod_reliability.py:299: PytestWarning: The test <Function test_p0_3_chat_endpoints_apply_inference> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_chat_endpoints_apply_inference():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_4_hallucination_gate_flags_invented_rewrite
+  tests/test_iter212m177_prod_reliability.py:331: PytestWarning: The test <Function test_p0_4_hallucination_gate_flags_invented_rewrite> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_4_hallucination_gate_flags_invented_rewrite():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_4_task_text_paths_are_read_first
+  tests/test_iter212m177_prod_reliability.py:344: PytestWarning: The test <Function test_p0_4_task_text_paths_are_read_first> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_4_task_text_paths_are_read_first():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_4_no_done_status_without_edits
+  tests/test_iter212m177_prod_reliability.py:354: PytestWarning: The test <Function test_p0_4_no_done_status_without_edits> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_4_no_done_status_without_edits():
+
+tests/test_iter212m177_prod_reliability.py::test_p1_5_zero_file_scans_never_persisted_and_last_filtered
+  tests/test_iter212m177_prod_reliability.py:388: PytestWarning: The test <Function test_p1_5_zero_file_scans_never_persisted_and_last_filtered> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p1_5_zero_file_scans_never_persisted_and_last_filtered():
+
+tests/test_iter212m177_prod_reliability.py::test_p1_6_all_pre_gen_awaits_have_hard_timeouts
+  tests/test_iter212m177_prod_reliability.py:398: PytestWarning: The test <Function test_p1_6_all_pre_gen_awaits_have_hard_timeouts> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p1_6_all_pre_gen_awaits_have_hard_timeouts():
+
+tests/test_iter212m177_prod_reliability.py::test_p1_7_frontend_restores_and_reconnects
+  tests/test_iter212m177_prod_reliability.py:497: PytestWarning: The test <Function test_p1_7_frontend_restores_and_reconnects> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p1_7_frontend_restores_and_reconnects():
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 41 passed, 16 warnings in 9.75s ========================

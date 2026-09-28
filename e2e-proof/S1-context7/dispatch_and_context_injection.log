@@ -1,0 +1,26 @@
+=== invoke_local_tool result ===
+{
+  "ok": true,
+  "library": "fastapi",
+  "library_id": "/websites/fastapi_tiangolo",
+  "content": "### Declare Request Body Using Python Dataclass\n\nSource: https://fastapi.tiangolo.com/advanced/dataclasses\n\nStandard dataclasses can be used directly as request body type annotations in endpoint path operations. FastAPI internally converts standard dataclasses to Pydantic dataclasses to provide vali...",
+  "truncated": false,
+  "cache_hit": false,
+  "rate_limited": false
+}
+
+=== ctx["tool_calls"] after dispatch (proves it is tracked like every other tool) ===
+[
+  {
+    "tool": "get_library_docs",
+    "args": {
+      "library": "fastapi",
+      "query": "how to write a new endpoint with a request body"
+    }
+  }
+]
+
+=== simulated pre-fix message history (docs ARE in context before the fix) ===
+[user] Write a FastAPI endpoint that accepts a JSON body and adds a custom middleware....
+[assistant] {"tool": "get_library_docs", "args": {"library": "fastapi", "query": "how to write a new endpoint with a request body"}}...
+[tool] ### Declare Request Body Using Python Dataclass  Source: https://fastapi.tiangolo.com/advanced/dataclasses  Standard dataclasses can be used directly ...

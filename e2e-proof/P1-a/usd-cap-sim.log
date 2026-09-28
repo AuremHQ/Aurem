@@ -1,0 +1,14 @@
+=== P1-a: USD cap cost simulation (NO real tokens, NO real provider call) ===
+[1] Rate table loaded: qwen3.8-27b={'input_per_m': 0.425, 'output_per_m': 2.55} qwen3.7-plus={'input_per_m': 0.4, 'output_per_m': 1.6}
+    Source: Alibaba Cloud Model Studio (DashScope) international pricing, cited 2026-08-28 (services/llm_rate_table.py)
+[2] Set free-tier cap to a tiny $0.01/mo for this simulation
+[3] Simulated a prior real usage row this month totalling exactly the $0.01 cap (no provider call made — direct ledger write)
+[4] Calling the REAL stream_chat() choke point (MOCK_LLM forced off for this sim only) with a Free user already at cap...
+2026-08-28 19:25:57,457 aurem.llm_usd_cap WARNING [llm_usd_cap] GW_BLOCK_COST — cap=per_plan user_id=p1a-sim-7997ecf7 tier=free spend=$0.0100 cap=$0.0100
+[5] Events received: [{'type': 'resolved', 'model': 'qwen3.8-27b', 'label': 'sim', 'source': 'env'}, {'type': 'error', 'error': 'monthly_limit_reached', 'detail': 'Monthly limit reached — upgrade to continue.'}]
+[6] PASS — provider was never constructed (AssertionError would have fired above if it had been).
+[7] PASS — human-readable block message confirmed: "Monthly limit reached — upgrade to continue."
+[8] PASS — ledger row count for this user after the blocked call = 1 (unchanged, zero new spend recorded)
+[9] PASS — GW_BLOCK_COST guardrail event logged: per_plan cap_usd=0.01 spend_usd=0.01
+[10] Cleanup done, caps reset to defaults.
+=== SIMULATION RESULT: PASS — pre-call USD cap blocks correctly, zero real tokens spent, human message shown, GW_BLOCK_COST logged ===

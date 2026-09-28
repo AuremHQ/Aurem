@@ -1,0 +1,6 @@
+data: {"meta": true, "session_id": "r8-mock-back-on", "provider": "mock", "mode": "A", "temperature": 0.0, "thinking_s": 0.0, "tool_calls_run": 0}
+
+data: {"token": "I'm ORA (mock mode). The live model isn't connected on this instance \u2014 no real LLM calls are being made. This is a placeholder for UX testing."}
+
+data: {"done": true, "provider": "mock", "session_id": "r8-mock-back-on", "tokens_remaining": null}
+
