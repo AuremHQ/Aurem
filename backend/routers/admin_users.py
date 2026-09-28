@@ -41,6 +41,7 @@ from services.usage import get_usage
 from services.admin_analytics_cache import (
     mongo_swr_cache,
 )
+from services.synthetic_filter import synthetic_mongo_filter
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on
@@ -83,20 +84,31 @@ async def github_sync_status(authorization: Optional[str] = Header(None)):
 # presence query, which have historically disagreed (see
 # BusinessPulse's "cockpit says 33 total, financials says 31 free"
 # comment in AdminCockpit.jsx).
+# 2026-09-28 "ACTIVATION FIRST" Part 3 fix — `total_users` now uses
+# the SAME organic/synthetic-filtered count as /admin/pulse (was raw
+# `dev_users.count_documents({})`, causing the exact "246 vs 243"
+# gauge-vs-card mismatch the founder reported). `active_24h` is also
+# now the single source for the Cockpit's "DAU (today)" card — the
+# OLD dau (routers/admin_analytics.py, "sent a chat message today")
+# was a much narrower definition than "anyone active" and could
+# legitimately read 0 while this endpoint's `live_now` read 2 (a
+# founder just browsing the admin panel, never sending a chat
+# message, is "live" but wasn't "DAU" under the old definition).
 @router.get("/presence/summary")
 async def presence_summary(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
     db = require_db()
     now = time.time()
-    total_users = await db.dev_users.count_documents({})
+    organic = synthetic_mongo_filter()
+    total_users = await db.dev_users.count_documents(organic)
     live_now = await db.dev_users.count_documents(
-        {"last_seen_at": {"$gte": now - 120}}
+        {**organic, "last_seen_at": {"$gte": now - 120}}
     )
     active_24h = await db.dev_users.count_documents(
-        {"last_seen_at": {"$gte": now - 86400}}
+        {**organic, "last_seen_at": {"$gte": now - 86400}}
     )
     paid_users = await db.dev_users.count_documents(
-        {"tier": {"$in": ["starter", "pro", "team"]}}
+        {**organic, "tier": {"$in": ["starter", "pro", "team"]}}
     )
     return {
         "ok": True,

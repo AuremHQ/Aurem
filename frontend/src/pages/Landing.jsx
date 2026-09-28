@@ -823,8 +823,8 @@ export default function Landing() {
               {proof.commits_shipped > 0 && (
                 <div><div className="proof-num" data-testid="proof-commits">{proof.commits_shipped}</div><div className="proof-label">production commits shipped</div></div>
               )}
-              {proof.correction_rate_pct > 0 && (
-                <div><div className="proof-num" data-testid="proof-corrections">{proof.correction_rate_pct}%</div><div className="proof-label">AI mistakes auto-caught</div></div>
+              {proof.review_save_rate_pct > 0 && (
+                <div><div className="proof-num" data-testid="proof-corrections">{proof.review_save_rate_pct}%</div><div className="proof-label">AI mistakes auto-caught</div></div>
               )}
               <div><div className="proof-num">55%</div><div className="proof-label">cheaper than Copilot</div></div>
             </div>

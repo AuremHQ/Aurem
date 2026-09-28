@@ -82,7 +82,7 @@ def test_wrapped_share_text_format():
         "period_label": "June 2026",
         "tasks_shipped": 12, "hours_saved": 9.6, "repos_touched": 3,
         "top_mode": "C", "ship_streak_days": 5,
-        "claude_corrections": 2, "developer_name": "Test",
+        "review_saves": 2, "developer_name": "Test",
     })
     assert "AUREMcto" in text or "AUREM" in text
     assert "12" in text       # tasks_shipped

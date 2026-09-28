@@ -180,6 +180,12 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
     if (asGate) {
       api.post("/onboarding/repo-connect-gate/skip").catch(() => {});
       onSkip?.();
+      // 2026-09-28 "ACTIVATION FIRST" Part 3.2 — never leave the user
+      // staring at an empty chat after skipping. Open the 3-choice
+      // starter modal (website scan / paste-code bugfix / demo
+      // project) the INSTANT they skip, instead of waiting for the
+      // slower post_skip mascot nudge (EngagementNudge) to appear.
+      window.dispatchEvent(new Event("aurem:open-starter-choices"));
     }
     close();
   }

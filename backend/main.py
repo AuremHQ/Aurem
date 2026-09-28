@@ -54,6 +54,7 @@ from routers.admin_observability import router as admin_observability_router  # 
 from routers.admin_payments import router as admin_payments_router  # 2026-02-11 — Phase 2 split: /admin/payments, /financials, /stripe-*, /billing/*
 from routers.admin_support import router as admin_support_router  # 2026-02-11 — Phase 2 split: /admin/support, /errors, /alerts
 from routers.admin_users import router as admin_users_router  # 2026-02-11 — Phase 2 split: /admin/users, /funnel, /insights
+from routers.admin_funnel import router as admin_funnel_router  # 2026-09-28 MASTER TASK — GET /admin/funnel activation dashboard
 from routers.admin_projects_brain import router as admin_projects_brain_router  # 2026-02-11 — Phase 2 split: /admin/projects, /project-brain, /architecture
 from routers.admin_ops_config import router as admin_ops_config_router  # 2026-02-11 — Phase 2 split: /admin/cache, /feature-flags, /integrations, /settings, /github-app-config
 from routers.admin_llm_config import router as admin_llm_config_router  # 2026-08-27 — Admin self-serve LLM Settings
@@ -3943,6 +3944,7 @@ app.include_router(admin_observability_router, prefix="/api")       # 2026-02-11
 app.include_router(admin_payments_router, prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_support_router,  prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_users_router,          prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
+app.include_router(admin_funnel_router,         prefix="/api/aurem-dev")  # 2026-09-28 MASTER TASK — GET /admin/funnel
 app.include_router(admin_projects_brain_router, prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_ops_config_router,     prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_llm_config_router,     prefix="/api/aurem-dev")  # 2026-08-27 — Admin self-serve LLM Settings

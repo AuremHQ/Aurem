@@ -240,9 +240,14 @@ export default function Settings() {
         {/* ── Tab content ── */}
         {tab === "profile" && (
           <div key="profile" style={{ display: "grid", gap: 18, animation: "ds2SettingsIn .22s ease both" }}>
-            {/* Iter 212m-221 — Universal Key + quota card. Prominent
-                at top of Profile tab so users don't need the Plans
-                tab to see their key balance / tier / remaining quota. */}
+            {/* Iter 212m-221 — quota card. Prominent at top of Profile
+                tab so users don't need the Plans tab to see their
+                balance / tier / remaining quota.
+                2026-09-28 MASTER TASK Part 5.1 — header was branded
+                "Universal LLM Key — Emergent", naming our own infra
+                provider to the user (R6 violation). Rebranded to
+                ORA's own language; the balance grid itself is real,
+                useful data and stays exactly as-is. */}
             <section className="card" data-testid="settings-universal-key" style={{
               display: "grid", gap: 14,
               padding: "20px 24px",
@@ -257,9 +262,9 @@ export default function Settings() {
                     background: "var(--accent-soft, rgba(255,138,42,0.16))", color: "var(--accent, #ffb347)",
                   }}><KeyRound size={18} /></span>
                   <div>
-                    <div className="label-mini" style={{ marginBottom: 2 }}>Universal LLM Key</div>
+                    <div className="label-mini" style={{ marginBottom: 2 }}>Your ORA balance</div>
                     <div style={{ fontSize: 15, color: "var(--text)", fontWeight: 600 }}>
-                      Emergent — one key, all models
+                      Tokens, tasks &amp; plan usage
                     </div>
                   </div>
                 </div>

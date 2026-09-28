@@ -41,6 +41,7 @@ import {
   setActiveProjectId as setActiveProjectIdGlobal,
 } from "../components/TabBar";
 import NewUserWizard from "../components/NewUserWizard";
+import StarterChoiceModal from "../components/StarterChoiceModal";
 import VisibilityKitPanel from "../components/VisibilityKitPanel";
 import { EngagementNudge } from "../components/EngagementNudge";
 import RepoCleanupBanner from "../components/RepoCleanupBanner";
@@ -762,6 +763,13 @@ function DashboardV2Body() {
       )}
       {/* Iter 212m-200 — Connect-Repo interactive tour overlay. */}
       {tourOpen && <ConnectRepoTour onClose={() => setTourOpen(false)} />}
+
+      {/* 2026-09-28 "ACTIVATION FIRST" Part 3 — guided first-task
+          modal (website scan / paste-code bugfix / demo project).
+          Always mounted (listens for aurem:open-starter-choices); the
+          repo-connect gate's Skip action and the post_skip mascot
+          nudge both fire that event. */}
+      <StarterChoiceModal />
 
       {/* 2026-08-30 — Visibility Kit visual panel (spec §6), the
           "Kit" tab. Only renders when a project with a repo is active

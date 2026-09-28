@@ -31,6 +31,7 @@ import AdminBINTracker from "./AdminBINTracker";               // Iter 212m-171
 import AdminGithubBulkRevoke from "./AdminGithubBulkRevoke";    // 2026-08-30
 import AdminVisibilityKit from "./AdminVisibilityKit";          // 2026-08-30
 import AdminOnboardingFunnel from "./AdminOnboardingFunnel";    // 2026-09-08
+import AdminFunnelPage from "./AdminFunnelPage";                 // 2026-09-28 MASTER TASK — /admin/funnel
 import AdminFeatureFlags from "./AdminFeatureFlags";           // Iter 212m-171
 import { LLMCreditMonitor } from "./AdminLLMCredits";          // Iter 212m-171
 import { ParliamentLivePanel } from "./AdminParliamentLive";   // Iter 212m-171
@@ -2295,6 +2296,7 @@ const NAV = buildGroupedAdminNav({
   github_bulk_revoke: ShieldAlert,
   visibility_kit: Sparkles,
   onboarding_funnel: Filter,
+  activation_funnel: TrendingDown,
   users: Users,
   support: Mail,
   suggestions: MessageCircle,   // Iter 212m-193
@@ -2467,6 +2469,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "github_bulk_revoke": return <AdminGithubBulkRevoke />;
       case "visibility_kit": return <AdminVisibilityKit />;
       case "onboarding_funnel": return <AdminOnboardingFunnel />;
+      case "activation_funnel": return <AdminFunnelPage />;
       case "feature_flags":  return <AdminFeatureFlags />;
       case "dash":           return <Dashboard />;
       case "users":          return <UsersList onSelect={setSelectedUser} />;

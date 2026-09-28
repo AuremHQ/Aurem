@@ -126,7 +126,7 @@ export default function OraWrapped({ defaultPeriod = "this_month" }) {
             paddingTop: 12, marginBottom: 16,
           }}>
             <SmallStat label="Maxx mode tasks" value={stats.maxx_tasks} />
-            <SmallStat label="Claude corrections" value={stats.claude_corrections} />
+            <SmallStat label="Review saves" value={stats.review_saves} />
             <SmallStat label="Top mode" value={stats.top_mode} />
           </div>
 

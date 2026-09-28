@@ -25,6 +25,13 @@ export const ADMIN_NAV = [
   { id: "maintenance",     label: "Maintenance",          route: "/admin/maintenance",    group: "MONITOR" },
   { id: "arch",            label: "Architecture",         route: "/admin/architecture",   group: "MONITOR" },
   { id: "onboarding_funnel", label: "Onboarding Funnel",  route: "/admin/onboarding-funnel", group: "USERS" },
+  // 2026-09-28 MASTER TASK "ACTIVATION FIRST" — the granular
+  // signed-up→...→came-back-another-day dashboard w/ drop reasons +
+  // first-task token cost. Deliberately its OWN entry, not merged
+  // into "Onboarding Funnel" above — that page reads /admin/funnel's
+  // `nudge_stages` (a different, coarser cron-nudge classification)
+  // and this page must not disturb that existing consumer.
+  { id: "activation_funnel", label: "Activation Funnel",  route: "/admin/funnel",        group: "USERS" },
   { id: "bin_tracker",     label: "BIN Tracker",          route: "/admin/bin-tracker",    group: "USERS" },
   { id: "github_bulk_revoke", label: "GitHub Bulk Revoke", route: "/admin/github-bulk-revoke", group: "USERS" },
   { id: "visibility_kit",  label: "Visibility Kit",       route: "/admin/visibility-kit", group: "USERS" },

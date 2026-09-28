@@ -292,7 +292,10 @@ export default function OraGuideMascot() {
   function actSecondaryNudge() {
     if (!secondaryNudge) return;
     if (secondaryNudge.variant === "post_skip") {
-      window.dispatchEvent(new Event("aurem:open-connect-wizard"));
+      // 2026-09-28 "ACTIVATION FIRST" Part 3.2 — offer the 3 starter
+      // choices instead of only re-asking for the repo they just
+      // skipped (the modal itself also offers "Connect GitHub instead").
+      window.dispatchEvent(new Event("aurem:open-starter-choices"));
     } else if (secondaryNudge.kind === "first_scan") {
       window.dispatchEvent(new CustomEvent("aurem:run-scan", { detail: { commandId: "scan" } }));
     } else if (secondaryNudge.prefillTask) {

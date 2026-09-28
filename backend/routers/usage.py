@@ -167,8 +167,11 @@ async def public_stats():
             "tasks_shipped": tasks,
             "interactions": total,
             "code_tasks": code,
-            "claude_corrections": corrections,
-            "correction_rate_pct": round((corrections / max(code, 1)) * 100, 1) if code else 0.0,
+            # 2026-09-28 MASTER TASK Part 5.1 — renamed from
+            # claude_corrections/correction_rate_pct (named the model
+            # to the public, unauthenticated homepage stats tile — R6).
+            "review_saves": corrections,
+            "review_save_rate_pct": round((corrections / max(code, 1)) * 100, 1) if code else 0.0,
             "lint_blocks_caught": lint_blocks,
             "cached_at": int(now),
         }

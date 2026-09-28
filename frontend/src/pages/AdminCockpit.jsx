@@ -327,7 +327,16 @@ function AnalogGauge({ value, max, label, sublabel, color, testId }) {
   // literal analog dial per the founder's spec for these 3 activity
   // metrics specifically (total users / live now / active-24h).
   const pct = max > 0 ? Math.min(1, Math.max(0, value / max)) : 0;
-  const angleDeg = -90 + pct * 180; // -90 = pointing left(0%), 90 = pointing right(100%)
+  // 2026-09-28 "ACTIVATION FIRST" Part 3 fix — was `-90 + pct*180`,
+  // which put 0% pointing UP and 100% pointing DOWN (off by 90° from
+  // the arc's own declared endpoints, arcPoint(180)=left/arcPoint(0)
+  // =right below). That mismatch is exactly why a 98%-full value
+  // didn't look ~98%-full: the needle AND the filled-arc's endpoint
+  // (both driven by this one `angleDeg`) were sweeping through the
+  // BOTTOM of the dial instead of the TOP, and clipping short of
+  // "right" well before 100%. Correct mapping: 0% = 180° (left),
+  // 50% = 270° (top), 100% = 360°/0° (right).
+  const angleDeg = 180 + pct * 180;
   const rad = (angleDeg * Math.PI) / 180;
   const cx = 50, cy = 54, r = 40;
   const needleX = cx + r * 0.82 * Math.cos(rad);
@@ -425,6 +434,7 @@ function BusinessPulse() {
   // in one place removes the false-discrepancy signal.
   const [tiers, setTiers] = useState(null);
   const [fin, setFin] = useState(null);
+  const [presence, setPresence] = useState(null);
   const [err, setErr] = useState(null);
   useEffect(() => {
     // Feb 2026 · prod-hang fix — bound each fetch with a per-request
@@ -440,15 +450,19 @@ function BusinessPulse() {
     api.get("/admin/financials", { timeout: 12000 })
        .then(r => { setTiers(r.data?.users || null); setFin(r.data); })
        .catch(() => { /* soft-fail — the tier sub-line just won't render */ });
+    // 2026-09-28 "ACTIVATION FIRST" Part 3 — TOTAL USERS/DAU now read
+    // from the SAME /admin/presence/summary this page's own gauges
+    // use (PresenceGauges above), instead of yet a 3rd source
+    // (/admin/dashboard's raw count + narrow "sent a chat msg" DAU).
+    // Fixes both the "246 vs 243" gauge/card mismatch AND "Live now 2
+    // but DAU 0" (DAU is now "active in the last 24h", not "sent a
+    // message today").
+    api.get("/admin/presence/summary", { timeout: 12000 })
+       .then(r => setPresence(r.data))
+       .catch(() => { /* soft-fail — falls back to the old sources below */ });
   }, []);
-  // 2026-08-26 — was `d?.total_users` first: /admin/dashboard's RAW
-  // (unfiltered) count, while the GITHUB CONNECT % card two rows down
-  // reads /admin/pulse's ORGANIC (synthetic-filtered) total as its
-  // denominator — same page, two different "total users" numbers
-  // whenever a synthetic/test row exists. Pulse's organic count is
-  // now the primary source everywhere on this page.
-  const users = p?.total_users || d?.total_users || 0;
-  const dau   = d?.dau || d?.dau_today || 0;
+  const users = presence?.total_users ?? p?.total_users ?? d?.total_users ?? 0;
+  const dau   = presence?.active_24h ?? d?.dau ?? d?.dau_today ?? 0;
   // 2026-08-26 — was `d?.revenue_30d || d?.mrr`, both fields that
   // /admin/dashboard never returns (grep-confirmed) — this card was
   // permanently hardwired to show $0 next to a real non-zero "PAID

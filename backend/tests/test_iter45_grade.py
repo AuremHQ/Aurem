@@ -82,11 +82,11 @@ async def test_public_stats_no_auth():
     assert "available" in r
     if r["available"]:
         for k in ("users", "tasks_shipped", "interactions",
-                  "claude_corrections", "correction_rate_pct",
+                  "review_saves", "review_save_rate_pct",
                   "lint_blocks_caught"):
             assert k in r, f"public_stats missing {k}"
-        assert isinstance(r["correction_rate_pct"], (int, float))
-        assert 0 <= r["correction_rate_pct"] <= 100
+        assert isinstance(r["review_save_rate_pct"], (int, float))
+        assert 0 <= r["review_save_rate_pct"] <= 100
 
 
 # ─── Sentry init is gated on env (no DSN → no crash, no init) ───────────
