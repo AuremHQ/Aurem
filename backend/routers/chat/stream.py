@@ -156,6 +156,13 @@ async def chat_stream(
     logger.info("R10_TIMING turn_start prompt=%r session=%s project=%s",
                 (body.prompt or "")[:40], body.session_id, body.project_id)
     user = await current_dev(authorization)
+    # 2026-09-27 MASTER TASK Part A — tag every LLM call this request
+    # makes as surface="cto_chat" for the unified `real_llm_usage`
+    # ledger. See `tag_request_surface`'s docstring for why this is
+    # safe without an explicit reset in a request handler this size.
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface("cto_chat", session_id=body.session_id or None,
+                         project_id=body.project_id or None)
     from services.interaction_contract import request_conflict, finalize, new_request_id
     request_conflict(body.prompt)
     interaction_request_id = new_request_id()

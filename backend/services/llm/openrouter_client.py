@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import time
 from typing import Optional
 
 import httpx
@@ -264,11 +265,13 @@ async def call_openrouter_model(
         _ambient_user = current_ambient_user_id()
         if _ambient_user:
             payload["user"] = _ambient_user
+        _t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=_timeout_s) as c:
                 r = await c.post(OPENROUTER_URL, headers=headers, json=payload)
                 r.raise_for_status()
                 data = r.json()
+            _latency_ms = (time.monotonic() - _t0) * 1000
             _msg = data["choices"][0]["message"]
             # 2026-08-25 — defensive guard (see openrouter_providers.py
             # `_call_deepseek` for the customer-facing incident this
@@ -321,6 +324,8 @@ async def call_openrouter_model(
                     (data or {}).get("usage") or {},
                     generation_id=(data or {}).get("id"),
                     feature=feature,
+                    latency_ms=_latency_ms,
+                    status="ok",
                 )
             except Exception as _e:
                 logger.debug(
@@ -342,6 +347,15 @@ async def call_openrouter_model(
                 # Prompt-level bug (4xx other than 402/429). Don't burn
                 # extra free quota — surface the failure.
                 logger.warning("call_openrouter_model(%s) non-retryable: %r", candidate, e)
+                try:
+                    from services.loop_token_ledger import log_real_usage
+                    await log_real_usage(
+                        candidate, {}, feature=feature,
+                        latency_ms=(time.monotonic() - _t0) * 1000,
+                        status="failed", error_reason=f"{type(e).__name__}: {str(e)[:200]}",
+                    )
+                except Exception as _e:
+                    logger.debug("[silent-catch] call_openrouter_model failed-row log skipped: %r", _e)
                 return ""
             logger.warning(
                 "call_openrouter_model(%s) fallback-worthy failure (%d/%d): %r",
@@ -420,4 +434,13 @@ async def call_openrouter_model(
         "call_openrouter_model: all %d candidates exhausted (primary=%r). Last error: %r",
         len(candidates), model, last_exc,
     )
+    try:
+        from services.loop_token_ledger import log_real_usage
+        await log_real_usage(
+            model, {}, feature=feature, status="failed",
+            error_reason=f"chain_exhausted: {type(last_exc).__name__ if last_exc else 'unknown'}: "
+                         f"{str(last_exc)[:200] if last_exc else 'no candidates'}",
+        )
+    except Exception as _e:
+        logger.debug("[silent-catch] call_openrouter_model exhausted-row log skipped: %r", _e)
     return ""

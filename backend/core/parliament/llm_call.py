@@ -43,6 +43,7 @@ async def _llm_call_protected(*, system: str, user: str, max_tokens: int,
     observation.  Silent no-op when Langfuse keys are not configured.
     """
     from services.llm import call_llm_with_meta
+    from services.loop_token_ledger import llm_surface_context
     t0 = time.monotonic()
     md = {
         "mode":        mode,
@@ -59,64 +60,65 @@ async def _llm_call_protected(*, system: str, user: str, max_tokens: int,
         "user_preview":   (user or "")[:1200],
     }
     with trace_llm(trace_name, input=trace_input, metadata=md) as span:
-        async with _GLOBAL_LLM_SEM:
-            try:
-                kwargs = dict(
-                    system=system, user=user, max_tokens=max_tokens,
-                    mode=mode, user_id=user_id, review_mode=review_mode,
-                )
+        async with llm_surface_context(surface="parliament", mode=mode):
+            async with _GLOBAL_LLM_SEM:
                 try:
-                    meta = await asyncio.wait_for(
-                        call_llm_with_meta(temperature=temperature, **kwargs),
-                        timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
+                    kwargs = dict(
+                        system=system, user=user, max_tokens=max_tokens,
+                        mode=mode, user_id=user_id, review_mode=review_mode,
                     )
-                except TypeError:
-                    # Older signature without temperature kwarg.
-                    meta = await asyncio.wait_for(
-                        call_llm_with_meta(**kwargs),
-                        timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
-                    )
-            except asyncio.TimeoutError:
-                latency_ms = round((time.monotonic() - t0) * 1000, 1)
-                _GLOBAL_BREAKER.record_failure(latency_ms, kind="timeout")
-                span.set_metadata({"latency_ms": latency_ms, "error": "timeout"})
-                span.record_error("timeout")
-                return "", latency_ms, "timeout"
-            except Exception as e:                          # noqa: BLE001
-                latency_ms = round((time.monotonic() - t0) * 1000, 1)
-                _GLOBAL_BREAKER.record_failure(latency_ms, kind=type(e).__name__)
-                err_tag = f"{type(e).__name__}: {str(e)[:120]}"
-                span.set_metadata({"latency_ms": latency_ms, "error": err_tag})
-                span.record_error(e)
-                return "", latency_ms, err_tag
-        latency_ms = round((time.monotonic() - t0) * 1000, 1)
-        # 2026-08 hardening (F2) — a cost-cap breach comes back as a
-        # normal {"ok": False, "error_code": "COST_CAP_REACHED"} dict
-        # from _meta.py, not an exception. Tag it distinctly so callers
-        # (CEO.decide, Parliament._fallback_single_call) can tell
-        # "budget exhausted" apart from a generic empty/error response —
-        # this is NOT a circuit-breaker-worthy failure (it's not the
-        # provider being unhealthy), so skip recording it there.
-        if isinstance(meta, dict) and meta.get("error_code") == "COST_CAP_REACHED":
-            span.set_metadata({"latency_ms": latency_ms, "error": "cost_cap_reached"})
-            span.record_error("cost_cap_reached")
-            return "", latency_ms, "cost_cap_reached"
-        content = (meta or {}).get("content", "") or ""
-        if not content.strip():
-            _GLOBAL_BREAKER.record_failure(latency_ms, kind="empty")
-            span.set_metadata({"latency_ms": latency_ms, "error": "empty"})
-            span.record_error("empty_response")
-            return "", latency_ms, "empty"
-        _GLOBAL_BREAKER.record_success(latency_ms)
-        # Capture output + token usage (when llm meta provides it).
-        span.set_output(content[:2000])
-        usage_md = {"latency_ms": latency_ms}
-        try:
-            for k in ("input_tokens", "output_tokens", "total_tokens",
-                      "provider", "model"):
-                if isinstance(meta, dict) and meta.get(k) is not None:
-                    usage_md[k] = meta[k]
-        except Exception:
-            pass
-        span.set_metadata(usage_md)
-        return content, latency_ms, None
+                    try:
+                        meta = await asyncio.wait_for(
+                            call_llm_with_meta(temperature=temperature, **kwargs),
+                            timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
+                        )
+                    except TypeError:
+                        # Older signature without temperature kwarg.
+                        meta = await asyncio.wait_for(
+                            call_llm_with_meta(**kwargs),
+                            timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
+                        )
+                except asyncio.TimeoutError:
+                    latency_ms = round((time.monotonic() - t0) * 1000, 1)
+                    _GLOBAL_BREAKER.record_failure(latency_ms, kind="timeout")
+                    span.set_metadata({"latency_ms": latency_ms, "error": "timeout"})
+                    span.record_error("timeout")
+                    return "", latency_ms, "timeout"
+                except Exception as e:                          # noqa: BLE001
+                    latency_ms = round((time.monotonic() - t0) * 1000, 1)
+                    _GLOBAL_BREAKER.record_failure(latency_ms, kind=type(e).__name__)
+                    err_tag = f"{type(e).__name__}: {str(e)[:120]}"
+                    span.set_metadata({"latency_ms": latency_ms, "error": err_tag})
+                    span.record_error(e)
+                    return "", latency_ms, err_tag
+            latency_ms = round((time.monotonic() - t0) * 1000, 1)
+            # 2026-08 hardening (F2) — a cost-cap breach comes back as a
+            # normal {"ok": False, "error_code": "COST_CAP_REACHED"} dict
+            # from _meta.py, not an exception. Tag it distinctly so callers
+            # (CEO.decide, Parliament._fallback_single_call) can tell
+            # "budget exhausted" apart from a generic empty/error response —
+            # this is NOT a circuit-breaker-worthy failure (it's not the
+            # provider being unhealthy), so skip recording it there.
+            if isinstance(meta, dict) and meta.get("error_code") == "COST_CAP_REACHED":
+                span.set_metadata({"latency_ms": latency_ms, "error": "cost_cap_reached"})
+                span.record_error("cost_cap_reached")
+                return "", latency_ms, "cost_cap_reached"
+            content = (meta or {}).get("content", "") or ""
+            if not content.strip():
+                _GLOBAL_BREAKER.record_failure(latency_ms, kind="empty")
+                span.set_metadata({"latency_ms": latency_ms, "error": "empty"})
+                span.record_error("empty_response")
+                return "", latency_ms, "empty"
+            _GLOBAL_BREAKER.record_success(latency_ms)
+            # Capture output + token usage (when llm meta provides it).
+            span.set_output(content[:2000])
+            usage_md = {"latency_ms": latency_ms}
+            try:
+                for k in ("input_tokens", "output_tokens", "total_tokens",
+                          "provider", "model"):
+                    if isinstance(meta, dict) and meta.get(k) is not None:
+                        usage_md[k] = meta[k]
+            except Exception:
+                pass
+            span.set_metadata(usage_md)
+            return content, latency_ms, None

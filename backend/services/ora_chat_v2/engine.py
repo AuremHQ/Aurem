@@ -80,6 +80,28 @@ async def _log_usage(db, admin_id: str, session_id: str,
 async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
                     think_mode: bool = False, advise_only: bool = False,
                     page_inspection: Optional[dict] = None) -> AsyncIterator[dict]:
+    """Thin wrapper — tags every LLM call this turn makes (2026-09-27
+    MASTER TASK Part A) with the ambient `user_id` (= `admin_id`, the
+    founder/admin running THIS chat) and `surface="founder_chat"` so
+    `real_llm_usage` rows attribute correctly instead of landing under
+    "anonymous"/`surface=unknown` — root cause of ORA calls showing
+    app "Unknown" / no Client User ID on the OpenRouter dashboard.
+    Full implementation: `_run_turn_impl`."""
+    from services.loop_token_ledger import llm_user_context, llm_surface_context
+    async with llm_user_context(admin_id), llm_surface_context(
+        surface="founder_chat", session_id=session.get("session_id") or None,
+    ):
+        async for evt in _run_turn_impl(
+            db, admin_id=admin_id, session=session, user_message=user_message,
+            think_mode=think_mode, advise_only=advise_only,
+            page_inspection=page_inspection,
+        ):
+            yield evt
+
+
+async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
+                    think_mode: bool = False, advise_only: bool = False,
+                    page_inspection: Optional[dict] = None) -> AsyncIterator[dict]:
     """Yields SSE-ready dict events. See routers/ora_chat.py for the
     exact event contract forwarded to the frontend."""
     if not await _rate_limit_ok(db, admin_id):

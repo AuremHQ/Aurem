@@ -1,13 +1,15 @@
 /**
- * AgentTokenPanel.jsx — Iter 65 — Per-agent token consumption widget
+ * AgentTokenPanel.jsx — Iter 65 — Per-provider token consumption widget
  * shown above the Users list in the admin panel.
  *
- * Renders for each agent (DeepSeek, Maxx/Claude review, Groq):
- *   • Total tokens in the selected window
- *   • Total USD cost
- *   • Avg cost per finished task
- *   • A "Claude vs DeepSeek delta" callout — answers Teji's question
- *     "kya Claude ka extra cost worth hai ya nahi?"
+ * 2026-09-27 MASTER TASK Part A/C — rewritten to render whatever
+ * providers actually show up in `real_llm_usage` (the one canonical
+ * ledger) instead of a hardcoded 4-agent list with a mislabeled
+ * "per 1k" rate table baked into the tooltip (that was the literal
+ * source of the "$0.30 per 1k" ~1000x-too-high bug). Every number
+ * here now comes straight from `/admin/agent-tokens`, which itself
+ * reads real provider-reported tokens + real cost_usd — no fixed
+ * rate table anywhere in this file anymore.
  *
  * Range selector: 24h | 7d | 30d | 90d | 365d.
  * Lightweight inline bar chart (no charting lib) for the time series.
@@ -23,14 +25,28 @@ const RANGES = [
   { id: "365d", label: "1y",   desc: "monthly" },
 ];
 
-// Color per agent — orange for the primary (DeepSeek), amber for the
-// expensive reviewer (Claude/Maxx), green for cheap (Groq).
-const AGENT_META = {
-  deepseek: { color: "#ff8a2a", label: "DeepSeek" },
-  maxx:     { color: "#ffc560", label: "Claude (Maxx)" },
-  claude:   { color: "#ffc560", label: "Claude" },
-  groq:     { color: "#6dd4a1", label: "Groq" },
+// Color per provider — falls back to a stable hash-based color for
+// any provider not in this list, so a brand-new model never renders
+// blank/uncolored.
+const PROVIDER_COLORS = {
+  deepseek:         "#ff8a2a",
+  deepseek_direct:  "#ff8a2a",
+  anthropic:        "#ffc560",
+  "z-ai":           "#6aa9ff",
+  openai:           "#c792ea",
+  groq:             "#6dd4a1",
 };
+const FALLBACK_COLORS = ["#e05d5d", "#5dc9c9", "#a0e05d", "#e0a05d"];
+function colorFor(provider, idx) {
+  return PROVIDER_COLORS[provider] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
+}
+function labelFor(provider) {
+  if (provider === "z-ai") return "GLM";
+  if (provider === "anthropic") return "Claude";
+  if (provider === "deepseek_direct") return "DeepSeek (direct)";
+  if (provider === "unknown") return "Unattributed";
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
 
 export default function AgentTokenPanel() {
   const [range, setRange] = useState("7d");
@@ -58,14 +74,15 @@ export default function AgentTokenPanel() {
     return () => { cancelled = true; };
   }, [range]);
 
+  const providers = data?.providers || [];
+
   // Pre-compute chart bar max so heights normalize
   const maxBucketTotal = useMemo(() => {
     if (!data?.series) return 0;
     return data.series.reduce((m, b) =>
-      Math.max(m,
-        (b.deepseek || 0) + (b.maxx || 0) + (b.claude || 0) + (b.groq || 0)),
+      Math.max(m, providers.reduce((s, p) => s + (b[p] || 0), 0)),
       0);
-  }, [data]);
+  }, [data, providers]);
 
   return (
     <div data-testid="agent-token-panel" style={{
@@ -86,7 +103,7 @@ export default function AgentTokenPanel() {
           </div>
           <div style={{ fontSize: 10, color: "var(--text-faint)",
                          letterSpacing: "0.05em", marginTop: 2 }}>
-            Compare DeepSeek vs Claude (Maxx) — is the extra cost worth it?
+            Real per-call cost from real_llm_usage — every provider that actually ran.
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 4,
@@ -130,44 +147,54 @@ export default function AgentTokenPanel() {
                        fontStyle: "italic" }}>Loading…</div>
       )}
 
-      {data && (
+      {data && providers.length === 0 && (
+        <div data-testid="agent-tokens-empty" style={{
+          fontSize: 11, color: "var(--text-faint)", fontStyle: "italic",
+        }}>
+          No real LLM calls recorded in this window yet.
+        </div>
+      )}
+
+      {data && providers.length > 0 && (
         <>
-          {/* Per-agent summary cards */}
+          {/* Per-provider summary cards */}
           <div style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
             gap: 10, marginBottom: 14,
           }}>
-            {Object.entries(AGENT_META).map(([agent, meta]) => {
-              const tokens = data.totals_tokens?.[agent] || 0;
-              const cost = data.costs_usd?.[agent] || 0;
-              const tasks = data.task_counts?.[agent] || 0;
-              const avg = data.avg_per_task?.[agent] || {};
+            {providers.map((provider, idx) => {
+              const tokens = data.totals_tokens?.[provider] || 0;
+              const cost = data.costs_usd?.[provider] || 0;
+              const calls = data.call_counts?.[provider] || 0;
+              const tasks = data.task_counts?.[provider] || 0;
+              const avg = data.avg_per_call?.[provider] || {};
               return (
-                <div key={agent} data-testid={`agent-card-${agent}`} style={{
+                <div key={provider} data-testid={`agent-card-${provider}`} style={{
                   padding: "10px 12px",
                   background: "var(--panel-2)",
                   border: "1px solid var(--border)",
-                  borderLeft: `3px solid ${meta.color}`,
+                  borderLeft: `3px solid ${colorFor(provider, idx)}`,
                   borderRadius: 4,
                 }}>
                   <div style={{ fontSize: 11, color: "var(--text-dim)",
                                  letterSpacing: "0.05em" }}>
-                    {meta.label}
+                    {labelFor(provider)}
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 600,
                                  color: "var(--text)", marginTop: 4,
                                  fontFamily: "'JetBrains Mono', monospace" }}>
-                    ${cost.toFixed(2)}
+                    ${cost.toFixed(4)}
                   </div>
                   <div style={{ fontSize: 10, color: "var(--text-faint)",
                                  fontFamily: "'JetBrains Mono', monospace" }}>
-                    {tokens.toLocaleString()} tok · {tasks} task{tasks === 1 ? "" : "s"}
+                    {tokens.toLocaleString()} tok · {calls} call{calls === 1 ? "" : "s"}
+                    {tasks > 0 ? ` · ${tasks} task${tasks === 1 ? "" : "s"}` : ""}
                   </div>
-                  {tasks > 0 && (
+                  {calls > 0 && (
                     <div style={{ fontSize: 9, color: "var(--text-faint)",
                                    marginTop: 4 }}>
-                      avg ${avg.cost_avg_usd?.toFixed(4) || "0.0000"}/task
+                      avg ${avg.cost_avg_usd?.toFixed(6) || "0.000000"}/call
                     </div>
                   )}
                 </div>
@@ -175,7 +202,7 @@ export default function AgentTokenPanel() {
             })}
           </div>
 
-          {/* Claude-vs-DeepSeek delta — the headline answer */}
+          {/* Claude-vs-DeepSeek delta — the headline answer, when both ran */}
           {data.claude_vs_deepseek && (
             <div data-testid="claude-vs-deepseek" style={{
               padding: "10px 12px", marginBottom: 14,
@@ -187,20 +214,15 @@ export default function AgentTokenPanel() {
               overflowWrap: "anywhere",
             }}>
               <span style={{ color: "var(--accent-2)", fontWeight: 600 }}>
-                Claude/Maxx vs DeepSeek delta:{" "}
+                Claude vs DeepSeek delta:{" "}
               </span>
               <span style={{ color: "var(--text)" }}>
-                ${data.claude_vs_deepseek.delta_usd_per_task.toFixed(4)} extra per task
+                ${data.claude_vs_deepseek.delta_usd_per_call.toFixed(6)} extra per call
               </span>
               {data.claude_vs_deepseek.delta_multiplier && (
                 <> · <span style={{ color: "var(--accent-2)" }}>
                   {data.claude_vs_deepseek.delta_multiplier}×
                 </span> the DeepSeek cost</>
-              )}
-              {data.claude_corrections > 0 && (
-                <span style={{ color: "var(--ok)" }}>
-                  {" "}· Claude corrected DeepSeek in {data.claude_corrections} task(s)
-                </span>
               )}
             </div>
           )}
@@ -214,10 +236,7 @@ export default function AgentTokenPanel() {
               overflowX: "auto", overflowY: "hidden",
             }}>
               {data.series.map((bucket, i) => {
-                const total = (bucket.deepseek || 0) +
-                              (bucket.maxx || 0) +
-                              (bucket.claude || 0) +
-                              (bucket.groq || 0);
+                const total = providers.reduce((s, p) => s + (bucket[p] || 0), 0);
                 const heightPct = maxBucketTotal
                   ? (total / maxBucketTotal) * 100 : 0;
                 return (
@@ -231,17 +250,13 @@ export default function AgentTokenPanel() {
                       display: "flex", flexDirection: "column-reverse",
                       borderRadius: "2px 2px 0 0", overflow: "hidden",
                     }}
-                    title={`${bucket.label}: $${(
-                      (bucket.deepseek / 1000) * 0.30 +
-                      ((bucket.maxx + bucket.claude) / 1000) * 0.65 +
-                      (bucket.groq / 1000) * 0.03
-                    ).toFixed(3)}`}>
-                      {["deepseek", "maxx", "claude", "groq"].map((a) => {
-                        const v = bucket[a] || 0;
+                    title={`${bucket.label}: ${total.toLocaleString()} tokens`}>
+                      {providers.map((p, idx) => {
+                        const v = bucket[p] || 0;
                         if (!v) return null;
                         return (
-                          <div key={a} style={{
-                            background: AGENT_META[a].color,
+                          <div key={p} style={{
+                            background: colorFor(p, idx),
                             height: `${(v / total) * 100}%`,
                             opacity: 0.9,
                           }} />
@@ -260,11 +275,10 @@ export default function AgentTokenPanel() {
 
           <div style={{ marginTop: 10, fontSize: 10, color: "var(--text-faint)",
                          display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <span><b style={{ color: "var(--text)" }}>
+            <span data-testid="agent-tokens-total"><b style={{ color: "var(--text)" }}>
               Total: ${data.total_cost_usd?.toFixed(4)}
             </b></span>
             <span>Range: {data.range} · {data.bucket} buckets · {data.buckets_count} pts</span>
-            <span>Rates: DS $0.30 · Maxx/Claude $0.65 · Groq $0.03 per 1k tok</span>
           </div>
         </>
       )}

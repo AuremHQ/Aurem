@@ -427,13 +427,13 @@ class TestOraLearning:
 class TestTokenPnl:
     def test_token_pnl(self, client, fake_db):
         now = time.time()
-        # 2026-08-27 — root-fixed to source AI cost from `customer_chat_cost`
-        # (real per-call LLM ledger), same source /admin/agent-performance
-        # already uses — `cto_tasks.tokens_used` never carried real
-        # model attribution, which is exactly why the cockpit showed $0
-        # while Agent Performance showed real spend from the same window.
-        fake_db.customer_chat_cost.rows.append({
-            "ts": now, "model": "deepseek", "cost_usd": 0.4, "input_tokens": 800, "output_tokens": 200,
+        # 2026-09-27 MASTER TASK Part A/C — root-fixed AGAIN to source AI
+        # cost from `real_llm_usage` (the ONE unified ledger every LLM
+        # call writes to now — Loop/scan/verifier/Parliament/founder-chat
+        # included, not just customer chat), grouped by real `provider`.
+        fake_db.real_llm_usage.rows.append({
+            "ts": now, "provider": "deepseek", "status": "ok",
+            "cost_usd": 0.001, "input_tokens": 800, "output_tokens": 200,
         })
         fake_db.cto_payments.rows.append({
             "created_at": now, "payment_status": "paid", "amount": 50.0,
@@ -442,22 +442,26 @@ class TestTokenPnl:
         assert r.status_code == 200
         body = r.json()
         assert body["revenue_month"] == 50.0
-        assert body["month_by_agent"]["deepseek"] == 0.4
-        assert body["ai_cost_month"] == 0.4
+        assert body["month_by_agent"]["deepseek"] == 0.001
+        assert body["ai_cost_month"] == 0.001
 
 
 class TestAgentTokens:
     def test_agent_tokens_7d(self, client, fake_db):
         now = time.time()
-        fake_db.cto_tasks.rows.append({
-            "created_at": now, "status": "done", "agent_used": "claude",
-            "tokens_used": 500, "claude_corrected": True,
+        # 2026-09-27 MASTER TASK Part A/C — real ledger row, not the old
+        # `cto_tasks.agent_used`/`tokens_used` fields (those never carried
+        # real per-call model/provider attribution).
+        fake_db.real_llm_usage.rows.append({
+            "ts": now, "provider": "anthropic", "status": "ok",
+            "total_tokens": 500, "cost_usd": 0.02, "task_id": "t1",
         })
         r = client.get("/api/aurem-dev/admin/agent-tokens", headers=AUTH, params={"range": "7d"})
         assert r.status_code == 200
         body = r.json()
-        assert body["totals_tokens"]["claude"] == 500
-        assert body["claude_corrections"] == 1
+        assert body["totals_tokens"]["anthropic"] == 500
+        assert body["task_counts"]["anthropic"] == 1
+        assert body["costs_usd"]["anthropic"] == 0.02
 
     def test_agent_tokens_invalid_range_falls_back(self, client, fake_db):
         r = client.get("/api/aurem-dev/admin/agent-tokens", headers=AUTH, params={"range": "bogus"})

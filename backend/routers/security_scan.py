@@ -117,6 +117,8 @@ async def run_security_scan(
     user = await require_admin(authorization)
     user_id = user["user_id"]
     project_id = (body or {}).get("project_id")
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface("scan", project_id=project_id or None)
     two_round  = bool((body or {}).get("two_round", False))
     auto_pr    = bool((body or {}).get("auto_pr", False))
     if not project_id:

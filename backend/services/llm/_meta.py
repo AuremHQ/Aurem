@@ -60,8 +60,8 @@ async def call_llm_with_meta(system: str, user: str,
     the 4-hop chain below. See `services.loop_token_ledger.
     llm_user_context` for why a contextvar instead of a new parameter
     everywhere. Full implementation + docstring: `_call_llm_with_meta_impl`."""
-    from services.loop_token_ledger import llm_user_context
-    async with llm_user_context(user_id):
+    from services.loop_token_ledger import llm_user_context, llm_surface_context
+    async with llm_user_context(user_id), llm_surface_context(mode=mode):
         return await _call_llm_with_meta_impl(
             system, user, max_tokens=max_tokens, mode=mode, user_id=user_id,
             review_mode=review_mode, step_hook=step_hook, feature=feature,

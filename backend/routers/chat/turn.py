@@ -182,6 +182,9 @@ async def chat_send(
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
     user = await current_dev(authorization)
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface("cto_chat", session_id=body.session_id or None,
+                         project_id=body.project_id or None)
     from services.interaction_contract import request_conflict, finalize, new_request_id
     request_conflict(body.prompt)
     interaction_request_id = new_request_id()

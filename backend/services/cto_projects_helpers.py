@@ -266,7 +266,58 @@ async def _set_status(task_id: str, **fields):
                 # Translator must never block the failure write —
                 # fall back to leaving only `error` populated.
                 logger.warning("error_translator wedged: %r", _e)
+        # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+        # write (done/failed), roll up this task's real LLM spend from
+        # the unified `real_llm_usage` ledger (Part A) straight onto the
+        # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+        # /admin/token-pnl and the user's own tokens-used total agree
+        # with the SAME source everywhere), `llm_mode` (the mode(s) this
+        # task actually ran — fixes the empty "mode distribution" the
+        # founder reported), and — for failures only, and only when no
+        # human-readable reason was set above — a real `error_reason`
+        # pulled from the LAST failed call this task made, so failures
+        # stop showing "unknown".
+        if fields.get("status") in ("done", "failed"):
+            try:
+                await _rollup_task_llm_usage(db, task_id, fields)
+            except Exception as _e:                  # noqa: BLE001
+                logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                task_id, _e)
         await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+
+
+async def _rollup_task_llm_usage(db, task_id: str, fields: dict) -> None:
+    """Aggregate every `real_llm_usage` row this task's LLM calls wrote
+    (Part A's unified ledger, matched on `task_id`) and merge the
+    totals into `fields` (mutated in place) before the caller's
+    `update_one`. Never raises past its own try/except — see caller."""
+    agg = await db.real_llm_usage.aggregate([
+        {"$match": {"task_id": task_id}},
+        {"$group": {
+            "_id": None,
+            "tokens": {"$sum": "$total_tokens"},
+            "cost_usd": {"$sum": "$cost_usd"},
+            "calls": {"$sum": 1},
+            "modes": {"$addToSet": "$mode"},
+            "models": {"$addToSet": "$model"},
+        }},
+    ]).to_list(1)
+    if not agg:
+        return
+    row = agg[0]
+    fields["tokens_used"] = int(row.get("tokens") or 0)
+    fields["cost_usd"] = round(float(row.get("cost_usd") or 0.0), 6)
+    fields["llm_call_count"] = int(row.get("calls") or 0)
+    fields["llm_modes"] = [m for m in (row.get("modes") or []) if m and m != "unknown"]
+    fields["llm_models"] = [m for m in (row.get("models") or []) if m]
+    if fields.get("status") == "failed" and not fields.get("error") and not fields.get("error_code"):
+        last_failed = await db.real_llm_usage.find_one(
+            {"task_id": task_id, "status": "failed"},
+            {"_id": 0, "error_reason": 1},
+            sort=[("ts", -1)],
+        )
+        if last_failed and last_failed.get("error_reason"):
+            fields["error_reason"] = last_failed["error_reason"]
 
 
 def _sh(cmd: list, cwd: Path, timeout: int = 60) -> subprocess.CompletedProcess:

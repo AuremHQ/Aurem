@@ -532,43 +532,40 @@ async def token_pnl(authorization: Optional[str] = Header(None)):
     day_ago = now - 86400
     month_ago = now - 86400 * 30
 
-    # Iter 2026-08-27 — ROOT FIX: this previously aggregated
-    # `cto_tasks.tokens_used`/`agent_used`, which is ALWAYS empty for
-    # this purpose (cto_tasks only carries per-task status metadata,
-    # never real per-call model/cost attribution — same root cause the
-    # 2026-08-26 fix to /admin/agent-performance already diagnosed and
-    # fixed for that endpoint). Real per-call LLM cost lives in
-    # `customer_chat_cost` (cost_usd, model, ts) — the same ledger
-    # `admin_bi.py::_fetch_inference_metrics` and the now-fixed
-    # /admin/agent-performance already use. Switched to the same real
-    # source so the cockpit's "AI cost (mo)" card stops showing $0
-    # while Agent Performance shows real spend from the same 30d window.
+    # 2026-09-27 MASTER TASK Part A/C — REWRITTEN AGAIN (was
+    # `customer_chat_cost`, a customer-chat-only ledger that missed
+    # Loop/scan/verifier/Parliament/founder-chat spend entirely — one
+    # of the three-way mismatches the founder reported between this
+    # card, /admin/agent-tokens and /analytics). `real_llm_usage` is
+    # now the ONE ledger every LLM call writes to (see
+    # services/loop_token_ledger.py's module docstring), so this is
+    # the same source those other two pages read too.
     month_pipe = [
-        {"$match": {"ts": {"$gte": month_ago}}},
-        {"$group": {"_id": "$model", "cost": {"$sum": "$cost_usd"},
+        {"$match": {"ts": {"$gte": month_ago}, "status": {"$ne": "failed"}}},
+        {"$group": {"_id": "$provider", "cost": {"$sum": "$cost_usd"},
                     "n": {"$sum": 1}}},
     ]
     month_by_agent: dict[str, float] = {}
     month_calls_by_agent: dict[str, int] = {}
-    async for d in db.customer_chat_cost.aggregate(month_pipe):
+    async for d in db.real_llm_usage.aggregate(month_pipe):
         agent = d.get("_id") or "unknown"
-        month_by_agent[agent] = round(float(d.get("cost") or 0), 4)
+        month_by_agent[agent] = round(float(d.get("cost") or 0), 6)
         month_calls_by_agent[agent] = int(d.get("n") or 0)
 
     day_pipe = [
-        {"$match": {"ts": {"$gte": day_ago}}},
-        {"$group": {"_id": "$model", "cost": {"$sum": "$cost_usd"},
+        {"$match": {"ts": {"$gte": day_ago}, "status": {"$ne": "failed"}}},
+        {"$group": {"_id": "$provider", "cost": {"$sum": "$cost_usd"},
                     "n": {"$sum": 1}}},
     ]
     day_by_agent: dict[str, float] = {}
     day_calls_by_agent: dict[str, int] = {}
-    async for d in db.customer_chat_cost.aggregate(day_pipe):
+    async for d in db.real_llm_usage.aggregate(day_pipe):
         agent = d.get("_id") or "unknown"
-        day_by_agent[agent] = round(float(d.get("cost") or 0), 4)
+        day_by_agent[agent] = round(float(d.get("cost") or 0), 6)
         day_calls_by_agent[agent] = int(d.get("n") or 0)
 
-    ai_cost_month = round(sum(month_by_agent.values()), 2)
-    ai_cost_today = round(sum(day_by_agent.values()), 2)
+    ai_cost_month = round(sum(month_by_agent.values()), 4)
+    ai_cost_today = round(sum(day_by_agent.values()), 4)
 
     done_month = await db.cto_tasks.count_documents(
         {"created_at": {"$gte": month_ago}, "status": "done"}
@@ -667,8 +664,10 @@ async def token_pnl(authorization: Optional[str] = Header(None)):
             "actually landed, never blended with assigned_plan_value_month. "
             "Stripe fees are an ESTIMATE at 2.9% + $0.30/txn (US standard) "
             "— not a settlement-accurate figure. AI cost = sum(cost_usd) "
-            "from customer_chat_cost (real per-call LLM ledger, same "
-            "source /admin/agent-performance uses) in the last 30d/24h. "
+            "from real_llm_usage (the ONE unified LLM ledger — every "
+            "founder-chat/CTO-chat/loop/scan/verifier/Parliament call, "
+            "real provider-reported tokens + real cost) in the last "
+            "30d/24h — same source /admin/agent-tokens and /analytics read. "
             "assigned_plan_value_month = live Stripe subscription MRR "
             "(same figure Cockpit/Financials/Personal Track show) — this "
             "is the NOMINAL plan value, not necessarily real settled cash "
@@ -683,6 +682,20 @@ async def agent_tokens(
     range: str = "7d",
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
+    """2026-09-27 MASTER TASK Part A/C — REWRITTEN to read exclusively
+    from `real_llm_usage` (the one canonical ledger, see
+    services/loop_token_ledger.py). Previously aggregated
+    `cto_tasks.tokens_used`/`agent_used` with a hardcoded, mislabeled
+    `cost_per_1k = {"deepseek": 0.30, ...}` table that was actually a
+    PER-MILLION rate (a real 3,575-token DeepSeek call costs about a
+    tenth of a cent, not the $1.07 that table implied) — that's one of
+    the two founder-reported mismatches (this card vs /admin/token-pnl
+    vs /analytics all disagreeing) this rewrite fixes by making all
+    three read the same source. Bucketed by real `provider` (deepseek/
+    anthropic/z-ai/openai/groq/deepseek_direct — whatever actually
+    appears in the ledger), not a hardcoded 4-agent list, so new
+    models show up with zero code change.
+    """
     await _require_admin(authorization)
     db = require_db()
     range_map = {
@@ -698,70 +711,70 @@ async def agent_tokens(
     now = time.time()
     since = now - window_secs
 
-    # Pull every done task in window with agent + tokens + created_at.
-    cur = db.cto_tasks.find(
-        {"created_at": {"$gte": since}, "status": "done"},
-        {"agent_used": 1, "tokens_used": 1, "created_at": 1,
-         "claude_corrected": 1, "_id": 0},
+    cur = db.real_llm_usage.find(
+        # `{"$ne": "failed"}` (not `"status": "ok"`) — real_llm_usage
+        # rows written before this MASTER TASK never had a `status`
+        # field at all (it didn't exist yet); those are real historical
+        # successes and must still count here, not disappear because
+        # they predate the new field.
+        {"ts": {"$gte": since}, "status": {"$ne": "failed"}},
+        {"_id": 0, "provider": 1, "total_tokens": 1, "cost_usd": 1,
+         "ts": 1, "task_id": 1},
     )
-    # Cost rates per 1k tokens (real OpenRouter/Anthropic prices Feb 2026)
-    cost_per_1k = {"deepseek": 0.30, "maxx": 0.65, "claude": 0.65, "groq": 0.03}
-
-    # Bucket → agent → tokens
     buckets: dict[float, dict[str, int]] = {}
-    totals = {"deepseek": 0, "maxx": 0, "claude": 0, "groq": 0}
-    task_counts = {"deepseek": 0, "maxx": 0, "claude": 0, "groq": 0}
-    claude_corrections = 0
-
+    totals: dict[str, int] = {}
+    costs: dict[str, float] = {}
+    call_counts: dict[str, int] = {}
+    task_ids_by_provider: dict[str, set] = {}
     async for d in cur:
-        agent = (d.get("agent_used") or "deepseek").lower()
-        if agent not in totals:
-            agent = "deepseek"
-        tk = int(d.get("tokens_used") or 0)
-        bucket_start = (int(d.get("created_at", now) // bucket_secs)) * bucket_secs
-        bkt = buckets.setdefault(bucket_start, {a: 0 for a in totals})
-        bkt[agent] += tk
-        totals[agent] += tk
-        task_counts[agent] += 1
-        if d.get("claude_corrected"):
-            claude_corrections += 1
+        provider = d.get("provider") or "unknown"
+        tk = int(d.get("total_tokens") or 0)
+        cost = float(d.get("cost_usd") or 0.0)
+        bucket_start = (int(d.get("ts", now) // bucket_secs)) * bucket_secs
+        bkt = buckets.setdefault(bucket_start, {})
+        bkt[provider] = bkt.get(provider, 0) + tk
+        totals[provider] = totals.get(provider, 0) + tk
+        costs[provider] = costs.get(provider, 0.0) + cost
+        call_counts[provider] = call_counts.get(provider, 0) + 1
+        if d.get("task_id"):
+            task_ids_by_provider.setdefault(provider, set()).add(d["task_id"])
 
-    # Format chronological series
+    providers = sorted(totals.keys(), key=lambda p: -totals[p])
+
+    # Format chronological series — one key per provider actually seen.
     series = []
     for bs in sorted(buckets.keys()):
         row = {"ts": int(bs), "label": _bucket_label(bs, bucket_label)}
-        for agent, val in buckets[bs].items():
-            row[agent] = val
+        for provider, val in buckets[bs].items():
+            row[provider] = val
         series.append(row)
 
-    # Cost summary
-    costs = {a: round((t / 1000) * cost_per_1k.get(a, 0.30), 4)
-             for a, t in totals.items()}
-    total_cost = round(sum(costs.values()), 4)
+    costs = {p: round(v, 6) for p, v in costs.items()}
+    total_cost = round(sum(costs.values()), 6)
 
-    # Per-task averages — the key question Teji asks
-    avg_per_task = {}
-    for a in totals:
-        n = task_counts[a]
-        avg_per_task[a] = {
-            "tokens_avg": round(totals[a] / n) if n else 0,
-            "cost_avg_usd": round((totals[a] / n / 1000) * cost_per_1k.get(a, 0.30), 4)
-                             if n else 0,
+    # Per-call averages (renamed from "per-task" — most LLM calls in
+    # the ledger are chat turns/scans/verifier passes, not all of them
+    # map 1:1 to a `cto_tasks` document, so "per call" is the accurate
+    # unit; distinct task_id count is ALSO surfaced for the subset that
+    # do belong to a task).
+    avg_per_call = {}
+    for p in providers:
+        n = call_counts.get(p, 0)
+        avg_per_call[p] = {
+            "tokens_avg": round(totals[p] / n) if n else 0,
+            "cost_avg_usd": round(costs.get(p, 0.0) / n, 6) if n else 0,
         }
+    task_counts = {p: len(task_ids_by_provider.get(p, set())) for p in providers}
 
-    # Claude-vs-DeepSeek delta — directly answers the "how much extra"
+    # Claude-vs-DeepSeek delta — directly answers "how much extra".
     extra_for_claude = None
-    if task_counts["deepseek"] > 0 and (task_counts["maxx"] + task_counts["claude"]) > 0:
-        ds_avg_cost = avg_per_task["deepseek"]["cost_avg_usd"]
-        maxx_avg_tokens = (
-            totals["maxx"] + totals["claude"]
-        ) / max(task_counts["maxx"] + task_counts["claude"], 1)
-        claude_rate = cost_per_1k["maxx"]
-        claude_avg_cost = round((maxx_avg_tokens / 1000) * claude_rate, 4)
+    if "deepseek" in call_counts and "anthropic" in call_counts:
+        ds_avg_cost = avg_per_call["deepseek"]["cost_avg_usd"]
+        claude_avg_cost = avg_per_call["anthropic"]["cost_avg_usd"]
         extra_for_claude = {
-            "deepseek_avg_cost_per_task": ds_avg_cost,
-            "claude_maxx_avg_cost_per_task": claude_avg_cost,
-            "delta_usd_per_task": round(claude_avg_cost - ds_avg_cost, 4),
+            "deepseek_avg_cost_per_call": ds_avg_cost,
+            "claude_avg_cost_per_call": claude_avg_cost,
+            "delta_usd_per_call": round(claude_avg_cost - ds_avg_cost, 6),
             "delta_multiplier": round(claude_avg_cost / ds_avg_cost, 2)
                                 if ds_avg_cost else None,
         }
@@ -771,14 +784,16 @@ async def agent_tokens(
         "bucket": bucket_label,
         "buckets_count": len(series),
         "series": series,
+        "providers": providers,
         "totals_tokens": totals,
+        "call_counts": call_counts,
         "task_counts": task_counts,
-        "claude_corrections": claude_corrections,
-        "cost_per_1k_usd": cost_per_1k,
         "costs_usd": costs,
         "total_cost_usd": total_cost,
-        "avg_per_task": avg_per_task,
+        "avg_per_call": avg_per_call,
         "claude_vs_deepseek": extra_for_claude,
+        "_source": "real_llm_usage (real provider-reported tokens + real cost_usd — "
+                    "no fixed per-1k rate table)",
     }
 
 
@@ -1238,17 +1253,24 @@ async def product_analytics(
     if loop_failed:
         failure_by_reason["UNKNOWN"] = failure_by_reason.get("UNKNOWN", 0) + loop_failed
 
-    # Mode distribution (A/B/C/D/E/F) from ora_council_logs
+    # 2026-09-27 MASTER TASK Part B #7 — REWRITTEN. Previously read
+    # `db.ora_council_logs`, a legacy collection the current Loop/
+    # Parliament execution path no longer writes to — this is why the
+    # founder saw "mode distribution: empty" despite 30 real tasks
+    # having run. `real_llm_usage.mode` (Part A's unified ledger) is
+    # populated for every surface now (loop phase, chat mode, "parliament"
+    # calls, etc.) — group on that instead, so this always reflects
+    # what actually ran.
     mode_dist: dict = {}
-    async for r in db.ora_council_logs.aggregate(
+    async for r in db.real_llm_usage.aggregate(
         [
-            {"$match": {"ts": {"$gte": window_start}}},
+            {"$match": {"ts": {"$gte": window_start}, "status": {"$ne": "failed"}}},
             {"$group": {"_id": "$mode", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
         ]
     ):
         mid = r.get("_id")
-        if mid:
+        if mid and mid != "unknown":
             mode_dist[mid] = int(r.get("count", 0))
 
     # Daily active users trend (last 14 days)
@@ -1268,25 +1290,36 @@ async def product_analytics(
         label = datetime.fromtimestamp(day_end, tz=timezone.utc).strftime("%b %d")
         dau_trend.append({"date": label, "users": day_count})
 
-    # Top features used (by chat mode)
-    feature_labels = {
-        "C": "Code Ship", "D": "Debug", "B": "Advice",
-        "A": "Chat", "E": "Audit", "F": "Engage",
-    }
+    # Top features used (by real LLM call mode — Part B #7 rewrite,
+    # see mode_dist above. No longer the legacy A-F Council-mode
+    # labels; `mode` here is whatever real_llm_usage recorded, e.g.
+    # "chat", "code", "plan", "execute", "verify", "parliament").
     top_features = [
-        {"mode": k, "label": feature_labels.get(k, k), "count": v}
+        {"mode": k, "label": k.replace("_", " ").title(), "count": v}
         for k, v in sorted(mode_dist.items(), key=lambda x: -x[1])
     ]
 
-    # Token burn (last N days)
+    # Token burn (last N days) — Part A/C rewrite: previously summed
+    # ONLY `cto_tasks.tokens_used` (the narrow legacy field that
+    # missed chat/scan/verifier/Parliament calls with no `cto_tasks`
+    # document at all — the same root cause as the "Used: 0" bug).
+    # `real_llm_usage` is the same ledger /admin/token-pnl and
+    # /admin/agent-tokens now read, so this page agrees with those two.
     tokens_burned = await _first_or_zero(
-        db.cto_tasks,
+        db.real_llm_usage,
         [
-            {"$match": {"created_at": {"$gte": window_start}, "status": "done"}},
-            {"$group": {"_id": None, "total": {"$sum": "$tokens_used"}}},
+            {"$match": {"ts": {"$gte": window_start}, "status": {"$ne": "failed"}}},
+            {"$group": {"_id": None, "total": {"$sum": "$total_tokens"}}},
         ],
         "total",
     )
+    ai_cost_burned = 0.0
+    async for r in db.real_llm_usage.aggregate([
+        {"$match": {"ts": {"$gte": window_start}, "status": {"$ne": "failed"}}},
+        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
+    ]):
+        ai_cost_burned = round(float(r.get("total") or 0.0), 4)
+        break
 
     # Tier breakdown
     tier_breakdown: dict = {}
@@ -1322,6 +1355,7 @@ async def product_analytics(
             "success_rate_pct": success_rate,
             "maxx_mode": maxx_tasks,
             "tokens_burned": tokens_burned,
+            "ai_cost_burned_usd": ai_cost_burned,
         },
         "modes": {
             "distribution": mode_dist,
