@@ -95,6 +95,25 @@ async def _enable_automations_flag_for(user_id: str) -> None:
     assert r.status_code == 200, r.text
 
 
+async def _disable_automations_flag() -> None:
+    """Teardown counterpart of `_enable_automations_flag_for` — resets
+    the flag back to a clean global-OFF state (no leftover allowlist
+    cruft) so the collection reads unambiguously OFF between test
+    runs and in the admin UI."""
+    admin_tok = await _admin_token()
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        await c.post(f"{API}/admin/feature-flags",
+                     headers={"Authorization": f"Bearer {admin_tok}"},
+                     json={"flag": "user_automations_page", "enabled": False,
+                           "tier_allowlist": [], "user_allowlist": []})
+
+
+@pytest.fixture(autouse=True)
+async def _reset_automations_flag_after():
+    yield
+    await _disable_automations_flag()
+
+
 @pytest.mark.asyncio
 async def test_create_list_toggle_delete_automation():
     token, user_id = await _signup_and_get_token()

@@ -1,6 +1,41 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-28 (Round 6 — MASTER TASK: unified LLM usage & cost ledger, Part A+B). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-09-28 (Round 7 — MASTER TASK Batch 0: urgent security & trust). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## Round 7 (2026-09-28) — MASTER TASK Batch 0: urgent security & trust (Part 1, steps 1-8)
+
+This is Batch 0 of a much larger 6-batch master task (Batch 1 = the unified ledger, Round 6 below, already done; Batches 2-5 = UI cleanup/referral, admin/audit/presence, token reduction, live proof — **not started yet**).
+
+**Step 1 — CRITICAL security fix, webhook fail-open → fail-closed (DONE, PREVIEW ONLY, NOT YET DEPLOYED TO PRODUCTION):**
+- `backend/routers/automations.py::github_webhook()` previously accepted an unsigned `POST /automations/webhook/github` request and returned `200 {"ok":true,"triggered":0,"task_ids":[]}` whenever `GITHUB_WEBHOOK_SECRET` was unset — verified exploitable live via curl on **both** preview and production (`https://auremcto.com`) before the fix, since neither has the secret configured.
+- Fixed to fail closed: **403** "webhook not configured — signature verification unavailable" when the secret is unset; **401** on a missing/wrong `X-Hub-Signature-256` when the secret IS set; only a correct HMAC-SHA256 signature is processed.
+- **Production still has the OLD vulnerable code running — this fix exists only in this workspace/preview until the user redeploys ("Save to GitHub" + deploy).**
+- Verified: live curl on preview (403 confirmed), 8 new unit tests (`tests/test_master_task_2026_09_28_webhook_signature.py`, all 5 branches: no-secret, no-sig, wrong-sig, correct-sig+push, correct-sig+non-push), `tests/test_iter78_automations.py` rewritten (webhook tests now expect 403; CRUD tests enable the flag via the real admin API + auto-cleanup fixture resets it to `enabled:false` after).
+
+**Step 2 — Paused all pre-existing automations (DONE):** All 57 docs in `cto_automations` set to `enabled:false`, `paused_reason:"MASTER_TASK_2026_09_28_security_audit"`. None had ever run (`last_run_at` unset on all 57); 56/57 matched a real connected project. Nothing deleted.
+
+**Steps 3-5 — Hid `/automations`, `/analytics`, `/wall` behind default-OFF feature flags (DONE, PREVIEW):**
+- 3 new `feature_flags` docs, all `enabled:false`: `user_automations_page`, `user_analytics_page`, `public_ship_wall`.
+- Backend enforcement: `automations.py`'s `create_automation()`/`run_automation_now()` → 403 when flag off (list/toggle/delete of a user's OWN existing rows stay ungated — users can still clean up/pause their own stuff). `shipwall.py`'s new `_require_wall_enabled()` → 404 on `feed`/`stats`/`user/{handle}`/`badge/{id}` when off (opt-in/opt-out endpoints intentionally NOT gated — a user must always be able to manage their own preference). Admin analytics endpoints (`/admin/product-analytics` etc.) were already `require_admin`-gated before this round — re-confirmed 403 for non-admin, unaffected/untouched.
+- `GET /auth/me` now also returns `automations_page_enabled`/`analytics_page_enabled`/`ship_wall_enabled`; new `frontend/src/lib/pageFlags.js` mirrors them for the frontend.
+- `frontend/src/App.jsx`: `/automations` and `/analytics` now `<Navigate to="/dashboard">`, `/wall` now `<Navigate to="/">` (old page components left in the codebase, just unreferenced by these 3 routes — matches "hide, don't delete").
+- `frontend/src/components/nav/RailShell.jsx`: Automations/Analytics/Ship Wall nav items filtered out of the rail flyouts.
+- Removed all `/wall` links from `Landing.jsx` (hero + footer), `VsPage.jsx` (CTA), `Both.jsx` (fully removed the embedded live ship-feed widget section + its now-dead state/effect/helper); removed the `/wall` entry from `frontend/public/sitemap.xml`; removed the `GITHUB_WEBHOOK_SECRET` operator note from `Automations.jsx`'s UI copy. Grepped emails/ORA-guide content for `/wall` references — none found, nothing else to clean up.
+
+**Step 6 — Where did the public "X ships shipped" numbers come from (INVESTIGATED, not modified — code inspection only, per instruction):**
+- Root cause confirmed by direct DB query in preview: `shipwall.py::wall_stats()` has **no `wall_opt_in` filter at all** — it counts every `cto_tasks` doc with `status:"done"` + a `commit_sha`, globally, regardless of whether the task's owner ever opted in to the public wall. In this preview DB, 100% of the "ships" counted (11/11) belong to the test/founder account (`test_admin_001`); zero real users have `wall_opt_in:true`. The production "83 tasks · 2 developers · 1 repo" figure the founder saw almost certainly has the same root cause (same code, same missing filter) — very likely includes the founder's/test accounts, not just genuine opted-in external users. **This endpoint is now 404'd by the Step 3-5 flag work above, so the misleading number is no longer publicly visible regardless of root cause** — no further code change made to the counting logic itself this round (out of the stated scope for step 6, which asked only to explain, not fix).
+- The homepage's OTHER live counter (`GET /usage/public/stats`, rendered as "X developers using ORA") is a **separate, correctly-built** endpoint (comment in source: "Iter 356 · Guard 2") that DOES filter out test/founder accounts for `real_developers`/`commits_shipped` — currently shows 1,035 real developers, 0 commits (hidden by a `>0` UI guard, so nothing fake-looking is currently rendered). Two of its raw fields (`code_tasks`, `claude_corrections`, `lint_blocks_caught`) read a now-dead collection (`ora_council_logs`, nothing writes to it anymore — same dead-collection issue already flagged in Round 6) and are stuck at 0 — also hidden by guards, so not currently user-visible, but flagged here as a stale-data smell for a future round.
+
+**Step 8 — Public stats/reviews inventory (INVESTIGATED, not modified, per instruction "don't change them yet, just list"):**
+- Homepage/Landing.jsx: only live counter rendered is `real_developers` (1,035, verified real/filtered) via `/usage/public/stats`. No other page (Pricing.jsx, Integrations.jsx) has any hardcoded counter.
+- **Reviews section (Landing.jsx `REVIEWS` const): 5 testimonials (James R., Sarah P., Mrinul K., Luca M., Ridhi P.) are hardcoded strings with no `user_id`, no link to any review-collection system, no traceable real-user source found anywhere in the codebase.** This looks like marketing copy, not verified real customer quotes — flagging prominently for the founder's decision; **not touched**, per explicit instruction.
+
+**Tested:** `testing_agent_v3_fork` full pass (`test_reports/iteration_master_task_batch0_security_2026_09_28.json`) — 0 critical/minor issues, 100% backend + frontend success rate. Confirmed live: webhook 403 (both no-sig and no-secret paths), `/wall/*` 404 logged-out, `automations/create` 403 for a normal user, `/automations`→`/dashboard`, `/analytics`→`/dashboard`, `/wall`→`/` redirects all firing, homepage clean of wall links and still rendering the real usage counter, nav flyouts clean of the 3 hidden items, admin analytics still 403/200 correctly. 24/26 relevant pytest passing (2 pre-existing/unrelated failures in `test_iter54_shipwall_wrapped_overview.py`, confirmed via git-stash baseline). **Tested against PREVIEW only** — production (`https://auremcto.com`) has not been redeployed with any of this round's fixes yet.
+
+**NOT done yet this round (deferred to later Batch-0 items / later batches per the master task's own ordering):**
+- Step 7 (standing "always fail closed on missing secrets" rule) — acknowledged as a design principle going forward, no separate code artifact needed beyond the Step 1 fix itself.
+- Production deployment + post-deploy re-verification of the webhook fix — **blocking action item, requires the user's own "Save to GitHub" + deploy step**, not something this agent can perform.
+- Batches 1 (ledger validation/production deploy), 2 (UI cleanup, referral), 3 (admin/audit/presence), 4 (token reduction), 5 (live proof) — not started this round.
 
 ## Round 6 (2026-09-28) — MASTER TASK Part A+B: one usage & cost ledger
 

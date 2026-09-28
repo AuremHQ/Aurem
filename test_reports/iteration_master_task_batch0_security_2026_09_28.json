@@ -1,0 +1,36 @@
+{
+  "summary": "Batch 0 (URGENT SECURITY & TRUST, Part 1 steps 1-8) verified on PREVIEW env. Backend security fixes confirmed: GitHub webhook fails closed (403 with or without signature when no secret configured); /api/aurem-dev/wall/* returns 404 when logged out (public_ship_wall flag off); /api/aurem-dev/automations/create returns 403 'Automations are temporarily disabled' for a normal logged-in user (feature flag user_automations_page evaluated OFF for non-allowlisted users); admin analytics still 401 unauth / 200 as admin. Mongo state: all 57 docs in cto_automations have enabled=false with paused_reason='MASTER_TASK_2026_09_28_security_audit'. Feature flags user_analytics_page and public_ship_wall are enabled=false; user_automations_page is enabled=true but scoped to __pytest_only__ tier + a single user_id (test_admin_001 is NOT in the allowlist, so it correctly resolves OFF). /auth/me now returns automations_page_enabled, analytics_page_enabled, ship_wall_enabled (verified in code + response). Homepage has 0 hits for 'Ship Wall'/'See real ships'/'/wall' and still renders 'X developers using ORA' counter (shows 1035). After login as test@aurem.dev, direct navigation to /automations and /analytics both redirect to /dashboard; /wall route is coded as <Navigate to='/' replace/> in App.jsx line 521 (Cloudflare bot-verify page intercepted the live browser test for /wall, but backend 404 + code inspection confirms). Dashboard renders with 0 hits for Automations/Ship Wall in nav. Pytest: 24/26 passing across the 4 required files; the 2 failing tests in test_iter54_shipwall_wrapped_overview.py (test_admin_council_stats_endpoint_present, test_admin_page_wires_overview_as_first_tab) are the pre-existing/unrelated ones already flagged by the main agent. Tested against PREVIEW only (https://bin-context-pat.preview.emergentagent.com) — production https://auremcto.com not tested because the fix has not been deployed there yet (per request).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter78_automations.py",
+    "/app/backend/tests/test_master_task_2026_09_28_webhook_signature.py",
+    "/app/backend/tests/test_iter124j_public_polling_caches.py",
+    "/app/backend/tests/test_iter54_shipwall_wrapped_overview.py",
+    "/app/test_reports/pytest/batch0_security.xml"
+  ],
+  "action_items": [
+    "Deploy this codebase to production (https://auremcto.com). Per main agent context the exploit was live-verified on prod against the unsigned-webhook endpoint before the fix — the fix currently exists only in preview.",
+    "Optional cleanup: feature flag user_automations_page has enabled=true with tier_allowlist=['__pytest_only__'] and user_allowlist=['dc33e8bc294b493eb377cd5d97808740'] — semantically OFF for all real users but slightly counterintuitive vs the peer flags which use enabled=false; consider normalising to enabled=false once the pytest suite no longer depends on the allowlist path."
+  ],
+  "critical_code_review_comments": [
+    "backend/routers/automations.py github_webhook() correctly fails closed on both missing-secret and missing/invalid signature paths — verified via live curl and 8 unit tests in test_master_task_2026_09_28_webhook_signature.py.",
+    "backend/routers/shipwall.py _require_wall_enabled() is applied to feed/stats/user/badge but NOT to opt-in/opt-out (correct per spec — users must always be able to manage their own preference).",
+    "auth.py /auth/me correctly returns the 3 new page-flag booleans so the frontend RailShell can render nav from a single fetch (no extra round-trip)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (all Batch 0 backend security checks pass; 13/13 relevant pytest cases in the 4 files pass, the 2 failures are the pre-known unrelated ones)", "frontend": "100% on redirects + homepage cleanup + nav cleanup"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (admin/founder). /app/memory/test_credentials.md not needed for this batch — creds provided directly in request.",
+  "seed_data_creation": "None. Used the existing test admin account.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Batch 0 (security fixes for webhook signature verification + gating of /automations, /analytics, /wall behind default-OFF feature flags) is verified on PREVIEW. Production deploy is a separate step by the user/founder — a follow-up test agent run against https://auremcto.com will be needed AFTER deploy. Batches 1-12 (ledger further work, UI cleanup, admin views, audit log, presence, token reduction, referral program) are not yet built. The unified LLM usage ledger Part A+B was previously tested in /app/test_reports/iteration_master_task_partAB_unified_ledger_2026_09_28.json — do not repeat.",
+  "rca_of_the_issue": "Original bug: automations.github_webhook accepted requests when GITHUB_WEBHOOK_SECRET env var was unset (fail-open branch executed the push handler on any signature-less request). Reproduction: curl -X POST <base>/api/aurem-dev/automations/webhook/github with fake JSON body and no X-Hub-Signature-256 header returned 200 and processed the push. Fix: automations.py github_webhook() now short-circuits to HTTP 403 'Webhook not configured — signature verification unavailable' whenever GITHUB_WEBHOOK_SECRET is missing, and HTTP 401 on wrong/absent signature when the secret IS set. Verified via 3 layers: (1) live curl on preview -> 403 for both no-signature and bad-signature paths, (2) unit tests in test_master_task_2026_09_28_webhook_signature.py exercising all 5 branches (secret unset, missing sig, wrong sig, correct sig+push, correct sig+non-push), (3) related iter78 tests updated to expect 403. Parallel hardening: 57 legacy cto_automations rows paused with paused_reason='MASTER_TASK_2026_09_28_security_audit', and 3 feature flags (user_automations_page, user_analytics_page, public_ship_wall) gate the corresponding endpoints/routes/nav so even authenticated users cannot resurface the shipwall/analytics/automations attack surface until an explicit re-enable."
+}
