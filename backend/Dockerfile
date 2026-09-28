@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+WORKDIR /app/backend
 
 # Iter 212m-166 — add nodejs + eslint alongside ruff so the LoopEngine's
 # Verify phase (`services/loop_verify.py`) can actually lint the files
@@ -19,19 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl nodejs npm wget gnupg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# MongoDB Database Tools (mongodump/mongorestore). Installed from the
-# official MongoDB apt repo so we get signed, versioned binaries
-# instead of shipping a raw .deb. python:3.11-slim is Debian Bookworm.
-RUN wget -qO /usr/share/keyrings/mongodb-server-7.0.gpg \
-      https://pgp.mongodb.com/server-7.0.pub \
-    && echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] http://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
-      > /etc/apt/sources.list.d/mongodb-org-7.0.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends mongodb-database-tools \
-    && rm -rf /var/lib/apt/lists/* \
-    && mongodump --version | head -1 \
-    && mongorestore --version | head -1
-
 # Verify runtimes (fails the build early if apt served a broken node/npm)
 RUN node --version && npm --version
 
@@ -46,7 +33,7 @@ RUN npm install -g eslint@8 \
     && eslint --version
 
 # Install Python deps (emergentintegrations needs Emergent's extra index)
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
 
@@ -68,7 +55,7 @@ RUN python -m playwright install --with-deps chromium \
     && chmod -R o+rX /opt/ms-playwright
 
 # Copy application code
-COPY . .
+COPY backend/ .
 
 # Iter 212m-227 — CIS Docker Benchmark 4.1: run as non-root.
 # Creates an unprivileged system user, chowns /app, and drops
