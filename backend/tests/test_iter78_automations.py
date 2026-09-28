@@ -46,6 +46,8 @@ _ensure_env()
 
 API = "http://localhost:8001/api/aurem-dev"
 TEST_PASSWORD = "auto-pass-9281"
+ADMIN_EMAIL = "test@aurem.dev"
+ADMIN_PASSWORD = "AuremTest2026!"
 
 
 async def _db():
@@ -66,9 +68,37 @@ async def _signup_and_get_token() -> tuple[str, str]:
     return body["token"], body["user_id"]
 
 
+async def _admin_token() -> str:
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.post(f"{API}/auth/login",
+                         json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    assert r.status_code == 200, r.text
+    return r.json()["token"]
+
+
+async def _enable_automations_flag_for(user_id: str) -> None:
+    """2026-09-28 MASTER TASK R5/Part1#3 — /automations is now
+    default-OFF (`user_automations_page` flag). Narrow-enable it for
+    just this one test user via `tier_allowlist` set to a tier no
+    real user has + `user_allowlist` containing only this test user —
+    real users stay blocked, this test's user bypasses via the
+    allowlist. Goes through the real admin HTTP endpoint (not a
+    direct DB write) so the live server's 60s in-memory flag cache
+    actually gets invalidated."""
+    admin_tok = await _admin_token()
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.post(f"{API}/admin/feature-flags",
+                         headers={"Authorization": f"Bearer {admin_tok}"},
+                         json={"flag": "user_automations_page", "enabled": True,
+                               "tier_allowlist": ["__pytest_only__"],
+                               "user_allowlist": [user_id]})
+    assert r.status_code == 200, r.text
+
+
 @pytest.mark.asyncio
 async def test_create_list_toggle_delete_automation():
     token, user_id = await _signup_and_get_token()
+    await _enable_automations_flag_for(user_id)
     headers = {"Authorization": f"Bearer {token}"}
 
     # Create
@@ -115,7 +145,8 @@ async def test_create_list_toggle_delete_automation():
 
 @pytest.mark.asyncio
 async def test_create_requires_all_fields():
-    token, _ = await _signup_and_get_token()
+    token, user_id = await _signup_and_get_token()
+    await _enable_automations_flag_for(user_id)
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=10.0) as c:
         r = await c.post(f"{API}/automations/create", headers=headers, json={
@@ -125,87 +156,54 @@ async def test_create_requires_all_fields():
 
 
 @pytest.mark.asyncio
-async def test_webhook_triggers_task_on_matching_project():
-    """End-to-end: insert a project + automation, then post a webhook
-    payload and confirm a queued task lands in cto_tasks tagged with
-    source='automation_webhook'."""
-    token, user_id = await _signup_and_get_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    db = await _db()
-
-    owner = f"auto-{uuid.uuid4().hex[:6]}"
-    repo  = "demo"
-    repo_full = f"{owner}/{repo}"
-    project_id = f"p_{uuid.uuid4().hex[:8]}"
-
-    await db.cto_projects.insert_one({
-        "project_id":   project_id,
-        "user_id":      user_id,
-        "github_owner": owner,
-        "github_repo":  repo,
-        "branch":       "main",
-        # plaintext PAT so _enqueue_cto_task doesn't bail on no_pat
-        "github_token": "ghp_dummy_for_test_only",
-        "created_at":   time.time(),
-    })
-
-    # Create automation
-    async with httpx.AsyncClient(timeout=10.0) as c:
-        r = await c.post(f"{API}/automations/create", headers=headers, json={
-            "name": "Auto-fix push",
-            "repo_full_name": repo_full,
-            "trigger": "push",
-            "branch_filter": "main",
-            "task_template": "Fix the push on {branch}: {commit_messages}",
-        })
-    assert r.status_code == 200, r.text
-
-    # Fire a GitHub-style webhook (no secret set → signature check skipped)
+async def test_webhook_rejects_when_secret_not_configured():
+    """2026-09-28 MASTER TASK R1/Part1#1 SECURITY FIX. Verified live on
+    both preview and production (auremcto.com) BEFORE this fix: an
+    unsigned webhook POST returned 200 {"ok":true} — anyone who knew a
+    connected repo's full_name could trigger a real paid task on that
+    user's account with zero auth. `GITHUB_WEBHOOK_SECRET` is NOT set
+    in this environment (confirmed: not present in backend/.env), so
+    the webhook must now fail CLOSED (403), never silently accept and
+    process. A request WITH a plausible-but-wrong signature header
+    must ALSO 403 the same way (still no secret configured to check
+    it against — this isn't a 401-signature-mismatch case).
+    The full HMAC signature-verification logic (valid sig accepted,
+    wrong sig 401'd, secret configured) is covered separately in
+    test_master_task_2026_09_28_webhook_signature.py, which patches
+    GITHUB_WEBHOOK_SECRET in-process via TestClient (can't be done
+    against this already-running live server)."""
     payload = {
         "ref": "refs/heads/main",
-        "repository": {"full_name": repo_full},
-        "pusher": {"name": "octocat"},
-        "commits": [{"message": "fix: tiny tweak"}],
+        "repository": {"full_name": "someuser/somerepo"},
+        "pusher": {"name": "attacker"},
+        "commits": [{"message": "unauthenticated push"}],
     }
     async with httpx.AsyncClient(timeout=10.0) as c:
-        r = await c.post(
+        r_unsigned = await c.post(
+            f"{API}/automations/webhook/github",
+            json=payload, headers={"X-GitHub-Event": "push"},
+        )
+        r_fake_sig = await c.post(
             f"{API}/automations/webhook/github",
             json=payload,
-            headers={"X-GitHub-Event": "push"},
+            headers={"X-GitHub-Event": "push",
+                     "X-Hub-Signature-256": "sha256=deadbeef"},
         )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["triggered"] == 1
-    task_id = body["task_ids"][0]
-
-    # The task row should exist, tagged automation_webhook.
-    # Worker will fail (dummy PAT) but the routing proof is enough.
-    for _ in range(10):
-        row = await db.cto_tasks.find_one({"task_id": task_id})
-        if row:
-            break
-        await asyncio.sleep(0.2)
-    assert row is not None, "webhook did not create a task row"
-    assert row["source"] == "automation_webhook"
-    assert row["user_id"] == user_id
-    assert row["project_id"] == project_id
-
-    # Cleanup so we don't leak state across runs.
-    await db.cto_tasks.delete_many({"user_id": user_id})
-    await db.cto_projects.delete_many({"user_id": user_id})
-    await db.cto_automations.delete_many({"user_id": user_id})
+    assert r_unsigned.status_code == 403, r_unsigned.text
+    assert r_fake_sig.status_code == 403, r_fake_sig.text
+    assert "triggered" not in r_unsigned.json()
 
 
 @pytest.mark.asyncio
 async def test_webhook_skips_non_push_events():
+    # Same root cause as above — with no secret configured, EVERY
+    # webhook call is now rejected before the event type is even
+    # inspected, including this previously-200-with-skipped:true ping.
     async with httpx.AsyncClient(timeout=10.0) as c:
         r = await c.post(f"{API}/automations/webhook/github",
                          json={"zen": "..."},
                          headers={"X-GitHub-Event": "ping"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["skipped"] is True
-    assert body["event"] == "ping"
+    assert r.status_code == 403
 
 
 def test_automations_router_wired_in_main():

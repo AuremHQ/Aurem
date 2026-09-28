@@ -30,6 +30,23 @@ router = APIRouter(prefix="/wall", tags=["Ship Wall"])
 
 APP_URL = os.getenv("APP_URL", "https://auremcto.com")
 
+
+async def _require_wall_enabled() -> None:
+    """2026-09-28 MASTER TASK R5/Part1#5 — the whole Ship Wall feature
+    (page + every API below) is now default-OFF (`public_ship_wall`
+    flag, feature_flags collection). Root cause for taking it down:
+    `wall_stats()` below counted ALL done tasks with NO `wall_opt_in`
+    filter (unlike `/feed`, which correctly filters) — a public,
+    unauthenticated endpoint was leaking real ship counts for
+    non-opted-in users, including founder/admin/test accounts, to
+    any anonymous visitor. Fails closed (404, not 200-with-zeros) so
+    a disabled feature doesn't quietly keep serving stale/fake-looking
+    data. Code kept intact per R5 — flip the flag back on to restore,
+    after also fixing the opt-in filter gap noted above."""
+    from services.feature_flags import is_enabled
+    if not await is_enabled("public_ship_wall"):
+        raise HTTPException(404, "Not found")
+
 # Iter 124j — /wall/feed is polled every 30s by every Ship Wall page
 # viewer. The aggregation + $lookup + count_documents combo was driving
 # Atlas load past the K8s liveness threshold (42-min crash cadence,
@@ -77,6 +94,7 @@ async def ship_wall_feed(limit: int = 50) -> dict:
     Cached for 30s per limit value (see _FEED_CACHE above) — at one
     viewer Atlas hit per 30s instead of one per viewer per 30s.
     """
+    await _require_wall_enabled()
     db = get_db()
     if db is None:
         return {"ok": True, "ships": [], "total": 0}
@@ -131,6 +149,7 @@ async def ship_wall_feed(limit: int = 50) -> dict:
 @router.get("/user/{handle}")
 async def developer_wall(handle: str) -> dict:
     """Public profile wall for one developer. No auth needed."""
+    await _require_wall_enabled()
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database unavailable")
@@ -172,6 +191,7 @@ async def ship_card(task_id: str) -> dict:
     Returns OG card data for a single ship.
     Used by: share modal, Twitter/X cards, LinkedIn previews.
     """
+    await _require_wall_enabled()
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database unavailable")
@@ -215,6 +235,7 @@ async def readme_badge(user_id: str):
     Returns an SVG badge for GitHub READMEs.
     Usage: ![Built with AUREM](https://auremcto.com/api/aurem-dev/wall/badge/USER_ID)
     """
+    await _require_wall_enabled()
     db = get_db()
     count = 0
     if db is not None:
@@ -260,6 +281,7 @@ async def readme_badge(user_id: str):
 @router.get("/stats")
 async def wall_stats() -> dict:
     """Global numbers shown on the Ship Wall page."""
+    await _require_wall_enabled()
     db = get_db()
     if db is None:
         return {"total_ships": 0, "total_devs": 0, "total_repos": 0}

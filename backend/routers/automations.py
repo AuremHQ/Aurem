@@ -41,16 +41,27 @@ async def github_webhook(
     x_github_event: str = Header("push", alias="X-GitHub-Event"),
 ) -> dict:
     """GitHub posts push events here.  Each push triggers any matching
-    automations whose `repo_full_name` + `branch_filter` match."""
-    payload = await request.body()
+    automations whose `repo_full_name` + `branch_filter` match.
 
-    if GITHUB_WEBHOOK_SECRET:
-        expected = "sha256=" + hmac.new(
-            GITHUB_WEBHOOK_SECRET.encode("utf-8"),
-            payload, hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(expected, x_hub_signature_256 or ""):
-            raise HTTPException(401, "Invalid webhook signature")
+    2026-09-28 SECURITY FIX (MASTER TASK R1/Part 1 #1) — this
+    previously FAILED OPEN: `if GITHUB_WEBHOOK_SECRET:` skipped the
+    whole signature check when the env var was unset, so ANY
+    unauthenticated POST with a real connected repo's `full_name`
+    could trigger a real paid task on that user's account with zero
+    auth. Verified live on BOTH preview and production
+    (auremcto.com) before this fix: an unsigned fake push returned
+    `200 {"ok":true}` on both. Now fails CLOSED: no secret configured
+    → 403 (not silently accepted), wrong/missing signature → 401.
+    """
+    if not GITHUB_WEBHOOK_SECRET:
+        raise HTTPException(403, "Webhook not configured — signature verification unavailable")
+    payload = await request.body()
+    expected = "sha256=" + hmac.new(
+        GITHUB_WEBHOOK_SECRET.encode("utf-8"),
+        payload, hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, x_hub_signature_256 or ""):
+        raise HTTPException(401, "Invalid webhook signature")
 
     if x_github_event not in ("push", "pull_request"):
         return {"ok": True, "skipped": True, "event": x_github_event}
@@ -149,6 +160,15 @@ async def create_automation(
 ) -> dict:
     me = await current_dev(authorization)
     db = require_db()
+    # 2026-09-28 MASTER TASK R5/Part1#3 — the user-facing Automations
+    # feature is default-OFF (`user_automations_page` flag). Block new
+    # rules here too (defense in depth, on top of the frontend route
+    # being hidden) so nobody can create a new push-triggered
+    # automation — which auto-runs a paid LLM task on every GitHub
+    # push with no spend limit — while this feature is disabled.
+    from services.feature_flags import is_enabled
+    if not await is_enabled("user_automations_page", user_id=me["user_id"]):
+        raise HTTPException(403, "Automations are temporarily disabled")
     from services.team_permissions import check_permission
     ctx = await check_permission(me, "automations", "write", db=db)
     required = ("name", "repo_full_name", "trigger", "task_template")
@@ -201,6 +221,9 @@ async def run_automation_now(
     """
     me = await current_dev(authorization)
     db = require_db()
+    from services.feature_flags import is_enabled
+    if not await is_enabled("user_automations_page", user_id=me["user_id"]):
+        raise HTTPException(403, "Automations are temporarily disabled")
     rule = await db.cto_automations.find_one(
         {"_id": ObjectId(automation_id), "user_id": me["user_id"]},
     )

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { api, getToken, logout as apiLogout, newSessionId } from "../../lib/api";
 import { setChipV2Enabled } from "../../lib/chipFlag";
+import { setPageFlags, isAutomationsPageEnabled, isAnalyticsPageEnabled, isShipWallEnabled } from "../../lib/pageFlags";
 import { useChatSession } from "../Shell";
 
 const BG      = "rgb(7,8,13)";
@@ -98,6 +99,10 @@ export default function RailShell({
   const [repos, setRepos] = useState(reposProp || []);
   const [sessions, setSessions] = useState([]);
   const [isFounder, setIsFounder] = useState(false);
+  // MASTER TASK 2026-09-28 — mirrors pageFlags.js; forces a re-render
+  // once /auth/me resolves so the nav items actually disappear (the
+  // module-singleton mirror alone doesn't trigger React re-renders).
+  const [navFlagsVersion, setNavFlagsVersion] = useState(0);
   // 2026-02 · Phase 1 (Team RBAC) — controls whether the "Team" item
   // under Settings is shown at all. `null` = not resolved yet (fail
   // CLOSED, i.e. hidden, until we know — this is a sensitive area
@@ -215,6 +220,11 @@ export default function RailShell({
         setIsFounder(me.tier === "founder" || me.is_admin === true);
         // Phase E — mirror workcard_chip_v2 for chip-rendering components.
         setChipV2Enabled(r.data?.workcard_chip_v2_enabled === true);
+        // MASTER TASK 2026-09-28 — mirror the default-OFF nav flags
+        // (Automations / user-facing Analytics / Ship Wall) so their
+        // rail entries stop rendering until re-enabled.
+        setPageFlags(r.data);
+        setNavFlagsVersion((v) => v + 1);
       })
       .catch(() => {});
     return () => { dead = true; };
@@ -475,8 +485,26 @@ export default function RailShell({
 
   const flyoutBody = (id) => {
     if (id === "chat")     return renderChatFlyout();
-    if (id === "ship")     return <>{flyoutHeader("Ship")}{renderLinks(SHIP_ITEMS)}</>;
-    if (id === "insights") return <>{flyoutHeader("Insights")}{renderLinks(INSIGHT_ITEMS)}</>;
+    if (id === "ship") {
+      // MASTER TASK 2026-09-28 — Automations + Ship Wall are
+      // default-OFF (feature_flags: user_automations_page,
+      // public_ship_wall). navFlagsVersion forces this to
+      // re-evaluate once /auth/me resolves.
+      void navFlagsVersion;
+      const shipItems = SHIP_ITEMS.filter((it) => {
+        if (it.to === "/automations") return isAutomationsPageEnabled();
+        if (it.to === "/wall") return isShipWallEnabled();
+        return true;
+      });
+      return <>{flyoutHeader("Ship")}{renderLinks(shipItems)}</>;
+    }
+    if (id === "insights") {
+      const insightItems = INSIGHT_ITEMS.filter((it) => {
+        if (it.to === "/analytics") return isAnalyticsPageEnabled();
+        return true;
+      });
+      return <>{flyoutHeader("Insights")}{renderLinks(insightItems)}</>;
+    }
     if (id === "settings") return <>{flyoutHeader("Settings")}{renderLinks(SETTINGS_ITEMS.filter((it) => !it.requiresTeamManagement || canManageTeam === true))}</>;
     if (id === "admin")    return <>{flyoutHeader("Admin · founder")}{renderLinks(ADMIN_ITEMS)}</>;
     return null;

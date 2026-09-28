@@ -515,10 +515,10 @@ function BuilderView() {
 function DevView() {
   const navigate = useNavigate();
   const [integrity, setIntegrity] = useState(null);
-  const [feed, setFeed] = useState([]);
-  const [feedStatus, setFeedStatus] = useState("loading");
 
-  // Fetch real counts + real ship-wall feed on mount.
+  // Fetch real counts on mount. (2026-09-28 MASTER TASK R5/Part1#5 —
+  // the ship-wall feed fetch + widget were removed here; /wall is now
+  // behind a default-OFF feature flag, see routers/shipwall.py.)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -528,29 +528,6 @@ function DevView() {
         if (!cancelled) setIntegrity(j);
       } catch (e) {
         if (!cancelled) setIntegrity({available: false});
-      }
-    })();
-    (async () => {
-      try {
-        const r = await fetch(`${API}/api/aurem-dev/wall/feed?limit=6`, { signal: AbortSignal.timeout(15000) });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const j = await r.json();
-        const items = (j?.items || j?.feed || j || [])
-          .slice(0, 6)
-          .map((x) => ({
-            handle:   x.handle || x.user_handle || x.repo || "anon",
-            summary:  x.title || x.summary || x.commit_message
-                       || x.task_summary || "shipped a fix",
-            ago:      x.ago || x.time_ago || x.created_ago
-                       || (x.created_at
-                         ? _timeAgo(x.created_at) : "just now"),
-          }));
-        if (!cancelled) {
-          setFeed(items);
-          setFeedStatus(items.length === 0 ? "empty" : "ok");
-        }
-      } catch (e) {
-        if (!cancelled) setFeedStatus("error");
       }
     })();
     return () => { cancelled = true; };
@@ -724,66 +701,6 @@ function DevView() {
                 </div>
               ))}
             </div>
-          </div>
-        </section>
-
-        {/* Ship-Wall — REAL feed */}
-        <section style={{padding:"64px 0"}}>
-          <div style={{display:"flex", justifyContent:"space-between",
-                        alignItems:"baseline", marginBottom:20}}>
-            <h2 style={{fontSize:24, fontWeight:700}}>
-              Ship-Wall — live, real commits
-            </h2>
-            <span style={{fontSize:12.5, color:"#5f6570",
-                            fontFamily:"'JetBrains Mono',monospace"}}>
-              {feedStatus === "ok" ? "live feed"
-                : feedStatus === "loading" ? "loading…"
-                : feedStatus === "empty" ? "no ships yet"
-                : "feed unavailable"}
-            </span>
-          </div>
-          <div data-testid="shipwall-list"
-                style={{background:"#111318",
-                         border:"1px solid #ffffff1f",
-                         borderRadius:12, overflow:"hidden"}}>
-            {feedStatus === "loading" && (
-              <div style={{padding:20, color:"#5f6570", fontSize:13}}>
-                Loading feed…
-              </div>
-            )}
-            {feedStatus === "empty" && (
-              <div style={{padding:20, color:"#5f6570", fontSize:13}}>
-                No public ships yet. Be the first — connect your repo.
-              </div>
-            )}
-            {feedStatus === "error" && (
-              <div style={{padding:20, color:"#f2c34e", fontSize:13,
-                            fontFamily:"'JetBrains Mono',monospace"}}>
-                Feed temporarily unavailable.
-              </div>
-            )}
-            {feedStatus === "ok" && feed.map((row, i) => (
-              <div key={i}
-                    style={{display:"flex",
-                             justifyContent:"space-between",
-                             alignItems:"center", padding:"14px 18px",
-                             borderBottom: i < feed.length - 1
-                               ? "1px solid #ffffff14" : "none",
-                             fontSize:13}}>
-                <div style={{display:"flex", alignItems:"center",
-                              gap:10, color:"#c7cbd1"}}>
-                  <span style={{width:22, height:22, borderRadius:"50%",
-                                  background:"linear-gradient(135deg,#FF6608,#5B8DEF)",
-                                  flexShrink:0}}></span>
-                  {row.summary}
-                </div>
-                <div style={{fontFamily:"'JetBrains Mono',monospace",
-                              fontSize:11.5, color:"#5f6570",
-                              whiteSpace:"nowrap"}}>
-                  {row.handle} · {row.ago}
-                </div>
-              </div>
-            ))}
           </div>
         </section>
 

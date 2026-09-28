@@ -320,9 +320,6 @@ export default function VsPage({ forcedSlug }) {
             <Link to="/signup" style={S.cta} data-testid={`vs-${c.slug}-cta`}>
               Start free <ArrowRight size={18} aria-hidden />
             </Link>
-            <Link to="/wall" style={S.ghost}>
-              See real ships on the Wall
-            </Link>
           </div>
         </section>
       </div>

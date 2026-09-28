@@ -411,7 +411,15 @@ export default function App() {
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/profile"         element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/tokens"          element={<PrivateRoute><Tokens /></PrivateRoute>} />
-          <Route path="/analytics"       element={<PrivateRoute><Analytics /></PrivateRoute>} />
+          {/* 2026-09-28 MASTER TASK R5/Part1#4 — /analytics showed
+              company-wide data (DAU/MAU, tokens burned across ALL
+              users) to every regular user. Route + nav item hidden
+              behind `user_analytics_page` flag (default OFF,
+              feature_flags collection); component code kept intact,
+              not deleted. The backend data endpoint
+              (/admin/product-analytics) was already admin-gated
+              before this change. */}
+          <Route path="/analytics"       element={<Navigate to="/dashboard" replace />} />
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
@@ -505,9 +513,19 @@ export default function App() {
           <Route path="/admin/architecture" element={<AdminRoute><Admin initialTab="arch" /></AdminRoute>} />
           <Route path="/admin/ops" element={<AdminRoute><OpsRecipes /></AdminRoute>} />
           <Route path="/admin/brain/:projectId" element={<AdminRoute><BrainDump /></AdminRoute>} />
-          <Route path="/wall" element={<ShipWall />} />
+          {/* 2026-09-28 MASTER TASK R5/Part1#5 — public /wall leaked
+              real un-opted-in ship counts (stats endpoint had no
+              wall_opt_in filter, unlike feed) to any anonymous
+              visitor. Behind `public_ship_wall` flag (default OFF);
+              backend /wall/* now 404s while disabled too. */}
+          <Route path="/wall" element={<Navigate to="/" replace />} />
           <Route path="/wrapped" element={<PrivateRoute><Wrapped /></PrivateRoute>} />
-          <Route path="/automations" element={<PrivateRoute><Automations /></PrivateRoute>} />
+          {/* 2026-09-28 MASTER TASK R5/Part1#3 — /automations auto-ran
+              a paid LLM task on every GitHub push with no spend
+              limit, and its webhook signature check failed OPEN
+              (fixed separately in routers/automations.py). Behind
+              `user_automations_page` flag (default OFF). */}
+          <Route path="/automations" element={<Navigate to="/dashboard" replace />} />
           <Route path="/oauth-finish" element={<OAuthFinish />} />
           <Route path="/magic-login" element={<MagicLogin />} />       {/* 2026-08-20 */}
           <Route path="/vs/devin"  element={<VsDevin />} />

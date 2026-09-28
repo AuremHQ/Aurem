@@ -1290,7 +1290,6 @@ export default function Landing() {
           <p className="cta-sub">Start free. 10 tasks. No credit card required.</p>
           <div className="hero-buttons">
             <Link className="btn-primary" to="/signup" data-testid="cta-signup">Start free — 10 tasks</Link>
-            <Link className="btn-ghost" to="/wall" data-testid="cta-wall">See real ships</Link>
           </div>
         </section>
 
@@ -1320,7 +1319,6 @@ export default function Landing() {
           <div>
             <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Product</div>
             <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-              <Link to="/wall" data-testid="footer-wall">Ship Wall</Link>
               <Link to="/pricing" data-testid="footer-pricing">Pricing</Link>
               <Link to="/compare" data-testid="footer-vs">Compare</Link>
               <Link to="/login" data-testid="footer-signin">Sign in</Link>

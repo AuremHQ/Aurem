@@ -773,8 +773,20 @@ async def me(authorization: Optional[str] = Header(None)) -> dict:
     # it without a new endpoint.
     from services.feature_flags import is_enabled
     chip_v2_enabled = await is_enabled("workcard_chip_v2", user_id=payload["user_id"])
+    # 2026-09-28 MASTER TASK R5/Part1#3,4 — same pattern, same reason:
+    # /automations and the user-facing /analytics ("Insights") nav
+    # item + route are now default-OFF (see feature_flags collection
+    # for why). Admin-only /admin/analytics is unaffected — it's a
+    # completely separate route/endpoint gated by is_admin, not this
+    # flag.
+    automations_page_enabled = await is_enabled("user_automations_page", user_id=payload["user_id"])
+    analytics_page_enabled = await is_enabled("user_analytics_page", user_id=payload["user_id"])
+    ship_wall_enabled = await is_enabled("public_ship_wall", user_id=payload["user_id"])
     return {"ok": True, "user": user or payload, "token": fresh_token,
-            "workcard_chip_v2_enabled": chip_v2_enabled}
+            "workcard_chip_v2_enabled": chip_v2_enabled,
+            "automations_page_enabled": automations_page_enabled,
+            "analytics_page_enabled": analytics_page_enabled,
+            "ship_wall_enabled": ship_wall_enabled}
 
 
 @router.get("/tokens")
