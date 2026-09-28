@@ -1,8 +1,8 @@
-# QA Report — commit da7667c (2026-09-28T19:31:38+00:00)
+# QA Report — commit c449c29 (2026-09-28T20:27:17+00:00)
 
-**Commit message**: fix: grant auto-qa regression lock write permission
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
+**Commit message**: test: update team plan RBAC coverage
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
