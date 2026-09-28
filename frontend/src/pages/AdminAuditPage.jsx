@@ -11,6 +11,14 @@
  * GET /admin/audit). Two unrelated collections/shapes that both
  * count as "the audit log" conceptually — kept as separate sub-tabs
  * on the SAME page/sidebar entry rather than merging their shapes.
+ *
+ * 2026-09-28 MASTER TASK Part B — "Admin actions" now also carries
+ * logins (success + failed auth attempts), plan/tier changes, token
+ * grants, and feature-flag changes (services/admin_audit_log.py is
+ * the single write-side helper for all of these). Table columns
+ * normalized to timestamp/actor/action/target/result; anything
+ * action-specific (installation_ids, reason, before→after, …) moved
+ * into the row's expand panel.
  */
 import React, { useState, useEffect } from "react";
 import { api } from "../lib/api";
@@ -44,7 +52,8 @@ function AdminActionsTab() {
       {err && <div style={{ color: "#ef4444", fontSize: 12 }}>{err}</div>}
       {!loading && rows.length === 0 && !err && (
         <div style={{ color: "var(--text-faint)", fontSize: 12 }}>
-          No admin actions logged yet (bulk-revoke, flag-idle, etc.).
+          No admin actions logged yet (logins, plan changes, token grants,
+          feature-flag changes, bulk-revoke, flag-idle, etc.).
         </div>
       )}
       {rows.length > 0 && (
@@ -57,11 +66,9 @@ function AdminActionsTab() {
               <tr style={{ color: "var(--text-faint)", textAlign: "left",
                             borderBottom: "1px solid var(--border)" }}>
                 <th style={th}>Timestamp</th>
-                <th style={th}>Admin</th>
+                <th style={th}>Actor</th>
                 <th style={th}>Action</th>
-                <th style={th}>Installations</th>
-                <th style={th}>Users</th>
-                <th style={th}>Reason</th>
+                <th style={th}>Target</th>
                 <th style={th}>Result</th>
               </tr>
             </thead>
@@ -83,25 +90,36 @@ function AdminActionsTab() {
                     >
                       <td style={td}>{(r.ts || "").slice(0, 19).replace("T", " ")}</td>
                       <td style={td}>{r.actor || "—"}</td>
-                      <td style={td}>{r.action || "—"}</td>
-                      <td style={td}>{(r.installation_ids || []).length}</td>
-                      <td style={td}>{(r.user_ids || []).length}</td>
-                      <td style={td} title={r.reason || ""}>{(r.reason || "—").slice(0, 30)}</td>
-                      <td style={td}>{r.result ? JSON.stringify(r.result) : "—"}</td>
+                      <td style={td}>
+                        <span style={{
+                          color: r.action === "login" && r.result === "failed" ? "#ef4444" : "var(--text-dim)",
+                        }}>{r.action || "—"}</span>
+                      </td>
+                      <td style={td} title={r.target || ""}>{(r.target || "—").toString().slice(0, 30)}</td>
+                      <td style={td}>
+                        <span style={{
+                          color: r.result === "failed" ? "#ef4444" : r.result === "success" ? "#22c55e" : "var(--text-faint)",
+                        }}>{r.result != null ? String(r.result) : "—"}</span>
+                      </td>
                     </tr>
                     {isOpen && (
                       <tr data-testid={`admin-audit-actions-detail-${i}`}>
-                        <td colSpan={7} style={{
+                        <td colSpan={5} style={{
                           padding: "10px 14px",
                           background: "var(--bg-elev)",
                           borderBottom: "1px solid var(--border)",
                           color: "var(--text-dim)",
                           whiteSpace: "pre-wrap", wordBreak: "break-word",
                         }}>
-                          <div><strong style={{ color: "var(--text)" }}>installation_ids:</strong> {(r.installation_ids || []).join(", ") || "—"}</div>
-                          <div><strong style={{ color: "var(--text)" }}>user_ids:</strong> {(r.user_ids || []).join(", ") || "—"}</div>
-                          <div><strong style={{ color: "var(--text)" }}>reason:</strong> {r.reason || "—"}</div>
-                          {r.per_installation ? <div><strong style={{ color: "var(--text)" }}>per_installation:</strong> {JSON.stringify(r.per_installation)}</div> : null}
+                          {(r.installation_ids || []).length > 0 && (
+                            <div><strong style={{ color: "var(--text)" }}>installation_ids:</strong> {(r.installation_ids || []).join(", ")}</div>
+                          )}
+                          {(r.user_ids || []).length > 0 && (
+                            <div><strong style={{ color: "var(--text)" }}>user_ids:</strong> {(r.user_ids || []).join(", ")}</div>
+                          )}
+                          {r.reason && <div><strong style={{ color: "var(--text)" }}>reason:</strong> {r.reason}</div>}
+                          {r.before !== undefined && <div><strong style={{ color: "var(--text)" }}>before → after:</strong> {String(r.before)} → {String(r.after)}</div>}
+                          {r.extra ? <div><strong style={{ color: "var(--text)" }}>extra:</strong> {JSON.stringify(r.extra)}</div> : null}
                         </td>
                       </tr>
                     )}

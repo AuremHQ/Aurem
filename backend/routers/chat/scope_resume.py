@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from services.scope_confirmation import COLLECTION
 from services.scope_resume import claim_proposal, receipt_for, resolve_proposal
+from services.user_response_sanitizer import sanitize_provider_for_user
 
 EXECUTION_DEADLINE_S = 180
 PROGRESS_INTERVAL_S = 2
@@ -80,7 +81,8 @@ async def scope_resume_stream(*, request, body, user, authorization, db):
                 {"id": proposal["id"], "user_id": user["user_id"]}, {"_id": 0},
             )
             yield frame({"meta": True, "session_id": body.session_id,
-                         "provider": "scope-proposal-executor", "mode": proposal["would_be_mode"]})
+                         "provider": sanitize_provider_for_user("scope-proposal-executor"),
+                         "mode": proposal["would_be_mode"]})
             yield frame({"type": "mode", "mode": proposal["would_be_mode"], "needs_confirm": False})
             yield frame({"type": "intent", "intent": {"tier": "agentic", "method": "saved-proposal"}})
             if not claimed:
@@ -143,7 +145,8 @@ async def scope_resume_stream(*, request, body, user, authorization, db):
                              "continue_available": False},
             )
             yield frame({"token": result["content"]})
-            yield frame({"done": True, "session_id": body.session_id, **result})
+            yield frame({"done": True, "session_id": body.session_id, **result,
+                         "provider": sanitize_provider_for_user(result.get("provider"))})
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive",

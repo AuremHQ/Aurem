@@ -223,6 +223,28 @@ function Dashboard() {
   );
 }
 
+// 2026-09-28 MASTER TASK Part B — Live Presence. `last_seen_at` is a
+// Unix-epoch float bumped by cto_services/auth.py::current_dev on every
+// authenticated request; `is_online` from the backend already applies
+// the 2-minute freshness bar, reused here rather than re-derived so the
+// list and the drill-down page can never disagree on the cutoff.
+function PresenceDot({ isOnline, lastSeenAt, testId }) {
+  return (
+    <span data-testid={testId} style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      fontSize: 11, color: isOnline ? "var(--ok, #22c55e)" : "var(--text-faint)",
+    }}>
+      <span style={{
+        width: 7, height: 7, borderRadius: "50%",
+        background: isOnline ? "#22c55e" : "var(--text-faint)",
+        boxShadow: isOnline ? "0 0 6px #22c55e" : "none",
+        flexShrink: 0,
+      }} />
+      {isOnline ? "Active now" : (lastSeenAt ? ago(lastSeenAt) : "Never")}
+    </span>
+  );
+}
+
 function UsersList({ onSelect }) {
   const [users, setUsers] = useState([]);
   const [buckets, setBuckets] = useState({ "24h": 0, "7d": 0, "30d": 0, "all": 0 });
@@ -398,7 +420,7 @@ function UsersList({ onSelect }) {
                 onChange={toggleAll}
                 style={{ cursor: "pointer" }}
               />,
-              "Email", "Name", "Tier", "Projects", "Tasks", "Status", "Joined", "",
+              "Email", "Name", "Tier", "Presence", "Projects", "Tasks", "Status", "Joined", "",
             ]}
             rows={users.map((u) => [
               <input
@@ -413,6 +435,8 @@ function UsersList({ onSelect }) {
               u.email,
               u.name || "—",
               <Badge key="tier">{u.tier || "free"}</Badge>,
+              <PresenceDot key="presence" testId={`admin-user-presence-${u.user_id}`}
+                           isOnline={!!u.is_online} lastSeenAt={u.last_seen_at} />,
               u.project_count ?? 0,
               u.task_count ?? 0,
               <Badge key="status" color={STATUS_COLOR[u.status || "active"]}>{u.status || "active"}</Badge>,
@@ -882,6 +906,11 @@ function UserDetail({ user, onBack }) {
             <div><b>User ID:</b> <code style={{ fontSize: 11 }}>{d.user_id}</code></div>
             <div><b>Tier:</b> {d.tier || "free"}</div>
             <div><b>Status:</b> <Badge color={STATUS_COLOR[d.status || "active"]}>{d.status || "active"}</Badge></div>
+            <div data-testid="admin-user-presence-detail">
+              <b>Presence:</b>{" "}
+              <PresenceDot isOnline={!!d.is_online} lastSeenAt={d.last_seen_at}
+                           testId="admin-user-presence-detail-dot" />
+            </div>
             <div><b>Tokens remaining:</b> {fmt((d.usage ? d.usage.remaining : d.tokens_remaining) || 0)}</div>
             {d.usage && (
               <div data-testid="admin-user-usage" style={{ marginTop: 6, padding: "6px 8px",
@@ -992,6 +1021,25 @@ function UserDetail({ user, onBack }) {
                 {d.token_grants.map((g, i) => (
                   <div key={i} style={{ padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
                     +{fmt(g.tokens)} · {g.reason || "no reason"} · <span style={{ color: "var(--text-faint)" }}>{ago(g.granted_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* 2026-09-28 MASTER TASK Part B — per-user cost-by-model,
+              same canonical real_llm_usage ledger as /admin/agent-tokens,
+              scoped to just this user. Admin-only page, so the raw
+              provider/model codenames stay visible here on purpose —
+              they're stripped from every user-facing surface instead. */}
+          {Object.keys(d.cost_by_model || {}).length > 0 && (
+            <div data-testid="admin-user-cost-by-model" style={{ marginTop: 12, fontSize: 11, color: "var(--text-dim)" }}>
+              <b style={{ fontSize: 11 }}>Cost by model — ${(d.cost_total_usd ?? 0).toFixed(4)} total</b>
+              <div style={{ maxHeight: 130, overflowY: "auto", marginTop: 4 }}>
+                {Object.entries(d.cost_by_model).map(([key, v]) => (
+                  <div key={key} style={{ padding: "3px 0", borderBottom: "1px solid var(--border)",
+                                           display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <code style={{ fontSize: 10 }}>{key}</code>
+                    <span>{fmt(v.tokens)} tok · {v.calls} calls · ${v.cost_usd.toFixed(4)}</span>
                   </div>
                 ))}
               </div>

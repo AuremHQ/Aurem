@@ -127,6 +127,12 @@ async def _record_login_failure(db, client_ip: str, email: str) -> None:
         )
     except Exception as _e:
         logger.warning("dev_users failed_logins update failed: %r", _e)
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed
+    # (GET /admin/audit/actions). "system" as actor since a failed
+    # login by definition has no authenticated identity yet.
+    from services.admin_audit_log import record_event
+    await record_event(db, actor="system", action="login",
+                        target=email, result="failed")
 
 
 async def _clear_login_failures(db, client_ip: str, email: str) -> None:
@@ -145,6 +151,13 @@ async def _clear_login_failures(db, client_ip: str, email: str) -> None:
         )
     except Exception:
         pass
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed. Only
+    # reachable after bcrypt.checkpw succeeded (see /auth/login), so
+    # this is a genuine successful password verification — even for
+    # accounts that still have an MFA step ahead of them.
+    from services.admin_audit_log import record_event
+    await record_event(db, actor=email, action="login",
+                        target=email, result="success")
 
 
 def _email_ci(email: str) -> dict:

@@ -132,7 +132,7 @@ async def toggle_feature_flag(
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     """Flip a feature flag's `enabled` boolean."""
-    await _require_admin(authorization)
+    admin = await _require_admin(authorization)
     db = require_db()
     doc = await db.feature_flags.find_one({"flag": flag})
     if not doc:
@@ -143,6 +143,13 @@ async def toggle_feature_flag(
     )
     from services.feature_flags import invalidate_cache as _ff_invalidate
     _ff_invalidate()
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed.
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="feature_flag_change", target=flag, result="ok",
+        extra={"kind": "toggle", "enabled": new_state},
+    )
     return {"ok": True, "flag": flag, "enabled": new_state}
 
 
@@ -152,7 +159,7 @@ async def create_feature_flag(
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     """Create or update a feature flag (idempotent upsert)."""
-    await _require_admin(authorization)
+    admin = await _require_admin(authorization)
     db = require_db()
     flag = (body.get("flag") or "").strip()
     if not flag:
@@ -177,6 +184,13 @@ async def create_feature_flag(
     )
     from services.feature_flags import invalidate_cache as _ff_invalidate
     _ff_invalidate()
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed.
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="feature_flag_change", target=flag, result="ok",
+        extra={"kind": "create_or_update", "enabled": bool(body.get("enabled", False))},
+    )
     return {"ok": True, "flag": flag}
 
 

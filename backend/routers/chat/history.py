@@ -12,6 +12,7 @@ from fastapi import Header, HTTPException
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.user_response_sanitizer import sanitize_provider_for_user
 
 from . import router
 
@@ -71,6 +72,16 @@ async def chat_history(
     # null crashed the frontend hydration entirely.
     turns = [t for t in turns if isinstance(t, dict) and t.get("role")]
     turns = sort_turns_by_ts(turns)
+    # 2026-09-28 MASTER TASK Part A1 — GET /chat/history round-trips
+    # whatever _persist_turn stored verbatim, including the raw
+    # internal `provider` codename ("deepseek-v3-council-c",
+    # "claude-sonnet-maxx-direct", …) on every assistant turn. That's
+    # the SAME leak the live SSE stream was audited for — a page
+    # refresh must not re-expose it just because the live-stream path
+    # was fixed. Sanitized here, once, for every turn returned.
+    for t in turns:
+        if "provider" in t:
+            t["provider"] = sanitize_provider_for_user(t["provider"])
     return {
         "ok": True,
         "messages": turns,

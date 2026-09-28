@@ -820,6 +820,16 @@ async def admin_audit_actions(
     ).sort("ts", -1).limit(max(1, min(int(limit or 100), 500))).to_list(500)
     for r in rows:
         r["ts"] = _iso(r.get("ts"))
+        # 2026-09-28 MASTER TASK Part B — normalize legacy rows written
+        # before `target`/`result` existed (tier_change used
+        # `target_user_id`; flag_idle_reengage/clear_github_stuck_state/
+        # manual_github_install_link had neither) so every row the
+        # admin UI renders has the same 5 fields: timestamp, actor,
+        # action, target, result. Never overwrites a real value.
+        if "target" not in r:
+            r["target"] = r.get("target_user_id")
+        if "result" not in r:
+            r["result"] = "ok"
     return {"ok": True, "rows": rows, "count": len(rows)}
 
 
@@ -859,6 +869,13 @@ async def flag_user_override_set(
         }},
         upsert=True,
     )
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed.
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="feature_flag_change", target=flag, result="ok",
+        extra={"bin_id": body.bin_id, "value": bool(body.value), "kind": "user_override_set"},
+    )
     return {"ok": True, "flag": flag, "bin_id": body.bin_id,
             "value": body.value}
 
@@ -870,7 +887,7 @@ async def flag_user_override_remove(
     authorization: Optional[str] = Header(None),
 ):
     """Remove a per-user override for a feature flag."""
-    await _require_admin(authorization)
+    admin = await _require_admin(authorization)
     from cto_services.db import get_db
     db = get_db()
     if db is None:
@@ -878,6 +895,13 @@ async def flag_user_override_remove(
     await db.feature_flags.update_one(
         {"flag": flag},
         {"$unset": {f"user_overrides.{bin_id}": ""}},
+    )
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed.
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="feature_flag_change", target=flag, result="ok",
+        extra={"bin_id": bin_id, "kind": "user_override_removed"},
     )
     return {"ok": True, "flag": flag, "bin_id": bin_id, "removed": True}
 

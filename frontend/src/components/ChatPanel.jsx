@@ -5138,7 +5138,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         return (
           <div
             data-testid="free-mode-pill"
-            title={`Served by Groq emergency fallback (model: ${prov.model || "llama-3.3-70b-versatile"}). Recharge OpenRouter credits to restore primary models.`}
+            title="ORA is running on backup capacity right now — replies may be a bit different than usual."
             style={{
               position: "absolute",
               top: 14,

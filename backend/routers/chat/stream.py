@@ -51,6 +51,9 @@ from .stream_state import StreamState
 from .worker import run_worker
 from .watchdog import consume_worker_queue
 from .retries import run_confidence_gate
+from services.user_response_sanitizer import (
+    sanitize_provider_for_user, sanitize_provenance_for_user,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +120,7 @@ async def _replay_retry_gen(rec: dict, body: "ChatBody"):
     yield (
         "data: " + json.dumps({
             "meta": True, "session_id": body.session_id,
-            "provider": rec.get("provider") or "aurem-cto",
+            "provider": sanitize_provider_for_user(rec.get("provider")) or "ORA",
             "thinking_s": 0.0, "tool_calls_run": rec.get("tool_calls_run", 0),
             "replayed_from_retry": True,
         }) + "\n\n"
@@ -128,7 +131,7 @@ async def _replay_retry_gen(rec: dict, body: "ChatBody"):
         await asyncio.sleep(0.005)
     yield (
         "data: " + json.dumps({
-            "done": True, "provider": rec.get("provider") or "aurem-cto",
+            "done": True, "provider": sanitize_provider_for_user(rec.get("provider")) or "ORA",
             "session_id": body.session_id, "tokens_remaining": None,
             "turn_state": rec.get("turn_state") or "success",
             **(rec.get("scope_confirmation") or {}),
@@ -183,14 +186,14 @@ async def chat_stream(
     from services.ora_chat_v2.llm_client import is_mock as _mock_llm_on
     if _mock_llm_on():
         async def _mock_gen():
-            yield f"data: {json.dumps({'meta': True, 'session_id': body.session_id, 'provider': 'mock', 'mode': 'A', 'temperature': 0.0, 'thinking_s': 0.0, 'tool_calls_run': 0})}\n\n"
+            yield f"data: {json.dumps({'meta': True, 'session_id': body.session_id, 'provider': 'ORA', 'mode': 'A', 'temperature': 0.0, 'thinking_s': 0.0, 'tool_calls_run': 0})}\n\n"
             _mock_text = (
                 "I'm ORA (mock mode). The live model isn't connected on "
                 "this instance — no real LLM calls are being made. This "
                 "is a placeholder for UX testing."
             )
             yield f"data: {json.dumps({'token': _mock_text})}\n\n"
-            yield f"data: {json.dumps({'done': True, 'provider': 'mock', 'session_id': body.session_id, 'tokens_remaining': None})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'provider': 'ORA', 'session_id': body.session_id, 'tokens_remaining': None})}\n\n"
         return StreamingResponse(
             _mock_gen(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
@@ -497,7 +500,7 @@ async def chat_stream(
             meta = {
                 "meta": True,
                 "session_id": body.session_id,
-                "provider": "aurem-clarify-fix",
+                "provider": "ORA",
                 "mode": "A",
                 "temperature": 0.0,
                 "thinking_s": 0.0,
@@ -824,7 +827,7 @@ async def chat_stream(
             "data: " + json.dumps({
                 "meta": True,
                 "session_id": body.session_id,
-                "provider": "aurem-cto",
+                "provider": "ORA",
                 "thinking_s": 0.0,
                 "tool_calls_run": 0,
                 "request_id": interaction_request_id,
@@ -902,7 +905,7 @@ async def chat_stream(
                     "type": "task_handoff",
                     "task_id": handoff_task_id,
                     "project_id": handoff_project_id,
-                    "source": result.get("provider") or "auto_handoff",
+                    "source": sanitize_provider_for_user(result.get("provider")) or "auto_handoff",
                 }) + "\n\n"
             )
 
@@ -1008,7 +1011,7 @@ async def chat_stream(
                 result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
 
         meta = {"meta": True, "session_id": body.session_id,
-                "provider": provider, "mode": mode, "temperature": temperature,
+                "provider": sanitize_provider_for_user(provider) or "ORA", "mode": mode, "temperature": temperature,
                 "thinking_s": round(_t.monotonic() - state.t_start, 1),
                 "tool_calls_run": result.get("tool_calls_run", 0),
                 "low_confidence": state.low_confidence,
@@ -1451,7 +1454,7 @@ async def chat_stream(
         done_payload = {
             "done": True,
             **({"interaction": interaction} if interaction else {}),
-            "provider": provider,
+            "provider": sanitize_provider_for_user(provider) or "ORA",
             "session_id": body.session_id,
             "tokens_remaining": tokens_remaining,
             # 2026-08-27 · P5 — was `bool(result.get("council"))`,
@@ -1477,7 +1480,7 @@ async def chat_stream(
             # the primary OpenRouter call AND every free-tier candidate
             # failed). `is_emergency=False` means OpenRouter served it
             # normally and the pill stays hidden.
-            "llm_provenance": _safe_provenance(),
+            "llm_provenance": sanitize_provenance_for_user(_safe_provenance()),
             # Iter 85 — paths the model actually read this turn.
             # Frontend uses this to enforce ABSOLUTE NEGATIVE rule (d):
             # any path inside the ```aurem-handoff fence that is NOT in

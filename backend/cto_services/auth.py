@@ -14,6 +14,44 @@ logger = logging.getLogger("aurem.auth")
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 
+# 2026-09-28 MASTER TASK Part B — Live Presence.
+# In-process, per-worker cache of the last time we WROTE last_seen_at
+# for a given user_id, keyed by monotonic time. `current_dev` runs on
+# every single authenticated request across the whole app, so without
+# this throttle every request would fire a Mongo update. 45s means the
+# green-dot/"active within 2 minutes" bar in the admin panel is always
+# well within its own freshness window even under this throttle.
+_PRESENCE_WRITE_THROTTLE_S = 45.0
+_last_presence_write: dict[str, float] = {}
+
+
+def _touch_presence(user_id: str) -> None:
+    """Fire-and-forget `dev_users.last_seen_at` bump — never awaited
+    inline, never allowed to add latency or fail the real request."""
+    now_mono = time.monotonic()
+    last = _last_presence_write.get(user_id)
+    if last is not None and (now_mono - last) < _PRESENCE_WRITE_THROTTLE_S:
+        return
+    _last_presence_write[user_id] = now_mono
+
+    async def _write():
+        try:
+            from cto_services.db import get_db
+            db = get_db()
+            if db is None:
+                return
+            await db.dev_users.update_one(
+                {"user_id": user_id}, {"$set": {"last_seen_at": time.time()}},
+            )
+        except Exception as e:  # noqa: BLE001 — presence is best-effort
+            logger.debug("presence touch failed for %s: %r", user_id, e)
+
+    try:
+        import asyncio
+        asyncio.ensure_future(_write())
+    except RuntimeError:
+        pass
+
 
 async def current_dev(authorization: Optional[str] = None) -> dict:
     """Verify Bearer JWT and return payload enriched with the latest user
@@ -79,6 +117,8 @@ async def current_dev(authorization: Optional[str] = None) -> dict:
                 payload = {**payload, **u}
     except Exception:
         pass
+    if payload.get("user_id"):
+        _touch_presence(payload["user_id"])
     return payload
 
 

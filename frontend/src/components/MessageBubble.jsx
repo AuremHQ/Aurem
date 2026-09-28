@@ -1381,61 +1381,13 @@ export default function MessageBubble({
               <Zap size={10} style={{ color: "var(--accent-2)" }} /> maxx
             </div>
           )}
-          {/* Iter 161 — Agent chip. Shows which engine ACTUALLY wrote
-              the reply (and if it was reviewed). Mapping:
-                review_mode=swift → DeepSeek wrote, Claude diff-reviewed
-                review_mode=pro   → DeepSeek wrote, Claude full-reviewed
-                review_mode=maxx  → Claude wrote (no review tail)
-                else (auto/chat) → fall back to raw provider name      */}
-          {!m.streaming && m.provider && m.provider !== "system"
-              && !m.council && (
-            (() => {
-              const rm = (m.reviewMode || "").toLowerCase();
-              const prov = (m.provider || "").toLowerCase();
-              let writer = null;
-              let reviewer = null;
-              if (rm === "maxx" || prov.includes("claude")) {
-                writer = "Claude";
-              } else if (rm === "swift" || rm === "pro") {
-                writer = "DeepSeek";
-                reviewer = "Claude";
-              } else if (prov.includes("deepseek")) {
-                writer = "DeepSeek";
-              }
-              if (m.interaction?.version === 1) {
-                reviewer = hasVerifiedReview(m.interaction) ? m.interaction.review_evidence.reviewer : null;
-                // Tier is a request preference, not execution provenance.
-                writer = prov.includes("claude") ? "Claude" : prov.includes("deepseek") ? "DeepSeek" : null;
-              }
-              if (!writer) return null;
-              return (
-                <div
-                  data-testid={`agent-chip-${idx}`}
-                  data-review-mode={rm || "auto"}
-                  style={{
-                    marginTop: 8, fontSize: 10,
-                    fontFamily: "'JetBrains Mono', monospace",
-                    color: "var(--text-faint)",
-                    letterSpacing: "0.1em",
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    padding: "2px 8px", borderRadius: 999,
-                    background: "rgba(255, 138, 42, 0.05)",
-                    border: "1px solid rgba(255, 138, 42, 0.20)",
-                  }}
-                >
-                  <span style={{ color: "var(--accent-2)" }}>{writer}</span>
-                  <span>wrote</span>
-                  {reviewer && (
-                    <>
-                      <span style={{ opacity: 0.5 }}>·</span>
-                      <span style={{ color: "var(--accent-2)" }}>{reviewer}</span>
-                      <span>reviewed</span>
-                    </>
-                  )}
-                </div>
-              );
-            })()
-          )}
+          {/* 2026-09-28 MASTER TASK Part A1 — removed the "agent chip"
+              that showed "Claude wrote" / "DeepSeek wrote · Claude
+              reviewed" directly to the user. This was Iter 161's
+              writer/reviewer badge; it's exactly the model/provider
+              leak the founder's Batch 2 privacy audit flagged.
+              "double-checked by a second reviewer" (below) already
+              tells the user what matters without naming the model. */}
           {!m.streaming && <InteractionStatus interaction={m.interaction} index={idx} />}
           {!m.streaming && m.content && (m.interaction?.version === 1 ? hasVerifiedReview(m.interaction) :
             (m.council || m.provider === "mode-b-council")) && (
@@ -1717,7 +1669,12 @@ export default function MessageBubble({
             marginTop: 8, fontSize: 11, color: "var(--text-faint)",
             fontStyle: "italic",
           }}>
-            Watchdog skipped: {m.watchdog.error || "unavailable"}
+            {/* 2026-09-28 MASTER TASK Part A1 — was printing
+                m.watchdog.error verbatim, which can carry a raw
+                internal exception string (provider name, HTTP body,
+                key-name) straight from the LLM layer. Second-reviewer
+                availability is the only thing a user needs to know. */}
+            Second review unavailable for this reply.
           </div>
         )}
       </div>
