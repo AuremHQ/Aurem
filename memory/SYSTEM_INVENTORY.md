@@ -1007,3 +1007,9 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-09-28
 
 - `services/pricing_table.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T02:39:45.237108Z] <!-- inv:service:services/pricing_table.py -->
+- `loop_run_log kind='user_override_set'` — auto-detected in backend/routers/admin_bin.py (verify) [Iter 0, 2026-09-28T06:21:04.172181Z] <!-- inv:loop_run_log_kind:user_override_set -->
+- `loop_run_log kind='user_override_removed'` — auto-detected in backend/routers/admin_bin.py (verify) [Iter 0, 2026-09-28T06:21:04.172224Z] <!-- inv:loop_run_log_kind:user_override_removed -->
+- `loop_run_log kind='toggle'` — auto-detected in backend/routers/admin_ops_config.py (verify) [Iter 0, 2026-09-28T06:21:04.172246Z] <!-- inv:loop_run_log_kind:toggle -->
+- `loop_run_log kind='create_or_update'` — auto-detected in backend/routers/admin_ops_config.py (verify) [Iter 0, 2026-09-28T06:21:04.172271Z] <!-- inv:loop_run_log_kind:create_or_update -->
+- `services/admin_audit_log.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172300Z] <!-- inv:service:services/admin_audit_log.py -->
+- `services/user_response_sanitizer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172326Z] <!-- inv:service:services/user_response_sanitizer.py -->

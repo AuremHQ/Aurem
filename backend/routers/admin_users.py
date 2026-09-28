@@ -254,6 +254,7 @@ async def list_users(
         # is real request activity, not a synthetic "online" flag.
         # "online" mirrors the founder's own 2-minute freshness bar.
         last_seen = u.get("last_seen_at")
+        u["last_seen_at"] = last_seen
         u["is_online"] = bool(last_seen and (now - last_seen) <= 120)
     return {"users": users, "bucket_counts": bucket_counts}
 
@@ -346,6 +347,7 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     user["cost_by_model"] = cost_by_model
     user["cost_total_usd"] = round(sum(v["cost_usd"] for v in cost_by_model.values()), 6)
     last_seen = user.get("last_seen_at")
+    user["last_seen_at"] = last_seen
     user["is_online"] = bool(last_seen and (time.time() - last_seen) <= 120)
 
 
