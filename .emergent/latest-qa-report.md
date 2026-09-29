@@ -1,6 +1,6 @@
-# QA Report — commit c449c29 (2026-09-28T20:27:17+00:00)
+# QA Report — commit d5963f5 (2026-09-29T04:39:18+00:00)
 
-**Commit message**: test: update team plan RBAC coverage
+**Commit message**: test: relax rapid send lock source check
 **Scope decided**: backend=False, ui=True, scenarios=[]
 **Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
 
