@@ -1,9 +1,12 @@
-# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
+# QA Report — commit 95e0ea9 (2026-09-29T04:07:30+00:00)
 
-**Commit message**: Merge main into claude/fix-guard21-admin-gateway
+**Commit message**: Fix repo_identity default-roots test: don't assume the repo is checked out at /app
+
+On CI the workspace is /home/runner/work/<repo>/<repo>, so the hardcoded
+'app/backend' suffix can never match. Assert the structure instead.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+Claude-Session: 
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
