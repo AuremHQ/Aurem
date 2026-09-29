@@ -1,9 +1,12 @@
-# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
+# QA Report — commit 32f7899 (2026-09-29T04:01:52+00:00)
 
-**Commit message**: Merge main into claude/fix-guard21-admin-gateway
+**Commit message**: CI: stop Backend pytest gracefully at 15 min and print slowest tests
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+The Backend job's 20-minute timeout kills 'Run tests' silently (no summary,
+no durations, no coverage.json). Stop pytest with SIGINT at 15 minutes so the
+run still reports, and add --durations=30.
+
+Co-Authored-By: Claude Sonnet 5.
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
