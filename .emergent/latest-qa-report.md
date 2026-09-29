@@ -1,11 +1,10 @@
-# QA Report — commit 4a3b14b (2026-09-29T19:28:31+00:00)
+# QA Report — commit 00aec2a (2026-09-29T21:33:10+00:00)
 
-**Commit message**: ci: list failing pytest tests in the job summary
+**Commit message**: ci: add JUnit XML artifact + failing-test summary to Fitness-function invariants job
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+I…1636 chars truncated…s.
 **Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
