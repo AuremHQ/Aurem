@@ -1,14 +1,14 @@
-# QA Report — commit 95e0ea9 (2026-09-29T04:07:30+00:00)
+# QA Report — commit 55ef1dd (2026-09-29T07:26:57+00:00)
 
-**Commit message**: Fix repo_identity default-roots test: don't assume the repo is checked out at /app
+**Commit message**: Fix invalid UTF-8 in a test title and stop the style gate crashing on bad bytes
 
-On CI the workspace is /home/runner/work/<repo>/<repo>, so the hardcoded
-'app/backend' suffix can never match. Assert the structure instead.
+TeamManagementPanel.phase1.test.jsx held a Windows-1252 em dash (0x97), which
+crashed ci_check_test_style.py (UnicodeDecodeError) for any PR whose diff
+touches that file, failing 'Static-grep threshold on new tests'.
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: 
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+C
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['crash', 'auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
