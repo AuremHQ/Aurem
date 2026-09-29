@@ -94,11 +94,25 @@ jobs:
 
 
   backend-tests:
-    name: Backend — pytest
+    name: Backend — pytest (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # 2026-06 · was 10 — first real post-billing-fix run was killed at
-    # the job timeout mid-suite (93%), hiding the true failure list.
-    timeout-minutes: 20
+    # 2026-09-29 · CI-trustworthiness audit — this job used to run the
+    # WHOLE suite in one step and reliably hit this timeout (see the
+    # 20→10 history above the pre-split version of this comment): the
+    # real cause was 98 test files making live `requests.*` calls to
+    # REACT_APP_BACKEND_URL that fell through to the file committed in
+    # frontend/.env (a real, reachable deployment) instead of being
+    # skipped — see the REACT_APP_BACKEND_URL override below and
+    # backend/tests/live_env_quarantine.txt. Fixing that took the
+    # whole suite from >15min (killed, never finished) to ~7.5min
+    # total. Sharded 4 ways below anyway so a slow week of new tests
+    # doesn't silently reintroduce the same failure mode — each shard
+    # now has ~9x headroom under its own 10-minute cap instead of 0.
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     services:
       mongodb:
@@ -124,6 +138,13 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       CI: "true"
       DISABLE_LOGIN_RATE_LIMIT: "true"
+      # 2026-09-29 — root cause of the 15-minute timeout (see job
+      # comment above). This job never boots a server, so it must
+      # never resolve to one either: a guaranteed-refused loopback
+      # address makes every live_env-quarantined test's reachability
+      # probe fail in <1s instead of falling through to whatever real
+      # URL happens to be committed in frontend/.env.
+      REACT_APP_BACKEND_URL: http://127.0.0.1:1
 
     steps:
       - name: Checkout
@@ -169,7 +190,7 @@ jobs:
           for attempt in 1 2 3; do
             pip install --no-cache-dir -r requirements.txt \
               --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
-              pytest pytest-asyncio pytest-cov pytest-timeout pytest-rerunfailures httpx --quiet \
+              pytest pytest-asyncio pytest-cov pytest-timeout pytest-rerunfailures pytest-split httpx --quiet \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
@@ -204,7 +225,7 @@ jobs:
         working-directory: backend
         run: python scripts/pricing_copy_lint.py
 
-      - name: Run tests
+      - name: Run tests (shard ${{ matrix.shard }} of 4)
         working-directory: backend
         run: |
           # Iter 309 · Phase 0.2 · Round 6 — CAPTURE pytest exit code
@@ -218,19 +239,25 @@ jobs:
           # as belt-and-braces so the `2>&1 | tee` pipe returns the
           # left-hand exit code by default.
           set -o pipefail
-          # The job's own timeout-minutes (20) kills this step silently:
-          # no summary, no durations, coverage.json never written. Stop
-          # pytest with SIGINT at 15 min instead, so it still prints the
-          # slowest tests + summary and flushes coverage, and the guards
-          # below still have time to run. Still a failing step (exit 124).
-          timeout -s INT 15m python -m pytest \
+          # 2026-09-29 — was one un-sharded run of the whole suite with
+          # `timeout -s INT 15m` as the last-resort guard against the
+          # job's own timeout-minutes killing it silently. Now 4
+          # parallel shards (pytest-split, --splits/--group below;
+          # .test_durations.json committed alongside this file so the
+          # split is time-balanced, not just equal-count) — each shard
+          # keeps the same SIGINT-before-job-timeout safety net, just
+          # scaled down to match its own much smaller 12-minute job
+          # budget. Still a failing step (exit 124) if a shard's
+          # timeout is ever hit again.
+          timeout -s INT 8m python -m pytest \
+            --splits 4 --group ${{ matrix.shard }} \
+            --splitting-algorithm least_duration \
             --tb=short \
             --timeout=30 \
             --durations=30 \
             -q \
             --cov=. \
-            --cov-report=term-missing \
-            --cov-report=json:coverage.json \
+            --cov-report= \
             --continue-on-collection-errors \
             --reruns 1 --reruns-delay 3 \
             --only-rerun "ConnectionError|ConnectionRefusedError|TimeoutError|RemoteDisconnected|ConnectionResetError" \
@@ -240,20 +267,24 @@ jobs:
           PYTEST_EXIT=${PIPESTATUS[0]}
           echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
           if [ "$PYTEST_EXIT" = "124" ]; then
-            echo "::error::pytest hit the 15-minute cap — the suite is too slow for this job. See the 'slowest durations' block above."
+            echo "::error::pytest hit shard ${{ matrix.shard }}/4's 8-minute cap — see the 'slowest durations' block above."
           fi
+          # Coverage combine below (aggregate job) needs one uniquely
+          # named file per shard — plain `.coverage` would collide
+          # once all 4 shards' artifacts land in the same directory.
+          mv .coverage ".coverage.shard${{ matrix.shard }}" 2>/dev/null || true
 
           # Exit with pytest's exit code (captured before any post-processing).
           exit "$PYTEST_EXIT"
 
-      - name: Summarise failing tests
+      - name: Summarise failing tests (shard ${{ matrix.shard }})
         # `if: always()` so it runs after a red "Run tests"; puts the failing
         # test ids in the job summary, which the API can read (the raw log tail
         # is buried under service-container noise).
         if: always()
         run: |
           {
-            echo "### Failing / erroring tests"
+            echo "### Failing / erroring tests — shard ${{ matrix.shard }}/4"
             if [ -f /tmp/pytest_output.txt ]; then
               grep -E '^(FAILED|ERROR) ' /tmp/pytest_output.txt | sort -u | head -200 || true
               tail -n 1 /tmp/pytest_output.txt
@@ -262,13 +293,130 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload shard test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-shard-${{ matrix.shard }}
+          path: /tmp/pytest_output.txt
+          retention-days: 7
+
+      - name: Upload shard coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: backend/.coverage.shard${{ matrix.shard }}
+          retention-days: 1
+          if-no-files-found: ignore
+
+
+  # 2026-09-29 · CI-trustworthiness audit — split off backend-tests
+  # above (see that job's header comment for why). Everything here
+  # used to be later steps of that same job; unchanged other than
+  # reading MERGED inputs from all 4 shards instead of one job's own
+  # /tmp/pytest_output.txt / backend/coverage.json. deploy-gate's
+  # needs: list below was updated to depend on this job too — these
+  # guards are required checks, not advisory, and must keep blocking
+  # deploy exactly like they did as steps inside backend-tests.
+  backend-tests-aggregate:
+    name: Backend — pytest (guards, merged across shards)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [backend-tests]
+    if: always()
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: aurem_test
+      JWT_SECRET: ci-test-secret-32-chars-minimum!!
+      OPENROUTER_API_KEY: sk-test-not-real
+      EMERGENT_LLM_KEY: test-not-real
+      AUREM_MASTER_KEY: ci-test-master-key-32-chars-long!!
+      REDIS_URL: ""
+      DISABLE_UPSTREAM_TOOLS: "1"
+      ENABLE_EVAL_CRON: "0"
+      APP_URL: http://localhost:8001
+      PYTHONDONTWRITEBYTECODE: "1"
+      CI: "true"
+      DISABLE_LOGIN_RATE_LIMIT: "true"
+      REACT_APP_BACKEND_URL: http://127.0.0.1:1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          for attempt in 1 2 3; do
+            pip install --no-cache-dir -r requirements.txt \
+              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+              pytest pytest-asyncio pytest-cov pytest-timeout pytest-rerunfailures pytest-split httpx --quiet \
+              && break
+            echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 5))
+          done
+
+      - name: Map workspace to /app (legacy hardcoded test paths)
+        run: sudo ln -sfn "$GITHUB_WORKSPACE" /app
+
+      - name: Download all shard test-result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pytest-results-shard-*
+          path: /tmp/shard-results
+
+      - name: Download all shard coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-shard-*
+          path: backend
+          merge-multiple: true
+
+      - name: Merge shard outputs (pytest_output.txt + coverage.json)
+        working-directory: backend
+        run: |
+          # Regression baseline lock (below) counts FAILED/ERROR lines
+          # in this file — a plain concatenation across the 4 shards'
+          # own /tmp/pytest_output.txt is exactly right, no special
+          # merge logic needed for that guard.
+          cat /tmp/shard-results/pytest-results-shard-*/pytest_output.txt > /tmp/pytest_output.txt 2>/dev/null || true
+          echo "--- merged $(grep -cE '^(FAILED|ERROR) ' /tmp/pytest_output.txt || echo 0) failed/errored lines across 4 shards ---"
+
+          # Coverage ratchet (below) needs one real, full-repo
+          # coverage.json — `coverage combine` merges the 4 shards'
+          # .coverage.shard* SQLite files (standard parallel-coverage
+          # pattern), then `coverage json` renders it same as the
+          # single-job version always did.
+          python -m coverage combine .coverage.shard1 .coverage.shard2 .coverage.shard3 .coverage.shard4 2>&1 || echo "::warning::coverage combine had issues — ratchet guard below may see partial data"
+          python -m coverage json -o coverage.json 2>&1 || echo "::warning::coverage json render failed"
+
       - name: Guard — Coverage ratchet + touched-file floor (Phase 0)
-        # 2026-08 founder directive — runs even if "Run tests" above
+        # 2026-08 founder directive — runs even if a shard above
         # failed for pre-existing/unrelated reasons (same if: always()
         # pattern as the Legacy lane step below) so this guard's own
         # signal is never silently swallowed by the wider red suite.
-        # coverage.json is written by the step above even on partial
-        # failure (pytest-cov flushes on process exit).
         if: always()
         env:
           EVENT: ${{ github.event_name }}
@@ -307,7 +455,7 @@ jobs:
         # regression anywhere in the suite can't hide inside the
         # pre-existing red. if: always() — same reasoning as the
         # ratchet guard above, this signal must never be swallowed
-        # by an unrelated "Run tests" step failure.
+        # by an unrelated shard failure.
         if: always()
         env:
           EVENT: ${{ github.event_name }}
@@ -386,9 +534,8 @@ jobs:
         # tests/test_iter309_phase03_self_heal_paused.py without
         # updating it, and it sat silently red inside the wider suite
         # for ~5 weeks because nothing isolated it. if: always() so
-        # this signal is never swallowed by an unrelated red "Run
-        # tests" step above (same pattern as the Coverage ratchet
-        # guard step).
+        # this signal is never swallowed by an unrelated shard failure
+        # above (same pattern as the Coverage ratchet guard step).
         if: always()
         working-directory: backend
         run: python -m pytest -m source_of_truth -v --tb=short --timeout=30
@@ -443,7 +590,7 @@ jobs:
           path: .emergent/legacy-test-report.md
           retention-days: 14
 
-      - name: Upload test results
+      - name: Upload merged test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -459,7 +606,7 @@ jobs:
     name: Simulated-user QA (promptfoo)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [backend-tests]
+    needs: [backend-tests, backend-tests-aggregate]
 
     services:
       mongodb:
@@ -744,7 +891,7 @@ jobs:
 
   deploy-gate:
     name: Deploy gate — all checks passed
-    needs: [frontend-build, backend-tests, simulated-user-qa, security-scan, secret-scan, absolute-claim-lint]
+    needs: [frontend-build, backend-tests, backend-tests-aggregate, simulated-user-qa, security-scan, secret-scan, absolute-claim-lint]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     env:
