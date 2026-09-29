@@ -1,9 +1,12 @@
-# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
+# QA Report — commit aaa272b (2026-09-29T04:10:23+00:00)
 
-**Commit message**: Merge main into claude/fix-guard21-admin-gateway
+**Commit message**: Auto-QA: a failed report push must not fail the regression-lock gate
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+The job went red on main and on PRs with every lock passing; only the final
+'Commit report back to repo' step failed (branch moved or protected).
+Warn instead of failing; a real lock failure still fails the run step.
+
+Co-Authored-
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
