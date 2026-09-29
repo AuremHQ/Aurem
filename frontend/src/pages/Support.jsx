@@ -19,6 +19,8 @@ import React, { useState, useMemo } from "react";
 import { useLocation, Link } from "react-router-dom";
 import { API_BASE } from "../lib/api";
 import axios from "axios";
+import usePageMeta from "../lib/usePageMeta";
+import { pageTitle } from "../lib/siteConfig";
 
 const PAL = {
   bg:        "#0b0b0b",
@@ -36,6 +38,7 @@ const PAL = {
 const EMAIL_RX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export default function Support() {
+  usePageMeta({ title: pageTitle("Support") });
   const loc = useLocation();
   const params = useMemo(() => new URLSearchParams(loc.search), [loc.search]);
   const token  = params.get("t")   || "";

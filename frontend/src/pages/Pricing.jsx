@@ -12,8 +12,11 @@ import Shell from "../components/Shell";
 import PricingCards from "../components/PricingCards";
 import MarketingNav from "../components/marketing/MarketingNav";
 import { api, getToken } from "../lib/api";
+import usePageMeta from "../lib/usePageMeta";
+import { pageTitle } from "../lib/siteConfig";
 
 export default function Pricing() {
+  usePageMeta({ title: pageTitle("Pricing") });
   const [currentTier, setCurrentTier] = useState("");
 
   useEffect(() => {
