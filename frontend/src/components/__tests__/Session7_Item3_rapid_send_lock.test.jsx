@@ -17,6 +17,8 @@
  * behavior end-to-end requires a full ChatPanel mount with mocked
  * axios + SSE, which is disproportionate for what is fundamentally
  * a single-ref-guard contract.
+ *
+ * # static-grep-ok: source-level lock contract; a full ChatPanel mount is disproportionate for a one-ref guard
  */
 import fs from "node:fs";
 import path from "node:path";
