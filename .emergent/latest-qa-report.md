@@ -1,13 +1,10 @@
-# QA Report — commit 433e031 (2026-09-29T21:03:33+00:00)
+# QA Report — commit 9055cee (2026-09-29T21:25:41+00:00)
 
-**Commit message**: ci: shard Backend — pytest into 4 parallel groups, fix the real root cause of the 15-min timeout
+**Commit message**: ci: fix KeyError: MONGO_URL in test_scope_resume_issue3.py (21 tests)
 
-Root cause (evidence: GH Actions run 36621460624/job 109587622533,
-main @ 5f97cc88): the 'Run tests' step ran the whole suite with no
-REACT_APP_BACKEND_URL set, so both the tests/conftest.py live_env
-sk
+Real GH Actio…1195 chars truncated…un's tests/test_scope_resume_issue3.py.
 **Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['ship', 'leak']
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
