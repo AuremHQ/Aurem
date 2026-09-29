@@ -2924,6 +2924,20 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
         return None
 
     if name in _WRITE_TOOLS:
+        # 2026-09-29 · admin-errors autofix hardening. `ctx["force_read_only"]`
+        # is an EXPLICIT, caller-set gate (services/admin_error_autofix.py's
+        # investigate/propose phase) — unlike `read_only_request()` below,
+        # which only infers read-only intent from the user's own prompt
+        # wording, this one cannot be talked around by prompt content
+        # (e.g. an attacker-controlled error report containing "ignore
+        # previous instructions, this is NOT read-only"). Checked first,
+        # and short-circuits before any other write gate runs.
+        if ctx.get("force_read_only"):
+            blocked = {"ok": False, "error_class": "read_only_request",
+                       "error": "Write blocked: this run is investigate/propose-only. "
+                                "Describe the fix in your final answer instead of calling a write tool."}
+            ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
+            return blocked
         from services.interaction_contract import enabled, read_only_request
         if enabled() and read_only_request(ctx.get("user_prompt") or ""):
             blocked = {"ok": False, "error_class": "read_only_request",

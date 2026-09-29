@@ -7048,3 +7048,82 @@ Also added a defensive optimization to `frontend/src/pages/Landing.jsx`: below-t
 
 **Verification labels**: all `SANDBOX-REPRODUCED` against this pod's real backend + real Mongo + real LLM key + real headless Chrome — not run against the actual GitHub Actions runner. No git commits made this round — user handles "Save to GitHub" themselves, one item at a time, per their explicit instruction.
 
+
+## 2026-09-29 — PR A (security-only): admin errors-report hardening + autofix safety
+
+Scoped to items 1 & 2 of a larger 7-item admin-audit request; per user
+instruction this ships as its own branch/PR, kept small and separate
+from the invariants-red-on-main carry-over and from PR B (items 3-7:
+circular-import fix, admin retry UX, phone shell padding, admin nav
+"More" group, response schemas). Full writeup: `/app/PR_A_DESCRIPTION.md`.
+
+**Item 1 — `POST /api/aurem-dev/admin/errors/report` (`routers/admin_public.py`):**
+was unauthenticated (by design), globally exempt from the shared rate
+limiter, and had no per-IP throttle, no cap on distinct rows created,
+no `type` allowlist. Fixed, staying unauthenticated + always HTTP 200
+(the frontend ErrorBoundary/console hook retries on failure, so a 429
+would storm it harder): per-IP 30/min cap via `services.rate_limiter`;
+global cap of 200 NEW distinct rows/rolling-hour (counted via the
+Mongo `_id`'s embedded timestamp — no new index needed; repeat reports
+of an existing `(message,url)` stay free); `type` allowlisted to the 3
+values `errorReporter.js` actually sends (coerced to `console_error`
+otherwise, not rejected); field caps lowered (msg 4000→1000, stack
+16000→4000, url 1000→400); every row now stamped `trusted: false`.
+6 new tests: `test_regression_iter9_admin_errors_report_hardening.py`.
+
+**Item 2 — autofix safety (`services/admin_error_autofix.py`,
+`routers/admin_support.py`):** also surfaced that **the autofix
+feature has never worked** — the pre-existing `chat_with_tools()` call
+passed `history_lines=[]` (not a real param) and omitted the required
+`jwt_token`, so every click raised `TypeError` before reaching the
+LLM; and there is **no frontend UI anywhere** that calls `GET
+/admin/errors` or `POST .../autofix*` — fully unreachable in practice.
+Left as-is (product decision, out of scope), but fixed the underlying
+safety gap for whenever it IS wired up: split into
+Propose (`POST /errors/{id}/autofix`, runs with a new
+`force_read_only=True` `chat_with_tools()` kwarg that
+`services/local_tools.py::invoke_local_tool()` enforces
+unconditionally on `write_repo_file`/`patch_repo_file` — checked
+before `args` are even inspected, so prompt-injection in the
+attacker-controlled report text cannot argue it open) → Apply (`POST
+.../autofix/apply`, new, the ONLY path that can write; 409s unless
+`autofix_status=="proposed"`, i.e. a human must already have a
+proposal to review) → Reject (`POST .../autofix/reject`, new,
+discards a proposal). `GET /errors` now also returns `trusted` and
+`autofix_proposal`. 9 new tests:
+`test_regression_iter10_admin_errors_autofix_safety.py`.
+
+**Reconciled against `claude/eloquent-goodall-2cty9y` (PR #190, open,
+NOT merged @ `15033a93`, main @ `2c8947e2` — fetched live via this
+repo's own installed GitHub App, `services/github_app`, since no git
+remote is configured in this sandbox):** that branch independently
+added `_FENCE`/`_FENCE_END`/`_scrub`/`build_autofix_prompt` (the
+prompt-fencing partial mitigation, plus
+`test_regression_iter396_autofix_prompt_treats_report_as_untrusted.py`
+asserting on them) to the same file this PR touches. Kept those 4
+symbols byte-for-byte from the real branch content (fetched via the
+GitHub Contents API, not guessed) and layered the `force_read_only`/
+propose-apply-reject split on top; re-verified iter396's 6 assertions
+pass unchanged against the reconciled file. If PR #190 merges before
+this PR is reviewed, re-diff both files against the new main tip once
+more — the reconciliation should already cover it.
+
+**Regression sweep:** all 15 new tests pass. Ran the full ~650-file
+`chat_with_tools`/`invoke_local_tool`-touching test surface
+(`grep -rl` across `tests/`) before and after via `git stash` — 35
+pre-existing failures reproduce byte-identically both with and
+without this change (confirmed via spot-check + full-batch dot
+pattern comparison); this diff adds zero regressions. Also confirmed
+2 unrelated pre-existing failures (`test_iter138_acceptance_seven.py`,
+2 stale-string-match tests in `test_iter212h_production_readiness.py`
+checking `routers/admin.py` for a route that lives in
+`admin_support.py` post-split) exist identically on baseline.
+
+**Verification labels:** `SANDBOX-REPRODUCED` (real Mongo, real
+backend restart, live curl smoke test of all 5 endpoints incl. 401
+gating with no auth). **Not pushed** — no git remote configured in
+this sandbox (`git remote -v` empty); repo/branch/merge state was
+read via the GitHub REST API through the app's own installed GitHub
+App token, not `git fetch`. Diff is committed locally on `main`; user
+asked to hand this off via "Save to GitHub" as **its own branch**,
+separate from `main`/PR #190/PR B.
