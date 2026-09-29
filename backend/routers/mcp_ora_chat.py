@@ -17,12 +17,16 @@ chase the official SDK was judged too risky for a single new admin
 feature, so this router hand-rolls the same wire protocol
 `routers/mcp.py` already ships in production.
 
-Auth: `Authorization: Bearer <admin key>` ONLY — a key minted via
-POST /admin/gateway/keys with scope="mcp" (backend/services/
-admin_gateway_keys.py). Every call re-verifies the key's OWNING USER
-is still an admin right now, is not revoked, is under its per-key
-rate limit, and (for ask_ora_chat) is under its monthly spend cap.
-OAuth 2.1 is an explicitly deferred follow-up phase, not built here.
+Auth: `Authorization: Bearer <admin key>` (minted via POST
+/admin/gateway/keys with scope="mcp", backend/services/
+admin_gateway_keys.py) OR `Authorization: Bearer <OAuth access token>`
+issued by the OAuth 2.1 flow in routers/oauth_mcp.py (Dynamic Client
+Registration + PKCE — see /.well-known/oauth-authorization-server and
+/.well-known/oauth-protected-resource, served by
+frontend/vite-plugins/oauth-mcp-metadata.mjs). EITHER path is checked
+on every call; both re-verify the token/key's owning user is STILL an
+admin right now, is not revoked, is under its per-key rate limit, and
+(for ask_ora_chat) is under its monthly spend cap.
 
 GET  /mcp/ora-chat  -> manifest (server info + tool list)
 POST /mcp/ora-chat  -> JSON-RPC 2.0: initialize / tools/list / tools/call
@@ -37,6 +41,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 import services.admin_gateway_keys as gw_keys
+import services.oauth_mcp_store as oauth_store
 from services.mcp_ora_chat_tools import (
     ask_ora_chat_impl, get_ora_conversation_impl, list_ora_conversations_impl,
 )
@@ -160,25 +165,63 @@ async def manifest() -> JSONResponse:
     payload["tools"] = TOOLS
     payload["transport"] = "streamable-http"
     payload["auth"] = {
-        "type": "bearer",
-        "note": "Authorization: Bearer <admin MCP key> — generate one in "
-                "the admin panel (API Keys page). OAuth 2.1 not yet built.",
+        "type": "oauth2.1+bearer",
+        "note": "Two ways in: (1) Authorization: Bearer <admin MCP key> — "
+                "generate one in the admin panel (API Keys page), or "
+                "(2) OAuth 2.1 with Dynamic Client Registration + PKCE — "
+                "Claude Desktop custom connectors discover this "
+                "automatically via /.well-known/oauth-protected-resource. "
+                "Both are admin-only.",
     }
     return JSONResponse(payload)
 
 
+def _origin(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    return f"{proto}://{host}"
+
+
+def _www_authenticate(request: Request) -> str:
+    prm_url = f"{_origin(request)}/.well-known/oauth-protected-resource/api/aurem-dev/mcp/ora-chat"
+    return f'Bearer realm="mcp", resource_metadata="{prm_url}"'
+
+
 async def _authenticate(authorization: Optional[str]) -> tuple[Optional[dict], Optional[dict], int]:
-    """Returns (key_doc, rpc_error_dict_or_None, http_status)."""
+    """Returns (key_doc, rpc_error_dict_or_None, http_status). Accepts
+    EITHER a static admin MCP key (services/admin_gateway_keys.py) OR
+    an OAuth 2.1 access token (services/oauth_mcp_store.py) — both are
+    normalized to the same key_doc shape so rate-limit/spend-cap/
+    usage-log code below doesn't need to know which path was used."""
     if not authorization:
         return None, {"code": _RPC_UNAUTHORIZED, "message": "Missing Authorization header"}, 401
     raw = authorization.replace("Bearer ", "", 1).strip()
     key_doc = await gw_keys.verify_key(raw, scope="mcp")
     if not key_doc:
-        return None, {"code": _RPC_UNAUTHORIZED, "message": "Invalid, revoked, or non-admin key"}, 403
+        key_doc = await oauth_store.verify_access_token(raw)
+    if not key_doc:
+        return None, {"code": _RPC_UNAUTHORIZED, "message": "Invalid, revoked, expired, or non-admin credential"}, 403
     limit = key_doc.get("rate_limit_per_min", gw_keys.DEFAULT_RATE_LIMIT_PER_MIN)
     if not await check_rate_limit_async(f"mcp_ora_chat:{key_doc['key_id']}", limit):
         return None, {"code": _RPC_RATE_LIMITED, "message": f"Rate limit exceeded ({limit}/min). Slow down."}, 429
     return key_doc, None, 200
+
+
+@router.get("/.well-known/oauth-protected-resource")
+async def prm_fallback(request: Request):
+    """Backend-native fallback discovery path (path-appending
+    convention: {resource}/.well-known/...). The primary, RFC
+    8414/9728-correct copy is served at the bare domain root by
+    frontend/vite-plugins/oauth-mcp-metadata.mjs and is what the
+    `resource_metadata` hint below points to."""
+    origin = _origin(request)
+    return {
+        "resource": f"{origin}/api/aurem-dev/mcp/ora-chat",
+        "authorization_servers": [f"{origin}/api/aurem-dev/mcp"],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": ["mcp"],
+        "resource_name": "ORA Chat MCP (admin only)",
+    }
 
 
 @router.post("")
@@ -190,7 +233,8 @@ async def mcp_rpc(request: Request, authorization: Optional[str] = Header(None))
     if not isinstance(body, dict):
         return JSONResponse(_rpc_err(None, _RPC_INVALID_REQUEST, "Body must be a JSON object"), status_code=400)
     result, status = await _handle_one(body, authorization)
-    return JSONResponse(result, status_code=status)
+    headers = {"WWW-Authenticate": _www_authenticate(request)} if status in (401, 403) else None
+    return JSONResponse(result, status_code=status, headers=headers)
 
 
 async def _handle_one(req: dict, authorization: Optional[str]) -> tuple[dict, int]:

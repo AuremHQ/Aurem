@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import require_admin
 import services.admin_gateway_keys as gw_keys
+import services.oauth_mcp_store as oauth_store
 
 router = APIRouter(prefix="/admin/gateway", tags=["Admin — ORA Chat MCP/Gateway"])
 
@@ -117,3 +118,24 @@ async def test_mcp(authorization: Optional[str] = Header(None)):
     except RuntimeError as e:
         raise HTTPException(500, f"ORA Chat call failed: {e}")
     return {"ok": True, "result": result}
+
+
+@router.get("/oauth-clients")
+async def get_oauth_clients(authorization: Optional[str] = Header(None)):
+    """2026-09-29 — Registered OAuth 2.1 clients (Dynamic Client
+    Registration) for the ORA Chat MCP server. Read-only visibility
+    into which Claude connectors etc. have self-registered."""
+    await require_admin(authorization)
+    return {"ok": True, "clients": await oauth_store.list_oauth_clients()}
+
+
+@router.post("/oauth-clients/{client_id}/revoke")
+async def revoke_oauth_client(client_id: str, authorization: Optional[str] = Header(None)):
+    """Revokes ALL access/refresh tokens for this OAuth client and
+    deletes its registration — forces a fresh /oauth/authorize +
+    admin consent next time that connector tries to reconnect."""
+    await require_admin(authorization)
+    ok = await oauth_store.revoke_client(client_id)
+    if not ok:
+        raise HTTPException(404, "Client not found")
+    return {"ok": True}

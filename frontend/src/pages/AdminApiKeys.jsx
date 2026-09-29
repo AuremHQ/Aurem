@@ -288,7 +288,11 @@ function OraChatMcpCard() {
   const [label, setLabel] = useState("");
   const [testResult, setTestResult] = useState(null);
   const [testBusy, setTestBusy] = useState(false);
+  const [oauthClients, setOauthClients] = useState([]);
+  const [oauthLoading, setOauthLoading] = useState(true);
   const mcpUrl = `${window.location.origin}/api/aurem-dev/mcp/ora-chat`;
+  const asMetadataUrl = `${window.location.origin}/.well-known/oauth-authorization-server/api/aurem-dev/mcp`;
+  const prmUrl = `${window.location.origin}/.well-known/oauth-protected-resource/api/aurem-dev/mcp/ora-chat`;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -304,6 +308,32 @@ function OraChatMcpCard() {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const loadOauthClients = useCallback(async () => {
+    setOauthLoading(true);
+    try {
+      const r = await api.get("/admin/gateway/oauth-clients", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      setOauthClients(r.data?.clients || []);
+    } catch (e) {
+      toast({ message: cleanErr(e, "Failed to load OAuth clients."), kind: "error", duration: 3000 });
+    } finally {
+      setOauthLoading(false);
+    }
+  }, []);
+  useEffect(() => { loadOauthClients(); }, [loadOauthClients]);
+
+  const revokeOauthClient = async (clientId) => {
+    try {
+      await api.post(`/admin/gateway/oauth-clients/${clientId}/revoke`, {}, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      await loadOauthClients();
+    } catch (e) {
+      toast({ message: cleanErr(e, "Revoke failed."), kind: "error", duration: 3000 });
+    }
+  };
 
   const create = async () => {
     setBusy(true);
@@ -377,9 +407,70 @@ function OraChatMcpCard() {
         Lets Claude Desktop call ORA Chat (AUREM&apos;s internal assistant) as a tool
         inside any conversation: <code style={codeChip}>ask_ora_chat</code>,{" "}
         <code style={codeChip}>list_ora_conversations</code>,{" "}
-        <code style={codeChip}>get_ora_conversation</code>. Bearer-key auth
-        (OAuth 2.1 not built yet). Server-enforced admin-only.
+        <code style={codeChip}>get_ora_conversation</code>. Two ways to connect:
+        a static Bearer key (below), or OAuth 2.1 with Dynamic Client
+        Registration + PKCE for Claude&apos;s &quot;custom connector&quot; flow
+        (Claude discovers everything automatically — nothing to paste).
+        Server-enforced admin-only either way.
       </p>
+
+      <div style={{ ...hintBox, marginTop: 0, marginBottom: 24 }} data-testid="ora-oauth-box">
+        <div style={{ fontSize: 11, color: "var(--text-faint)", letterSpacing: "0.12em",
+                      textTransform: "uppercase", marginBottom: 10 }}>
+          OAuth 2.1 · custom connector (no key needed)
+        </div>
+        <p style={{ color: "var(--text-dim)", fontSize: 13, lineHeight: 1.6, marginBottom: 10 }}>
+          In Claude Desktop: Settings → Connectors → Add custom connector → paste
+          the MCP URL above. Claude will discover OAuth automatically, open a
+          browser to sign in with your ORA admin account, and ask you to Allow.
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "var(--text-faint)" }}>AS metadata</span>
+          <code data-testid="ora-oauth-as-url" style={{ ...codeChip, fontSize: 11 }}>{asMetadataUrl}</code>
+          <button style={btnGhost} onClick={() => copy(asMetadataUrl)} data-testid="ora-oauth-copy-as-url">Copy</button>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "var(--text-faint)" }}>Resource metadata</span>
+          <code data-testid="ora-oauth-prm-url" style={{ ...codeChip, fontSize: 11 }}>{prmUrl}</code>
+          <button style={btnGhost} onClick={() => copy(prmUrl)} data-testid="ora-oauth-copy-prm-url">Copy</button>
+        </div>
+
+        {oauthLoading ? (
+          <div style={{ ...emptyState, marginTop: 14 }}>Loading…</div>
+        ) : oauthClients.length === 0 ? (
+          <div data-testid="ora-oauth-clients-empty" style={{ ...emptyState, marginTop: 14 }}>
+            No OAuth clients registered yet.
+          </div>
+        ) : (
+          <div style={{ ...tableWrap, marginTop: 14 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--text-faint)",
+                             textTransform: "uppercase", fontSize: 10, letterSpacing: "0.1em" }}>
+                  <th style={th}>Client</th>
+                  <th style={th}>Active tokens</th>
+                  <th style={{ ...th, textAlign: "right" }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {oauthClients.map((c) => (
+                  <tr key={c.client_id} data-testid={`ora-oauth-client-row-${c.client_id}`}
+                      style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={td}>{c.client_name}</td>
+                    <td style={td}>{c.active_access_tokens}</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      <button data-testid={`ora-oauth-revoke-${c.client_id}`}
+                              onClick={() => revokeOauthClient(c.client_id)} style={btnDanger}>
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>MCP URL</span>
