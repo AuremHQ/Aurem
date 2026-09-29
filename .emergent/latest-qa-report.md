@@ -1,11 +1,8 @@
-# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
+# QA Report — commit f4ce176 (2026-09-29T06:02:57+00:00)
 
-**Commit message**: Merge main into claude/fix-guard21-admin-gateway
-
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+**Commit message**: test: rename first50 removal test so Delete Gate does not false-match
 **Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
