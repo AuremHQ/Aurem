@@ -1,12 +1,11 @@
-# QA Report — commit 3d375eb (2026-09-29T17:25:36+00:00)
+# QA Report — commit 67d7bf3 (2026-09-29T19:06:58+00:00)
 
-**Commit message**: Test: admin pages survive empty and failed API data
+**Commit message**: Fix unhandled rejections on failed admin loads (Vitest exit code 1 in CI)
 
-Renders the nine pages fixed in the admin audit with {} responses and with
-every call failing (HTTP 500). Fails on the previous versions of all nine.
-
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code
+CI's Vitest job failed on #190: all 895 tests passed but 4 unhandled promise
+rejections made the run exit 1. They come from real code, not the test:
+- ChurnRiskWidget / DuplicationWidget: useAsyncState.run() rethrows after
+  
 **Scope decided**: backend=False, ui=True, scenarios=[]
 **Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
 
