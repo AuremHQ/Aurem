@@ -218,9 +218,15 @@ jobs:
           # as belt-and-braces so the `2>&1 | tee` pipe returns the
           # left-hand exit code by default.
           set -o pipefail
-          python -m pytest \
+          # The job's own timeout-minutes (20) kills this step silently:
+          # no summary, no durations, coverage.json never written. Stop
+          # pytest with SIGINT at 15 min instead, so it still prints the
+          # slowest tests + summary and flushes coverage, and the guards
+          # below still have time to run. Still a failing step (exit 124).
+          timeout -s INT 15m python -m pytest \
             --tb=short \
             --timeout=30 \
+            --durations=30 \
             -q \
             --cov=. \
             --cov-report=term-missing \
@@ -233,6 +239,9 @@ jobs:
             2>&1 | tee /tmp/pytest_output.txt
           PYTEST_EXIT=${PIPESTATUS[0]}
           echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
+          if [ "$PYTEST_EXIT" = "124" ]; then
+            echo "::error::pytest hit the 15-minute cap — the suite is too slow for this job. See the 'slowest durations' block above."
+          fi
 
           # Exit with pytest's exit code (captured before any post-processing).
           exit "$PYTEST_EXIT"
