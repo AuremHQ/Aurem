@@ -34,10 +34,19 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
   });
 
   it("send() checks the ref BEFORE any await point", () => {
-    // The check must come BEFORE the busy-based guard so a stale
-    // closure of `busy=false` still gets blocked.
-    expect(CHAT_PANEL_SRC).toMatch(
-      /async function send\([\s\S]{0,2000}sendInFlightRef\.current[\s\S]{0,500}dropped rapid duplicate/);
+    // The check must come BEFORE the first actual await so a stale
+    // closure with busy=false still gets blocked. Strip comments first
+    // so the invariant is based on executable source, not documentation.
+    const sendFnIdx = CHAT_PANEL_SRC.indexOf("async function send(");
+    expect(sendFnIdx).toBeGreaterThan(-1);
+    const sendFnBody = CHAT_PANEL_SRC.slice(sendFnIdx, sendFnIdx + 12000);
+    const executableBody = sendFnBody.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const guardIdx = executableBody.indexOf("if (sendInFlightRef.current)");
+    const awaitIdx = executableBody.indexOf("await ");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(awaitIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(awaitIdx);
+    expect(executableBody.slice(guardIdx, guardIdx + 500)).toContain("dropped rapid duplicate");
   });
 
   it("lock is armed AFTER validity guards, not before", () => {
