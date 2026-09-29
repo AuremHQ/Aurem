@@ -1,13 +1,11 @@
-# QA Report — commit 67d7bf3 (2026-09-29T19:06:58+00:00)
+# QA Report — commit 162298f (2026-09-29T19:49:22+00:00)
 
-**Commit message**: Fix unhandled rejections on failed admin loads (Vitest exit code 1 in CI)
+**Commit message**: Merge remote-tracking branch 'origin/main' into claude/eloquent-goodall-2cty9y
 
-CI's Vitest job failed on #190: all 895 tests passed but 4 unhandled promise
-rejections made the run exit 1. They come from real code, not the test:
-- ChurnRiskWidget / DuplicationWidget: useAsyncState.run() rethrows after
-  
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
+# Conflicts:
+#	.emergent/latest-qa-report.md
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
