@@ -1,11 +1,9 @@
-# QA Report — commit 4a3b14b (2026-09-29T19:28:31+00:00)
+# QA Report — commit 26bb850 (2026-09-29T21:22:12+00:00)
 
-**Commit message**: ci: list failing pytest tests in the job summary
-
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+**Commit message**: ci: fix Fitness-function invariants s…5188 chars truncated…LM key access from
+this sandbox to confirm/deny.
 **Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
