@@ -1,9 +1,10 @@
-# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
+# QA Report — commit 2fb831e (2026-09-29T04:42:38+00:00)
 
-**Commit message**: Merge main into claude/fix-guard21-admin-gateway
+**Commit message**: Re-record stream golden for user-facing provider branding; pin the interaction flag
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+The golden still held raw provider ids and llm_provenance, but the user-facing
+sanitizer now brands provider as ORA and reduces llm_provenance to
+is_emergency. Those were the only diffs on all 6 scenarios (checked w
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
