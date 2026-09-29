@@ -1,8 +1,13 @@
-# QA Report — commit c449c29 (2026-09-28T20:27:17+00:00)
+# QA Report — commit 33bf244 (2026-09-29T02:32:29+00:00)
 
-**Commit message**: test: update team plan RBAC coverage
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
+**Commit message**: Attach router-level require_admin_dep to admin_gateway router
+
+Guard 21 (check_admin_router_gates) requires every routers/admin*.py to
+carry a router-level admin dependency. admin_gateway.py only gated
+per-handler, which failed Guard 21 on main and skipped the Backend
+pytest run. Per-handler require
+**Scope decided**: backend=True, ui=False, scenarios=[]
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
