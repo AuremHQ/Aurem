@@ -1,11 +1,11 @@
-# QA Report — commit ce53123 (2026-09-29T02:35:30+00:00)
+# QA Report — commit 1b0fabd (2026-09-29T02:40:42+00:00)
 
-**Commit message**: Add regression test for admin_gateway router-level admin gate
+**Commit message**: Mark rapid-send lock test as intentional static-grep contract
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
