@@ -348,6 +348,7 @@ async def test_quoted_no_edit_phrase_is_negative_control_not_conflict(monkeypatc
     from main import app
     from routers.chat import turn as turn_router
     from services.ora_chat_v2 import llm_client
+    from services.user_response_sanitizer import sanitize_provider_for_user
 
     async def _fake_user(_authorization=None):
         return {"user_id": "u_negative_control", "tier": "founder", "is_admin": True, "is_unlimited": True}
@@ -366,7 +367,10 @@ async def test_quoted_no_edit_phrase_is_negative_control_not_conflict(monkeypatc
         )
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload.get("provider") == "mock"
+    # provider is user-facing, so it is branded ("ORA"), never the raw "mock";
+    # the canned content is what proves the mock path ran.
+    assert payload.get("provider") == sanitize_provider_for_user("mock")
+    assert payload.get("content") == turn_router.MOCK_SEND_TEXT
 
 
 # -------------------- Contradictory instruction entry guard wiring ------------
