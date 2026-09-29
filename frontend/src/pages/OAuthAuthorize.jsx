@@ -2,7 +2,7 @@
  * pages/OAuthAuthorize.jsx — 2026-09-29 OAuth 2.1 consent screen for
  * the ORA Chat MCP server.
  *
- * Reached via GET /api/aurem-dev/oauth/authorize (routers/oauth_mcp.py)
+ * Reached via GET /api/aurem-dev/oauth/authorize (routers/oauth.py)
  * redirecting the browser here with `?consent_id=...` after validating
  * the OAuth request (client_id, redirect_uri, PKCE challenge, resource).
  *
