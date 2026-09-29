@@ -37,6 +37,13 @@ const STAGE_ACCENT = {
   stage3_no_chat:         "var(--danger)",
 };
 
+// `detail` can be a list/object (FastAPI validation errors); only a string is
+// safe to render.
+function errorText(e) {
+  const d = e?.response?.data?.detail;
+  return typeof d === "string" ? d : (e?.message || "request failed");
+}
+
 function toCsv(rows) {
   const cols = ["email", "name", "stuck_since", "stuck_days", "nudge_sent", "nudge_sent_at", "nudge_clicked"];
   const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -64,20 +71,30 @@ export default function AdminOnboardingFunnel() {
   const [trend, setTrend] = useState(null);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [trendFailed, setTrendFailed] = useState(false);
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api.get("/admin/onboarding-funnel/summary");
       setSummary(r.data);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(errorText(e));
     } finally {
       setLoading(false);
     }
   }, []);
 
   const loadTrend = useCallback(async () => {
-    const r = await api.get("/admin/onboarding-funnel/trend", { params: { days: 30 } });
-    setTrend(r.data);
+    try {
+      const r = await api.get("/admin/onboarding-funnel/trend", { params: { days: 30 } });
+      setTrend(r.data);
+      setTrendFailed(false);
+    } catch {
+      setTrendFailed(true);
+    }
   }, []);
 
   useEffect(() => { loadSummary(); loadTrend(); }, [loadSummary, loadTrend]);
@@ -89,6 +106,8 @@ export default function AdminOnboardingFunnel() {
     try {
       const r = await api.get("/admin/onboarding-funnel/users", { params: { stage: stageKey } });
       setUsers(r.data);
+    } catch (e) {
+      setLoadError(errorText(e));
     } finally {
       setUsersLoading(false);
     }
@@ -99,6 +118,8 @@ export default function AdminOnboardingFunnel() {
     try {
       const r = await api.get("/admin/onboarding-funnel/preview-email", { params: { stage: stageKey } });
       setPreview(r.data);
+    } catch (e) {
+      setLoadError(errorText(e));
     } finally {
       setPreviewLoading(false);
     }
@@ -136,6 +157,19 @@ export default function AdminOnboardingFunnel() {
         Every signed-up user stuck 24h+ at their most-advanced funnel step, live-classified
         from real DB state (same logic the nudge-email cron uses). Click a stage to see who.
       </div>
+
+      {loadError && (
+        <div data-testid="admin-onboarding-funnel-error"
+             style={{ padding: 12, marginBottom: 14, fontSize: 12, color: "var(--danger)",
+                      border: "1px solid var(--border)", borderRadius: 8 }}>
+          Couldn't load the funnel: {loadError}{" "}
+          <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }}
+                  data-testid="admin-onboarding-funnel-retry"
+                  onClick={() => { loadSummary(); loadTrend(); }}>
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading && !summary ? (
         <div style={{ padding: 24, color: "var(--text-faint)" }}>
@@ -238,7 +272,11 @@ export default function AdminOnboardingFunnel() {
             Funnel trend — last 30 days
           </h3>
           <Card style={{ marginBottom: 20 }}>
-            {!trend ? (
+            {trendFailed && !trend ? (
+              <div data-testid="admin-onboarding-trend-error" style={{ padding: 12, fontSize: 12, color: "var(--text-faint)" }}>
+                Couldn't load the trend. Use Refresh to try again.
+              </div>
+            ) : !trend ? (
               <div style={{ padding: 24, color: "var(--text-faint)" }}><Loader2 size={14} className="spin" /> Loading…</div>
             ) : (trend.points?.length ?? 0) < 2 ? (
               <div data-testid="admin-onboarding-trend-empty" style={{ padding: 12, fontSize: 12, color: "var(--text-faint)" }}>

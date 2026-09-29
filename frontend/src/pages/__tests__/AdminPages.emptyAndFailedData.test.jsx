@@ -14,7 +14,7 @@
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 // Several page modules use JSX without importing React (the app builds them
@@ -22,10 +22,15 @@ import { MemoryRouter } from "react-router-dom";
 globalThis.React = React;
 
 let mode = "empty"; // "empty" | "fail"
+// A real Error (not a bare object) so an unhandled rejection prints a stack
+// that names the component that forgot to catch the failed call.
+const failure = () => {
+  const e = new Error("Request failed with status code 500");
+  e.response = { status: 500, data: { detail: "boom" } };
+  return Promise.reject(e);
+};
 const respond = () =>
-  mode === "fail"
-    ? Promise.reject({ response: { status: 500, data: { detail: "boom" } }, message: "Request failed with status code 500" })
-    : Promise.resolve({ data: {}, status: 200 });
+  mode === "fail" ? failure() : Promise.resolve({ data: {}, status: 200 });
 
 vi.mock("../../lib/api", async (importOriginal) => {
   const real = await importOriginal();
@@ -59,6 +64,8 @@ import AdminQADashboard from "../AdminQADashboard.jsx";
 import AdminSystemHealth from "../AdminSystemHealth.jsx";
 import FeatureWindow from "../FeatureWindow.jsx";
 import AdminMaintenance from "../AdminMaintenance.jsx";
+import ChurnRiskWidget from "../../components/ChurnRiskWidget.jsx";
+import DuplicationWidget from "../../components/DuplicationWidget.jsx";
 
 const PAGES = [
   ["AdminCockpit (/admin)", AdminCockpit],
@@ -111,3 +118,28 @@ describe.each([["empty", "empty `{}` API responses"], ["fail", "every API call f
     });
   },
 );
+
+describe("a failed load shows an error and leaves no unhandled rejection", () => {
+  // Vitest fails the whole run on an unhandled rejection, so these tests also
+  // guard against a widget forgetting to catch the failed call (the Cockpit's
+  // Churn and Duplication widgets and the Onboarding funnel each did).
+  it("ChurnRiskWidget shows its error message", async () => {
+    mode = "fail";
+    render(<MemoryRouter><ChurnRiskWidget /></MemoryRouter>);
+    expect(await screen.findByTestId("churn-risk-error")).toBeTruthy();
+  });
+
+  it("DuplicationWidget shows its error message", async () => {
+    mode = "fail";
+    render(<MemoryRouter><DuplicationWidget /></MemoryRouter>);
+    expect(await screen.findByTestId("duplication-error")).toBeTruthy();
+  });
+
+  it("Onboarding funnel shows an error with a Retry button", async () => {
+    mode = "fail";
+    render(<MemoryRouter><AdminOnboardingFunnel /></MemoryRouter>);
+    expect(await screen.findByTestId("admin-onboarding-funnel-error")).toBeTruthy();
+    expect(screen.getByTestId("admin-onboarding-funnel-retry")).toBeTruthy();
+    expect(await screen.findByTestId("admin-onboarding-trend-error")).toBeTruthy();
+  });
+});
