@@ -4,6 +4,7 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import auremProdFixes from './vite-plugins/aurem-prod-fixes.mjs'
+import oauthMcpMetadata from './vite-plugins/oauth-mcp-metadata.mjs'
 
 // Resolve the frontend build sha at Vite config time. Priority:
 //   1. explicit env var BUILD_SHA / GIT_COMMIT (deploy pipeline sets)
@@ -43,7 +44,7 @@ export default defineConfig(({ mode }) => {
   console.log(`[vite.config] Frontend build sha resolved: ${buildSha}`)
 
   return {
-    plugins: [react(), auremProdFixes()],
+    plugins: [react(), auremProdFixes(), oauthMcpMetadata()],
     server: {
       port: 3000,
       host: '0.0.0.0',

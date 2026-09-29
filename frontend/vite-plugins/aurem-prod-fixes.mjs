@@ -47,6 +47,9 @@ const KNOWN_PREFIXES = new Set([
   // the existing "settings" prefix, but /team/accept-invite (public
   // invite-acceptance page, App.jsx) is its own top-level route.
   "team",
+  // 2026-09-29 · OAuth 2.1 for ORA Chat MCP — /oauth/authorize is the
+  // consent screen routers/oauth_mcp.py redirects admins to.
+  "oauth",
 ]);
 
 const HAS_EXTENSION = /\.[a-zA-Z0-9]+$/;
