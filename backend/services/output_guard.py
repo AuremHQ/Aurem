@@ -70,7 +70,10 @@ _UNIVERSAL_LEAK_PATTERNS = [
     # self-censor; this is the mechanical net behind that instruction,
     # which previously didn't exist in this module at all.
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[redacted credential]"),
-    (re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"), "[redacted credential]"),
+    # 2026-09-27 P0-4 — was `ghp_` only; widened to gho_/ghs_/ghu_
+    # (App install/server + OAuth tokens) and open-ended length
+    # (GitHub's new stateless format runs up to ~520 chars).
+    (re.compile(r"\bgh[psuo]_[A-Za-z0-9_.\-]{20,}\b"), "[redacted credential]"),
     (re.compile(r"\bsk_live_[A-Za-z0-9]{20,}\b"), "[redacted credential]"),
     (re.compile(r"\bmongodb(?:\+srv)?://[^\s\"'<>]+"), "[redacted connection string]"),
     # 2026-09-02 — leaked AI stage-direction / self-narration (e.g.

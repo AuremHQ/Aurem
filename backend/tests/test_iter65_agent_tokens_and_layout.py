@@ -27,13 +27,13 @@ def _read(rel):
 # ── Backend endpoint ──────────────────────────────────────────────────
 
 def test_agent_tokens_endpoint_registered():
-    from routers.admin import router as adm
+    from routers.admin_analytics import router as adm
     paths = [r.path for r in adm.routes]
     assert "/admin/agent-tokens" in paths
 
 
 def test_agent_tokens_handler_supports_all_ranges():
-    src = _read("backend/routers/admin.py")
+    src = _read("backend/routers/admin_analytics.py")
     m = re.search(r"async def agent_tokens.*?(?=\n@router\.|\Z)",
                   src, re.DOTALL)
     assert m, "agent_tokens handler not found"
@@ -48,20 +48,31 @@ def test_agent_tokens_handler_supports_all_ranges():
 
 
 def test_agent_tokens_returns_claude_vs_deepseek_delta():
-    src = _read("backend/routers/admin.py")
+    src = _read("backend/routers/admin_analytics.py")
     assert "claude_vs_deepseek" in src
-    assert "delta_usd_per_task" in src
+    assert "delta_usd_per_call" in src
     assert "delta_multiplier" in src
-    # Avg-per-task summary
-    assert "avg_per_task" in src
+    # Avg-per-call summary
+    assert "avg_per_call" in src
     assert "cost_avg_usd" in src
 
 
 def test_agent_tokens_uses_real_cost_rates():
-    src = _read("backend/routers/admin.py")
-    # The header rates UI references
-    assert '"deepseek": 0.30' in src
-    assert '"maxx": 0.65' in src
+    # 2026-09-27 MASTER TASK Part A #5 — the OLD hardcoded
+    # `cost_per_1k = {"deepseek": 0.30, ...}` table was actually a
+    # PER-MILLION rate mislabeled as per-1k (a real 3,575-token
+    # DeepSeek call costs ~$0.001, not the $1.07 that implied).
+    # /admin/agent-tokens must have ZERO fixed rate table now — every
+    # dollar figure comes from `real_llm_usage.cost_usd`, which is
+    # either the provider's own real `usage.cost` or, for the two
+    # non-OpenRouter paths, `services/pricing_table.py` (the ONE
+    # per-million price table for the whole app).
+    src = _read("backend/routers/admin_analytics.py")
+    m = re.search(r"async def agent_tokens.*?(?=\n@router\.|\Z)",
+                  src, re.DOTALL)
+    body = m.group(0)
+    assert 'cost_per_1k = {"deepseek": 0.30, "maxx": 0.65' not in body
+    assert "real_llm_usage" in body
 
 
 # ── Frontend AgentTokenPanel widget ───────────────────────────────────

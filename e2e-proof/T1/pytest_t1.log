@@ -1,0 +1,19 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts ==============================
+platform linux -- Python 3.11.16, pytest-8.3.0, pluggy-1.6.0 -- /root/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /app/backend
+configfile: pytest.ini
+plugins: anyio-4.13.0, cov-7.1.0, timeout-2.4.0, asyncio-0.24.0, rerunfailures-16.6, respx-0.23.1
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 4 items
+
+tests/test_overnight_t1_ship_meter.py::test_meter_fields_present_task_diff_shape PASSED [ 25%]
+tests/test_overnight_t1_ship_meter.py::test_meter_fields_present_loop_ship_diff_shape PASSED [ 50%]
+tests/test_overnight_t1_ship_meter.py::test_meter_fields_present_empty_diff_is_all_zero PASSED [ 75%]
+tests/test_overnight_t1_ship_meter.py::test_meter_zero_llm_no_llm_import_anywhere_in_module PASSED [100%]
+
+============================== 4 passed in 0.07s ===============================

@@ -4,5 +4,11 @@
     "package": "extract-zip",
     "reason": "Transitive dev-time dependency via @lhci/cli → lighthouse → puppeteer-core → @puppeteer/browsers. Never runs in production runtime; only touched by Lighthouse CI dev tooling. No fix version published upstream yet (advisory reports fix=<0.0.0). Revisit when upstream ships a patched release or when Lighthouse CI is upgraded.",
     "expires": "2026-11-13"
+  },
+  {
+    "id": "CVE-2026-19693",
+    "package": "extract-zip",
+    "reason": "Same package, same transitive path as CVE-2026-56876 above (dev-time only, via @lhci/cli → lighthouse → puppeteer-core → @puppeteer/browsers — never bundled or run in the production app). This is a Zip-Slip / symlink path-traversal flaw (CWE-22/CWE-59): exploitation requires extract-zip to unzip an ATTACKER-CONTROLLED archive. Our only call site has it unzip Chrome-for-Testing binaries downloaded by puppeteer from Google's own CDN during CI setup — never a user- or attacker-supplied zip. Maintainer is reported unresponsive; a fix landed on the extract-zip GitHub master branch but has not been published to npm as of this scan (fix=<0.0.0). Revisit alongside CVE-2026-56876 when upstream publishes a patched release or Lighthouse CI drops the dependency.",
+    "expires": "2026-11-13"
   }
 ]

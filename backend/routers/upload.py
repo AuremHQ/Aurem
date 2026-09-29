@@ -29,6 +29,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 
 from cto_services.auth import current_dev
+from services.team_permissions import check_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/upload", tags=["Upload / MarkItDown"])
@@ -70,12 +71,18 @@ async def upload_convert(
     prompt as clean LLM-readable text."""
     # Auth required so we don't expose this as an open conversion endpoint
     user = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2) — the LLM-budget check below was
+    # keyed on the caller's own login, so it drew from (and could
+    # exhaust) an INVITED TEAM MEMBER's own personal quota instead of
+    # the shared account quota every other feature draws from.
+    ctx = await check_permission(user, "loop", "write")
+    user_id = ctx["effective_account_id"]
     # Iter 364 · Phase 3 — token hard-stop for image-branch (uses a
     # vision LLM). Text/PDF conversions are stdlib-cheap so they
     # aren't gated, but IMAGE_EXTS hits `_describe_image_via_vision`
     # which is a real LLM call we need to protect.
     from services.usage import assert_has_budget
-    await assert_has_budget(user["user_id"])
+    await assert_has_budget(user_id)
 
     raw = await file.read()
     size = len(raw)

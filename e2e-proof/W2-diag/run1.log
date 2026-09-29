@@ -1,0 +1,10 @@
+persona section 'ROLLBACK / REVERT / UNDO REQUESTS — treat as EXECUTE MODE' has no layer mapping — defaulting to CORE
+persona section 'SAVE FINDINGS DURING AUDITS — DO NOT SKIP' has no layer mapping — defaulting to CORE
+LOG_LINE_0 prior_fix_signal=True intent_tier=agentic confidence=0.9 signals=['pending_fix_ack_override']
+list_tools upstream HTTP 400
+LOG_LINE_A_fresh_fence raw_provider='diag-stub' raw_content_len=119 raw_content_head='Root cause: the README is missing a license line.\n```aurem-handoff\nIn `README.md` add a license line at the bottom.\n```' empty_fallback_fired=False mismatch=False final_content_len=119 final_content_head='Root cause: the README is missing a license line.\n```aurem-handoff\nIn `README.md` add a license line at the bottom.\n```' has_aurem_handoff_fence=True
+list_tools upstream HTTP 400
+chat_with_tools: empty completion on iter 1/2 (0 invocation(s) so far) — retrying instead of returning blank content
+LOG_LINE_B_empty_content raw_provider='diag-stub' raw_content_len=0 raw_content_head='' empty_fallback_fired=True mismatch=False final_content_len=121 final_content_head="_(I wasn't able to produce a reply for this agentic request. Please rephrase or try again — the chat itself is healthy.)_" has_aurem_handoff_fence=False
+list_tools upstream HTTP 400
+LOG_LINE_C_raises raw_provider='' raw_content_len=0 raw_content_head='' empty_fallback_fired=True mismatch=False final_content_len=121 final_content_head="_(I wasn't able to produce a reply for this agentic request. Please rephrase or try again — the chat itself is healthy.)_" has_aurem_handoff_fence=False

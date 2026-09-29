@@ -321,6 +321,108 @@ function EnvBadge({ env, dbHost }) {
   );
 }
 
+function AnalogGauge({ value, max, label, sublabel, color, testId }) {
+  // 2026-09-28 MASTER TASK Part B — semi-circle needle gauge. Distinct
+  // on purpose from MetricCard/HealthDonut below (plain numbers) — a
+  // literal analog dial per the founder's spec for these 3 activity
+  // metrics specifically (total users / live now / active-24h).
+  const pct = max > 0 ? Math.min(1, Math.max(0, value / max)) : 0;
+  // 2026-09-28 "ACTIVATION FIRST" Part 3 fix — was `-90 + pct*180`,
+  // which put 0% pointing UP and 100% pointing DOWN (off by 90° from
+  // the arc's own declared endpoints, arcPoint(180)=left/arcPoint(0)
+  // =right below). That mismatch is exactly why a 98%-full value
+  // didn't look ~98%-full: the needle AND the filled-arc's endpoint
+  // (both driven by this one `angleDeg`) were sweeping through the
+  // BOTTOM of the dial instead of the TOP, and clipping short of
+  // "right" well before 100%. Correct mapping: 0% = 180° (left),
+  // 50% = 270° (top), 100% = 360°/0° (right).
+  const angleDeg = 180 + pct * 180;
+  const rad = (angleDeg * Math.PI) / 180;
+  const cx = 50, cy = 54, r = 40;
+  const needleX = cx + r * 0.82 * Math.cos(rad);
+  const needleY = cy + r * 0.82 * Math.sin(rad);
+  // Arc path helper (SVG polar → cartesian on the same circle).
+  const arcPoint = (deg) => {
+    const a = (deg * Math.PI) / 180;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  const [x1, y1] = arcPoint(180); // left end (0%)
+  const [x2, y2] = arcPoint(0);   // right end (100%)
+  const [xm, ym] = arcPoint(angleDeg); // needle-tip end of the filled arc
+  const bgArc = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
+  const fgArc = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${xm} ${ym}`;
+  return (
+    <div data-testid={testId} style={{
+      background: C.panel, border: `1px solid ${C.border}`,
+      borderRadius: 12, padding: "14px 16px 10px", textAlign: "center",
+    }}>
+      <svg viewBox="0 0 100 62" width="100%" height="86">
+        <path d={bgArc} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" strokeLinecap="round" />
+        {pct > 0 && <path d={fgArc} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" />}
+        <line x1={cx} y1={cy} x2={needleX} y2={needleY} stroke={C.text} strokeWidth="1.6" strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r="2.6" fill={C.text} />
+      </svg>
+      <div style={{ color: C.text, fontSize: 20, fontWeight: 700, marginTop: -6 }}>
+        {value.toLocaleString()}
+      </div>
+      <div style={{ fontFamily: C.mono, fontSize: 10, letterSpacing: "0.12em",
+                    color: C.faint, marginTop: 2 }}>
+        {label}
+      </div>
+      {sublabel && (
+        <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{sublabel}</div>
+      )}
+    </div>
+  );
+}
+
+function PresenceGauges() {
+  // 2026-09-28 MASTER TASK Part B — "Total users" / "Live now" /
+  // "active-24h" chosen over "paid users" for the 3rd gauge: paid-user
+  // count is already surfaced twice below (TOTAL USERS card's "X free
+  // · Y paid" sub-line, and the PAID UPGRADES 30d card) as a revenue
+  // metric. Pairing "Live now" with "Active last 24h" instead gives a
+  // recency funnel (whole base → active today → active this instant)
+  // that a dial is actually good at showing, since both are naturally
+  // 0–100% of the user base — paid_users is still returned by
+  // /admin/presence/summary for anyone who wants it back.
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    api.get("/admin/presence/summary", { timeout: 12000 })
+      .then((r) => setD(r.data))
+      .catch((e) => setErr(e?.message || "failed"));
+  }, []);
+  if (err) {
+    return (
+      <div data-testid="cockpit-presence-error" style={{
+        color: C.amber, fontFamily: C.mono, fontSize: 11, marginTop: 14,
+        padding: "8px 12px", border: `1px solid ${C.border}`, borderRadius: 8,
+      }}>
+        Presence gauges unavailable — {err}
+      </div>
+    );
+  }
+  if (!d) return null;
+  const totalMilestone = Math.max(50, Math.ceil((d.total_users || 1) / 50) * 50);
+  return (
+    <div data-testid="cockpit-presence-gauges" style={{
+      display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))",
+      gap: 10, marginTop: 14,
+    }}>
+      <AnalogGauge testId="cockpit-gauge-total-users"
+        value={d.total_users} max={totalMilestone} color={C.amber}
+        label="TOTAL USERS" sublabel={`of ${totalMilestone} milestone`} />
+      <AnalogGauge testId="cockpit-gauge-live-now"
+        value={d.live_now} max={Math.max(1, d.total_users)} color={C.green}
+        label="LIVE NOW" sublabel="active in the last 2 min" />
+      <AnalogGauge testId="cockpit-gauge-active-24h"
+        value={d.active_24h} max={Math.max(1, d.total_users)} color={C.amber}
+        label="ACTIVE LAST 24H" sublabel="of total user base" />
+    </div>
+  );
+}
+
 function BusinessPulse() {
   const [d, setD] = useState(null);
   const [p, setP] = useState(null);
@@ -332,6 +434,7 @@ function BusinessPulse() {
   // in one place removes the false-discrepancy signal.
   const [tiers, setTiers] = useState(null);
   const [fin, setFin] = useState(null);
+  const [presence, setPresence] = useState(null);
   const [err, setErr] = useState(null);
   useEffect(() => {
     // Feb 2026 · prod-hang fix — bound each fetch with a per-request
@@ -347,15 +450,19 @@ function BusinessPulse() {
     api.get("/admin/financials", { timeout: 12000 })
        .then(r => { setTiers(r.data?.users || null); setFin(r.data); })
        .catch(() => { /* soft-fail — the tier sub-line just won't render */ });
+    // 2026-09-28 "ACTIVATION FIRST" Part 3 — TOTAL USERS/DAU now read
+    // from the SAME /admin/presence/summary this page's own gauges
+    // use (PresenceGauges above), instead of yet a 3rd source
+    // (/admin/dashboard's raw count + narrow "sent a chat msg" DAU).
+    // Fixes both the "246 vs 243" gauge/card mismatch AND "Live now 2
+    // but DAU 0" (DAU is now "active in the last 24h", not "sent a
+    // message today").
+    api.get("/admin/presence/summary", { timeout: 12000 })
+       .then(r => setPresence(r.data))
+       .catch(() => { /* soft-fail — falls back to the old sources below */ });
   }, []);
-  // 2026-08-26 — was `d?.total_users` first: /admin/dashboard's RAW
-  // (unfiltered) count, while the GITHUB CONNECT % card two rows down
-  // reads /admin/pulse's ORGANIC (synthetic-filtered) total as its
-  // denominator — same page, two different "total users" numbers
-  // whenever a synthetic/test row exists. Pulse's organic count is
-  // now the primary source everywhere on this page.
-  const users = p?.total_users || d?.total_users || 0;
-  const dau   = d?.dau || d?.dau_today || 0;
+  const users = presence?.total_users ?? p?.total_users ?? d?.total_users ?? 0;
+  const dau   = presence?.active_24h ?? d?.dau ?? d?.dau_today ?? 0;
   // 2026-08-26 — was `d?.revenue_30d || d?.mrr`, both fields that
   // /admin/dashboard never returns (grep-confirmed) — this card was
   // permanently hardwired to show $0 next to a real non-zero "PAID
@@ -522,6 +629,7 @@ export default function AdminCockpit() {
         {/* ModeBoard + BusinessPulse render UNCONDITIONALLY so a
             slow status/all can't block the business surfaces below. */}
         <ModeBoard />
+        <PresenceGauges />
         <BusinessPulse />
 
         {/* 2026-02-18 — Live Business Intelligence merged in from the

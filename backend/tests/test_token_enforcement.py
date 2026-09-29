@@ -102,15 +102,24 @@ async def test_usage_me_unauthorized():
 
 
 @pytest.mark.asyncio
-async def test_submit_402_when_exhausted_and_recovers_after_grant():
-    """Burn budget → /cto/tasks/submit must 402 + NOT write a task row →
-    admin grants tokens → next submit clears the 402 gate."""
+async def test_submit_not_blocked_by_token_exhaustion_alone():
+    """2026-09-27 — product decision: the token counter no longer
+    gates real requests (only the flat-fee monthly task-count cap
+    does — see test_chat_pre_llm_dedup_2026_09_06.py for that live
+    402 coverage). A token-exhausted user's /cto/tasks/submit call
+    must proceed PAST the (now log-only) budget check — it may still
+    404 for an unrelated reason (bad project_id here), but MUST NOT
+    be a 402. Tracking (is_exhausted / used) stays accurate; admin
+    grant-tokens still raises the effective_limit and clears
+    is_exhausted, purely as a cost-visibility/founder tool now."""
     admin_tok, _admin_uid = await _login(ADMIN_EMAIL, ADMIN_PASSWORD)
     _, _, user_tok, uid = await _signup_throwaway()
     db = await _db()
 
     try:
-        # Burn the entire free budget via a single fake "done" task
+        # Burn the entire free token budget via a single fake "done" task
+        # (well under the free tier's task-COUNT cap, so this exercises
+        # the token check in isolation).
         fake_id = f"t_test_enforce_{uuid.uuid4().hex[:8]}"
         await db.cto_tasks.insert_one({
             "task_id": fake_id, "user_id": uid, "status": "done",
@@ -124,22 +133,24 @@ async def test_submit_402_when_exhausted_and_recovers_after_grant():
 
             usage = (await c.get(f"{API}/usage/me", headers=user_h)).json()
             assert usage["is_exhausted"] is True, f"usage={usage}"
+            assert usage["is_blocked"] is False, (
+                "token exhaustion alone must not set is_blocked "
+                f"anymore: {usage}"
+            )
 
-            # 1) submit must 402 (NOT touch AI / write to cto_tasks)
-            before = await db.cto_tasks.count_documents({"user_id": uid})
+            # submit must NOT 402 for token reasons anymore — it
+            # proceeds past the budget check (404 here is expected,
+            # since project_id="no-such" doesn't exist; what matters
+            # is it's not 402).
             r = await c.post(
                 f"{API}/cto/tasks/submit",
                 headers=user_h,
                 json={"project_id": "no-such", "task": "anything"},
             )
-            assert r.status_code == 402, r.text
-            d = r.json()["detail"]
-            assert d["error"] == "token_limit_reached"
-            assert d["used"] >= d["limit"]
-            after = await db.cto_tasks.count_documents({"user_id": uid})
-            assert after == before, "task row written despite 402"
+            assert r.status_code != 402, r.text
 
-            # 2) admin grants 800 → effective 1800 > 1500 used → recovered
+            # admin grant-tokens still works as a tracking/visibility
+            # tool — is_exhausted clears once effective_limit rises.
             gr = await c.post(
                 f"{API}/admin/users/{uid}/grant-tokens",
                 headers=admin_h,
@@ -147,15 +158,6 @@ async def test_submit_402_when_exhausted_and_recovers_after_grant():
             )
             assert gr.status_code == 200, gr.text
             assert gr.json()["usage"]["is_exhausted"] is False
-
-            # 3) submit now bypasses the budget check; 404 is fine (no project),
-            #    what matters is NOT 402.
-            r2 = await c.post(
-                f"{API}/cto/tasks/submit",
-                headers=user_h,
-                json={"project_id": "no-such", "task": "anything"},
-            )
-            assert r2.status_code != 402, r2.text
     finally:
         await _purge_user(uid)
 

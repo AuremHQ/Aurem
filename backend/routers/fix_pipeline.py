@@ -60,6 +60,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.team_permissions import check_permission
 from services import fix_job_manager as fjm
 from services.finding_fix_applier import apply_finding_fix
 from services import ora_fix_learning
@@ -161,12 +162,26 @@ _TERMINAL_ERROR_CODES     = frozenset({
 })
 
 
-def _is_unlimited(user: dict) -> bool:
-    return bool(
-        user.get("is_admin")
-        or user.get("is_unlimited")
-        or (user.get("tier") == "founder")
-    )
+# 2026-09-26 P0 RBAC fix (Task 2) — every handler below used to read/
+# write fix-pipeline jobs and quota keyed on `user["user_id"]` (the
+# CALLER's own login), never on the team's `effective_account_id`.
+# A team member invited with real "loop" access got back EMPTY job
+# lists (their own user_id has no jobs — the owner's does) instead of
+# a 403, indistinguishable from "nothing here"; a "viewer" (read-only)
+# team member could kick off real GitHub-mutating bulk fixes via
+# /bulk with ZERO permission enforcement at all. This helper is the
+# one place every handler now goes through: resolves the real
+# team-permission gate, then hands back a `user`-shaped dict with
+# `user_id` swapped to the effective account so quota/job lookups
+# hit the SAME data the owner and every other team member share —
+# `get_fix_quota()`/`assert_can_fix()` then resolve tier/is_unlimited
+# off THAT id, so a team member's fix draws from the shared account's
+# quota, not their own (usually free-tier) personal login.
+async def _gate(authorization: Optional[str], level: str, db=None) -> tuple[dict, dict]:
+    caller = await current_dev(authorization)
+    ctx = await check_permission(caller, "loop", level, db=db)
+    effective_user = {**caller, "user_id": ctx["effective_account_id"]}
+    return caller, effective_user
 
 
 # ─── Preview endpoint ──────────────────────────────────────────────────
@@ -177,8 +192,8 @@ async def preview_cost(body: dict,
     modal.  Returns total tokens + estimated USD + the caller's
     current balance + an `is_unlimited` flag the UI uses to swap the
     payment line for an `⚡ Founder — FREE` chip."""
-    user    = await current_dev(authorization)
-    user_id = user["user_id"]
+    user, effective = await _gate(authorization, "write")
+    user_id = effective["user_id"]
     findings = body.get("findings") or []
     if not isinstance(findings, list):
         raise HTTPException(400, "findings must be a list")
@@ -192,13 +207,12 @@ async def preview_cost(body: dict,
     total_requested = len(findings)
     findings = findings[:_BULK_MAX_FINDINGS]
 
-    is_unlim = _is_unlimited(user)
-
     # Iter 212m-190 — task-quota model: 1 issue fixed = 1 task.
     tool = (body.get("tool") or "health-scan").strip()
     if tool not in ALL_FIX_TOOLS:
         tool = "health-scan"
-    quota = await get_fix_quota(user)
+    quota = await get_fix_quota(effective)
+    is_unlim = quota["is_unlimited"]
     count = len(findings)
     tool_allowed = tool in quota["fix_tools"]
     bulk_allowed = count <= 1 or quota["bulk_fix"]
@@ -238,8 +252,8 @@ async def fix_quota(authorization: Optional[str] = Header(None)) -> dict:
     """Iter 212m-190 — task-quota snapshot for the fix UI. The frontend
     uses `fix_tools` to show/hide per-finding Fix buttons and
     `bulk_fix` to show/hide the bulk button (Team tier only)."""
-    user = await current_dev(authorization)
-    q = await get_fix_quota(user)
+    _, effective = await _gate(authorization, "read")
+    q = await get_fix_quota(effective)
     return {"ok": True, **q}
 
 
@@ -250,8 +264,8 @@ async def start_bulk_fix(body: dict,
     """Kick off a sequential bulk fix.  The HTTP response returns
     immediately with `{job_id}`; the client opens an SSE connection
     to `/fix-pipeline/stream/{job_id}` to watch progress."""
-    user      = await current_dev(authorization)
-    user_id   = user["user_id"]
+    _, effective = await _gate(authorization, "write")
+    user_id   = effective["user_id"]
     project_id = (body or {}).get("project_id")
     findings   = body.get("findings") or []
     if not project_id:
@@ -274,24 +288,29 @@ async def start_bulk_fix(body: dict,
     if db is None:
         raise HTTPException(503, "DB not connected")
 
-    is_unlim = _is_unlimited(user)
     # Iter 212m-190 — task-quota gate: tool access by tier, bulk (count
     # > 1) is Team-only, and N fixes need N remaining tasks. Raises
     # 403/402 with structured detail BEFORE any work starts. Tasks are
     # deducted per SUCCESSFUL fix inside the worker — failures never
-    # burn quota.
+    # burn quota. Quota is the (possibly shared) account's, via
+    # `effective` — a team member's fix draws from the SAME monthly
+    # task pool the owner and every other member share.
     tool = ((body or {}).get("tool") or "health-scan").strip()
     if tool not in ALL_FIX_TOOLS:
         tool = "health-scan"
-    await assert_can_fix(user, tool, count=len(findings))
+    quota = await assert_can_fix(effective, tool, count=len(findings))
+    is_unlim = quota["is_unlimited"]
 
     job_id = await fjm.create_job(
         db=db, user_id=user_id, kind="bulk", total=len(findings),
         project_id=project_id, findings=findings,
     )
     # Launch the worker — runs in the background, streams events.
+    # `user=effective` — apply_finding_fix() reads the GitHub App
+    # installation off the PROJECT, which belongs to the account
+    # (owner), not to whichever team member happened to click Fix.
     asyncio.create_task(_run_bulk_job(
-        job_id=job_id, db=db, user=user, project_id=project_id,
+        job_id=job_id, db=db, user=effective, project_id=project_id,
         findings=findings, is_unlim=is_unlim, tool=tool,
     ))
     return {
@@ -722,14 +741,14 @@ async def stream_fix(job_id: str,
     """
     if not authorization and token:
         authorization = f"Bearer {token}"
-    user = await current_dev(authorization)
+    user, effective = await _gate(authorization, "read")
     db = get_db()
     summary = fjm.get_summary(job_id)
 
     # If not in memory, try Mongo for owner-check before letting the
     # generator stream the hydrated payload.
     if not summary:
-        persisted = await fjm.get_persisted(db, job_id, user["user_id"])
+        persisted = await fjm.get_persisted(db, job_id, effective["user_id"])
         if persisted is None and not user.get("is_admin"):
             # Don't 403 — the user might be the legitimate owner but
             # we lost the row entirely.  Let the generator emit
@@ -744,9 +763,10 @@ async def stream_fix(job_id: str,
                        })}
             return EventSourceResponse(_empty())
     else:
-        # Owner check — in-memory job must belong to caller.
+        # Owner check — in-memory job must belong to the caller's
+        # (team-resolved) account.
         job = fjm._JOBS.get(job_id) or {}                 # noqa: SLF001
-        if job.get("user_id") and job["user_id"] != user["user_id"] \
+        if job.get("user_id") and job["user_id"] != effective["user_id"] \
                 and not user.get("is_admin"):
             raise HTTPException(404, "Job not found")
 
@@ -761,18 +781,18 @@ async def stream_fix(job_id: str,
 @router.get("/summary/{job_id}")
 async def get_job_summary(job_id: str,
                            authorization: Optional[str] = Header(None)) -> dict:
-    user = await current_dev(authorization)
+    user, effective = await _gate(authorization, "read")
     db = get_db()
     s = fjm.get_summary(job_id)
     if not s:
         # Fall back to Mongo so a multi-pod / post-restart caller
         # still gets a polling response.
-        persisted = await fjm.get_persisted(db, job_id, user["user_id"])
+        persisted = await fjm.get_persisted(db, job_id, effective["user_id"])
         if not persisted:
             raise HTTPException(404, "Job not found")
         return {"ok": True, "from_mongo": True, **persisted}
     job = fjm._JOBS.get(job_id) or {}                         # noqa: SLF001
-    if job.get("user_id") and job["user_id"] != user["user_id"] \
+    if job.get("user_id") and job["user_id"] != effective["user_id"] \
             and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     return {"ok": True, **s}
@@ -785,12 +805,12 @@ async def retry_verify_commit(job_id: str, finding_id: str,
     """The commit-exists check can itself fail (rate limit, network)
     independent of whether the fix succeeded. This lets the UI ask
     "check again" without re-running the whole fix."""
-    user = await current_dev(authorization)
+    user, effective = await _gate(authorization, "read")
     db = get_db()
-    s = fjm.get_summary(job_id) or await fjm.get_persisted(db, job_id, user["user_id"])
+    s = fjm.get_summary(job_id) or await fjm.get_persisted(db, job_id, effective["user_id"])
     if not s:
         raise HTTPException(404, "Job not found")
-    if s.get("user_id") and s["user_id"] != user["user_id"] and not user.get("is_admin"):
+    if s.get("user_id") and s["user_id"] != effective["user_id"] and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     project_id = s.get("project_id")
     row = next((r for r in (s.get("results") or [])
@@ -798,7 +818,7 @@ async def retry_verify_commit(job_id: str, finding_id: str,
     if not row:
         raise HTTPException(404, "Finding not found in this job")
     verified = await _verify_commit_exists(
-        db=db, user=user, project_id=project_id, full_sha=row.get("full_sha"),
+        db=db, user=effective, project_id=project_id, full_sha=row.get("full_sha"),
     )
     await fjm.update_result_verified(db, job_id, finding_id, verified)
     return {"ok": True, "finding_id": finding_id, "verified": verified}
@@ -811,13 +831,15 @@ async def list_user_jobs(
     limit: int = 20,
     authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Returns the caller's recent fix jobs (newest first).  Used by
-    the Dashboard "Resume in-flight fix" banner + the FixProgressDrawer
-    re-attach logic on page reload."""
-    user = await current_dev(authorization)
+    """Returns the account's recent fix jobs (newest first) — shared
+    across every team member with "loop" access, not just whoever
+    happened to click the button. Used by the Dashboard "Resume
+    in-flight fix" banner + the FixProgressDrawer re-attach logic on
+    page reload."""
+    _, effective = await _gate(authorization, "read")
     db = get_db()
     rows = await fjm.list_jobs(
-        db, user["user_id"], limit=min(50, max(1, int(limit))),
+        db, effective["user_id"], limit=min(50, max(1, int(limit))),
         status=status,
     )
     return {"ok": True, "jobs": rows, "count": len(rows)}
@@ -840,8 +862,8 @@ async def restart_job(job_id: str,
       • If every finding was already completed, returns 200 with
         `{nothing_to_do: true}` instead of starting an empty worker.
     """
-    user = await current_dev(authorization)
-    user_id = user["user_id"]
+    user, effective = await _gate(authorization, "write")
+    user_id = effective["user_id"]
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
@@ -880,7 +902,8 @@ async def restart_job(job_id: str,
                 "message": "All findings were already completed."}
 
     project_id = persisted.get("project_id") or ""
-    is_unlim   = _is_unlimited(user)
+    quota = await get_fix_quota(effective)
+    is_unlim   = quota["is_unlimited"]
     new_job_id = await fjm.create_job(
         db=db, user_id=user_id, kind="bulk", total=len(remaining),
         project_id=project_id, findings=remaining,
@@ -897,7 +920,7 @@ async def restart_job(job_id: str,
     except Exception:
         pass
     asyncio.create_task(_run_bulk_job(
-        job_id=new_job_id, db=db, user=user, project_id=project_id,
+        job_id=new_job_id, db=db, user=effective, project_id=project_id,
         findings=remaining, is_unlim=is_unlim,
     ))
     return {

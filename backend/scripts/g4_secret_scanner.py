@@ -4,7 +4,9 @@ scripts/g4_secret_scanner.py — G4 · Rendered-page secret scanner
 Fetches every public page's rendered HTML/JS and greps for real
 secret patterns:
   - `sk-aurem-[A-Za-z0-9_-]{20,}`  (our API key format)
-  - `ghp_[A-Za-z0-9]{20,}`          (GitHub PATs)
+  - `gh[psuo]_[A-Za-z0-9_.-]{20,}` (GitHub PAT / OAuth / App tokens —
+    2026-09-27 P0-4: widened from `ghp_`-only + plain-alphanumeric;
+    GitHub's new ghs_ stateless format embeds a dot-separated JWT)
   - `sk_(live|test)_[A-Za-z0-9]{20,}` (Stripe secret keys)
   - `AKIA[0-9A-Z]{16}`              (AWS access keys)
   - JWT bearer tokens (`eyJ` prefix + base64)
@@ -26,7 +28,7 @@ from typing import List
 
 PATTERNS = {
     "aurem_api_key":  re.compile(r"sk-aurem-[A-Za-z0-9_\-]{20,}"),
-    "github_pat":     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+    "github_token":   re.compile(r"gh[psuo]_[A-Za-z0-9_.\-]{20,}"),
     "stripe_live":    re.compile(r"sk_live_[A-Za-z0-9]{20,}"),
     "stripe_test":    re.compile(r"sk_test_[A-Za-z0-9]{20,}"),
     "aws_key":        re.compile(r"AKIA[0-9A-Z]{16}"),

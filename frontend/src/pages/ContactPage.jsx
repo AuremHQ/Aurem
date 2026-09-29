@@ -6,6 +6,7 @@
 import React, { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { CONTACT } from "../data/companyInfo";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 export default function ContactPage() {
   useEffect(() => {
@@ -15,16 +16,14 @@ export default function ContactPage() {
   }, []);
 
   return (
-    <div data-testid="contact-page" style={{
-      maxWidth: 820, margin: "0 auto", padding: "40px 24px 80px",
-      color: "var(--text, #e8e3d3)",
-      fontFamily: "Inter, system-ui, -apple-system, sans-serif",
-      lineHeight: 1.65,
-    }}>
-      <Link to="/" data-testid="contact-back-home" style={{
-        fontSize: 12, color: "var(--text-dim)", textDecoration: "none",
-      }}>← Back to AUREM</Link>
-
+    <div data-testid="contact-page">
+      <MarketingNav />
+      <div style={{
+        maxWidth: 820, margin: "0 auto", padding: "40px 24px 80px",
+        color: "var(--text, #e8e3d3)",
+        fontFamily: "Inter, system-ui, -apple-system, sans-serif",
+        lineHeight: 1.65,
+      }}>
       <h1 data-testid="contact-title" style={{
         fontSize: 32, fontWeight: 500, letterSpacing: "-0.02em",
         margin: "16px 0 24px",
@@ -51,6 +50,7 @@ export default function ContactPage() {
         <Link to="/privacy" style={{ color: "inherit", marginRight: 16 }}>Privacy</Link>
         <Link to="/terms" style={{ color: "inherit" }}>Terms</Link>
       </footer>
+      </div>
     </div>
   );
 }

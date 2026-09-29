@@ -226,7 +226,6 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
   const reads   = task?.files_read || [];
   const sha     = task?.commit_sha;
   const ghUrl   = task?.github_url;
-  const agent   = task?.agent_used || "DeepSeek";
   const tokens  = task?.tokens_used;
   const elapsed = task?.time_taken_seconds;
 
@@ -530,13 +529,14 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
         </section>
       )}
 
-      {/* §3 Vanguard */}
+      {/* §3 Security check (2026-09-28 MASTER TASK Part 15 — "Vanguard"
+          was an internal codename with no meaning to a user) */}
       <section data-testid="ltp-vanguard" style={sec()}>
         {findings.length === 0 ? (
-          <Row icon="🛡" text="Vanguard — no security issues found" color={C.green}/>
+          <Row icon="🛡" text="Security check — no issues found" color={C.green}/>
         ) : (
           <>
-            <Row icon="🛡" text={`Vanguard blocked ${findings.length} issue${findings.length !== 1 ? "s" : ""}:`} color={C.red}/>
+            <Row icon="🛡" text={`Security check blocked ${findings.length} issue${findings.length !== 1 ? "s" : ""}:`} color={C.red}/>
             {findings.slice(0, 5).map((f, i) => (
               <div key={i} data-testid={`ltp-finding-${i}`}
                    style={{ paddingLeft: 18, marginTop: 3 }}>
@@ -563,10 +563,15 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
           display: "flex", flexDirection: "column", gap: 4,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+            {/* 2026-09-28 MASTER TASK Part A1/Part 15 — was showing
+                the raw commit short-sha ("✓ 6c0e98") and the internal
+                agent name ("DeepSeek"/"Claude"); neither means
+                anything to a user and the agent name is exactly the
+                kind of model/provider leak Batch 2's audit flagged. */}
             <span data-testid="ltp-commit-sha"
-                  style={{ color: C.green }}>✓ {String(sha).slice(0, 7)}</span>
+                  style={{ color: C.green }}>✓ Fix saved</span>
             <span style={{ color: C.dim }}>
-              {agent}{tokens ? ` · ${formatTokens(tokens)} tokens` : ""}{elapsed != null ? ` · ${elapsed}s` : ""}
+              {tokens ? `${formatTokens(tokens)} tokens` : ""}{elapsed != null ? ` · ${elapsed}s` : ""}
             </span>
           </div>
           {/* Trust & Verification round — Enhancement 2. Backend-

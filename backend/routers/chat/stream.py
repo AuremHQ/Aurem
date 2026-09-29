@@ -51,6 +51,9 @@ from .stream_state import StreamState
 from .worker import run_worker
 from .watchdog import consume_worker_queue
 from .retries import run_confidence_gate
+from services.user_response_sanitizer import (
+    sanitize_provider_for_user, sanitize_provenance_for_user,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +120,7 @@ async def _replay_retry_gen(rec: dict, body: "ChatBody"):
     yield (
         "data: " + json.dumps({
             "meta": True, "session_id": body.session_id,
-            "provider": rec.get("provider") or "aurem-cto",
+            "provider": sanitize_provider_for_user(rec.get("provider")) or "ORA",
             "thinking_s": 0.0, "tool_calls_run": rec.get("tool_calls_run", 0),
             "replayed_from_retry": True,
         }) + "\n\n"
@@ -128,9 +131,10 @@ async def _replay_retry_gen(rec: dict, body: "ChatBody"):
         await asyncio.sleep(0.005)
     yield (
         "data: " + json.dumps({
-            "done": True, "provider": rec.get("provider") or "aurem-cto",
+            "done": True, "provider": sanitize_provider_for_user(rec.get("provider")) or "ORA",
             "session_id": body.session_id, "tokens_remaining": None,
             "turn_state": rec.get("turn_state") or "success",
+            **(rec.get("scope_confirmation") or {}),
             "replayed_from_retry": True,
             "tool_calls_run": rec.get("tool_calls_run", 0),
         }) + "\n\n"
@@ -155,6 +159,13 @@ async def chat_stream(
     logger.info("R10_TIMING turn_start prompt=%r session=%s project=%s",
                 (body.prompt or "")[:40], body.session_id, body.project_id)
     user = await current_dev(authorization)
+    # 2026-09-27 MASTER TASK Part A — tag every LLM call this request
+    # makes as surface="cto_chat" for the unified `real_llm_usage`
+    # ledger. See `tag_request_surface`'s docstring for why this is
+    # safe without an explicit reset in a request handler this size.
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface("cto_chat", session_id=body.session_id or None,
+                         project_id=body.project_id or None)
     from services.interaction_contract import request_conflict, finalize, new_request_id
     request_conflict(body.prompt)
     interaction_request_id = new_request_id()
@@ -175,19 +186,28 @@ async def chat_stream(
     from services.ora_chat_v2.llm_client import is_mock as _mock_llm_on
     if _mock_llm_on():
         async def _mock_gen():
-            yield f"data: {json.dumps({'meta': True, 'session_id': body.session_id, 'provider': 'mock', 'mode': 'A', 'temperature': 0.0, 'thinking_s': 0.0, 'tool_calls_run': 0})}\n\n"
+            yield f"data: {json.dumps({'meta': True, 'session_id': body.session_id, 'provider': 'ORA', 'mode': 'A', 'temperature': 0.0, 'thinking_s': 0.0, 'tool_calls_run': 0})}\n\n"
             _mock_text = (
                 "I'm ORA (mock mode). The live model isn't connected on "
                 "this instance — no real LLM calls are being made. This "
                 "is a placeholder for UX testing."
             )
             yield f"data: {json.dumps({'token': _mock_text})}\n\n"
-            yield f"data: {json.dumps({'done': True, 'provider': 'mock', 'session_id': body.session_id, 'tokens_remaining': None})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'provider': 'ORA', 'session_id': body.session_id, 'tokens_remaining': None})}\n\n"
         return StreamingResponse(
             _mock_gen(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                      "Connection": "keep-alive"},
         )
+    # Resume explicit saved consent before ANY fresh intent/context routing.
+    from services.scope_resume import is_scope_confirmation
+    if body.scope_confirmed_proposal_id or is_scope_confirmation(body.prompt):
+        from .scope_resume import scope_resume_stream
+        return await scope_resume_stream(
+            request=request, body=body, user=user,
+            authorization=authorization, db=get_db(),
+        )
+
     # INTERACTION_CONTRACT_V1 P1 — idempotent retry replay. See
     # services/chat_reliability.py's module docstring for the full
     # rationale. Checked BEFORE any budget/rate-limit/provider work —
@@ -480,7 +500,7 @@ async def chat_stream(
             meta = {
                 "meta": True,
                 "session_id": body.session_id,
-                "provider": "aurem-clarify-fix",
+                "provider": "ORA",
                 "mode": "A",
                 "temperature": 0.0,
                 "thinking_s": 0.0,
@@ -807,7 +827,7 @@ async def chat_stream(
             "data: " + json.dumps({
                 "meta": True,
                 "session_id": body.session_id,
-                "provider": "aurem-cto",
+                "provider": "ORA",
                 "thinking_s": 0.0,
                 "tool_calls_run": 0,
                 "request_id": interaction_request_id,
@@ -885,7 +905,7 @@ async def chat_stream(
                     "type": "task_handoff",
                     "task_id": handoff_task_id,
                     "project_id": handoff_project_id,
-                    "source": result.get("provider") or "auto_handoff",
+                    "source": sanitize_provider_for_user(result.get("provider")) or "auto_handoff",
                 }) + "\n\n"
             )
 
@@ -940,7 +960,8 @@ async def chat_stream(
         # before falling back to the canned message. Extracted to
         # retries.py (2026-09-08 StreamState refactor) — mechanical
         # move, same side effects now land on `state.*`.
-        content, provider = await run_confidence_gate(state, content, provider)
+        if not result.get("awaiting_scope_confirmation"):
+            content, provider = await run_confidence_gate(state, content, provider)
 
         # 2026-08-28 · NEW P0 Task 2 — final defense-in-depth (see
         # chat_send's identical comment for the full rationale).
@@ -977,7 +998,7 @@ async def chat_stream(
         # attempt to enforce this (right after _run_orchestrator, now
         # removed) ran too early and got overwritten by these same
         # guards. This MUST be the true last word before streaming.
-        if state.required_read_gate:
+        if state.required_read_gate and not result.get("awaiting_scope_confirmation"):
             from services.required_tool_gate import enforce_required_read_gate
             content = enforce_required_read_gate(state.required_read_gate, content)
             # 2026-02 round-4 — see turn.py's identical fix: this
@@ -990,7 +1011,7 @@ async def chat_stream(
                 result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
 
         meta = {"meta": True, "session_id": body.session_id,
-                "provider": provider, "mode": mode, "temperature": temperature,
+                "provider": sanitize_provider_for_user(provider) or "ORA", "mode": mode, "temperature": temperature,
                 "thinking_s": round(_t.monotonic() - state.t_start, 1),
                 "tool_calls_run": result.get("tool_calls_run", 0),
                 "low_confidence": state.low_confidence,
@@ -1337,7 +1358,13 @@ async def chat_stream(
                             low_confidence=state.low_confidence,
                             ship_suppressed=state.ship_suppressed,
                             bin_ctx=bin_ctx, interaction=interaction,
-                            stream_state=_stream_state if _ic_enabled() else None)
+                            stream_state=_stream_state if _ic_enabled() else None,
+                            scope_confirmation={
+                                "proposal_id": result["scope_confirmation_proposal_id"],
+                                "awaiting": True,
+                                "prompt": result.get("scope_confirmation_prompt"),
+                                "summary": result.get("scope_confirmation_summary"),
+                            } if result.get("awaiting_scope_confirmation") else None)
         # INTERACTION_CONTRACT_V1 P1 — ledger terminal state. See
         # services/chat_reliability.py: only a `completed` record with
         # a non-"error" turn_state is ever replayed by a future retry.
@@ -1356,6 +1383,12 @@ async def chat_stream(
                         content=content, provider=provider,
                         tool_calls_run=result.get("tool_calls_run", 0),
                         turn_state=_final_turn_state,
+                        scope_confirmation={
+                            "awaiting_scope_confirmation": True,
+                            "scope_confirmation_proposal_id": result["scope_confirmation_proposal_id"],
+                            "scope_confirmation_prompt": result.get("scope_confirmation_prompt"),
+                            "scope_confirmation_summary": result.get("scope_confirmation_summary"),
+                        } if result.get("awaiting_scope_confirmation") else None,
                     )
             except Exception:
                 logger.debug("chat_reliability ledger record skipped (normal completion)")
@@ -1421,7 +1454,7 @@ async def chat_stream(
         done_payload = {
             "done": True,
             **({"interaction": interaction} if interaction else {}),
-            "provider": provider,
+            "provider": sanitize_provider_for_user(provider) or "ORA",
             "session_id": body.session_id,
             "tokens_remaining": tokens_remaining,
             # 2026-08-27 · P5 — was `bool(result.get("council"))`,
@@ -1447,7 +1480,7 @@ async def chat_stream(
             # the primary OpenRouter call AND every free-tier candidate
             # failed). `is_emergency=False` means OpenRouter served it
             # normally and the pill stays hidden.
-            "llm_provenance": _safe_provenance(),
+            "llm_provenance": sanitize_provenance_for_user(_safe_provenance()),
             # Iter 85 — paths the model actually read this turn.
             # Frontend uses this to enforce ABSOLUTE NEGATIVE rule (d):
             # any path inside the ```aurem-handoff fence that is NOT in
@@ -1493,6 +1526,12 @@ async def chat_stream(
             "turn_state": ("error" if _hard_error else (result.get("turn_state") or "success")),
             "continue_available": bool(result.get("continue_available")) and not _hard_error,
             "error": _hard_error,
+            **({
+                "awaiting_scope_confirmation": True,
+                "scope_confirmation_proposal_id": result["scope_confirmation_proposal_id"],
+                "scope_confirmation_prompt": result.get("scope_confirmation_prompt"),
+                "scope_confirmation_summary": result.get("scope_confirmation_summary"),
+            } if result.get("awaiting_scope_confirmation") else {}),
             "failure_mode": _failure_mode,
             "recovery_action": _RECOVERY_ACTION_FOR_MODE.get(_failure_mode) if _failure_mode else None,
         }

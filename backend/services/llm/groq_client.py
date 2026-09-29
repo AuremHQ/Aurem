@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from typing import Optional
 
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,7 @@ async def _call_groq(
     system: str = "",
     max_tokens: int = 1500,
     temperature: float = 0.7,
+    feature: Optional[str] = None,
 ) -> str:
     """Async call to Groq Cloud — only reached when OpenRouter primary
     AND every free-tier candidate have failed. Returns the completion
@@ -122,6 +125,7 @@ async def _call_groq(
         effective_system = system
     msgs = ([{"role": "system", "content": effective_system}]
             + messages) if effective_system else messages
+    _t0 = time.monotonic()
     completion = await client.chat.completions.create(
         model=_GROQ_MODEL,
         messages=msgs,
@@ -131,5 +135,23 @@ async def _call_groq(
         # (QA regression Result 3 — degeneration-loop fix).
         frequency_penalty=float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4")),
     )
+    _latency_ms = (time.monotonic() - _t0) * 1000
     content = (completion.choices[0].message.content or "").strip()
+    # 2026-09-27 MASTER TASK Part A — Groq is a non-OpenRouter leaf
+    # transport (own vendor API/SDK); self-log real usage the same
+    # way `_call_deepseek_direct` does, since no outer caller sees the
+    # raw completion object to log it for us.
+    try:
+        usage = getattr(completion, "usage", None)
+        usage_dict = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+        } if usage else {}
+        from services.loop_token_ledger import log_real_usage
+        await log_real_usage(
+            _GROQ_MODEL, usage_dict, provider="groq", feature=feature,
+            latency_ms=_latency_ms, status="ok",
+        )
+    except Exception as _e:                                    # noqa: BLE001
+        logger.debug("[silent-catch] _call_groq — log_real_usage failed: %r", _e)
     return content

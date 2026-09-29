@@ -130,6 +130,9 @@ async def check_project_pat(
 async def add_project(body: AddProject, authorization: str = Header(None)) -> dict:
     me = await _pkg.current_dev(authorization)
     db = _pkg.require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(me, "projects", "write", db=db)
+    account_id = ctx["effective_account_id"]  # owner's account — shared across the team
     owner, repo = _parse_repo(body.github_url)
 
     # 2026-08-20 · funnel visibility — attempt event fires before any
@@ -163,7 +166,7 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
     # direct "Open my project" redirect instead of a dead end.
     existing = await db.cto_projects.find_one(
         {
-            "user_id": me["user_id"],
+            "user_id": account_id,
             "github_owner": {"$regex": f"^{re.escape(owner)}$", "$options": "i"},
             "github_repo":  {"$regex": f"^{re.escape(repo)}$",  "$options": "i"},
         },
@@ -207,7 +210,7 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
         # verify_installation_for_repo for the full root-cause note).
         from services.github_app import verify_installation_for_repo
         ok, err_code, err_msg = await verify_installation_for_repo(
-            db, user_id=me["user_id"], installation_id=int(installation_id),
+            db, user_id=account_id, installation_id=int(installation_id),
             owner=owner, repo=repo,
         )
         if not ok:
@@ -245,7 +248,7 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
 
     proj_id = f"p_{uuid.uuid4().hex[:10]}"
     doc = {
-        "project_id": proj_id, "user_id": me["user_id"],
+        "project_id": proj_id, "user_id": account_id,
         "name": body.name, "github_url": body.github_url,
         "github_owner": owner, "github_repo": repo,
         "github_token": encrypted_token,       # None for github_app branch
@@ -282,7 +285,7 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
         else:
             _ix_token = pat
         asyncio.create_task(_run_project_indexing(
-            db=db, project_id=proj_id, user_id=me["user_id"],
+            db=db, project_id=proj_id, user_id=account_id,
             github_token=_ix_token, github_owner=owner, github_repo=repo,
             branch=body.branch or "main",
         ))
@@ -293,7 +296,7 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
         # same error-swallowing contract as the indexing task above.
         from services.project_onboarding_scan import run_onboarding_scan
         asyncio.create_task(run_onboarding_scan(
-            db=db, user_id=me["user_id"], project_id=proj_id,
+            db=db, user_id=account_id, project_id=proj_id,
             github_token=_ix_token, github_owner=owner, github_repo=repo,
         ))
         # Onboarding Step 4 · S-B (2026-08-26) — the first-scan aha.
@@ -303,7 +306,7 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
         # me" CTA. Fire-and-forget, same error-swallowing contract.
         from services.onboarding_first_scan import trigger_first_scan
         asyncio.create_task(trigger_first_scan(
-            db=db, user_id=me["user_id"], project_id=proj_id,
+            db=db, user_id=account_id, project_id=proj_id,
         ))
     except Exception as _bbe:
         logger.warning("indexing scheduler skipped: %r", _bbe)
@@ -423,8 +426,10 @@ async def verify_pat(
 async def list_projects(authorization: str = Header(None)) -> dict:
     me = await _pkg.current_dev(authorization)
     db = _pkg.require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(me, "projects", "read", db=db)
     projs = await db.cto_projects.find(
-        {"user_id": me["user_id"]},
+        {"user_id": ctx["effective_account_id"]},
         {"_id": 0},        # need github_token presence; strip ciphertext below
     ).sort("created_at", -1).to_list(50)
     # Iter 206 — surface a boolean `has_pat` flag (without ever leaking

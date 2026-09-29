@@ -152,15 +152,21 @@ async def test_usd_backfill_idempotent(db, test_user):
 @pytest.mark.asyncio
 async def test_usd_secondary_caps_kept(db, test_user):
     """R6 layers a NEW dollar cap on TOP of the existing token/task
-    caps in services/usage.py for the OTHER (non-Qwen) chat path —
-    it must not have touched or disabled them."""
+    caps in services/usage.py for the OTHER (non-Qwen) chat path.
+
+    2026-09-27 — the token cap itself was later decoupled from
+    customer-facing gating (product decision: only the flat-fee
+    task-count cap blocks now; assert_has_budget logs instead of
+    raising). This test now verifies the TRACKING side (is_exhausted
+    still computed accurately) rather than a raise, so it doesn't
+    assert against a since-superseded contract."""
     from services import usage
     task = await db.cto_tasks.insert_one({
         "user_id": test_user, "status": "done", "tokens_used": 999_999_999,
     })
     try:
-        with pytest.raises(Exception) as exc:
-            await usage.assert_has_budget(test_user)
-        assert getattr(exc.value, "status_code", None) == 402
+        await usage.assert_has_budget(test_user)  # must NOT raise (2026-09-27)
+        u = await usage.get_usage(test_user)
+        assert u["is_exhausted"] is True
     finally:
         await db.cto_tasks.delete_one({"_id": task.inserted_id})

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 import time
 from datetime import datetime, timezone
@@ -713,6 +714,63 @@ async def install_webhook(request: Request):
                             "cto_projects repo-removed cascade failed: %r", e,
                         )
 
+        elif event == "repository" and action in ("transferred", "renamed"):
+            # 2026-09-27 P0 — GitHub App repository transferred/renamed.
+            # Previously NOT handled at all (confirmed by grep before
+            # this change: only installation/installation_repositories/
+            # meta/pull_request had branches here). A transferred or
+            # renamed repo left every stored `cto_projects.github_url`
+            # pointing at the OLD owner/name — GitHub 301-redirects the
+            # old URL for a while, but that's not a substitute for the
+            # stored record being correct (redirects can expire, and
+            # any code that does a strict string match against the
+            # stored github_owner/github_repo — e.g. the installation_
+            # repositories `removed` cascade a few lines above — would
+            # silently stop matching). This is the actual root cause
+            # class behind "my active project points at a repo that no
+            # longer exists under that name" for ANY account whose repo
+            # gets transferred/renamed after being connected.
+            repo = payload.get("repository") or {}
+            new_full_name = repo.get("full_name") or ""
+            new_owner, _, new_repo = new_full_name.partition("/")
+            changes = payload.get("changes") or {}
+            if action == "transferred":
+                old_owner_block = ((changes.get("owner") or {}).get("from") or {})
+                old_owner = (old_owner_block.get("organization") or {}).get("login") \
+                    or (old_owner_block.get("user") or {}).get("login") or ""
+                old_repo = repo.get("name") or new_repo  # repo NAME is unchanged on a transfer
+            else:  # renamed
+                old_owner = new_owner  # owner is unchanged on a plain rename
+                old_repo = ((changes.get("repository") or {}).get("name") or {}).get("from") or ""
+
+            if new_owner and new_repo and old_owner and old_repo:
+                try:
+                    new_url = f"https://github.com/{new_owner}/{new_repo}"
+                    match = {
+                        "github_owner": {"$regex": f"^{re.escape(old_owner)}$", "$options": "i"},
+                        "github_repo":  {"$regex": f"^{re.escape(old_repo)}$",  "$options": "i"},
+                    }
+                    affected = await db.cto_projects.find(match).to_list(1000)
+                    if affected:
+                        await db.cto_projects.update_many(match, {"$set": {
+                            "github_owner": new_owner,
+                            "github_repo":  new_repo,
+                            "github_url":   new_url,
+                            "github_url_updated_at": _now_utc_epoch(),
+                            "github_url_update_reason": f"webhook:{action}",
+                        }})
+                        logger.warning(
+                            "github_app webhook: repository.%s — auto-updated "
+                            "%d cto_projects row(s) from %s/%s -> %s (delivery=%s)",
+                            action, len(affected), old_owner, old_repo,
+                            new_full_name, delivery_id,
+                        )
+                except Exception as e:                        # noqa: BLE001
+                    logger.warning(
+                        "cto_projects repository.%s cascade failed: %r",
+                        action, e,
+                    )
+
         elif event == "meta" and action == "deleted":
             # Catastrophic: the App itself was deleted from GitHub.
             # Mass-mark every installation of this App as inactive.
@@ -950,6 +1008,9 @@ async def claim_installation(
 ):
     user = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(user, "repo_connect", "write", db=db)
+    account_id = ctx["effective_account_id"]
 
     row = await db.github_installations.find_one(
         {"installation_id": int(body.installation_id)}
@@ -958,7 +1019,7 @@ async def claim_installation(
         raise HTTPException(404, "installation_not_found")
 
     existing_user_id = row.get("user_id")
-    if existing_user_id == user["user_id"]:
+    if existing_user_id == account_id:
         return {"ok": True, "already_linked": True}
     if existing_user_id:
         raise HTTPException(403, "installation_belongs_to_another_user")
@@ -969,12 +1030,12 @@ async def claim_installation(
 
     await db.github_installations.update_one(
         {"installation_id": int(body.installation_id)},
-        {"$set": {"user_id": user["user_id"], "linked_at": _now_utc_epoch()}},
+        {"$set": {"user_id": account_id, "linked_at": _now_utc_epoch()}},
     )
     logger.info(
         "GH_CONNECT_CLIENT_CLAIMED installation_id=%s user_id=%s — "
         "client-side claim linked a previously-orphaned installation",
-        body.installation_id, user["user_id"],
+        body.installation_id, account_id,
     )
     return {"ok": True, "already_linked": False}
 
@@ -1022,9 +1083,12 @@ _STATUS_FETCH_CONCURRENCY = 5
 async def connect_status(authorization: Optional[str] = Header(None)):
     user = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    ctx = await check_permission(user, "repo_connect", "read", db=db)
+    account_id = ctx["effective_account_id"]
 
     rows = await db.github_installations.find(
-        {"user_id": user["user_id"], "active": True},
+        {"user_id": account_id, "active": True},
     ).to_list(length=50)
 
     if not rows:

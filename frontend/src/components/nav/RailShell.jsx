@@ -21,12 +21,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   MessageSquare, Rocket, BarChart3, Settings as Cog, ShieldCheck,
-  Plus, FolderGit2, Globe, Zap, Trophy, Coins, Gift,
+  Plus, FolderGit2, Globe, Zap, Trophy, Gift,
   Receipt, User as UserIcon, Plug, Lock, KeyRound, LayoutDashboard,
   Users as UsersIcon, Lightbulb, Landmark, X, Menu, LogOut,
 } from "lucide-react";
 import { api, getToken, logout as apiLogout, newSessionId } from "../../lib/api";
 import { setChipV2Enabled } from "../../lib/chipFlag";
+import { setPageFlags, isAutomationsPageEnabled, isAnalyticsPageEnabled, isShipWallEnabled } from "../../lib/pageFlags";
 import { useChatSession } from "../Shell";
 
 const BG      = "rgb(7,8,13)";
@@ -43,7 +44,6 @@ const SHIP_ITEMS = [
 ];
 const INSIGHT_ITEMS = [
   { to: "/analytics", label: "Analytics", icon: BarChart3, testid: "rail-item-analytics" },
-  { to: "/tokens",    label: "Tokens",    icon: Coins,     testid: "rail-item-tokens" },
   { to: "/wrapped",   label: "Wrapped",   icon: Gift,      testid: "rail-item-wrapped" },
 ];
 const SETTINGS_ITEMS = [
@@ -52,6 +52,10 @@ const SETTINGS_ITEMS = [
   { to: "/settings?tab=integrations", label: "Integrations",    icon: Plug,     testid: "rail-item-integrations" },
   { to: "/settings?tab=vault",        label: "Vault",           icon: Lock,     testid: "rail-item-vault" },
   { to: "/integrations",              label: "IDE setup (MCP)", icon: Plug,     testid: "rail-item-mcp" },
+  // 2026-02 · Phase 1 (Team RBAC) — filtered out below unless the
+  // caller is the owner or has write/read_write on team_management
+  // (see the /team/me fetch + SETTINGS_ITEMS filtering near renderLinks).
+  { to: "/settings?tab=team",         label: "Team",            icon: UsersIcon, testid: "nav-team", requiresTeamManagement: true },
 ];
 import { findAdminNavItem } from "../../lib/adminNav";
 
@@ -94,6 +98,15 @@ export default function RailShell({
   const [repos, setRepos] = useState(reposProp || []);
   const [sessions, setSessions] = useState([]);
   const [isFounder, setIsFounder] = useState(false);
+  // MASTER TASK 2026-09-28 — mirrors pageFlags.js; forces a re-render
+  // once /auth/me resolves so the nav items actually disappear (the
+  // module-singleton mirror alone doesn't trigger React re-renders).
+  const [navFlagsVersion, setNavFlagsVersion] = useState(0);
+  // 2026-02 · Phase 1 (Team RBAC) — controls whether the "Team" item
+  // under Settings is shown at all. `null` = not resolved yet (fail
+  // CLOSED, i.e. hidden, until we know — this is a sensitive area
+  // unlike the other nav items which fail open).
+  const [canManageTeam, setCanManageTeam] = useState(null);
   const wrapRef = useRef(null);
 
   // Feb 2026 · Auto-hide rail on chat typing.
@@ -206,8 +219,35 @@ export default function RailShell({
         setIsFounder(me.tier === "founder" || me.is_admin === true);
         // Phase E — mirror workcard_chip_v2 for chip-rendering components.
         setChipV2Enabled(r.data?.workcard_chip_v2_enabled === true);
+        // MASTER TASK 2026-09-28 — mirror the default-OFF nav flags
+        // (Automations / user-facing Analytics / Ship Wall) so their
+        // rail entries stop rendering until re-enabled.
+        setPageFlags(r.data);
+        setNavFlagsVersion((v) => v + 1);
       })
       .catch(() => {});
+    return () => { dead = true; };
+  }, []);
+
+  // 2026-02 · Phase 1 (Team RBAC) — resolve whether this caller can
+  // manage the team at all before ever showing the nav item for it.
+  // 2026-09-28 MASTER TASK Batch 2 (c) — also requires
+  // `team_feature_enabled` (paid Team tier or staff); a free/starter/
+  // pro owner is trivially `is_owner: true` of their own solo account
+  // but shouldn't see a nav item for a feature their plan doesn't
+  // include.
+  useEffect(() => {
+    if (!getToken()) return;
+    let dead = false;
+    api.get("/team/me")
+      .then((r) => {
+        if (dead) return;
+        const perms = r.data?.permissions || {};
+        const hasRole = r.data?.is_owner === true ||
+          ["write", "read_write"].includes(perms.team_management);
+        setCanManageTeam(hasRole && r.data?.team_feature_enabled === true);
+      })
+      .catch(() => { if (!dead) setCanManageTeam(false); });
     return () => { dead = true; };
   }, []);
 
@@ -450,9 +490,27 @@ export default function RailShell({
 
   const flyoutBody = (id) => {
     if (id === "chat")     return renderChatFlyout();
-    if (id === "ship")     return <>{flyoutHeader("Ship")}{renderLinks(SHIP_ITEMS)}</>;
-    if (id === "insights") return <>{flyoutHeader("Insights")}{renderLinks(INSIGHT_ITEMS)}</>;
-    if (id === "settings") return <>{flyoutHeader("Settings")}{renderLinks(SETTINGS_ITEMS)}</>;
+    if (id === "ship") {
+      // MASTER TASK 2026-09-28 — Automations + Ship Wall are
+      // default-OFF (feature_flags: user_automations_page,
+      // public_ship_wall). navFlagsVersion forces this to
+      // re-evaluate once /auth/me resolves.
+      void navFlagsVersion;
+      const shipItems = SHIP_ITEMS.filter((it) => {
+        if (it.to === "/automations") return isAutomationsPageEnabled();
+        if (it.to === "/wall") return isShipWallEnabled();
+        return true;
+      });
+      return <>{flyoutHeader("Ship")}{renderLinks(shipItems)}</>;
+    }
+    if (id === "insights") {
+      const insightItems = INSIGHT_ITEMS.filter((it) => {
+        if (it.to === "/analytics") return isAnalyticsPageEnabled();
+        return true;
+      });
+      return <>{flyoutHeader("Insights")}{renderLinks(insightItems)}</>;
+    }
+    if (id === "settings") return <>{flyoutHeader("Settings")}{renderLinks(SETTINGS_ITEMS.filter((it) => !it.requiresTeamManagement || canManageTeam === true))}</>;
     if (id === "admin")    return <>{flyoutHeader("Admin · founder")}{renderLinks(ADMIN_ITEMS)}</>;
     return null;
   };

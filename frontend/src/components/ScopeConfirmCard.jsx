@@ -1,102 +1,76 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { api } from "../lib/api";
 
-/**
- * ScopeConfirmCard — Trust & Verification round, Enhancement 5
- * (Pre-Execution Scope Confirmation).
- *
- * Rendered on an assistant turn where `awaitingScopeConfirmation` is
- * true (routers/chat/worker.py's `_scope_confirmation_gate` short-
- * circuited BEFORE any tool call ran). The turn's own `content`
- * already carries the interpreted-scope summary text — this card
- * adds the three real actions on top of it:
- *   - Confirm and proceed  -> resends the EXACT same prompt with
- *     `scope_confirmed_proposal_id` set (ChatPanel.confirmScopeProposal)
- *   - Change scope         -> cancels the proposal, lets the user
- *     type a new/clarified message themselves
- *   - Cancel               -> cancels the proposal, never executes
- */
-export default function ScopeConfirmCard({ proposalId, prompt, onConfirm, onCancel }) {
+/** Consent is not completion. Only the server's task/commit receipt is success. */
+export default function ScopeConfirmCard({ proposalId, prompt, onConfirm, onCancel, disabled = false, executionReceipt }) {
   const [busy, setBusy] = useState(false);
-  const [resolved, setResolved] = useState(null); // "confirmed" | "cancelled" | "change"
+  const [receipt, setReceipt] = useState(null);
+  const [resolved, setResolved] = useState(null);
+  const [error, setError] = useState(null);
+  const lock = useRef(false);
+  const testId = (name) => `scope-confirm-${name}-${proposalId}`;
+
+  useEffect(() => {
+    if (executionReceipt?.proposal_id === proposalId) setReceipt(executionReceipt);
+  }, [executionReceipt, proposalId]);
+
+  useEffect(() => {
+    if (!proposalId) return;
+    let active = true;
+    api.get(`/verification/scope-confirm/${proposalId}`).then(({ data }) => {
+      if (!active) return;
+      if (data?.proposal?.execution_receipt) setReceipt(data.proposal.execution_receipt);
+      else if (["cancelled", "expired"].includes(data?.proposal?.status)) setResolved(data.proposal.status);
+    }).catch(() => { if (active) setError("Couldn't refresh this proposal. Confirmation will recheck its current status."); });
+    return () => { active = false; };
+  }, [proposalId]);
 
   if (!proposalId) return null;
+  const committed = receipt?.status === "succeeded" && receipt.task_id
+    && /^[a-f0-9]{40,64}$/i.test(receipt.commit_sha || "");
 
-  const handleConfirm = () => {
-    if (busy || resolved) return;
-    setBusy(true);
-    setResolved("confirmed");
-    onConfirm?.(proposalId, prompt);
-  };
-  const handleCancel = (kind) => {
-    if (busy || resolved) return;
-    setBusy(true);
-    setResolved(kind);
-    onCancel?.(proposalId);
-  };
+  async function act(kind) {
+    if (lock.current || disabled || resolved || receipt) return;
+    lock.current = true; setBusy(true); setError(null);
+    try {
+      if (kind === "confirm") {
+        if (!onConfirm) throw new Error("Confirmation is unavailable. No execution was requested.");
+        const result = await onConfirm(proposalId, prompt);
+        if (!result || result.proposal_id !== proposalId || !["succeeded", "executing", "unknown", "failed"].includes(result.status)) {
+          throw new Error("No execution receipt was received. Check this proposal before retrying.");
+        }
+        if (result.status === "succeeded" && (!result.task_id || !/^[a-f0-9]{40,64}$/i.test(result.commit_sha || ""))) {
+          throw new Error("The response has no verifiable task/commit receipt.");
+        }
+        setReceipt(result);
+      } else {
+        const result = await onCancel?.(proposalId);
+        if (result?.ok !== true || result.status !== "cancelled") {
+          throw new Error("Cancellation was not confirmed. This proposal may already be executing.");
+        }
+        setResolved(kind === "change" ? "change" : "cancelled");
+      }
+    } catch (e) { setError(e?.message || "Confirmation failed. No success has been verified."); }
+    finally { lock.current = false; setBusy(false); }
+  }
 
   return (
-    <div
-      data-testid="scope-confirm-card"
-      style={{
-        marginTop: 10,
-        padding: "10px 12px",
-        borderRadius: 10,
-        border: "1px solid var(--border)",
-        borderLeft: "3px solid var(--accent-2, #e8a020)",
-        background: "var(--panel-2)",
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
-                    color: "var(--accent-2, #e8a020)", marginBottom: 6 }}>
-        AWAITING SCOPE CONFIRMATION
+    <div data-testid={testId("card")} style={{ marginTop: 10, padding: 12, borderRadius: 8,
+      border: "1px solid var(--border)", borderLeft: "3px solid var(--accent-2, #e8a020)", background: "var(--panel-2)",
+      overflowWrap: "anywhere", maxWidth: "100%", minWidth: 0 }}>
+      <div data-testid={testId("status")} role="status" style={{ fontSize: 13, marginBottom: 8 }}>
+        {busy ? "Waiting for the execution receipt…" : committed ? `Commit recorded: ${receipt.commit_sha}`
+          : receipt ? `${receipt.status === "failed" ? "Execution failed" : "Execution not yet verified"}. ${receipt.error || "Check the task record."}`
+          : resolved === "change" ? "Cancelled. Send the revised scope as a new request."
+          : resolved ? `Proposal ${resolved}.` : "Awaiting scope confirmation"}
       </div>
-      {resolved ? (
-        <div data-testid="scope-confirm-resolved" style={{ fontSize: 13, color: "var(--text-dim)" }}>
-          {resolved === "confirmed" && "Confirmed — proceeding…"}
-          {resolved === "cancelled" && "Cancelled — nothing was touched."}
-          {resolved === "change" && "Okay — type the change you'd like and send it as a new message."}
-        </div>
-      ) : (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            data-testid="scope-confirm-proceed-btn"
-            onClick={handleConfirm}
-            disabled={busy}
-            style={{
-              padding: "6px 14px", borderRadius: 8, border: "none",
-              background: "var(--accent-2, #e8a020)", color: "#1a1206",
-              fontSize: 13, fontWeight: 600, cursor: busy ? "default" : "pointer",
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            Confirm and proceed
-          </button>
-          <button
-            data-testid="scope-confirm-change-btn"
-            onClick={() => handleCancel("change")}
-            disabled={busy}
-            style={{
-              padding: "6px 14px", borderRadius: 8,
-              border: "1px solid var(--border)", background: "transparent",
-              color: "var(--text-dim)", fontSize: 13, cursor: busy ? "default" : "pointer",
-            }}
-          >
-            Change scope
-          </button>
-          <button
-            data-testid="scope-confirm-cancel-btn"
-            onClick={() => handleCancel("cancelled")}
-            disabled={busy}
-            style={{
-              padding: "6px 14px", borderRadius: 8,
-              border: "1px solid var(--border)", background: "transparent",
-              color: "var(--text-faint)", fontSize: 13, cursor: busy ? "default" : "pointer",
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
+      {receipt?.task_id && <div data-testid={testId("task-id")}>Task: <code>{receipt.task_id}</code></div>}
+      {error && <div role="alert" data-testid={testId("error")} style={{ color: "var(--error, #ef4444)", marginBottom: 8 }}>{error}</div>}
+      {!resolved && !receipt && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" data-testid={testId("proceed-btn")} className="btn-primary" disabled={busy || disabled} onClick={() => act("confirm")}>Confirm and proceed</button>
+        <button type="button" data-testid={testId("change-btn")} className="btn-ghost" disabled={busy || disabled} onClick={() => act("change")}>Change scope</button>
+        <button type="button" data-testid={testId("cancel-btn")} className="btn-ghost" disabled={busy || disabled} onClick={() => act("cancel")}>Cancel</button>
+      </div>}
     </div>
   );
 }

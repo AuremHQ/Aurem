@@ -106,8 +106,7 @@ export default function Automations() {
           <p style={{ fontSize: 11, color: "var(--text-faint)",
                        marginTop: 10, lineHeight: 1.6 }}>
             Content type <code>application/json</code> · trigger on the
-            push event · set <code>GITHUB_WEBHOOK_SECRET</code> in prod
-            for signature verification.
+            push event.
           </p>
         </section>
 

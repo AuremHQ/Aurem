@@ -79,12 +79,12 @@ async def _already_sent(db, user_id: str) -> bool:
 
 
 async def _is_unsubscribed(db, email: str) -> bool:
-    from services.first50_campaign import is_unsubscribed
+    from services.email_link_tokens import is_unsubscribed
     return await is_unsubscribed(db, email)
 
 
 def render_text(user: dict) -> str:
-    from services.first50_campaign import unsub_url
+    from services.email_link_tokens import unsub_url
     first = (user.get("name") or (user.get("email") or "").split("@")[0] or "there").split()[0]
     email = user.get("email") or ""
     return (
@@ -100,7 +100,7 @@ def render_text(user: dict) -> str:
 
 
 def render_html(user: dict) -> str:
-    from services.first50_campaign import unsub_url
+    from services.email_link_tokens import unsub_url
     first = (user.get("name") or (user.get("email") or "").split("@")[0] or "there").split()[0]
     email = user.get("email") or ""
     return (

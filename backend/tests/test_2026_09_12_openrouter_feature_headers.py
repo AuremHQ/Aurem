@@ -132,8 +132,8 @@ class TestBudgetGateCallSitesPresent:
     @pytest.mark.parametrize("relpath,needle", [
         ("routers/chat/stream.py",         "assert_has_budget(user["),
         ("routers/chat/turn.py",           "assert_has_budget(user["),
-        ("routers/diagram.py",             "assert_has_task_budget(user["),
-        ("routers/upload.py",              "assert_has_budget(user["),
+        ("routers/diagram.py",             "assert_has_task_budget(user_id)"),
+        ("routers/upload.py",              "assert_has_budget(user_id)"),
         ("routers/cto_projects/tasks.py",  "assert_has_task_budget"),
     ])
     def test_budget_gate_still_wired(self, relpath, needle):

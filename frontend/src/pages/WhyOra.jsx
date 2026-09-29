@@ -14,6 +14,7 @@
  */
 import React from "react";
 import { Link } from "react-router-dom";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 const CSS = `
 .wo {
@@ -41,20 +42,6 @@ const CSS = `
 }
 .wo * { box-sizing: border-box; }
 .wo .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
-
-/* Top nav */
-.wo .nav {
-  position: sticky; top: 0; z-index: 50;
-  backdrop-filter: blur(18px);
-  background: rgba(10,14,26,0.72);
-  border-bottom: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 32px;
-}
-.wo .nav a.logo { color: var(--accent); font-family: var(--font-mono); font-weight: 800; font-size: 22px; letter-spacing: -1px; text-decoration: none; }
-.wo .nav a.logo span { color: var(--muted-2); font-weight: 400; font-size: 13px; margin-left: 6px; letter-spacing: 0; }
-.wo .nav .back { color: var(--muted-1); font-family: var(--font-mono); font-size: 13px; text-decoration: none; }
-.wo .nav .back:hover { color: var(--accent); }
 
 /* Hero */
 .wo .hero { padding: 96px 24px 40px; text-align: center; }
@@ -146,7 +133,6 @@ const CSS = `
 
 /* Mobile */
 @media (max-width: 640px) {
-  .wo .nav { padding: 12px 20px; }
   .wo .hero { padding: 64px 20px 20px; }
   .wo .tier { padding: 48px 20px 20px; }
   .wo .card { padding: 18px; }
@@ -176,7 +162,7 @@ const TIERS = [
         icon: "VOTE",
         h: "Parliament — Multi-Model Council with CEO Picker",
         p: "Three council members generate in parallel at temps 0.1 / 0.2 / 0.3. CEO (different model) picks best. Circuit breaker + trace_id + Semaphore(6).",
-        proof: "core/parliament.py",
+        proof: "core/parliament/parliament.py",
       },
       {
         n: "03",
@@ -273,7 +259,7 @@ const TIERS = [
         n: "14",
         icon: "HEAL",
         h: "Repo Auto-Heal (sidebar dot self-recovers)",
-        p: "Cheapest-first strategy pyramid: 3× exponential retry → PAT re-decrypt → OAuth refresh → surface. Transient failures never touch the user.",
+        p: "Cheapest-first pyramid: 3× exponential-backoff retry → re-mint GitHub App installation token → detect repo rename via case-insensitive owner/repo lookup → surface for manual reinstall.",
         proof: "services/repo_heal.py",
       },
       {
@@ -300,9 +286,9 @@ const TIERS = [
       {
         n: "17",
         icon: "KEY",
-        h: "Universal LLM Key across OpenAI / Claude / Gemini",
-        p: "One EMERGENT_LLM_KEY routes to any model. No juggling three separate API keys. Auto top-up baked in.",
-        proof: "services/llm.py",
+        h: "Multi-Provider LLM Gateway with 4-Tier Failover",
+        p: "OpenRouter primary (Claude Sonnet 4.5 for code, DeepSeek for chat) → DeepSeek direct-API failover → OpenRouter free-model chain → Groq emergency. One outage never means downtime.",
+        proof: "services/llm/__init__.py",
       },
       {
         n: "18",
@@ -322,7 +308,7 @@ const TIERS = [
         n: "20",
         icon: "SIGN",
         h: "Real-Developer Commit Identity + Co-authored-by",
-        p: "Commits attribute to real dev (from GitHub OAuth), Conventional Commits format, Co-authored-by: ORA trailer. Locked with 39 pytests.",
+        p: "Commits attribute to real dev (from GitHub OAuth), Conventional Commits format, Co-authored-by: ORA trailer. Locked with a dedicated regression suite.",
         proof: "services/git_identity.py",
       },
     ],
@@ -335,15 +321,8 @@ export default function WhyOra() {
     <div className="wo" data-testid="why-ora-page">
       <style>{CSS}</style>
 
-      {/* ── Top nav ─────────────────────────────────────────────── */}
-      <nav className="nav">
-        <Link to="/" className="logo" data-testid="why-ora-logo">
-          AUREM<span>· CTO</span>
-        </Link>
-        <Link to="/" className="back" data-testid="why-ora-back">
-          ← Back to home
-        </Link>
-      </nav>
+      {/* ── Top nav (shared, matches homepage) ─────────────────── */}
+      <MarketingNav />
 
       {/* ── Hero ────────────────────────────────────────────────── */}
       <section className="hero">

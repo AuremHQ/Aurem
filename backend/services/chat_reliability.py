@@ -103,7 +103,7 @@ async def record_started(db, *, request_id: str, session_id: str, user_id: str,
 
 
 async def record_completed(db, *, request_id: str, content: str, provider: str,
-                            tool_calls_run: int, turn_state: str) -> None:
+                            tool_calls_run: int, turn_state: str, scope_confirmation=None) -> None:
     """Terminal state: the turn produced a real, delivered result.
     This is the ONLY status `lookup_retry()` will ever replay from —
     a completed record is the one case where re-running the provider/
@@ -119,6 +119,7 @@ async def record_completed(db, *, request_id: str, content: str, provider: str,
                 "tool_calls_run": int(tool_calls_run or 0),
                 "turn_state": turn_state or "success",
                 "completed_at": _now_iso(),
+                **({"scope_confirmation": scope_confirmation} if scope_confirmation else {}),
             }},
         )
     except Exception as e:  # noqa: BLE001

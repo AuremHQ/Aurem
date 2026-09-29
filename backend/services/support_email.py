@@ -14,8 +14,8 @@ This module sends a plain-text + HTML email via Resend whenever
     (public, HMAC-token-verified — no login required, same pattern as
     the existing /support?t=…&e=… campaign-email link)
 
-Reuses `support_token()` from first50_campaign so a single token
-verifies both the composer link and the thread-view link.
+Reuses `support_token()` from services.email_link_tokens so a single
+token verifies both the composer link and the thread-view link.
 
 Fire-and-forget: send failures are logged but never block the admin's
 reply (the reply is still in Mongo and shows in the admin panel).
@@ -28,7 +28,7 @@ import os
 from typing import Optional
 from urllib.parse import quote
 
-from services.first50_campaign import support_token
+from services.email_link_tokens import support_token
 
 logger = logging.getLogger(__name__)
 

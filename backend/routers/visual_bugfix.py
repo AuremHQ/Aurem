@@ -41,6 +41,7 @@ from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.bin_context import build_bin_context
 from services.usage import assert_has_task_budget
+from services.team_permissions import check_permission
 from services.visual_bugfix_storage import get_object, put_object
 from services.visual_bugfix_vision import analyze_screenshot
 
@@ -66,12 +67,23 @@ async def _ensure_ttl_index(db) -> None:
         logger.warning("[visual_bugfix] TTL index create failed: %r", e)
 
 
-async def _resolve_user(authorization: Optional[str]) -> dict:
+async def _resolve_user(authorization: Optional[str], level: str = "write") -> dict:
+    """2026-09-26 P0 RBAC fix (Task 2) — every caller of this used to
+    get back the CALLER's own dev_users row untouched, so a team
+    member with real "loop" access either got a false 404 on every
+    report (their own user_id owns none — the account owner's does)
+    or, on /upload, silently created reports/burned task-budget under
+    their own personal account instead of the shared team one.
+    `user["user_id"]` returned here is the RESOLVED effective account
+    (owner for a team member, self for the owner/solo user) — every
+    downstream query and the task-budget check below now naturally
+    line up with the account these reports actually belong to."""
     payload = await current_dev(authorization)
     if not payload or not payload.get("user_id"):
         raise HTTPException(401, "Invalid token")
     db = get_db()
-    user = await db.dev_users.find_one({"user_id": payload["user_id"]})
+    ctx = await check_permission(payload, "loop", level, db=db)
+    user = await db.dev_users.find_one({"user_id": ctx["effective_account_id"]})
     if not user:
         raise HTTPException(401, "User not found")
     return user
@@ -159,7 +171,7 @@ async def get_screenshot(
     # `<img src>` can't set custom headers — accept the token as a
     # query param too, same convention as routers/github_app.py's
     # install-redirect route.
-    user = await _resolve_user(authorization or (f"Bearer {auth}" if auth else None))
+    user = await _resolve_user(authorization or (f"Bearer {auth}" if auth else None), level="read")
     doc = await _get_owned_report(report_id, user["user_id"])
     storage_path = doc.get("storage_path") if variant == "before" else doc.get("after_storage_path")
     if not storage_path:
@@ -435,7 +447,7 @@ async def get_status(
     services/local_tools.py's own search_repo docstring already
     documents for this pod, so /preview returns immediately and the
     frontend polls here instead of holding one long request open."""
-    user = await _resolve_user(authorization)
+    user = await _resolve_user(authorization, level="read")
     doc = await _get_owned_report(report_id, user["user_id"])
     return {
         "ok": True,

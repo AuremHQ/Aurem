@@ -25,7 +25,16 @@ jobs:
           node-version: '22'
       - name: Install locked dependencies
         run: |
-          pip install -r backend/requirements.txt
+          # 2026-09-26 fix — every other workflow (ci.yml, deploy.yml,
+          # qa-weekly.yml, quality-gate.yml) already passes
+          # --extra-index-url here because emergentintegrations lives
+          # on Emergent's private package index, not public PyPI (see
+          # Iter 306 comment in ci.yml). This workflow was missing it,
+          # so the plain `pip install -r requirements.txt` could never
+          # resolve on a public GH-hosted runner ("Could not find a
+          # version that satisfies the requirement emergentintegrations").
+          pip install -r backend/requirements.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
           corepack enable
           cd frontend
           yarn install --frozen-lockfile

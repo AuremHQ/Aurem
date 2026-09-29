@@ -61,9 +61,14 @@ _PATTERNS: list[tuple[re.Pattern, str, str]] = [
                 re.IGNORECASE), "aws_secret",
      "AWS secret access key"),
 
-    # GitHub personal access tokens.
-    (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github_pat",
-     "GitHub PAT"),
+    # GitHub personal access / OAuth / App tokens. 2026-09-27 P0-4 —
+    # GitHub's changelog: these are moving to a new stateless format
+    # up to ~520 chars (vs. the old fixed 36/40), with ghs_ tokens
+    # embedding a dot-separated JWT (base64url `-`/`_`) — widened
+    # both length AND charset, and fixed a typo that had left ghs_/
+    # ghu_ (App install/server tokens) unmatched here entirely.
+    (re.compile(r"gh[psuo]_[A-Za-z0-9_.\-]{20,}"), "github_pat",
+     "GitHub PAT / App token"),
     (re.compile(r"github_pat_[A-Za-z0-9_]{40,}"), "github_fine_grained_pat",
      "GitHub fine-grained PAT"),
 

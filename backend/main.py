@@ -3,6 +3,7 @@ AUREM Dev — Developer AI Platform
 Clean FastAPI entry point — wired to all routers from aurem_cto
 """
 import os
+import re
 import time
 import asyncio
 import logging
@@ -38,6 +39,7 @@ from routers.github_oauth import router as github_oauth_router
 from routers.google_oauth import router as google_oauth_router
 from routers.github_funnel import router as github_funnel_router  # 2026-08-01 CTA drop-off telemetry
 from routers.github_app import router as github_app_router  # 2026-02-10 · Phase 2 · install router + webhook
+from routers.team_management import router as team_management_router  # 2026-02 · Phase 1 · team RBAC
 from routers.cto_projects import router as cto_projects_router
 from routers.automations import router as automations_router
 from routers.upload import router as upload_router
@@ -52,6 +54,7 @@ from routers.admin_observability import router as admin_observability_router  # 
 from routers.admin_payments import router as admin_payments_router  # 2026-02-11 — Phase 2 split: /admin/payments, /financials, /stripe-*, /billing/*
 from routers.admin_support import router as admin_support_router  # 2026-02-11 — Phase 2 split: /admin/support, /errors, /alerts
 from routers.admin_users import router as admin_users_router  # 2026-02-11 — Phase 2 split: /admin/users, /funnel, /insights
+from routers.admin_funnel import router as admin_funnel_router  # 2026-09-28 MASTER TASK — GET /admin/funnel activation dashboard
 from routers.admin_projects_brain import router as admin_projects_brain_router  # 2026-02-11 — Phase 2 split: /admin/projects, /project-brain, /architecture
 from routers.admin_ops_config import router as admin_ops_config_router  # 2026-02-11 — Phase 2 split: /admin/cache, /feature-flags, /integrations, /settings, /github-app-config
 from routers.admin_llm_config import router as admin_llm_config_router  # 2026-08-27 — Admin self-serve LLM Settings
@@ -71,6 +74,8 @@ from routers.support import router as support_router
 from routers.payments import router as payments_router
 from routers.stripe_webhook_compat import router as stripe_webhook_compat_router  # Iter 388-ae — legacy /api/stripe/webhook alias (see Payments $0 root-cause memo)
 from routers.mcp import router as mcp_router, mcp_discovery_root
+from routers.mcp_ora_chat import router as mcp_ora_chat_router  # 2026-09-28 ORA Chat MCP (admin-only, Part A)
+from routers.admin_gateway import router as admin_gateway_router  # 2026-09-28 ORA Chat MCP/Gateway key admin API
 from routers.vercel import router as vercel_router  # Iter 212m-84 — Vercel platform tools for ORA
 from routers.oauth import router as oauth_router
 from routers.usage import router as usage_router
@@ -84,9 +89,8 @@ from routers.repo_indexing import router as repo_indexing_router    # Iter 212m-
 from routers.founder_offer import router as founder_offer_router    # Iter 212m-30 PR-2
 from routers.onboarding_first_scan import router as onboarding_first_scan_router  # Onboarding Step 4 · S-B
 from routers.onboarding import router as onboarding_router          # Iter 212m-32 nudge emails
-from routers.promo_first50 import router as promo_first50_router    # Track 3 (item #31) — First-50 signup promo + email verification
+from routers.auth_verify import router as auth_verify_router        # 2026-09-26 — email verification (was routers/promo_first50.py; promo removed, 0 users had ever claimed it)
 from routers.email_unsubscribe import router as email_unsubscribe_router  # 2026-02-12 · CAN-SPAM/GDPR one-click unsubscribe
-from routers.admin_first50_campaign import router as admin_first50_campaign_router  # 2026-02-12 · First-50 drip admin
 from routers.admin_vanguard import router as admin_vanguard_router  # Iter 212m-42 vanguard admin toggle
 from routers.admin_bin import router as admin_bin_router  # Iter 212m-171 admin panel rebuild
 from routers.security_scan import router as security_scan_router    # Iter 212m-55 1-click vuln scanner
@@ -1192,24 +1196,10 @@ async def lifespan(app: FastAPI):
             logger.warning("gate_stuck_nudge_cron not started: %r", e)
     else:
         app.state.gate_stuck_nudge_task = None
-    # Track 3 (item #31) — hourly cron to auto-downgrade First-50 promo
-    # users whose 30-day Pro grant has expired. Idempotent, safe to
-    # skip cycles. Same env-flag opt-out as the nudge cron.
-    if os.environ.get("ENABLE_PROMO_DOWNGRADE_CRON", "1").lower() in ("1", "true", "yes"):
-        try:
-            from routers.promo_first50 import downgrade_cron as _promo_downgrade_cron
-            app.state.promo_downgrade_task = _supervise(
-                _promo_downgrade_cron(3600),
-                name="promo_first50_downgrade",
-                db_getter=lambda: app.state.db,
-                long_lived=True,
-            )
-            logger.info("🕒 promo first50 downgrade cron enabled (hourly)")
-        except Exception as e:
-            app.state.promo_downgrade_task = None
-            logger.warning("promo downgrade cron not started: %r", e)
-    else:
-        app.state.promo_downgrade_task = None
+    # 2026-09-26 — the hourly First-50 promo-expiry downgrade cron that
+    # used to sit here was removed along with the rest of the promo
+    # (0 users had ever claimed it, so there was nothing left to
+    # downgrade — this wasn't a data migration, just dead code removal).
     # Iter 153 — nightly MongoDB backup. Refactored 2026-02-09 (item #5):
     # writes to Cloudflare R2 (offsite, durable), 30-day retention default,
     # 03:00 UTC default. The cron passes `db` on each invocation so the
@@ -2328,6 +2318,99 @@ class SSEAwareGZipMiddleware(GZipMiddleware):
 
 
 app.add_middleware(SSEAwareGZipMiddleware, minimum_size=512, compresslevel=5)
+
+
+# ── 2026-09-27 P0-3 follow-up — GitHub token response-body guard ──
+# The /loop/{id}/status leak (fixed 2026-09-26) was a live GitHub App
+# installation token accidentally included in a JSON response body.
+# That specific bug is fixed at the source now, but per the founder's
+# explicit ask: add a standing guard so a FUTURE leak of this shape —
+# here or in any new /loop/* endpoint — is provable or disprovable
+# from logs instead of relying on a one-time code review. Scoped to
+# /api/aurem-dev/loop/* (where the original bug lived) to keep this
+# cheap: only small JSON bodies are buffered/scanned; every other
+# response (SSE, static, non-loop routes, non-JSON) passes straight
+# through untouched. On a hit: redact in place before the bytes leave
+# the server AND log a CRITICAL alert (path + best-effort user_id —
+# NEVER the token value) so this is forensically provable going
+# forward.
+class GithubTokenLeakGuardMiddleware:
+    _TOKEN_RE = re.compile(r"gh[psuo]_[A-Za-z0-9_.\-]{20,}")
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    def _best_effort_user_id(scope) -> str:
+        try:
+            headers = dict(scope.get("headers") or [])
+            auth = headers.get(b"authorization", b"").decode("latin-1")
+            if not auth.lower().startswith("bearer "):
+                return "unknown"
+            import jwt as _jwt
+            from cto_services.auth import JWT_SECRET, JWT_ALGORITHM
+            payload = _jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            return payload.get("user_id", "unknown")
+        except Exception:
+            return "unknown"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/aurem-dev/loop/"):
+            return await self.app(scope, receive, send)
+
+        body_chunks: list[bytes] = []
+        start_message: dict = {}
+        is_json = {"val": False}
+
+        async def _guarded_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                start_message.clear()
+                start_message.update(message)
+                headers = dict(message.get("headers") or [])
+                ct = headers.get(b"content-type", b"").decode("latin-1")
+                is_json["val"] = "application/json" in ct
+                if not is_json["val"]:
+                    return await send(message)
+                return  # defer — decided once the full body is in
+            if message["type"] == "http.response.body":
+                if not is_json["val"]:
+                    return await send(message)
+                body_chunks.append(message.get("body", b""))
+                if message.get("more_body"):
+                    return
+                full_body = b"".join(body_chunks)
+                try:
+                    text = full_body.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = None
+                if text and self._TOKEN_RE.search(text):
+                    logger.critical(
+                        "SECURITY github_token_leak_guard: a github-token-"
+                        "shaped value was found in the outgoing response "
+                        "body for %s (user_id=%s) — redacted before send. "
+                        "This is the exact leak class fixed in "
+                        "/loop/{id}/status on 2026-09-26; if this fires, "
+                        "that leak has recurred or a new one exists.",
+                        scope.get("path"), self._best_effort_user_id(scope),
+                    )
+                    full_body = self._TOKEN_RE.sub(
+                        "[REDACTED_GITHUB_TOKEN]", text).encode("utf-8")
+                    headers = [
+                        (k, v) for k, v in (start_message.get("headers") or [])
+                        if k.lower() != b"content-length"
+                    ]
+                    headers.append((b"content-length", str(len(full_body)).encode()))
+                    start_message["headers"] = headers
+                await send(start_message)
+                await send({"type": "http.response.body", "body": full_body,
+                            "more_body": False})
+                return
+            await send(message)
+
+        await self.app(scope, receive, _guarded_send)
+
+
+app.add_middleware(GithubTokenLeakGuardMiddleware)
 
 
 # ── Iter 212m-55 — LPDoS protection (request body size cap) ──
@@ -3848,6 +3931,7 @@ app.include_router(google_oauth_router, prefix="/api/aurem-dev")
 app.include_router(github_funnel_router, prefix="/api/aurem-dev")  # 2026-08-01 CTA drop-off telemetry
 app.include_router(github_app_router, prefix="/api/aurem-dev")  # 2026-02-10 · Phase 2 · install router + webhook
 app.include_router(cto_projects_router, prefix="/api/aurem-dev")
+app.include_router(team_management_router, prefix="/api/aurem-dev")  # 2026-02 · Phase 1 · team RBAC
 app.include_router(automations_router, prefix="/api/aurem-dev")
 app.include_router(upload_router,        prefix="/api/aurem-dev")
 app.include_router(migrations_admin_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/migrations/*
@@ -3862,6 +3946,7 @@ app.include_router(admin_observability_router, prefix="/api")       # 2026-02-11
 app.include_router(admin_payments_router, prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_support_router,  prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_users_router,          prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
+app.include_router(admin_funnel_router,         prefix="/api/aurem-dev")  # 2026-09-28 MASTER TASK — GET /admin/funnel
 app.include_router(admin_projects_brain_router, prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_ops_config_router,     prefix="/api/aurem-dev")  # 2026-02-11 — Phase 2 split
 app.include_router(admin_llm_config_router,     prefix="/api/aurem-dev")  # 2026-08-27 — Admin self-serve LLM Settings
@@ -3903,9 +3988,8 @@ app.include_router(repo_indexing_router,  prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(founder_offer_router,  prefix="/api/aurem-dev")  # Iter 212m-30 PR-2
 app.include_router(onboarding_first_scan_router, prefix="/api/aurem-dev")  # Onboarding Step 4 · S-B
 app.include_router(onboarding_router,     prefix="/api/aurem-dev")  # Iter 212m-32 nudge emails
-app.include_router(promo_first50_router,  prefix="/api/aurem-dev")  # Track 3 (item #31) — First-50 signup promo + email verification
+app.include_router(auth_verify_router,    prefix="/api/aurem-dev")  # 2026-09-26 — email verification (was promo_first50_router)
 app.include_router(email_unsubscribe_router,        prefix="/api/aurem-dev")  # 2026-02-12 · one-click unsubscribe
-app.include_router(admin_first50_campaign_router,   prefix="/api/aurem-dev")  # 2026-02-12 · First-50 drip admin
 app.include_router(admin_vanguard_router, prefix="/api/aurem-dev")  # Iter 212m-42 vanguard config
 app.include_router(admin_bin_router,      prefix="/api/aurem-dev")  # Iter 212m-171 admin panel rebuild
 app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-55 1-click vuln scanner
@@ -3953,6 +4037,8 @@ app.include_router(trust_level_router)
 app.include_router(diagram_router,        prefix="/api/aurem-dev")  # Iter 212m-61 /diagram
 app.include_router(feature_window_router, prefix="/api/aurem-dev")  # Iter 212m-64 system map
 app.include_router(mcp_router,            prefix="/api/aurem-dev")  # iter 173 — MCP server
+app.include_router(mcp_ora_chat_router,   prefix="/api/aurem-dev")  # 2026-09-28 ORA Chat MCP (admin-only)
+app.include_router(admin_gateway_router,  prefix="/api/aurem-dev")  # 2026-09-28 ORA Chat MCP/Gateway key admin API
 app.include_router(vercel_router,         prefix="/api/aurem-dev")  # Iter 212m-84 — Vercel tools for ORA
 app.include_router(oauth_router,          prefix="/api/aurem-dev")  # iter 182 — OAuth 2.1 + PKCE for Claude Directory
 from routers.visibility import router as visibility_router          # Phase 3 · Visibility Kit Phase B (2026-08-28)

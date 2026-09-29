@@ -544,7 +544,7 @@ export default function Login() {
             textAlign: "center", fontSize: 13, color: "var(--text-dim)",
           }}>
             No account yet?{" "}
-            <Link to="/signup" data-testid="login-to-signup">Claim 1000 tokens →</Link>
+            <Link to="/signup" data-testid="login-to-signup">Claim 10 free tasks →</Link>
           </div>
 
           <div

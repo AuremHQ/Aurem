@@ -17,11 +17,23 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev
+from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/github", tags=["AUREM GitHub"])
+
+# 2026-09-26 P0 RBAC audit — this router pre-dates the GitHub App
+# migration (see module docstring: "P3 OAuth pending") and the app has
+# since fully moved to per-repo GitHub App installation tokens as the
+# only supported connect method. `/push` used a single GLOBAL
+# `GITHUB_TOKEN` PAT to write to ANY `body.repo` string the caller
+# supplied, gated only by "is logged in" — with zero check that the
+# caller actually owns/has access to that repo. Locking the whole
+# router to admin so this legacy bot-account path can't be used by a
+# regular authenticated user to push to an arbitrary repo the bot's
+# PAT can reach (currently fails closed anyway since `GITHUB_TOKEN` is
+# unset, but that's an environment fact, not a code guarantee).
 
 GITHUB_API = "https://api.github.com"
 
@@ -58,7 +70,7 @@ def _extract_files_from_text(text: str) -> List[FileEntry]:
 
 @router.get("/status")
 async def status(authorization: str = Header(None)) -> dict:
-    me = await current_dev(authorization)
+    me = await require_admin(authorization)
     token = os.getenv("GITHUB_TOKEN", "")
     return {
         "user_id": me["user_id"],
@@ -77,7 +89,7 @@ async def push(body: PushBody, authorization: str = Header(None)) -> dict:
     File source priority: body.files > files extracted from session messages.
     Uses GITHUB_TOKEN PAT. Creates/updates each file via the Contents API.
     """
-    me = await current_dev(authorization)
+    me = await require_admin(authorization)
     token = os.getenv("GITHUB_TOKEN", "")
     if not token:
         raise HTTPException(

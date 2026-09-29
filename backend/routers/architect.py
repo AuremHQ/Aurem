@@ -18,6 +18,7 @@ from fastapi import APIRouter, Header, HTTPException
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.architect_agent import get_blueprint
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/architect", tags=["architect"])
 
@@ -35,11 +36,13 @@ async def get_project_blueprint(
     feature, or one whose task was a scoped fix rather than a new
     build) rather than an error."""
     user = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2).
+    ctx = await check_permission(user, "projects", "read", db=get_db())
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
     proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": user["user_id"]},
+        {"project_id": project_id, "user_id": ctx["effective_account_id"]},
         {"_id": 0, "project_id": 1},
     )
     if not proj:

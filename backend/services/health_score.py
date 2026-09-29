@@ -593,10 +593,15 @@ async def _rollback_penalty(db) -> dict:
 # ── live GitHub Actions ci.yml pass-rate over 30 days ──────────────────
 async def _ci_pass_rate_30d() -> dict:
     from services.http.client import ext_client
-    token = os.environ.get("GITHUB_ACTIONS_TOKEN")
+    from services.github_app import get_token_for_repo
     repo = os.environ.get("GITHUB_REPO")
-    if not token or not repo:
-        return {"available": False, "reason": "GITHUB_ACTIONS_TOKEN/GITHUB_REPO not set"}
+    if not repo or "/" not in repo:
+        return {"available": False, "reason": "GITHUB_REPO not set"}
+    owner, name = repo.split("/", 1)
+    token, reason = await get_token_for_repo(owner, name)
+    if not token:
+        return {"available": False,
+                "reason": f"GitHub App has no access to {repo} ({reason})"}
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {token}",

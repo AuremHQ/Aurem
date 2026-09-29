@@ -7,6 +7,7 @@ import React, { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } from "../data/competitors";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 const S = {
   page:  { minHeight: "100vh", background: "var(--bg)", color: "var(--text)" },
@@ -51,6 +52,7 @@ export default function CompareHub() {
   return (
     <div data-testid="compare-hub-root" style={S.page}>
       <MetaTags />
+      <MarketingNav />
       <div style={S.shell}>
         <header style={{ padding: "72px 0 32px", textAlign: "center" }}>
           <h1 style={{ fontSize: 38, fontWeight: 700, margin: "0 0 12px" }}>

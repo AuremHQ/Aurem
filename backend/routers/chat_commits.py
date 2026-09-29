@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/chat-commits", tags=["AUREM Chat Commits"])
 
@@ -33,11 +34,13 @@ async def link_commit(body: LinkBody,
                       authorization: str = Header(None)) -> dict[str, Any]:
     """Called by the chat backend whenever a message triggers a code change."""
     me = await current_dev(authorization)
+    ctx = await check_permission(me, "loop", "write", db=require_db())
+    user_id = ctx["effective_account_id"]
     db = require_db()
     await db.aurem_cto_chat_commits.update_one(
-        {"user_id": me["user_id"], "message_id": body.message_id},
+        {"user_id": user_id, "message_id": body.message_id},
         {"$set": {
-            "user_id":    me["user_id"],
+            "user_id":    user_id,
             "message_id": body.message_id,
             "commit_sha": body.commit_sha,
             "summary":    body.summary,
@@ -53,9 +56,10 @@ async def link_commit(body: LinkBody,
 async def by_message(message_id: str,
                       authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
+    ctx = await check_permission(me, "loop", "read", db=require_db())
     db = require_db()
     row = await db.aurem_cto_chat_commits.find_one(
-        {"user_id": me["user_id"], "message_id": message_id},
+        {"user_id": ctx["effective_account_id"], "message_id": message_id},
         {"_id": 0},
     )
     if not row:
@@ -72,9 +76,10 @@ async def rollback(body: RollbackBody,
                     authorization: str = Header(None)) -> dict[str, Any]:
     """Mark the rollback as initiated; the deploy router actually runs git revert."""
     me = await current_dev(authorization)
+    ctx = await check_permission(me, "loop", "write", db=require_db())
     db = require_db()
     row = await db.aurem_cto_chat_commits.find_one(
-        {"user_id": me["user_id"], "message_id": body.message_id},
+        {"user_id": ctx["effective_account_id"], "message_id": body.message_id},
         {"_id": 0},
     )
     if not row:

@@ -1,0 +1,133 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts ==============================
+platform linux -- Python 3.11.16, pytest-8.3.0, pluggy-1.6.0 -- /root/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /app/backend
+configfile: pytest.ini
+plugins: timeout-2.4.0, rerunfailures-16.6, cov-7.1.0, anyio-4.13.0, asyncio-0.24.0, respx-0.23.1
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 56 items
+
+tests/test_x1_mock_incident_2026_08_30.py::test_t_mock_isolation_preview_prod_read_once_at_import PASSED [  1%]
+tests/test_x1_mock_incident_2026_08_30.py::test_t_mock_response_sets_serving_flag PASSED [  3%]
+tests/test_x1_mock_incident_2026_08_30.py::test_t_mock_gate_covers_council_and_loop_path PASSED [  5%]
+tests/test_x1_mock_incident_2026_08_30.py::test_t_ship_refuses_on_mock_source_level PASSED [  7%]
+tests/test_x1_mock_incident_2026_08_30.py::test_t_mock_detect_alert_logged PASSED [  8%]
+tests/test_x1_mock_incident_2026_08_30.py::test_t_real_path_unchanged_when_mock_off PASSED [ 10%]
+tests/test_b1_repo_status_invalidate.py::test_t_commit_success_clears_not_connected PASSED [ 12%]
+tests/test_b1_repo_status_invalidate.py::test_t_invalidate_missing_key_is_a_noop PASSED [ 14%]
+tests/test_w2_step2_mock_short_circuit_chat_stream.py::test_mock_short_circuit_live_chat PASSED [ 16%]
+tests/test_w2_step2_mock_short_circuit_chat_stream.py::test_mock_no_fence PASSED [ 17%]
+tests/test_w2_step2_mock_short_circuit_chat_stream.py::test_mock_off_real_path_unchanged PASSED [ 19%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_glm_model_id_default_is_z_ai_glm_52 PASSED [ 21%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_call_glm_function_exists PASSED [ 23%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_swift_mode_uses_glm_only PASSED [ 25%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_pro_mode_uses_glm_when_non_empty PASSED [ 26%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_pro_mode_falls_back_to_claude_when_glm_empty PASSED [ 28%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_pro_mode_falls_back_to_claude_when_glm_raises PASSED [ 30%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_maxx_mode_calls_both_glm_then_claude_review PASSED [ 32%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_maxx_mode_returns_glm_draft_when_claude_review_fails PASSED [ 33%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_maxx_mode_falls_back_to_claude_direct_when_glm_empty PASSED [ 35%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_legacy_chat_mode_still_uses_deepseek PASSED [ 37%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_step_hook_fires_thinking_label_in_swift_mode PASSED [ 39%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_step_hook_fires_review_label_in_maxx_mode PASSED [ 41%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_orchestrator_plumbs_review_mode_to_llm PASSED [ 42%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_orchestrator_fires_step_hook_on_tool_dispatch PASSED [ 44%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_chat_sse_registers_step_callback PASSED [ 46%]
+tests/test_iter212m18_glm_primary_claude_watchdog_sse_steps.py::test_chat_sse_forwards_step_events_to_client PASSED [ 48%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_topbar_theme_toggle_removed PASSED [ 50%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_dashboard_hardcodes_dark_theme PASSED [ 51%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_chat_focus_event_dispatched_from_composer PASSED [ 53%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_topbar_listens_for_chat_focus_to_hide PASSED [ 55%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_dashboard_auto_collapses_advisor_on_chat_active PASSED [ 57%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_loop_engine_has_manual_ship_pause_and_confirm PASSED [ 58%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_loop_confirm_ship_endpoint_registered PASSED [ 60%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_confirm_ship_approved_runs_commit_and_emits_completed PASSED [ 62%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_confirm_ship_rejected_aborts_no_commit PASSED [ 64%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_ship_pending_card_component_exists PASSED [ 66%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_chat_panel_renders_ship_pending_card_on_awaiting_ship PASSED [ 67%]
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_loop_api_exposes_confirm_ship_helper PASSED [ 69%]
+tests/test_iter212m177_prod_reliability.py::test_p0_1_double_confirm_ship_pushes_exactly_once PASSED [ 71%]
+tests/test_iter212m177_prod_reliability.py::test_p0_1_route_returns_existing_commit PASSED [ 73%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_list_repo_files_wrapper_maps_tree PASSED [ 75%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_search_repo_wrapper_sends_pattern PASSED [ 76%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_get_repo_structure_wrapper_maps_symbols PASSED [ 78%]
+tests/test_iter212m177_prod_reliability.py::test_p0_2_local_list_repo_files_against_real_github_shape PASSED [ 80%]
+tests/test_iter212m177_prod_reliability.py::test_p0_3_ten_writing_prompts_route_to_council_c PASSED [ 82%]
+tests/test_iter212m177_prod_reliability.py::test_p0_3_analysis_routes_to_b_and_code_stays_a PASSED [ 83%]
+tests/test_iter212m177_prod_reliability.py::test_p0_3_chat_endpoints_apply_inference PASSED [ 85%]
+tests/test_iter212m177_prod_reliability.py::test_p0_4_hallucination_gate_flags_invented_rewrite PASSED [ 87%]
+tests/test_iter212m177_prod_reliability.py::test_p0_4_task_text_paths_are_read_first PASSED [ 89%]
+tests/test_iter212m177_prod_reliability.py::test_p0_4_no_done_status_without_edits PASSED [ 91%]
+tests/test_iter212m177_prod_reliability.py::test_p1_5_get_repo_health_skips_zero_file_scans PASSED [ 92%]
+tests/test_iter212m177_prod_reliability.py::test_p1_5_zero_file_scans_never_persisted_and_last_filtered PASSED [ 94%]
+tests/test_iter212m177_prod_reliability.py::test_p1_6_all_pre_gen_awaits_have_hard_timeouts PASSED [ 96%]
+tests/test_iter212m177_prod_reliability.py::test_p1_7_stream_replays_mongo_last_event_without_local_engine PASSED [ 98%]
+tests/test_iter212m177_prod_reliability.py::test_p1_7_frontend_restores_and_reconnects PASSED [100%]
+
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests/test_w2_step2_mock_short_circuit_chat_stream.py::test_mock_short_circuit_live_chat
+  /app/backend/routers/chat.py:311: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("prompt")
+
+tests/test_w2_step2_mock_short_circuit_chat_stream.py::test_mock_short_circuit_live_chat
+  /app/backend/routers/chat.py:315: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("task_type")
+
+tests/test_iter212m111_night_mode_focus_manual_ship.py::test_confirm_ship_rejected_aborts_no_commit
+  /root/.venv/lib/python3.11/site-packages/pymongo/synchronous/collection.py:1541: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    return self._database.client._retryable_write(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_iter212m177_prod_reliability.py::test_p0_2_list_repo_files_wrapper_maps_tree
+  /app/backend/routers/mcp.py:424: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    "annotations": {
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_ten_writing_prompts_route_to_council_c
+  tests/test_iter212m177_prod_reliability.py:267: PytestWarning: The test <Function test_p0_3_ten_writing_prompts_route_to_council_c> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_ten_writing_prompts_route_to_council_c():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_analysis_routes_to_b_and_code_stays_a
+  tests/test_iter212m177_prod_reliability.py:278: PytestWarning: The test <Function test_p0_3_analysis_routes_to_b_and_code_stays_a> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_analysis_routes_to_b_and_code_stays_a():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_chat_endpoints_apply_inference
+  tests/test_iter212m177_prod_reliability.py:289: PytestWarning: The test <Function test_p0_3_chat_endpoints_apply_inference> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_chat_endpoints_apply_inference():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_4_hallucination_gate_flags_invented_rewrite
+  tests/test_iter212m177_prod_reliability.py:321: PytestWarning: The test <Function test_p0_4_hallucination_gate_flags_invented_rewrite> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_4_hallucination_gate_flags_invented_rewrite():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_4_task_text_paths_are_read_first
+  tests/test_iter212m177_prod_reliability.py:334: PytestWarning: The test <Function test_p0_4_task_text_paths_are_read_first> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_4_task_text_paths_are_read_first():
+
+tests/test_iter212m177_prod_reliability.py::test_p0_4_no_done_status_without_edits
+  tests/test_iter212m177_prod_reliability.py:344: PytestWarning: The test <Function test_p0_4_no_done_status_without_edits> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_4_no_done_status_without_edits():
+
+tests/test_iter212m177_prod_reliability.py::test_p1_5_zero_file_scans_never_persisted_and_last_filtered
+  tests/test_iter212m177_prod_reliability.py:378: PytestWarning: The test <Function test_p1_5_zero_file_scans_never_persisted_and_last_filtered> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p1_5_zero_file_scans_never_persisted_and_last_filtered():
+
+tests/test_iter212m177_prod_reliability.py::test_p1_6_all_pre_gen_awaits_have_hard_timeouts
+  tests/test_iter212m177_prod_reliability.py:388: PytestWarning: The test <Function test_p1_6_all_pre_gen_awaits_have_hard_timeouts> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p1_6_all_pre_gen_awaits_have_hard_timeouts():
+
+tests/test_iter212m177_prod_reliability.py::test_p1_7_frontend_restores_and_reconnects
+  tests/test_iter212m177_prod_reliability.py:487: PytestWarning: The test <Function test_p1_7_frontend_restores_and_reconnects> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p1_7_frontend_restores_and_reconnects():
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 56 passed, 14 warnings in 2.62s ========================

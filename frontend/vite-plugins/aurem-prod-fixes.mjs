@@ -43,6 +43,10 @@ const KNOWN_PREFIXES = new Set([
   // 2026-09-12 · is-agentic.com agent-readiness fix — new /developers
   // portal (see ROUTE_META below for its no-JS server-rendered body).
   "developers",
+  // 2026-02 · Phase 1 (Team RBAC) — /settings?tab=team is covered by
+  // the existing "settings" prefix, but /team/accept-invite (public
+  // invite-acceptance page, App.jsx) is its own top-level route.
+  "team",
 ]);
 
 const HAS_EXTENSION = /\.[a-zA-Z0-9]+$/;

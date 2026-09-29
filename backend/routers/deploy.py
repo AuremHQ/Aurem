@@ -39,7 +39,11 @@ def _now_iso() -> str:
 def _scrub(text: str) -> str:
     if not text:
         return ""
-    text = re.sub(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]+)",
+    # 2026-09-27 P0-4 — widened from ghp_-only, plain-alphanumeric to
+    # also catch bare ghs_/gho_/ghu_ App tokens (GitHub's new
+    # stateless format embeds a dot-separated JWT) not already
+    # caught by the "Authorization: Bearer …" scrub below.
+    text = re.sub(r"(gh[psuo]_[A-Za-z0-9_.\-]{20,}|github_pat_[A-Za-z0-9_]+)",
                   "github_pat_***", text)
     text = re.sub(r"(?i)(authorization:\s*bearer\s+)\S+", r"\1***", text)
     return text[:4000]
@@ -128,6 +132,8 @@ async def _find_cfg(db, user_id: str, project_id: str | None) -> dict | None:
 async def get_config(authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "read", db=db)
     row = await _find_cfg(db, me["user_id"], None)
     return _serialize_cfg(row)
 
@@ -151,6 +157,8 @@ async def save_config(body: DeployConfigBody,
                       authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "write", db=db)
     if not is_vault_available():
         raise HTTPException(503, {
             "code": "vault_unavailable",

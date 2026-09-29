@@ -82,7 +82,7 @@ def test_wrapped_share_text_format():
         "period_label": "June 2026",
         "tasks_shipped": 12, "hours_saved": 9.6, "repos_touched": 3,
         "top_mode": "C", "ship_streak_days": 5,
-        "claude_corrections": 2, "developer_name": "Test",
+        "review_saves": 2, "developer_name": "Test",
     })
     assert "AUREMcto" in text or "AUREM" in text
     assert "12" in text       # tasks_shipped
@@ -141,12 +141,16 @@ def test_analytics_page_renders_wrapped_card():
     assert "<OraWrapped" in src
 
 
-def test_landing_has_wall_nav_link():
+def test_landing_has_no_wall_nav_link():
+    """2026-09-28 MASTER TASK R5/Part1#5 — /wall is now default-OFF
+    (public_ship_wall flag) because its /stats endpoint leaked real
+    un-opted-in ship counts, incl. founder/test accounts, to anyone.
+    Every public link to it (homepage CTA + footer) was removed."""
     path = os.path.join(
         os.path.dirname(__file__),
         "..", "..", "frontend", "src", "pages", "Landing.jsx",
     )
     with open(path, encoding="utf-8") as fh:
         src = fh.read()
-    assert 'to="/wall"' in src
-    assert "Ship Wall" in src
+    assert 'to="/wall"' not in src
+    assert "Ship Wall" not in src

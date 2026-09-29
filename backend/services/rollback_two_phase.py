@@ -130,8 +130,8 @@ async def execute_rollback_from_snapshot(
                 "hint": "Pass confirm=true — phase-2 commit is explicit."}
     if not token:
         return {"ok": False, "reason": "no_write_token_configured",
-                "hint": "Set AUREM_DRILL_TOKEN (or GITHUB_ACTIONS_TOKEN) "
-                        "with contents:write for the target repo."}
+                "hint": "The AUREM GitHub App has no access to this repo, "
+                        "and AUREM_DRILL_TOKEN isn't set as a fallback."}
 
     prev = await db.rollback_previews.find_one({"preview_token": preview_token})
     if not prev or prev.get("snapshot_id") != snapshot_id:

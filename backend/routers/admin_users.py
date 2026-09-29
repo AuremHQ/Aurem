@@ -41,6 +41,7 @@ from services.usage import get_usage
 from services.admin_analytics_cache import (
     mongo_swr_cache,
 )
+from services.synthetic_filter import synthetic_mongo_filter
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on
@@ -74,6 +75,49 @@ async def github_sync_status(authorization: Optional[str] = Header(None)):
     from routers.version import _COMMIT_SHA, _BUILT_AT
     from services.github_sync import get_github_sync
     return await get_github_sync(_COMMIT_SHA, _BUILT_AT, db=get_db())
+
+
+# 2026-09-28 MASTER TASK Part B — Cockpit gauges. One dedicated
+# endpoint for the three gauge values so they always agree with each
+# other (same counting method, same instant) instead of stitching
+# together numbers from /admin/dashboard + /admin/pulse + a new
+# presence query, which have historically disagreed (see
+# BusinessPulse's "cockpit says 33 total, financials says 31 free"
+# comment in AdminCockpit.jsx).
+# 2026-09-28 "ACTIVATION FIRST" Part 3 fix — `total_users` now uses
+# the SAME organic/synthetic-filtered count as /admin/pulse (was raw
+# `dev_users.count_documents({})`, causing the exact "246 vs 243"
+# gauge-vs-card mismatch the founder reported). `active_24h` is also
+# now the single source for the Cockpit's "DAU (today)" card — the
+# OLD dau (routers/admin_analytics.py, "sent a chat message today")
+# was a much narrower definition than "anyone active" and could
+# legitimately read 0 while this endpoint's `live_now` read 2 (a
+# founder just browsing the admin panel, never sending a chat
+# message, is "live" but wasn't "DAU" under the old definition).
+@router.get("/presence/summary")
+async def presence_summary(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    db = require_db()
+    now = time.time()
+    organic = synthetic_mongo_filter()
+    total_users = await db.dev_users.count_documents(organic)
+    live_now = await db.dev_users.count_documents(
+        {**organic, "last_seen_at": {"$gte": now - 120}}
+    )
+    active_24h = await db.dev_users.count_documents(
+        {**organic, "last_seen_at": {"$gte": now - 86400}}
+    )
+    paid_users = await db.dev_users.count_documents(
+        {**organic, "tier": {"$in": ["starter", "pro", "team"]}}
+    )
+    return {
+        "ok": True,
+        "total_users": total_users,
+        "live_now": live_now,
+        "active_24h": active_24h,
+        "paid_users": paid_users,
+    }
+
 
 
 @router.get("/users")
@@ -216,6 +260,14 @@ async def list_users(
         u["project_count"] = proj_counts.get(uid, 0)
         u["task_count"]    = task_counts.get(uid, 0)
         u["session_count"] = sess_counts.get(uid, 0)
+        # 2026-09-28 MASTER TASK Part B — Live Presence. `last_seen_at`
+        # is bumped on every authenticated request (cto_services/
+        # auth.py::current_dev, throttled to 1 write/45s/user) — this
+        # is real request activity, not a synthetic "online" flag.
+        # "online" mirrors the founder's own 2-minute freshness bar.
+        last_seen = u.get("last_seen_at")
+        u["last_seen_at"] = last_seen
+        u["is_online"] = bool(last_seen and (now - last_seen) <= 120)
     return {"users": users, "bucket_counts": bucket_counts}
 
 
@@ -279,6 +331,37 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     user["token_grants"] = await db.cto_token_grants.find(
         {"user_id": user_id}, {"_id": 0},
     ).sort("granted_at", -1).limit(20).to_list(20)
+
+    # 2026-09-28 MASTER TASK Part B — per-user drill-down additions:
+    # (a) cost-by-model breakdown from the SAME canonical `real_llm_usage`
+    #     ledger /admin/agent-tokens reads, just scoped to this user_id
+    #     instead of the whole app — no separate cost source invented.
+    # (b) live presence (last_seen_at bumped by cto_services/auth.py::
+    #     current_dev on every authenticated request this user makes;
+    #     is_online mirrors the same 2-minute freshness bar as the
+    #     Users list's green dot).
+    cost_by_model: dict[str, dict] = {}
+    async for d in db.real_llm_usage.aggregate([
+        {"$match": {"user_id": user_id, "status": {"$ne": "failed"}}},
+        {"$group": {
+            "_id": {"provider": "$provider", "model": "$model"},
+            "tokens": {"$sum": "$total_tokens"},
+            "cost_usd": {"$sum": "$cost_usd"},
+            "calls": {"$sum": 1},
+        }},
+    ]):
+        key = f"{d['_id'].get('provider') or 'unknown'}/{d['_id'].get('model') or 'unknown'}"
+        cost_by_model[key] = {
+            "tokens": int(d.get("tokens") or 0),
+            "cost_usd": round(float(d.get("cost_usd") or 0.0), 6),
+            "calls": int(d.get("calls") or 0),
+        }
+    user["cost_by_model"] = cost_by_model
+    user["cost_total_usd"] = round(sum(v["cost_usd"] for v in cost_by_model.values()), 6)
+    last_seen = user.get("last_seen_at")
+    user["last_seen_at"] = last_seen
+    user["is_online"] = bool(last_seen and (time.time() - last_seen) <= 120)
+
 
     # 2026-08-20 — Funnel nudge emails sent to this user (stage, sent
     # time, click-through), from services/funnel_nudge_cron.py's
@@ -405,42 +488,20 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
             "kind": "auth", "type": "email_verified",
             "at": used_at, "detail": {},
         })
-    # Promo First-50 claim (from dev_users itself).
-    if user.get("promo_first50_claimed"):
-        claim_ts = user.get("promo_first50_claimed_at")
-        if hasattr(claim_ts, "timestamp"):
-            claim_ts = claim_ts.timestamp()
-        timeline.append({
-            "kind": "offer", "type": "promo_first50_claimed",
-            "at": claim_ts, "detail": {
-                "pro_expires_at": (
-                    user["pro_expires_at"].timestamp()
-                    if hasattr(user.get("pro_expires_at"), "timestamp")
-                    else user.get("pro_expires_at")
-                ),
-            },
-        })
     # Sort merged timeline (drop rows with unusable ts).
     timeline = [t for t in timeline if isinstance(t.get("at"), (int, float))]
     timeline.sort(key=lambda x: x["at"], reverse=True)
     user["activity_timeline"] = timeline[:80]
 
     # (3) Active Offers / Promo Status — single source of truth.
-    now_ts = time.time()
-    pro_exp = user.get("pro_expires_at")
-    pro_exp_epoch = (
-        pro_exp.timestamp() if hasattr(pro_exp, "timestamp") else pro_exp
-    )
-    pro_active = bool(
-        pro_exp_epoch and isinstance(pro_exp_epoch, (int, float))
-        and pro_exp_epoch > now_ts
-    )
     tier = user.get("tier") or "free"
-    # tier_source discriminator — is Pro from promo or a real Stripe sub?
+    # tier_source discriminator — is Pro from a real Stripe sub, founder,
+    # or something else? (2026-09-26 — the First-50 promo branch that
+    # used to sit here was removed along with the rest of the promo;
+    # 0 users had ever claimed it, so this is a clean cut, not a data
+    # migration.)
     if tier == "founder":
         tier_source = "founder"
-    elif user.get("promo_first50_claimed") and pro_active:
-        tier_source = "promo_first50"   # ← don't dangle offers at these users
     elif user.get("stripe_subscription_id") or user.get("subscription_id"):
         tier_source = "paid_subscription"
     elif tier != "free":
@@ -468,20 +529,6 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     user["offers"] = {
         "tier":        tier,
         "tier_source": tier_source,
-        "first50": {
-            "claimed":         bool(user.get("promo_first50_claimed")),
-            "claimed_at":      (
-                user["promo_first50_claimed_at"].timestamp()
-                if hasattr(user.get("promo_first50_claimed_at"), "timestamp")
-                else user.get("promo_first50_claimed_at")
-            ),
-            "pro_expires_at":  pro_exp_epoch,
-            "pro_active":      pro_active,
-            "days_left":       (
-                round((pro_exp_epoch - now_ts) / 86400, 1)
-                if pro_active else None
-            ),
-        },
         "founder_offer": {
             "claim_count":   len(seo_claims),
             "active_claims": [c for c in seo_claims
@@ -543,6 +590,16 @@ async def grant_tokens(
         "granted_by": admin.get("email") or admin.get("user_id"),
         "granted_at": now,
     })
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed
+    # (GET /admin/audit/actions), on top of the existing
+    # cto_token_grants row (kept as-is — it's the per-user grant
+    # history the user detail drill-down reads).
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="token_grant", target=user_id, result="ok",
+        extra={"tokens": body.tokens, "reason": (body.reason or "").strip()[:200]},
+    )
     usage = await get_usage(user_id)
     return {"ok": True, "granted": body.tokens, "usage": usage}
 

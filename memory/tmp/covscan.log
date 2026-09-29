@@ -1,0 +1,1597 @@
+/root/.venv/lib/python3.11/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......................F............................F....................................................................... [ 13%]
+F.......FF.......................................F.FF...........s......F [ 21%]
+F.F......FFF.F...................................F..............F...s... [ 28%]
+.........F.............................................................. [ 36%]
+.........sss.........................ssss......................F.F....s. [ 44%]
+.F..............FF.F........................F.....F.................F... [ 52%]
+........................................................................ [ 60%]
+....................................................................ssss [ 68%]
+sssssssssssssssssssss................................................... [ 75%]
+........................................................................ [ 83%]
+........................................................................ [ 91%]
+..................................F..........F.....................F.... [ 99%]
+F...F..                                                                  [100%]
+=================================== FAILURES ===================================
+_____________ TestMockOverride.test_ora_chat_message_returns_mock ______________
+
+self = <test_admin_llm_settings_e2e.TestMockOverride object at 0xf93b2da2ee50>
+headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...5Y2M0Mzg1MzciLCJleHAiOjE3ODkzNTExNzN9.TGx89aWbDV-nj42g-7QOb0XUZ6ulgDibwYzrk0ukxRY', 'Content-Type': 'application/json'}
+
+    def test_ora_chat_message_returns_mock(self, headers):
+        # Create session
+        r = requests.post(f"{API}/ora-chat/sessions", headers=headers, json={}, timeout=15)
+        if r.status_code == 404:
+            pytest.skip("ora-chat sessions endpoint not present at expected path")
+        assert r.status_code in (200, 201), r.text
+        body = r.json()
+        session = body.get("session") or body
+        session_id = session.get("session_id") or session.get("id")
+        assert session_id, r.text
+    
+        # Send message
+        r = requests.post(f"{API}/ora-chat/message", headers=headers,
+                          json={"session_id": session_id, "content": "hello test", "mode": "advise"},
+                          timeout=60, stream=False)
+        # This may be SSE — accept 200
+        assert r.status_code == 200, r.text[:500]
+        body_text = r.text
+        # In MOCK_LLM mode we expect mock indicator in stream
+>       assert ("mock" in body_text.lower()) or ("MOCK" in body_text), body_text[:800]
+E       AssertionError: event: state
+E         data: {"type": "state", "state_as_of": "state_as_of: 2026-09-07T01:59:34.684093+00:00"}
+E         
+E         event: error
+E         data: {"type": "error", "error": "llm_api_key_missing"}
+E         
+E         
+E       assert ('mock' in 'event: state\r\ndata: {"type": "state", "state_as_of": "state_as_of: 2026-09-07t01:59:34.684093+00:00"}\r\n\r\nevent: error\r\ndata: {"type": "error", "error": "llm_api_key_missing"}\r\n\r\n' or 'MOCK' in 'event: state\r\ndata: {"type": "state", "state_as_of": "state_as_of: 2026-09-07T01:59:34.684093+00:00"}\r\n\r\nevent: error\r\ndata: {"type": "error", "error": "llm_api_key_missing"}\r\n\r\n')
+E        +  where 'event: state\r\ndata: {"type": "state", "state_as_of": "state_as_of: 2026-09-07t01:59:34.684093+00:00"}\r\n\r\nevent: error\r\ndata: {"type": "error", "error": "llm_api_key_missing"}\r\n\r\n' = <built-in method lower of str object at 0xf93b0deade30>()
+E        +    where <built-in method lower of str object at 0xf93b0deade30> = 'event: state\r\ndata: {"type": "state", "state_as_of": "state_as_of: 2026-09-07T01:59:34.684093+00:00"}\r\n\r\nevent: error\r\ndata: {"type": "error", "error": "llm_api_key_missing"}\r\n\r\n'.lower
+
+tests/test_admin_llm_settings_e2e.py:230: AssertionError
+________________ test_bug4_chat_feedback_invalid_vote_rejected _________________
+
+session = <requests.sessions.Session object at 0xf93b21a473d0>
+token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3RAYXVyZW0uZGV2IiwiaXNfYWRt...RpIjoiNTJmM2VmNjlhNjIwNDljZDg0OWQwYzM5M2JkNWM1MjMiLCJleHAiOjE3ODkzNTEyMTR9.tGfP358SM1VfcTaGWhYg8xn-XeAzP4BZZjmd2uyfRUE'
+
+    def test_bug4_chat_feedback_invalid_vote_rejected(session, token):
+        sid = f"sess-{uuid.uuid4()}"
+>       session.post(f"{AUREM}/chat/send", headers=H(token),
+                     json={"prompt": "x", "session_id": sid, "max_tool_iters": 1},
+                     timeout=60)
+
+tests/test_aurem_p0_bugs.py:321: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:712: in post
+    return self.request("POST", url, data=data, json=json, **kwargs)
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:651: in request
+    resp = self.send(prep, **send_kwargs)
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:784: in send
+    r = adapter.send(request, **kwargs)
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:696: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:788: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:534: in _make_request
+    response = conn.getresponse()
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:571: in getresponse
+    httplib_response = super().getresponse()
+/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/stdlib.py:181: in getresponse
+    rv = real_getresponse(self, *args, **kwargs)
+/usr/local/lib/python3.11/http/client.py:1443: in getresponse
+    response.begin()
+/usr/local/lib/python3.11/http/client.py:337: in begin
+    version, status, reason = self._read_status()
+/usr/local/lib/python3.11/http/client.py:298: in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+/usr/local/lib/python3.11/socket.py:718: in readinto
+    return self._sock.recv_into(b)
+/usr/local/lib/python3.11/ssl.py:1314: in recv_into
+    return self.read(nbytes, buffer)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <ssl.SSLSocket [closed] fd=-1, family=2, type=1, proto=6>, len = 8192
+buffer = <memory at 0xf93b0de84ac0>
+
+    def read(self, len=1024, buffer=None):
+        """Read up to LEN bytes and return them.
+        Return zero-length string on EOF."""
+    
+        self._checkClosed()
+        if self._sslobj is None:
+            raise ValueError("Read on closed or unwrapped SSL socket.")
+        try:
+            if buffer is not None:
+>               return self._sslobj.read(len, buffer)
+E               Failed: Timeout (>30.0s) from pytest-timeout.
+
+/usr/local/lib/python3.11/ssl.py:1166: Failed
+----------------------------- Captured stdout call -----------------------------
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~ Stack of sentry-sdk.BackgroundWorker (274031185949088) ~~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/worker.py", line 150, in _target
+    callback = self._queue.get()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/_queue.py", line 240, in get
+    self.not_empty.wait()
+  File "/usr/local/lib/python3.11/threading.py", line 327, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~ Stack of Thread-2 (_thread) (274032014315936) ~~~~~~~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/sessions.py", line 202, in _thread
+    running = not self.__shutdown_requested.wait(self.flush_interval)
+  File "/usr/local/lib/python3.11/threading.py", line 629, in wait
+    signaled = self._cond.wait(timeout)
+  File "/usr/local/lib/python3.11/threading.py", line 331, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~ Stack of sentry.monitor (274032022770080) ~~~~~~~~~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/monitor.py", line 82, in _thread
+    time.sleep(self.interval)
+~~~~~~~~~~~~~ Stack of pymongo_server_rtt_thread (274032360223136) ~~~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/periodic_executor.py", line 175, in _run
+    time.sleep(self._min_interval)
+~~~~~~~~~~~~ Stack of pymongo_kill_cursors_thread (274032374968736) ~~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/periodic_executor.py", line 175, in _run
+    time.sleep(self._min_interval)
+~~~~~~~~~~~ Stack of pymongo_server_monitor_thread (274032596742560) ~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/periodic_executor.py", line 160, in _run
+    if not self._target():
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/monitor.py", line 76, in target
+    monitor._run()  # type:ignore[attr-defined]
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/monitor.py", line 206, in _run
+    self._server_description = self._check_server()
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/monitor.py", line 249, in _check_server
+    return self._check_once()
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/monitor.py", line 317, in _check_once
+    response, round_trip_time = self._check_with_socket(conn)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/monitor.py", line 352, in _check_with_socket
+    response = Hello(conn._next_reply(), awaitable=True)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/pool.py", line 471, in _next_reply
+    reply = self.receive_message(None)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/pool.py", line 590, in receive_message
+    return receive_message(self, request_id, self.max_message_size)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/network.py", line 320, in receive_message
+    length, _, response_to, op_code = _UNPACK_HEADER(_receive_data_on_socket(conn, 16, deadline))
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/network.py", line 390, in _receive_data_on_socket
+    wait_for_read(conn, deadline)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/network.py", line 375, in wait_for_read
+    readable = conn.socket_checker.select(sock, read=True, timeout=timeout)
+  File "/root/.venv/lib/python3.11/site-packages/pymongo/socket_checker.py", line 66, in select
+    res = self._poller.poll(timeout_)
+~~~~~~~~~~~~~~ Stack of ThreadPoolExecutor-0_0 (274032613650848) ~~~~~~~~~~~~~~~
+  File "/usr/local/lib/python3.11/threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 136, in run
+    return _run_old_run_func()
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py", line 129, in _run_old_run_func
+    return old_run_func(self, *a[1:], **kw)
+  File "/usr/local/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/usr/local/lib/python3.11/concurrent/futures/thread.py", line 81, in _worker
+    work_item = work_queue.get(block=True)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+______________ test_section_forbids_oauth_gating_for_public_repos ______________
+
+    def test_section_forbids_oauth_gating_for_public_repos():
+        p = AUREM_CTO_PERSONA
+>       assert "Do NOT route the user to 'connect it via GitHub OAuth first'" in p
+E       assert "Do NOT route the user to 'connect it via GitHub OAuth first'" in 'You are ORA, the AI engineer inside ORA by Aurem (by AUREM, Polaris Built Inc.). Refer to yourself as "ORA" — first m...Always use `read_repo_file` (GitHub) or `execute_bash` with `cat` (local pod) to fetch real bytes before quoting them.'
+
+tests/test_iter106_external_url_tools.py:38: AssertionError
+____________________ test_login_intent_creates_login_state _____________________
+
+    @pytest.mark.asyncio
+    async def test_login_intent_creates_login_state():
+        """The /connect endpoint with intent=login must build a state that
+        starts with `login:` so the cancel handler can route correctly."""
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.get(
+                "/api/aurem-dev/github/oauth/connect",
+                params={"signup": "1", "intent": "login"},
+                follow_redirects=False,
+            )
+        # Backend redirects to github.com/login/oauth/authorize?...state=login:...
+        loc = r.headers.get("location", "")
+>       assert "github.com" in loc, f"expected redirect to github.com, got {loc!r}"
+E       AssertionError: expected redirect to github.com, got ''
+E       assert 'github.com' in ''
+
+tests/test_iter113_oauth_login_cancel.py:99: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/github/oauth/connect
+Traceback (most recent call last):
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 159, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/anyio/streams/memory.py", line 132, in receive
+    raise EndOfStream from None
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/main.py", line 2097, in _security_headers
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2019, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2000, in _nosql_op_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1954, in _body_size_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1921, in __call__
+    return await super().__call__(scope, receive, _peek_send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 24, in __call__
+    await responder(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 44, in __call__
+    await self.app(scope, receive, self.send_with_gzip)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 352, in _sentry_exceptionmiddleware_call
+    await old_call(self, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/fastapi.py", line 155, in _sentry_app
+    return await old_app(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/github_oauth.py", line 157, in connect
+    await db.oauth_states.insert_one({
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/motor/metaprogramming.py", line 75, in method
+    return framework.run_on_executor(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/motor/frameworks/asyncio/__init__.py", line 85, in run_on_executor
+    return loop.run_in_executor(_EXECUTOR, functools.partial(fn, *args, **kwargs))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 817, in run_in_executor
+    self._check_closed()
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 520, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+______________ test_signup_intent_creates_signup_state_unchanged _______________
+
+    @pytest.mark.asyncio
+    async def test_signup_intent_creates_signup_state_unchanged():
+        """No regression: bare `?signup=1` (no intent) still uses `signup:`."""
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.get(
+                "/api/aurem-dev/github/oauth/connect",
+                params={"signup": "1"},
+                follow_redirects=False,
+            )
+        loc = r.headers.get("location", "")
+>       assert "state=signup%3A" in loc or "state=signup:" in loc
+E       AssertionError: assert ('state=signup%3A' in '' or 'state=signup:' in '')
+
+tests/test_iter113_oauth_login_cancel.py:115: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/github/oauth/connect
+Traceback (most recent call last):
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 159, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/anyio/streams/memory.py", line 132, in receive
+    raise EndOfStream from None
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/main.py", line 2097, in _security_headers
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2019, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2000, in _nosql_op_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1954, in _body_size_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1921, in __call__
+    return await super().__call__(scope, receive, _peek_send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 24, in __call__
+    await responder(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 44, in __call__
+    await self.app(scope, receive, self.send_with_gzip)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 352, in _sentry_exceptionmiddleware_call
+    await old_call(self, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/fastapi.py", line 155, in _sentry_app
+    return await old_app(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/github_oauth.py", line 157, in connect
+    await db.oauth_states.insert_one({
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/motor/metaprogramming.py", line 75, in method
+    return framework.run_on_executor(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/motor/frameworks/asyncio/__init__.py", line 85, in run_on_executor
+    return loop.run_in_executor(_EXECUTOR, functools.partial(fn, *args, **kwargs))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 817, in run_in_executor
+    self._check_closed()
+  File "/usr/local/lib/python3.11/asyncio/base_events.py", line 520, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+_______________________ test_rate_limit_allows_under_cap _______________________
+
+db = <test_iter2026_08_27_ora_chat_v2_p1_p5._FakeDb object at 0xf93aff147590>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93b2fc57a10>
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_allows_under_cap(db, monkeypatch):
+        monkeypatch.setenv("ORA_CHAT_RATE_LIMIT_PER_HOUR", "20")
+        events = [e async for e in engine.run_turn(
+            db, admin_id="u2", session={"messages": []}, user_message="hi")]
+>       assert any(e["type"] == "final" for e in events)
+E       assert False
+E        +  where False = any(<generator object test_rate_limit_allows_under_cap.<locals>.<genexpr> at 0xf93b0fbda5a0>)
+
+tests/test_iter2026_08_27_ora_chat_v2_p1_p5.py:139: AssertionError
+---------------------------- Captured log teardown -----------------------------
+ERROR    asyncio:base_events.py:1785 Task was destroyed but it is pending!
+task: <Task pending name='Task-1017' coro=<<async_generator_athrow without __name__>()>>
+_______________ test_mock_llm_turn_yields_state_deltas_and_final _______________
+
+db = <test_iter2026_08_27_ora_chat_v2_p1_p5._FakeDb object at 0xf93aff144bd0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93affaccc90>
+
+    @pytest.mark.asyncio
+    async def test_mock_llm_turn_yields_state_deltas_and_final(db, monkeypatch):
+        monkeypatch.setenv("MOCK_LLM", "true")
+        events = [e async for e in engine.run_turn(
+            db, admin_id="u4", session={"messages": []},
+            user_message="What's the build status?")]
+    
+        types = [e["type"] for e in events]
+        assert types[0] == "state"
+>       assert "delta" in types
+E       AssertionError: assert 'delta' in ['state', 'error']
+
+tests/test_iter2026_08_27_ora_chat_v2_p1_p5.py:166: AssertionError
+---------------------------- Captured log teardown -----------------------------
+ERROR    asyncio:base_events.py:1785 Task was destroyed but it is pending!
+task: <Task pending name='Task-1020' coro=<<async_generator_athrow without __name__>()>>
+_____________ test_advise_only_mode_disables_action_catalog_block ______________
+
+db = <test_iter2026_08_27_ora_chat_v2_p1_p5._FakeDb object at 0xf93affac9490>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93b2fbd0850>
+
+    @pytest.mark.asyncio
+    async def test_advise_only_mode_disables_action_catalog_block(db, monkeypatch):
+        monkeypatch.setenv("MOCK_LLM", "true")
+        events = [e async for e in engine.run_turn(
+            db, admin_id="u5", session={"messages": []},
+            user_message="fix something", advise_only=True)]
+>       assert any(e["type"] == "final" for e in events)
+E       assert False
+E        +  where False = any(<generator object test_advise_only_mode_disables_action_catalog_block.<locals>.<genexpr> at 0xf93affae8ba0>)
+
+tests/test_iter2026_08_27_ora_chat_v2_p1_p5.py:180: AssertionError
+---------------------------- Captured log teardown -----------------------------
+ERROR    asyncio:base_events.py:1785 Task was destroyed but it is pending!
+task: <Task pending name='Task-1022' coro=<<async_generator_athrow without __name__>()>>
+_____________ TestMockLLMTurn.test_mock_llm_stream_delivers_final ______________
+
+self = <test_iter2026_08_28_ora_chat_v2_e2e.TestMockLLMTurn object at 0xf93b22673790>
+hdr = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...5MzFjMjVjNDkiLCJleHAiOjE3ODkzNTE0MjR9.NPHf7Hyi18ajmYToZec-INrx8grncdZ86WFoXfHp_Hg', 'Content-Type': 'application/json'}
+session = '1b25b209b98c410e94fb7153f7e17194'
+
+    def test_mock_llm_stream_delivers_final(self, hdr, session):
+        status, events = _stream_message(hdr, session,
+                                         "Hello ORA, quick smoke test.")
+        assert status == 200
+        types = [e[0] for e in events]
+        # Should include at least one state or delta event and a final
+>       assert "final" in types, f"no final event: {types}"
+E       AssertionError: no final event: ['state', 'error']
+E       assert 'final' in ['state', 'error']
+
+tests/test_iter2026_08_28_ora_chat_v2_e2e.py:144: AssertionError
+_____________ TestMockLLMTurn.test_tokens_persisted_on_transcript ______________
+
+self = <test_iter2026_08_28_ora_chat_v2_e2e.TestMockLLMTurn object at 0xf93b22684290>
+hdr = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...5MzFjMjVjNDkiLCJleHAiOjE3ODkzNTE0MjR9.NPHf7Hyi18ajmYToZec-INrx8grncdZ86WFoXfHp_Hg', 'Content-Type': 'application/json'}
+session = '1b25b209b98c410e94fb7153f7e17194'
+
+    def test_tokens_persisted_on_transcript(self, hdr, session):
+        # after 2 turns above, GET session should show assistant messages
+        # with input_tokens / output_tokens fields
+        r = requests.get(f"{API}/ora-chat/sessions/{session}",
+                          headers=hdr, timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        msgs = body.get("messages") or body.get("session", {}).get("messages") or []
+        assistant = [m for m in msgs if m.get("role") == "assistant"]
+>       assert assistant, "no assistant messages persisted"
+E       AssertionError: no assistant messages persisted
+E       assert []
+
+tests/test_iter2026_08_28_ora_chat_v2_e2e.py:173: AssertionError
+________________ TestActionFlow.test_approve_reversible_action _________________
+
+self = <test_iter2026_08_28_ora_chat_v2_e2e.TestActionFlow object at 0xf93b22685d50>
+hdr = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...5MzFjMjVjNDkiLCJleHAiOjE3ODkzNTE0MjR9.NPHf7Hyi18ajmYToZec-INrx8grncdZ86WFoXfHp_Hg', 'Content-Type': 'application/json'}
+
+    def test_approve_reversible_action(self, hdr):
+        pid = _seed_proposal("create_backlog_item",
+                              {"title": "TEST_e2e backlog", "note": "auto"})
+        r = requests.post(f"{API}/ora-chat/action/approve",
+                          headers=hdr, json={"proposal_id": pid}, timeout=15)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("ok") is True, body
+        # audit trail should contain proposed -> approved -> executed
+        r2 = requests.get(f"{API}/ora-chat/actions/recent",
+                           headers=hdr, timeout=10)
+        assert r2.status_code == 200
+        events = [x for x in r2.json().get("actions", [])
+                   if x.get("proposal_id") == pid]
+        types = {e.get("event_type") for e in events}
+>       assert {"proposed", "approved", "executed"}.issubset(types), types
+E       AssertionError: {'executed'}
+E       assert False
+E        +  where False = <built-in method issubset of set object at 0xf93affa77e60>({'executed'})
+E        +    where <built-in method issubset of set object at 0xf93affa77e60> = {'approved', 'executed', 'proposed'}.issubset
+
+tests/test_iter2026_08_28_ora_chat_v2_e2e.py:295: AssertionError
+____________________ test_projects_add_rejects_missing_pat _____________________
+
+    def test_projects_add_rejects_missing_pat():
+        """Inspect the source to verify the hard rule lives in the codebase."""
+        src = cto_projects_src()
+        # The 400 message must mention the PAT requirement
+>       assert "Personal Access Token is required" in src
+E       assert 'Personal Access Token is required' in '"""\nrouters/cto_projects/__init__.py — AUREM multi-project system.\nConnect existing client GitHub repos, run AI tas...ception(e)\n        except Exception:\n            pass\n    finally:\n        shutil.rmtree(ws, ignore_errors=True)\n'
+
+tests/test_iter211_pat_compulsory_and_oauth_id.py:25: AssertionError
+____________________ test_projects_add_validates_pat_prefix ____________________
+
+    def test_projects_add_validates_pat_prefix():
+        src = cto_projects_src()
+>       assert 'startswith("ghp_")' in src
+E       assert 'startswith("ghp_")' in '"""\nrouters/cto_projects/__init__.py — AUREM multi-project system.\nConnect existing client GitHub repos, run AI tas...ception(e)\n        except Exception:\n            pass\n    finally:\n        shutil.rmtree(ws, ignore_errors=True)\n'
+
+tests/test_iter211_pat_compulsory_and_oauth_id.py:31: AssertionError
+___________ test_projects_add_verifies_against_github_before_insert ____________
+
+    def test_projects_add_verifies_against_github_before_insert():
+        """The verify-then-insert pattern is enforced atomically — the
+        httpx call MUST happen before the insert_one() call."""
+        src = cto_projects_src()
+        # Order check: the GitHub verify block must appear BEFORE the
+        # cto_projects.insert_one call inside `add_project`.
+        httpx_idx  = src.find("api.github.com/repos/")
+        insert_idx = src.find("cto_projects.insert_one")
+>       assert 0 < httpx_idx < insert_idx, \
+            "GitHub verify must run before insert_one (atomic verify+persist)"
+E       AssertionError: GitHub verify must run before insert_one (atomic verify+persist)
+E       assert 29900 < 18946
+
+tests/test_iter211_pat_compulsory_and_oauth_id.py:44: AssertionError
+____________________ test_pat_decryption_chain_still_intact ____________________
+
+    def test_pat_decryption_chain_still_intact():
+        """Sanity — iter 205 decryption fix must still be in place so the
+        new server-side verify uses the SAME chain as live tool calls."""
+        src = (Path(__file__).resolve().parents[1] / "services" / "local_tools.py").read_text()
+>       assert "_decrypt_pat" in src
+E       assert '_decrypt_pat' in '"""\nservices/local_tools.py — First-party tools for AUREM orchestrator.\n\nIter 35 — Major upgrade to close the Emer...          llm_facing,\n        "error_class":    err_class or None,\n        "system_signal":  sig["signal"],\n    }\n'
+
+tests/test_iter211_pat_compulsory_and_oauth_id.py:68: AssertionError
+__________________ test_live_post_no_auth_returns_503_or_401 ___________________
+
+    def test_live_post_no_auth_returns_503_or_401():
+        """Live backend has AUREM_CI_INGEST_TOKEN unset → 503 fail-closed
+        regardless of whether a bearer is provided."""
+        r = requests.post(INGEST_URL, json={
+            "repo": "a/b", "commit": "deadbeef", "scanner": "trufflehog",
+            "findings": [],
+        }, timeout=15)
+        # Token unset → 503 fail-closed.
+>       assert r.status_code == 503, f"expected 503 fail-closed, got {r.status_code}: {r.text}"
+E       AssertionError: expected 503 fail-closed, got 401: {"detail":"Authorization header missing"}
+E       assert 401 == 503
+E        +  where 401 = <Response [401]>.status_code
+
+tests/test_iter212m120_vanguard_ci_live_http.py:40: AssertionError
+__________ test_chat_messages_right_padding_preserves_live_popup_room __________
+
+src = '/**\n * ChatPanel.jsx — Streaming chat + session persistence.\n *\n * Toolbar:\n *  📎 Upload    — attach files (multi....name\n        }\n        open={scanOpen}\n        onClose={() => setScanOpen(false)}\n      />\n    </div>\n  );\n}\n'
+
+    def test_chat_messages_right_padding_preserves_live_popup_room(src: str) -> None:
+        """When a live-task popup is open, the right padding must still
+        swap to 392px so the popup doesn't overlap message content. This
+        override STAYS inline (JS-driven runtime state, not layout state).
+        When no popup, the property is omitted so CSS clamp drives both
+        sides."""
+        anchor = src.index('data-testid="chat-messages"')
+        style_window = src[anchor:anchor + 4000]
+>       assert "...(livePopupTaskId ? { paddingRight: 392 } : {})" in style_window, (
+            "Right padding must override to 392px while the live popup is "
+            "open via a conditional spread (NOT a ternary) so the property "
+            "is omitted otherwise."
+        )
+E       AssertionError: Right padding must override to 392px while the live popup is open via a conditional spread (NOT a ternary) so the property is omitted otherwise.
+E       assert '...(livePopupTaskId ? { paddingRight: 392 } : {})' in 'data-testid="chat-messages"\n        style={{\n          flex: 1, overflowY: "auto",\n          minHeight: 0,\n      ...                {hideOlder\n                  ? `Show all (${messages.length - 1})`\n                  : "Hide older ↑'
+
+tests/test_iter212m134_chat_messages_padding.py:65: AssertionError
+_____________________ test_casual_branch_uses_content_key ______________________
+
+    def test_casual_branch_uses_content_key():
+        """The intent-gateway casual fast-path must write `content`
+        (not `reply`) so the SSE worker downstream streams it.
+    
+        2026-08-25 — the casual-reply implementation (system prompt +
+        fallback string) was extracted into
+        services/intent_gateway_casual_reply.py (shared by chat_send and
+        chat_stream, testing_agent code-review flag on single-surface
+        drift risk). The result-dict shape (content key, provider tag)
+        still lives at the chat.py call sites. Check both."""
+        from tests._chat_pkg_src import chat_package_source
+        chat_text = chat_package_source()
+        reply_text = (_BACKEND / "services" / "intent_gateway_casual_reply.py").read_text()
+        sys_anchor = 'For this casual message, respond naturally and briefly'
+        assert sys_anchor in reply_text
+        # Both chat_send and chat_stream call sites build the result dict
+        # with `content` (never the buggy `reply` key) + the intent-gateway
+        # provider tag.
+        call_sites = [m.start() for m in __import__("re").finditer(
+            r'from services\.intent_gateway_casual_reply import casual_direct_reply', chat_text,
+        )]
+>       assert len(call_sites) >= 2, "expected both chat_send and chat_stream call sites"
+E       AssertionError: expected both chat_send and chat_stream call sites
+E       assert 0 >= 2
+E        +  where 0 = len([])
+
+tests/test_iter212m155_chat_casual_content_key.py:45: AssertionError
+____________________ test_reconcile_endpoint_is_admin_gated ____________________
+
+    def test_reconcile_endpoint_is_admin_gated():
+>       assert '@router.post("/payments/reconcile")' in _ADMIN_SRC
+E       assert '@router.post("/payments/reconcile")' in '"""\nrouters/admin.py — Admin panel endpoints.\n\nAll routes require a JWT with `is_admin: true`. The admin user is w...g normally. This is a DISPLAY simulation, not\n#     a real termination, so a founder click never breaks a cron.\n\n\n'
+
+tests/test_iter352_payments_truth.py:39: AssertionError
+___________________ test_payments_page_has_reconcile_button ____________________
+
+    def test_payments_page_has_reconcile_button():
+        src = open("/app/frontend/src/pages/Admin.jsx").read()
+>       assert 'data-testid="reconcile-pending-btn"' in src
+E       assert 'data-testid="reconcile-pending-btn"' in "/**\n * pages/Admin.jsx — AuremCTO Admin Panel\n * Guarded route: only users with is_admin in localStorage 'aurem_use... 212m-238 — floating ORA Chat drawer, available on every admin tab */}\n      <OraChatDrawer />\n    </div>\n  );\n}\n"
+
+tests/test_iter352_payments_truth.py:58: AssertionError
+___________ test_get_repo_token_dispatch_legacy_missing_auth_method ____________
+
+    @pytest.mark.asyncio
+    async def test_get_repo_token_dispatch_legacy_missing_auth_method():
+        """Legacy rows with no auth_method must fall through to PAT."""
+        from services import pat_vault
+>       with patch("services.pat_vault._decrypt_pat",
+                   new=AsyncMock(return_value="ghp_leg")) as m:
+
+tests/test_iter363_phase3b_github_app_dispatch.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/lib/python3.11/unittest/mock.py:1446: in __enter__
+    original, local = self.get_original()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0xf93afc3bff90>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'services.pat_vault' from '/app/backend/services/pat_vault.py'> does not have the attribute '_decrypt_pat'
+
+/usr/local/lib/python3.11/unittest/mock.py:1419: AttributeError
+______________ test_token_pnl_reports_real_revenue_from_paid_only ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93aff0a4150>
+
+    @pytest.mark.asyncio
+    async def test_token_pnl_reports_real_revenue_from_paid_only(monkeypatch):
+        """Revenue must reflect ONLY payment_status='paid' rows, NOT the
+        various `status` values (checkout-session state)."""
+        from main import app
+    
+        now = 1_800_000_000
+        month_ago = now - 30 * 86400
+        seed = {"cto_payments": [
+            # paid, in-window — SHOULD count
+            {"amount": 29.0, "payment_status": "paid", "status": "complete",
+             "created_at": now - 86400},
+            {"amount": 49.0, "payment_status": "paid", "status": "complete",
+             "created_at": now - 2 * 86400},
+            # complete session but payment NOT paid — MUST NOT count
+            {"amount": 99.0, "payment_status": "expired", "status": "complete",
+             "created_at": now - 86400},
+            {"amount": 199.0, "payment_status": "pending", "status": "open",
+             "created_at": now - 86400},
+            # paid but out-of-window — MUST NOT count in month total
+            {"amount": 999.0, "payment_status": "paid", "status": "complete",
+             "created_at": month_ago - 86400},
+        ]}
+        fake_db = _FakeDB(seed)
+    
+        async def fake_admin(authorization=None):
+            return {"user_id": "admin", "email": "a@x", "is_admin": True}
+    
+        monkeypatch.setattr("routers.admin_analytics._require_admin", fake_admin)
+        dep = _override_admin_dep(app)
+        monkeypatch.setattr("routers.admin_analytics.require_db", lambda: fake_db)
+        monkeypatch.setattr("time.time", lambda: now)
+    
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as ac:
+            r = await ac.get("/api/aurem-dev/admin/token-pnl",
+                             headers={"Authorization": "Bearer x"})
+>       assert r.status_code == 200, r.text
+E       AssertionError: {"detail":"client disconnected or upstream error"}
+E       assert 499 == 200
+E        +  where 499 = <Response [499 ]>.status_code
+
+tests/test_iter388y_admin_payments_accuracy.py:173: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  services.rate_limiter:rate_limiter.py:244 rate_limiter: Redis unavailable at host=127.0.0.1:6379 error=ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connect call failed ('127.0.0.1', 6379). — falling back to per-process in-memory (1 identical warnings suppressed in the last minute)
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/admin/token-pnl
+Traceback (most recent call last):
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 159, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/anyio/streams/memory.py", line 132, in receive
+    raise EndOfStream from None
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/main.py", line 2097, in _security_headers
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2019, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2000, in _nosql_op_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1954, in _body_size_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1921, in __call__
+    return await super().__call__(scope, receive, _peek_send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 24, in __call__
+    await responder(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 44, in __call__
+    await self.app(scope, receive, self.send_with_gzip)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 352, in _sentry_exceptionmiddleware_call
+    await old_call(self, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/fastapi.py", line 155, in _sentry_app
+    return await old_app(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/admin_analytics.py", line 550, in token_pnl
+    async for d in db.customer_chat_cost.aggregate(month_pipe):
+                   ^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/tests/test_iter388y_admin_payments_accuracy.py", line 133, in __getattr__
+    raise AttributeError(name)
+AttributeError: customer_chat_cost
+____________ test_token_pnl_returns_zero_revenue_when_no_paid_rows _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93b2fdfc9d0>
+
+    @pytest.mark.asyncio
+    async def test_token_pnl_returns_zero_revenue_when_no_paid_rows(monkeypatch):
+        """When 0 paid rows exist, all revenue fields are honestly 0 —
+        NOT the old hardcoded 0 that lied when paid rows did exist."""
+        from main import app
+    
+        seed = {"cto_payments": [
+            {"amount": 29.0, "payment_status": "pending", "status": "open",
+             "created_at": 1_800_000_000 - 86400},
+        ]}
+        fake_db = _FakeDB(seed)
+    
+        async def fake_admin(authorization=None):
+            return {"user_id": "admin", "email": "a@x"}
+        monkeypatch.setattr("routers.admin_analytics._require_admin", fake_admin)
+        dep = _override_admin_dep(app)
+        monkeypatch.setattr("routers.admin_analytics.require_db", lambda: fake_db)
+        monkeypatch.setattr("time.time", lambda: 1_800_000_000)
+    
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as ac:
+            r = await ac.get("/api/aurem-dev/admin/token-pnl",
+                             headers={"Authorization": "Bearer x"})
+        body = r.json()
+>       assert body["revenue_month"] == 0.0
+E       KeyError: 'revenue_month'
+
+tests/test_iter388y_admin_payments_accuracy.py:208: KeyError
+------------------------------ Captured log call -------------------------------
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/admin/token-pnl
+Traceback (most recent call last):
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 159, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/anyio/streams/memory.py", line 132, in receive
+    raise EndOfStream from None
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/main.py", line 2097, in _security_headers
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2019, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2000, in _nosql_op_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1954, in _body_size_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1921, in __call__
+    return await super().__call__(scope, receive, _peek_send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 24, in __call__
+    await responder(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 44, in __call__
+    await self.app(scope, receive, self.send_with_gzip)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 352, in _sentry_exceptionmiddleware_call
+    await old_call(self, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/fastapi.py", line 155, in _sentry_app
+    return await old_app(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/admin_analytics.py", line 550, in token_pnl
+    async for d in db.customer_chat_cost.aggregate(month_pipe):
+                   ^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/tests/test_iter388y_admin_payments_accuracy.py", line 133, in __getattr__
+    raise AttributeError(name)
+AttributeError: customer_chat_cost
+________________ test_stripe_configured_reads_env_not_hardcoded ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93b2fe3d950>
+
+    @pytest.mark.asyncio
+    async def test_stripe_configured_reads_env_not_hardcoded(monkeypatch):
+        """stripe_configured must reflect actual STRIPE_API_KEY presence,
+        not the previous hardcoded False."""
+        from main import app
+    
+        fake_db = _FakeDB({"cto_payments": []})
+        async def fake_admin(authorization=None):
+            return {"user_id": "admin", "email": "a@x"}
+        monkeypatch.setattr("routers.admin_analytics._require_admin", fake_admin)
+        dep = _override_admin_dep(app)
+        monkeypatch.setattr("routers.admin_analytics.require_db", lambda: fake_db)
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_dummy")
+        monkeypatch.setattr("time.time", lambda: 1_800_000_000)
+    
+        async with AsyncClient(transport=ASGITransport(app=app),
+                               base_url="http://test") as ac:
+            r = await ac.get("/api/aurem-dev/admin/token-pnl",
+                             headers={"Authorization": "Bearer x"})
+>       assert r.json()["stripe_configured"] is True
+E       KeyError: 'stripe_configured'
+
+tests/test_iter388y_admin_payments_accuracy.py:266: KeyError
+------------------------------ Captured log call -------------------------------
+ERROR    main:main.py:2109 middleware caught unhandled exception on GET /api/aurem-dev/admin/token-pnl
+Traceback (most recent call last):
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 159, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/anyio/streams/memory.py", line 132, in receive
+    raise EndOfStream from None
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/backend/main.py", line 2097, in _security_headers
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2019, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 2000, in _nosql_op_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 189, in __call__
+    with collapse_excgroups():
+  File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_utils.py", line 93, in collapse_excgroups
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1954, in _body_size_guard
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 165, in call_next
+    raise app_exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/base.py", line 151, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/main.py", line 1921, in __call__
+    return await super().__call__(scope, receive, _peek_send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 24, in __call__
+    await responder(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/gzip.py", line 44, in __call__
+    await self.app(scope, receive, self.send_with_gzip)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 352, in _sentry_exceptionmiddleware_call
+    await old_call(self, scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/starlette.py", line 175, in _create_span_call
+    return await old_call(app, scope, receive, send, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "/root/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "/root/.venv/lib/python3.11/site-packages/starlette/routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/fastapi.py", line 155, in _sentry_app
+    return await old_app(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/routers/admin_analytics.py", line 550, in token_pnl
+    async for d in db.customer_chat_cost.aggregate(month_pipe):
+                   ^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/tests/test_iter388y_admin_payments_accuracy.py", line 133, in __getattr__
+    raise AttributeError(name)
+AttributeError: customer_chat_cost
+______________ test_brain_replay_uses_same_brain_context_as_chat _______________
+
+    def test_brain_replay_uses_same_brain_context_as_chat():
+        """The replay must call get_brain_context with github_token so the
+        sandbox answer matches what a real chat turn would see."""
+        src = _read("backend/routers/admin.py")
+        m = re.search(r"async def admin_brain_replay\(.*?(?=\n@router\.|\Z)",
+                      src, re.DOTALL)
+>       body = m.group(0)
+E       AttributeError: 'NoneType' object has no attribute 'group'
+
+tests/test_iter70_mode_telemetry_and_brain_replay.py:94: AttributeError
+_________________ test_chat_router_wires_council_before_mode_f _________________
+
+    def test_chat_router_wires_council_before_mode_f():
+        """The council branch MUST run before the Mode F branch — both
+        early-return so order decides who wins on a Mode B message that
+        also matches a Mode F pattern."""
+        base = os.path.join(os.path.dirname(__file__), "..")
+        with open(os.path.join(base, "routers/chat/stream.py"), encoding="utf-8") as fh:
+            src = fh.read()
+>       assert "from services.mode_b_council import" in src
+E       assert 'from services.mode_b_council import' in '"""\nrouters/chat/stream.py — POST /chat/stream (the SSE chat loop).\nSplit from the former routers/chat.py god-file ... "no-cache",\n            "X-Accel-Buffering": "no",\n            "Connection": "keep-alive",\n        },\n    )\n\n\n'
+
+tests/test_iter81_mode_b_council.py:83: AssertionError
+_________ TestGoogleOAuthProviderTag.test_oauth_finish_reads_provider __________
+
+self = <test_iter_ambiguity_and_mode_d_gates.TestGoogleOAuthProviderTag object at 0xf93b0ed85c90>
+
+    def test_oauth_finish_reads_provider(self):
+        with open("/app/frontend/src/pages/OAuthFinish.jsx") as f:
+            src = f.read()
+        assert 'parts.get("provider")' in src
+>       assert "google=missing_token" in src
+E       AssertionError: assert 'google=missing_token' in '/**\n * OAuthFinish.jsx — final hop after GitHub OAuth signup/sign-in.\n *\n * Backend redirects here with the JWT in...    <style>{`@keyframes auremspin { to { transform: rotate(360deg); } }`}</style>\n      </div>\n    </div>\n  );\n}\n'
+
+tests/test_iter_ambiguity_and_mode_d_gates.py:156: AssertionError
+_________________ test_patch_installation_id_sets_auth_method __________________
+
+auth_headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...mMmRhY2I0MTQiLCJleHAiOjE3ODkzNTE1MDh9.6mQjhAV-zY1ZgmeKfF84Sr-axG_dYwgJEaqf8YDuk68', 'Content-Type': 'application/json'}
+projects = [{'auth_method': 'github_app', 'branch': 'main', 'created_at': '2026-07-13T01:49:30.427000', 'default_branch': 'main',...ora-testkit', ...}, {'branch': 'main', 'github_owner': 'tjsandhu', 'github_repo': 'aurem', 'has_pat': False, ...}, ...]
+
+    def test_patch_installation_id_sets_auth_method(auth_headers, projects):
+        if not projects:
+            pytest.skip("no projects on account")
+        target = projects[0]
+        pid = target["project_id"]
+        original_auth = target.get("auth_method")
+        original_iid = target.get("installation_id")
+        test_iid = 987654321  # bogus but valid int
+        try:
+            r = requests.patch(f"{BASE}/cto/projects/{pid}",
+                               headers=auth_headers,
+                               json={"installation_id": test_iid}, timeout=30)
+>           assert r.status_code == 200, r.text
+E           AssertionError: {"detail":{"error":"installation_not_found_or_inactive","message":"That GitHub App installation isn't linked to your account, or has been suspended/uninstalled. Re-install the App and try again."}}
+E           assert 400 == 200
+E            +  where 400 = <Response [400]>.status_code
+
+tests/test_revoked_repo_banner_2026_08_20.py:84: AssertionError
+_________________ test_g15_yarn_audit_returns_deduped_findings _________________
+
+    @pytest.mark.skipif(not _yarn_available() or not YARN_LOCK.exists(),
+                        reason="yarn or yarn.lock unavailable")
+    def test_g15_yarn_audit_returns_deduped_findings():
+        """Import the module and call _run_yarn_audit() for real —
+        against the actual yarn.lock in this repo. Zero mocks."""
+        sys.path.insert(0, str(SCRIPT.parent))
+        try:
+            import importlib
+            mod = importlib.import_module("g15_dependency_scan")
+            importlib.reload(mod)  # in case a previous test cached it
+            status, findings = mod._run_yarn_audit()
+        finally:
+            sys.path.remove(str(SCRIPT.parent))
+    
+        # Scan itself must have run
+        assert status == 0, f"scanner failed to run (status={status})"
+        # Every finding must be shape-correct
+        for f in findings:
+            assert "package" in f
+            assert "id" in f
+            assert "severity" in f
+            assert "source" in f and f["source"] == "yarn"
+            assert f["severity"] in {"INFO", "LOW", "MODERATE",
+                                     "HIGH", "CRITICAL", ""}, f
+        # Deduplication proof — no two findings share the same primary id
+        ids = [f["id"] for f in findings]
+>       assert len(ids) == len(set(ids)), \
+            f"yarn audit findings must be deduped by advisory id: {ids}"
+E       AssertionError: yarn audit findings must be deduped by advisory id: ['CVE-2026-9358', 'CVE-2026-41907', 'CVE-2026-53669', 'CVE-2026-53666', 'CVE-2026-40181', 'CVE-2026-53668', 'CVE-2026-40181', 'CVE-2026-56876', 'CVE-2026-82562', 'CVE-2026-82417']
+E       assert 10 == 9
+E        +  where 10 = len(['CVE-2026-9358', 'CVE-2026-41907', 'CVE-2026-53669', 'CVE-2026-53666', 'CVE-2026-40181', 'CVE-2026-53668', ...])
+E        +  and   9 = len({'CVE-2026-40181', 'CVE-2026-41907', 'CVE-2026-53666', 'CVE-2026-53668', 'CVE-2026-53669', 'CVE-2026-56876', ...})
+E        +    where {'CVE-2026-40181', 'CVE-2026-41907', 'CVE-2026-53666', 'CVE-2026-53668', 'CVE-2026-53669', 'CVE-2026-56876', ...} = set(['CVE-2026-9358', 'CVE-2026-41907', 'CVE-2026-53669', 'CVE-2026-53666', 'CVE-2026-40181', 'CVE-2026-53668', ...])
+
+tests/test_session4_step_d_guard15_yarn_audit.py:98: AssertionError
+____ TestPaymentsRouterUsesResolver.test_router_reads_from_runtime_override ____
+
+self = <test_stripe_price_id_override.TestPaymentsRouterUsesResolver object at 0xf93b0e07ed90>
+
+    def test_router_reads_from_runtime_override(self):
+        sc.set_runtime_stripe_price_ids({"starter": "price_from_db"})
+>       assert pay.STRIPE_PRICES["starter"]() == "price_from_db"
+E       AssertionError: assert '' == 'price_from_db'
+E         
+E         - price_from_db
+
+tests/test_stripe_price_id_override.py:144: AssertionError
+____________________ test_payments_loads_subscription_tiers ____________________
+
+    def test_payments_loads_subscription_tiers():
+        import routers.payments as m
+        from services.subscription_tiers import TIER_LIMITS
+        # The module imports the shared table — guarantees there's no parallel
+        # tier list secretly drifting inside payments.py
+>       assert m.TIER_LIMITS is TIER_LIMITS
+E       AssertionError: assert {<Tier.FOUNDER: 'founder'>: {'brain_memory': True, 'custom_domain': True, 'dedicated_db': True, 'maxx_mode': True, ......ARTER: 'starter'>: {'brain_memory': True, 'custom_domain': False, 'dedicated_db': False, 'maxx_mode': False, ...}, ...} is {<Tier.FOUNDER: 'founder'>: {'brain_memory': True, 'custom_domain': True, 'dedicated_db': True, 'maxx_mode': True, ......ARTER: 'starter'>: {'brain_memory': True, 'custom_domain': False, 'dedicated_db': False, 'maxx_mode': False, ...}, ...}
+E        +  where {<Tier.FOUNDER: 'founder'>: {'brain_memory': True, 'custom_domain': True, 'dedicated_db': True, 'maxx_mode': True, ......ARTER: 'starter'>: {'brain_memory': True, 'custom_domain': False, 'dedicated_db': False, 'maxx_mode': False, ...}, ...} = <module 'routers.payments' from '/app/backend/routers/payments.py'>.TIER_LIMITS
+
+tests/test_subscription_tiers.py:88: AssertionError
+______________________ test_mock_short_circuit_live_chat _______________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf93ad80c0110>
+
+    @pytest.mark.asyncio
+    async def test_mock_short_circuit_live_chat(monkeypatch):
+        """With MOCK_LLM on, chat_stream must NEVER construct/call any
+        real provider — a spy that raises on construction proves it was
+        never touched — and must return exactly one deterministic canned
+        SSE message with ZERO ora_chat_usage rows written.
+    
+        X1 hardening (2026-08-30) — is_mock() now reads MOCK_LLM ONCE at
+        process import (cached), so a bare monkeypatch.setenv() only works
+        if this is the very FIRST thing to import
+        services.ora_chat_v2.llm_client in the whole pytest session — not
+        reliable once thousands of other tests run first. Set the cached
+        constant directly instead."""
+        from services.ora_chat_v2 import llm_client
+        monkeypatch.setattr(llm_client, "_MOCK_LLM_AT_BOOT", True)
+    
+        from routers import chat as chat_router
+    
+        async def _boom(*a, **k):
+            raise AssertionError("real provider call_llm_with_meta was constructed/called — MOCK_LLM leak")
+    
+        monkeypatch.setattr("services.orchestrator.call_llm_with_meta", _boom)
+        monkeypatch.setattr("services.llm.call_llm", _boom)
+    
+        async def _fake_current_dev(auth):
+            return {"user_id": "diag-mock-user", "email": "diag@example.com", "tier": "free"}
+    
+        monkeypatch.setattr(chat_router.stream, "current_dev", _fake_current_dev)
+    
+        body = chat_router.ChatBody(prompt="fix the readme", session_id="diag-mock-sess")
+        resp = await chat_router.chat_stream(request=None, body=body, authorization="Bearer x")
+    
+        frames = []
+        async for chunk in resp.body_iterator:
+            line = chunk if isinstance(chunk, str) else chunk.decode()
+            for part in line.split("\n\n"):
+                part = part.strip()
+                if part.startswith("data:"):
+                    frames.append(json.loads(part[5:].strip()))
+    
+        assert any(f.get("meta") for f in frames), frames
+        token_frames = [f for f in frames if "token" in f]
+        assert len(token_frames) == 1, f"expected exactly one canned token frame, got {token_frames}"
+        canned = token_frames[0]["token"]
+        assert "mock mode" in canned.lower()
+        assert "aurem-handoff" not in canned
+        assert any(f.get("done") for f in frames), frames
+    
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+>           count = await db.ora_chat_usage.count_documents({"user_id": "diag-mock-user"})
+
+tests/test_w2_step2_mock_short_circuit_chat_stream.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/lib/python3.11/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+/root/.venv/lib/python3.11/site-packages/sentry_sdk/integrations/threading.py:175: in wrapped_fn
+    return fn(*args, **kwargs)
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/collection.py:2113: in count_documents
+    return self._retryable_non_cursor_read(_cmd, session, _Op.COUNT)
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/collection.py:2127: in _retryable_non_cursor_read
+    return client._retryable_read(func, self._read_preference_for(s), s, operation)
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:1863: in _retryable_read
+    return self._retry_internal(
+/root/.venv/lib/python3.11/site-packages/pymongo/_csot.py:120: in csot_wrapper
+    return func(self, *args, **kwargs)
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:1830: in _retry_internal
+    ).run()
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:2554: in run
+    return self._read() if self._is_read else self._write()
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:2689: in _read
+    self._server = self._get_server()
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:2645: in _get_server
+    return self._client._select_server(
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:1636: in _select_server
+    topology = self._get_topology()
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/mongo_client.py:1576: in _get_topology
+    self._topology.open()
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/topology.py:245: in open
+    self._ensure_opened()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Topology CLOSED <TopologyDescription id: 6a9e1be7c2d935c13f17e0cb, topology_type: Unknown, servers: [<ServerDescription ('localhost', 27017) server_type: Unknown, rtt: None>]>>
+
+    def _ensure_opened(self) -> None:
+        """Start monitors, or restart after a fork.
+    
+        Hold the lock when calling this.
+        """
+        if self._closed:
+>           raise InvalidOperation("Cannot use MongoClient after close")
+E           pymongo.errors.InvalidOperation: Cannot use MongoClient after close
+
+/root/.venv/lib/python3.11/site-packages/pymongo/synchronous/topology.py:774: InvalidOperation
+------------------------------ Captured log call -------------------------------
+WARNING  services.orchestrator:orchestrator.py:1184 persona section 'ROLLBACK / REVERT / UNDO REQUESTS — treat as EXECUTE MODE' has no layer mapping — defaulting to CORE
+WARNING  services.orchestrator:orchestrator.py:1184 persona section 'SAVE FINDINGS DURING AUDITS — DO NOT SKIP' has no layer mapping — defaulting to CORE
+=============================== warnings summary ===============================
+../../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
+  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+routers/chat/turn.py:94
+  /app/backend/routers/chat/turn.py:94: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("prompt")
+
+routers/chat/turn.py:98
+  /app/backend/routers/chat/turn.py:98: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+    @validator("task_type")
+
+../../root/.venv/lib/python3.11/site-packages/pydantic/_internal/_fields.py:192
+  /root/.venv/lib/python3.11/site-packages/pydantic/_internal/_fields.py:192: UserWarning: Field name "schema" in "InsertBody" shadows an attribute in parent "BaseModel"
+    warnings.warn(
+
+tests/test_aurem_p0_bugs.py::test_bug5_chat_send_persists_with_project_id
+  /root/.venv/lib/python3.11/site-packages/_pytest/python.py:163: PytestReturnNotNoneWarning: Expected None, but tests/test_aurem_p0_bugs.py::test_bug5_chat_send_persists_with_project_id returned ('sess-a1e84ceb-c1e8-4557-a59c-c52c7914db05', 'p_374af95ade'), which will be an error in a future version of pytest.  Did you mean to use `assert` instead of `return`?
+    warnings.warn(
+
+tests/test_iter212m177_prod_reliability.py::test_p0_3_chat_endpoints_apply_inference
+  tests/test_iter212m177_prod_reliability.py:300: PytestWarning: The test <Function test_p0_3_chat_endpoints_apply_inference> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_p0_3_chat_endpoints_apply_inference():
+
+tests/test_iter212m210_advisor_tier_split.py::test_chat_prompt_has_infra_guard_source
+  tests/test_iter212m210_advisor_tier_split.py:171: PytestWarning: The test <Function test_chat_prompt_has_infra_guard_source> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_chat_prompt_has_infra_guard_source():
+
+tests/test_iter212m217_scan_rate_limit_shape.py::test_chat_panel_reads_retry_after_seconds_from_detail
+  tests/test_iter212m217_scan_rate_limit_shape.py:109: PytestWarning: The test <Function test_chat_panel_reads_retry_after_seconds_from_detail> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_chat_panel_reads_retry_after_seconds_from_detail():
+
+tests/test_p0_2026_08_28_commit_files_missing_author_fix.py::TestCommitFilesAuthorIdentityFix::test_missing_identity_never_reaches_bare_typeerror
+  /root/.venv/lib/python3.11/site-packages/sentry_sdk/scope.py:735: RuntimeWarning: coroutine '_gh_list_files' was never awaited
+    self._transaction_info: "dict[str, str]" = {}
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.11.16-final-0 _______________
+
+Coverage JSON written to file coverage.json
+=========================== short test summary info ============================
+FAILED tests/test_admin_llm_settings_e2e.py::TestMockOverride::test_ora_chat_message_returns_mock
+FAILED tests/test_aurem_p0_bugs.py::test_bug4_chat_feedback_invalid_vote_rejected
+FAILED tests/test_iter106_external_url_tools.py::test_section_forbids_oauth_gating_for_public_repos
+FAILED tests/test_iter113_oauth_login_cancel.py::test_login_intent_creates_login_state
+FAILED tests/test_iter113_oauth_login_cancel.py::test_signup_intent_creates_signup_state_unchanged
+FAILED tests/test_iter2026_08_27_ora_chat_v2_p1_p5.py::test_rate_limit_allows_under_cap
+FAILED tests/test_iter2026_08_27_ora_chat_v2_p1_p5.py::test_mock_llm_turn_yields_state_deltas_and_final
+FAILED tests/test_iter2026_08_27_ora_chat_v2_p1_p5.py::test_advise_only_mode_disables_action_catalog_block
+FAILED tests/test_iter2026_08_28_ora_chat_v2_e2e.py::TestMockLLMTurn::test_mock_llm_stream_delivers_final
+FAILED tests/test_iter2026_08_28_ora_chat_v2_e2e.py::TestMockLLMTurn::test_tokens_persisted_on_transcript
+FAILED tests/test_iter2026_08_28_ora_chat_v2_e2e.py::TestActionFlow::test_approve_reversible_action
+FAILED tests/test_iter211_pat_compulsory_and_oauth_id.py::test_projects_add_rejects_missing_pat
+FAILED tests/test_iter211_pat_compulsory_and_oauth_id.py::test_projects_add_validates_pat_prefix
+FAILED tests/test_iter211_pat_compulsory_and_oauth_id.py::test_projects_add_verifies_against_github_before_insert
+FAILED tests/test_iter211_pat_compulsory_and_oauth_id.py::test_pat_decryption_chain_still_intact
+FAILED tests/test_iter212m120_vanguard_ci_live_http.py::test_live_post_no_auth_returns_503_or_401
+FAILED tests/test_iter212m134_chat_messages_padding.py::test_chat_messages_right_padding_preserves_live_popup_room
+FAILED tests/test_iter212m155_chat_casual_content_key.py::test_casual_branch_uses_content_key
+FAILED tests/test_iter352_payments_truth.py::test_reconcile_endpoint_is_admin_gated
+FAILED tests/test_iter352_payments_truth.py::test_payments_page_has_reconcile_button
+FAILED tests/test_iter363_phase3b_github_app_dispatch.py::test_get_repo_token_dispatch_legacy_missing_auth_method
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_reports_real_revenue_from_paid_only
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_returns_zero_revenue_when_no_paid_rows
+FAILED tests/test_iter388y_admin_payments_accuracy.py::test_stripe_configured_reads_env_not_hardcoded
+FAILED tests/test_iter70_mode_telemetry_and_brain_replay.py::test_brain_replay_uses_same_brain_context_as_chat
+FAILED tests/test_iter81_mode_b_council.py::test_chat_router_wires_council_before_mode_f
+FAILED tests/test_iter_ambiguity_and_mode_d_gates.py::TestGoogleOAuthProviderTag::test_oauth_finish_reads_provider
+FAILED tests/test_revoked_repo_banner_2026_08_20.py::test_patch_installation_id_sets_auth_method
+FAILED tests/test_session4_step_d_guard15_yarn_audit.py::test_g15_yarn_audit_returns_deduped_findings
+FAILED tests/test_stripe_price_id_override.py::TestPaymentsRouterUsesResolver::test_router_reads_from_runtime_override
+FAILED tests/test_subscription_tiers.py::test_payments_loads_subscription_tiers
+FAILED tests/test_w2_step2_mock_short_circuit_chat_stream.py::test_mock_short_circuit_live_chat
+32 failed, 855 passed, 35 skipped, 6461 deselected, 9 warnings in 428.66s (0:07:08)
+Sentry is attempting to send 1 pending events
+Waiting up to 2 seconds
+Press Ctrl-C to quit
+exit 1

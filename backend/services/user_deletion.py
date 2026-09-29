@@ -29,6 +29,7 @@ returned dict surfaces per-step success so the caller can audit.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -78,7 +79,11 @@ async def cascade_delete_user_data(db, user_id: str) -> dict:
             k = stripe_key()
             if k:
                 stripe.api_key = k
-                stripe.Subscription.delete(sub_id)
+                # 2026-09-26 · prod-hang fix — same class as billing_cron.py
+                # and payment_reconciliation.py: the Stripe SDK is fully
+                # synchronous, so this bare network call would freeze the
+                # event loop for the duration of the round-trip.
+                await asyncio.to_thread(stripe.Subscription.delete, sub_id)
                 report["stripe_cancelled"] = True
                 logger.info(
                     "user_deletion[%s]: cancelled stripe subscription %s",

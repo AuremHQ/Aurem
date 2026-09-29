@@ -1812,32 +1812,38 @@ async def install_links(
     authorization: Optional[str] = Header(None),
     mint_if_missing: bool = True,
 ) -> dict:
-    """One-click install links for Cursor, VS Code, and copy-paste
-    config for Claude Desktop + Claude Code CLI.
+    """Copy-paste MCP config for Cursor, VS Code, Claude Desktop, and
+    Claude Code CLI.
 
     Requires JWT auth (a user's session).  Reads the user's newest
     active `sk-aurem-…` API key; if none exists AND `mint_if_missing`
-    is true, mints one on-the-fly so the deep-link is always
-    self-contained.  The full key is embedded in the deep-links (they
-    open in the IDE, not in a shared page), and returned in the JSON
-    body as `api_key` so the frontend can render a copy-once affordance.
+    is true, mints one on-the-fly.  The full key is returned ONLY in
+    the JSON body's `api_key` field (the frontend masks it behind an
+    explicit Reveal action before ever painting it into the DOM).
+
+    2026-09-26 SECURITY FIX — this endpoint used to also return
+    `cursor`/`vscode` deep-link URLs (`cursor://…`, `vscode:mcp/install
+    ?…`) with the raw API key baked into the query string. Those were
+    rendered as real `<a href>` elements, which meant the full,
+    unmasked key sat in the page's HTML regardless of whether "Reveal"
+    was ever clicked — copyable via "Copy link address" with zero
+    interaction, and logged into browser history the moment the link
+    was actually clicked. Removed entirely; Cursor/VS Code setup is
+    now manual-config-only (same masked-then-reveal pattern already
+    used correctly by Claude Desktop/Claude Code CLI).
 
     Returns:
       {
-        "endpoint":    "<public /api/aurem-dev/mcp URL>",
-        "api_key":     "sk-aurem-…",
-        "api_key_new": bool,   # true if we minted a key on this call
-        "config_json": {...},  # Claude Desktop / any MCP client
-        "cursor":      "cursor://…",
-        "vscode":      "vscode:mcp/install?…",
-        "claude_code_cli": "claude mcp add …",
-        "instructions":  { docs strings per client }
+        "endpoint":         "<public /api/aurem-dev/mcp URL>",
+        "api_key":           "sk-aurem-…",
+        "api_key_new":       bool,   # true if we minted a key on this call
+        "config_json":       {...},  # Cursor / Claude Desktop (mcpServers key)
+        "vscode_config_json": {...}, # VS Code (servers key — different schema)
+        "claude_code_cli":   "claude mcp add …",
+        "instructions":      { docs strings per client }
       }
     """
-    import base64
-    import json
     import secrets
-    import urllib.parse as _urlparse
 
     if not authorization:
         raise HTTPException(401, "Authorization header required")
@@ -1846,6 +1852,8 @@ async def install_links(
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database unavailable")
+    from services.team_permissions import check_permission
+    await check_permission(user, "integrations", "read", db=db)
 
     # 1. Reuse the newest active API key for this user; else mint one.
     existing = await db.api_keys.find_one(
@@ -1884,33 +1892,24 @@ async def install_links(
         }
     }
 
-    # Cursor deep-link: cursor://anysphere.cursor-deeplink/mcp/install
-    # ?name=ORA&config=<base64 of a minimal MCP server config>.
-    # Cursor accepts one server per call.
-    cursor_config = {
-        "type":    "http",
-        "url":     endpoint,
-        "headers": {"Authorization": f"Bearer {api_key}"},
+    # VS Code uses a DIFFERENT schema from every other MCP client —
+    # top-level key is `servers`, not `mcpServers` (confirmed against
+    # VS Code's own docs, 2026-09). Meant for `.vscode/mcp.json` /
+    # the user-level `mcp.json` opened via "MCP: Open User
+    # Configuration" — NOT `settings.json`'s `mcp.servers` setting,
+    # which is a different (also-valid, but settings.json-specific)
+    # path with its own nesting. Kept as a separate object so Cursor/
+    # Claude Desktop's `config_json` never accidentally drifts to the
+    # wrong schema for VS Code or vice versa.
+    vscode_config_json = {
+        "servers": {
+            "ora": {
+                "type":    "http",
+                "url":     endpoint,
+                "headers": {"Authorization": f"Bearer {api_key}"},
+            }
+        }
     }
-    cursor_b64 = base64.urlsafe_b64encode(
-        json.dumps(cursor_config, separators=(",", ":")).encode()
-    ).decode().rstrip("=")
-    cursor_link = (
-        "cursor://anysphere.cursor-deeplink/mcp/install"
-        f"?name=ORA&config={cursor_b64}"
-    )
-
-    # VS Code deep-link: vscode:mcp/install?<url-encoded json>.
-    # VS Code 1.100+ MCP client accepts a JSON blob as the query.
-    vscode_payload = _urlparse.quote(
-        json.dumps({
-            "name":    "ORA",
-            "type":    "http",
-            "url":     endpoint,
-            "headers": {"Authorization": f"Bearer {api_key}"},
-        }, separators=(",", ":"))
-    )
-    vscode_link = f"vscode:mcp/install?{vscode_payload}"
 
     # Claude Code CLI command
     claude_code_cli = (
@@ -1919,22 +1918,21 @@ async def install_links(
     )
 
     return {
-        "endpoint":        endpoint,
-        "api_key":         api_key,
-        "api_key_new":     api_key_new,
-        "config_json":     config_json,
-        "cursor":          cursor_link,
-        "vscode":          vscode_link,
-        "claude_code_cli": claude_code_cli,
+        "endpoint":            endpoint,
+        "api_key":             api_key,
+        "api_key_new":         api_key_new,
+        "config_json":         config_json,
+        "vscode_config_json": vscode_config_json,
+        "claude_code_cli":    claude_code_cli,
         "instructions": {
             "cursor":         (
-                "Click the Install button to open Cursor with ORA "
-                "pre-configured. Cursor 0.42+ required."
+                "Paste the config below into Cursor Settings → MCP "
+                "Servers. Cursor 0.42+ required."
             ),
             "vscode":         (
-                "Click the Install button to open VS Code (1.100+) "
-                "with ORA pre-configured. Or install the AUREM "
-                "extension from the marketplace."
+                "Create .vscode/mcp.json in your project (or run "
+                "\"MCP: Open User Configuration\" for a global config) "
+                "and paste the config below. VS Code 1.100+ required."
             ),
             "claude_desktop": (
                 "Copy the JSON config below into your "

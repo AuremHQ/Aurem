@@ -13,7 +13,7 @@ import { pageTitle } from "./siteConfig";
 // GitHub in minutes.") instead of the shared one — see siteConfig.js.
 const DEFAULT_TITLE = pageTitle();
 const DEFAULT_DESC =
-  "AUREM is an autonomous AI engineer that plans, writes, tests and ships features to your GitHub repo. 1,000 tokens free, no card required.";
+  "AUREM is an autonomous AI engineer that plans, writes, tests and ships features to your GitHub repo. 10 free tasks, no card required.";
 
 function setMeta(name, content, attr = "name") {
   let tag = document.querySelector(`meta[${attr}="${name}"]`);

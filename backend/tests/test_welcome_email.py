@@ -58,14 +58,6 @@ async def _cleanup(db, email: str) -> None:
         await db.onboarding_emails.delete_many({"user_id": uid})
 
 
-async def _reset_singleton(db):
-    await db.promo_first50_state.update_one(
-        {"_id": "global"},
-        {"$set": {"spots_claimed": 0, "total": 50, "is_active": True}},
-        upsert=True,
-    )
-
-
 async def _signup_and_get_token(client, db, email):
     await _cleanup(db, email)
     r = await client.post(
@@ -86,7 +78,6 @@ async def _signup_and_get_token(client, db, email):
 
 async def test_1_verify_fires_welcome(client, db):
     email = f"welcome-{uuid.uuid4().hex[:8]}@example.com"
-    await _reset_singleton(db)
     user_id, token = await _signup_and_get_token(client, db, email)
 
     r = await client.get(
@@ -113,7 +104,6 @@ async def test_1_verify_fires_welcome(client, db):
 
 async def test_2_second_verify_click_is_idempotent(client, db):
     email = f"welcome-idem-{uuid.uuid4().hex[:8]}@example.com"
-    await _reset_singleton(db)
     user_id, token = await _signup_and_get_token(client, db, email)
 
     await client.get(

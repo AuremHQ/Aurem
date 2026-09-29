@@ -1,0 +1,11 @@
+=== 2 PLAIN CHAT ===
+[] provider=intent-gateway-casual dt=2.0s len=20 head="That's easy—it's 12."
+[] provider=intent-gateway-casual dt=3.8s len=26 head="Hey there! How's it going?"
+=== 3 TOOL-CALL FLOWS (read-only) ===
+[] provider=glm-5.2 dt=6.5s len=678 head="I'm ORA, by Aurem. Here are the top-level files in `polarisbuiltinc-wq/ora-grounding`:\n\n1. **.gitignore** — ignore rules for the repo\n2. **LICENSE** — MIT license file\n3. **README.md** — project docs "
+[] provider=deepseek-v3-council-c dt=6.8s len=279 head='ORA is a Python library that detects when AI chat agents confidently invent false details (like non-existent files or code locations) using deterministic checks and cross-family adversarial review—wit'
+[] provider=deepseek-v3-council-c dt=5.6s len=47 head='[OK] The repo has a LICENSE file (MIT license).'
+=== ACTION 1: READ-tier propose/approve/execute ===
+[] provider=glm-5.2 dt=3.3s len=189 head='The project name declared in `pyproject.toml` is **`ora-grounding`** (version `0.1.0`), described as *"Post-response grounding check + cross-family adversarial review for LLM chat agents."*'
+=== RATE LIMIT BOUNDARY (per-IP 30/min) ===
+[rate-limit] did NOT hit 429 within 32 rapid requests (founder tier may bypass IP limit, or 30/min needs less-bursty timing)

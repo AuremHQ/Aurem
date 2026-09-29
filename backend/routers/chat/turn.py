@@ -27,6 +27,7 @@ from services.chat_helpers import (
     _persist_turn,
     retrieved_context_for_grounding, run_rendering_pipeline,
 )
+from services.user_response_sanitizer import sanitize_provider_for_user
 
 from . import router
 from .misc import PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT
@@ -161,7 +162,7 @@ def _mock_send_response(body: ChatBody, user: dict) -> dict:
     """Canned /chat/send reply for MOCK_LLM — same shape as the real
     return, provider='mock', never carries an aurem-handoff fence."""
     return {
-        "ok": True, "content": MOCK_SEND_TEXT, "provider": "mock",
+        "ok": True, "content": MOCK_SEND_TEXT, "provider": sanitize_provider_for_user("mock"),
         "watchdog": None, "mode": "A", "temperature": 0.0, "iterations": 0,
         "session_id": body.session_id, "user_id": user.get("user_id"),
         "tokens_remaining": None, "low_confidence": False, "bail_reason": None,
@@ -182,6 +183,9 @@ async def chat_send(
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
     user = await current_dev(authorization)
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface("cto_chat", session_id=body.session_id or None,
+                         project_id=body.project_id or None)
     from services.interaction_contract import request_conflict, finalize, new_request_id
     request_conflict(body.prompt)
     interaction_request_id = new_request_id()
@@ -796,7 +800,14 @@ async def chat_send(
         **({"interaction": interaction, "turn_state": interaction["turn_state"],
             "continue_available": interaction["continue_available"]} if interaction else {}),
         "content": content,
-        "provider": provider,
+        # 2026-09-28 MASTER TASK Part A1 — was the raw internal
+        # provider/model codename (e.g. "claude-sonnet-maxx-direct",
+        # "deepseek-v3-council-c+emergent-watchdog"). Sanitized at
+        # this exact serialization boundary, not just hidden by the
+        # frontend — `provider` (the local variable) keeps its real
+        # value for the internal cost-logging calls above this
+        # return statement, only the outgoing response is scrubbed.
+        "provider": sanitize_provider_for_user(provider),
         "watchdog": watchdog,
         "mode": mode,
         "temperature": temperature,

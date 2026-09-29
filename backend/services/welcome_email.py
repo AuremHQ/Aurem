@@ -7,7 +7,7 @@ existing Resend integration (same shipping pattern as
 plus the same `onboarding_emails` audit collection so the admin
 panel renders every campaign uniformly.
 
-Trigger point: `routers/promo_first50.py::verify_email` — after
+Trigger point: `routers/auth_verify.py::verify_email` — after
 `email_verified` is flipped to True, fires this as a safe_bg task.
 Founders never see it (they auto-verify at signup; there is no
 click event to hang the campaign off).

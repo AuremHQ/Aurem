@@ -168,10 +168,10 @@ class TestFixQuotaEndpoint:
     _limits = {"free": 10, "starter": 50, "pro": 300, "team": 400}
 
     @pytest.mark.parametrize("tier,expected_tools,bulk", [
-        ("free",    [], False),
-        ("starter", ["vanguard-scan"], False),
-        ("pro",     ["health-scan", "vanguard-scan"], False),
-        ("team",    ["bug-hunt", "health-scan", "security-scan", "vanguard-scan"], True),
+        ("free",    ["visibility-kit"], False),
+        ("starter", ["vanguard-scan", "visibility-kit"], False),
+        ("pro",     ["health-scan", "vanguard-scan", "visibility-kit"], False),
+        ("team",    ["bug-hunt", "health-scan", "security-scan", "vanguard-scan", "visibility-kit"], True),
     ])
     def test_tier_snapshot(self, reg_ctx, tier, expected_tools, bulk):
         _wipe_usage(reg_ctx["user_id"])
@@ -196,7 +196,7 @@ class TestFixQuotaEndpoint:
         assert data["tasks_remaining"] is None
         assert data["bulk_fix"] is True
         assert sorted(data["fix_tools"]) == sorted([
-            "bug-hunt", "health-scan", "security-scan", "vanguard-scan"])
+            "bug-hunt", "health-scan", "security-scan", "vanguard-scan", "visibility-kit"])
 
     def test_usage_rollup_includes_scan_fix_usage(self, reg_ctx):
         _set_tier(reg_ctx["user_id"], "team")

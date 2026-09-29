@@ -113,6 +113,11 @@ async def test_wall_feed_uses_cache(monkeypatch):
     fake_db.cto_tasks.aggregate = _agg
     fake_db.cto_tasks.count_documents = _count
     monkeypatch.setattr("routers.shipwall.get_db", lambda: fake_db)
+    # 2026-09-28 MASTER TASK R5/Part1#5 — /wall/* is now default-OFF
+    # behind the `public_ship_wall` feature flag; bypass it here since
+    # this test is about the CACHE behaviour, not the flag gate (that
+    # has its own dedicated test in test_master_task_2026_09_28_security.py).
+    monkeypatch.setattr("services.feature_flags.is_enabled", AsyncMock(return_value=True))
 
     r1 = await sw.ship_wall_feed(limit=50)
     r2 = await sw.ship_wall_feed(limit=50)

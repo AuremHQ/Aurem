@@ -287,9 +287,21 @@ from .openrouter_providers import (
 
 async def call_llm(messages: list, system: str = "",
                    max_tokens: int = 4000,
-                   temperature: float = 0.7) -> str:
-    """Direct OpenRouter → DeepSeek call (backwards compat). Returns content."""
-    return await _call_deepseek(messages, system, max_tokens, temperature)
+                   temperature: float = 0.7,
+                   user_id: str | None = None) -> str:
+    """Direct OpenRouter → DeepSeek call (backwards compat). Returns content.
+
+    2026-09-27 — optional `user_id`: sets the ambient attribution
+    context (services.loop_token_ledger.llm_user_context) for the
+    duration of this call so the REAL per-user cost ledger can tag
+    the resulting OpenRouter request, even though this shortcut path
+    skips call_llm_with_meta entirely. Root-cause fix for "casual"/
+    "advisor" quick-reply chat turns (intent_gateway_casual_reply,
+    chat/worker.py's direct-advisor path) burning real tokens that
+    never showed up on the token meter."""
+    from services.loop_token_ledger import llm_user_context
+    async with llm_user_context(user_id):
+        return await _call_deepseek(messages, system, max_tokens, temperature)
 
 
 # ─── Session D · D-part-2 — call_llm_with_meta + inner moved to _meta.py ──

@@ -1,0 +1,16 @@
+[root_file_readme] provider=deepseek-v3-council-c dt=23.4s len=354 head='```aurem-handoff\nAdd MIT license notice at the end of README.md: "This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details."\n```\n\nThe fix adds a standard license re'
+[nested_py_file] provider=longcat-2.0 dt=41.9s len=1744 head='[ISSUE] **Missing dependency imports** — `services/orchestrator.py` imports `exponential_backoff` from `.retry` (line 6) and `WorkflowState` from `.state_manager` (line 7), but neither `services/retry'
+[nested_config] provider=intent-gateway-casual dt=4.2s len=82 head='Got it! Just add `python = ">=3.11"` under `[project]` in the pyproject.toml file.'
+[test_file] provider=intent-gateway-casual dt=4.7s len=115 head="I'll review a project file and suggest any needed assertions - expect a quick follow-up with specific improvements!"
+[root_config_gitignore] provider=longcat-2.0 dt=19.8s len=276 head='[OK] `.gitignore` already contains `__pycache__/` on line 2 — no fix needed.\n\nThe file correctly ignores Python bytecode directories along with all the other standard Python artifacts (`.pyc`, `.pyo`,'
+
+=== FENCE EMIT RATE ===
+2/5 emitted a valid aurem-handoff fence
+- root_file_readme: fence=True provider=deepseek-v3-council-c
+- nested_py_file: fence=True provider=longcat-2.0
+- nested_config: fence=False provider=intent-gateway-casual
+  MISS excerpt: 'Got it! Just add `python = ">=3.11"` under `[project]` in the pyproject.toml file.'
+- test_file: fence=False provider=intent-gateway-casual
+  MISS excerpt: "I'll review a project file and suggest any needed assertions - expect a quick follow-up with specific improvements!"
+- root_config_gitignore: fence=False provider=longcat-2.0
+  MISS excerpt: '[OK] `.gitignore` already contains `__pycache__/` on line 2 — no fix needed.\n\nThe file correctly ignores Python bytecode directories along with all the other standard Python artifacts (`.pyc`, `.pyo`, `*.egg-info`, virtual environments, test caches, IDE folders, and secrets).'

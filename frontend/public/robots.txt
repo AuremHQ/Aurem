@@ -8,7 +8,6 @@
 
 User-agent: *
 Allow: /
-Allow: /wall
 Allow: /wrapped
 Disallow: /dashboard
 Disallow: /admin
@@ -20,6 +19,7 @@ Disallow: /tokens
 Disallow: /analytics
 Disallow: /projects
 Disallow: /automations
+Disallow: /wall
 Disallow: /api/
 
 # ── Traditional search engines (explicit allow for clarity) ─────────

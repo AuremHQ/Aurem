@@ -85,7 +85,11 @@ def classify_task_type(prompt: str) -> str:
 _SECRET_PATTERNS = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bsk-[a-zA-Z0-9]{32,}\b"),
-    re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"),
+    # 2026-09-27 P0-4 — widened from ghp_-only to also catch
+    # ghs_/gho_/ghu_ (App install/server + OAuth tokens) — the
+    # primary credential type AUREM itself now mints post GitHub-App
+    # migration. Already open-ended length.
+    re.compile(r"\bgh[psuo]_[A-Za-z0-9_.\-]{20,}\b"),
     re.compile(r"\bsk_live_[A-Za-z0-9]{20,}\b"),
     re.compile(r"-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"\bBearer\s+[A-Za-z0-9\-_.]{20,}"),

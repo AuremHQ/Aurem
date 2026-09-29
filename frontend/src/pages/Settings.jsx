@@ -13,7 +13,7 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, User, KeyRound, Receipt, Plug, ShieldCheck, Coins,
+  ArrowLeft, User, KeyRound, Receipt, Plug, ShieldCheck, Coins, Users2,
 } from "lucide-react";
 import { api, getUser } from "../lib/api";
 import { trackPurchase, metaPurchase, openaiSubscriptionCreated } from "../lib/analytics";
@@ -21,12 +21,14 @@ import GitHubCard from "../components/GitHubCard";
 import VercelCard from "../components/VercelCard";
 import PricingCards from "../components/PricingCards";
 import OraWrapped from "../components/OraWrapped";
+import UsageHistoryCard from "../components/UsageHistoryCard";
 import ReferralShare from "../components/ReferralShare";
 import TrustLevelCard from "../components/TrustLevelCard";
 import DangerZone from "../components/DangerZone";
 import ChangePasswordCard from "../components/ChangePasswordCard";
 import PhoneNumberCard from "../components/PhoneNumberCard";
 import ShipWallOptInCard from "../components/ShipWallOptInCard";
+import TeamManagementPanel from "../components/TeamManagementPanel";
 
 // 2026-08 · Round-2 PR (P0-4, founder ruling D-TRACK) — Personal
 // Track switching is hidden from new users. Component, the
@@ -40,6 +42,7 @@ const TABS = [
   { id: "plans",        label: "Plans & Usage", icon: Receipt },
   { id: "integrations", label: "Integrations",  icon: Plug },
   { id: "vault",        label: "Vault",         icon: KeyRound },
+  { id: "team",         label: "Team",          icon: Users2 },
 ];
 
 export default function Settings() {
@@ -237,9 +240,14 @@ export default function Settings() {
         {/* ── Tab content ── */}
         {tab === "profile" && (
           <div key="profile" style={{ display: "grid", gap: 18, animation: "ds2SettingsIn .22s ease both" }}>
-            {/* Iter 212m-221 — Universal Key + quota card. Prominent
-                at top of Profile tab so users don't need the Plans
-                tab to see their key balance / tier / remaining quota. */}
+            {/* Iter 212m-221 — quota card. Prominent at top of Profile
+                tab so users don't need the Plans tab to see their
+                balance / tier / remaining quota.
+                2026-09-28 MASTER TASK Part 5.1 — header was branded
+                "Universal LLM Key — Emergent", naming our own infra
+                provider to the user (R6 violation). Rebranded to
+                ORA's own language; the balance grid itself is real,
+                useful data and stays exactly as-is. */}
             <section className="card" data-testid="settings-universal-key" style={{
               display: "grid", gap: 14,
               padding: "20px 24px",
@@ -254,9 +262,9 @@ export default function Settings() {
                     background: "var(--accent-soft, rgba(255,138,42,0.16))", color: "var(--accent, #ffb347)",
                   }}><KeyRound size={18} /></span>
                   <div>
-                    <div className="label-mini" style={{ marginBottom: 2 }}>Universal LLM Key</div>
+                    <div className="label-mini" style={{ marginBottom: 2 }}>Your ORA balance</div>
                     <div style={{ fontSize: 15, color: "var(--text)", fontWeight: 600 }}>
-                      Emergent — one key, all models
+                      Tokens, tasks &amp; plan usage
                     </div>
                   </div>
                 </div>
@@ -414,8 +422,15 @@ export default function Settings() {
               }}><Coins size={16} /></span>
               <div>
                 <div className="label-mini" style={{ marginBottom: 2 }}>token wallet</div>
-                <div style={{ fontSize: 18, color: "var(--text)", fontWeight: 600 }}>
-                  {me?.is_unlimited ? "∞ Unlimited" : (me?.tokens_remaining ?? "—")}
+                <div style={{ fontSize: 18, color: "var(--text)", fontWeight: 600 }} data-testid="plans-wallet-remaining">
+                  {/* 2026-09-28 MASTER TASK Batch 2 (b) — was reading
+                      the stale `me.tokens_remaining` DB field, which
+                      could drift from the ledger-derived number the
+                      Profile tab's card already shows correctly a
+                      few tabs over. Same `usage.remaining` source
+                      everywhere now — one number, one place it comes
+                      from. */}
+                  {(usage?.is_unlimited || me?.is_unlimited) ? "∞ Unlimited" : (usage?.remaining != null ? Number(usage.remaining).toLocaleString() : "—")}
                 </div>
               </div>
             </section>
@@ -433,6 +448,8 @@ export default function Settings() {
             <section className="card" data-testid="settings-wrapped">
               <OraWrapped defaultPeriod="this_month" />
             </section>
+
+            <UsageHistoryCard />
           </div>
         )}
 
@@ -468,6 +485,12 @@ export default function Settings() {
                 </ul>
               )}
             </section>
+          </div>
+        )}
+        {tab === "team" && (
+          <div key="team" style={{ display: "grid", gap: 18, animation: "ds2SettingsIn .22s ease both" }}
+               data-testid="settings-team-tab">
+            <TeamManagementPanel />
           </div>
         )}
       </div>

@@ -27,8 +27,10 @@ _RULES: list[dict] = [
      "pattern": re.compile(r"\bsk-[a-zA-Z0-9]{32,}\b"),
      "desc": "Hardcoded OpenAI / DeepSeek style API key"},
     {"id": "secret_github_pat",       "vuln": "secret_leak", "severity": "critical",
-     "pattern": re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"),
-     "desc": "Hardcoded GitHub Personal Access Token"},
+     # 2026-09-27 P0-4 — widened from ghp_-only to also catch
+     # ghs_/gho_/ghu_ (App install/server + OAuth tokens).
+     "pattern": re.compile(r"\bgh[psuo]_[A-Za-z0-9_.\-]{20,}\b"),
+     "desc": "Hardcoded GitHub token (PAT / OAuth / App)"},
     {"id": "secret_stripe_live",      "vuln": "secret_leak", "severity": "critical",
      "pattern": re.compile(r"\bsk_live_[A-Za-z0-9]{20,}\b"),
      "desc": "Hardcoded Stripe LIVE secret key"},

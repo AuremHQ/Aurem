@@ -139,7 +139,13 @@ async def my_referrals(authorization: str = Header(None)) -> dict[str, Any]:
         "clicks":           clicks,
         "invites_sent":     invites,
         "verified_signups": verified,
-        "reward_per_paid":  "1 month free",
+        # 2026-09-28 MASTER TASK Part A2 — reward program is ON HOLD
+        # (no automated grant exists anywhere in this file — verified
+        # above is a pure count, never a credit/billing action). Was
+        # "1 month free", which promised something the backend never
+        # actually fulfills. Unused by the frontend card today, kept
+        # here as a neutral placeholder for when a real reward ships.
+        "reward_per_paid":  "coming soon",
         "profile":          profile,
     }
 

@@ -31,6 +31,7 @@ import AdminBINTracker from "./AdminBINTracker";               // Iter 212m-171
 import AdminGithubBulkRevoke from "./AdminGithubBulkRevoke";    // 2026-08-30
 import AdminVisibilityKit from "./AdminVisibilityKit";          // 2026-08-30
 import AdminOnboardingFunnel from "./AdminOnboardingFunnel";    // 2026-09-08
+import AdminFunnelPage from "./AdminFunnelPage";                 // 2026-09-28 MASTER TASK — /admin/funnel
 import AdminFeatureFlags from "./AdminFeatureFlags";           // Iter 212m-171
 import { LLMCreditMonitor } from "./AdminLLMCredits";          // Iter 212m-171
 import { ParliamentLivePanel } from "./AdminParliamentLive";   // Iter 212m-171
@@ -223,6 +224,28 @@ function Dashboard() {
   );
 }
 
+// 2026-09-28 MASTER TASK Part B — Live Presence. `last_seen_at` is a
+// Unix-epoch float bumped by cto_services/auth.py::current_dev on every
+// authenticated request; `is_online` from the backend already applies
+// the 2-minute freshness bar, reused here rather than re-derived so the
+// list and the drill-down page can never disagree on the cutoff.
+function PresenceDot({ isOnline, lastSeenAt, testId }) {
+  return (
+    <span data-testid={testId} style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      fontSize: 11, color: isOnline ? "var(--ok, #22c55e)" : "var(--text-faint)",
+    }}>
+      <span style={{
+        width: 7, height: 7, borderRadius: "50%",
+        background: isOnline ? "#22c55e" : "var(--text-faint)",
+        boxShadow: isOnline ? "0 0 6px #22c55e" : "none",
+        flexShrink: 0,
+      }} />
+      {isOnline ? "Active now" : (lastSeenAt ? ago(lastSeenAt) : "Never")}
+    </span>
+  );
+}
+
 function UsersList({ onSelect }) {
   const [users, setUsers] = useState([]);
   const [buckets, setBuckets] = useState({ "24h": 0, "7d": 0, "30d": 0, "all": 0 });
@@ -398,7 +421,7 @@ function UsersList({ onSelect }) {
                 onChange={toggleAll}
                 style={{ cursor: "pointer" }}
               />,
-              "Email", "Name", "Tier", "Projects", "Tasks", "Status", "Joined", "",
+              "Email", "Name", "Tier", "Presence", "Projects", "Tasks", "Status", "Joined", "",
             ]}
             rows={users.map((u) => [
               <input
@@ -413,6 +436,8 @@ function UsersList({ onSelect }) {
               u.email,
               u.name || "—",
               <Badge key="tier">{u.tier || "free"}</Badge>,
+              <PresenceDot key="presence" testId={`admin-user-presence-${u.user_id}`}
+                           isOnline={!!u.is_online} lastSeenAt={u.last_seen_at} />,
               u.project_count ?? 0,
               u.task_count ?? 0,
               <Badge key="status" color={STATUS_COLOR[u.status || "active"]}>{u.status || "active"}</Badge>,
@@ -862,7 +887,6 @@ function UserDetail({ user, onBack }) {
     if (T === "email_verified")         return { icon: "✓", label: "Email verified", tail: "" };
     if (T === "first_chat")             return { icon: "○", label: "First chat opened", tail: "" };
     if (T === "first_ship")             return { icon: "★", label: "First ship", tail: "" };
-    if (T === "promo_first50_claimed")  return { icon: "🎁", label: "First-50 promo claimed → 30-day Pro", tail: "" };
     if (T === "token_grant")            return { icon: "＋", label: `+${(D.tokens || 0).toLocaleString()} tokens granted`, tail: D.reason ? `— ${D.reason}` : "" };
     if (T.startsWith("task_"))          return { icon: "▸", label: `Task ${T.slice(5)}`, tail: D.task ? `— ${D.task.slice(0, 60)}${D.task.length > 60 ? "…" : ""}` : "" };
     return { icon: "·", label: T || "event", tail: "" };
@@ -883,6 +907,11 @@ function UserDetail({ user, onBack }) {
             <div><b>User ID:</b> <code style={{ fontSize: 11 }}>{d.user_id}</code></div>
             <div><b>Tier:</b> {d.tier || "free"}</div>
             <div><b>Status:</b> <Badge color={STATUS_COLOR[d.status || "active"]}>{d.status || "active"}</Badge></div>
+            <div data-testid="admin-user-presence-detail">
+              <b>Presence:</b>{" "}
+              <PresenceDot isOnline={!!d.is_online} lastSeenAt={d.last_seen_at}
+                           testId="admin-user-presence-detail-dot" />
+            </div>
             <div><b>Tokens remaining:</b> {fmt((d.usage ? d.usage.remaining : d.tokens_remaining) || 0)}</div>
             {d.usage && (
               <div data-testid="admin-user-usage" style={{ marginTop: 6, padding: "6px 8px",
@@ -998,6 +1027,25 @@ function UserDetail({ user, onBack }) {
               </div>
             </div>
           )}
+          {/* 2026-09-28 MASTER TASK Part B — per-user cost-by-model,
+              same canonical real_llm_usage ledger as /admin/agent-tokens,
+              scoped to just this user. Admin-only page, so the raw
+              provider/model codenames stay visible here on purpose —
+              they're stripped from every user-facing surface instead. */}
+          {Object.keys(d.cost_by_model || {}).length > 0 && (
+            <div data-testid="admin-user-cost-by-model" style={{ marginTop: 12, fontSize: 11, color: "var(--text-dim)" }}>
+              <b style={{ fontSize: 11 }}>Cost by model — ${(d.cost_total_usd ?? 0).toFixed(4)} total</b>
+              <div style={{ maxHeight: 130, overflowY: "auto", marginTop: 4 }}>
+                {Object.entries(d.cost_by_model).map(([key, v]) => (
+                  <div key={key} style={{ padding: "3px 0", borderBottom: "1px solid var(--border)",
+                                           display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <code style={{ fontSize: 10 }}>{key}</code>
+                    <span>{fmt(v.tokens)} tok · {v.calls} calls · ${v.cost_usd.toFixed(4)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
         <Card style={{ padding: 16 }}>
           <h3 style={{ fontSize: 13, margin: "0 0 10px" }}>Projects ({(d.projects || []).length})</h3>
@@ -1047,61 +1095,15 @@ function UserDetail({ user, onBack }) {
                   Source:{" "}
                   <Badge color={
                     d.offers.tier_source === "founder"           ? "#eab308" :
-                    d.offers.tier_source === "promo_first50"     ? "#a855f7" :
                     d.offers.tier_source === "paid_subscription" ? "#22c55e" :
                     "#64748b"
                   }>
-                    {d.offers.tier_source === "promo_first50"    ? "First-50 promo (not paid)" :
-                     d.offers.tier_source === "paid_subscription" ? "Paid subscription" :
+                    {d.offers.tier_source === "paid_subscription" ? "Paid subscription" :
                      d.offers.tier_source === "founder"          ? "Founder allow-list" :
                      d.offers.tier_source === "paid_or_unknown"  ? "Paid or unknown" :
                      "Free (no active offer)"}
                   </Badge>
                 </div>
-              </div>
-
-              {/* First-50 promo status */}
-              <div data-testid="admin-user-first50-block"
-                   style={{ padding: 10, borderRadius: 8,
-                            background: d.offers.first50?.claimed
-                              ? "rgba(168,85,247,0.10)"
-                              : "rgba(255,255,255,0.03)",
-                            border: d.offers.first50?.claimed
-                              ? "1px solid rgba(168,85,247,0.32)"
-                              : "1px solid transparent" }}>
-                <div style={{ color: "var(--text-faint)", fontSize: 10,
-                              textTransform: "uppercase", letterSpacing: "0.08em",
-                              marginBottom: 4 }}>
-                  First-50 promo
-                </div>
-                {d.offers.first50?.claimed ? (
-                  <>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#a855f7" }}>
-                      🎁 Claimed
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
-                      Claimed {ago(d.offers.first50.claimed_at)}
-                    </div>
-                    {d.offers.first50.pro_active ? (
-                      <div style={{ fontSize: 11, marginTop: 2, color: "var(--ok)" }}>
-                        Pro active · {d.offers.first50.days_left ?? "?"} days left
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 11, marginTop: 2, color: "var(--text-faint)" }}>
-                        Pro window ended
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, color: "var(--text-faint)" }}>
-                    Not claimed
-                    <div style={{ fontSize: 11, marginTop: 4, color: "var(--text-dim)" }}>
-                      {d.email_verified
-                        ? "Email verified — promo may have been full at verify time"
-                        : "Email unverified — promo not yet available"}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Founder offer (SEO fix) */}
@@ -2294,6 +2296,7 @@ const NAV = buildGroupedAdminNav({
   github_bulk_revoke: ShieldAlert,
   visibility_kit: Sparkles,
   onboarding_funnel: Filter,
+  activation_funnel: TrendingDown,
   users: Users,
   support: Mail,
   suggestions: MessageCircle,   // Iter 212m-193
@@ -2466,6 +2469,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "github_bulk_revoke": return <AdminGithubBulkRevoke />;
       case "visibility_kit": return <AdminVisibilityKit />;
       case "onboarding_funnel": return <AdminOnboardingFunnel />;
+      case "activation_funnel": return <AdminFunnelPage />;
       case "feature_flags":  return <AdminFeatureFlags />;
       case "dash":           return <Dashboard />;
       case "users":          return <UsersList onSelect={setSelectedUser} />;

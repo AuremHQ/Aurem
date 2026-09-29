@@ -28,9 +28,14 @@ class _FakeResp:
 
 
 @pytest.mark.asyncio
-async def test_first50_campaign_send_includes_reply_to(monkeypatch):
-    """`_resend_send` in services.first50_campaign must include a
-    `reply_to` field when REPLY_TO_EMAIL is set."""
+async def test_resend_send_includes_reply_to(monkeypatch):
+    """`_resend_send` in services.verification_email must include a
+    `reply_to` field when REPLY_TO_EMAIL is set. (2026-09-26 —
+    repointed from services.first50_campaign, which was removed along
+    with the First-50 promo; the underlying Reply-To concern this
+    test guards is unrelated to that promo and still applies to every
+    Resend-backed email sender in the app, verification_email.py's
+    `_resend_send` included.)"""
     monkeypatch.setenv("REPLY_TO_EMAIL", "test-reply@example.com")
     monkeypatch.setenv("RESEND_API_KEY", "test-key")
 
@@ -43,15 +48,14 @@ async def test_first50_campaign_send_includes_reply_to(monkeypatch):
     # Patch the exact symbol the service imports from.
     monkeypatch.setattr("services.http.ext_request", fake_ext_request)
 
-    from services.first50_campaign import _resend_send
-    ok, err, mid = await _resend_send(
-        "user@example.com",
-        subject="hi", text="body", html="<p>body</p>",
+    from services.verification_email import _resend_send
+    ok, err = await _resend_send(
+        "recipient@aurem-reply-to-test.dev", text="body", html="<p>body</p>",
     )
     assert ok is True, f"send should succeed, got err={err}"
     assert "reply_to" in captured["json"], (
         "outbound Resend payload is missing the reply_to header — "
-        "campaign replies will bounce again"
+        "verification emails will bounce again"
     )
     assert captured["json"]["reply_to"] == "test-reply@example.com"
 
@@ -72,10 +76,9 @@ async def test_reply_to_omitted_when_env_unset(monkeypatch):
 
     monkeypatch.setattr("services.http.ext_request", fake_ext_request)
 
-    from services.first50_campaign import _resend_send
+    from services.verification_email import _resend_send
     await _resend_send(
-        "user@example.com",
-        subject="hi", text="body", html="<p>body</p>",
+        "recipient@aurem-reply-to-test.dev", text="body", html="<p>body</p>",
     )
     assert "reply_to" not in captured["json"], (
         "reply_to must be omitted when REPLY_TO_EMAIL is unset"

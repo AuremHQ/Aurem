@@ -480,7 +480,7 @@ export default function BugHunt() {
               <div className="how-icon">⌕</div>
               <div className="how-title">Run Bug Hunt</div>
               <div className="how-desc">
-                Click the Bug Hunt tile in the Codebase Health Dashboard. ORA scans
+                Type <code>/bug-hunt</code> in your ORA dashboard chat. ORA scans
                 up to 600 files in parallel, applying all 50+ patterns. Takes under
                 60 seconds for most repos.
               </div>

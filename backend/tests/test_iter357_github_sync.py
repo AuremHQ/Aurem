@@ -56,8 +56,6 @@ def _fresh():
 @pytest.mark.asyncio
 async def test_not_wired_without_env(monkeypatch):
     gs = _fresh()
-    monkeypatch.delenv("GITHUB_ACTIONS_TOKEN", raising=False)
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_REPO", raising=False)
     r = await gs.get_github_sync("abc123abc123", "2026-06-30T00:00:00+00:00")
     assert r["status"] == "not_wired"
@@ -65,10 +63,26 @@ async def test_not_wired_without_env(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_not_wired_when_app_has_no_access(monkeypatch):
+    gs = _fresh()
+    monkeypatch.setenv("GITHUB_REPO", "org/repo")
+    monkeypatch.setattr(gs, "_resolve_token",
+                         lambda repo: _async_return(("", "github_app_not_configured")))
+    r = await gs.get_github_sync("abc123abc123", "2026-06-30T00:00:00+00:00")
+    assert r["status"] == "not_wired"
+    assert r["critical"] is False
+
+
+async def _async_return(value):
+    return value
+
+
+@pytest.mark.asyncio
 async def test_in_sync_when_head_matches_build(monkeypatch):
     gs = _fresh()
-    monkeypatch.setenv("GITHUB_ACTIONS_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_REPO", "org/repo")
+    monkeypatch.setattr(gs, "_resolve_token",
+                         lambda repo: _async_return(("ghs_test", "github_app_installation:1")))
     _FakeClient.routes = {
         "/commits/main": _FakeResp(200, {
             "sha": "abc123abc123ffffffff",
@@ -84,8 +98,9 @@ async def test_in_sync_when_head_matches_build(monkeypatch):
 @pytest.mark.asyncio
 async def test_behind_and_critical_after_48h(monkeypatch):
     gs = _fresh()
-    monkeypatch.setenv("GITHUB_ACTIONS_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_REPO", "org/repo")
+    monkeypatch.setattr(gs, "_resolve_token",
+                         lambda repo: _async_return(("ghs_test", "github_app_installation:1")))
     _FakeClient.routes = {
         "/commits/main": _FakeResp(200, {
             "sha": "1111111111111111",
@@ -103,8 +118,9 @@ async def test_behind_and_critical_after_48h(monkeypatch):
 @pytest.mark.asyncio
 async def test_github_ahead_counts_as_in_sync(monkeypatch):
     gs = _fresh()
-    monkeypatch.setenv("GITHUB_ACTIONS_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_REPO", "org/repo")
+    monkeypatch.setattr(gs, "_resolve_token",
+                         lambda repo: _async_return(("ghs_test", "github_app_installation:1")))
     _FakeClient.routes = {
         "/commits/main": _FakeResp(200, {
             "sha": "2222222222222222",

@@ -998,3 +998,20 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `services/trust_calibration.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085480Z] <!-- inv:service:services/trust_calibration.py -->
 - `services/trust_calibration_cron.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085503Z] <!-- inv:service:services/trust_calibration_cron.py -->
 - `services/verification.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-23T01:38:01.085523Z] <!-- inv:service:services/verification.py -->
+
+### Iter 0 · 2026-09-26
+
+| `routers/auth_verify.py` | `(none)` | 2 | auto-detected new router (verify) (Iter 0, 2026-09-26T06:37:11.572521Z) | <!-- inv:router:routers/auth_verify.py -->
+- `services/email_link_tokens.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-26T06:37:11.572581Z] <!-- inv:service:services/email_link_tokens.py -->
+
+### Iter 0 · 2026-09-28
+
+- `services/pricing_table.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T02:39:45.237108Z] <!-- inv:service:services/pricing_table.py -->
+- `loop_run_log kind='user_override_set'` — auto-detected in backend/routers/admin_bin.py (verify) [Iter 0, 2026-09-28T06:21:04.172181Z] <!-- inv:loop_run_log_kind:user_override_set -->
+- `loop_run_log kind='user_override_removed'` — auto-detected in backend/routers/admin_bin.py (verify) [Iter 0, 2026-09-28T06:21:04.172224Z] <!-- inv:loop_run_log_kind:user_override_removed -->
+- `loop_run_log kind='toggle'` — auto-detected in backend/routers/admin_ops_config.py (verify) [Iter 0, 2026-09-28T06:21:04.172246Z] <!-- inv:loop_run_log_kind:toggle -->
+- `loop_run_log kind='create_or_update'` — auto-detected in backend/routers/admin_ops_config.py (verify) [Iter 0, 2026-09-28T06:21:04.172271Z] <!-- inv:loop_run_log_kind:create_or_update -->
+- `services/admin_audit_log.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172300Z] <!-- inv:service:services/admin_audit_log.py -->
+- `services/user_response_sanitizer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172326Z] <!-- inv:service:services/user_response_sanitizer.py -->
+| `routers/admin_funnel.py` | `/admin` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-28T17:28:42.827581Z) | <!-- inv:router:routers/admin_funnel.py -->
+- `BASE_URL` — auto-detected in backend/tests/test_activation_part3_guided_first_task.py (verify) (default: unset) [Iter 0, 2026-09-28T17:28:42.827638Z] <!-- inv:envvar:BASE_URL -->

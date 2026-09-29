@@ -21,9 +21,20 @@ def _db(request: Request):
     return get_db()
 
 
-def _env_token() -> str:
-    return (os.environ.get("AUREM_DRILL_TOKEN", "").strip()
-            or os.environ.get("GITHUB_ACTIONS_TOKEN", "").strip())
+async def _resolve_token(repo: str) -> str:
+    """2026-09-26 — migrated off the now-expired GITHUB_ACTIONS_TOKEN
+    PAT onto the same GitHub App installation-token path the rest of
+    the product uses (Task 6). AUREM_DRILL_TOKEN (a separate,
+    deliberately-scoped drill-only PAT) stays as an explicit fallback
+    since it predates the App and is still used by the synthetic
+    drill's own isolated test repo, distinct from real rollback ops."""
+    if "/" in repo:
+        owner, name = repo.split("/", 1)
+        from services.github_app import get_token_for_repo
+        token, _reason = await get_token_for_repo(owner, name)
+        if token:
+            return token
+    return os.environ.get("AUREM_DRILL_TOKEN", "").strip()
 
 
 class SnapshotReq(BaseModel):
@@ -47,9 +58,10 @@ class ExecuteReq(BaseModel):
 @router.post("/snapshot")
 async def create_snapshot_ep(req: SnapshotReq, request: Request):
     from services.rollback_snapshot import create_snapshot
+    token = await _resolve_token(f"{req.owner}/{req.repo}")
     row = await create_snapshot(
         _db(request), owner=req.owner, repo=req.repo, branch=req.branch,
-        token=_env_token(), file_paths=req.file_paths, trigger="manual",
+        token=token, file_paths=req.file_paths, trigger="manual",
     )
     return {"ok": True, "snapshot": row}
 
@@ -63,20 +75,29 @@ async def list_snapshots(request: Request, limit: int = 20):
     return {"snapshots": out}
 
 
+async def _repo_for_snapshot(request: Request, snapshot_id: str) -> str:
+    row = await _db(request).rollback_snapshots.find_one(
+        {"snapshot_id": snapshot_id}, {"_id": 0, "repo": 1})
+    return (row or {}).get("repo", "")
+
+
 @router.post("/preview")
 async def preview_ep(req: PreviewReq, request: Request):
     from services.rollback_two_phase import preview_rollback
+    repo = await _repo_for_snapshot(request, req.snapshot_id)
     return await preview_rollback(
-        _db(request), snapshot_id=req.snapshot_id, token=_env_token())
+        _db(request), snapshot_id=req.snapshot_id,
+        token=await _resolve_token(repo))
 
 
 @router.post("/execute")
 async def execute_ep(req: ExecuteReq, request: Request):
     from services.rollback_two_phase import execute_rollback_from_snapshot
+    repo = await _repo_for_snapshot(request, req.snapshot_id)
     return await execute_rollback_from_snapshot(
         _db(request), snapshot_id=req.snapshot_id,
         preview_token=req.preview_token,
-        initiated_by=req.initiated_by, token=_env_token(),
+        initiated_by=req.initiated_by, token=await _resolve_token(repo),
         confirm=req.confirm,
     )
 

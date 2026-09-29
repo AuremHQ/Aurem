@@ -1274,7 +1274,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                           commit_sha=sha,
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
-                          verified=True,
+                          verified=True, commit_full_sha=commit_full_sha,
                           # Trust & Verification round — DISTINCT from
                           # `verified` above (which only means "the
                           # content GitHub returned matches what we

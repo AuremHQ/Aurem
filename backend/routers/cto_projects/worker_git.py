@@ -498,6 +498,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         await _pkg._log(task_id, f"🚀 pushed — {sha}", "success")
         await _pkg._set_status(task_id, status="done", result=summary,
                           commit_sha=sha,
+                          commit_full_sha=commit_full_sha, push_confirmed=True,
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
                           verification_status=_iv_result.get("decision"),

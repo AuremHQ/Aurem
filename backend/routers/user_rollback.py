@@ -34,6 +34,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
+from services.team_permissions import check_permission
 
 logger = logging.getLogger("aurem.user_rollback")
 
@@ -44,19 +45,40 @@ def _tier_allowed(tier: str) -> bool:
     return (tier or "").lower() in ("pro", "team", "founder")
 
 
-@router.get("/candidates")
-async def rollback_candidates(authorization: Optional[str] = Header(None)):
-    """List up to 5 of the user's own recently-shipped loops that are
-    eligible for a one-click revert."""
+async def _gate(authorization: Optional[str], level: str):
+    """2026-09-26 P0 RBAC fix (Task 2) — every handler below used to
+    read/write `user["user_id"]` (the caller's own login) directly,
+    so a team member with real "loop" access on the owner's account
+    got 404s on the OWNER's ships/loops instead of the account's real
+    rollback candidates, while a viewer-role member could still fire
+    a real GitHub revert with zero enforcement. Resolves permission
+    + the effective (owner) account id in one place, and the tier
+    check is against the ACCOUNT's own plan (the owner's `dev_users`
+    row), never the individual caller's own tier field."""
     user = await current_dev(authorization)
-    if not _tier_allowed(user.get("tier")) and not user.get("is_admin"):
+    db = require_db()
+    ctx = await check_permission(user, "loop", level, db=db)
+    owner_id = ctx["effective_account_id"]
+    if ctx["is_owner"]:
+        tier = user.get("tier")
+    else:
+        owner_doc = await db.dev_users.find_one({"user_id": owner_id}, {"_id": 0, "tier": 1, "is_admin": 1})
+        tier = (owner_doc or {}).get("tier")
+    if not _tier_allowed(tier) and not user.get("is_admin"):
         raise HTTPException(403, {
             "error":  "rollback_locked",
-            "tier":   user.get("tier"),
+            "tier":   tier,
             "message": ("Rollback is a Pro/Team feature. Upgrade to "
                         "revert a shipped loop with one click."),
         })
-    db = require_db()
+    return user, db, owner_id
+
+
+@router.get("/candidates")
+async def rollback_candidates(authorization: Optional[str] = Header(None)):
+    """List up to 5 of the account's own recently-shipped loops that are
+    eligible for a one-click revert."""
+    user, db, owner_id = await _gate(authorization, "read")
     out = []
     try:
         # Iter 367 audit fix — was filtering `shipped: True` which no
@@ -64,7 +86,7 @@ async def rollback_candidates(authorization: Optional[str] = Header(None)):
         # write that field). The correct filter is unreverted rows —
         # every row in loop_outcomes IS a shipped commit by construction.
         async for d in db.loop_outcomes.find(
-            {"user_id": user["user_id"],
+            {"user_id": owner_id,
              "reverted": {"$ne": True}},
             {"_id": 0, "loop_id": 1, "user_id": 1, "project_id": 1,
              "shipped_at": 1, "commit_sha": 1, "file_paths": 1,
@@ -90,19 +112,13 @@ async def revert_last_ship(
     bg: BackgroundTasks,
     authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Reverts the user's MOST RECENT unreverted shipped loop by firing
+    """Reverts the account's MOST RECENT unreverted shipped loop by firing
     a REAL github_api_writer.revert_commit() via loop_rollback."""
-    user = await current_dev(authorization)
-    if not _tier_allowed(user.get("tier")) and not user.get("is_admin"):
-        raise HTTPException(403, {
-            "error": "rollback_locked", "tier": user.get("tier"),
-            "message": "Rollback is a Pro/Team feature.",
-        })
-    db = require_db()
+    user, db, owner_id = await _gate(authorization, "write")
 
-    # 1) Find latest unreverted ship for this user.
+    # 1) Find latest unreverted ship for this account.
     latest = await db.loop_outcomes.find_one(
-        {"user_id": user["user_id"], "reverted": {"$ne": True}},
+        {"user_id": owner_id, "reverted": {"$ne": True}},
         sort=[("shipped_at", -1)],
     )
     if not latest:
@@ -137,7 +153,7 @@ async def revert_last_ship(
     # 2) Idempotence — refuse if already rolled back or in flight on
     #    the loop_sessions doc.
     sess = await db.loop_sessions.find_one(
-        {"loop_id": loop_id, "user_id": user["user_id"]},
+        {"loop_id": loop_id, "user_id": owner_id},
     )
     if not sess:
         raise HTTPException(404, {
@@ -158,7 +174,7 @@ async def revert_last_ship(
     # 3) Load project + PAT via the same helpers cto_projects uses so
     #    encryption + fallback rules stay consistent with /loop/{id}/rollback.
     proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": user["user_id"]},
+        {"project_id": project_id, "user_id": owner_id},
         {"_id": 0, "repo_index_summary": 0, "brain_text": 0,
          "repo_index_blocks": 0, "last_commit_diff": 0},
     )

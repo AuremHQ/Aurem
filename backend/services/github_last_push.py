@@ -24,15 +24,25 @@ _GH_PUSH_CACHE_TTL_S = int(os.environ.get("GH_PUSH_CACHE_TTL_S", "60"))
 async def fetch_last_github_push() -> Optional[dict]:
     """Return {'commit_sha', 'pushed_at', 'html_url', 'message'} for
     the most recent commit on the tracked repo's default branch, or
-    None when GITHUB_ACTIONS_TOKEN / GITHUB_REPO are missing or the
+    None when the GitHub App has no access to GITHUB_REPO or the
     upstream call fails. Cached to avoid hammering the GitHub REST API.
+
+    2026-09-26 — migrated off the now-expired GITHUB_ACTIONS_TOKEN PAT
+    onto the same GitHub App installation-token path the rest of the
+    product uses (Task 6): `get_token_for_repo()`.
     """
     now = time.time()
     if _GH_PUSH_CACHE["value"] is not None and now < _GH_PUSH_CACHE["expires_at"]:
         return _GH_PUSH_CACHE["value"]
-    token = os.environ.get("GITHUB_ACTIONS_TOKEN")
-    repo  = os.environ.get("GITHUB_REPO")
-    if not token or not repo:
+    repo = os.environ.get("GITHUB_REPO")
+    if not repo or "/" not in repo:
+        _GH_PUSH_CACHE["value"] = None
+        _GH_PUSH_CACHE["expires_at"] = now + _GH_PUSH_CACHE_TTL_S
+        return None
+    owner, name = repo.split("/", 1)
+    from services.github_app import get_token_for_repo
+    token, _reason = await get_token_for_repo(owner, name)
+    if not token:
         # Cache the None too — otherwise every /version call retries
         # a missing config, wastes CPU.
         _GH_PUSH_CACHE["value"] = None

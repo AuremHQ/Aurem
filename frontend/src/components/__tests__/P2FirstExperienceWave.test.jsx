@@ -58,7 +58,13 @@ describe("P2-B · new-user first-scan nudge", () => {
   });
 
   it("t_p2b_first_scan_nudge_click_prefills_scan_and_dismiss_sticks: exact same event/message and localStorage dismiss key as the original", () => {
-    expect(mascot).toMatch(/ora:prefill.*message:\s*"\/scan"|message:\s*"\/scan"/);
+    // 2026-09-21 — upgraded from a text-prefill handoff to a direct
+    // one-click scan trigger (same aurem:run-scan event a real
+    // "/bug-hunt" dropdown pick uses) — the scan actually runs
+    // instead of just filling the composer with "/scan" text the
+    // user still had to send themselves. Same underlying contract
+    // (clicking the nudge kicks off a scan), stronger mechanism.
+    expect(mascot).toMatch(/secondaryNudge\.kind === "first_scan"[\s\S]{0,80}aurem:run-scan.*commandId:\s*"scan"/);
     expect(mascot).toMatch(/FIRST_SCAN_DISMISS_KEY\s*=\s*\(pid\)\s*=>\s*`aurem_first_scan_nudge_dismissed_\$\{pid\}`/);
     expect(mascot).toMatch(/New here\? Start with a quick scan of your site/);
   });

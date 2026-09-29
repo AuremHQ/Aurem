@@ -61,10 +61,12 @@ class _FakeCollection:
 
         filtered = [r for r in self.rows if matches(r)]
         group = next((s.get("$group") for s in pipeline if "$group" in s), {})
-        if group.get("_id") == "$model":
+        group_key = group.get("_id")
+        if isinstance(group_key, str) and group_key.startswith("$"):
+            field = group_key[1:]
             buckets = {}
             for r in filtered:
-                m = r.get("model") or "unknown"
+                m = r.get(field) or "unknown"
                 buckets.setdefault(m, {"cost": 0.0, "n": 0})
                 buckets[m]["cost"] += float(r.get("cost_usd") or 0)
                 buckets[m]["n"] += 1
@@ -86,7 +88,7 @@ class _FakeDB:
             "cto_payments": _FakeCollection(seed.get("cto_payments", [])),
             "cto_tasks": _FakeCollection(seed.get("cto_tasks", [])),
             "chat_sessions": _FakeCollection(seed.get("chat_sessions", [])),
-            "customer_chat_cost": _FakeCollection(seed.get("customer_chat_cost", [])),
+            "real_llm_usage": _FakeCollection(seed.get("real_llm_usage", [])),
         }
 
     def __getattr__(self, name):

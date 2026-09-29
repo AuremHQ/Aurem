@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend-only verification of 3 fixes on preview (auremcto.com preview URL): (1) /pricing no longer renders old app-sidebar (both anon + logged-in), (2) '10 free tasks' copy present on /, /signup, /login with no '1,000 tokens' / '1000 tokens' remnants, (3) blocked Free-user flow — signed up throwaway user, seeded 10 'done' cto_tasks docs in mongo -> GET /api/aurem-dev/usage/me returned is_blocked:true with monthly_task_cap:10, tasks_this_month:10; /dashboard rendered usage-limit-modal with all required data-testids, upgrade-starter click POSTed /api/aurem-dev/payments/checkout {plan:'starter',origin_url:...}, and token-banner text correctly read '🚫 Free tasks used up. 10 / 10 tasks this month. Upgrade your plan to keep shipping.' Regression: fresh free user with 0 tasks -> no modal, no banner. Seeded data was cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/dashboard (blocked free user, no GitHub connected yet)", "issues": ["GitHub 'Connect your GitHub repo' onboarding modal visually covers the new usage-limit-modal (both are mounted; usage modal has z-index 10001 but the onboarding modal is stacked above it). In practice this overlap only occurs for a Free user with no GitHub connection, which would be rare since a user needs completed tasks to hit the limit. Consider suppressing the connect-repo onboarding modal when usage-limit-modal is open, OR bumping usage-limit-modal z-index above onboarding. Not blocking — usage-limit-modal is still present in DOM and its buttons work when clicked."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL: Prioritize usage-limit-modal over the GitHub 'Connect a repo' onboarding modal (raise z-index above onboarding modal, or dismiss/defer onboarding while blocked) so a blocked user without a repo actually sees the upgrade modal visually, not just in the DOM."
+  ],
+  "critical_code_review_comments": [
+    "UsageLimitModal.upgrade() sets busy=null only on error/no-url paths; on success it does window.location.href=url which unloads the page — fine, but if the API returns 200 with an unexpected shape (no checkout_url and no url) the button correctly resets and toasts. Good.",
+    "TokenBanner correctly falls back to legacy is_exhausted / pct>=100 for older /usage/me responses. blockedByTaskCap check requires taskCap!=null which is correct.",
+    "ChatPanel refreshUsage uses usageLimitShownRef to only show modal once per mount + sessionStorage dismissal — good UX guardrail."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (3/3 bug fixes verified + regression passes)"},
+  "test_credentials": "Existing preview account test@aurem.dev / AuremTest2026! is founder-tier (bypasses free limit) so it can't be used to verify the block flow. For the block-flow verification I signed up a fresh throwaway (testagent+free<ts>@example.com / LimitTest2026!) via /api/aurem-dev/auth/signup and deleted it after testing. No credentials rotated.",
+  "seed_data_creation": "Inserted 10 cto_tasks docs (status='done', project_id='p_fake') for the throwaway user to trigger is_blocked=true. Both the seeded tasks and the throwaway dev_users records were deleted at end of test (verified deleted_count=10 tasks + 2 users).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "This iteration only verified 3 frontend fixes on the marketing/billing side (Pricing.jsx chromeless, '10 free tasks' copy, UsageLimitModal + updated TokenBanner). Do NOT re-run Team RBAC / /ora PIN tests from iter 394/395 — those are unrelated and already re-verified there. Backend field contract for /usage/me (is_blocked, monthly_task_cap, tasks_this_month, tasks_remaining) is already returning correctly against real mongo; if you need to reproduce the blocked flow, follow the same seed pattern: signup fresh user -> insert 10 done cto_tasks docs with that user_id -> GET /usage/me returns is_blocked:true."
+}

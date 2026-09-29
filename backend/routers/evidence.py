@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Header
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.evidence_pointer import EVIDENCE_COLLECTIONS
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/evidence", tags=["Evidence"])
 logger = logging.getLogger(__name__)
@@ -36,7 +37,12 @@ async def get_evidence(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    # 2026-09-26 P0 RBAC fix (Task 2) — scoped to the caller's own
+    # user_id, so a team member following a pointer copied out of a
+    # SHARED chat (owner's account) got a false 404 instead of the
+    # real record.
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     collection = EVIDENCE_COLLECTIONS.get(kind)
     if not collection:
         raise HTTPException(404, f"unknown evidence kind: {kind}")

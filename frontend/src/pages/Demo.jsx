@@ -12,6 +12,7 @@ import React, { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import WalkthroughPlayer from "../components/demo/WalkthroughPlayer";
 import { FULL_STEPS, TEASER_STEPS } from "../components/demo/demoSteps";
+import MarketingNav from "../components/marketing/MarketingNav";
 
 export default function Demo() {
   const [sp] = useSearchParams();
@@ -38,21 +39,9 @@ export default function Demo() {
         padding: "48px 24px 96px",
       }}
     >
-      {/* Simple top nav */}
-      <div style={{ maxWidth: 1200, margin: "0 auto 32px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Link
-          to="/"
-          data-testid="demo-back-home"
-          style={{
-            fontFamily: '"JetBrains Mono", monospace',
-            fontSize: 12,
-            color: "#94a3b8",
-            textDecoration: "none",
-            letterSpacing: "0.06em",
-          }}
-        >
-          ← Home
-        </Link>
+      <MarketingNav />
+      {/* Demo-specific utility bar: full/teaser switch + signup CTA */}
+      <div style={{ maxWidth: 1200, margin: "32px auto 32px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <Link
             to={mode === "teaser" ? "/demo" : "/demo?mode=teaser"}

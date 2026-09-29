@@ -109,6 +109,10 @@ export function mapHistoryTurn(t) {
     interrupted: t.interrupted || false,
     kind: t.kind,
     task_id: t.task_id,
+    awaitingScopeConfirmation: !!t.awaiting_scope_confirmation,
+    scopeConfirmationProposalId: t.scope_confirmation_proposal_id || null,
+    scopeConfirmationPrompt: t.scope_confirmation_prompt || null,
+    scopeExecution: t.scope_execution || null,
     ...interactionFields(t),
   };
 }

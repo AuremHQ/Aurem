@@ -1,0 +1,28 @@
+{
+  "summary": "Independent re-verification of ORA Chat MCP (Part A). Backend: ran /app/backend/tests/test_mcp_ora_chat_admin.py — 13/13 passed against the preview BASE URL. Extra curl checks confirmed: create-key returns raw 'key' starting with 'oraadm_mcp_' + 'key_doc' with NO 'key_hash', defaults are rate_limit_per_min=60 and spend_cap_monthly_usd=50, list-keys includes current_month_spend_usd/spend_pct/over_alert_threshold fields, revoke returns {ok:true}. Non-admin JWT is server-side rejected with 403 on both POST and GET /admin/gateway/keys. Frontend: /admin/api-keys shows 'ORA CHAT — MCP' card with 'ADMIN ONLY' badge below the pre-existing sk-aurem MCP keys section, MCP URL + Copy, label input + '+ Generate MCP key', 'Test (ask_ora_chat: ping)' button, and a keys table with columns Key/Label, Last used, Rate limit, Spend this month ($0.00 / $50), Status, Action (Regenerate/Revoke). Clicking Generate reveals a one-time banner 'COPY THIS NOW — IT WON'T BE SHOWN AGAIN' with the full raw key, Copy + 'I've saved it' buttons, and Claude Desktop setup line ('Claude Desktop -> Settings -> Connectors -> Add custom connector -> ... Advanced settings -> Request headers -> Authorization = Bearer oraadm_mcp_...'). After page reload the raw key is NOT shown anywhere (regex for oraadm_mcp_[20+ chars] returned 0 matches); only truncated 'oraadm_mcp_XxXxXx…' prefixes appear in the table. Clicking 'Test (ask_ora_chat: ping)' returned the clean error message 'ORA Chat call failed: llm_api_key_missing' within a few seconds (no stack trace, no infinite spinner) — matches the documented, pre-existing, out-of-scope gap. MCP Inspector step skipped (curl tools/list substitute already covered).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_mcp_ora_chat_admin.py",
+    "/app/test_reports/pytest/mcp_ora_chat.xml",
+    "/app/test_reports/mcp_card.png",
+    "/app/test_reports/reveal.png",
+    "/app/test_reports/test_btn.png"
+  ],
+  "action_items": [
+    "(Out-of-scope reminder, not a bug in this feature) Configure a working API key for the role='chat' entry in services/llm_config_store.py so ask_ora_chat can produce a real reply in this preview — currently correctly surfaces llm_api_key_missing."
+  ],
+  "critical_code_review_comments": [
+    "Feature is well-scoped and matches the spec: bearer-key auth (OAuth explicitly deferred), key hashed + shown once, admin-only enforced server-side (nonadmin JWT gets 403 via curl, not just UI hiding), rate limit + spend cap defaults 60/$50 exposed on the model, spend_pct + over_alert_threshold fields present on list response for the >=80% badge.",
+    "MCP JSON-RPC endpoint returns 200 with a JSON-RPC 'error' body for tool-level failures (unknown tool, conversation not found, llm_api_key_missing) — correct per JSON-RPC 2.0.",
+    "Revoked key immediately rejected on the MCP endpoint (403), confirming no stale-cache window.",
+    "conftest.py in /app/backend/tests requires running pytest from /app/backend (not /app) due to 'from services...' imports — pre-existing repo convention, not introduced by this feature, just noting for future testing agents."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (13/13 pytest + all curl extras)", "frontend": "100% (all UI acceptance criteria met)"},
+  "test_credentials": "Admin test@aurem.dev / AuremTest2026! (valid). Non-admin created via POST /api/aurem-dev/auth/signup (throwaway pytest-mcp-nonadmin-*@example.com).",
+  "seed_data_creation": "Several MCP test keys created during this run (labels: testagent-inspect, ui-test-key, pytest key x N, pytest rate-limit, pytest lifecycle). Most auto-revoked by test teardown; a couple UI-created ones remain (harmless, all hashed & scoped, non-security).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run backend pytest from /app/backend, NOT /app, otherwise conftest fails with ModuleNotFoundError: services. Set BASE_URL=https://bin-context-pat.preview.emergentagent.com. MCP endpoint is /api/aurem-dev/mcp/ora-chat (note the /aurem-dev prefix, not /api/mcp/...). Existing sk-aurem 'API Keys' section on /admin/api-keys is a SEPARATE, pre-existing feature — the new ORA-Chat MCP card is appended BELOW it. Part B (Anthropic-compatible /api/claude-gateway) intentionally does not exist yet; do not report its absence as a bug."
+}

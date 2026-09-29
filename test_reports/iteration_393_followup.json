@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-26",
+  "scope": "Issue 3 only; implementation authorized, no real GitHub commits authorized",
+  "parent_report": "/app/test_reports/iteration_393.json",
+  "backend_tests": {"scope_resume": 22, "existing_stream_golden": 6, "passed": 28},
+  "frontend_tests": {"scope_card": 10, "stream_and_history": 3, "passed": 13},
+  "browser_followup": {
+    "app_origin": "frontend/.env REACT_APP_BACKEND_URL",
+    "method": "Current yarn-build output loaded at external /dashboard via browser-only response interception; all API requests fulfilled with fixtures. No service/configuration change.",
+    "evidence_log": "/root/.emergent/automation_output/20260926_013420/console_20260926_013420.log",
+    "passed": [
+      "SSE proposal and final response render/enable actual ChatPanel confirmation button",
+      "Button payload contains saved proposal ID and session; card waits for receipt",
+      "Typed phrase uses same chat stream and updates original proposal card from returned receipt",
+      "HTTP failure shows visible error, not confirmation/success",
+      "Missing execution receipt shows visible error, not confirmation/success",
+      "Full receipt SHA wraps at 320/768/1024/1440 widths"
+    ],
+    "captured_chat_payloads": 8,
+    "MOCKED": "All browser API/task/GitHub execution responses. No actual task/commit/provider requests were sent."
+  },
+  "resolved_testing_blockers": [
+    "Complete session/project/quota fixtures prevent the missing-session send guard",
+    "Wait for enabled controls instead of force-clicking while original stream is still finishing",
+    "Use compiled UI assets in browser interception to avoid Vite development-module bursts; underlying ingress configuration unchanged"
+  ],
+  "additional_issue_found_and_fixed": "Typed confirmation now updates the original pending card with the receipt; previously only the new reply displayed it.",
+  "checks": {"frontend_build": "PASS", "focused_frontend_lint": "PASS", "new_backend_module_lint": "PASS", "diff_whitespace": "PASS"},
+  "real_mongo": "Temporary isolated databases; real proposal/claim/task/history persistence. Existing task worker and auth/context/provider dependencies MOCKED. Databases cleaned.",
+  "runtime_mocked_apis": [],
+  "credentials": "No accounts/passwords/provider keys modified. Existing credentials file unchanged.",
+  "remaining_acceptance": [
+    "User must independently confirm actual GitHub commit/diff from button flow",
+    "User must independently confirm actual GitHub commit/diff from typed phrase flow",
+    "Production version and real provider execution are NOT verified by these tests"
+  ],
+  "next_action": "Pause for user verification; do not implement Issue 6 or later backlog issues yet."
+}

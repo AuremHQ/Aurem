@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import os
 import re as _re
+import time
 from typing import Optional
 
 
@@ -345,6 +346,7 @@ async def _call_deepseek_direct(
     system: str = "",
     max_tokens: int = 1500,
     temperature: float = 0.7,
+    feature: Optional[str] = None,
 ) -> str:
     """Call DeepSeek's own API directly (NOT via OpenRouter).
 
@@ -372,10 +374,12 @@ async def _call_deepseek_direct(
     }
     # Playbook-prescribed timeout (30s standard; 120s only for reasoning).
     timeout_s = float(os.getenv("DEEPSEEK_DIRECT_TIMEOUT_S", "30.0"))
+    _t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=timeout_s) as c:
         r = await c.post(_DEEPSEEK_DIRECT_URL, headers=headers, json=payload)
         r.raise_for_status()
         data = r.json()
+    _latency_ms = (time.monotonic() - _t0) * 1000
     msg = data["choices"][0]["message"]
     # 2026-08-25 — same defensive guard as `_call_deepseek` below: a
     # non-dict `message` must raise a clean, expected error type (the
@@ -383,7 +387,23 @@ async def _call_deepseek_direct(
     # an uncaught AttributeError.
     if not isinstance(msg, dict):
         raise TypeError(f"DeepSeek-direct malformed response: message is {type(msg).__name__}, not dict")
+    # 2026-09-27 MASTER TASK Part A — this path bypasses OpenRouter
+    # entirely (own vendor API), so it's the ONE non-OpenRouter leaf
+    # transport that must self-log — no outer caller sees `data` to
+    # log it for us. Real tokens (not estimated) from DeepSeek's own
+    # `usage` object.
+    try:
+        from services.loop_token_ledger import log_real_usage
+        await log_real_usage(
+            _DEEPSEEK_DIRECT_MODEL,
+            (data or {}).get("usage") or {},
+            provider="deepseek_direct", feature=feature,
+            latency_ms=_latency_ms, status="ok",
+        )
+    except Exception as _e:                                    # noqa: BLE001
+        logger.debug("[silent-catch] _call_deepseek_direct — log_real_usage failed: %r", _e)
     return (msg.get("content") or "").strip()
+
 
 
 async def _call_deepseek(messages: list, system: str = "",
@@ -403,6 +423,7 @@ async def _call_deepseek(messages: list, system: str = "",
         _free_fallback_models, _retryable, _retry_delay, _is_fallback_worthy,
     )
     from .groq_client import _call_groq, _groq_key, _GROQ_MODEL
+    from services.loop_token_ledger import current_ambient_user_id
 
     api_key = _openrouter_key()
     if not api_key:
@@ -456,6 +477,13 @@ async def _call_deepseek(messages: list, system: str = "",
                 "order": _DEEPSEEK_HOSTS,
                 "allow_fallbacks": False,
             }
+        # 2026-09-27 — see matching comment in call_openrouter_model.
+        # Real per-user cost attribution; only set when a caller tagged
+        # the ambient context (llm_user_context) — internal/no-user
+        # callers simply omit it.
+        _amb_u = current_ambient_user_id()
+        if _amb_u:
+            p["user"] = _amb_u
         return p
 
     _LLM_TIMEOUT_S = float(os.getenv("LLM_HTTP_TIMEOUT_S", "25.0"))
@@ -486,6 +514,7 @@ async def _call_deepseek(messages: list, system: str = "",
     served_by: str | None = None
     for ci, (cand_model, with_provider) in enumerate(candidates):
         payload = _build_payload(cand_model, with_provider)
+        _t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=_LLM_TIMEOUT_S) as c:
                 # Per-model: 1 retry on transient errors (unchanged
@@ -496,6 +525,7 @@ async def _call_deepseek(messages: list, system: str = "",
                         r.raise_for_status()
                         data = r.json()
                         served_by = cand_model
+                        _latency_ms = (time.monotonic() - _t0) * 1000
                         # Iter 309 · Pre-Phase-1 — loop-token accounting.
                         # If this call is happening inside a loop (see
                         # loop_engine._with_budget's contextvars scope),
@@ -516,6 +546,27 @@ async def _call_deepseek(messages: list, system: str = "",
                                 "[silent-catch] llm.py:738 in _call_deepseek "
                                 "— loop_token_ledger.log_llm_usage failed: %r",
                                 _e,
+                            )
+                        # 2026-09-27 P0 — REAL per-user cost ledger.
+                        # Unconditional (unlike log_llm_usage above,
+                        # which is loop-only) — this is the actual fix
+                        # for "casual"/"advisor" quick-reply chat turns
+                        # (this exact code path) burning real tokens
+                        # that never showed up on the token meter.
+                        try:
+                            from services.loop_token_ledger import log_real_usage
+                            await log_real_usage(
+                                cand_model,
+                                (data or {}).get("usage") or {},
+                                generation_id=(data or {}).get("id"),
+                                feature=feature,
+                                latency_ms=_latency_ms,
+                                status="ok",
+                            )
+                        except Exception as _e:
+                            logger.debug(
+                                "[silent-catch] _call_deepseek — "
+                                "loop_token_ledger.log_real_usage failed: %r", _e,
                             )
                         break
                     except Exception as e:
@@ -542,6 +593,15 @@ async def _call_deepseek(messages: list, system: str = "",
                 logger.error(
                     "OpenRouter call (%s) failed non-retryably: %r", cand_model, e,
                 )
+                try:
+                    from services.loop_token_ledger import log_real_usage
+                    await log_real_usage(
+                        cand_model, {}, feature=feature,
+                        latency_ms=(time.monotonic() - _t0) * 1000,
+                        status="failed", error_reason=f"{type(e).__name__}: {str(e)[:200]}",
+                    )
+                except Exception as _e:
+                    logger.debug("[silent-catch] _call_deepseek non-retryable-row log skipped: %r", _e)
                 raise
             logger.warning(
                 "OpenRouter %s failed (fallback-worthy, %d/%d): %r — walking chain",
@@ -565,6 +625,7 @@ async def _call_deepseek(messages: list, system: str = "",
                         system=system,
                         max_tokens=max_tokens,
                         temperature=temperature,
+                        feature=feature,
                     )
                     if ds_content:
                         logger.warning(
@@ -617,6 +678,7 @@ async def _call_deepseek(messages: list, system: str = "",
                     system="",  # already prepended above
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    feature=feature,
                 )
                 if content:
                     logger.warning(
@@ -638,6 +700,15 @@ async def _call_deepseek(messages: list, system: str = "",
             "OpenRouter exhausted all %d candidates. Last error: %r",
             len(candidates), last_exc,
         )
+        try:
+            from services.loop_token_ledger import log_real_usage
+            await log_real_usage(
+                _deepseek_model(), {}, feature=feature, status="failed",
+                error_reason=f"chain_exhausted: {type(last_exc).__name__ if last_exc else 'unknown'}: "
+                             f"{str(last_exc)[:200] if last_exc else 'no candidates'}",
+            )
+        except Exception as _e:
+            logger.debug("[silent-catch] _call_deepseek exhausted-row log skipped: %r", _e)
         if last_exc is not None:
             raise last_exc
         raise RuntimeError("OpenRouter call failed: no candidate models returned")

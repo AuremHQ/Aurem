@@ -23,11 +23,14 @@ def _read(path):
         return f.read()
 
 
-def test_hero_has_exactly_one_promo_no_founder_offer_pill():
+def test_hero_has_no_founder_offer_pill():
+    """2026-09-26 — the First-50 promo chip this test used to also
+    check for has since been fully removed from the codebase (0 users
+    had ever claimed it). FounderOfferPill staying out of the hero is
+    still the valid, standing assertion."""
     src = _read("pages/Landing.jsx")
     assert 'import FounderOfferPill' not in src
     assert '<FounderOfferPill' not in src
-    assert 'data-testid="hero-promo-chip"' in src
 
 
 def test_vibe_coders_group_entry_exists_with_three_competitors():

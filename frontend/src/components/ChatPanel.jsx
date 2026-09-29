@@ -98,6 +98,7 @@ import { useGithubConnectionStatus } from "../hooks/useGithubConnectionStatus";
 // imports below replace in-file definitions that previously lived
 // at the top + bottom of this file (~700 LOC).
 import TokenBanner       from "./chat/TokenBanner";
+import UsageLimitModal, { hasUsageLimitModalBeenDismissed } from "./chat/UsageLimitModal";
 import ToolButton        from "./chat/ToolButton";
 import StreamHealthPill  from "./chat/StreamHealthPill";
 import RepoHelpDialog    from "./chat/RepoHelpDialog";
@@ -397,6 +398,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     try { localStorage.setItem(PREVIEW_KEY, "1"); } catch { /* noop */ }
   }, []);
   const [usage, setUsage] = useState(null);  // {used, effective_limit, remaining, pct_used, is_exhausted}
+  // 2026-09-26 — product gap fix: a hard-to-miss one-click-upgrade
+  // modal the MOMENT a Free user hits their 10/10 monthly task cap
+  // (previously the only signal was the thin, easy-to-miss TokenBanner
+  // strip above the composer — see components/chat/UsageLimitModal.jsx).
+  const [showUsageLimitModal, setShowUsageLimitModal] = useState(false);
+  const usageLimitShownRef = useRef(false);
   // Iter 38: agent selector. Persisted in localStorage so the user keeps
   // their pick across reloads. Default "auto" = our existing routing.
   const [agent, setAgent] = useState(
@@ -1251,6 +1258,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     try {
       const r = await api.get("/usage/me");
       setUsage(r.data);
+      if (r.data?.is_blocked && !usageLimitShownRef.current
+          && !hasUsageLimitModalBeenDismissed()) {
+        usageLimitShownRef.current = true;
+        setShowUsageLimitModal(true);
+      }
     } catch (_) { /* non-fatal */ }
   }, []);
 
@@ -1328,10 +1340,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     return () => window.removeEventListener("aurem:token-limit-reached", onTokenLimit);
   }, [refreshUsage]);
 
-  // Iter 364 — canonical "actually blocked" flag from the server.
-  // Falls back to legacy is_exhausted on older /usage/me payloads so
-  // the composer disables correctly during the deploy roll.
-  const exhausted = !!(usage?.is_blocked || usage?.is_exhausted);
+  // 2026-09-27 — the token counter was decoupled from gating; only
+  // the flat-fee monthly task-count cap can actually block a send
+  // now. `is_blocked` alone is the server's authoritative signal —
+  // the legacy is_exhausted fallback is REMOVED (it now legitimately
+  // goes true for normal, server-accepted usage and would disable
+  // the composer for users the backend is happily serving).
+  const exhausted = usage?.is_blocked === true;
 
   // Iter 154 — toggleMaxx removed; Maxx is now selected via ModeSelector.
 
@@ -2033,10 +2048,39 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     const promptOverride = opts.promptOverride || null;
     const scopeConfirmedProposalId = opts.scopeConfirmedProposalId || null;
     const text = promptOverride != null ? promptOverride : input.trim();
+    // 2026-09-27 P0-2 — second, independent layer against the same
+    // "/bug-hunt went through as a normal chat message" bug class.
+    // `onKeyDown` already intercepts Enter live off the current
+    // input, but `send()` is also reachable directly (e.g. a Send
+    // button click) without going through that keydown handler at
+    // all. Catch a bare, exact slash-command trigger here too so
+    // there is no path left where typing a real command can slip
+    // through to the LLM chat endpoint instead of firing the scan.
+    if (promptOverride == null) {
+      const exactCmd = SLASH_COMMANDS.find(
+        (c) => c.trigger.toLowerCase() === text.trim().toLowerCase(),
+      );
+      if (exactCmd) {
+        runSlashCommand(exactCmd, "send_exact_match");
+        return;
+      }
+      // Telemetry-only, no behavior change: if something that LOOKS
+      // like a bug-hunt trigger reaches this point uncaught (e.g. a
+      // future regression reopens the exact class of bug this batch
+      // fixed), record it so it's provable instead of silently
+      // going to the LLM as a normal chat message again.
+      if (/^\/bug-hunt\b/i.test(text.trim())) {
+        logBugHuntTrigger("send_uncaught_fallthrough", false,
+          `slipped through to normal chat: ${JSON.stringify(text.slice(0, 60))}`);
+      }
+    }
+    const isScopeResume = !!scopeConfirmedProposalId || /^confirm\s+and\s+proceed[.!]?$/i.test(text.trim());
+    let scopeReceipt = null;
+    let scopeSendError = null;
     // Pull ready attachments (uploading ones get skipped silently —
     // user can re-send if they were too slow). Also keep errored ones
     // (their stub markdown tells the LLM something was attempted).
-    const readyAttachments = attachments.filter(
+    const readyAttachments = isScopeResume ? [] : attachments.filter(
       (a) => a.status === "ready" || a.status === "error"
     );
     // Session 7 · Item 3 (2026-07-31) — SYNCHRONOUS send-in-flight
@@ -2058,7 +2102,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       // eslint-disable-next-line no-console
       console.debug("[send] dropped rapid duplicate send while "
         + "previous is still in flight");
-      return;
+      return { ok: false, error: "Another message is still in flight." };
     }
     // Allow send when EITHER text OR attachments exist — previous gate
     // demanded text, which is why an image-only chat silently refused.
@@ -2377,7 +2421,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     // The legacy `LOOP_PHASE:execute` continuation through send() is
     // gone — handleApprovePlan calls confirmLoop directly.
     // ──────────────────────────────────────────────────────────────
-    if (execMode === EXEC_MODES.LOOP && !opts.loopPhase && !opts.forceChat) {
+    if (!isScopeResume && execMode === EXEC_MODES.LOOP && !opts.loopPhase && !opts.forceChat) {
       await runLoopPlan(text, readyAttachments, opts);
       return;
     }
@@ -2409,7 +2453,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     // hint to decide whether the model should respond plan-only or
     // proceed with execution. First-turn loop sends get `:plan`; the
     // PlanApprovalCard approval path passes `loopPhase: "execute"`.
-    const inLoop = execMode === EXEC_MODES.LOOP && !opts.forceChat;
+    const inLoop = !isScopeResume && execMode === EXEC_MODES.LOOP && !opts.forceChat;
     const resolvedPhase = inLoop
       ? (loopPhaseHint || "plan")
       : null;
@@ -2488,7 +2532,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     // commands, ship-cancel detection, session-start, input-clearing) —
     // extending that same guard here for consistency, not inventing a
     // new mechanism.
-    const f12Payload = promptOverride != null
+    const f12Payload = promptOverride != null || isScopeResume
       ? null
       : (lastF12PayloadRef.current
           || ((typeof window !== "undefined" && window.__auremF12)
@@ -2664,7 +2708,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       maxxMode,
       agent,                       // iter 38: selector value
       mode: chatMode,              // Iter 153: swift / pro / maxx review
-      executionMode: execMode,     // Iter 212m-58: prompt / loop
+      executionMode: isScopeResume ? "prompt" : execMode,
       f12Payload,                  // iter 42: console/network/stack errors
       // INTERACTION_CONTRACT_V1 P1 — set on every call INCLUDING the
       // first: null on a genuinely fresh turn (lastRequestIdRef is
@@ -2958,7 +3002,24 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           return copy;
         });
       },
+      onScopeConfirmation: (event) => {
+        bumpActivity();
+        const proposal = event?.proposal;
+        if (!proposal?.id) return;
+        setMessages((msgs) => msgs.map((m, i) => i === msgs.length - 1 && m.role === "assistant" ? {
+          ...m, awaitingScopeConfirmation: true, scopeConfirmationProposalId: proposal.id,
+          scopeConfirmationPrompt: proposal.prompt,
+        } : m));
+      },
       onDone: (d) => {
+        if (d.scope_execution?.proposal_id) {
+          setMessages((msgs) => msgs.map((m) => m.scopeConfirmationProposalId === d.scope_execution.proposal_id
+            ? { ...m, scopeExecution: d.scope_execution } : m));
+        }
+        if (isScopeResume) {
+          scopeReceipt = d.scope_execution || null;
+          scopeSendError = d.error || null;
+        }
         clearIdleWatchdog();
         // 2026-08-23 — findings-to-fix bridge. Merge this turn's
         // critical/high save_finding results into the session-level
@@ -3067,7 +3128,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               // confirmation rather than executing.
               awaitingScopeConfirmation: !!d.awaiting_scope_confirmation,
               scopeConfirmationProposalId: d.scope_confirmation_proposal_id || null,
-              scopeConfirmationPrompt: d.awaiting_scope_confirmation ? finalPrompt : null,
+              scopeConfirmationPrompt: d.scope_confirmation_prompt || (d.awaiting_scope_confirmation ? finalPrompt : null),
+              scopeExecution: d.scope_execution || null,
               ...interactionFields(d),
             };
           }
@@ -3084,7 +3146,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         //   • Execute turn done → auto-advance through verify (visual
         //     only in Phase A) → security (live scan via /security-scan)
         //     → ship/done.
-        if (execMode === EXEC_MODES.LOOP) {
+        if (!isScopeResume && execMode === EXEC_MODES.LOOP) {
           const justSentPhase = resolvedPhase || "plan";
           if (justSentPhase === "plan") {
             // Detect the [PLAN_READY] marker in the last assistant
@@ -3130,6 +3192,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         setTimeout(() => taRef.current?.focus(), 80);
       },
       onError: (err) => {
+        scopeSendError = typeof err === "string" ? err : (err?.message || "Confirmation failed.");
         clearIdleWatchdog();
         // Iter 212m-19 — hide the floating card on error so it
         // doesn't sit there with an in-progress ⏳ forever.
@@ -3204,12 +3267,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       lastRequestIdRef.current = null;
       await runTurn();
     } catch (e) {
+      scopeSendError = e?.message || "The confirmation response was interrupted.";
       const name = e?.name || "";
       const msg = (e?.message || "").toLowerCase();
       const isAbort = name === "AbortError" || msg.includes("aborted");
       if (!isAbort) {
         console.warn("send(): unexpected error outside streamChat's own handling", e);
       }
+    }
+    if (isScopeResume) {
+      if (!scopeReceipt) {
+        const message = scopeSendError || "No execution receipt arrived. Check the proposal/task record before retrying.";
+        setBusy(false);
+        setMessages((msgs) => msgs.map((m, i) => i === msgs.length - 1 && m.role === "assistant"
+          ? { ...m, streaming: false, error: true, content: message } : m));
+        return { ok: false, error: message };
+      }
+      return { ok: true, receipt: scopeReceipt };
     }
   }
 
@@ -3260,52 +3334,74 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // `scopeConfirmedProposalId` set — the backend gate
   // (services/scope_confirmation.confirm_proposal) only honours it
   // when it matches the proposal's stored prompt verbatim.
-  function confirmScopeProposal(proposalId, originalPrompt) {
-    if (busy || !proposalId || !originalPrompt) return;
-    send(null, { promptOverride: originalPrompt, scopeConfirmedProposalId: proposalId });
+  async function confirmScopeProposal(proposalId) {
+    if (busy || !proposalId) throw new Error("Wait for the current response to finish before confirming.");
+    const outcome = await send(null, { promptOverride: "Confirm and proceed", scopeConfirmedProposalId: proposalId });
+    if (outcome?.ok !== true || !outcome.receipt) throw new Error(outcome?.error || "Confirmation was not dispatched.");
+    return outcome.receipt;
   }
 
   // "Cancel"/"Change scope" just tell the backend so the proposal
   // doesn't linger as pending — no re-send, no new tool execution.
   async function cancelScopeProposal(proposalId) {
-    if (!proposalId) return;
-    try {
-      await api.post(`/verification/scope-confirm/${proposalId}/cancel`);
-    } catch { /* best-effort — the 15-min TTL expires it anyway */ }
+    if (!proposalId) throw new Error("Missing proposal ID.");
+    const response = await api.post(`/verification/scope-confirm/${proposalId}/cancel`);
+    return response.data;
   }
 
   function onKeyDown(e) {
-    // Iter 212m-190 · Session 3 — Slash-menu key handling. When the
-    // menu is open the arrow keys navigate matches, Enter/Tab picks
-    // the highlighted command (fires the scan), Escape closes it.
-    if (slashOpen) {
-      const matches = matchSlashCommands(input);
-      if (matches.length > 0) {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setSlashIdx((i) => Math.min(i + 1, matches.length - 1));
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setSlashIdx((i) => Math.max(i - 1, 0));
-          return;
-        }
-        if (e.key === "Escape") {
-          setSlashOpen(false);
-          return;
-        }
-        if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
-          runSlashCommand(matches[slashIdx] || matches[0]);
-          return;
-        }
+    // 2026-09-27 P0-2 — decoupled from `slashOpen` (a separate popover
+    // -visibility React state that's only updated on `onChange`, one
+    // render behind the just-typed character). Founder-reported
+    // symptom: typing "/bug-hunt" + Enter sometimes went through as a
+    // normal chat message instead of firing a new scan — i.e. Enter
+    // fired while `slashOpen` hadn't (yet) reflected the latest
+    // keystroke, so this block was skipped entirely and fell through
+    // to `send()` below. Recomputing the match directly off the
+    // CURRENT `input` value at the moment Enter is pressed removes
+    // that whole class of race — it can never be stale, because
+    // there's nothing to be stale.
+    const liveMatches = matchSlashCommands(input);
+    if (liveMatches.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIdx((i) => Math.min(i + 1, liveMatches.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIdx((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        setSlashOpen(false);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        runSlashCommand(liveMatches[slashIdx] || liveMatches[0], "keydown_enter");
+        return;
       }
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
     }
+  }
+
+  // 2026-09-27 P0-2 follow-up — fire-and-forget telemetry so a FUTURE
+  // reproduction of "click/Enter fired zero requests" on production
+  // leaves a real server-side record (timestamp + trigger source +
+  // whether the scan POST was actually reached), instead of relying
+  // on someone having DevTools open at the exact right moment. Never
+  // let this block or throw into the real flow.
+  function logBugHuntTrigger(trigger, requestSent, reason) {
+    try {
+      api.post("/codebase-health/telemetry/bug-hunt-trigger", {
+        trigger, request_sent: requestSent, reason: reason || null,
+        client_ts: Date.now() / 1000,
+      }).catch(() => {});
+    } catch { /* telemetry must never break the real flow */ }
   }
 
   // Iter 212m-190 · Session 3 — Slash-command scan dispatcher. Maps
@@ -3315,15 +3411,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // we stash a session-scoped summary via `markScanJustCompleted` so
   // the strip surfaces the critical/high totals (or nothing at all
   // when clean).
-  async function runSlashCommand(cmd) {
+  async function runSlashCommand(cmd, trigger = "unknown") {
     if (!cmd) return;
     setSlashOpen(false);
     setInput("");
     const projectId = activeProject?.project_id;
     if (!projectId) {
+      logBugHuntTrigger(trigger, false, "no_active_project");
       toast({ message: "Connect a repo first — /scan needs a project", kind: "warn" });
       return;
     }
+    logBugHuntTrigger(trigger, true, null);
     await _executeSlashScan(cmd, projectId);
   }
 
@@ -5040,7 +5138,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         return (
           <div
             data-testid="free-mode-pill"
-            title={`Served by Groq emergency fallback (model: ${prov.model || "llama-3.3-70b-versatile"}). Recharge OpenRouter credits to restore primary models.`}
+            title="ORA is running on backup capacity right now — replies may be a bit different than usual."
             style={{
               position: "absolute",
               top: 14,
@@ -5639,6 +5737,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           composer form opens.
       */}
       <TokenBanner usage={usage} />
+      <UsageLimitModal
+        open={showUsageLimitModal}
+        usage={usage}
+        onClose={() => setShowUsageLimitModal(false)}
+      />
 
       {/* Iter 212m-163 — Loop mode pill is now rendered INSIDE the
           composer toolbar (next to the IntentTierIndicator), driven
@@ -6175,7 +6278,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           <SlashCommandMenu
             matches={matchSlashCommands(input)}
             selectedIndex={slashIdx}
-            onPick={(cmd) => runSlashCommand(cmd)}
+            onPick={(cmd) => runSlashCommand(cmd, "menu_click")}
           />
         )}
         <textarea

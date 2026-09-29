@@ -44,8 +44,13 @@ const CHAT_PANEL_SRC = fs.readFileSync(
 
 describe("ChatPanel · F12 payload must not hijack promptOverride retries (2026-02)", () => {
   it("f12Payload computation is gated on promptOverride == null", () => {
+    // `promptOverride != null` must still be one of the conditions
+    // that nulls out f12Payload — an `isScopeResume` OR-condition
+    // was legitimately added alongside it later (scope-confirm
+    // resends are also mechanical, not a fresh compose), so this
+    // no longer requires it to be the ONLY condition on that line.
     expect(CHAT_PANEL_SRC).toMatch(
-      /const f12Payload = promptOverride != null\s*\n\s*\? null\s*\n\s*: \(lastF12PayloadRef\.current/,
+      /const f12Payload = [^\n]*promptOverride != null[^\n]*\s*\n\s*\? null\s*\n\s*: \(lastF12PayloadRef\.current/,
     );
   });
 

@@ -49,7 +49,7 @@ export function EngagementNudge({ variant, projectId }) {
 
     (async () => {
       let message = variant === "post_skip"
-        ? "Connect your repo so ORA can actually ship fixes for you — not just chat about them."
+        ? "Skipped connecting a repo? No problem — scan your website, try a demo fix, or connect anytime."
         : null;
       let prefillTask = null;
       if (variant === "post_scan") {
@@ -69,7 +69,7 @@ export function EngagementNudge({ variant, projectId }) {
         window.dispatchEvent(new CustomEvent("aurem:external-nudge", {
           detail: {
             variant, message, prefillTask,
-            actionLabel: variant === "post_skip" ? "Connect" : "Try it",
+            actionLabel: variant === "post_skip" ? "See options" : "Try it",
           },
         }));
       } catch { /* noop */ }

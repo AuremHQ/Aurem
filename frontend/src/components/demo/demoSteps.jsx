@@ -122,7 +122,7 @@ const StepSignup = ({ tick }) => {
           <div style={{ fontFamily: "Georgia, serif", fontSize: 22, fontWeight: 700, color: C.text, letterSpacing: "-0.5px" }}>
             Start building, production-ready from day one
           </div>
-          <div style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>1,000 tokens free. No card required.</div>
+          <div style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>10 free tasks. No card required.</div>
         </div>
 
         {/* ORA GUIDE card */}

@@ -16,7 +16,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from cto_services.auth import current_dev
+from cto_services.db import get_db
 from services.repo_indexing import build_repo_index
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/repos", tags=["Repo Indexing"])
 
@@ -32,8 +34,14 @@ async def index_repo(
     or a 4xx with the `errors` list as `detail` when the project can't
     be found or the analysis bailed."""
     me = await current_dev(authorization)
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # user_id, so a team member re-indexing a shared project either
+    # got a false "not found" (their user_id owns nothing) or, worse,
+    # rebuilt a DIFFERENT project of their own with the same repo_id
+    # under their own account instead of the team's real one.
+    ctx = await check_permission(me, "projects", "write", db=get_db())
     result = await build_repo_index(
-        user_id=me["user_id"], project_id=repo_id, commit=bool(commit),
+        user_id=ctx["effective_account_id"], project_id=repo_id, commit=bool(commit),
     )
     if not result.get("ok"):
         # 404 if the project is unknown; 502 for upstream failures so

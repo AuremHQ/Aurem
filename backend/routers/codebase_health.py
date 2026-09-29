@@ -38,10 +38,12 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
 from services.feature_flags import is_enabled
+from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/codebase-health", tags=["Codebase Health"])
 
@@ -104,7 +106,16 @@ async def scan(
     # change and silently 403'd every real paying customer who
     # clicked "Review findings →" from the chat reminder banner.
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # login for the project-ownership check, rate limit, and
+    # fixed-findings map, so a team member with real "projects"
+    # access got a false 404/empty state instead of the account's
+    # real scan data.
+    ctx = await check_permission(user, "projects", "write", db=db)
+    user_id = ctx["effective_account_id"]
     project_id = (body or {}).get("project_id")
     categories = (body or {}).get("categories") or list(SCANNERS.keys())
     categories = [c for c in categories if c in SCANNERS]
@@ -112,10 +123,6 @@ async def scan(
         raise HTTPException(400, "project_id required")
     if not categories:
         raise HTTPException(400, "At least one category required")
-
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "DB not connected")
 
     # Iter 212m-75 — sliding-window rate limit (10 scans / hour / user / category).
     # Iter 212m-110 — admins, founders and is_unlimited accounts are
@@ -199,6 +206,37 @@ async def scan(
             f"github_fetch_crashed: {type(e).__name__}: {str(e)[:200]}",
         )
 
+    # 2026-09-27 P0-2 — VERIFIED root cause of "banner shows 'Scan
+    # running', then no new result card appears": `_build_text_cache`
+    # fetches every candidate file in parallel (asyncio.gather) and
+    # silently drops any that fail — a GitHub secondary rate-limit or
+    # transient network blip hitting most/all of those parallel
+    # fetches at once returns `{}` with NO exception raised anywhere
+    # in this call chain. Before this fix, `{}` flowed straight into
+    # the scoring logic below, which scores an empty finding set as a
+    # perfect "0 issues found — clean" success — a fabricated result
+    # that gets a green toast and a chat message, while the line
+    # further down that refuses to persist a 0-file scan (Iter
+    # 212m-177) correctly skips writing a DB record. Net effect: a
+    # fake "clean" reply with nothing behind it — exactly the reported
+    # "banner ran, no card ever showed up" symptom, and it also means
+    # any PAST scan that silently hit this path told the founder their
+    # repo was clean when nothing was actually scanned. Never claim a
+    # scan succeeded when zero files were read.
+    if not text_cache:
+        logger.warning(
+            "codebase_health.scan read ZERO files — refusing to report a "
+            "fake 'clean' result (user=%s project=%s owner=%s repo=%s branch=%s)",
+            user_id, project_id, owner, repo, branch,
+        )
+        raise HTTPException(502, {
+            "error": "scan_no_files_read",
+            "message": "The scan couldn't read any files from this repository — "
+                        "this is almost always a transient GitHub fetch issue "
+                        "(rate limit or network blip), not an actually-empty repo. "
+                        "Please try again in a moment.",
+        })
+
     breakdown: dict[str, dict] = {}
     all_findings: list[dict] = []
     # Iter 212m-193 — findings already fixed (commits on draft-PR
@@ -273,7 +311,18 @@ async def scan(
         "total_fixed":   total_fixed,
         "scanned_files": len(text_cache),
         "summary":       (
-            f"{total} issues found across {len(categories)} categories — "
+            # 2026-09-27 — wording fix: "categories" here counts which
+            # of the 4 top-level SCANNERS (vanguard/bug_hunt/http/
+            # docker) this particular scan command ran (e.g. /bug-hunt
+            # intentionally runs only the bug_hunt scanner) — it has
+            # NOTHING to do with Bug Hunt's own 4 internal pattern
+            # groups (secrets/vulnerable-code/endpoints/CVE-deps),
+            # which all run correctly inside that one scanner
+            # regardless of this count. The old wording ("across N
+            # categories") was genuinely misread as "only 1 of Bug
+            # Hunt's 4 promised categories ran" — it wasn't; this is
+            # just clearer.
+            f"{total} issues found across {len(categories)} scanner(s) — "
             f"{sum(1 for f in all_findings if f['severity']=='critical')} critical."
             + (f" {total_fixed} already fixed." if total_fixed else "")
         ),
@@ -478,7 +527,8 @@ async def last_scan(
     # query below, so relaxing to current_dev can't leak another
     # user's scan data.
     user = await current_dev(authorization)
-    user_id = user["user_id"]
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
     # Build Prompt v4 · Phase B — computed once, included on every branch
     # below so the frontend always gets a consistent boolean regardless
     # of which return path fires.
@@ -608,7 +658,6 @@ async def request_fix(
     # need Pro+), 1 task per successful fix. No token pricing.
     from services.scan_fix_quota import assert_can_fix, record_scan_fixes
     user = await current_dev(authorization)
-    user_id = user["user_id"]
     project_id  = (body or {}).get("project_id")
     finding_id  = (body or {}).get("finding_id") or ""
     title       = (body or {}).get("title") or "security_issue"
@@ -621,6 +670,13 @@ async def request_fix(
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
+    # 2026-09-26 P0 RBAC fix (Task 2) — was keyed on the caller's own
+    # login for project lookup + shared task quota, so a team member
+    # with real "projects" write access either got a false 404 or
+    # drew from their own personal quota instead of the account's.
+    ctx = await check_permission(user, "projects", "write", db=db)
+    user_id = ctx["effective_account_id"]
+    effective_user = {**user, "user_id": user_id}
     is_unlimited_user = bool(
         user.get("is_admin")
         or user.get("is_unlimited")
@@ -628,7 +684,7 @@ async def request_fix(
     )
     # Gate BEFORE any work: tool access + 1 task remaining. Raises
     # 403 fix_not_available_on_tier / 402 insufficient_tasks.
-    await assert_can_fix(user, "health-scan", count=1)
+    await assert_can_fix(effective_user, "health-scan", count=1)
     tokens_cost = 0
     me = await db.dev_users.find_one(
         {"user_id": user_id}, {"_id": 0, "tokens_remaining": 1},
@@ -658,7 +714,7 @@ async def request_fix(
     _t_start = _t.time()
     try:
         res = await apply_finding_fix(
-            db=db, user=user, project_id=project_id, finding=finding_payload,
+            db=db, user=effective_user, project_id=project_id, finding=finding_payload,
         )
     except Exception as e:
         logger.exception("health apply_finding_fix raised")
@@ -888,3 +944,61 @@ async def scanner_feedback(
         "recent":       recent,
         "generated_at": time.time(),
     }
+
+
+# ── 2026-09-27 P0-2 follow-up — Bug Hunt trigger telemetry ──
+# The founder reported "typing/clicking /bug-hunt sometimes fires zero
+# network requests" and I could not reproduce it on this pod (both an
+# Enter-key attempt and two back-to-back menu clicks fired real scan
+# requests every time I tried). Rather than claim it's fixed on a
+# symptom I never actually saw, this logs EVERY bug-hunt trigger
+# attempt server-side — timestamp, how it was triggered (keydown vs
+# click vs the send() fallback guard), and whether the scan POST was
+# actually reached — so the NEXT time the founder reproduces it on
+# production, there's a real, queryable record instead of relying on
+# them having DevTools open at the exact right moment. Deliberately
+# NOT marking P0-2's "zero requests" sub-case as fixed — this is
+# observability for that specific unreproduced symptom, nothing more.
+class BugHuntTriggerEvent(BaseModel):
+    trigger:      str            # "keydown_enter" | "menu_click" | "send_exact_match"
+    request_sent: bool           # did the code actually reach the scan POST call?
+    reason:       Optional[str] = None   # why not, if request_sent is False
+    client_ts:    Optional[float] = None  # client Date.now()/1000, for ordering
+
+
+@router.post("/telemetry/bug-hunt-trigger")
+async def log_bug_hunt_trigger(body: BugHuntTriggerEvent,
+                                authorization: Optional[str] = Header(None)):
+    user = await current_dev(authorization)
+    db = get_db()
+    if db is None:
+        return {"ok": False}
+    event = {
+        "user_id":      user["user_id"],
+        "trigger":      body.trigger,
+        "request_sent": body.request_sent,
+        "reason":       body.reason,
+        "client_ts":    body.client_ts,
+        "server_ts":    time.time(),
+    }
+    await db.bug_hunt_trigger_events.insert_one(event)
+    logger.info(
+        "bug_hunt_trigger user=%s trigger=%s request_sent=%s reason=%s",
+        user["user_id"], body.trigger, body.request_sent, body.reason,
+    )
+    return {"ok": True}
+
+
+@router.get("/telemetry/bug-hunt-triggers")
+async def list_bug_hunt_triggers(limit: int = 100,
+                                  authorization: Optional[str] = Header(None)):
+    """Admin-only — inspect recent trigger events to prove/disprove
+    the "zero requests fired" symptom once it's actually reproduced."""
+    await require_admin(authorization)
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB unavailable")
+    cur = db.bug_hunt_trigger_events.find(
+        {}, {"_id": 0},
+    ).sort("server_ts", -1).limit(min(limit, 500))
+    return {"events": [row async for row in cur]}

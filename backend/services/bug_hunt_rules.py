@@ -61,15 +61,21 @@ _SECRET_RULES: list[tuple[str, re.Pattern, str, str]] = [
      "CRITICAL",
      "Slack token — exfiltrates entire workspace history and DMs."),
     ("github_pat",
-     re.compile(r"\bghp_[A-Za-z0-9]{36}\b"),
+     # 2026-09-27 P0-4 — was exact `{36}`. GitHub's changelog: these
+     # move to a new stateless format up to ~520 chars, with ghs_
+     # tokens embedding a dot-separated JWT (base64url `-`/`_`) —
+     # both the length AND the plain-alphanumeric charset assumption
+     # were wrong; widened both, verified against a real-shaped
+     # synthetic token.
+     re.compile(r"\bghp_[A-Za-z0-9_.\-]{20,}\b"),
      "CRITICAL",
      "GitHub personal access token — can clone, push, and delete repos."),
     ("github_oauth_token",
-     re.compile(r"\bgho_[A-Za-z0-9]{36}\b"),
+     re.compile(r"\bgho_[A-Za-z0-9_.\-]{20,}\b"),
      "CRITICAL",
      "GitHub OAuth user token — full account access at GitHub permissions level."),
     ("github_app_token",
-     re.compile(r"\b(?:ghs|ghu)_[A-Za-z0-9]{36}\b"),
+     re.compile(r"\b(?:ghs|ghu)_[A-Za-z0-9_.\-]{20,}\b"),
      "CRITICAL",
      "GitHub App/server token — installation-wide access on repos."),
     ("jwt_secret_hardcoded",

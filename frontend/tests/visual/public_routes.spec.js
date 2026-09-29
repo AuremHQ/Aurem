@@ -26,17 +26,17 @@ import { test, expect } from "@playwright/test";
 
 
 // Iter 300 — root-cause fix for the flaky landing/login diffs: both
-// were failing not from any CSS/design regression, but from two live
-// data sources that legitimately change between baseline capture and
-// test run:
-//   1. CookieConsentBanner (first-visit only) — repositions the whole
-//      fold depending on whether it's showing.
-//   2. Landing's `/promo/first50/status` + `/usage/public/stats`
-//      polls — real DB counters that drift over time, shifting the
-//      hero chip / trust-badge text and reflowing everything below it.
-// stubDynamicContent() neutralises both BEFORE first paint so every
-// run renders the exact same fold, regardless of real promo/usage
-// state or first-visit cookie status.
+// were failing not from any CSS/design regression, but from a live
+// data source that legitimately changes between baseline capture and
+// test run: CookieConsentBanner (first-visit only) repositions the
+// whole fold depending on whether it's showing. stubDynamicContent()
+// neutralises it BEFORE first paint so every run renders the exact
+// same fold, regardless of first-visit cookie status.
+//
+// 2026-09-26 — the homepage's `/promo/first50/status` poll this used
+// to also stub is gone; the entire First-50 promo feature (hero chip,
+// endpoint, everything) was removed from the codebase, so Landing.jsx
+// no longer makes that call at all.
 async function stubDynamicContent(page) {
   // Already-consented — CookieConsentBanner reads this on mount and
   // renders nothing when present (see cookieConsentStorage.js STORAGE_KEY).
@@ -51,14 +51,6 @@ async function stubDynamicContent(page) {
       })
     );
   });
-  // Fixed promo counter — matches routers/promo_first50.py response shape.
-  await page.route("**/promo/first50/status", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ claimed: 200, total: 500, remaining: 300, is_active: true }),
-    })
-  );
   // Hide the live trust-badge tile — matches routers/usage.py's own
   // fallback shape so the page renders exactly as it does pre-data.
   await page.route("**/usage/public/stats", (route) =>

@@ -245,6 +245,8 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
                     "slow_notice": bool(ev.get("slow_notice", False)),
                 }) + "\n\n"
             )
+        elif ev["type"] == "scope_confirmation":
+            yield "data: " + json.dumps(ev) + "\n\n"
         elif ev["type"] == "mode":
             # Iter 42 — forward classified mode (A/B/C/D/E) to UI so
             # the pill renders BEFORE tokens stream.

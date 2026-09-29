@@ -94,6 +94,8 @@ async def start_loop(body: StartBody,
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB unavailable")
+    from services.team_permissions import check_permission
+    await check_permission(user, "loop", "write", db=db)
     # Iter 364 — Kill switch (env or DB flag) — hard-off for everyone
     # including founders / betas. Instant rollback without a deploy.
     from services import loop_beta as _lb
@@ -457,8 +459,10 @@ async def get_active_loop(
     db = get_db()
     if db is None:
         return {"ok": True, "active": None}
+    from services.team_permissions import check_permission
+    ctx = await check_permission(user, "loop", "read", db=db)
     q = {
-        "user_id":  user["user_id"],
+        "user_id":  ctx["effective_account_id"],
         "state":    {"$in": [
             # Iter 312 · Class 1 — `planning` MUST be included so that
             # the ChatPanel timeout-recovery poll (recovery of the
@@ -865,6 +869,18 @@ async def loop_status(loop_id: str,
             {"ship_branch": pr_branch}, {"_id": 0, "pr_status": 1},
         )
         doc["pr_status"] = (outcome or {}).get("pr_status") or "open"
+    # 2026-09-26 P0 — `context.ship_pending.token` is a LIVE GitHub App
+    # installation access token (real write access to the connected
+    # repo), minted server-side purely so `confirm_ship()` can perform
+    # the actual commit later in this same process. It has no reason to
+    # ever leave the server — the frontend only needs to know a ship is
+    # pending, not the credential that will perform it. Strip it here,
+    # at the API boundary, on every poll; `doc` is an in-memory dict
+    # from `load_session()` so this never touches what's persisted in
+    # Mongo or what `confirm_ship()` reads from `self.context` server-side.
+    _sp = (doc.get("context") or {}).get("ship_pending")
+    if isinstance(_sp, dict) and "token" in _sp:
+        _sp.pop("token", None)
     return doc
 
 

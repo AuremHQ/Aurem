@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time as _time
 from typing import AsyncIterator, Optional
 
 logger = logging.getLogger(__name__)
@@ -160,14 +161,27 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             return
 
     from openai import AsyncOpenAI
+    # 2026-09-27 — P0-1(e)/P1-7 root cause: this was the one LLM call
+    # site in the codebase with NO HTTP-Referer/X-Title headers and no
+    # `user` field, confirmed by grep against every other call site
+    # (services/llm/openrouter_client.py, openrouter_providers.py,
+    # services/ora_chat/providers.py, advisor_vision.py, etc., which
+    # all set these). That's why the founder's OpenRouter dashboard
+    # rows for /ora (gpt-oss-20b) showed app "Unknown" and no Client
+    # User ID — those rows all came from here.
+    default_headers = {
+        "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://auremcto.com"),
+        "X-Title": "AUREM - ORA Founder Chat",
+    }
     client = AsyncOpenAI(base_url=resolved["base_url"], api_key=resolved["api_key"],
-                          timeout=_TIMEOUT_S)
+                          timeout=_TIMEOUT_S, default_headers=default_headers)
     extra_body: dict = {}
     if reasoning:
         extra_body[os.getenv("LLM_REASONING_PARAM", "enable_thinking")] = True
 
     tool_accum: dict[int, dict] = {}
     usage: dict = {}
+    _t0 = _time.monotonic()
     try:
         stream = await client.chat.completions.create(
             model=resolved["model"],
@@ -176,6 +190,11 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             tool_choice="auto" if tools else None,
             stream=True,
             max_tokens=max_tokens,
+            # `user` is OpenRouter's documented end-user attribution
+            # field (distinct from HTTP-Referer/X-Title, which just
+            # tag the *app*) — this is what populates "Client User ID"
+            # in the OpenRouter dashboard logs the founder was reading.
+            user=user_id or None,
             extra_body=extra_body or None,
         )
         async for chunk in stream:
@@ -200,6 +219,16 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
                           "output_tokens": u.completion_tokens or 0}
     except Exception as e:  # noqa: BLE001
         logger.warning("ora_chat_v2 llm_client stream error: %r", e)
+        try:
+            from services.loop_token_ledger import log_real_usage
+            await log_real_usage(
+                resolved["model"], {}, status="failed",
+                error_reason=f"{type(e).__name__}: {str(e)[:200]}",
+                latency_ms=(_time.monotonic() - _t0) * 1000,
+                mode=role,
+            )
+        except Exception as _e:                                # noqa: BLE001
+            logger.debug("[silent-catch] llm_client stream-error row log skipped: %r", _e)
         yield {"type": "error", "error": type(e).__name__, "detail": str(e)[:200]}
         return
 
@@ -227,5 +256,20 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
                     cost_usd=real_cost)
             except Exception as e:                              # noqa: BLE001
                 logger.warning("llm_usd_cap: record_usd_spend failed: %r", e)
+        # 2026-09-27 MASTER TASK Part A — the ONE canonical ledger row
+        # for this turn's LLM call, in addition to the cap-tracking
+        # write above (kept as-is — different concern, don't break
+        # it). `real_llm_usage` is what /tokens, admin user detail,
+        # /admin/agent-tokens, /admin/token-pnl and /analytics all
+        # read from now.
+        try:
+            from services.loop_token_ledger import log_real_usage
+            await log_real_usage(
+                resolved["model"], usage, status="ok",
+                latency_ms=(_time.monotonic() - _t0) * 1000,
+                mode=role,
+            )
+        except Exception as e:                                  # noqa: BLE001
+            logger.debug("[silent-catch] llm_client usage-row log skipped: %r", e)
         yield {"type": "usage", **usage}
     yield {"type": "done"}

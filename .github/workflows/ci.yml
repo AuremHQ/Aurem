@@ -750,16 +750,24 @@ jobs:
   # tool_executor.py was deleted 3× as "dead code" while lazy-imported,
   # crashing every prod chat tool-call. This job blocks undocumented
   # file deletions:
-  #   • PR: description MUST contain the check-safe-to-delete.sh
-  #     output block ("Script output:").
-  #   • Push (Emergent auto-push has no PR): the same push MUST update
-  #     docs/DELETE_GATE.md's verdict record — OR (2026-08-26) this job
-  #     runs check-safe-to-delete.sh itself and auto-commits the
-  #     verdict when every deleted file comes back with ZERO
-  #     references, so the audit trail is never skipped by a missed
-  #     manual step. Any deletion the script flags as still-referenced
-  #     STILL fails the gate for real — this only automates the safe
-  #     case, it never rubber-stamps a risky one.
+  #   • Either event: a manual verdict already present (PR description
+  #     contains the check-safe-to-delete.sh "Script output:" block,
+  #     OR docs/DELETE_GATE.md was updated in the same push/PR head)
+  #     short-circuits straight to a pass.
+  #   • Otherwise (2026-08-26, extended 2026-09-26 to also cover
+  #     pull_request — it used to ONLY get this auto-verdict fallback
+  #     on `push`; a `pull_request` run with no "Script output:" text
+  #     in the PR body hard-failed immediately even when every deleted
+  #     file was provably unreferenced, which is why this job could
+  #     show red on `push` and green on `pull_request` — or vice versa
+  #     — for the exact same commit, depending on which fallback path
+  #     each trigger type was allowed to take) — this job runs
+  #     check-safe-to-delete.sh itself and auto-commits the verdict
+  #     when every deleted file comes back with ZERO references, so
+  #     the audit trail is never skipped by a missed manual step. Any
+  #     deletion the script flags as still-referenced STILL fails the
+  #     gate for real — this only automates the safe case, it never
+  #     rubber-stamps a risky one.
   # ────────────────────────────────────────────────────────────────
   delete-gate:
     name: Delete Gate — dependency-check enforcement
@@ -772,6 +780,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # PRs need the actual head branch checked out (not the
+          # detached merge-commit HEAD actions/checkout@v4 gives by
+          # default for pull_request events) so the auto-verdict
+          # commit below can be pushed straight back onto it.
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
       - name: Block undocumented file deletions
         env:
@@ -780,17 +793,20 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -e
           if [ "$EVENT" = "pull_request" ]; then
             git fetch origin "$BASE_REF" --depth=50 || true
             RANGE="origin/$BASE_REF...HEAD"
+            PUSH_REF="$PR_HEAD_REF"
           else
             if [ -z "$BEFORE" ] || echo "$BEFORE" | grep -q '^0*$'; then
               RANGE="HEAD~1..HEAD"
             else
               RANGE="$BEFORE..$SHA"
             fi
+            PUSH_REF="${GITHUB_REF#refs/heads/}"
           fi
           DELETED=$(git diff --diff-filter=D --name-only $RANGE 2>/dev/null \
             | grep -Ev '^(_deprecated/)' \
@@ -801,29 +817,25 @@ jobs:
           fi
           echo "⚠️ Deleted files detected in $RANGE:"
           echo "$DELETED"
-          if [ "$EVENT" = "pull_request" ]; then
-            if printf '%s' "$PR_BODY" | grep -q "Script output:"; then
-              echo "✅ PR carries the mandatory check-safe-to-delete.sh output block."
-              exit 0
-            fi
-            echo "::error::File deletion without ./scripts/check-safe-to-delete.sh output in the PR description. See docs/DELETE_GATE.md."
-            exit 1
+          if [ "$EVENT" = "pull_request" ] && printf '%s' "$PR_BODY" | grep -q "Script output:"; then
+            echo "✅ PR carries the mandatory check-safe-to-delete.sh output block."
+            exit 0
           fi
-
-          if git diff --name-only $RANGE | grep -q "docs/DELETE_GATE.md"; then
+          if [ "$EVENT" != "pull_request" ] && git diff --name-only $RANGE | grep -q "docs/DELETE_GATE.md"; then
             echo "✅ docs/DELETE_GATE.md verdict record updated in the same push."
             exit 0
           fi
 
-          echo "No manual verdict in this push — running check-safe-to-delete.sh for each deleted file to auto-verify."
+          echo "No manual verdict found — running check-safe-to-delete.sh for each deleted file to auto-verify."
           echo "$DELETED" > /tmp/deleted_files.txt
           ALL_SAFE=1
           {
             echo ""
             echo "## Auto-verdict — $(date -u +%Y-%m-%dT%H:%M:%SZ) — commit \`${SHA:0:9}\`"
-            echo "Generated by the delete-gate CI job (2026-08-26 automation) — no manual"
-            echo "docs/DELETE_GATE.md edit was made in this push, so check-safe-to-delete.sh"
-            echo "ran automatically for every deleted file below."
+            echo "Generated by the delete-gate CI job (2026-08-26 automation, extended"
+            echo "2026-09-26 to pull_request) — no manual docs/DELETE_GATE.md edit /"
+            echo "PR-description \"Script output:\" block was present, so"
+            echo "check-safe-to-delete.sh ran automatically for every deleted file below."
             echo ""
           } > /tmp/verdict_block.md
           while IFS= read -r f; do
@@ -843,6 +855,11 @@ jobs:
           done < /tmp/deleted_files.txt
 
           if [ "$ALL_SAFE" -eq 1 ]; then
+            if [ -z "$PUSH_REF" ]; then
+              echo "⚠️ Could not resolve a branch ref to push the auto-verdict to (detached/fork PR?) — passing without committing docs/DELETE_GATE.md. Please add the verdict manually."
+              cat /tmp/verdict_block.md
+              exit 0
+            fi
             echo "✅ Every deleted source file has ZERO remaining references — auto-committing the verdict."
             cat /tmp/verdict_block.md >> docs/DELETE_GATE.md
             git config user.name "aurem-delete-gate-bot"
@@ -851,7 +868,7 @@ jobs:
             git commit -m "docs: auto-verdict for deletions in ${SHA:0:9} [delete-gate-bot]"
             # GITHUB_TOKEN-authored pushes don't re-trigger push-based
             # workflows (GitHub's own loop guard) — safe to push here.
-            git push origin HEAD:"${GITHUB_REF#refs/heads/}"
+            git push origin "HEAD:$PUSH_REF"
             exit 0
           fi
 

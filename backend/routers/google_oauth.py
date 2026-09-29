@@ -186,6 +186,19 @@ async def callback(
         })
 
     jwt_token = create_token(user_id, user_mail, is_admin=is_admin)
+    # 2026-09-28 MASTER TASK Part 5.2 — audit-log gap found: Google
+    # OAuth is a COMPLETELY separate login path from /auth/login's
+    # email+password flow (which _clear_login_failures/
+    # _record_login_failure already write to admin_audit). This
+    # callback never wrote a "login" event at all, so anyone signing
+    # in with Google (including via the admin panel) was invisible
+    # to GET /admin/audit/actions.
+    try:
+        from services.admin_audit_log import record_event
+        await record_event(db, actor=user_mail, action="login", target=user_mail,
+                            result="success", extra={"via": "google_oauth", "new_account": is_new_account})
+    except Exception as e:
+        logger.warning("[google-oauth] audit log write failed: %r", e)
     base = (state_origin or "").rstrip("/")
     if not base:
         raise HTTPException(500, "Could not determine redirect origin")

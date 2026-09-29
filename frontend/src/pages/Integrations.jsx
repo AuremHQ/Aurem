@@ -2,12 +2,19 @@
  * frontend/src/pages/Integrations.jsx  —  Iter 212m-174
  *
  * Public IDE-integration setup page.  Renders 4 tabs (Cursor, VS Code,
- * Claude Desktop, Claude Code CLI) with one-click install deep-links
- * and copy-paste configs, all pre-filled with the caller's real
- * sk-aurem- API key (minted on first visit).
+ * Claude Desktop, Claude Code CLI), all copy-paste MCP configs
+ * pre-filled with the caller's real sk-aurem- API key (minted on
+ * first visit), masked in the DOM behind an explicit Reveal action.
+ *
+ * 2026-09-26 SECURITY FIX — Cursor/VS Code used to also get a
+ * one-click `cursor://` / `vscode:mcp/install` deep-link with the
+ * raw key baked into the URL, rendered as a real `<a href>` — the
+ * full key sat in the page HTML regardless of whether Reveal was
+ * ever clicked. Removed; every IDE tab now uses the same
+ * masked-then-reveal manual-config pattern.
  *
  * Data source: `GET /api/aurem-dev/mcp/install-links` (auto-mints an
- * API key if the user has none). Zero manual configuration.
+ * API key if the user has none).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate }             from "react-router-dom";
@@ -97,9 +104,9 @@ export default function Integrations() {
         style={styles.gate}>
         <h1 style={styles.h1}>Connect your IDE to ORA</h1>
         <p style={styles.gateP}>
-          Sign in to generate your ORA API key and get one-click
-          install links for Cursor, VS Code, Claude Desktop, and
-          Claude Code CLI.
+          Sign in to generate your ORA API key and get copy-paste MCP
+          setup for Cursor, VS Code, Claude Desktop, and Claude Code
+          CLI.
         </p>
         <button data-testid="integrations-login-btn"
           onClick={() => navigate("/login?next=/integrations")}
@@ -145,7 +152,7 @@ export default function Integrations() {
           Connect ORA to your IDE
         </h1>
         <p style={styles.sub}>
-          One-click install for Cursor, VS Code, Claude Desktop, and Claude Code CLI.
+          Copy-paste MCP setup for Cursor, VS Code, Claude Desktop, and Claude Code CLI.
           Every request runs only against your own projects — nothing is shared
           between accounts.
         </p>
@@ -261,21 +268,14 @@ function ApiKeyCard({ apiKey, isNew, endpoint, onCopy, onTestConnection, testRes
 function CursorTab({ data, onCopy }) {
   return (
     <div data-testid="cursor-tab-content">
-      <Step n={1} title="Install in one click">
-        <p style={styles.p}>
-          Cursor 0.42 or newer required. This will open Cursor with ORA
-          pre-configured.
+      <Step n={1} title="Add ORA as an MCP server">
+        <p style={styles.pSmall}>
+          Cursor 0.42+ required. Paste this into Cursor Settings →
+          MCP Servers:
         </p>
-        <a data-testid="cursor-install-link"
-          href={data.cursor}
-          style={styles.installBtn}>
-          Install ORA in Cursor&nbsp;↗
-        </a>
-        <button data-testid="cursor-copy-link"
-          onClick={() => onCopy(data.cursor, "Cursor install link")}
-          style={styles.linkBtn}>
-          copy install link
-        </button>
+        <ConfigBlock json={data.config_json} onCopy={onCopy}
+          apiKey={data.api_key}
+          testid="cursor-config-json" />
       </Step>
       <Step n={2} title="Test it in Cursor">
         <p style={styles.p}>Open Cursor's chat and try:</p>
@@ -285,15 +285,6 @@ function CursorTab({ data, onCopy }) {
           MCP server and show your connected repos.
         </p>
       </Step>
-      <Step n={3} title="Manual fallback">
-        <p style={styles.pSmall}>
-          If the deep-link doesn't work, paste this into Cursor Settings
-          → MCP Servers:
-        </p>
-        <ConfigBlock json={data.config_json} onCopy={onCopy}
-          apiKey={data.api_key}
-          testid="cursor-config-json" />
-      </Step>
     </div>
   );
 }
@@ -301,20 +292,16 @@ function CursorTab({ data, onCopy }) {
 function VSCodeTab({ data, onCopy }) {
   return (
     <div data-testid="vscode-tab-content">
-      <Step n={1} title="One-click install">
-        <p style={styles.p}>
-          VS Code 1.100+ with MCP support required.
+      <Step n={1} title="Add ORA as an MCP server">
+        <p style={styles.pSmall}>
+          VS Code 1.100+ with MCP support required. Create
+          <code>&nbsp;.vscode/mcp.json</code> in your project (or run
+          "MCP: Open User Configuration" for a global config) and
+          paste this:
         </p>
-        <a data-testid="vscode-install-link"
-          href={data.vscode}
-          style={styles.installBtn}>
-          Install ORA in VS Code&nbsp;↗
-        </a>
-        <button data-testid="vscode-copy-link"
-          onClick={() => onCopy(data.vscode, "VS Code install link")}
-          style={styles.linkBtn}>
-          copy install link
-        </button>
+        <ConfigBlock json={data.vscode_config_json} onCopy={onCopy}
+          apiKey={data.api_key}
+          testid="vscode-config-json" />
       </Step>
       <Step n={2} title="Or install the AUREM extension">
         <p style={styles.p}>
@@ -325,14 +312,10 @@ function VSCodeTab({ data, onCopy }) {
           href="vscode:extension/auremcto.aurem-cto"
           style={styles.linkBtn}>Open in VS Code Marketplace&nbsp;↗</a>
       </Step>
-      <Step n={3} title="Manual fallback">
-        <p style={styles.pSmall}>
-          Paste this into <code>settings.json</code> under
-          <code>&nbsp;"mcp.servers"</code>:
-        </p>
-        <ConfigBlock json={data.config_json} onCopy={onCopy}
-          apiKey={data.api_key}
-          testid="vscode-config-json" />
+      <Step n={3} title="Test it">
+        <p style={styles.p}>Reload the window, open Copilot Chat's
+          agent mode, and try:</p>
+        <code style={styles.exampleCode}>list my ORA projects</code>
       </Step>
     </div>
   );
@@ -388,12 +371,9 @@ function ClaudeCodeTab({ data, onCopy }) {
           style={styles.linkBtn}>copy</button>
       </Step>
       <Step n={2} title="Add ORA as an MCP server">
-        <code data-testid="claude-code-cmd" style={styles.exampleCode}>
-          {data.claude_code_cli}
-        </code>
-        <button data-testid="claude-code-copy-cmd"
-          onClick={() => onCopy(data.claude_code_cli, "Claude Code command")}
-          style={styles.linkBtn}>copy</button>
+        <MaskedCommand command={data.claude_code_cli} apiKey={data.api_key}
+          onCopy={onCopy} copyLabel="Claude Code command"
+          testid="claude-code-cmd" />
       </Step>
       <Step n={3} title="Verify">
         <p style={styles.p}>Run <code>claude mcp list</code>.
@@ -453,6 +433,48 @@ function ConfigBlock({ json, onCopy, testid, apiKey }) {
         )}
         <button
           onClick={() => onCopy(str, "Config JSON")}
+          style={styles.miniBtn}>
+          Copy
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MaskedCommand({ command, apiKey, onCopy, copyLabel, testid }) {
+  // Iter 2026-09-26 SECURITY — same masked-then-reveal treatment as
+  // ConfigBlock above, applied to the Claude Code CLI command string
+  // (a plain shell command, not JSON, so ConfigBlock's JSON.stringify
+  // doesn't apply — this is the string equivalent).
+  const [reveal, setReveal] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const masked = apiKey ? `${apiKey.slice(0, 14)}…${apiKey.slice(-4)}` : "";
+  const display = (!apiKey || reveal) ? command : command.split(apiKey).join(masked);
+  const toggleReveal = () => {
+    if (!reveal) { setConfirmOpen(true); return; }
+    setReveal(false);
+  };
+  return (
+    <div style={{ position: "relative" }}>
+      <ConfirmModal
+        open={confirmOpen}
+        testidPrefix={`${testid}-reveal-confirm`}
+        title="Reveal API key?"
+        body="Anyone looking at your screen will be able to copy your full API key."
+        confirmLabel="Reveal"
+        onConfirm={() => { setReveal(true); setConfirmOpen(false); }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+      <code data-testid={testid} style={{ ...styles.exampleCode, display: "block", paddingRight: 140 }}>
+        {display}
+      </code>
+      <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}>
+        <button data-testid={`${testid}-reveal`} onClick={toggleReveal}
+          style={styles.miniBtn}>
+          {reveal ? "Hide key" : "Reveal key"}
+        </button>
+        <button data-testid={`${testid}-copy`}
+          onClick={() => onCopy(command, copyLabel)}
           style={styles.miniBtn}>
           Copy
         </button>

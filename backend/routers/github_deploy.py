@@ -29,20 +29,33 @@ from pydantic import BaseModel, Field
 
 from services import github_deploy_service as gh
 from cto_services.auth import current_dev
+from services.team_permissions import check_permission
+from cto_services.db import get_db
 
 router = APIRouter(prefix="/github-deploy", tags=["github-deploy"])
 logger = logging.getLogger(__name__)
 
 
-def _tenant_id_of(user: dict) -> str:
-    # Standardize on user_id as the tenant identifier across the app.
-    return user.get("user_id") or user.get("email") or ""
+async def _gate(authorization: Optional[str], level: str) -> str:
+    """2026-09-26 P0 RBAC fix (Task 2) — every handler below used the
+    caller's own login as the tenant id, so a team member with real
+    "deploy" access got a false "not connected" instead of the
+    account's real GitHub-deploy connection/PRs/reports."""
+    user = await current_dev(authorization)
+    ctx = await check_permission(user, "deploy", level, db=get_db())
+    return ctx["effective_account_id"]
 
 
 # ── Request models ────────────────────────────────────────────────────
 
 class ConnectBody(BaseModel):
-    token: str = Field(..., min_length=10, max_length=512)
+    # 2026-09-27 P0-4 — GitHub's changelog: installation/PAT tokens are
+    # moving to a new stateless format up to ~520 chars (vs. the old
+    # fixed ~40). The old `max_length=512` here would hard-reject a
+    # valid new-format token pasted by a real customer with a 422
+    # before it ever reached GitHub. Generous headroom, no downside —
+    # this is just an opaque string being stored, not parsed.
+    token: str = Field(..., min_length=10, max_length=1024)
     repo:  Optional[str] = Field(None, pattern=r"^[\w.\-]+/[\w.\-]+$")
 
 
@@ -72,8 +85,7 @@ class ReportBody(BaseModel):
 
 @router.post("/connect")
 async def connect(body: ConnectBody, authorization: Optional[str] = Header(None)):
-    user = await current_dev(authorization)
-    tid = _tenant_id_of(user)
+    tid = await _gate(authorization, "write")
     if not tid:
         raise HTTPException(400, "no tenant id on user")
     result = await gh.connect_github(tid, body.token, body.repo)
@@ -84,14 +96,13 @@ async def connect(body: ConnectBody, authorization: Optional[str] = Header(None)
 
 @router.get("/status")
 async def status(authorization: Optional[str] = Header(None)):
-    user = await current_dev(authorization)
-    return await gh.get_connection_status(_tenant_id_of(user))
+    tid = await _gate(authorization, "read")
+    return await gh.get_connection_status(tid)
 
 
 @router.post("/push-fix")
 async def push_fix(body: PushFixBody, authorization: Optional[str] = Header(None)):
-    user = await current_dev(authorization)
-    tid = _tenant_id_of(user)
+    tid = await _gate(authorization, "write")
     result = await gh.push_fix(
         tenant_id=tid,
         repo=body.repo,
@@ -112,8 +123,8 @@ async def pr_status(
     repo: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ):
-    user = await current_dev(authorization)
-    res = await gh.get_pr_status(_tenant_id_of(user), pr_number=pr_number, repo=repo)
+    tid = await _gate(authorization, "read")
+    res = await gh.get_pr_status(tid, pr_number=pr_number, repo=repo)
     if res.get("error"):
         raise HTTPException(404 if "No PR" in res["error"] else 400, res["error"])
     return res
@@ -124,9 +135,9 @@ async def install_workflow(
     body: InstallWorkflowBody,
     authorization: Optional[str] = Header(None),
 ):
-    user = await current_dev(authorization)
+    tid = await _gate(authorization, "write")
     res = await gh.ship_auto_deploy_workflow(
-        tenant_id=_tenant_id_of(user),
+        tenant_id=tid,
         repo=body.repo,
         base_branch=body.base_branch,
     )

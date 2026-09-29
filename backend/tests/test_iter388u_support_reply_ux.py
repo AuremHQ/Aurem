@@ -81,7 +81,7 @@ class _FakeDB:
 
 # ── Unit: token pattern ──────────────────────────────────────────────
 def test_support_token_deterministic_and_case_insensitive():
-    from services.first50_campaign import support_token
+    from services.email_link_tokens import support_token
     t1 = support_token("Alice@Example.com")
     t2 = support_token("alice@example.com")
     t3 = support_token(" ALICE@EXAMPLE.COM ")
@@ -131,7 +131,7 @@ async def test_public_thread_rejects_bad_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_public_thread_returns_messages_on_valid_token(monkeypatch):
     from main import app
-    from services.first50_campaign import support_token
+    from services.email_link_tokens import support_token
 
     seed = {
         "cto_support": [{
@@ -167,7 +167,7 @@ async def test_public_thread_404_when_owner_mismatch(monkeypatch):
     """Valid token but ticket belongs to a different email → 404
     (never leak existence to non-owners)."""
     from main import app
-    from services.first50_campaign import support_token
+    from services.email_link_tokens import support_token
 
     seed = {"cto_support": [{
         "ticket_id": "tkt_x", "user_email": "someone-else@ex.com",
@@ -204,7 +204,7 @@ async def test_public_reply_rejects_bad_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_public_reply_appends_message_and_reopens(monkeypatch):
     from main import app
-    from services.first50_campaign import support_token
+    from services.email_link_tokens import support_token
 
     seed = {"cto_support": [{
         "ticket_id": "tkt_r1", "user_email": "u@ex.com",

@@ -42,7 +42,50 @@ async def my_usage(authorization: Optional[str] = Header(None)):
       }
     """
     me = await current_dev(authorization)
-    return await get_usage(me["user_id"])
+    from services.team_permissions import check_permission
+    ctx = await check_permission(me, "reports", "read")
+    return await get_usage(ctx["effective_account_id"])
+
+
+@router.get("/me/history")
+async def my_usage_history(days: int = 30, authorization: Optional[str] = Header(None)):
+    """2026-09-28 MASTER TASK Batch 2 (d) — per-day usage history for
+    Settings > Plans & Usage. Reads directly from the one canonical
+    ledger (`real_llm_usage`), same source as every admin cost view,
+    so this number can never drift from what's real.
+
+    Standing rule (R — user visibility): a regular user must NEVER
+    see cost, model, or provider, in the UI *or* the API response —
+    this projection only ever includes `total_tokens`/`calls`/`date`.
+    Explicitly does not project `cost_usd`, `provider`, or `model` at
+    the Mongo level (not just hidden in the frontend), so there's
+    nothing to leak even if this endpoint is called directly.
+    """
+    me = await current_dev(authorization)
+    from services.team_permissions import check_permission
+    from cto_services.db import require_db
+    ctx = await check_permission(me, "reports", "read")
+    db = require_db()
+    days = max(1, min(int(days), 90))
+    since = time.time() - days * 86400
+    pipe = [
+        {"$match": {"user_id": ctx["effective_account_id"], "ts": {"$gte": since},
+                     "status": {"$ne": "failed"}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d",
+                     "date": {"$toDate": {"$multiply": ["$ts", 1000]}}}},
+            "tokens": {"$sum": "$total_tokens"},
+            "calls": {"$sum": 1},
+        }},
+        {"$sort": {"_id": -1}},
+        {"$project": {"_id": 0, "date": "$_id", "tokens": 1, "calls": 1}},
+    ]
+    try:
+        days_list = await db.real_llm_usage.aggregate(pipe).to_list(90)
+    except Exception as e:
+        logger.warning("usage history aggregate failed: %r", e)
+        days_list = []
+    return {"days": days_list}
 
 
 # Iter 94 — Maxx-mode (Claude Sonnet) monthly counter, for the UI
@@ -124,8 +167,11 @@ async def public_stats():
             "tasks_shipped": tasks,
             "interactions": total,
             "code_tasks": code,
-            "claude_corrections": corrections,
-            "correction_rate_pct": round((corrections / max(code, 1)) * 100, 1) if code else 0.0,
+            # 2026-09-28 MASTER TASK Part 5.1 — renamed from
+            # claude_corrections/correction_rate_pct (named the model
+            # to the public, unauthenticated homepage stats tile — R6).
+            "review_saves": corrections,
+            "review_save_rate_pct": round((corrections / max(code, 1)) * 100, 1) if code else 0.0,
             "lint_blocks_caught": lint_blocks,
             "cached_at": int(now),
         }

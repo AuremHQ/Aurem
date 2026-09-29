@@ -1,0 +1,17 @@
+ok: True
+library_id: /websites/fastapi_tiangolo
+rate_limited: False
+cache_hit: False
+content_preview: ### Add an ASGI middleware using FastAPI's add_middleware
+
+Source: https://fastapi.tiangolo.com/advanced/middleware
+
+Recommended method to register middleware in FastAPI to ensure internal error handling and custom exception handlers function correctly.
+
+```python
+from fastapi import FastAPI
+from unicorn import UnicornMiddleware
+
+app = FastAPI()
+
+app.add_middleware(UnicornMiddleware, some_config="

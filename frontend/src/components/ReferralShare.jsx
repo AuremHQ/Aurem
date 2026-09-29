@@ -64,10 +64,10 @@ export default function ReferralShare() {
         <h3 style={{
           margin: 0, fontSize: 14, fontWeight: 600, color: "var(--text)",
           letterSpacing: "-0.01em",
-        }}>Refer a builder, earn 1 month free</h3>
+        }}>Invite other builders to ORA</h3>
         <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text-dim)" }}>
-          When someone signs up via your link and upgrades, your next month
-          is on us. No limit on how many you can stack.
+          Share your link — we're tracking every referral. Rewards for
+          referrers are on the roadmap and not live yet.
         </p>
       </div>
 
@@ -125,7 +125,6 @@ export default function ReferralShare() {
         {stat("Clicks", data.clicks ?? 0, "var(--text-dim)")}
         {stat("Sign-ups", data.invites_sent ?? 0, "var(--accent, #ff8a2a)")}
         {stat("Paid conversions", data.verified_signups ?? 0, "#6dd4a1")}
-        {stat("Free months earned", data.verified_signups ?? 0, "#6dd4a1")}
       </div>
     </div>
   );

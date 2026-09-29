@@ -189,7 +189,7 @@ def click_url(user_id: str, stage: str) -> str:
 
 
 async def render_text(db, user: dict, stage: str, *, preview: bool = False) -> str:
-    from services.first50_campaign import unsub_url
+    from services.email_link_tokens import unsub_url
     first = _first_name(user)
     body = BODIES[stage]
     cta = await magic_click_url(db, user.get("user_id", ""), user.get("email", ""), stage, preview=preview)
@@ -203,7 +203,7 @@ async def render_text(db, user: dict, stage: str, *, preview: bool = False) -> s
 
 
 async def render_html(db, user: dict, stage: str, *, preview: bool = False) -> str:
-    from services.first50_campaign import unsub_url
+    from services.email_link_tokens import unsub_url
     first = _first_name(user)
     body = BODIES[stage].replace("\n\n", "<br><br>")
     cta = await magic_click_url(db, user.get("user_id", ""), user.get("email", ""), stage, preview=preview)
@@ -269,7 +269,7 @@ async def _resend_send(to_email: str, *, subject: str, text: str, html: str) -> 
 
 
 async def _is_unsubscribed(db, email: str) -> bool:
-    from services.first50_campaign import is_unsubscribed
+    from services.email_link_tokens import is_unsubscribed
     return await is_unsubscribed(db, email)
 
 

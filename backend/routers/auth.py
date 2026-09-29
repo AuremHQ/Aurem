@@ -127,6 +127,12 @@ async def _record_login_failure(db, client_ip: str, email: str) -> None:
         )
     except Exception as _e:
         logger.warning("dev_users failed_logins update failed: %r", _e)
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed
+    # (GET /admin/audit/actions). "system" as actor since a failed
+    # login by definition has no authenticated identity yet.
+    from services.admin_audit_log import record_event
+    await record_event(db, actor="system", action="login",
+                        target=email, result="failed")
 
 
 async def _clear_login_failures(db, client_ip: str, email: str) -> None:
@@ -145,11 +151,34 @@ async def _clear_login_failures(db, client_ip: str, email: str) -> None:
         )
     except Exception:
         pass
+    # 2026-09-28 MASTER TASK Part B — unified admin audit feed. Only
+    # reachable after bcrypt.checkpw succeeded (see /auth/login), so
+    # this is a genuine successful password verification — even for
+    # accounts that still have an MFA step ahead of them.
+    from services.admin_audit_log import record_event
+    await record_event(db, actor=email, action="login",
+                        target=email, result="success")
 
 
 def _email_ci(email: str) -> dict:
     """Case-insensitive exact-match Mongo filter for an email."""
     return {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+
+
+# Deliberately simple RFC-5321-shaped check (local@domain.tld), not a
+# full RFC-5322 grammar — good enough to catch "not-an-email"/missing
+# "@"/missing TLD without rejecting real-world edge-case addresses.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _validate_email_format(email: str) -> None:
+    """2026-09-26 bug fix — signup used to accept ANY string as an
+    email (Pydantic's `email: str` has no format constraint), so
+    "not-an-email" silently became a real account. Onboarding spec
+    Step 1 requires bad email format to be rejected with a clear
+    error, not accepted."""
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(400, "Please enter a valid email address.")
 
 
 def _validate_phone_optional(phone: Optional[str]) -> Optional[str]:
@@ -251,6 +280,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
     if db is None:
         raise HTTPException(503, "Database not connected")
     email = body.email.strip().lower()
+    _validate_email_format(email)
     # Iter 365 · signup abuse guards (honeypot / timing / disposable /
     # per-IP rate-limit). Founder emails bypass every guard. Raises
     # HTTPException on any signal — we do NOT insert into dev_users
@@ -311,10 +341,8 @@ async def signup(body: SignupBody, request: Request) -> dict:
         "signup_ip":  client_ip,
         # Track 3 (item #31) — email verification gate. Founders are
         # auto-verified so their signup UX isn't blocked; everyone else
-        # starts unverified and claims the First-50 promo spot only on
-        # verification click.
+        # starts unverified.
         "email_verified":       bool(is_founder),
-        "promo_first50_claimed": False,
         # Iter 390 — Developer-only rollout. Every new signup defaults
         # to "developer" so /choose-track is no longer needed. Legacy
         # backfill in main.py::_backfill_dev_users_track remains as a
@@ -758,19 +786,35 @@ async def me(authorization: Optional[str] = Header(None)) -> dict:
     # it without a new endpoint.
     from services.feature_flags import is_enabled
     chip_v2_enabled = await is_enabled("workcard_chip_v2", user_id=payload["user_id"])
+    # 2026-09-28 MASTER TASK R5/Part1#3,4 — same pattern, same reason:
+    # /automations and the user-facing /analytics ("Insights") nav
+    # item + route are now default-OFF (see feature_flags collection
+    # for why). Admin-only /admin/analytics is unaffected — it's a
+    # completely separate route/endpoint gated by is_admin, not this
+    # flag.
+    automations_page_enabled = await is_enabled("user_automations_page", user_id=payload["user_id"])
+    analytics_page_enabled = await is_enabled("user_analytics_page", user_id=payload["user_id"])
+    ship_wall_enabled = await is_enabled("public_ship_wall", user_id=payload["user_id"])
     return {"ok": True, "user": user or payload, "token": fresh_token,
-            "workcard_chip_v2_enabled": chip_v2_enabled}
+            "workcard_chip_v2_enabled": chip_v2_enabled,
+            "automations_page_enabled": automations_page_enabled,
+            "analytics_page_enabled": analytics_page_enabled,
+            "ship_wall_enabled": ship_wall_enabled}
 
 
 @router.get("/tokens")
 async def get_tokens(authorization: Optional[str] = Header(None)) -> dict:
-    """Return the current wallet balance for the authenticated user."""
+    """Return the current wallet balance for the authenticated user
+    (the ACCOUNT's balance — team members share the owner's wallet,
+    they never carry their own)."""
+    from services.team_permissions import check_permission
     payload = await current_dev(authorization)
     db = get_db()
     if db is None:
         return {"ok": True, "tokens_remaining": 0}
+    ctx = await check_permission(payload, "billing", "read", db=db)
     u = await db.dev_users.find_one(
-        {"user_id": payload["user_id"]}, {"_id": 0, "tokens_remaining": 1}
+        {"user_id": ctx["effective_account_id"]}, {"_id": 0, "tokens_remaining": 1}
     )
     return {"ok": True, "tokens_remaining": int((u or {}).get("tokens_remaining", 0))}
 

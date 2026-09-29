@@ -387,6 +387,52 @@ async def get_repo_via_installation(
     return r.json() or {}
 
 
+async def get_token_for_repo(owner: str, repo: str) -> tuple[Optional[str], str]:
+    """Auto-discover the installation covering `owner/repo` and mint a
+    fresh installation token for it — no `user_id`/`github_installations`
+    row required. For internal ops/health-check code acting on OUR OWN
+    behalf (Guard 8, deploy readiness, CI pass-rate, rollback drills),
+    NOT for customer-facing "connect a repo" flows, which have a
+    specific user's own linked installation and should keep using
+    `verify_installation_for_repo`/`get_repo_via_installation` instead.
+
+    2026-09-26 P0 — extracted from `rollback_drill.py`'s previously
+    local-only `_resolve_write_token` discovery loop so every
+    guard/health-check that used to fall back to the now-expired
+    `GITHUB_ACTIONS_TOKEN` PAT can share ONE real GitHub App code path
+    instead of each re-implementing (or PAT-depending on) their own.
+
+    Never raises — callers in the health-check family treat a missing
+    App config the same as a missing PAT used to be treated: an honest
+    "not wired" state (gray), not a crash. Returns `(None, reason)` on
+    any failure; `reason` is safe to surface in a "not_wired"/"error"
+    payload.
+    """
+    try:
+        if not is_configured():
+            return None, "github_app_not_configured"
+        target = f"{owner}/{repo}".lower()
+        for inst in await list_installations():
+            acct = (inst.get("account") or {}).get("login") or ""
+            if acct.lower() != owner.lower():
+                continue
+            try:
+                repos = await list_installation_repos(inst["id"])
+            except Exception as e:
+                logger.info("get_token_for_repo: list_installation_repos(%s) "
+                            "failed: %r", inst.get("id"), e)
+                continue
+            if any((r.get("full_name") or "").lower() == target for r in repos):
+                token, _exp = await get_installation_token(inst["id"])
+                return token, f"github_app_installation:{inst['id']}"
+        return None, f"no_installation_covers_{owner}/{repo}"
+    except GitHubAppNotConfigured:
+        return None, "github_app_not_configured"
+    except Exception as e:
+        logger.info("get_token_for_repo(%s/%s) failed: %r", owner, repo, e)
+        return None, f"discovery_error: {e!r}"
+
+
 async def verify_installation_for_repo(
     db, *, user_id: str, installation_id: int, owner: str, repo: str,
 ) -> tuple[bool, Optional[str], Optional[str]]:

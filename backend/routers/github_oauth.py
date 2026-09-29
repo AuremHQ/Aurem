@@ -480,6 +480,15 @@ async def callback(
             })
 
         jwt_token = create_token(user_id, user_mail, is_admin=is_admin)
+        # 2026-09-28 MASTER TASK Part 5.2 — same audit-log gap as
+        # google_oauth.py's callback: this signup/login path never
+        # wrote a "login" event to admin_audit.
+        try:
+            from services.admin_audit_log import record_event
+            await record_event(db, actor=user_mail, action="login", target=user_mail,
+                                result="success", extra={"via": "github_oauth", "new_account": is_new_account})
+        except Exception as e:
+            logger.warning("[github-oauth] audit log write failed: %r", e)
         # 2026-08-01 — funnel `linked` event (terminal success for signup flow).
         await _funnel_track(
             "linked", source=funnel_source, session_id=funnel_session,

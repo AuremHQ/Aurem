@@ -35,7 +35,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
-from services.first50_campaign import support_token
+from services.email_link_tokens import support_token
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 
 logger = logging.getLogger(__name__)
@@ -115,10 +115,12 @@ async def create_ticket(
     """Logged-in ticket create. Subject is optional — first line of the
     body becomes the subject if not provided (matches the popup UX
     which is subject-less)."""
+    from services.team_permissions import check_permission
     user = await current_dev(authorization)
+    db = require_db()
+    await check_permission(user, "support", "write", db=db)
     if not (body.body or "").strip():
         raise HTTPException(400, "message body is required")
-    db = require_db()
     ticket_id = await _insert_ticket(
         db,
         user_id=user.get("user_id") or "",
@@ -219,8 +221,10 @@ async def create_ticket_public(payload: CreateTicketPublic, request: Request) ->
 
 @router.get("/tickets")
 async def list_my_tickets(authorization: Optional[str] = Header(None)) -> dict:
+    from services.team_permissions import check_permission
     user = await current_dev(authorization)
     db = require_db()
+    await check_permission(user, "support", "read", db=db)
     tickets = await db.cto_support.find(
         {"user_id": user.get("user_id")},
         {"_id": 0},

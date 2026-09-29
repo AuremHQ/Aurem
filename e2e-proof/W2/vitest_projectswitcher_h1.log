@@ -1,0 +1,31 @@
+yarn run v1.22.22
+$ /app/frontend/node_modules/.bin/vitest run src/components/dashboard/v2/__tests__/ProjectSwitcher.r3.test.jsx src/pages/__tests__/AdminSystemHealth.webhookFence.test.jsx
+
+ RUN  v3.2.7 /app/frontend
+
+stderr | src/pages/__tests__/AdminSystemHealth.webhookFence.test.jsx > AdminSystemHealth — GitHub Webhook Fence tile (R5c) > t_fence_tile_renders_missing_subscription: shows the missing pull_request badge
+⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+stderr | src/components/dashboard/v2/__tests__/ProjectSwitcher.r3.test.jsx > ProjectSwitcher — R3 Repo Quick-Switch > t_switch_repo_a_to_b: selecting a valid, reachable project calls onSelect with its id
+Warning: An update to ProjectSwitcher inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at ProjectSwitcher (/app/frontend/src/components/dashboard/v2/ProjectSwitcher.jsx:8:28)
+
+ ✓ src/components/dashboard/v2/__tests__/ProjectSwitcher.r3.test.jsx (6 tests) 137ms
+ ✓ src/pages/__tests__/AdminSystemHealth.webhookFence.test.jsx (3 tests) 248ms
+
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+   Start at  06:21:36
+   Duration  3.58s (transform 158ms, setup 923ms, collect 1.31s, tests 385ms, environment 3.26s, prepare 271ms)
+
+Done in 4.09s.

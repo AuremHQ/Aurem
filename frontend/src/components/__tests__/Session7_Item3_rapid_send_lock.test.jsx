@@ -42,9 +42,22 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
 
   it("lock is armed AFTER validity guards, not before", () => {
     // Otherwise an invalid send (empty text) would arm the lock
-    // and starve the next legitimate send.
-    expect(CHAT_PANEL_SRC).toMatch(
-      /!sessionId[\s\S]{0,300}sendInFlightRef\.current = true/);
+    // and starve the next legitimate send. Checked by POSITION
+    // within the send() function body (guard must appear before the
+    // lock-arm line) rather than a fixed character-distance regex —
+    // legitimate, unrelated guard logic (e.g. the 20,000-char length
+    // check, the cancel-ship rejection mirror) has been added between
+    // them over time without breaking the actual invariant tested
+    // here. `!sessionId` also appears elsewhere in the file (outside
+    // send()), so this is scoped to the send() function body first.
+    const sendFnIdx = CHAT_PANEL_SRC.indexOf("async function send(");
+    expect(sendFnIdx).toBeGreaterThan(-1);
+    const sendFnBody = CHAT_PANEL_SRC.slice(sendFnIdx, sendFnIdx + 8000);
+    const guardIdx = sendFnBody.indexOf("!sessionId");
+    const lockIdx = sendFnBody.indexOf("sendInFlightRef.current = true");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(lockIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(lockIdx);
   });
 
   it("lock releases on busy transition to false via useEffect", () => {

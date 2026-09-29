@@ -1,0 +1,17 @@
+loop_sessions rollback fields: {'rollback_commit_sha': 'd82c23671996fe6d14614983950fc9ad9b7d44fe', 'rollback_status': 'done', 'rollback_html_url': 'https://github.com/polarisbuiltinc-wq/aurem-rollback-testbed/commit/1fe24ee', 'rollback_sha': '1fe24ee', 'rollback_verified': True}
+main history (newest first):
+   1fe24ee3faaf | chore: revert "d82c236" [via ORA by Aurem]
+   d82c23671996 | ship: R10 E2E (r10e2e_17e09aea07) (#1)
+   eca279371e56 | revert: restore snapshot snap_bc46479d0c564b77a89b (pre-ship state @ e62db04) [A
+   1fc2a9c24595 | feat(drill): DELIBERATELY breaking change [drill_295a5985f600]
+   8762ce8f339e | chore(drill): seed known-good state [drill_295a5985f600]
+   e62db04c5e35 | revert: restore snapshot snap_c48af5386734424aba74 (pre-ship state @ 09f98fd) [A
+shipped file on main after revert -> HTTP 404 (404 expected)
+{
+ "sha_before_ship": "eca279371e56f017464dab787ffdd43d7b3cc823",
+ "pre_merge_head": "94782191944c1d050129b0b38dfea11864ceb998",
+ "merged_sha": "d82c23671996fe6d14614983950fc9ad9b7d44fe",
+ "revert_sha": "1fe24ee3faaf2de6785a2f33e7c6bae9f15dfec4",
+ "main_head_after_rollback": "1fe24ee3faaf2de6785a2f33e7c6bae9f15dfec4"
+}
+t_rollback_reverts_merged_sha (live): PASS

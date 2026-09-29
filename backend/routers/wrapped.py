@@ -138,8 +138,10 @@ async def my_wrapped(
     )
     streak = _calc_streak(ship_days)
 
-    # Claude corrections (Maxx mode catches)
-    corrections = sum(
+    # 2026-09-28 MASTER TASK Part 5.1 — renamed from claude_corrections;
+    # was naming the underlying model to end users (R6). Same metric
+    # (Maxx mode's second-review pass catching an issue before ship).
+    review_saves = sum(
         1 for t in maxx
         if not t.get("review_passed", True)
     )
@@ -154,7 +156,7 @@ async def my_wrapped(
         "repos_touched":    len(repos),
         "hours_saved":      hours_saved,
         "maxx_tasks":       len(maxx),
-        "claude_corrections": corrections,
+        "review_saves":     review_saves,
         "top_mode":         top_mode,
         "ship_streak_days": streak,
         "period_label":     label,
@@ -173,7 +175,7 @@ async def my_wrapped(
 def _empty_stats() -> dict:
     return {
         "tasks_shipped": 0, "tasks_failed": 0, "repos_touched": 0,
-        "hours_saved": 0.0, "maxx_tasks": 0, "claude_corrections": 0,
+        "hours_saved": 0.0, "maxx_tasks": 0, "review_saves": 0,
         "top_mode": "—", "ship_streak_days": 0,
         "period_label": "this month", "developer_name": "Developer",
     }
@@ -217,7 +219,7 @@ def _share_text(s: dict) -> str:
     ]
     if s["ship_streak_days"] > 2:
         lines.append(f"Streak: {s['ship_streak_days']} days straight")
-    if s["claude_corrections"] > 0:
-        lines.append(f"Claude caught {s['claude_corrections']} issues before commit")
+    if s["review_saves"] > 0:
+        lines.append(f"ORA's second review caught {s['review_saves']} issues before commit")
     lines += ["", "#AUREM #ShipWithAI #BuildInPublic"]
     return "\n".join(lines)

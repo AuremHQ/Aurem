@@ -40,6 +40,7 @@ import Landing from "./pages/Landing";
 // the 350KB code-splitting target (they render behind Suspense).
 const Both              = lazy(() => import("./pages/Both"));
 const ResetPassword     = lazy(() => import("./pages/ResetPassword"));
+const AcceptInvite      = lazy(() => import("./pages/AcceptInvite"));  // 2026-02 · Phase 1 team RBAC
 const LoopLiveFeedDemo  = lazy(() => import("./pages/LoopLiveFeedDemo"));
 const ShippedRowHarness = lazy(() => import("./pages/ShippedRowHarness"));
 const VisualFixtures    = lazy(() => import("./pages/VisualFixtures"));
@@ -381,13 +382,25 @@ export default function App() {
           <Route path="/login"           element={<Login />} />
           <Route path="/signup"          element={<Signup />} />
           <Route path="/reset-password"  element={<ResetPassword />} />
+          <Route path="/team/accept-invite" element={<AcceptInvite />} />  {/* 2026-02 · Phase 1 team RBAC — public */}
           <Route path="/verify"          element={<Verify />} />
           <Route path="/support"         element={<Support />} />
           <Route path="/support/thread/:ticketId" element={<SupportThread />} />
           <Route path="/dashboard"       element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           {/* Iter 212m-235 — Personal Track routes.
               Iter 390 — /choose-track removed (developer-only default). */}
-          <Route path="/ora"             element={<PrivateRoute><OraDirect /></PrivateRoute>} />
+          {/* 2026-02 · PIN-gate regression fix — /ora (and /ora/*) is
+              DELIBERATELY public at the router layer. It must stay
+              reachable with ZERO existing app session so the PIN pad
+              inside OraDirect is the only thing standing between a
+              visitor and the chat — wrapping it in <PrivateRoute>
+              (Gap Register #42) silently bounced unauthenticated
+              visitors to /login before the PIN pad could ever render,
+              and let anyone already logged into the main dashboard
+              skip the PIN entirely once redirected back here. See
+              OraDirect.jsx for the actual (now-decoupled) PIN gate. */}
+          <Route path="/ora"             element={<OraDirect />} />
+          <Route path="/ora/*"           element={<OraDirect />} />
           <Route path="/build"           element={<PrivateRoute><BuildHome /></PrivateRoute>} />
           <Route path="/build/:draftId"  element={<PrivateRoute><DraftReview /></PrivateRoute>} />
           <Route path="/build/:draftId/ship"    element={<PrivateRoute><ShipProgress /></PrivateRoute>} />
@@ -397,8 +410,22 @@ export default function App() {
           <Route path="/domain"          element={<PrivateRoute><Domain /></PrivateRoute>} />
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/profile"         element={<PrivateRoute><Settings /></PrivateRoute>} />
-          <Route path="/tokens"          element={<PrivateRoute><Tokens /></PrivateRoute>} />
-          <Route path="/analytics"       element={<PrivateRoute><Analytics /></PrivateRoute>} />
+          {/* 2026-09-28 MASTER TASK Batch 2 (a) — /tokens duplicated
+              the Plans & Usage tab with a stale balance source
+              (`me.tokens_remaining` instead of the ledger-derived
+              `usage.remaining`). Redirect to the one consolidated
+              view instead of maintaining two displays that can drift
+              apart. Page component kept intact, not deleted. */}
+          <Route path="/tokens"          element={<Navigate to="/settings?tab=plans" replace />} />
+          {/* 2026-09-28 MASTER TASK R5/Part1#4 — /analytics showed
+              company-wide data (DAU/MAU, tokens burned across ALL
+              users) to every regular user. Route + nav item hidden
+              behind `user_analytics_page` flag (default OFF,
+              feature_flags collection); component code kept intact,
+              not deleted. The backend data endpoint
+              (/admin/product-analytics) was already admin-gated
+              before this change. */}
+          <Route path="/analytics"       element={<Navigate to="/dashboard" replace />} />
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
@@ -471,6 +498,7 @@ export default function App() {
           <Route path="/admin/github-bulk-revoke" element={<AdminRoute><Admin initialTab="github_bulk_revoke" /></AdminRoute>} />
           <Route path="/admin/visibility-kit" element={<AdminRoute><Admin initialTab="visibility_kit" /></AdminRoute>} />
           <Route path="/admin/onboarding-funnel" element={<AdminRoute><Admin initialTab="onboarding_funnel" /></AdminRoute>} />
+          <Route path="/admin/funnel" element={<AdminRoute><Admin initialTab="activation_funnel" /></AdminRoute>} />
           <Route path="/admin/feature-flags"  element={<AdminRoute><Admin initialTab="feature_flags" /></AdminRoute>} />
           <Route path="/admin/llm-credits"    element={<AdminRoute><Admin initialTab="llm_credits" /></AdminRoute>} />
           <Route path="/admin/parliament-live" element={<AdminRoute><Admin initialTab="parliament_live" /></AdminRoute>} />
@@ -492,9 +520,19 @@ export default function App() {
           <Route path="/admin/architecture" element={<AdminRoute><Admin initialTab="arch" /></AdminRoute>} />
           <Route path="/admin/ops" element={<AdminRoute><OpsRecipes /></AdminRoute>} />
           <Route path="/admin/brain/:projectId" element={<AdminRoute><BrainDump /></AdminRoute>} />
-          <Route path="/wall" element={<ShipWall />} />
+          {/* 2026-09-28 MASTER TASK R5/Part1#5 — public /wall leaked
+              real un-opted-in ship counts (stats endpoint had no
+              wall_opt_in filter, unlike feed) to any anonymous
+              visitor. Behind `public_ship_wall` flag (default OFF);
+              backend /wall/* now 404s while disabled too. */}
+          <Route path="/wall" element={<Navigate to="/" replace />} />
           <Route path="/wrapped" element={<PrivateRoute><Wrapped /></PrivateRoute>} />
-          <Route path="/automations" element={<PrivateRoute><Automations /></PrivateRoute>} />
+          {/* 2026-09-28 MASTER TASK R5/Part1#3 — /automations auto-ran
+              a paid LLM task on every GitHub push with no spend
+              limit, and its webhook signature check failed OPEN
+              (fixed separately in routers/automations.py). Behind
+              `user_automations_page` flag (default OFF). */}
+          <Route path="/automations" element={<Navigate to="/dashboard" replace />} />
           <Route path="/oauth-finish" element={<OAuthFinish />} />
           <Route path="/magic-login" element={<MagicLogin />} />       {/* 2026-08-20 */}
           <Route path="/vs/devin"  element={<VsDevin />} />
