@@ -1,13 +1,11 @@
-# QA Report — commit 33bf244 (2026-09-29T02:32:29+00:00)
+# QA Report — commit ce53123 (2026-09-29T02:35:30+00:00)
 
-**Commit message**: Attach router-level require_admin_dep to admin_gateway router
+**Commit message**: Add regression test for admin_gateway router-level admin gate
 
-Guard 21 (check_admin_router_gates) requires every routers/admin*.py to
-carry a router-level admin dependency. admin_gateway.py only gated
-per-handler, which failed Guard 21 on main and skipped the Backend
-pytest run. Per-handler require
-**Scope decided**: backend=True, ui=False, scenarios=[]
-**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth']
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
