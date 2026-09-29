@@ -80,7 +80,7 @@ describe("TeamManagementPanel — non-owner/non-admin view", () => {
   });
 });
 
-describe("TeamManagementPanel � free user upgrade view", () => {
+describe("TeamManagementPanel — free user upgrade view", () => {
   it("shows the Team upgrade card for a free user", async () => {
     api.get.mockImplementation((path) => {
       if (path === "/team/me") {

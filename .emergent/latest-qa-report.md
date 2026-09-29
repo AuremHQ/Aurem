@@ -1,12 +1,14 @@
-# QA Report — commit 2fb831e (2026-09-29T04:42:38+00:00)
+# QA Report — commit 55ef1dd (2026-09-29T07:26:57+00:00)
 
-**Commit message**: Re-record stream golden for user-facing provider branding; pin the interaction flag
+**Commit message**: Fix invalid UTF-8 in a test title and stop the style gate crashing on bad bytes
 
-The golden still held raw provider ids and llm_provenance, but the user-facing
-sanitizer now brands provider as ORA and reduces llm_provenance to
-is_emergency. Those were the only diffs on all 6 scenarios (checked w
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+TeamManagementPanel.phase1.test.jsx held a Windows-1252 em dash (0x97), which
+crashed ci_check_test_style.py (UnicodeDecodeError) for any PR whose diff
+touches that file, failing 'Static-grep threshold on new tests'.
+
+C
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['crash', 'auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
