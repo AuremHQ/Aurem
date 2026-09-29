@@ -125,4 +125,9 @@ jobs:
             exit 0
           fi
           git commit -m "chore: update auto-qa regression report [auto-qa-bot]"
-          git push origin HEAD:"${GITHUB_REF#refs/heads/}"
+          # Publishing the report is a side effect, not the gate. The
+          # push fails whenever the branch moved during the run or is
+          # protected (main), and that used to turn the whole job red
+          # even though every regression lock had passed. A real lock
+          # failure still fails the "Run Auto-QA" step above.
+          git push origin HEAD:"${GITHUB_REF#refs/heads/}" || echo "::warning::Could not push the QA report (branch moved or protected). The regression locks themselves passed; the report was not committed."
