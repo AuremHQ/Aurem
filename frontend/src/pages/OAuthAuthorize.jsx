@@ -2,9 +2,9 @@
  * pages/OAuthAuthorize.jsx — 2026-09-29 OAuth 2.1 consent screen for
  * the ORA Chat MCP server.
  *
- * Reached via GET /api/aurem-dev/oauth/authorize (routers/oauth.py)
- * redirecting the browser here with `?consent_id=...` after validating
- * the OAuth request (client_id, redirect_uri, PKCE challenge, resource).
+ * Not currently routed: the consolidated routers/oauth.py renders its
+ * own consent HTML and no longer redirects here with `?consent_id=...`.
+ * Kept until someone confirms it can be deleted.
  *
  * Wrapped in <AdminRoute> in App.jsx — that already handles "not
  * logged in -> /login?next=..." and "logged in but not admin ->
