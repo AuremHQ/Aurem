@@ -1,11 +1,14 @@
-# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
+# QA Report — commit 55ef1dd (2026-09-29T07:26:57+00:00)
 
-**Commit message**: Merge main into claude/fix-guard21-admin-gateway
+**Commit message**: Fix invalid UTF-8 in a test title and stop the style gate crashing on bad bytes
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+TeamManagementPanel.phase1.test.jsx held a Windows-1252 em dash (0x97), which
+crashed ci_check_test_style.py (UnicodeDecodeError) for any PR whose diff
+touches that file, failing 'Static-grep threshold on new tests'.
+
+C
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['crash', 'auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
