@@ -1,12 +1,9 @@
-# QA Report — commit ad52cb1 (2026-09-29T07:58:27+00:00)
+# QA Report — commit 4a3b14b (2026-09-29T19:28:31+00:00)
 
-**Commit message**: docs: drop repeated delete-gate auto-verdict blocks; verdict lives in the PR body
-
-The Delete Gate job appended a new block on every run and each commit cancelled
-the CI run in flight. The PR description now carries the manual verdict.
+**Commit message**: ci: list failing pytest tests in the job summary
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claud
+Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
