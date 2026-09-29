@@ -163,10 +163,14 @@ def test_invariant_steady_state_declared_in_bootstrap_spec():
         assert f'"{coll}"' in src, (
             f"{coll} must be declared in _BOOTSTRAP_SPEC (Steady State)"
         )
-    # And each must have an expireAfterSeconds line nearby.
+    # And each must have an expireAfterSeconds line nearby. Window is
+    # 1200 (not 500) because loop_failures' entry carries a legitimate
+    # long explanatory comment (2026-09-08 Atlas index-naming collision
+    # fix) between the collection name and its TTL spec — a real
+    # production comment, not something to strip to satisfy a test.
     for coll in required:
         idx = src.find(f'"{coll}"')
-        block = src[idx: idx + 500]
+        block = src[idx: idx + 1200]
         assert "expireAfterSeconds" in block, (
             f"{coll} block must include expireAfterSeconds — no TTL "
             f"= Steady State violation"

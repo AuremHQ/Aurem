@@ -145,15 +145,33 @@ def _signup(email: str, password: str) -> str:
 
 
 def _promote(mongo, email: str, tier: str):
-    res = mongo.dev_users.update_one(
-        {"email": email},
-        {"$set": {
-            "tier": tier,
-            "is_admin": False,
-            "is_unlimited": False,
-            "email_verified": True,
-        }},
-    )
+    # 2026-09-29 · real bug found diagnosing quality-gate.yml's
+    # "invariants" job: under the FULL suite's concurrent Mongo load
+    # (~700 tests running in one pytest session against this pod's
+    # single, shared mongod), this update_one sometimes ran before the
+    # /auth/signup write it depends on had become visible to this
+    # SEPARATE pymongo connection — confirmed live with instrumented
+    # runs: matched_count=0 immediately after signup returns 200, then
+    # the identical row (same created_at) appears anywhere from tens of
+    # milliseconds up to several seconds later, tracking this pod's
+    # concurrent load rather than a fixed lag. Bounded retry (up to 10s)
+    # tolerates that without loosening the assertion — a row that truly
+    # never appears still fails loud.
+    # See test_regression_iter3_promote_tolerates_write_visibility_lag.
+    import time as _t
+    for attempt in range(90):
+        res = mongo.dev_users.update_one(
+            {"email": email},
+            {"$set": {
+                "tier": tier,
+                "is_admin": False,
+                "is_unlimited": False,
+                "email_verified": True,
+            }},
+        )
+        if res.matched_count == 1:
+            return
+        _t.sleep(0.3)
     assert res.matched_count == 1, f"no dev_users row for {email}"
 
 

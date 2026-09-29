@@ -15,7 +15,24 @@
          anything. Real visitors almost always scroll/tap within the
          first second, so this pushes the third-party JS parse/eval
          cost further past LCP/TBT measurement without losing
-         PageView/conversion data. -->
+         PageView/conversion data.
+
+         2026-09-29 · confirmed real bug diagnosing docs/performance_budget.md's
+         TBT<=200ms budget: requestIdleCallback's `timeout` option is a
+         CEILING, not a delay — it fires on the FIRST idle slot, which
+         in a synthetic/automated page load (Lighthouse, CI, this had
+         zero real user activity to compete with) arrives almost
+         immediately. Verified live: every one of these scripts'
+         network requests started at startTime=0ms, not ~4500ms — the
+         opposite of the comment's stated intent, and the single
+         biggest contributor to main-thread blocking time in a 6x-CPU
+         Lighthouse trace (fbevents.js + gtag.js + Meta's signals/config
+         request together outweighed our OWN app bundle's scripting
+         time). Fixed with a real setTimeout for the no-interaction
+         fallback — the interaction listeners below are unchanged (a
+         real visitor who scrolls/taps still fires it instantly), only
+         the "nobody interacted" path now genuinely waits the full
+         idleTimeoutMs instead of firing on the next idle tick. -->
     <script>
     window.__auremDeferThirdParty = function(fn, idleTimeoutMs) {
       var fired = false;
@@ -29,11 +46,7 @@
       events.forEach(function(ev) {
         window.addEventListener(ev, run, { passive: true, once: true });
       });
-      if ('requestIdleCallback' in window) {
-        window.requestIdleCallback(run, { timeout: idleTimeoutMs });
-      } else {
-        setTimeout(run, idleTimeoutMs);
-      }
+      setTimeout(run, idleTimeoutMs);
     };
     </script>
 

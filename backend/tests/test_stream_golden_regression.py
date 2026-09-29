@@ -48,6 +48,17 @@ Two more INTENTIONAL, verified diffs, both re-recorded:
   with -vv, confirmed every other field/event on all 6 scenarios was
   byte-identical to the pre-activation golden) — re-captured via
   `python -m tests._capture_stream_golden`.
+
+2026-09-29 · real bug found diagnosing quality-gate.yml's "invariants"
+job: golden was stale again — `services/user_response_sanitizer.py`'s
+`sanitize_provider_for_user`/`sanitize_provenance_for_user` (provider-
+name branding: always show "ORA" to the user, never leak the raw
+provider/model) is an INTENTIONAL, already-shipped feature that
+predates this diagnosis but was never re-recorded. Verified with -vv
+across all 6 scenarios that the ONLY diff anywhere was raw provider
+names ("aurem-cto", "golden-provider", "mode-d-redirect", "openrouter",
+etc.) becoming "ORA" (or being stripped from `llm_provenance`) —
+re-captured via `python -m tests._capture_stream_golden`.
 """
 import json
 import os

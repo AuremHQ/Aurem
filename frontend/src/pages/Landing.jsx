@@ -81,6 +81,17 @@ const LANDING_CSS = `
 .ora-landing * { box-sizing: border-box; }
 .ora-landing .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
 
+/* 2026-09-29 · Lighthouse TBT fix — content-visibility:auto skips
+   style+layout for whatever's still off-screen the instant this
+   mounts (deferred to an idle callback — see showBelowFold in the
+   component body). contain-intrinsic-size reserves a placeholder
+   height so nothing shifts once each child's real layout runs
+   on-scroll (keeps CLS inside its 0.1 budget). */
+.ora-landing .below-fold > * {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 900px;
+}
+
 /* Edge-to-edge tools strip */
 .ora-landing .topstrip {
   position: sticky; top: 64px; z-index: 40;
@@ -649,6 +660,31 @@ export default function Landing() {
       .catch(() => {});
   }, []);
 
+  // 2026-09-29 · Lighthouse TBT fix (docs/performance_budget.md budget
+  // TBT <= 200ms; CI measured 236-323ms). Root cause per a real trace
+  // at 6x CPU slowdown: everything below the hero mounts in the SAME
+  // synchronous commit as the hero — a ~263ms React render, then a
+  // ~140ms style recalc + ~598ms layout over ~1,800 elements (the demo
+  // player, 4 video cards, the 3-window mockup, pricing, FAQ, footer —
+  // none of it needed for first paint or LCP, all of it blocking).
+  // Deferring that whole block to mount after the browser's first idle
+  // slot splits it into a SEPARATE, later commit so the hero paints
+  // and becomes interactive first; content-visibility:auto on the
+  // deferred wrapper (see LANDING_CSS's .below-fold rule) then skips
+  // style+layout entirely for whatever's still off-screen once it
+  // does mount. Playwright visual-regression still sees the full page
+  // — the defer is a handful of ms, not a visible/skipped section.
+  const [showBelowFold, setShowBelowFold] = useState(false);
+  useEffect(() => {
+    const mount = () => setShowBelowFold(true);
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(mount, { timeout: 1200 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(mount, 0);
+    return () => clearTimeout(id);
+  }, []);
+
   // 2026-09-26 — MarketingNav's Features/Pricing/Reviews links now
   // point at `/#features` etc. so they work from every other public
   // page too, not just when you're already on "/". React Router
@@ -812,6 +848,12 @@ export default function Landing() {
 
       </div>
 
+      {/* ─── Below the fold: deferred to an idle callback (see
+          showBelowFold above) + content-visibility:auto (.below-fold
+          in LANDING_CSS) so this whole block — social proof through
+          the footer — never blocks the hero's first paint. ─── */}
+      {showBelowFold && (
+      <div className="below-fold">
       {/* ─── Social proof (full-width) — live DB numbers only ─── */}
       {proof && (proof.real_developers > 0 || proof.commits_shipped > 0) && (
         <section className="social-proof" data-testid="landing-social-proof">
@@ -1418,6 +1460,8 @@ export default function Landing() {
           </div>
         </div>
       </footer>
+      </div>
+      )}
     </div>
   );
 }
