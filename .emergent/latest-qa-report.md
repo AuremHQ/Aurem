@@ -1,14 +1,14 @@
-# QA Report — commit ad52cb1 (2026-09-29T07:58:27+00:00)
+# QA Report — commit 3d375eb (2026-09-29T17:25:36+00:00)
 
-**Commit message**: docs: drop repeated delete-gate auto-verdict blocks; verdict lives in the PR body
+**Commit message**: Test: admin pages survive empty and failed API data
 
-The Delete Gate job appended a new block on every run and each commit cancelled
-the CI run in flight. The PR description now carries the manual verdict.
+Renders the nine pages fixed in the admin audit with {} responses and with
+every call failing (HTTP 500). Fails on the previous versions of all nine.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claud
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+Claude-Session: https://claude.ai/code
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
