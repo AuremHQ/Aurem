@@ -2,6 +2,33 @@
 
 Last updated: 2026-09-28 (Round 8 — MASTER TASK founder Q&A audit + Batch 2 build). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
 
+## ORA Chat MCP server — Claude Desktop, ADMIN-ONLY (2026-09-28, Part A DONE)
+
+Founder wants ORA Chat (the internal admin/founder chat pipeline, `routers/ora_chat.py`) usable from the Claude Desktop app. Two parts requested: (A) an MCP server, (B) an Anthropic-compatible gateway exposing only "ora-chat" as a model. Founder's explicit sequencing: **finish and fully test Part A first, hand it off, THEN start Part B — don't block A on B.**
+
+**Founder's decisions (asked via ask_human before building):**
+1. Bearer-key auth first, NOT full OAuth 2.1 (OAuth 2.1 would mean building a mini authorization server — a real, separate future phase, only if asked for later). Confirmed via Anthropic's own docs that static Bearer/API-key headers are a first-class, fully-supported custom-connector mechanism in Claude Desktop today (Settings → Connectors → Advanced → Request headers) — not a lesser fallback.
+2. MCP tools call the **existing admin/founder-only** ORA Chat pipeline only — never the customer-facing product chat.
+3. Claude Desktop's model picker only auto-shows models "recognizably Claude" by ID (relevant for Part B later) — founder accepted a one-time manual step, deferred to when B is built.
+4. Defaults: 60 req/min rate limit, $50/month spend cap per key, adjustable in the admin panel; show current-month spend; alert at 80% (implemented as a visible in-panel badge, not email — Resend is separately known-broken).
+
+**Built (Part A, DONE, PREVIEW):**
+- `backend/services/admin_gateway_keys.py` — shared key service for BOTH this feature and the future Part B gateway (`scope="mcp"` vs `"gateway"`). Keys are `oraadm_mcp_<random>` / `oraadm_gw_<random>`, SHA-256 hashed at rest (raw value shown exactly once, never logged/returned again), every `verify_key()` call re-checks the owning user is STILL an admin right now (a demoted admin's old keys stop working immediately, not just at next login), per-key rate limit + monthly spend cap enforced server-side, usage logged with NO message content (only timing/tool-name/tokens/cost/status).
+- `backend/routers/mcp_ora_chat.py` — the actual MCP server: `GET /mcp/ora-chat` (manifest), `POST /mcp/ora-chat` (JSON-RPC 2.0: `initialize`/`tools/list`/`tools/call`). **Official `mcp` PyPI SDK was evaluated and deliberately NOT used** — SDK 1.10.0 (the newest version compatible with this app's pinned `pydantic==2.10.0` per its declared bounds) still fails to import (`mcp.types` incompatible with pydantic 2.10's schema builder — a real, confirmed bug, not a style choice); upgrading pydantic app-wide to chase the label was judged too risky for one admin feature. Instead this hand-rolls the exact same JSON-RPC/HTTP wire protocol the pre-existing `routers/mcp.py` already ships to real Claude Desktop/Cursor users today.
+- 3 tools, implemented in `backend/services/mcp_ora_chat_tools.py`, calling ORA Chat's real pipeline (`services/ora_chat/session.py` + `services/ora_chat_v2/engine.py`) — same system prompt/knowledge/model routing as the existing admin chat UI, `conversation_id` IS the underlying `session_id` (no separate mapping table):
+  - `ask_ora_chat(message, conversation_id?, context?)` — 60s internal timeout; on timeout returns whatever partial text streamed so far plus a "call again with the same conversation_id" note, rather than hanging or erroring.
+  - `list_ora_conversations(limit?)`, `get_ora_conversation(conversation_id)`.
+- `backend/routers/admin_gateway.py` — admin panel CRUD: create/list/revoke/regenerate keys, update limits, and a `/test/mcp` endpoint the panel's "Test" button calls directly (bypasses MCP transport, uses the admin's own browser session).
+- Frontend: new `OraChatMcpCard` component appended to the **existing** `frontend/src/pages/AdminApiKeys.jsx` (`/admin/api-keys`, already `<AdminRoute>`-gated) below the pre-existing, unrelated `sk-aurem-` MCP-keys section — MCP URL + copy, generate/regenerate/revoke, per-key spend/rate-limit table with an "≥80%" badge, one-time key-reveal banner with exact Claude Desktop setup steps, and the Test button.
+- `backend/tests/test_mcp_ora_chat_admin.py` — 13 pytest cases (manifest, auth rejection, admin-only enforcement via curl not just UI, rate limiting, revocation takes effect immediately, all 3 tools).
+
+**Known, pre-existing, OUT-OF-SCOPE gap found while testing (not introduced by this feature):** ORA Chat's own dedicated LLM config (`services/llm_config_store.py`, role="chat") has no working API key in this preview — a dormant `llm_configs` row exists (label "OpenRouter — Qwen 3.8 27B") but decrypts to an empty key, and the `LLM_API_KEY` env-var fallback is also blank. `ask_ora_chat` correctly surfaces this as a fast, clean `llm_api_key_missing` error (JSON-RPC tool_failed / clean HTTP 500 in the admin Test button) rather than hanging or faking success — confirmed by both the pytest suite and testing_agent_v3_fork. **Founder action needed**: provide a working key for this role (OpenRouter or DashScope/Qwen, matching the existing `LLM_BASE_URL`/`LLM_MODEL` config) to get real replies through the MCP tool.
+
+**Tested:** `backend/tests/test_mcp_ora_chat_admin.py` 13/13 passing + `testing_agent_v3_fork` — 100% backend, 100% frontend, 0 critical/minor issues, 0 action items besides the LLM-key gap noted above. Report: `/app/test_reports/iteration_2026_09_28_mcp_ora_chat_part_a.json`.
+
+**NOT done yet:** Part B (Anthropic-compatible `/api/claude-gateway` for Claude Desktop's "Gateway" third-party inference mode) — deliberately not started per founder's own sequencing instruction. OAuth 2.1 for Part A — deferred, only if founder asks for it later.
+
+
 ## Round 8 continued — homepage revert + 2 new bug reports investigated + Batch 2 built
 
 **Homepage reverted at founder's explicit request**: the `real_developers`-activity-filter fix, `public_founders_counter`/`public_testimonials_reviews` flags, and the Reviews-section/nav-link gating (all built earlier this round, see above) were fully reverted via `git checkout` on `backend/routers/usage.py`, `frontend/src/pages/Landing.jsx`, `frontend/src/components/marketing/MarketingNav.jsx`, and the 2 flag docs deleted from `feature_flags`. Homepage is back to showing 1,055 "developers using ORA" (unfiltered by activity) and all 5 original testimonials, exactly as before this session touched it. `robots.txt`'s `/wall` disallow and `daily_digest.py`'s cost-calc fix were NOT part of this revert (unrelated to the counter/testimonials, left in place).

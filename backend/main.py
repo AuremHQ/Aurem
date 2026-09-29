@@ -74,6 +74,8 @@ from routers.support import router as support_router
 from routers.payments import router as payments_router
 from routers.stripe_webhook_compat import router as stripe_webhook_compat_router  # Iter 388-ae — legacy /api/stripe/webhook alias (see Payments $0 root-cause memo)
 from routers.mcp import router as mcp_router, mcp_discovery_root
+from routers.mcp_ora_chat import router as mcp_ora_chat_router  # 2026-09-28 ORA Chat MCP (admin-only, Part A)
+from routers.admin_gateway import router as admin_gateway_router  # 2026-09-28 ORA Chat MCP/Gateway key admin API
 from routers.vercel import router as vercel_router  # Iter 212m-84 — Vercel platform tools for ORA
 from routers.oauth import router as oauth_router
 from routers.usage import router as usage_router
@@ -4035,6 +4037,8 @@ app.include_router(trust_level_router)
 app.include_router(diagram_router,        prefix="/api/aurem-dev")  # Iter 212m-61 /diagram
 app.include_router(feature_window_router, prefix="/api/aurem-dev")  # Iter 212m-64 system map
 app.include_router(mcp_router,            prefix="/api/aurem-dev")  # iter 173 — MCP server
+app.include_router(mcp_ora_chat_router,   prefix="/api/aurem-dev")  # 2026-09-28 ORA Chat MCP (admin-only)
+app.include_router(admin_gateway_router,  prefix="/api/aurem-dev")  # 2026-09-28 ORA Chat MCP/Gateway key admin API
 app.include_router(vercel_router,         prefix="/api/aurem-dev")  # Iter 212m-84 — Vercel tools for ORA
 app.include_router(oauth_router,          prefix="/api/aurem-dev")  # iter 182 — OAuth 2.1 + PKCE for Claude Directory
 from routers.visibility import router as visibility_router          # Phase 3 · Visibility Kit Phase B (2026-08-28)

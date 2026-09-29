@@ -273,9 +273,231 @@ export default function AdminApiKeys() {
           {" "}(Windows). Restart Claude Desktop after editing.
         </div>
       </div>
+
+      <OraChatMcpCard />
     </div>
   );
 }
+
+// ── ORA Chat MCP (admin-only) — 2026-09-28 Part A ────────────────────
+function OraChatMcpCard() {
+  const [keys, setKeys] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [newKey, setNewKey] = useState(null);
+  const [label, setLabel] = useState("");
+  const [testResult, setTestResult] = useState(null);
+  const [testBusy, setTestBusy] = useState(false);
+  const mcpUrl = `${window.location.origin}/api/aurem-dev/mcp/ora-chat`;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.get("/admin/gateway/keys?scope=mcp", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      setKeys(r.data?.keys || []);
+    } catch (e) {
+      toast({ message: cleanErr(e, "Failed to load MCP keys."), kind: "error", duration: 3000 });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/admin/gateway/keys",
+        { scope: "mcp", label: label.trim() || "Claude Desktop" },
+        { headers: { Authorization: `Bearer ${getToken()}` } });
+      setNewKey(r.data?.key || "");
+      setLabel("");
+      await load();
+    } catch (e) {
+      toast({ message: cleanErr(e, "Failed to generate key."), kind: "error", duration: 3500 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (keyId) => {
+    try {
+      await api.post(`/admin/gateway/keys/${keyId}/revoke?scope=mcp`, {}, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      await load();
+    } catch (e) {
+      toast({ message: cleanErr(e, "Revoke failed."), kind: "error", duration: 3000 });
+    }
+  };
+
+  const regenerate = async (keyId) => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/admin/gateway/keys/${keyId}/regenerate?scope=mcp`, {}, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      setNewKey(r.data?.key || "");
+      await load();
+    } catch (e) {
+      toast({ message: cleanErr(e, "Regenerate failed."), kind: "error", duration: 3000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runTest = async () => {
+    setTestBusy(true);
+    setTestResult(null);
+    try {
+      const r = await api.post("/admin/gateway/test/mcp", {}, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      setTestResult({ ok: true, reply: r.data?.result?.reply || "(empty reply)" });
+    } catch (e) {
+      setTestResult({ ok: false, reply: cleanErr(e, "Test failed.") });
+    } finally {
+      setTestBusy(false);
+    }
+  };
+
+  const copy = (text) => {
+    navigator.clipboard.writeText(text);
+    toast({ message: "Copied.", kind: "success", duration: 1500 });
+  };
+
+  return (
+    <div style={{ ...hintBox, marginTop: 40, borderColor: "rgba(255,180,84,0.35)" }} data-testid="ora-mcp-card">
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <h3 style={{ ...sectionLabel, margin: 0 }}>ORA Chat — MCP</h3>
+        <span style={adminOnlyBadge}>ADMIN ONLY</span>
+      </div>
+      <p style={{ color: "var(--text-dim)", fontSize: 13, margin: "0 0 16px", lineHeight: 1.6 }}>
+        Lets Claude Desktop call ORA Chat (AUREM&apos;s internal assistant) as a tool
+        inside any conversation: <code style={codeChip}>ask_ora_chat</code>,{" "}
+        <code style={codeChip}>list_ora_conversations</code>,{" "}
+        <code style={codeChip}>get_ora_conversation</code>. Bearer-key auth
+        (OAuth 2.1 not built yet). Server-enforced admin-only.
+      </p>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>MCP URL</span>
+        <code data-testid="ora-mcp-url" style={{ ...codeChip, fontSize: 12 }}>{mcpUrl}</code>
+        <button style={btnGhost} onClick={() => copy(mcpUrl)} data-testid="ora-mcp-copy-url">Copy</button>
+      </div>
+
+      {newKey && (
+        <div data-testid="ora-mcp-new-key-banner" style={revealBanner}>
+          <div style={{ fontSize: 11, color: "#ffb454", letterSpacing: "0.12em",
+                        textTransform: "uppercase", marginBottom: 8 }}>
+            ⚠ Copy this now — it won&apos;t be shown again
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <code data-testid="ora-mcp-new-key-value" style={keyDisplay}>{newKey}</code>
+            <button style={btnGhost} onClick={() => copy(newKey)} data-testid="ora-mcp-copy-key">Copy</button>
+            <button style={btnGhost} onClick={() => setNewKey(null)} data-testid="ora-mcp-dismiss-key">
+              I&apos;ve saved it
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 10, lineHeight: 1.6 }}>
+            Claude Desktop → Settings → Connectors → Add custom connector →
+            paste the MCP URL above → Advanced settings → Request headers:
+            add <code style={codeChip}>Authorization</code> ={" "}
+            <code style={codeChip}>Bearer {newKey.slice(0, 18)}…</code>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+        <input
+          data-testid="ora-mcp-label-input"
+          placeholder="Key label (e.g. My laptop)"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          style={{ ...codeChip, padding: "8px 12px", minWidth: 200, background: "var(--bg)" }}
+        />
+        <button data-testid="ora-mcp-create-key" onClick={create} disabled={busy} style={btnPrimary(busy)}>
+          {busy ? "Generating…" : "+ Generate MCP key"}
+        </button>
+        <button data-testid="ora-mcp-test-btn" onClick={runTest} disabled={testBusy} style={btnGhost}>
+          {testBusy ? "Testing…" : "Test (ask_ora_chat: ping)"}
+        </button>
+      </div>
+
+      {testResult && (
+        <div data-testid="ora-mcp-test-result"
+             style={testResult.ok ? { ...revealBanner, background: "rgba(109,212,161,0.06)", borderColor: "rgba(109,212,161,0.3)" } : errBanner}>
+          {testResult.reply}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={emptyState}>Loading…</div>
+      ) : keys.length === 0 ? (
+        <div data-testid="ora-mcp-keys-empty" style={emptyState}>No MCP keys yet.</div>
+      ) : (
+        <div style={tableWrap}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--text-faint)",
+                           textTransform: "uppercase", fontSize: 10, letterSpacing: "0.1em" }}>
+                <th style={th}>Key / Label</th>
+                <th style={th}>Last used</th>
+                <th style={th}>Rate limit</th>
+                <th style={th}>Spend this month</th>
+                <th style={th}>Status</th>
+                <th style={{ ...th, textAlign: "right" }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => (
+                <tr key={k.key_id} data-testid={`ora-mcp-key-row-${k.key_id}`}
+                    style={{ borderBottom: "1px solid var(--border)" }}>
+                  <td style={td}>
+                    <code style={codeChip}>{k.key_prefix}…</code>
+                    <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-faint)" }}>{k.label}</span>
+                  </td>
+                  <td style={td}>{timeSince(k.last_used_at)}</td>
+                  <td style={td}>{k.rate_limit_per_min}/min</td>
+                  <td style={td}>
+                    ${k.current_month_spend_usd?.toFixed(2)} / ${k.spend_cap_monthly_usd?.toFixed(0)}
+                    {k.over_alert_threshold && (
+                      <span style={{ ...badgeRevoked, color: "#ffb454", marginLeft: 6,
+                                     borderColor: "rgba(255,180,84,0.4)", background: "rgba(255,180,84,0.1)" }}>
+                        ≥80%
+                      </span>
+                    )}
+                  </td>
+                  <td style={td}>
+                    <span style={k.revoked ? badgeRevoked : badgeOk}>{k.revoked ? "Revoked" : "Active"}</span>
+                  </td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {!k.revoked && (
+                      <>
+                        <button data-testid={`ora-mcp-regen-${k.key_id}`} onClick={() => regenerate(k.key_id)}
+                                style={{ ...btnGhost, marginRight: 6, padding: "6px 10px", fontSize: 11 }}>
+                          Regenerate
+                        </button>
+                        <button data-testid={`ora-mcp-revoke-${k.key_id}`} onClick={() => revoke(k.key_id)} style={btnDanger}>
+                          Revoke
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+const adminOnlyBadge = {
+  fontSize: 10, letterSpacing: "0.1em", padding: "2px 8px", borderRadius: 10,
+  color: "#ffb454", background: "rgba(255,180,84,0.1)", border: "1px solid rgba(255,180,84,0.35)",
+};
 
 // ── Styles ──────────────────────────────────────────────────────────
 const codeChip = {
