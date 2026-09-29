@@ -1,8 +1,11 @@
-# QA Report — commit c449c29 (2026-09-28T20:27:17+00:00)
+# QA Report — commit 2ab13b9 (2026-09-29T02:40:04+00:00)
 
-**Commit message**: test: update team plan RBAC coverage
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
+**Commit message**: Fix stale interaction-contract assertion: mock provider is branded
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
