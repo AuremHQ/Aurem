@@ -1,15 +1,20 @@
-# QA Report — commit 60e3eca (2026-07-30T05:32:43+00:00)
+# QA Report — commit 55ef1dd (2026-09-29T07:26:57+00:00)
 
-**Commit message**: predeploy gate g20
-**Scope decided**: backend=False, ui=False, scenarios=['smoke_baseline']
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
+**Commit message**: Fix invalid UTF-8 in a test title and stop the style gate crashing on bad bytes
+
+TeamManagementPanel.phase1.test.jsx held a Windows-1252 em dash (0x97), which
+crashed ci_check_test_style.py (UnicodeDecodeError) for any PR whose diff
+touches that file, failing 'Static-grep threshold on new tests'.
+
+C
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['crash', 'auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
 |---|---|---|---|
-| smoke_baseline | health | PASS | GET http://localhost:8001/api/health → 200, ok=True |
-| regression_locks | regression-20260728-ship-gate-infinite-loop | OPEN | bug still open — not gating. test_iter332_ship_gate_skip.py:PASS (lock passing — consider status=fixed) |
-| regression_locks | regression-20260729-null-turn-prompt-mode-crash | PASS | test_iter339k_null_turn_prompt_mode.py:PASS |
+| regression_locks | regression-20260728-ship-gate-infinite-loop | OPEN | bug still open — not gating. test_iter332_ship_gate_skip.py:FAIL |
+| regression_locks | regression-20260729-null-turn-prompt-mode-crash | DEFERRED | live-server lock — runs in preview env, not runnable on a CI runner |
 | regression_locks | regression-20260729-freetier-499-unboundlocal | PASS | test_regression_iter339m_freetier_unboundlocal.py:PASS |
 | regression_locks | regression-20260729-rollback-button-dead-click | PASS | LoopLiveFeed.iter339j_rollback_remount.test.jsx:PASS; LoopLiveFeed.iter329_task2_shipped_row.test.jsx:PASS |
 
