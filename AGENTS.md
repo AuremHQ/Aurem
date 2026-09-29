@@ -63,6 +63,31 @@ port 3000) · MongoDB.
 ## 7. Testing Requirements — current honest state (verified live, not assumed)
 - Every bug fix ships with a regression test named
   `test_regression_iter<N>_<description>` (`backend/tests/`).
+- **Flaky-test quarantine (Iter 292).** A test that fails intermittently
+  with no code change gets `@pytest.mark.flaky(reason="...", owner="...",
+  fix_by="...")` — every quarantined test MUST carry an `owner` and a
+  `fix_by` date; a flaky test with no owner is a bug in the process, not
+  a pass. `pytest.ini` defaults CI to `-m "not flaky"` so quarantine is
+  non-blocking. Quarantine ceiling: if `>5%` of the suite is tagged
+  `@flaky`, the pattern is systemic — stop quarantining, fix the class
+  of failure. Loop/SSE flakiness exception: a flake in async
+  Loop/SSE code is not automatically quarantine-eligible — flakes in
+  async code often expose a real intermittent bug (an async race, a
+  write-visibility lag under load) rather than test noise; root-cause
+  before tagging `@flaky`.
+- **Frontend behavioural-test rule mirrors the backend one.** A test
+  that only greps the DOM/`className` for expected markup (STATIC_GREP)
+  is not a valid regression test — render with React Testing Library
+  (or drive it with Playwright) and assert real behaviour.
+- **Per-environment deploy reporting.** A completion report must state
+  whether the change is live on preview vs. live on production — never
+  imply "deployed" without saying which. See `docs/environments.md`
+  for the current, verified-live surface parity (Mongo, env vars,
+  GitHub, services) across preview and production.
+- Session start runs `backend/scripts/session_start_dashboard.py` —
+  a 3-line, no-ceremony discipline probe (static-vs-behavioural ratio,
+  mock-reality check, environment-ledger staleness). Reference it by
+  this exact path so a rename doesn't silently strand the discipline.
 - **CI is not fully green right now.** Fresh run this session:
   `backend/tests/test_invariants_continuous_quality.py` — 5/5 passing.
   Frontend `yarn test` — **9 tests failing across 5 files** (`StreamHealthPill.test.jsx`,

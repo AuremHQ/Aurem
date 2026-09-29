@@ -1,0 +1,32 @@
+{
+  "summary": "Verified the CONSOLIDATED OAuth 2.1 fix for ORA Chat MCP against the public preview URL (K8s ingress + Vite dev-server preview plugin). All 12 review items pass. Ran 28 in-process pytests (test_oauth_ora_chat.py + test_mcp_ora_chat_admin.py) — all 28 pass. Wrote and ran 16 live E2E pytest cases against REACT_APP_BACKEND_URL (test_oauth_ora_chat_live_preview.py) covering: (a) prefixed & bare-root .well-known discovery [THE production bug], (b) DCR + validation, (c) full authorize→admin-gate reject non-admin / allow admin / issue code, (d) admin-gating scoped ONLY to /mcp/ora-chat (other resources still open — regression proven), (e) PKCE token exchange with single-use codes and wrong-verifier reject, (f) MCP call with issued token returns exactly 3 tools, (g) 401 WWW-Authenticate points at bare-root PRM (no long suffix), (h) admin panel list & revoke kills token, (i) legacy Bearer-key path still works and revoke enforces. Frontend verified: server-rendered ORA consent page loads under the /api path with ADMIN-ONLY notice and email/password form; wrong creds re-render with 'Invalid email or password. Please try again.' Admin /admin/api-keys page loads for admin user, body contains 'ORA Chat', 'MCP', both bare '/.well-known/oauth-authorization-server' and '/.well-known/oauth-protected-resource' URLs, Copy buttons and Revoke buttons present. Real-production nginx SPA-fallback fix in frontend/Dockerfile is NOT verifiable from this preview pod (preview uses Vite plugin) — flagged as untestable-here per instruction, not a failure.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_oauth_ora_chat_live_preview.py",
+    "/app/backend/tests/test_oauth_ora_chat.py",
+    "/app/backend/tests/test_mcp_ora_chat_admin.py",
+    "/app/test_reports/pytest/oauth_ora_chat_results.xml",
+    "/app/test_reports/pytest/oauth_live_preview.xml"
+  ],
+  "action_items": [
+    "Nothing to fix. Per founder note, production nginx path (frontend/Dockerfile SPA-fallback proxy rule for /.well-known/*) is NOT testable from this preview pod (preview uses Vite dev-server plugin instead) — real deployment must be smoke-tested on auremcto.com after next production build/deploy.",
+    "Optional cleanup: admin panel currently shows two leftover 'Claude OAuth (...)' active clients from previous iterations — my live test revoked its own client but pre-existing leftovers remain. Founder can bulk-revoke via UI if unwanted."
+  ],
+  "critical_code_review_comments": [
+    "Consolidation onto backend/routers/oauth.py is clean: single source of truth for issuer, registration, authorize, token, discovery. Admin-only gating is correctly scoped by parsing the `resource` query param against MCP_ORA_CHAT_RESOURCE_PATH — verified with the OTHER-resource regression test that a non-admin can still complete the flow for a non-ora-chat resource.",
+    "WWW-Authenticate now advertises the bare-root PRM (no long path suffix) — matches the simplified design and matches what Claude expects.",
+    "Vite plugin frontend/vite-plugins/oauth-wellknown-proxy.mjs is a thin preview-only proxy — production correctness depends on the nginx rule in frontend/Dockerfile; that rule cannot be exercised in preview, so post-deploy smoke test on auremcto.com is required.",
+    "Preview URL discovery paths correctly return application/json Content-Type with matching issuer/resource values — the root cause of the production 401 loop is closed for the preview path."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_oauth_ora_chat_live_preview.py (new, 16 live E2E cases)"
+  ],
+  "success_rate": {"backend": "100% (28/28 in-process + 16/16 live preview)", "frontend": "100% (consent page + admin panel visibility)"},
+  "test_credentials": "Admin: test@aurem.dev / AuremTest2026! (used for admin JWT and OAuth consent). Non-admin: throwaway TEST_nonadmin_*@example.com created inline via /auth/signup each run.",
+  "seed_data_creation": "Each live-preview test class self-creates DCR clients (client_name='TEST_*') and throwaway non-admin users. The admin OAuth client from the full-flow test is revoked at end of TestAdminPanel. Legacy Bearer key is revoked at end of TestBearerKeyRegression. Leftover 'Claude OAuth' clients from PRIOR iterations remain in db.oauth_dcr_clients — not created by this run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Live E2E suite path: backend/tests/test_oauth_ora_chat_live_preview.py — run from /app/backend (not /app; parent conftest.py imports 'services' which needs backend on sys.path). Use `cd /app/backend && pytest tests/test_oauth_ora_chat_live_preview.py -v`. The 'admin bearer key create' response returns key_id inside `key_doc.key_id`, not at top level — already handled in the test. Bare-root .well-known JSON is served via Vite plugin in preview, via nginx in production — production is untestable from preview pod.",
+  "rca of the issue": "Original production bug: /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource fell through nginx to the SPA's index.html because the K8s ingress rule only proxied /api/*. Additionally a stale static file frontend/public/.well-known/oauth-protected-resource had authorization_servers:[]. Fix: (a) backend main.py adds root-level app.add_route aliases so backend serves JSON when the request reaches uvicorn (used in preview by Vite plugin proxy, and by nginx in prod after Dockerfile change), (b) the static file was updated to real ORA metadata (safety net for the nginx path), (c) the AS discovery doc gained registration_endpoint pointing to a new /oauth/register (RFC 7591 DCR), (d) admin-only gating was added scoped to resource==MCP path only, (e) all this was consolidated onto the single pre-existing OAuth server at backend/routers/oauth.py (redundant parallel system deleted). Verified: all 12 review items green."
+}

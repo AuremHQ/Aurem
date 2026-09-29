@@ -1,13 +1,7 @@
 {
-  "resource": "https://auremcto.com",
-  "authorization_servers": [],
+  "resource": "https://auremcto.com/api/aurem-dev/mcp/ora-chat",
+  "authorization_servers": ["https://auremcto.com/api/aurem-dev"],
   "bearer_methods_supported": ["header"],
-  "scopes_supported": [
-    "read:repo",
-    "write:repo",
-    "ship:commit",
-    "admin"
-  ],
-  "resource_documentation": "https://auremcto.com/api/docs",
-  "resource_name": "AUREM API"
+  "scopes_supported": ["mcp"],
+  "resource_name": "ORA Chat MCP (admin only)"
 }

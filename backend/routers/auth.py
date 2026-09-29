@@ -37,6 +37,16 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 _LOGIN_RATE_PER_MIN  = int(os.getenv("LOGIN_RATE_PER_MIN", "10"))
 _LOGIN_FAIL_LIMIT    = int(os.getenv("LOGIN_FAIL_LIMIT", "5"))
 _LOGIN_LOCKOUT_MIN   = int(os.getenv("LOGIN_LOCKOUT_MIN", "15"))
+# 2026-09-29 · quality-gate.yml "invariants" job evidence — Layer 1
+# (services.rate_limiter, in-memory) already honours RATE_LIMIT_DISABLED=1,
+# but this Mongo-persisted lockout (Layer 2) never checked it. CI boots
+# the backend as a SEPARATE process from pytest (conftest's per-test
+# in-memory bucket reset can't reach it), so many test files logging in
+# with wrong creds from the one shared runner IP (127.0.0.1) accumulate
+# real login_attempts rows and, after 5, 429-lock EVERY later test's
+# login for 15 minutes regardless of RATE_LIMIT_DISABLED — cascading
+# into ~70 unrelated FAILED/ERROR results. See test_regression_iter1_login_lockout_respects_rate_limit_disabled.
+_RATE_LIMIT_DISABLED = os.getenv("RATE_LIMIT_DISABLED", "0") == "1"
 
 
 def _now_utc() -> datetime:
@@ -67,7 +77,7 @@ async def _enforce_login_guard(db, client_ip: str) -> None:
             f"Slow down — limit is {_LOGIN_RATE_PER_MIN} per minute.",
         )
     # Layer 2 — persisted lockout window
-    if db is None:
+    if _RATE_LIMIT_DISABLED or db is None:
         return
     row = await db.login_attempts.find_one({"_id": f"ip:{client_ip}"})
     if not row:

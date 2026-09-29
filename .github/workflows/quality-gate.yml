@@ -215,6 +215,21 @@ jobs:
           # conftest's per-test bucket reset can't reach it — live-HTTP
           # tests share one runner IP and tripped the 10/min login limit.
           RATE_LIMIT_DISABLED: "1"
+          # 2026-09-29 · confirmed real bug diagnosing this job: no LLM
+          # key was set anywhere in this workflow, so every live
+          # chat-reply test (casual hello / greeting / chat-history /
+          # loop-trip-incident / commit-boundary / prompt-caching) got
+          # an empty reply or a 499 upstream-disconnect, always. Tried
+          # MOCK_LLM=true first — that fixed those but broke a
+          # DIFFERENT set (intent-classification tests like
+          # test_intent_gateway_points_4_6_2026_01.py need a real
+          # model's understanding of "casual" vs "tool request"; the
+          # canned mock can't tell the difference). A real key is the
+          # only fix that satisfies both — same secrets already used
+          # by the "Simulated-user QA" job below (ci.yml) for the same
+          # reason.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EMERGENT_LLM_KEY:   ${{ secrets.EMERGENT_LLM_KEY }}
         run: |
           uvicorn main:app --host 0.0.0.0 --port 8001 &
           echo $! > /tmp/backend.pid
@@ -285,7 +300,17 @@ jobs:
             --reruns 1 --reruns-delay 3 \
             --only-rerun "ConnectionError|ConnectionRefusedError|TimeoutError|RemoteDisconnected|ConnectionResetError" \
             --ignore=tests/test_iter138_acceptance_seven.py \
-            --ignore=tests/test_iter212m163_aggression_chat.py
+            --ignore=tests/test_iter212m163_aggression_chat.py \
+            --deselect=tests/test_regression_iter289_track1_lane_a.py::test_backend_coverage_json_written
+          # 2026-09-29 · confirmed real bug diagnosing this job: the
+          # deselected test asserts backend/coverage.json exists —
+          # that file is only ever written by ci.yml's SEPARATE
+          # "Backend — pytest" job (`--cov-report=json:coverage.json`),
+          # a different job/checkout with no artifact sharing into
+          # this one. It got swept into THIS job's selection only
+          # because its filename contains "regression"; it always
+          # fails on a genuinely fresh checkout here. Still runs (and
+          # is enforced) in ci.yml where its precondition is real.
       - name: Guard — Source-of-truth trip-wires (isolated, must never be silently red)
         # W3 · 2026-08 — same governance rule as ci.yml's dedicated
         # step: this exact job's broad -k filter above already ran

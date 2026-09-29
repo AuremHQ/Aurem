@@ -1,14 +1,14 @@
-# QA Report — commit 55ef1dd (2026-09-29T07:26:57+00:00)
+# QA Report — commit ad52cb1 (2026-09-29T07:58:27+00:00)
 
-**Commit message**: Fix invalid UTF-8 in a test title and stop the style gate crashing on bad bytes
+**Commit message**: docs: drop repeated delete-gate auto-verdict blocks; verdict lives in the PR body
 
-TeamManagementPanel.phase1.test.jsx held a Windows-1252 em dash (0x97), which
-crashed ci_check_test_style.py (UnicodeDecodeError) for any PR whose diff
-touches that file, failing 'Static-grep threshold on new tests'.
+The Delete Gate job appended a new block on every run and each commit cancelled
+the CI run in flight. The PR description now carries the manual verdict.
 
-C
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['crash', 'auth']
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claud
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |

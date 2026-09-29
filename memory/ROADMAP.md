@@ -1,5 +1,12 @@
 # ROADMAP — prioritized backlog (post 2026-08-27 ORA Chat v2 P1-P5 checkpoint)
 
+## 2026-09-29 — CI-health follow-up (see CHANGELOG.md for full detail)
+- Item A (quality-gate.yml invariants job) and Item B (Landing page Lighthouse TBT) — both DONE this round, 6 new backend regression tests + 1 frontend Vitest test, testing_agent-verified.
+- **Open, low-priority**: `test_iter212m190_scan_fix_quota.py::test_login_case_insensitive` + `::test_bulk_cap_regression` reproduce only under full ~750-test-suite load, pass 17/17 in isolation — root cause not found (grace period + cross-file collision both ruled out). Revisit if it starts blocking CI in practice.
+- **Not a code issue, no action needed here**: this local pod's `OPENROUTER_API_KEY` is out of balance (402) with several dead free-tier/Groq fallback slugs (404) — causes ~5 local-only invariants failures on real-LLM chat tests. Real CI's `secrets.OPENROUTER_API_KEY`/`secrets.EMERGENT_LLM_KEY` are separate keys; watch the actual quality-gate.yml run post-merge to confirm these don't recur there.
+- **Pre-existing, unrelated to this round** (confirmed via git-stash A/B, do not "fix" as part of any future Landing/Lighthouse work): 3 Playwright visual baselines (`/` hero-and-fold, `/why-ora`, `/demo`) drift with identical pixel-diff counts on baseline vs. HEAD — likely ARM64-pod font rendering vs. the original baseline-capture platform; 7 pre-existing Vitest failures (`Session7_Item3_rapid_send_lock`, `TeamManagementPanel.phase1` x4, `RailShell.teamRbacNav.phase1` x2).
+
+
 ## 2026-09-23 — reliability blueprint round: INTERACTION_CONTRACT_V1 activated + 3 P1 sub-gaps CLOSED
 - `INTERACTION_CONTRACT_V1` is now **ON** in `backend/.env` (was OFF pending the items below — all 3 are now done, see CHANGELOG.md 2026-09-23 entry for full detail + live E2E proof).
 - ~~4 *distinct* timeout clocks (connect/first-token/stream-idle/hard-deadline)~~ → DONE, `services/timeout_clocks.py`.

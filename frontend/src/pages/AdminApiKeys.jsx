@@ -291,8 +291,8 @@ function OraChatMcpCard() {
   const [oauthClients, setOauthClients] = useState([]);
   const [oauthLoading, setOauthLoading] = useState(true);
   const mcpUrl = `${window.location.origin}/api/aurem-dev/mcp/ora-chat`;
-  const asMetadataUrl = `${window.location.origin}/.well-known/oauth-authorization-server/api/aurem-dev/mcp`;
-  const prmUrl = `${window.location.origin}/.well-known/oauth-protected-resource/api/aurem-dev/mcp/ora-chat`;
+  const asMetadataUrl = `${window.location.origin}/.well-known/oauth-authorization-server`;
+  const prmUrl = `${window.location.origin}/.well-known/oauth-protected-resource`;
 
   const load = useCallback(async () => {
     setLoading(true);

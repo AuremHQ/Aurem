@@ -70,7 +70,19 @@ def test_chat_history_8_turns(auth_headers):
     # Could be list or dict with turns/messages key
     turns = data if isinstance(data, list) else (data.get("turns") or data.get("messages") or data.get("history") or [])
     assert len(turns) >= 8, f"Expected >=8 turns, got {len(turns)}: {json.dumps(data)[:500]}"
-    providers = [str(t.get("provider", "")).lower() for t in turns]
+    # 2026-09-29 · stale test found diagnosing quality-gate.yml's
+    # "invariants" job: routers/chat/history.py sanitizes every turn's
+    # `provider` via sanitize_provider_for_user before it's ever
+    # returned to the client (intentional — never leak the raw
+    # internal provider name to a user, applied consistently across
+    # streaming/history/turn/scope-resume). The API response can no
+    # longer show the raw "loop" marker this test seeded — read it
+    # back from Mongo directly (already available via this file's own
+    # `_seed_history_session` helper) instead of the sanitized response.
+    from pymongo import MongoClient
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    seeded = db.chat_sessions.find_one({"session_id": SESSION_ID})
+    providers = [str(t.get("provider", "")).lower() for t in (seeded or {}).get("turns", [])]
     assert any("loop" in p for p in providers), f"No provider:'loop' turn found. providers={providers}"
 
 
