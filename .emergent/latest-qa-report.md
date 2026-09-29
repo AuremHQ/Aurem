@@ -1,14 +1,14 @@
-# QA Report — commit 32f7899 (2026-09-29T04:01:52+00:00)
+# QA Report — commit 55ef1dd (2026-09-29T07:26:57+00:00)
 
-**Commit message**: CI: stop Backend pytest gracefully at 15 min and print slowest tests
+**Commit message**: Fix invalid UTF-8 in a test title and stop the style gate crashing on bad bytes
 
-The Backend job's 20-minute timeout kills 'Run tests' silently (no summary,
-no durations, no coverage.json). Stop pytest with SIGINT at 15 minutes so the
-run still reports, and add --durations=30.
+TeamManagementPanel.phase1.test.jsx held a Windows-1252 em dash (0x97), which
+crashed ci_check_test_style.py (UnicodeDecodeError) for any PR whose diff
+touches that file, failing 'Static-grep threshold on new tests'.
 
-Co-Authored-By: Claude Sonnet 5.
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+C
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['crash', 'auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |

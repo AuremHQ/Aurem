@@ -122,7 +122,9 @@ def _file_exempts_itself(path: str) -> str | None:
     `# static-grep-ok: <reason>` (Python) or `// static-grep-ok: <reason>`
     (JS/TS) marker, return the reason. Else None."""
     try:
-        with open(_abs(path), "r", encoding="utf-8") as f:
+        # errors="replace": the marker is plain ASCII, and one stray
+        # non-UTF-8 byte in some test file must not crash the whole gate.
+        with open(_abs(path), "r", encoding="utf-8", errors="replace") as f:
             head_lines = "".join(f.readlines()[:40])
     except OSError:
         return None
