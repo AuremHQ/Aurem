@@ -240,9 +240,9 @@ export default function AdminOnboardingFunnel() {
           <Card style={{ marginBottom: 20 }}>
             {!trend ? (
               <div style={{ padding: 24, color: "var(--text-faint)" }}><Loader2 size={14} className="spin" /> Loading…</div>
-            ) : trend.points.length < 2 ? (
+            ) : (trend.points?.length ?? 0) < 2 ? (
               <div data-testid="admin-onboarding-trend-empty" style={{ padding: 12, fontSize: 12, color: "var(--text-faint)" }}>
-                Only {trend.points.length} day of data so far — the daily snapshot cron
+                Only {trend.points?.length ?? 0} day of data so far — the daily snapshot cron
                 just started. The trend line fills in day by day; check back tomorrow.
               </div>
             ) : (

@@ -187,6 +187,9 @@ export default function AdminFinancials() {
       const r = await api.get("/admin/financials", {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
+      if (!r.data?.metrics || !r.data.users || !r.data.fx) {
+        throw new Error("Unexpected response from /admin/financials (missing metrics, users or fx)");
+      }
       setData(r.data);
       setDraft(r.data.settings);
     } catch (e) {
@@ -260,7 +263,8 @@ export default function AdminFinancials() {
   }
 
   const m = data.metrics;
-  const cad = (usd) => (usd != null ? `≈ C$${Math.round(usd * data.fx.rate)}` : "");
+  const fxRate = data.fx?.rate;
+  const cad = (usd) => (usd != null && fxRate != null ? `≈ C$${Math.round(usd * fxRate)}` : "");
   const u   = data.users;
 
   return (
@@ -288,8 +292,8 @@ export default function AdminFinancials() {
             margin: 0,
           }}>Financial Command Center</h1>
           <p style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>
-            Live MongoDB data · USD→CAD rate <b>{data.fx.rate}</b>{" "}
-            <span style={{ color: "var(--text-faint)" }}>({data.fx.source})</span>
+            Live MongoDB data · USD→CAD rate <b>{fxRate ?? "n/a"}</b>{" "}
+            <span style={{ color: "var(--text-faint)" }}>({data.fx?.source ?? "unknown"})</span>
             {" "}·{" "}MRR source: <code>{m.mrr_source}</code>
           </p>
         </div>

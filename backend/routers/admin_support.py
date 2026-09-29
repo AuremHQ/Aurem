@@ -27,7 +27,7 @@ from cto_services.db import require_db
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
-from services.admin_error_autofix import run_error_autofix
+from services.admin_error_autofix import build_autofix_prompt, run_error_autofix
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on
@@ -266,16 +266,10 @@ async def autofix_error(
                   "autofix_started": datetime.now(timezone.utc).isoformat()}},
     )
 
-    msg   = doc.get("message", "")
-    stack = doc.get("stack", "")[:3_000]
-    url   = doc.get("url", "")
-    prompt = (
-        "A user-facing JS error is firing in production:\n\n"
-        f"  message: {msg}\n"
-        f"  url:     {url}\n\n"
-        f"```\n{stack}\n```\n\n"
-        "Investigate the root cause and ship a fix. Read the relevant "
-        "files first, then make the change."
+    prompt = build_autofix_prompt(
+        message=doc.get("message", ""),
+        url=doc.get("url", ""),
+        stack=doc.get("stack", ""),
     )
 
     asyncio.create_task(run_error_autofix(
