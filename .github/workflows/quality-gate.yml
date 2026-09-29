@@ -215,6 +215,7 @@ jobs:
           # conftest's per-test bucket reset can't reach it — live-HTTP
           # tests share one runner IP and tripped the 10/min login limit.
           RATE_LIMIT_DISABLED: "1"
+          DISABLE_LOGIN_RATE_LIMIT: "true"
         run: |
           uvicorn main:app --host 0.0.0.0 --port 8001 &
           echo $! > /tmp/backend.pid
@@ -255,6 +256,7 @@ jobs:
           AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
           FOUNDER_EMAILS: test@aurem.dev
           FOUNDER_ALERT_FROM: "AUREM Guardian <alerts@aurem.live>"
+          DISABLE_LOGIN_RATE_LIMIT: "true"
         run: |
           # Iter 309 · Phase 0.2 — DISCOVERY-BASED test collection.
           # Prior version was a hardcoded whitelist of specific test
