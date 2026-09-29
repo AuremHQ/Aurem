@@ -1,8 +1,8 @@
-# QA Report — commit d5963f5 (2026-09-29T04:39:18+00:00)
+# QA Report — commit b240fab (2026-09-29T05:39:56+00:00)
 
-**Commit message**: test: relax rapid send lock source check
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
+**Commit message**: ci: disable login rate limit in quality gate
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
