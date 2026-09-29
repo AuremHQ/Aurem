@@ -1,11 +1,13 @@
-# QA Report — commit 4a3b14b (2026-09-29T19:28:31+00:00)
+# QA Report — commit 433e031 (2026-09-29T21:03:33+00:00)
 
-**Commit message**: ci: list failing pytest tests in the job summary
+**Commit message**: ci: shard Backend — pytest into 4 parallel groups, fix the real root cause of the 15-min timeout
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
+Root cause (evidence: GH Actions run 36621460624/job 109587622533,
+main @ 5f97cc88): the 'Run tests' step ran the whole suite with no
+REACT_APP_BACKEND_URL set, so both the tests/conftest.py live_env
+sk
 **Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['ship', 'leak']
 
 ## Results
 | Scenario | Variant | Result | Detail |
