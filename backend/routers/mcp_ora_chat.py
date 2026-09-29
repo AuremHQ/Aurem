@@ -20,13 +20,27 @@ feature, so this router hand-rolls the same wire protocol
 Auth: `Authorization: Bearer <admin key>` (minted via POST
 /admin/gateway/keys with scope="mcp", backend/services/
 admin_gateway_keys.py) OR `Authorization: Bearer <OAuth access token>`
-issued by the OAuth 2.1 flow in routers/oauth_mcp.py (Dynamic Client
-Registration + PKCE — see /.well-known/oauth-authorization-server and
-/.well-known/oauth-protected-resource, served by
-frontend/vite-plugins/oauth-mcp-metadata.mjs). EITHER path is checked
-on every call; both re-verify the token/key's owning user is STILL an
-admin right now, is not revoked, is under its per-key rate limit, and
-(for ask_ora_chat) is under its monthly spend cap.
+issued by the SHARED OAuth 2.1 server in routers/oauth.py (RFC 7591
+Dynamic Client Registration + PKCE S256 — discovery at the domain
+root `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource`, aliased in main.py; that
+router enforces admin-only login specifically for THIS resource,
+`MCP_ORA_CHAT_RESOURCE_PATH`). EITHER path is checked on every call;
+both re-verify the token/key's owning user is STILL an admin right
+now, is not revoked, is under its per-key rate limit, and (for
+ask_ora_chat) is under its monthly spend cap.
+
+2026-09-30 — a prior version of this file shipped its OWN separate,
+parallel OAuth implementation (routers/oauth_mcp.py). Deleted:
+production evidence showed Claude couldn't connect because (a) that
+system's bare `.well-known/*` paths were only ever served correctly
+by a Vite dev-server plugin, which real production does NOT run
+(nginx does — a wrong assumption), and (b) it duplicated an OAuth
+server that already existed (routers/oauth.py, built for the general
+MCP "Claude Directory" listing) instead of extending it — two
+authorization servers for one API is a real security/maintenance
+liability, not just redundant code. Consolidated onto the one
+pre-existing OAuth server instead.
 
 GET  /mcp/ora-chat  -> manifest (server info + tool list)
 POST /mcp/ora-chat  -> JSON-RPC 2.0: initialize / tools/list / tools/call
@@ -41,7 +55,11 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 import services.admin_gateway_keys as gw_keys
-import services.oauth_mcp_store as oauth_store
+from routers.oauth import (
+    MCP_ORA_CHAT_RESOURCE_PATH,
+    oauth_protected_resource,
+    verify_oauth_token_for_resource,
+)
 from services.mcp_ora_chat_tools import (
     ask_ora_chat_impl, get_ora_conversation_impl, list_ora_conversations_impl,
 )
@@ -170,8 +188,9 @@ async def manifest() -> JSONResponse:
                 "generate one in the admin panel (API Keys page), or "
                 "(2) OAuth 2.1 with Dynamic Client Registration + PKCE — "
                 "Claude Desktop custom connectors discover this "
-                "automatically via /.well-known/oauth-protected-resource. "
-                "Both are admin-only.",
+                "automatically via /.well-known/oauth-protected-resource "
+                "(admin login required at the consent step). Both are "
+                "admin-only.",
     }
     return JSONResponse(payload)
 
@@ -183,22 +202,23 @@ def _origin(request: Request) -> str:
 
 
 def _www_authenticate(request: Request) -> str:
-    prm_url = f"{_origin(request)}/.well-known/oauth-protected-resource/api/aurem-dev/mcp/ora-chat"
+    prm_url = f"{_origin(request)}/.well-known/oauth-protected-resource"
     return f'Bearer realm="mcp", resource_metadata="{prm_url}"'
 
 
 async def _authenticate(authorization: Optional[str]) -> tuple[Optional[dict], Optional[dict], int]:
     """Returns (key_doc, rpc_error_dict_or_None, http_status). Accepts
     EITHER a static admin MCP key (services/admin_gateway_keys.py) OR
-    an OAuth 2.1 access token (services/oauth_mcp_store.py) — both are
-    normalized to the same key_doc shape so rate-limit/spend-cap/
-    usage-log code below doesn't need to know which path was used."""
+    an OAuth 2.1 access token issued by the shared server in
+    routers/oauth.py — both are normalized to the same key_doc shape
+    so rate-limit/spend-cap/usage-log code below doesn't need to know
+    which path was used."""
     if not authorization:
         return None, {"code": _RPC_UNAUTHORIZED, "message": "Missing Authorization header"}, 401
     raw = authorization.replace("Bearer ", "", 1).strip()
     key_doc = await gw_keys.verify_key(raw, scope="mcp")
     if not key_doc:
-        key_doc = await oauth_store.verify_access_token(raw)
+        key_doc = await verify_oauth_token_for_resource(raw, MCP_ORA_CHAT_RESOURCE_PATH)
     if not key_doc:
         return None, {"code": _RPC_UNAUTHORIZED, "message": "Invalid, revoked, expired, or non-admin credential"}, 403
     limit = key_doc.get("rate_limit_per_min", gw_keys.DEFAULT_RATE_LIMIT_PER_MIN)
@@ -208,20 +228,14 @@ async def _authenticate(authorization: Optional[str]) -> tuple[Optional[dict], O
 
 
 @router.get("/.well-known/oauth-protected-resource")
-async def prm_fallback(request: Request):
+async def prm_fallback():
     """Backend-native fallback discovery path (path-appending
-    convention: {resource}/.well-known/...). The primary, RFC
-    8414/9728-correct copy is served at the bare domain root by
-    frontend/vite-plugins/oauth-mcp-metadata.mjs and is what the
-    `resource_metadata` hint below points to."""
-    origin = _origin(request)
-    return {
-        "resource": f"{origin}/api/aurem-dev/mcp/ora-chat",
-        "authorization_servers": [f"{origin}/api/aurem-dev/mcp"],
-        "bearer_methods_supported": ["header"],
-        "scopes_supported": ["mcp"],
-        "resource_name": "ORA Chat MCP (admin only)",
-    }
+    convention: {resource}/.well-known/...). Same content as the
+    canonical copy at routers/oauth.py's `/.well-known/oauth-
+    protected-resource` (bare domain root, aliased in main.py) —
+    delegates to the SAME function so there's exactly one source of
+    truth for this document."""
+    return await oauth_protected_resource()
 
 
 @router.post("")

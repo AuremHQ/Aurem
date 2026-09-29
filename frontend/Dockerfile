@@ -14,6 +14,23 @@ RUN printf 'server {\n\
   listen 3001;\n\
   root /usr/share/nginx/html;\n\
   index index.html;\n\
+  # 2026-09-30 · OAuth 2.1 discovery for the ORA Chat MCP server.\n\
+  # RFC 8414/9728 clients (Claude'"'"'s MCP connector included) look for\n\
+  # these JSON docs at the BARE domain root, not under /api/aurem-dev.\n\
+  # MUST come before the SPA-fallback locations below, or nginx would\n\
+  # serve index.html (or a stale static file) for these paths instead\n\
+  # of proxying to the backend — exactly the bug that stopped Claude\n\
+  # from connecting (these returned the frontend HTML shell, not\n\
+  # JSON). Backend service/port per infra/docker-compose.yml'"'"'s `api`\n\
+  # service — adjust api_backend below if your deployment differs.\n\
+  location ~ ^/\\.well-known/(oauth-protected-resource|oauth-authorization-server|openid-configuration)(/.*)?$ {\n\
+    proxy_pass http://api:8002;\n\
+    proxy_http_version 1.1;\n\
+    proxy_set_header Host              $host;\n\
+    proxy_set_header X-Real-IP         $remote_addr;\n\
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $scheme;\n\
+  }\n\
   # Iter 386 · Session 2 · Layer 7 — Deploy-lag mitigation.\n\
   # Hashed asset files (main.abc123.js, styles.def456.css, etc.) can\n\
   # be cached aggressively — their filename embeds the content hash,\n\
@@ -41,7 +58,7 @@ RUN printf 'server {\n\
   # gets a real 404. Prerendered static dirs (about/, contact/,\n\
   # privacy/, vs/*, compare/) are matched by try_files BEFORE this\n\
   # regex even runs, so they keep serving their own real files.\n\
-  location ~ ^/(both|why-ora|demo|login|signup|reset-password|verify|support|dashboard|ora|build|integrations|deploy|domain|settings|profile|tokens|analytics|projects|admin|tools|feature-window|codebase-health|health|bug-hunt|sidebar-preview|dashboard-preview-v2|privacy|terms|acceptable-use|cookie-policy|cookie-preferences|refund-policy|ai-code-processing|subprocessors|dpa|security|status|policies|wall|wrapped|automations|oauth-finish|magic-login|vs|pricing|compare|dev|about|contact|developers|team|oauth)(/|$) {\n\
+  location ~ ^/(both|why-ora|demo|login|signup|reset-password|verify|support|dashboard|ora|build|integrations|deploy|domain|settings|profile|tokens|analytics|projects|admin|tools|feature-window|codebase-health|health|bug-hunt|sidebar-preview|dashboard-preview-v2|privacy|terms|acceptable-use|cookie-policy|cookie-preferences|refund-policy|ai-code-processing|subprocessors|dpa|security|status|policies|wall|wrapped|automations|oauth-finish|magic-login|vs|pricing|compare|dev|about|contact|developers|team)(/|$) {\n\
     try_files $uri $uri/ /index.html;\n\
   }\n\
   location / {\n\
