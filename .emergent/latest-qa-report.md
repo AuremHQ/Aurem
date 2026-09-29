@@ -1,6 +1,6 @@
-# QA Report — commit 20b3427 (2026-09-29T01:56:58+00:00)
+# QA Report — commit 026f347 (2026-09-29T02:17:42+00:00)
 
-**Commit message**: Fix brittle rapid-send lock test: assert ref check by position, not a fixed 2000-char window
+**Commit message**: Mark rapid-send lock test as intentional static-grep contract
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
