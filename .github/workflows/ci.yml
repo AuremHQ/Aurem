@@ -123,6 +123,7 @@ jobs:
       APP_URL: http://localhost:8001
       PYTHONDONTWRITEBYTECODE: "1"
       CI: "true"
+      DISABLE_LOGIN_RATE_LIMIT: "true"
 
     steps:
       - name: Checkout

@@ -24,6 +24,8 @@ jobs:
   regression-locks:
     name: "Regression locks — ALL past bugs re-verified"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 20
     services:
       mongodb:
