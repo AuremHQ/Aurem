@@ -1,11 +1,11 @@
-# QA Report — commit 026f347 (2026-09-29T02:17:42+00:00)
+# QA Report — commit fafd6e0 (2026-09-29T03:48:21+00:00)
 
-**Commit message**: Mark rapid-send lock test as intentional static-grep contract
+**Commit message**: Merge main into claude/fix-guard21-admin-gateway
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
