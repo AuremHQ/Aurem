@@ -246,6 +246,22 @@ jobs:
           # Exit with pytest's exit code (captured before any post-processing).
           exit "$PYTEST_EXIT"
 
+      - name: Summarise failing tests
+        # `if: always()` so it runs after a red "Run tests"; puts the failing
+        # test ids in the job summary, which the API can read (the raw log tail
+        # is buried under service-container noise).
+        if: always()
+        run: |
+          {
+            echo "### Failing / erroring tests"
+            if [ -f /tmp/pytest_output.txt ]; then
+              grep -E '^(FAILED|ERROR) ' /tmp/pytest_output.txt | sort -u | head -200 || true
+              tail -n 1 /tmp/pytest_output.txt
+            else
+              echo "no pytest output captured"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Guard — Coverage ratchet + touched-file floor (Phase 0)
         # 2026-08 founder directive — runs even if "Run tests" above
         # failed for pre-existing/unrelated reasons (same if: always()
