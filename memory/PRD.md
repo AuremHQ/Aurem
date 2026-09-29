@@ -1,6 +1,110 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-28 (Round 8 — MASTER TASK founder Q&A audit + Batch 2 build). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-09-29 (CI-trustworthiness pass — 4 PRs, see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## CI trustworthiness — 4 separate PRs, one per item (2026-09-29)
+
+Founder's ask: make CI trustworthy — backend pytest job stuck at the 15-min
+cap, "Fitness-function invariants" red on main, two bots (`delete-gate-bot`,
+`auto-qa-bot`) committing straight to PR branches and cancelling in-flight
+runs, and no JUnit/failure-summary reporting on the Fitness job. One PR per
+item, each from a workspace freshly synced to `origin/main` (not stacked).
+Hard rules honored throughout: no test skipped/xfailed/quarantined to get
+green, no Lighthouse budget change, no file deletions, every bug fix has a
+`test_regression_iter<N>_<description>` test, `backend/routers/oauth.py`
+untouched.
+
+**PR #193 — `ci/shard-backend-pytest-and-fix-live-url-timeout` (item 1, DONE, real CI verified):**
+- Root cause of the 15-min timeout: two test files (`test_project_connect_mongo_regression.py`,
+  `test_scope_resume_issue3.py`, 21+2 tests) called `dotenv_values(.../.env)`
+  only — CI sets `MONGO_URL` via `env:`, never writes a physical `.env`
+  file, so every one of those tests raised `KeyError: 'MONGO_URL'` at
+  fixture setup. Fixed by merging `os.environ` first, `dotenv_values()`
+  layered on top (a real local `.env` still wins).
+- Split `ci.yml`'s "Backend — pytest" job into a 4-way `pytest-split==0.11.0`
+  matrix (`--splitting-algorithm least_duration`, `.test_durations.json`
+  committed for stable, balanced splits), each shard keeping the PR
+  #191 "Summarise failing tests" step, plus a `backend-tests-aggregate`
+  guard job so `simulated-user-qa`/`deploy-gate` depend on one green
+  signal instead of 4 matrix jobs directly.
+- **Real GitHub Actions run** (https://github.com/AuremHQ/Aurem/actions/runs/36630416161):
+  all 4 shards **completed** (no more exit-124 timeout) — shard 1: 405s
+  (6.8min), shard 2: 358s (6.0min), shard 3: 399s (6.7min), shard 4: 392s
+  (6.5min), guards-aggregate: 211s (3.5min). All comfortably under the
+  10-min-per-shard requirement. Conclusion was `failure` on all 4 shards —
+  ~352 failed + 47 errors across pre-existing app bugs (unrelated to the
+  timeout, not chased in this PR — that's item 2's/a future pass's scope).
+- New regression test: `test_regression_iter397_mongo_env_resolution_without_dotenv_file.py`.
+
+**PR #194 — `ci/fix-invariants-signup-rate-limit-cascade` (item 2, DONE for its 2 buckets, 2 buckets reported unresolved):**
+- Root cause of ~24 of the 35 failing invariants: the job's single boot
+  process hit `SIGNUP_RATE_LIMIT_PER_IP`'s 3/24h default on its 3rd
+  fixture signup, cascading 429s into every downstream test needing a
+  fresh token. Fixed via `SIGNUP_RATE_LIMIT_PER_IP: "1000"` in the job's
+  own env (app code in `signup_guards.py` untouched — real-user limit
+  unchanged). Verified locally: 13 failed/55 errors → 12 failed/3 errors
+  after the fix (real repro, no `.env` file, matching the job's actual env).
+- Also deselected `test_frontend_coverage_summary_written` (1 test) —
+  same precondition gap as its already-deselected sibling
+  `test_backend_coverage_json_written` (job has no Node/yarn step).
+- **NOT fixed, reported plainly**: R2 backup/restore drill (3 tests) —
+  `db_backup.py::run_backup()` correctly fails closed on missing
+  `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`R2_BUCKET`/`R2_ENDPOINT`;
+  needs real Cloudflare R2 credentials as a repo secret, or a product
+  decision to add a mock-object-store CI mode. Chat-content-empty / 499
+  tests (~6) — could not verify from this sandbox (no working LLM key);
+  may be a CI secrets gap, not confirmed a code bug.
+- New regression test: `test_regression_iter398_ci_signup_rate_limit_and_coverage_deselect.py`.
+
+**PR #195 — `ci/bot-comments-not-commits-to-pr-branches` (item 3, DONE, real bug reproduced AND fixed live):**
+- Real incident hit mid-session: `auto-qa-bot` pushed a commit onto PR
+  #193's own branch while its CI was running, forcing a rebase before the
+  next push. Confirmed `delete-gate-bot` has the identical shape of bug
+  for `pull_request` events (`git push origin "HEAD:$PUSH_REF"` where
+  `$PUSH_REF` is the PR's own head branch).
+- Fix: `auto-qa-bot`'s commit-back step now gated to `github.ref_name ==
+  'main'` only (main is never a PR head); every other branch gets a new
+  "Post report as a PR comment" step (`gh pr comment`, no push) instead.
+  `delete-gate-bot`'s auto-commit block now short-circuits before `git
+  push` when `$EVENT = pull_request`; a new "Post auto-verdict as a PR
+  comment" step covers that case. Direct pushes to `main` keep the
+  original commit behavior (never the reported problem).
+- **Live-verified**: pushed PR #195's own branch, its Auto-QA run
+  completed successfully, and — unlike PR #193 — **no new bot commit
+  appeared on the branch afterward** (`git log origin/<branch>` checked
+  directly post-run).
+- New regression test: `test_regression_iter399_bots_never_commit_to_pr_branches.py`.
+  31 pre-existing bot-related tests re-verified passing, unaffected.
+
+**PR #196 — `ci/fitness-job-junit-xml-and-failing-test-summary` (item 4, DONE, real CI verified):**
+- Added `--junitxml=invariants_junit.xml` + the same PIPESTATUS-safe
+  exit-code capture ci.yml's own "Run tests" step uses, a "Summarise
+  failing tests" step (`if: always()`), and an "Upload JUnit XML
+  artifact" step (`if: always()`) to the invariants job.
+- **Real GitHub Actions run**: job failed (pre-existing invariants
+  failures from item 2, expected — PR #194 not yet merged into this
+  branch's base) but the `invariants-junit-xml` artifact was still
+  uploaded (21,162 bytes, real JUnit content) and the summary step ran
+  cleanly — exactly the intended "still get a report on a red run" design.
+- New regression test: `test_regression_iter400_invariants_job_has_junit_and_summary.py`.
+- Scope note: intentionally does NOT include PR #194's `SIGNUP_RATE_LIMIT_PER_IP`
+  fix on the same step (would have made 2 PRs race on identical lines);
+  whichever merges first, the other needs a small additive rebase.
+
+**Not done / explicitly flagged as unresolved, not claimed fixed:**
+- R2 backup/restore CI secrets (needs founder-provided Cloudflare R2 creds
+  for a CI bucket, or a mock-object-store product decision).
+- Whether `OPENROUTER_API_KEY`/`EMERGENT_LLM_KEY` CI secrets are valid —
+  could not check secret values from this sandbox (GitHub API returned
+  403 for `secrets: read` on the installed App token); ~6 chat-content
+  test failures are consistent with, but not proven to be, this gap.
+- None of PR #193/#194/#195/#196 have been merged yet (all 4 open,
+  `mergeable: true` against `main` per the GitHub API) — a human still
+  needs to review and merge them.
+- A real GitHub Actions run *after* PR #195 merges, where a *future* PR
+  gets pushed to mid-run, is the only way to fully close out item 3 (this
+  session's evidence is strong — real reproduction, real fix, real
+  no-recurrence check — but is necessarily a single data point).
 
 ## ORA Chat MCP server — Claude Desktop, ADMIN-ONLY (2026-09-28, Part A DONE)
 
