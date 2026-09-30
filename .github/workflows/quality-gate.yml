@@ -309,15 +309,30 @@ jobs:
           # heart; regressions here (stuck states, missing heartbeats,
           # phase-mapping drift) must fail the gate immediately, not
           # hide inside the wider ci.yml suite.
+          #
+          # 2026-09-29 · same PIPESTATUS trap as ci.yml's "Run tests"
+          # step (see its own comment) — `set -o pipefail` plus
+          # capturing ${PIPESTATUS[0]} immediately after the
+          # `| tee` pipe, so a real pytest failure still fails this
+          # step even though later lines in this script also run.
+          # --junitxml feeds the new "Upload JUnit XML" step below;
+          # the tee'd file feeds the new "Summarise failing tests"
+          # step, same pattern ci.yml already uses per PR #191.
+          set -o pipefail
           python -m pytest tests/ \
             -k "regression or invariant or iter309 or ci_canary or frontend_sync or execute_stuck_recovery or jwt_revocation or self_heal_paused or loop" \
             --tb=short -q \
+            --junitxml=invariants_junit.xml \
             --reruns 1 --reruns-delay 3 \
             --only-rerun "ConnectionError|ConnectionRefusedError|TimeoutError|RemoteDisconnected|ConnectionResetError" \
             --ignore=tests/test_iter138_acceptance_seven.py \
             --ignore=tests/test_iter212m163_aggression_chat.py \
             --deselect=tests/test_regression_iter289_track1_lane_a.py::test_backend_coverage_json_written \
-            --deselect=tests/test_regression_iter289_track1_lane_a.py::test_frontend_coverage_summary_written
+            --deselect=tests/test_regression_iter289_track1_lane_a.py::test_frontend_coverage_summary_written \
+            2>&1 | tee /tmp/invariants_pytest_output.txt
+          PYTEST_EXIT=${PIPESTATUS[0]}
+          echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
+          exit "$PYTEST_EXIT"
           # 2026-09-29 · same class of false positive as the deselect
           # above, just the frontend twin: asserts
           # frontend/coverage/coverage-summary.json exists, which is
@@ -327,6 +342,41 @@ jobs:
           # node/yarn deps or runs vitest). Swept in for the same
           # "regression" filename-substring reason. Still runs (and is
           # enforced) in that job where its precondition is real.
+          # 2026-09-29 · confirmed real bug diagnosing this job: the
+          # deselected test asserts backend/coverage.json exists —
+          # that file is only ever written by ci.yml's SEPARATE
+          # "Backend — pytest" job (`--cov-report=json:coverage.json`),
+          # a different job/checkout with no artifact sharing into
+          # this one. It got swept into THIS job's selection only
+          # because its filename contains "regression"; it always
+          # fails on a genuinely fresh checkout here. Still runs (and
+          # is enforced) in ci.yml where its precondition is real.
+
+      - name: Summarise failing tests
+        # Same pattern as ci.yml's per-shard step (PR #191): puts the
+        # failing test ids in the job summary so they're visible
+        # without downloading the raw log.
+        if: always()
+        run: |
+          {
+            echo "### Failing / erroring tests — Fitness-function invariants"
+            if [ -f /tmp/invariants_pytest_output.txt ]; then
+              grep -E '^(FAILED|ERROR) ' /tmp/invariants_pytest_output.txt | sort -u | head -200 || true
+              tail -n 1 /tmp/invariants_pytest_output.txt
+            else
+              echo "no pytest output captured"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload JUnit XML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invariants-junit-xml
+          path: backend/invariants_junit.xml
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Guard — Source-of-truth trip-wires (isolated, must never be silently red)
         # W3 · 2026-08 — same governance rule as ci.yml's dedicated
         # step: this exact job's broad -k filter above already ran
