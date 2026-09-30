@@ -44,6 +44,7 @@ collections self-clean.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -559,7 +560,7 @@ async def oauth_authorize_submit(
     bad_creds = (
         not user
         or not user.get("password")
-        or not bcrypt.checkpw(password.encode(), user["password"].encode())
+        or not await asyncio.to_thread(bcrypt.checkpw, password.encode(), user["password"].encode())
     )
     if bad_creds:
         return _reshow("invalid_credentials")
