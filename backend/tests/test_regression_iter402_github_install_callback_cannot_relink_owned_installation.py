@@ -25,8 +25,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from starlette.requests import Request  # noqa: E402
 
-import routers.github_app as ga  # noqa: E402
-from services import github_app as svc  # noqa: E402
+# Imported lazily (module fixture below), NOT at collection time: importing
+# `services.github_app` while pytest collects sets it as an attribute of the
+# `services` package, and tests/test_iter388t_self_delete.py's
+# `monkeypatch.setitem(sys.modules, "services.github_app", ...)` then stops
+# working for every test run later in the same process.
+ga = None
+svc = None
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _load_github_app_modules():
+    global ga, svc
+    import routers.github_app as _ga
+    from services import github_app as _svc
+    ga, svc = _ga, _svc
+    yield
 
 VICTIM, ATTACKER, IID = "victim_user_id_111", "attacker_user_id_222", 424242
 FUTURE = 9_999_999_999
