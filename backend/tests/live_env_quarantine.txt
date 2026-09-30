@@ -187,3 +187,19 @@ tests/test_section15_batch_live_2026_09_22.py
 tests/test_task_chain_logging_2026_09_08.py
 tests/test_visibility_kit_v2_2026_08_30.py
 tests/test_w2_step2_mock_short_circuit_chat_stream.py
+
+# 2026-09-30 · files that hardcode http://localhost:8001 (they never read
+# REACT_APP_BACKEND_URL), found from the #197 shard output: `Connection refused`
+# in every shard because no server runs there. Listed here they skip cleanly in
+# the shards and run for real in quality-gate.yml's live-env-tests job, which
+# boots the backend on :8001. test_jwt_revocation.py is not listed: the
+# invariants job already runs it against a booted backend.
+tests/test_activation_part3_guided_first_task.py
+tests/test_iter212m20_admin_2fa_and_tabbar.py
+tests/test_iter270_ssrf_guard.py
+tests/test_mcp_ora_chat_admin.py
+tests/test_oauth_ora_chat.py
+tests/test_overnight_t6_p1a_ora_pin_lockout_live.py
+tests/test_p1_1_ora_per_user_pin_2026.py
+tests/test_r6_second_teammate_ora_pin_2026.py
+tests/test_slice_a_bi_cockpit.py

@@ -66,3 +66,28 @@ def test_regression_iter401_shard_jobs_can_comment_their_failing_tests():
     assert job["permissions"]["pull-requests"] == "write"
     step = next(s for s in job["steps"] if s.get("name", "").startswith("Summarise failing tests"))
     assert "gh pr comment" in step["run"]
+
+
+def test_regression_iter401_files_hardcoding_port_8001_are_quarantined_or_run_in_a_booted_job():
+    """A test file that hardcodes :8001 can only pass where a server runs. It must
+    be in the quarantine list (skips in the shards, runs in live-env-tests) or be
+    picked up by the invariants job, never left to fail `Connection refused`."""
+    import re
+
+    tests_dir = Path(__file__).resolve().parent
+    listed = {
+        Path(line.strip().split("::")[0]).name
+        for line in (tests_dir / "live_env_quarantine.txt").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    # The invariants job selects tests by name (`-k`); jwt_revocation is one of them.
+    runs_in_invariants = {"test_jwt_revocation.py"}
+    offenders = sorted(
+        p.name
+        for p in tests_dir.rglob("*.py")
+        if p.name != Path(__file__).name
+        and re.search(r"(localhost|127\.0\.0\.1):8001", p.read_text(errors="ignore"))
+        and p.name not in listed
+        and p.name not in runs_in_invariants
+    )
+    assert offenders == []
