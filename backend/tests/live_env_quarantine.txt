@@ -203,3 +203,7 @@ tests/test_overnight_t6_p1a_ora_pin_lockout_live.py
 tests/test_p1_1_ora_per_user_pin_2026.py
 tests/test_r6_second_teammate_ora_pin_2026.py
 tests/test_slice_a_bi_cockpit.py
+
+# 2026-09-30 · OAuth redirect_uri / token-binding regression tests: drive a live
+# /oauth/* server on localhost:8001, so they run in the live-env-tests job.
+tests/test_regression_iter403_oauth_open_redirect_and_token_binding.py

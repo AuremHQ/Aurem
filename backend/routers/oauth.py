@@ -94,11 +94,23 @@ def _redirect_uri_host(uri: str) -> Optional[str]:
     is userinfo — user:password — not the host)."""
     if not isinstance(uri, str) or not uri:
         return None
+    # Python's URL parser and a browser disagree on some inputs: for
+    # `https://evil.example\\@claude.ai/` urlsplit reports host `claude.ai`
+    # while a browser treats the backslash as a slash and goes to
+    # `evil.example`. Refuse anything a parser could read two ways instead of
+    # relying on how a library happens to encode it.
+    if "\\" in uri or "%5c" in uri.lower() or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in uri):
+        return None
     try:
         parsed = urllib.parse.urlsplit(uri)
+        parsed.port  # noqa: B018 — raises ValueError on a malformed port
     except ValueError:
         return None
     if parsed.fragment or not parsed.scheme or not parsed.hostname:
+        return None
+    # Legitimate OAuth callbacks never carry userinfo; `user@host` is only
+    # ever used to make one host look like another.
+    if parsed.username is not None or parsed.password is not None:
         return None
     return parsed.hostname
 
