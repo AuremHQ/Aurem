@@ -46,3 +46,15 @@ def test_regression_iter401_live_env_job_reports_failures_even_when_red():
     steps = {s.get("name"): s for s in _job()["steps"]}
     assert steps["Summarise failing tests"]["if"] == "always()"
     assert steps["Upload JUnit XML artifact"]["if"] == "always()"
+
+
+def test_regression_iter401_failing_test_list_is_also_posted_on_the_pr():
+    """The job summary is not readable through the API and the raw log tail is
+    service-container noise, so both test jobs must also comment the list."""
+    jobs = yaml.safe_load(WF.read_text())["jobs"]
+    for name in ("invariants", "live-env-tests"):
+        job = jobs[name]
+        assert job["permissions"]["pull-requests"] == "write"
+        step = next(s for s in job["steps"] if s.get("name") == "Summarise failing tests")
+        assert "gh pr comment" in step["run"]
+        assert step["if"] == "always()"

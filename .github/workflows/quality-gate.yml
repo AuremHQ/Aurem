@@ -123,6 +123,9 @@ jobs:
 
   invariants:
     name: Fitness-function invariants (always green on main)
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -357,6 +360,9 @@ jobs:
         # failing test ids in the job summary so they're visible
         # without downloading the raw log.
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
             echo "### Failing / erroring tests — Fitness-function invariants"
@@ -366,7 +372,13 @@ jobs:
             else
               echo "no pytest output captured"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > /tmp/failing_summary.md
+          cat /tmp/failing_summary.md >> "$GITHUB_STEP_SUMMARY"
+          # The job summary is not readable through the API, and the raw log tail is
+          # service-container noise, so also post the list on the PR (PR runs only).
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failing_summary.md || true
+          fi
 
       - name: Upload JUnit XML artifact
         if: always()
@@ -406,6 +418,9 @@ jobs:
   # probe passes and they run for real.
   live-env-tests:
     name: Live-env tests (backend booted, quarantined files)
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -570,6 +585,9 @@ jobs:
 
       - name: Summarise failing tests
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
             echo "### Failing / erroring tests — live_env (backend booted)"
@@ -579,7 +597,13 @@ jobs:
             else
               echo "no pytest output captured"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > /tmp/failing_summary.md
+          cat /tmp/failing_summary.md >> "$GITHUB_STEP_SUMMARY"
+          # The job summary is not readable through the API, and the raw log tail is
+          # service-container noise, so also post the list on the PR (PR runs only).
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failing_summary.md || true
+          fi
 
       - name: Upload JUnit XML artifact
         if: always()
