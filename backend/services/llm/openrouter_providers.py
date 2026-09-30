@@ -57,9 +57,32 @@ _CLAUDE_MODEL = os.getenv(
 # new primary model for Swift/Pro/Maxx review modes:
 #   Swift → GLM only (fastest path)
 #   Pro   → GLM, fall back to Claude on empty / error (resilience)
-#   Maxx  → GLM first, then Claude reviews+improves the GLM output
+#   Maxx  → GLM first, then GLM-5.3 reviews+improves the GLM output
+#           (Iter 212m-2xx — see _GLM_REVIEW_MODEL below)
 # Override per-deploy via env so we can pin a specific revision.
 _GLM_MODEL = os.getenv("GLM_MODEL", "z-ai/glm-5.2")
+
+
+# ─── GLM Review — Zhipu AI newer flagship, Maxx REVIEW step ─────────
+# 2026-02 cost-optimization — Claude Sonnet's review pass was the
+# single biggest per-Maxx-call cost driver ($3/$15 per 1M tokens).
+# GLM-5.3 ($1.40/$4.40 per 1M — confirmed live on OpenRouter as
+# `z-ai/glm-5.3`) matches/beats Claude Sonnet on agentic coding
+# benchmarks (SWE-bench) at ~1/3 the cost, so it replaces Claude as
+# the Maxx reviewer. Deliberately a DIFFERENT model generation than
+# the drafting `_GLM_MODEL` (still 5.2) so the review pass is a real
+# second look, not the same weights grading their own homework.
+_GLM_REVIEW_MODEL = os.getenv("GLM_REVIEW_MODEL", "z-ai/glm-5.3")
+
+
+# ─── GLM privacy — restrict to non-data-collecting providers ────────
+# 2026-02 — GLM (z-ai/*) is served on OpenRouter by many independent
+# upstream providers, not all of which contractually refuse to
+# store/train on request data. ORA reads customers' private repo
+# code on every GLM call (draft AND review), so both `_call_glm` and
+# `_call_glm_review` pin `data_collection: "deny"` — OpenRouter then
+# only routes to providers that don't retain/train on the payload.
+_GLM_PROVIDER_PREFS = {"data_collection": "deny"}
 
 
 # ─── LongCat — Meituan, Council A primary (probe-gated) ─────────────
@@ -160,6 +183,60 @@ async def _call_glm(system: str, user: str,
         max_tokens=max_tokens,
         temperature=temperature,
         feature=feature,
+        provider_prefs=_GLM_PROVIDER_PREFS,
+    )
+    return content or ""
+
+
+# ── GLM Review path (Maxx review step — z-ai/glm-5.3) ──────────────────────
+
+async def _call_glm_review(system: str, user: str,
+                           max_tokens: int = 3500,
+                           temperature: float = 0.0,
+                           feature: Optional[str] = None) -> str:
+    """Call GLM-5.3 (`z-ai/glm-5.3`) via OpenRouter — Maxx mode's review
+    step (replaces Claude Sonnet, 2026-02 cost-optimization — see
+    `_GLM_REVIEW_MODEL` comment above).
+
+    Mirrors `_call_glm`'s shape exactly, plus two review-specific
+    OpenRouter params:
+      • `reasoning={"effort": "high"}` — "Maxx" is NOT a separate
+        model, it's this same GLM-5.3 call at high reasoning effort.
+        Explicitly pinning "high" (rather than trusting whatever the
+        provider defaults to) keeps review depth consistent — the
+        whole point of swapping in a cheaper model is not losing
+        review quality.
+      • `provider_prefs=_GLM_PROVIDER_PREFS` — same data-collection-
+        deny restriction as `_call_glm` (see that constant's comment).
+
+    Returns "" on upstream failure/empty content — the Maxx review
+    branch in `_meta.py` treats that as "review unavailable" and
+    ships the primary draft unreviewed rather than falling through to
+    the costly Claude path.
+    """
+    from services.llm import _openrouter_key, _call_deepseek
+    from .openrouter_client import call_openrouter_model
+
+    if not _openrouter_key():
+        logger.info(
+            "OPENROUTER_API_KEY not set — GLM review call falling back to DeepSeek"
+        )
+        return await _call_deepseek(
+            messages=[{"role": "user", "content": user}],
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            feature=feature,
+        )
+    content = await call_openrouter_model(
+        model=_GLM_REVIEW_MODEL,
+        system=system,
+        user=user,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        feature=feature,
+        reasoning={"effort": "high"},
+        provider_prefs=_GLM_PROVIDER_PREFS,
     )
     return content or ""
 

@@ -7127,3 +7127,73 @@ read via the GitHub REST API through the app's own installed GitHub
 App token, not `git fetch`. Diff is committed locally on `main`; user
 asked to hand this off via "Save to GitHub" as **its own branch**,
 separate from `main`/PR #190/PR B.
+
+## 2026-02 — Maxx-mode reviewer + watchdog: Claude Sonnet → GLM-5.3
+(cost-optimization, per founder direction: "sonnet bhoot mehenga pad
+rha hai review main")
+
+**Model swap.** `services/llm/openrouter_providers.py`: new
+`_call_glm_review` (mirrors `_call_glm`'s shape) targets a NEW
+`_GLM_REVIEW_MODEL` env var (default `z-ai/glm-5.3`, confirmed live
+on OpenRouter, $1.40/$4.40 per 1M vs Sonnet's $3/$15 — ~2/3 cheaper).
+Deliberately a different GLM generation from the drafting `_GLM_MODEL`
+(still 5.2) so the review pass is a real second look, not the same
+weights grading their own homework. Two call sites switched from
+`_call_claude` to `_call_glm_review`:
+  1. `services/llm/_meta.py`'s "maxx" review step (GLM-5.2 drafts →
+     GLM-5.3 reviews+improves). Claude is now ONLY invoked as the
+     rare-edge-case fallback when the primary GLM draft itself comes
+     back empty (unrelated to the review-cost concern, kept for
+     reliability).
+  2. `services/llm/__init__.py`'s legacy `call_emergent_watchdog`
+     grader (only fires on the old `body.maxx_mode` flag path).
+Provider labels changed accordingly: `"glm-5.2+claude-review"` →
+`"glm-5.2+glm-review"`; `fallback_chain` `"claude-sonnet-review"` →
+`"glm-5.3-review"`. Both cost-slug mappers
+(`_meta._provider_to_model_slug`, `customer_cost_tracker.
+model_slug_for_provider`) updated to price the new label at GLM-5.3's
+rate (added to `ora_chat/cost_tracker.py`'s `_COST_PER_M_TOKENS`), not
+GLM-5.2's cheaper one — so the cost ledger doesn't silently
+under-count the review pass. Legacy `"...+claude-review"` label still
+maps correctly for old DB rows.
+
+**"Max" reasoning.** Per founder clarification — "Max" is not a
+separate model, it's the same GLM-5.3 call at high reasoning effort.
+`call_openrouter_model` (`openrouter_client.py`) gained two new
+optional passthrough params, `reasoning` and `provider_prefs`, both
+`None` by default (zero payload-shape change for every existing
+caller that doesn't opt in). `_call_glm_review` passes
+`reasoning={"effort": "high"}` (OpenRouter's unified reasoning-tokens
+param) so review depth doesn't quietly regress to a lower default
+effort tier — verified via web search that GLM-5.3 on OpenRouter
+supports `low`/`high`/`max` effort explicitly.
+
+**Private-repo data privacy.** New `_GLM_PROVIDER_PREFS =
+{"data_collection": "deny"}` constant — GLM runs on many independent
+OpenRouter upstream hosts, and ORA reads customers' private repo code
+on every GLM call, so both `_call_glm` (primary draft) AND
+`_call_glm_review` (reviewer) now pin `data_collection: "deny"` via
+the new `provider_prefs` param, restricting OpenRouter to hosts that
+don't store/train on the request. `_call_glm` does NOT get the forced
+`reasoning=high` override (only the review pass needed that pin).
+
+**Verification:** `test_regression_iter391_maxx_review_swapped_to_glm53.py`
+(8 new tests: model-generation-difference guard, no-Claude-for-review
+guard, watchdog-targets-GLM-5.3 guard, cost-slug-pricing guard,
+reasoning/provider_prefs wiring guards for both `_call_glm` and
+`_call_glm_review`, payload-shape-unchanged guard for every other
+caller). Updated 3 existing test files whose fixtures encoded the old
+Claude-review behavior
+(`test_iter212m18_glm_primary_claude_watchdog_sse_steps.py`,
+`test_iter166_no_emergent_sdk.py`, `test_2026_08_19_customer_cost_tracker.py`)
+— also fixed 5 unrelated pre-existing broken fixtures in those same
+files (missing `feature=None` kwarg, confirmed via `git stash` to
+predate this change) while already editing them. Full targeted sweep
+(`-k "llm or watchdog or maxx or cost_tracker or smart_router or
+openrouter or agents"`): 394 passed, 16 pre-existing-and-unrelated
+failures (confirmed byte-identical via `git stash` before/after) —
+zero regressions introduced. Live end-to-end smoke test against the
+real OpenRouter API (real key, real network call, no mocks) confirmed
+`provider="glm-5.2+glm-review"`, `model="z-ai/glm-5.3"`,
+`fallback_chain=["glm-5.2","glm-5.3-review"]`, real improved-code
+content returned.

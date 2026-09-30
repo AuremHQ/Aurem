@@ -62,14 +62,19 @@ def estimate_tokens(text: str) -> int:
 
 def model_slug_for_provider(provider: str) -> str:
     """Map the free-text `provider` label chat_with_tools() returns
-    (e.g. "claude-sonnet-maxx-direct", "glm-5.2+claude-review",
+    (e.g. "claude-sonnet-maxx-direct", "glm-5.2+glm-review",
     "deepseek-v3-council-c") to a pricing-table model slug. Provider
     labels are compound/varied by design (see services/llm/_meta.py),
     so this matches by substring rather than exact equality."""
     p = (provider or "").lower()
-    # Order matters: "glm-5.2+claude-review" means GLM is PRIMARY with
-    # Claude only as a reviewer pass, so glm/longcat/deepseek must be
-    # checked before the bare "claude" substring match.
+    # Order matters: "glm-5.2+glm-review" (2026-02 — Maxx reviewer is
+    # GLM-5.3, not Claude) means the pricier GLM-5.3 pass, so it must
+    # be checked before the bare "glm" substring match falls through
+    # to GLM-5.2's cheaper rate. Legacy "glm-5.2+claude-review" rows
+    # (pre cost-optimization) still match the generic "glm" branch —
+    # historical DB rows, harmless to under-price retroactively.
+    if "glm-review" in p:
+        return "z-ai/glm-5.3"
     if "glm" in p:
         return "z-ai/glm-5.2"
     if "longcat" in p:

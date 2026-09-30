@@ -669,6 +669,15 @@ User requested an audit against a six-item Trust & Verification spec, then build
 
 Tested: 14 new unit tests (`test_trust_verification_2026_09.py`) + 6 new live-endpoint e2e tests (`test_trust_verification_e2e_2026_09.py`), all passing; existing reliability/interaction regression suites unaffected (64/64 + prior suites green); 2 pre-existing failures in `test_cto_worker_safety_pipeline_2026_09_08.py` confirmed via `git stash` to be UNRELATED to this round. **Not live-verified**: a real GitHub-connected task completion through Enh.1/2/3's full lifecycle — preview `test@aurem.dev` only has demo-fixture projects (fake `installation_id`), no real GitHub App installation to exercise `worker_api.py`/`worker_git.py` end-to-end. Enh.5's live SSE trigger also not exercised (depends on classifier's own 0.55 heuristic firing on an ambiguous prompt) — code path + UI verified statically/via unit tests only.
 
+## Cost-optimization round (2026-02) — Maxx reviewer + watchdog: Claude Sonnet → GLM-5.3 (see CHANGELOG.md for full detail)
+
+Founder direction: Claude Sonnet's per-call review cost in "maxx" mode was too high; wanted a cheaper model with comparable review depth. Swapped both review call sites (`services/llm/_meta.py`'s maxx review step, `services/llm/__init__.py`'s legacy `call_emergent_watchdog`) from `_call_claude` to a new `_call_glm_review` targeting `z-ai/glm-5.3` (confirmed live on OpenRouter, ~2/3 cheaper than Sonnet, competitive on agentic-coding benchmarks). Deliberately a different GLM generation from the drafting `_GLM_MODEL` (5.2) so review is a real second pass. Per founder follow-up:
+- **"Max" reasoning** — added `reasoning={"effort": "high"}` (OpenRouter's unified reasoning param) to the review call only, so review depth doesn't quietly regress to a lower default effort tier. `call_openrouter_model` gained an optional `reasoning` passthrough (default `None`, zero shape-change for every other caller).
+- **Private-repo data privacy** — added `provider_prefs={"data_collection": "deny"}` to BOTH the primary GLM draft call and the GLM-5.3 review call (GLM runs on many independent OpenRouter upstream hosts; ORA reads customers' private repo code on every call). `call_openrouter_model` gained a matching optional `provider_prefs` passthrough.
+- Cost-slug mappers + `_COST_PER_M_TOKENS` pricing table updated so the new `"glm-5.2+glm-review"` provider label is priced at GLM-5.3's real rate, not GLM-5.2's cheaper one.
+
+Tested: 8 new tests (`test_regression_iter391_maxx_review_swapped_to_glm53.py`) + 3 existing test files updated to match the new behavior + 5 unrelated pre-existing broken fixtures fixed along the way (confirmed pre-existing via `git stash`). Full targeted sweep: 394 passed, 16 pre-existing-unrelated failures (byte-identical before/after). Live end-to-end smoke test against the real OpenRouter API confirmed the new provider/model/reasoning/privacy wiring end-to-end with a real generated response.
+
 ## Known open items (not fixed by any round above)
 
 - `input_normalizer.py` silently changes a code-fenced JS string `a—b` into `a--b`.
