@@ -51,6 +51,7 @@ returns no data.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
@@ -59,6 +60,8 @@ from pydantic import BaseModel
 
 from cto_services.db import get_db
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["Admin-public"])
 
@@ -111,6 +114,11 @@ async def report_error(body: ErrorReport, request: Request) -> dict:
         new_rows_last_hour = await db.frontend_errors.count_documents(
             {"_id": {"$gte": hour_ago}})
         if new_rows_last_hour >= _MAX_NEW_ROWS_PER_HOUR:
+            # A silent refusal hides both a flood and a real outage that
+            # is being dropped, so leave a trace an operator can alert on.
+            logger.warning(
+                "errors/report hourly new-row cap hit (%d >= %d); dropping ip=%s",
+                new_rows_last_hour, _MAX_NEW_ROWS_PER_HOUR, ip)
             return {"ok": False, "error": "rate_limited"}
 
     update = {
