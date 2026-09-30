@@ -265,6 +265,11 @@ export default function AdminSystemHealth() {
     && previewVer.commit_sha !== prodVer.commit_sha
     && previewVer.commit_sha !== "unknown";
 
+  // The monitor tile reads several nested fields; render it only when the
+  // response actually has them, so a partial payload can't blank the page.
+  const previewOk = !!(previewDeployMonitor?.last_24h?.preview_sessions
+    && previewDeployMonitor.last_24h.deploys);
+
   return (
     <div
       data-testid="admin-system-health"
@@ -410,7 +415,7 @@ export default function AdminSystemHealth() {
             <div style={{ color: C.text }}>
               build sha · <span style={{ color: C.amber }}>{frontendBuildSha}</span>
             </div>
-            {prodVer && frontendBuildSha !== "unknown" &&
+            {prodVer?.commit_sha && frontendBuildSha !== "unknown" &&
               !prodVer.commit_sha.startsWith(frontendBuildSha.slice(0, 7)) &&
               !frontendBuildSha.startsWith(prodVer.commit_sha.slice(0, 7)) && (
               <div style={{ color: C.amber, marginTop: 4 }}>
@@ -567,7 +572,7 @@ export default function AdminSystemHealth() {
               <Row
                 label="last 7d — failed_ratio"
                 value={
-                  loopMetrics.current?.failed_ratio === null
+                  loopMetrics.current?.failed_ratio == null
                     ? "n/a"
                     : (loopMetrics.current.failed_ratio * 100).toFixed(1) + "%"
                 }
@@ -579,7 +584,7 @@ export default function AdminSystemHealth() {
               <Row
                 label="prior 7d — failed_ratio"
                 value={
-                  loopMetrics.previous?.failed_ratio === null
+                  loopMetrics.previous?.failed_ratio == null
                     ? "n/a"
                     : (loopMetrics.previous.failed_ratio * 100).toFixed(1) + "%"
                 }
@@ -1116,11 +1121,11 @@ export default function AdminSystemHealth() {
         <Card
           testid="card-preview-deploy-monitor"
           title="Preview & Deploy Monitor"
-          status={errs.preview_deploy_monitor ? StatusBadge("down") : (previewDeployMonitor ? StatusBadge("ok") : null)}
+          status={errs.preview_deploy_monitor ? StatusBadge("down") : (previewOk ? StatusBadge("ok") : null)}
         >
           {errs.preview_deploy_monitor ? (
             <div style={{ fontSize: 12, color: C.red }}>{errs.preview_deploy_monitor}</div>
-          ) : previewDeployMonitor ? (
+          ) : previewOk ? (
             <>
               <div style={{ fontSize: 10, color: C.dim, marginBottom: 4, fontFamily: C.mono, letterSpacing: "0.08em" }}>
                 LAST 24H · PREVIEW SESSIONS
