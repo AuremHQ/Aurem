@@ -76,14 +76,50 @@ DCR_RATE_LIMIT_PER_MIN = 10
 # listing, routers/mcp.py) stays open to any dev_user, unchanged.
 MCP_ORA_CHAT_RESOURCE_PATH = "/api/aurem-dev/mcp/ora-chat"
 
+# 2026-09-30 — SECURITY FIX (real High-severity finding, code-read audit):
+# the ONLY pre-existing, non-DCR client this server has ever actually
+# talked to is Claude Desktop/Web's own custom-connector flow, whose
+# callback is a fixed, Anthropic-owned, non-attacker-controllable host
+# (https://claude.com/docs/connectors/building/authentication). This is
+# the ONE legacy exemption from "every redirect_uri must be registered"
+# below — anything else must go through /oauth/register (RFC 7591) first.
+LEGACY_CLAUDE_REDIRECT_HOST = "claude.ai"
+
+
+def _redirect_uri_host(uri: str) -> Optional[str]:
+    """Exact scheme+host parse — NEVER use string prefix matching
+    (startswith) on a URL for a security decision. `http://localhost:1@evil.com/`
+    starts with `http://localhost:` but its actual host, per every URL
+    parser and every browser, is `evil.com` (the `localhost:1` segment
+    is userinfo — user:password — not the host)."""
+    if not isinstance(uri, str) or not uri:
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(uri)
+    except ValueError:
+        return None
+    if parsed.fragment or not parsed.scheme or not parsed.hostname:
+        return None
+    return parsed.hostname
+
+
+def _is_legacy_claude_redirect_uri(uri: str) -> bool:
+    parsed_scheme = urllib.parse.urlsplit(uri).scheme if isinstance(uri, str) else ""
+    return parsed_scheme == "https" and _redirect_uri_host(uri) == LEGACY_CLAUDE_REDIRECT_HOST
+
 
 def _valid_redirect_uri(uri: str) -> bool:
-    if not isinstance(uri, str) or not uri:
+    """Registration-time policy only (used by /oauth/register). Exact
+    per-request authorization is done by _validate_redirect_uri_for_client
+    below, which additionally requires the URI to be one this specific
+    client actually registered (or the legacy Claude exemption)."""
+    host = _redirect_uri_host(uri)
+    if host is None:
         return False
-    if uri.startswith("https://"):
+    scheme = urllib.parse.urlsplit(uri).scheme
+    if scheme == "https":
         return True
-    return uri.startswith("http://localhost:") or uri.startswith("http://127.0.0.1:") \
-        or uri.startswith("http://localhost/") or uri.startswith("http://127.0.0.1/")
+    return scheme == "http" and host in ("localhost", "127.0.0.1")
 
 
 def _resource_path(resource: str) -> str:
@@ -229,6 +265,53 @@ async def _get_dcr_client(client_id: str) -> Optional[dict]:
     return await db.oauth_dcr_clients.find_one({"client_id": client_id}, {"_id": 0})
 
 
+async def _validate_redirect_uri_for_client(
+    client_id: str, redirect_uri: str, resource_path: str,
+) -> tuple[bool, str, Optional[dict]]:
+    """The core fix for the High-severity finding: every redirect_uri
+    must now be either (a) the fixed, Anthropic-owned Claude callback
+    host, or (b) one this exact client_id actually registered via
+    /oauth/register. A client_id with NO registration on file and a
+    redirect_uri that isn't the Claude exemption is rejected outright —
+    previously it was silently allowed through with zero checking.
+
+    Returns (ok, error_code, dcr_client_or_None). error_code is only
+    meaningful when ok is False: "invalid_redirect_uri" (host itself is
+    malformed/not https/not localhost — same policy as registration) or
+    "unregistered_client" (well-formed URI, but this client never
+    registered it).
+
+    Callers MUST treat ok=False as "render a local error, do not
+    redirect" (OAuth 2.1 requires this — see playbook §5): the whole
+    point of this function is that we do not yet know whether
+    redirect_uri is safe to send the user's browser to.
+    """
+    if not _valid_redirect_uri(redirect_uri):
+        return False, "invalid_redirect_uri", None
+
+    # ORA Chat MCP is the ONE admin-only, tool-executing resource on
+    # this shared server. Per founder decision: only the real Claude
+    # callback may ever receive a code for it, DCR or not — DCR's
+    # "any https:// URI" policy is deliberately NOT trusted here, since
+    # an attacker can self-register a client the normal way and still
+    # get an admin's auth code redirected to their own https:// server.
+    if resource_path == MCP_ORA_CHAT_RESOURCE_PATH:
+        if _is_legacy_claude_redirect_uri(redirect_uri):
+            return True, "", await _get_dcr_client(client_id)
+        return False, "unregistered_client", None
+
+    if _is_legacy_claude_redirect_uri(redirect_uri):
+        return True, "", await _get_dcr_client(client_id)
+
+    dcr_client = await _get_dcr_client(client_id)
+    if not dcr_client:
+        return False, "unregistered_client", None
+    registered = dcr_client.get("redirect_uris") or []
+    if not any(secrets.compare_digest(redirect_uri, r) for r in registered):
+        return False, "unregistered_client", None
+    return True, "", dcr_client
+
+
 async def list_ora_chat_oauth_clients() -> list[dict]:
     """Admin-panel visibility: DCR-registered clients that have
     actually obtained a token scoped to the ORA Chat MCP resource
@@ -328,6 +411,15 @@ async def oauth_authorize_page(
     if not code_challenge:
         raise HTTPException(400, "missing code_challenge (PKCE required)")
 
+    # 2026-09-30 — SECURITY FIX: validate client_id/redirect_uri/resource
+    # BEFORE ever rendering the consent page (never touch the login
+    # form for a request we can't tell is safe to redirect back from).
+    # A local 400 here, never a redirect — see _validate_redirect_uri_for_client.
+    resource_path = _resource_path(resource)
+    ok, err_code, dcr_client = await _validate_redirect_uri_for_client(client_id, redirect_uri, resource_path)
+    if not ok:
+        raise HTTPException(400, f"{err_code}: redirect_uri is not registered for this client_id")
+
     params = urllib.parse.urlencode({
         "response_type":         response_type,
         "client_id":             client_id,
@@ -355,11 +447,21 @@ async def oauth_authorize_page(
     else:
         err_block = ""
 
-    # Defensive HTML-escape: scope + client_id rendered for transparency.
-    safe_scope     = (scope or "mcp").replace("<", "&lt;").replace(">", "&gt;")
-    safe_client_id = (client_id or "claude-desktop")[:60].replace("<", "&lt;").replace(">", "&gt;")
+    # 2026-09-30 — SECURITY FIX: show the ACTUAL registered client name
+    # (never the raw, attacker-controlled client_id string) plus the
+    # real redirect host, so a user asked to type their password can
+    # see exactly who is asking and where they'll be sent back to —
+    # the two things they'd need to notice a phishing attempt.
+    if _is_legacy_claude_redirect_uri(redirect_uri):
+        display_client_name = (dcr_client or {}).get("client_name") or "Claude"
+    else:
+        display_client_name = (dcr_client or {}).get("client_name") or "Unknown client"
+    safe_client_name = str(display_client_name)[:80].replace("<", "&lt;").replace(">", "&gt;")
+    safe_redirect_host = str(_redirect_uri_host(redirect_uri) or "unknown host").replace("<", "&lt;").replace(">", "&gt;")
+    # Defensive HTML-escape: scope rendered for transparency.
+    safe_scope = (scope or "mcp").replace("<", "&lt;").replace(">", "&gt;")
 
-    if _resource_path(resource) == MCP_ORA_CHAT_RESOURCE_PATH:
+    if resource_path == MCP_ORA_CHAT_RESOURCE_PATH:
         scope_rows = (
             '<div class="scope-row"><span class="check">✓</span> Ask ORA Chat questions</div>'
             '<div class="scope-row"><span class="check">✓</span> View your ORA Chat conversations</div>'
@@ -475,7 +577,8 @@ async def oauth_authorize_page(
   <div class="card" data-testid="oauth-consent-card">
     <div class="logo">ORA</div>
     <h1>Connect ORA to Claude</h1>
-    <p class="lead"><b>{safe_client_id}</b> is requesting access to your ORA by Aurem account.</p>
+    <p class="lead"><b data-testid="oauth-client-name">{safe_client_name}</b> is requesting access to your ORA by Aurem account.
+    You'll be redirected back to <b data-testid="oauth-redirect-host">{safe_redirect_host}</b> after you allow or deny this.</p>
     {err_block}
     <div class="scopes">
       {scope_rows}
@@ -529,14 +632,14 @@ async def oauth_authorize_submit(
     if db is None:
         raise HTTPException(503, "Database not connected")
 
-    # If this client_id went through Dynamic Client Registration,
-    # its redirect_uri must be one it actually registered. Legacy/
-    # manually-configured client_ids (never DCR'd — e.g. the original
-    # hand-set-up "Claude Directory" connector) have no registration
-    # on file, so they're left exactly as-is (pre-existing behavior).
-    dcr_client = await _get_dcr_client(client_id)
-    if dcr_client and redirect_uri not in dcr_client.get("redirect_uris", []):
-        raise HTTPException(400, "invalid redirect_uri for this registered client")
+    # 2026-09-30 — SECURITY FIX: re-validate here too (defense in depth
+    # against a POST sent directly, bypassing the GET page's own check
+    # above). A rejection here raises a LOCAL error, never a redirect —
+    # we cannot safely redirect anywhere until this passes.
+    resource_path = _resource_path(resource)
+    ok, err_code, _dcr_client = await _validate_redirect_uri_for_client(client_id, redirect_uri, resource_path)
+    if not ok:
+        raise HTTPException(400, f"{err_code}: redirect_uri is not registered for this client_id")
 
     def _reshow(error_code: str) -> RedirectResponse:
         qs = urllib.parse.urlencode({
@@ -567,7 +670,7 @@ async def oauth_authorize_submit(
     # Admin-only gate — ORA Chat MCP resource ONLY. Every other
     # existing resource on this shared OAuth server (e.g. the general
     # MCP "Claude Directory" listing) stays open to any dev_user.
-    if _resource_path(resource) == MCP_ORA_CHAT_RESOURCE_PATH:
+    if resource_path == MCP_ORA_CHAT_RESOURCE_PATH:
         if not (user.get("is_admin") or user.get("tier") == "founder"):
             return _reshow("admin_required")
 
@@ -580,7 +683,7 @@ async def oauth_authorize_submit(
         "client_id":             client_id,
         "redirect_uri":          redirect_uri,
         "scope":                 scope,
-        "resource":              _resource_path(resource),
+        "resource":              resource_path,
         "code_challenge":        code_challenge,
         "code_challenge_method": code_challenge_method,
         "created_at":            now,
@@ -601,12 +704,27 @@ async def oauth_authorize_submit(
 
 @router.post("/oauth/authorize/deny")
 async def oauth_deny(
+    client_id: str = "",
     redirect_uri: str = "",
+    resource: str = "",
     state: str = "",
 ):
-    """User clicked Cancel — bounce back with access_denied per RFC 6749 §4.1.2.1."""
+    """User clicked Cancel — bounce back with access_denied per RFC 6749 §4.1.2.1.
+
+    2026-09-30 — SECURITY FIX: this used to redirect to ANY redirect_uri
+    with zero validation — a pure open redirect (attacker builds a link
+    with their own redirect_uri, victim clicks Cancel, browser is sent
+    to the attacker's URL with AUREM's own domain as the referrer/
+    apparent origin). Same validation as /oauth/authorize now applies;
+    an invalid combination gets a local 400, never a redirect.
+    """
     if not redirect_uri:
         raise HTTPException(400, "missing redirect_uri")
+    ok, err_code, _dcr_client = await _validate_redirect_uri_for_client(
+        client_id, redirect_uri, _resource_path(resource),
+    )
+    if not ok:
+        raise HTTPException(400, f"{err_code}: redirect_uri is not registered for this client_id")
     sep = "&" if "?" in redirect_uri else "?"
     err = f"{redirect_uri}{sep}error=access_denied"
     if state:
@@ -629,6 +747,17 @@ async def oauth_token(
         raise HTTPException(400, "unsupported_grant_type")
     if not code or not code_verifier:
         raise HTTPException(400, "missing code or code_verifier")
+    # 2026-09-30 — SECURITY FIX: both used to be optional here. Without
+    # them, a stolen code (via the redirect_uri attack above, or any
+    # other leak) could be redeemed by ANY client presenting ANY
+    # code_verifier that happens to match the ORIGINAL challenge —
+    # nothing tied the redemption back to the client_id/redirect_uri
+    # the code was actually issued to. RFC 6749 §4.1.3 requires both
+    # for a public client's token request; we now enforce it.
+    if not client_id:
+        raise HTTPException(400, "invalid_request: missing client_id")
+    if not redirect_uri:
+        raise HTTPException(400, "invalid_request: missing redirect_uri")
 
     db = get_db()
     if db is None:
@@ -644,7 +773,14 @@ async def oauth_token(
         _exp_dt = datetime.fromtimestamp(_exp, tz=timezone.utc)
     if datetime.now(timezone.utc) > _exp_dt:
         raise HTTPException(400, "invalid_grant: code expired")
-    if redirect_uri and code_doc.get("redirect_uri") and redirect_uri != code_doc["redirect_uri"]:
+    # 2026-09-30 — SECURITY FIX: both comparisons used to be skipped
+    # entirely whenever the caller simply omitted the field (`if
+    # redirect_uri and ...`, no client_id check at all). Now mandatory
+    # and exact — the code is bound to the exact client_id + redirect_uri
+    # it was issued to at /oauth/authorize.
+    if not secrets.compare_digest(client_id, code_doc.get("client_id", "")):
+        raise HTTPException(400, "invalid_grant: client_id mismatch")
+    if not secrets.compare_digest(redirect_uri, code_doc.get("redirect_uri", "")):
         raise HTTPException(400, "invalid_grant: redirect_uri mismatch")
 
     # PKCE — S256
@@ -654,7 +790,7 @@ async def oauth_token(
         raise HTTPException(400, "unsupported_code_challenge_method")
     digest   = hashlib.sha256(code_verifier.encode()).digest()
     computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    if computed != challenge:
+    if not secrets.compare_digest(computed, challenge):
         raise HTTPException(400, "invalid_grant: PKCE verification failed")
 
     # Burn the code so a replay can't reuse it
@@ -670,7 +806,7 @@ async def oauth_token(
     await db.api_keys.insert_one({
         "key":        token,
         "user_id":    code_doc["user_id"],
-        "client_id":  client_id or code_doc.get("client_id", "unknown"),
+        "client_id":  client_id,
         "scope":      code_doc.get("scope", "mcp"),
         "created_at": now,
         # 2026-08-27 — TTL fix: real BSON Date (was `time.time()`
@@ -679,7 +815,7 @@ async def oauth_token(
         # these rows).
         "expires_at": now + timedelta(seconds=TOKEN_TTL),
         "active":     True,
-        "label":      f"Claude OAuth ({(client_id or code_doc.get('client_id', 'unknown'))[:32]})",
+        "label":      f"Claude OAuth ({client_id[:32]})",
         "source":     "oauth",
         "resource":   code_doc.get("resource", ""),
     })
