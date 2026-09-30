@@ -232,8 +232,19 @@ async def funnel_stats(
         if source in per_source_stage and stage in per_source_stage[source]:
             per_source_stage[source][stage] += 1
         if stage == "callback_received":
-            outcome = row.get("outcomes", [None])[0]
-            reason  = row.get("reasons", [None])[0]
+            # 2026-09-30 — SECURITY/DEPLOY FIX: `.get("reasons", [None])[0]`
+            # only falls back to `[None]` when the key is entirely
+            # MISSING. If `$push` produced an empty list `[]` for this
+            # group (real production/Atlas data shape that didn't
+            # reproduce with this sandbox's local Mongo — e.g. a
+            # `$group` re-run against a stage that predates the `meta`
+            # field existing at all), `.get(...)` returns that empty
+            # list as-is (the default only applies to a missing key,
+            # not a falsy value), and `[][0]` raises IndexError,
+            # crashing every subsequent call to this endpoint. `or`
+            # falls back to `[None]` for BOTH "missing" and "empty".
+            outcome = (row.get("outcomes") or [None])[0]
+            reason  = (row.get("reasons") or [None])[0]
             key = reason if (outcome and outcome != "success" and reason) else (outcome or "success")
             callback_outcomes[key] = callback_outcomes.get(key, 0) + 1
 
