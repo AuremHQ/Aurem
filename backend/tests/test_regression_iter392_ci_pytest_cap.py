@@ -21,8 +21,9 @@ CI_YML = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml
 
 def _backend_job_and_run_step():
     jobs = yaml.safe_load(CI_YML.read_text(encoding="utf-8"))["jobs"]
-    job = next(j for j in jobs.values() if j.get("name") == "Backend — pytest")
-    step = next(s for s in job["steps"] if s.get("name") == "Run tests")
+    # The job is sharded ("Backend — pytest (shard N/4)"), so match by prefix.
+    job = next(j for j in jobs.values() if str(j.get("name", "")).startswith("Backend — pytest"))
+    step = next(s for s in job["steps"] if str(s.get("name", "")).startswith("Run tests"))
     return job, step["run"]
 
 
