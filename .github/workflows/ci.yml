@@ -95,6 +95,9 @@ jobs:
 
   backend-tests:
     name: Backend — pytest (shard ${{ matrix.shard }}/4)
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     # 2026-09-29 · CI-trustworthiness audit — this job used to run the
     # WHOLE suite in one step and reliably hit this timeout (see the
@@ -282,6 +285,9 @@ jobs:
         # test ids in the job summary, which the API can read (the raw log tail
         # is buried under service-container noise).
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
             echo "### Failing / erroring tests — shard ${{ matrix.shard }}/4"
@@ -291,7 +297,13 @@ jobs:
             else
               echo "no pytest output captured"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > /tmp/failing_summary.md
+          cat /tmp/failing_summary.md >> "$GITHUB_STEP_SUMMARY"
+          # The job summary is not readable through the API, so on PR runs also
+          # post the list as a comment.
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failing_summary.md || true
+          fi
 
       - name: Upload shard test results
         if: always()

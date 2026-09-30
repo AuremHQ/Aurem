@@ -58,3 +58,11 @@ def test_regression_iter401_failing_test_list_is_also_posted_on_the_pr():
         step = next(s for s in job["steps"] if s.get("name") == "Summarise failing tests")
         assert "gh pr comment" in step["run"]
         assert step["if"] == "always()"
+
+
+def test_regression_iter401_shard_jobs_can_comment_their_failing_tests():
+    ci = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+    job = yaml.safe_load(ci.read_text())["jobs"]["backend-tests"]
+    assert job["permissions"]["pull-requests"] == "write"
+    step = next(s for s in job["steps"] if s.get("name", "").startswith("Summarise failing tests"))
+    assert "gh pr comment" in step["run"]
