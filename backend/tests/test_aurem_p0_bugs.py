@@ -65,7 +65,7 @@ def H(t):
 
 
 # ─────────────────────────────────────────────────────────────
-# BUG 1: PAT stored on add, hidden on list
+# BUG 1: Project add/list security behavior
 # ─────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session")
 def created_project(session, token):
@@ -146,7 +146,7 @@ def test_bug1_list_excludes_github_token(session, token, created_project):
 
 
 # ─────────────────────────────────────────────────────────────
-# BUG 2: PATCH updates branch/tech_stack/pat & filters empties
+# BUG 2: PATCH updates branch/tech_stack and rejects unsupported auth fields
 # ─────────────────────────────────────────────────────────────
 def test_bug2_patch_updates_branch_and_tech(session, token, created_project):
     pid = created_project["id"]

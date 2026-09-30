@@ -497,4 +497,4 @@ class TestGetRepoToken:
         with patch.object(httpx, "AsyncClient", _make_mock_client(handler)):
             with pytest.raises(_pv.GithubAppAuthError) as exc:
                 await _pv.get_repo_token(row)
-        assert exc.value.code == "app_installation_revoked"
+        assert exc.value.code == "github_rejected"
