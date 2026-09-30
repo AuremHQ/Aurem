@@ -24,6 +24,8 @@ import ModeSelector from "./ModeSelector";
 import ThinkingHint from "./ThinkingHint";
 import LiveTaskPopup from "./LiveTaskPopup";
 import WarmStatusBar from "./WarmStatusBar";
+import GraphReadyCard from "./GraphReadyCard";
+import IdleStartHelper from "./IdleStartHelper";
 import { useWarmStart } from "../hooks/useWarmStart";
 import GraphPanel from "./GraphPanel";
 import TemperatureBadge from "./TemperatureBadge";
@@ -1208,6 +1210,26 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     };
     window.addEventListener("ora-inject", onInject);
     return () => window.removeEventListener("ora-inject", onInject);
+  }, []);
+
+  // 2026-02 — "STUCK USERS FIX" Part 1. Unlike `ora-inject` / `aurem:
+  // starter-pick` above (which deliberately only prefill — "never
+  // auto-sends"), the graph-ready card's 3 starter buttons and the
+  // 3-minute idle helper's "Yes, start" button must genuinely START
+  // a real task with zero typing (explicit founder requirement: "The
+  // first click starts a real task immediately"). This is the one
+  // place in the app that calls `send()` directly instead of just
+  // filling the composer.
+  useEffect(() => {
+    const onAutosend = (e) => {
+      const text = e?.detail?.text;
+      if (typeof text === "string" && text.trim()) {
+        send(null, { promptOverride: text.trim() });
+      }
+    };
+    window.addEventListener("aurem:starter-autosend", onAutosend);
+    return () => window.removeEventListener("aurem:starter-autosend", onAutosend);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Iter 163 — chat toolbar (Show all / Clear chat) auto-hide on
@@ -5200,6 +5222,17 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       {messages.length === 0 && (
         <WarmStatusBar status={warmStatus} progress={warmProgress} />
       )}
+      {/* 2026-02 — "STUCK USERS FIX" Part 1: only for a genuinely
+          empty chat on a real connected project — never competes with
+          WarmStatusBar's skeleton bars once real content exists. */}
+      <GraphReadyCard
+        projectId={activeProject?.project_id}
+        visible={messages.length === 0 && !!activeProject?.project_id}
+      />
+      <IdleStartHelper
+        projectId={activeProject?.project_id}
+        visible={messages.length === 0 && !!activeProject?.project_id}
+      />
       <div
         data-testid="chat-messages"
         style={{
