@@ -207,3 +207,4 @@ tests/test_slice_a_bi_cockpit.py
 # 2026-09-30 · OAuth redirect_uri / token-binding regression tests: drive a live
 # /oauth/* server on localhost:8001, so they run in the live-env-tests job.
 tests/test_regression_iter403_oauth_open_redirect_and_token_binding.py
+tests/test_regression_iter404_oauth_redirect_uri_parser_hardening.py
