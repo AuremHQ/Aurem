@@ -678,6 +678,14 @@ Founder direction: Claude Sonnet's per-call review cost in "maxx" mode was too h
 
 Tested: 8 new tests (`test_regression_iter391_maxx_review_swapped_to_glm53.py`) + 3 existing test files updated to match the new behavior + 5 unrelated pre-existing broken fixtures fixed along the way (confirmed pre-existing via `git stash`). Full targeted sweep: 394 passed, 16 pre-existing-unrelated failures (byte-identical before/after). Live end-to-end smoke test against the real OpenRouter API confirmed the new provider/model/reasoning/privacy wiring end-to-end with a real generated response.
 
+## "STUCK USERS FIX" round (2026-02) — Phase A done (Parts 1+2), Phases B/C/D pending (see CHANGELOG.md for full detail)
+
+Founder's 6-part request from real production alerts (6 users stuck after signup in 12h). Approved phased delivery:
+- **Phase A (DONE, tested)**: Part 1 (graph-built activation: auto-trigger the codebase graph build on connect instead of it only building lazily; new GraphReadyCard 3-button starter + IdleStartHelper 3-min nudge, both genuinely auto-send via a new `aurem:starter-autosend` event) + Part 2 (GitHub connect friction: client_timeout root-cause fix + a second silent-failure bug found/fixed in `connectGithub()`, pre-popup consent copy, popup_closed fallback to StarterChoiceModal, 10-min stuck-on-auth-screen visibilitychange backstop, graph-build 240s timeout+retry-once+partial-graph safety net).
+- **Phase B (next)**: Part 3 — wire the existing admin-only "Signup stalled" alert to also help the USER in-app; "Need a hand?" stall email behind a NEW `stall_help_email` flag (OFF by default, founder turns on); diagnose Resend's production 400 (code-side only, report what to change, don't touch keys); admin alert grouping + daily summary line.
+- **Phase C (after B)**: Part 4 — investigate the real cause of ~180 restarts/week (~hourly); Part 5 — 6 HIGH/CRITICAL CVE upgrades (G15 scan already run for real: all 6 are `brace-expansion`, transitive dep, not yet upgraded/reachability-assessed).
+- **Phase D (last)**: Part 6 — fix G18/"CI ↔ local drift" alert flakiness (require 2 consecutive red runs before alerting) without removing the checks.
+
 ## Known open items (not fixed by any round above)
 
 - `input_normalizer.py` silently changes a code-fenced JS string `a—b` into `a--b`.
