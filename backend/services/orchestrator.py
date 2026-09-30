@@ -1849,6 +1849,16 @@ async def chat_with_tools(
                                         # local_tools.py has this BEFORE
                                         # the model makes its first tool
                                         # call, not only after a read.
+    force_read_only: bool = False,      # 2026-09-29 — admin-errors autofix
+                                        # hardening (see admin_error_autofix.py).
+                                        # Unlike interaction_contract's
+                                        # read_only_request() heuristic, this
+                                        # is an explicit, caller-set gate that
+                                        # attacker-controlled prompt content
+                                        # (e.g. an error report body) cannot
+                                        # talk its way around: write_repo_file
+                                        # / patch_repo_file are blocked
+                                        # unconditionally for the whole run.
 ) -> dict:
     """Run the LLM tool-call loop until final answer (no more tool calls)
     or `max_iters` cap is hit.  Every tool call goes through `tools_bridge`
@@ -1890,6 +1900,7 @@ async def chat_with_tools(
         # the repo tree, instead of the model guessing a filename.
         "user_prompt":   prompt,
         "is_founder":    bool(is_founder),   # Iter 212m-168 — gates execute_bash
+        "force_read_only": bool(force_read_only),  # 2026-09-29 — see param doc above
         "bin_ctx":       bin_ctx,            # Iter 212m-169 — locked user+project+PAT
         # Iter 388t — Bug 20 fix.  Founder-pod-debug mode unlocks
         # execute_bash on the pod filesystem WHEN the caller is
