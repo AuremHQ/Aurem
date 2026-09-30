@@ -801,6 +801,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -881,6 +882,11 @@ jobs:
           done < /tmp/deleted_files.txt
 
           if [ "$ALL_SAFE" -eq 1 ]; then
+            if [ "$EVENT" = "pull_request" ]; then
+              echo "✅ Every deleted source file has ZERO remaining references."
+              echo "Posting the auto-verdict as a PR comment instead of committing it to the PR branch — a commit here would move the PR's head SHA and cancel the very CI run that produced this verdict."
+              exit 0
+            fi
             if [ -z "$PUSH_REF" ]; then
               echo "⚠️ Could not resolve a branch ref to push the auto-verdict to (detached/fork PR?) — passing without committing docs/DELETE_GATE.md. Please add the verdict manually."
               cat /tmp/verdict_block.md
@@ -894,6 +900,10 @@ jobs:
             git commit -m "docs: auto-verdict for deletions in ${SHA:0:9} [delete-gate-bot]"
             # GITHUB_TOKEN-authored pushes don't re-trigger push-based
             # workflows (GitHub's own loop guard) — safe to push here.
+            # Only reached for non-pull_request pushes (see the `$EVENT
+            # = pull_request` branch above): main has no PR pointing at
+            # it, so this push can never move a PR head or cancel an
+            # in-flight required check.
             git push origin "HEAD:$PUSH_REF"
             exit 0
           fi
@@ -901,3 +911,19 @@ jobs:
           echo "::error::At least one deleted file still has real references — NOT auto-approved. See the check-safe-to-delete.sh output above, investigate, and either restore the file or record a manual verdict in docs/DELETE_GATE.md."
           cat /tmp/verdict_block.md
           exit 1
+
+      - name: Post auto-verdict as a PR comment (pull_request events only)
+        # 2026-09-29 — replaces the old "commit docs/DELETE_GATE.md
+        # straight to the PR's head branch" side effect. That push moved
+        # the PR head SHA, which invalidated required-status-check state
+        # pinned to the old SHA and cancelled the in-flight run for this
+        # same PR. Posting a comment instead never touches the branch.
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f /tmp/verdict_block.md ]; then
+            echo "No verdict block written (gate not applicable or job failed earlier) — nothing to comment."
+            exit 0
+          fi
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --body-file /tmp/verdict_block.md
