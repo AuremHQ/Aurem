@@ -1,6 +1,88 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-29 (CI-trustworthiness pass — 4 PRs, see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-09-30 (Security audit fixes — OAuth High + 2 Medium, see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## Security audit fixes — 2 PRs (2026-09-30)
+
+Founder ran a manual code-read security audit (not live-exploited) and
+reported findings in chat. Confirmed with the user upfront: this
+contradicts the earlier CI-task rule "do not touch `backend/routers/oauth.py`"
+— explicitly re-approved for this dedicated security task before any code
+was written. Called `integration_expert` for an OAuth 2.1 hardening
+playbook before writing any auth code, per the mandatory-auth-integration
+rule.
+
+**PR #198 — `security/oauth-redirect-uri-validation-and-token-binding` (High, DONE, real E2E verified):**
+- Root cause: `routers/oauth.py`'s only redirect_uri check was
+  `if dcr_client and redirect_uri not in dcr_client[...]` — only validated
+  anything when a DCR record for `client_id` happened to exist. Any
+  unregistered `client_id` (made up, or self-registered via the open
+  `/oauth/register`) sailed through with `redirect_uri` completely
+  unchecked → an attacker's own redirect_uri could receive a victim's
+  real auth code; `/oauth/token` didn't check `client_id`/`redirect_uri`
+  against the code's own record either, so the code could be redeemed by
+  anyone.
+- Fix: new `_validate_redirect_uri_for_client()` requires an exact,
+  constant-time match against the client's own DCR-registered
+  `redirect_uris`, with ONE fixed exemption — the real, Anthropic-owned
+  `https://claude.ai/api/mcp/auth_callback` host (attacker can't control
+  content served there). The ORA Chat MCP (admin) resource now ONLY
+  accepts that claude.ai host, regardless of DCR status — even a client's
+  own genuinely-registered non-claude.ai redirect is rejected for that one
+  resource. `/oauth/authorize/deny` (was a pure open redirect) and
+  `/oauth/token` (now requires + matches `client_id` AND `redirect_uri`
+  against the code's record) both fixed. Consent page now shows the real
+  registered `client_name` + parsed redirect host instead of the raw
+  client_id. Low: `_valid_redirect_uri`'s `startswith("http://localhost:")`
+  bypass (`http://localhost:1@evil.com/` tricks a string-prefix check but
+  resolves to `evil.com` as its real host) fixed via `urlsplit(...).hostname`.
+- **Real E2E verification**: temporarily deployed the diff onto the
+  sandbox's live backend (port 8001, real Mongo), ran the full relevant
+  suite, reverted after (`git status` in `/app/backend` confirmed clean).
+  42 tests passed across `test_oauth_ora_chat.py` (18, incl. 4 new),
+  the new `test_regression_iter401_oauth_open_redirect_and_token_binding.py`
+  (12), and 2 pre-existing files (12, unaffected — both use claude.ai
+  redirects, covered by the legacy exemption).
+- Existing `test_oauth_ora_chat.py` fixture data updated (not weakened):
+  its ORA-chat-resource tests previously used a DCR-registered
+  `localhost:9999` redirect, which the new stricter ORA-chat policy
+  correctly now rejects — swapped to the real claude.ai callback, the one
+  destination that resource is supposed to accept.
+
+**PR #199 — `security/medium-funnel-metadata-cap-and-execute-bash-flags` (2 Medium, DONE, real E2E verified):**
+- `POST /funnel/github/event` (intentionally anonymous — pre-signup CTA
+  clicks): `meta` had no size cap (DB bloat / analytics-poisoning risk) and
+  `user_id` was taken verbatim from the client body (any caller could
+  attribute events to an arbitrary victim's real user_id). Fixed:
+  `meta` capped to ≤20 keys / ≤2048 bytes; `user_id` now always
+  server-derived from a valid Bearer token if present, else always
+  `None` — endpoint stays fully open to logged-out callers.
+- **Real bug found and deliberately NOT fixed in this PR**: `main.py`'s
+  global `_validation_exc_handler` crashes into an unrelated `499` when a
+  custom `@field_validator` raises a bare `ValueError` (pydantic puts the
+  raw exception object in `ctx.error`, not JSON-serializable). Sidestepped
+  by validating `meta` size as a plain function inside the endpoint
+  (raises `HTTPException` directly) instead of a pydantic validator.
+  Flagged for a separate fix — affects any future custom validator too.
+- `execute_bash` (ORA's "read-only" local tool, `services/local_tools.py`):
+  allowlisted `sed`/`find` but never checked their flags — `sed -i` writes
+  in place, `find -delete`/`-exec`/`-execdir`/`-ok`/`-fprint*` can delete
+  or run arbitrary commands per match. Fixed by blocking those specific
+  flags only; every other sed/find use (filtering, printing, searching)
+  unaffected.
+- **Real E2E verification**: same temporarily-deploy-then-revert method.
+  16 new tests passed (`test_regression_iter402_...` ×9,
+  `test_regression_iter403_...` ×7) plus 2 pre-existing suites re-verified
+  unaffected (22/22, 1 pre-existing unrelated failure confirmed via
+  `git stash`).
+
+**Not done / explicitly flagged, not claimed fixed:**
+- The pre-existing `_validation_exc_handler` JSON-serialization crash
+  (real, reproduced, in `main.py`) — needs its own fix.
+- A human security review of `backend/routers/oauth.py` overall — still
+  pending per the earlier carry-over note; PR #198 is a step toward it,
+  not a substitute.
+- Neither PR #198 nor #199 has been merged yet (both open, `mergeable: true`).
 
 ## CI trustworthiness — 4 separate PRs, one per item (2026-09-29)
 
