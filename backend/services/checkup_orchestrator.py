@@ -86,6 +86,10 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
     def add(it: dict, stage: str) -> Optional[dict]:
         it = dict(it)
         it.setdefault("stage", stage)
+        if it.get("confidence") == "unverified":        # C2: unsure is never shown as a problem
+            unverified.append({"stage": it["stage"], "check": it.get("rule_id"),
+                               "reason": "couldn't confirm it"})
+            return None
         ev = it.get("evidence") or {}
         key = f"{it.get('scanner')}::{ev.get('file')}:{ev.get('line')}:{it.get('rule_id')}"
         if key in seen:

@@ -78,3 +78,13 @@ def test_read_with_meta_attaches_meta(monkeypatch):
     monkeypatch.setattr(cm, "fetch_repo_meta", ok)
     tc = asyncio.run(cm.read_with_meta("o", "r", "t", cache))
     assert cm.repo_paths(tc) == [".env", "a.py"] and cm.meta_file(tc, ".gitignore") == "dist\n"
+
+
+def test_unverified_confidence_items_are_never_shown_as_findings(monkeypatch):
+    def unsure(_tc):
+        return [{"scanner": "x", "rule_id": "maybe_bad", "severity": "critical",
+                 "confidence": "unverified", "evidence": {"file": "a.py", "line": 1}}]
+    monkeypatch.setattr("services.checkup_orchestrator.CHECKS", [("safe", "probe", unsure)])
+    res = run_checkup({"a.py": "x"}, include_scanners=False)
+    assert res["items"] == [] and res["score"] == run_checkup({}, include_scanners=False)["score"]
+    assert [u["check"] for u in res["unverified"]] == ["maybe_bad"]
