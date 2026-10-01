@@ -21,7 +21,6 @@ tests/test_phase2c_codebase_health_live_e2e.py
 tests/test_pillars_2345_2026_08_24.py
 tests/test_aurem_backend.py
 tests/test_aurem_chat_persistence.py
-tests/test_aurem_p0_bugs.py
 tests/test_founder_and_admin_resilience.py
 tests/test_github_funnel_telemetry.py
 tests/test_iter123_dev_skills.py
