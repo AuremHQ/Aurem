@@ -42,6 +42,7 @@ def test_other_env_variants_are_checked_too():
     "VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiJ9.abc.def\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_abcdef\n",
     "API_KEY=\nSECRET=your_secret_here\nTOKEN=<paste token>\nDATABASE_URL=postgres://u:p@localhost/db\n",
     "PORT=3000\nNODE_ENV=production\n# STRIPE_SECRET_KEY=" + STRIPE + "\n",
+    "SECRET_KEY=changethis\nFIRST_SUPERUSER_PASSWORD=change_me\nPOSTGRES_PASSWORD=changeit\n",
 ])
 def test_committed_env_without_real_secrets_is_silent(env_text):
     tc = _tc([".env", "src/db.js"], {".env": env_text, ".gitignore": ".env\n"})
@@ -110,9 +111,29 @@ def test_patch_scan_reads_added_lines_only_and_skips_vendored():
 # ── detectors ─────────────────────────────────────────────────────────
 def test_detectors_fire_on_real_shapes_and_not_on_placeholders():
     assert [k for k, _ in find_secrets(f"x={AWS}")] == ["aws_access_key"]
-    assert [k for k, _ in find_secrets("-----BEGIN RSA PRIVATE KEY-----")] == ["private_key_block"]
+    real = "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj\n" * 3 + "-----END RSA PRIVATE KEY-----"
+    assert [k for k, _ in find_secrets(real)] == ["private_key_block"]
     assert find_secrets("sk_live_xxxxxxxxxxxxxxxxxxxxxxxx AKIAIOSFODNN7EXAMPLE sk_test_" + "a1B2c3D4e5F6g7H8i9J0k1L2") == []
 
 
 def test_secret_env_names_never_include_values():
     assert secret_env_names(f"A_TOKEN={STRIPE}\nB=plain\n") == ["A_TOKEN"]
+
+
+PEM_BODY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj\n" * 3
+
+
+def test_private_key_needs_a_real_body_not_just_a_header():
+    assert find_secrets("label = '-----BEGIN PRIVATE KEY-----'") == []
+    assert find_secrets("const re = /-----BEGIN RSA PRIVATE KEY-----/;") == []
+    full = f"-----BEGIN RSA PRIVATE KEY-----\n{PEM_BODY}-----END RSA PRIVATE KEY-----"
+    assert [k for k, _ in find_secrets(full)] == ["private_key_block"]
+
+
+def test_history_scan_skips_test_fixtures_and_typings():
+    body = "".join(f"+{ln}\n" for ln in PEM_BODY.splitlines())
+    key = f"+-----BEGIN PRIVATE KEY-----\n{body}+-----END PRIVATE KEY-----"
+    files = [{"filename": p, "patch": key} for p in
+             ("packages/db/test/server.key", "src/auth.test.ts", "lib/deno.d.ts", "e2e/setup.ts", "config/keys.example")]
+    assert secrets_in_patch(files) == []
+    assert secrets_in_patch([{"filename": "config/prod.key", "patch": key}]) == [("config/prod.key", "private_key_block")]

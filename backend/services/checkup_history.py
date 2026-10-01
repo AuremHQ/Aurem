@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -22,11 +23,13 @@ logger = logging.getLogger(__name__)
 
 MAX_COMMITS = 20
 _CONCURRENCY = 4
-_SKIP_SUFFIXES = (".lock", ".min.js", ".map", "package-lock.json")
+_SKIP_SUFFIXES = (".lock", ".min.js", ".map", "package-lock.json", ".d.ts", ".example", ".sample", ".md")
+# Test fixtures and mocks hold fake credentials on purpose.
+_TEST_PATH = re.compile(r"(?:^|/)(?:tests?|__tests__|__mocks__|fixtures?|mocks?|e2e|examples?)/|\.(?:test|spec)\.", re.I)
 
 
 def _scannable(path: str) -> bool:
-    return bool(path) and not _is_vendored(path) and not path.endswith(_SKIP_SUFFIXES)
+    return bool(path) and not _is_vendored(path) and not path.endswith(_SKIP_SUFFIXES) and not _TEST_PATH.search(path)
 
 
 def _added_text(patch: str) -> str:

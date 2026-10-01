@@ -19,8 +19,10 @@ SECRET_PATTERNS: dict[str, tuple[re.Pattern, str]] = {
     "anthropic_key": (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{30,}"), "Anthropic API key"),
     "openai_key": (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}"), "OpenAI API key"),
     "google_api_key": (re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), "Google API key"),
-    "private_key_block": (re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----"),
-                          "private key"),
+    # header + real base64 body + footer: a bare "-----BEGIN PRIVATE KEY-----" in a form label,
+    # doc or regex is not a key
+    "private_key_block": (re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----"
+                                     r"[A-Za-z0-9+/=\s\\n]{100,}-----END"), "private key"),
 }
 
 _FAKE_BODY = re.compile(r"example|your[_-]|placeholder|xxxx|0000|1234|test|dummy|sample|changeme", re.I)
@@ -29,7 +31,7 @@ _FAKE_BODY = re.compile(r"example|your[_-]|placeholder|xxxx|0000|1234|test|dummy
 def _looks_real(match_text: str) -> bool:
     """Reject documentation placeholders such as sk_live_xxxxxxxxxxxxxxxxxxxx."""
     if match_text.startswith("-----BEGIN"):
-        return True
+        return True                          # the body length is already enforced by the pattern
     return len(set(match_text)) >= 10 and not _FAKE_BODY.search(match_text)
 
 
@@ -53,7 +55,7 @@ _TEMPLATE_ENDS = (".example", ".sample", ".template", ".dist", ".defaults", ".tp
 _ASSIGN = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 _SECRET_NAME = re.compile(r"KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|DSN|DATABASE_URL|MONGO_URL|MONGODB_URI", re.I)
 _PUBLIC_NAME = re.compile(r"PUBLIC|ANON|PUBLISHABLE", re.I)
-_PLACEHOLDER = re.compile(r"^(?:|<.*>|\$\{.*\}|your[_-].*|.*changeme.*|.*replace.*|xxx+.*|todo|null|none|\*+|example.*)$", re.I)
+_PLACEHOLDER = re.compile(r"^(?:|<.*>|\$\{.*\}|your[_-].*|.*change[_-]?(?:me|this|it).*|.*replace.*|xxx+.*|todo|null|none|\*+|example.*)$", re.I)
 
 
 def is_env_file(path: str) -> bool:
