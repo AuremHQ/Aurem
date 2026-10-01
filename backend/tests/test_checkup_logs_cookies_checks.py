@@ -34,9 +34,18 @@ def test_sensitive_log_fires(path, code):
     ("app/a.py", "print('missing api_key in config')\n"),
     ("tests/a.test.js", "console.log(password);\n"),
     ("node_modules/x/a.js", "console.log(password);\n"),
+    ("app/a.py", "print(f\"found user has_password={bool(user.get('password'))}\")\n"),
+    ("app/a.py", "logger.warning('missing args token=%s', bool(gh_token))\n"),
+    ("app/a.py", "logger.info('password length %s', len(password))\n"),
+    ("scripts/seed.py", "print(f'AUTH_TOKEN={token}')\n"),
+    ("qa/seed.py", "print(f'AUTH_TOKEN={token}')\n"),
 ])
 def test_sensitive_log_silent_on_clean(path, code):
     assert check_sensitive_logs({path: code}) == []
+
+
+def test_log_wrappers_that_hide_the_value_are_still_flagged_when_value_leaks_elsewhere():
+    assert check_sensitive_logs({"app/a.py": "print(bool(token), token)\n"})
 
 
 # ── L10.6 ─────────────────────────────────────────────────────────────
@@ -62,6 +71,9 @@ def test_insecure_cookie_fires(path, code, fragment):
     ("app/a.py", "response.set_cookie('session_id', sid, httponly=True, secure=True, samesite='lax')\n"),
     ("settings.py", "SESSION_COOKIE_SECURE = True\nSESSION_COOKIE_HTTPONLY = True\n"),
     ("tests/a.test.js", "res.cookie('session', id);\n"),
+    ("server/a.js", "res.cookie('session', mint(u), cookieOpts(ttl));\n"),
+    ("app/a.py", "response.set_cookie('access_token', mint(u), **_cookie_kwargs(ttl))\n"),
+    ("server/a.js", "res.cookie('session', mint(u), buildOptions);\n"),
 ])
 def test_insecure_cookie_silent_on_clean(path, code):
     assert check_insecure_cookies({path: code}) == []

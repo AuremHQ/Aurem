@@ -14,7 +14,7 @@ import re
 from services.checkup_common import _files, _item, _line_of
 
 _CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
-_SKIP = re.compile(r"(?:^|/)(?:tests?|__tests__|fixtures?|examples?|docs?)/|\.(?:test|spec)\.|(?:^|/)test_", re.I)
+_SKIP = re.compile(r"(?:^|/)(?:tests?|__tests__|fixtures?|examples?|docs?|scripts?|qa)/|\.(?:test|spec)\.|(?:^|/)test_", re.I)
 _MAX_ARGS = 600
 
 
@@ -39,6 +39,7 @@ _SENSITIVE = re.compile(r"^(?:\w*_)?(?:password|passwd|pwd|secret|api_?key|token
 _HARMLESS_PART = re.compile(r"hash|length|len|reset|changed|updated|valid|strength|policy|required|label|error|err|missing|"
                             r"invalid|mismatch|empty|placeholder|field|name|type|count|enabled|next|page|csrf|cursor|expir", re.I)
 _REQ_HEADERS = re.compile(r"\b(?:req|request)\.headers\b(?!\[)")
+_SAFE_WRAPPER = re.compile(r"\b(?:bool|len|isinstance|type)\([^()]*(?:\([^()]*\)[^()]*)*\)")
 
 
 def _snake(token: str) -> str:
@@ -48,7 +49,8 @@ def _snake(token: str) -> str:
 def _interpolations(arg: str) -> str:
     """Keep what is *evaluated*: bare code, plus the `${...}` / f-string `{...}` parts of strings."""
     inner = " ".join(a or b for a, b in _TEMPLATE_EXPR.findall(arg))
-    return _QUOTED.sub(" ", arg) + " " + inner
+    code = _QUOTED.sub(" ", arg) + " " + _QUOTED.sub(" ", inner)
+    return _SAFE_WRAPPER.sub(" ", code)          # `bool(token)` logs a yes/no, not the token
 
 
 def _logs_sensitive(args: str) -> bool:
@@ -95,11 +97,31 @@ def _missing_flags(args: str) -> list[str]:
     return [label for label, rx in _FLAGS.items() if not rx.search(args)]
 
 
+def _top_level_args(args: str) -> list[str]:
+    out, depth, cur = [], 0, ""
+    for c in args:
+        depth += c in "([{" and 1 or c in ")]}" and -1 or 0
+        if c == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += c
+    return out + [cur.strip()] if cur.strip() else out
+
+
+def _options_from_helper(args: str) -> bool:
+    """`res.cookie(n, v, cookieOpts())` / `set_cookie(n, v, **kwargs())`: the flags live
+    elsewhere, so we can't say they're missing."""
+    parts = _top_level_args(args)
+    return "**" in args or (len(parts) >= 3 and not parts[2].startswith("{"))
+
+
 def _cookie_findings(path: str, text: str) -> list[tuple[int, str]]:
     found = []
     for m in _SET_COOKIE.finditer(text):
-        missing = _missing_flags(_call_args(text, text.index("(", m.start())))
-        if _SESSION_NAME.search(m.group(1)) and missing:
+        args = _call_args(text, text.index("(", m.start()))
+        missing = _missing_flags(args)
+        if _SESSION_NAME.search(m.group(1)) and missing and not _options_from_helper(args):
             found.append((m.start(), f"cookie `{m.group(1)}` is set without {', '.join(missing)}"))
     for m in _DOC_COOKIE.finditer(text):
         if _SESSION_NAME.search(m.group(1)):
