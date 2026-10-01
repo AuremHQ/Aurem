@@ -20,8 +20,13 @@ class _Coll:
         self.rows: list[dict] = []
 
     def _match(self, r, q):
-        return all((r.get(k) in v["$in"]) if isinstance(v, dict) and "$in" in v else r.get(k) == v
-                   for k, v in q.items())
+        def ok(k, v):
+            x = r.get(k)
+            if isinstance(v, dict):
+                return (("$in" not in v or x in v["$in"]) and ("$gte" not in v or x >= v["$gte"])
+                        and ("$lte" not in v or x <= v["$lte"]))
+            return x == v
+        return all(ok(k, v) for k, v in q.items())
 
     async def find_one(self, q, projection=None, sort=None):
         hits = [dict(r) for r in self.rows if self._match(r, q)]
@@ -160,3 +165,18 @@ def test_list_items_hides_closed_by_default():
                                           "scanner": "security", "severity": "high", "status": st})
     assert [i["id"] for i in run(fi.list_items(db, user_id="u", project_id="p"))] == ["f0"]
     assert len(run(fi.list_items(db, user_id="u", project_id="p", include_closed=True))) == 2
+
+
+def test_funnel_summary_counts_distinct_users_and_rates():
+    from datetime import datetime, timedelta, timezone
+    db = _DB()
+    now = datetime.now(timezone.utc)
+    for u, ev in (("a", "checkup_started"), ("b", "checkup_started"), ("a", "checkup_verdict_shown"),
+                  ("a", "fix_clicked"), ("a", "fix_clicked"), ("b", "checkup_skipped")):
+        run(fi.record_event(db, user_id=u, project_id="p", event=ev))
+    db.checkup_events.rows.append({"user_id": "old", "event": "checkup_started", "at": now - timedelta(days=90)})
+    out = run(fi.funnel_summary(db, start=now - timedelta(days=1), end=now + timedelta(days=1)))
+    assert out["users"]["checkup_started"] == 2 and out["users"]["fix_clicked"] == 1   # distinct, in range
+    assert out["rates"]["verdict_shown_of_started"] == 50.0
+    assert out["rates"]["fix_applied_of_clicked"] == 0.0 or out["rates"]["fix_applied_of_clicked"] is None
+    assert out["rates"]["fix_verified_of_applied"] is None                             # no divide-by-zero

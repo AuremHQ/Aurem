@@ -348,3 +348,28 @@ async def reconcile(db, *, user_id: str, project_id: str, detected_ids: set[str]
                       "last_checked_at": _now()}})
         closed.append(fid)
     return closed
+
+
+async def funnel_summary(db, *, start: datetime, end: datetime) -> dict:
+    """Admin: distinct users per checkup funnel event in [start, end] and the
+    step-to-step conversion, so 'does the checkup get people to a fix?' is a
+    number rather than a feeling."""
+    users: dict[str, set] = {e: set() for e in FUNNEL_EVENTS}
+    async for d in db.checkup_events.find({"at": {"$gte": start, "$lte": end}},
+                                          {"_id": 0, "user_id": 1, "event": 1}):
+        if d.get("event") in users and d.get("user_id"):
+            users[d["event"]].add(d["user_id"])
+    counts = {e: len(u) for e, u in users.items()}
+
+    def rate(num: str, den: str) -> Optional[float]:
+        return round(100 * counts[num] / counts[den], 1) if counts[den] else None
+    return {
+        "users": counts,
+        "rates": {
+            "verdict_shown_of_started": rate("checkup_verdict_shown", "checkup_started"),
+            "fix_clicked_of_verdict": rate("fix_clicked", "checkup_verdict_shown"),
+            "fix_applied_of_clicked": rate("fix_applied", "fix_clicked"),
+            "fix_verified_of_applied": rate("fix_verified", "fix_applied"),
+            "skipped_of_started": rate("checkup_skipped", "checkup_started"),
+        },
+    }
