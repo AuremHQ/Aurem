@@ -88,3 +88,9 @@ def check_ai_cost_protection(tc: dict[str, str]) -> list[dict]:
             confidence="unverified" if elsewhere else "high",
             fix_hint="Give each user a daily/monthly allowance, cap request size, and set a spending limit in your AI provider's dashboard."))
     return out
+
+
+CHECKS = [
+    ("safe", "auth_rate_limit", check_auth_rate_limit),
+    ("safe", "ai_cost_protection", check_ai_cost_protection),
+]
