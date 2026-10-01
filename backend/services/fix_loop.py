@@ -41,62 +41,79 @@ def _pr_body(item: dict, patch: dict) -> str:
             "Merge to apply; close this pull request to undo.")
 
 
+def _failure(reason: str, message: str) -> dict:
+    return {"ok": False, "reason": reason, "message": message}
+
+
+def _prove(tc: dict[str, str], patch: dict, item_id: str) -> Optional[tuple[str, str]]:
+    """S7 on the patch, then S8: re-run the real checks on the patched tree.
+    Returns (reason, message) on failure, None when the patch is sound."""
+    if evaluate_files(patch["files"], {p: tc.get(p) for p in patch["files"]}):
+        return "guard_blocked", "The fix looked too risky, so nothing was changed."
+    before = run_checkup(tc, include_scanners=False)
+    after = run_checkup({**tc, **patch["files"]}, include_scanners=False)
+    known = {b["id"] for b in before["items"]}
+    new_bad = [i for i in after["items"] if i["id"] not in known and i["severity"] in ("critical", "high")]
+    if item_id in {i["id"] for i in after["items"]} or new_bad:
+        return "proof_failed", "The fix didn't pass ORA's own re-check, so nothing was changed."
+    return None
+
+
+async def _publish(git: GitAdapter, item: dict, patch: dict, base_branch: str) -> Optional[dict]:
+    """Branch + commit + PR.  Returns {branch, base_sha, pr} or None."""
+    base_sha = await git.head_sha(base_branch)
+    branch = _branch_name(item["id"])
+    if not await git.create_branch(base_branch, branch):
+        return None
+    await git.commit(branch, patch["files"], f"fix: {patch['title']}")
+    pr = await git.open_pr(branch, base_branch, f"Fix: {patch['title']}", _pr_body(item, patch))
+    return {"branch": branch, "base_sha": base_sha, "pr": pr} if pr else None
+
+
+async def _record_applied(db, key: dict, patch: dict, pub: dict, base_branch: str,
+                          user_id: str, project_id: str) -> None:
+    pr = pub["pr"]
+    await db.cto_open_findings.update_one(key, {"$set": {"fix": {
+        "pack": patch["pack"], "branch": pub["branch"], "base_sha": pub["base_sha"],
+        "base_branch": base_branch, "pr_url": pr.get("url"), "pr_number": pr.get("number"),
+        "proof": "passed_on_branch"}}})
+    await fi.record_event(db, user_id=user_id, project_id=project_id, event="fix_applied",
+                          meta={"pack": patch["pack"]})
+    await fi.record_event(db, user_id=user_id, project_id=project_id, event="fix_verified",
+                          meta={"where": "branch"})
+
+
 async def run_fix(db, *, user_id: str, project_id: str, item_id: str, tc: dict[str, str],
                   base_branch: str, git: GitAdapter, clock=None) -> dict:
     items = {i["id"]: i for i in await fi.list_items(db, user_id=user_id, project_id=project_id)}
     item = items.get(item_id)
     if not item:
-        return {"ok": False, "reason": "not_found", "message": "We couldn't find that item any more."}
+        return _failure("not_found", "We couldn't find that item any more.")
     await fi.record_event(db, user_id=user_id, project_id=project_id, event="fix_clicked")
-
     patch = build_patch(item, tc, clock)
     if not patch:
-        return {"ok": False, "reason": "not_auto_fixable",
-                "message": "ORA can't fix this one automatically yet. You can ask ORA in chat to walk you through it."}
-
+        return _failure("not_auto_fixable", "ORA can't fix this one automatically yet. "
+                                            "You can ask ORA in chat to walk you through it.")
     if not await fi.set_status(db, user_id=user_id, project_id=project_id, item_id=item_id, new_status="fixing"):
-        return {"ok": False, "reason": "bad_state", "message": "This item can't be fixed right now."}
+        return _failure("bad_state", "This item can't be fixed right now.")
 
     async def restore(reason: str, message: str) -> dict:
         await fi.set_status(db, user_id=user_id, project_id=project_id, item_id=item_id, new_status="open")
-        return {"ok": False, "reason": reason, "message": message}
+        return _failure(reason, message)
 
     try:
-        # S7 — the patch itself must be safe against the current files
-        violations = evaluate_files(patch["files"], {p: tc.get(p) for p in patch["files"]})
-        if violations:
-            return await restore("guard_blocked", "The fix looked too risky, so nothing was changed.")
-
-        # S8 — prove it on the patched tree before touching GitHub
-        before = run_checkup(tc, include_scanners=False)
-        after = run_checkup({**tc, **patch["files"]}, include_scanners=False)
-        after_ids = {i["id"] for i in after["items"]}
-        new_bad = [i for i in after["items"] if i["id"] not in {b["id"] for b in before["items"]}
-                   and i["severity"] in ("critical", "high")]
-        if item_id in after_ids or new_bad:
-            return await restore("proof_failed", "The fix didn't pass ORA's own re-check, so nothing was changed.")
-
-        base_sha = await git.head_sha(base_branch)
-        branch = _branch_name(item_id)
-        if not await git.create_branch(base_branch, branch):
-            return await restore("git_failed", "We couldn't prepare a safe copy of your code. Nothing was changed.")
-        await git.commit(branch, patch["files"], f"fix: {patch['title']}")
-        pr = await git.open_pr(branch, base_branch, f"Fix: {patch['title']}", _pr_body(item, patch))
-        if not pr:
-            return await restore("git_failed", "The change was prepared but the pull request couldn't be opened.")
+        problem = _prove(tc, patch, item_id)
+        if problem:
+            return await restore(*problem)
+        pub = await _publish(git, item, patch, base_branch)
     except Exception as e:                                  # noqa: BLE001
         logger.warning("[fix_loop] failed item=%s: %r", item_id, e)
         return await restore("error", "Something went wrong, so nothing was changed.")
-
+    if not pub:
+        return await restore("git_failed", "We couldn't prepare the change on GitHub. Nothing was changed.")
     key = {"user_id": user_id, "project_id": project_id, "finding_id": item_id}
-    await db.cto_open_findings.update_one(key, {"$set": {"fix": {
-        "pack": patch["pack"], "branch": branch, "base_sha": base_sha, "base_branch": base_branch,
-        "pr_url": pr.get("url"), "pr_number": pr.get("number"), "proof": "passed_on_branch"}}})
-    await fi.record_event(db, user_id=user_id, project_id=project_id, event="fix_applied",
-                          meta={"pack": patch["pack"]})
-    await fi.record_event(db, user_id=user_id, project_id=project_id, event="fix_verified",
-                          meta={"where": "branch"})
-    return {"ok": True, "pr_url": pr.get("url"), "summary": patch["summary_plain"],
+    await _record_applied(db, key, patch, pub, base_branch, user_id, project_id)
+    return {"ok": True, "pr_url": pub["pr"].get("url"), "summary": patch["summary_plain"],
             "manual_steps": patch["manual_steps"]}
 
 
