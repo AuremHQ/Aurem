@@ -71,6 +71,7 @@ def seo_cards_to_items(cards: list[dict]) -> list[dict]:
 
 def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
                  include_scanners: bool = True,
+                 answers: Optional[dict] = None,
                  clock=time.monotonic) -> Iterator[dict]:
     """Yield progress events: stage_started, items, stage_done, then a
     final `done` event with score/stages/unverified."""
@@ -93,7 +94,7 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
         items.append(it)
         return it
 
-    pmap = build_permission_map(tc)
+    pmap = build_permission_map(tc, answers)
     plan = list(CHECKS)
     plan.append(("permissions", "permission_map", lambda _tc: pmap["items"]))
     if include_scanners:
