@@ -144,6 +144,21 @@ async def skip(body: dict, authorization: Optional[str] = Header(None)) -> dict:
     return {"ok": True}
 
 
+@router.post("/project-memory/preview")
+async def project_memory_preview(body: dict, authorization: Optional[str] = Header(None)) -> dict:
+    """Draft rules file for the user to read; nothing is written to their repo."""
+    project_id = (body or {}).get("project_id")
+    _, db, account_id = await _ctx(authorization, project_id)
+    _, owner, repo, pat = await _project_access(db, account_id, project_id)
+    try:
+        tc = await asyncio.wait_for(_build_text_cache(owner, repo, pat), FETCH_TIMEOUT_S)
+    except Exception:                                   # noqa: BLE001
+        return {"ok": False, "message": "We couldn't read your code right now. Nothing was changed."}
+    from services.project_memory import build_project_memory
+    return {"ok": True, "committed": False,
+            "files": build_project_memory(tc, (body or {}).get("app_purpose") or "")}
+
+
 async def _fix_ctx(authorization, body):
     project_id = (body or {}).get("project_id")
     user, db, account_id = await _ctx(authorization, project_id)
