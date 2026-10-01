@@ -81,3 +81,9 @@ def check_health_endpoint(tc: dict[str, str]) -> list[dict]:
         file=entry[0], line=entry[1],
         detail=f"server app found ({stack}) but no /health (or /ping, /ready) endpoint",
         fix_hint="Add a tiny /health endpoint that returns 200 when the app (and its database) is reachable.")]
+
+
+CHECKS = [
+    ("launch", "swallowed_errors", check_swallowed_errors),
+    ("launch", "health_endpoint", check_health_endpoint),
+]

@@ -17,7 +17,6 @@ import pkgutil
 import re
 from typing import Callable
 
-from services.checkup_checks_reliability import check_health_endpoint, check_swallowed_errors
 from services.checkup_checks_runs import (  # noqa: F401  (re-exported)
     check_dead_buttons, check_missing_routes, check_undeclared_packages,
     check_unresolved_imports,
@@ -118,8 +117,6 @@ CHECKS: list[tuple[str, str, Callable[[dict[str, str]], list[dict]]]] = [
     ("safe", "service_role", check_service_role_in_client),
     ("safe", "cors", check_cors_open_with_credentials),
     ("launch", "env_not_documented", check_env_not_documented),
-    ("launch", "swallowed_errors", check_swallowed_errors),
-    ("launch", "health_endpoint", check_health_endpoint),
 ]
 
 
