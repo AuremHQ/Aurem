@@ -25,24 +25,30 @@ DEFAULT_BUDGET_S = 60.0
 _SCANNER_SEVERITIES = ("critical", "high")
 
 
+def _scanner_item(name: str, f: dict) -> Optional[dict]:
+    from services.codebase_health_core import _norm_sev
+    sev = _norm_sev(f.get("severity"))
+    if sev not in _SCANNER_SEVERITIES:
+        return None
+    rule = f.get("rule_id") or f.get("id") or "unknown"
+    return {
+        "scanner": name, "rule_id": rule, "severity": sev,
+        "evidence": {"file": f.get("file") or "", "line": int(f.get("line") or 0),
+                     "rule": rule, "detail": f.get("message") or f.get("title") or ""},
+        "fix": {"hint": f["fix_hint"]} if f.get("fix_hint") else None,
+        "confidence": "high",
+    }
+
+
 def _scanner_items(tc: dict[str, str]) -> Iterator[dict]:
     """Existing deterministic scanners, critical/high only (same bar as the
     backlog), re-shaped to fix_items input."""
-    from services.codebase_health_core import SCANNERS, _norm_sev
+    from services.codebase_health_core import SCANNERS
     for name, fn in SCANNERS.items():
         for f in fn(tc) or []:
-            sev = _norm_sev(f.get("severity"))
-            if sev not in _SCANNER_SEVERITIES:
-                continue
-            yield {
-                "scanner": name, "rule_id": f.get("rule_id") or f.get("id") or "unknown",
-                "severity": sev,
-                "evidence": {"file": f.get("file") or "", "line": int(f.get("line") or 0),
-                             "rule": f.get("rule_id") or f.get("id") or "",
-                             "detail": f.get("message") or f.get("title") or ""},
-                "fix": {"hint": f["fix_hint"]} if f.get("fix_hint") else None,
-                "confidence": "high",
-            }
+            item = _scanner_item(name, f)
+            if item:
+                yield item
 
 
 def seo_cards_to_items(cards: list[dict]) -> list[dict]:
