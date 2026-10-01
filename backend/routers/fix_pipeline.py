@@ -691,7 +691,22 @@ def _guardian_rescan(category: str, path: str, patched_content: str) -> Optional
     of silence after a fix lands. Best-effort: unknown category or a
     scanner exception must never fail the fix itself — the commit
     already succeeded and was verified independently.
+
+    2026-10 (live-tested fix) — 4 categories look at the WHOLE repo's
+    file list, not one file (git_hygiene/documentation/seo_basics check
+    "does README.md/.env.example/robots.txt exist anywhere"; test_coverage
+    checks "is there a test file anywhere"). Re-running them against a
+    single-file `{path: content}` dict always reports every sibling file
+    as missing — real end-to-end test confirmed this: fixing a missing
+    `.gitignore` came back "1 other issue remains" (actually just
+    "README.md isn't in this 1-file dict", unrelated noise). Skip the
+    re-scan for those 4 — a single file can never give an honest signal
+    for a repo-wide check, and a fabricated "issue remains" is worse
+    than no signal at all.
     """
+    _REPO_LEVEL_CATEGORIES = {"git_hygiene", "documentation", "seo_basics", "test_coverage"}
+    if category in _REPO_LEVEL_CATEGORIES:
+        return None
     try:
         from services.codebase_health_core import SCANNERS
         scanner = SCANNERS.get(category)
