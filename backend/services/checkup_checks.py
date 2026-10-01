@@ -12,6 +12,8 @@ checks in `checkup_checks_runs`.
 """
 from __future__ import annotations
 
+import importlib
+import pkgutil
 import re
 from typing import Callable
 
@@ -119,3 +121,18 @@ CHECKS: list[tuple[str, str, Callable[[dict[str, str]], list[dict]]]] = [
     ("safe", "money_as_float", check_money_as_float),
     ("safe", "public_uploads", check_public_uploads),
 ]
+
+
+def _discover_v2() -> list[tuple[str, str, Callable[[dict[str, str]], list[dict]]]]:
+    """Check Library v2: every `services/checkup_checks_<group>.py` that exposes a
+    module-level `CHECKS` list is registered automatically, so a new group is one
+    new file and two PRs can never conflict on a shared registry line."""
+    import services
+    found = []
+    for mod in sorted(pkgutil.iter_modules(services.__path__), key=lambda m: m.name):
+        if mod.name.startswith("checkup_checks_"):
+            found += list(getattr(importlib.import_module(f"services.{mod.name}"), "CHECKS", []))
+    return found
+
+
+CHECKS.extend(_discover_v2())
