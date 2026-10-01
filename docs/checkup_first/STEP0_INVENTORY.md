@@ -63,12 +63,13 @@ Part 6 (chat cleanup) must be a strangler (new flag-gated render path), not an e
    `vendor/`, `benchmarks/`.
 2. **S6 (branch + PR) is not how chat edits work today.** `write_repo_file` commits to the project's
    configured branch directly.
-3. **Raw markdown bug (6.1) root cause:** `RenderedMessage.jsx` only handles code fences, inline
-   backticks and `[ISSUE]/[FIX]/[OK]` tags; it never parses `**bold**`, lists or links. Also
-   `MessageBubble.jsx` ~L945 renders `{m.content}` raw in one branch. `marked` and `dompurify` are
-   already dependencies and unused here.
-4. **Funnel "sent first message = 0" bug:** not investigated yet (events go through
-   `services/signup_guards`).
+3. **Raw markdown bug (6.1) root cause (corrected):** `RenderedMessage.jsx` already parses
+   `**bold**`, `_italic_`, code, links, images and tables (earlier version of this note was wrong).
+   What fell through as literal text was headings (`## x`), list items (`- x`, `* x`, `1. x`) and
+   `__bold__`. Fixed in #207 as React elements (no `dangerouslySetInnerHTML`). `MessageBubble`'s
+   raw `{m.content}` branch is the user's own message, which is correct to leave plain.
+4. **Funnel "sent first message = 0" bug (root cause found):** only `/chat/send` stamped `first_chat_sent`;
+   the real send path `/chat/stream` never did. Fixed separately (fix-first-chat-funnel).
 5. **Target stacks:** Permission Map is Supabase-first. Lovable/Bolt use Supabase; Emergent and many
    Replit apps are FastAPI+Mongo, where RLS does not exist. For those users the map would show
    "not available" (S9) — half the target audience may see nothing from Part 4.
