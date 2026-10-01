@@ -105,6 +105,7 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
     plan.append(("permissions", "permission_map", lambda _tc: pmap["items"]))
     if include_scanners:
         plan.append(("safe", "scanners", lambda _tc: list(_scanner_items(plain))))
+    plan.sort(key=lambda c: fi.STAGES.index(c[0]) if c[0] in fi.STAGES else len(fi.STAGES))
     current = None
     for stage, name, fn in plan:
         if stage != current:
