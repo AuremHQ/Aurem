@@ -126,3 +126,9 @@ def check_public_uploads(tc: dict[str, str]) -> list[dict]:
         if path.endswith((".py", ".js", ".ts", ".jsx", ".tsx")):
             out.extend(_s3_acl_hits(path, text))
     return out
+
+
+CHECKS = [
+    ("safe", "money_as_float", check_money_as_float),
+    ("safe", "public_uploads", check_public_uploads),
+]
