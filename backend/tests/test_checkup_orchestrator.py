@@ -124,3 +124,12 @@ def test_non_js_repo_runs_without_error():
     res = run_checkup({"app/main.py": "print(1)\n", "requirements.txt": "fastapi\n"},
                       include_scanners=False)
     assert res["stack"]["backend_python"] is True and res["items"] == []
+
+
+def test_permission_stage_included_and_honest_for_other_stacks():
+    res = run_checkup(PLANTED, include_scanners=False)
+    assert "rls_disabled" in {i["rule_id"] for i in res["items"]}
+    assert next(s for s in res["stages"] if s["stage"] == "permissions")["verdict"] == "problem"
+    assert res["permissions"]["supported"] is True
+    other = run_checkup({"requirements.txt": "django\n"}, include_scanners=False)
+    assert other["permissions"]["supported"] is False and other["permissions"]["reason"]

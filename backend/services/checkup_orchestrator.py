@@ -17,6 +17,7 @@ from typing import Iterator, Optional
 
 from services import fix_items as fi
 from services.checkup_checks import CHECKS, detect_stack
+from services.permission_map import build_permission_map
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,9 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
         items.append(it)
         return it
 
+    pmap = build_permission_map(tc)
     plan = list(CHECKS)
+    plan.append(("permissions", "permission_map", lambda _tc: pmap["items"]))
     if include_scanners:
         plan.append(("safe", "scanners", lambda tc_: list(_scanner_items(tc_))))
     current = None
@@ -119,6 +122,8 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
         "score": fi.score_for(items),
         "stages": fi.stage_summary(items),
         "unverified": unverified,
+        "permissions": {"supported": pmap["supported"], "reason": pmap.get("reason"),
+                        "questions": pmap["questions"], "matrix": pmap["matrix"]},
         "duration_ms": int((clock() - t0) * 1000),
     }
 
