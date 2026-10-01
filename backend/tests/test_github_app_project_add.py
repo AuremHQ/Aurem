@@ -483,7 +483,7 @@ class TestGetRepoToken:
     @pytest.mark.asyncio
     async def test_github_app_revoked_installation_raises_revoked(self, configured):
         """When GitHub returns 401/404 on token mint (installation
-        deleted or App uninstalled), helper raises app_installation_revoked
+        deleted or App uninstalled), helper raises github_rejected
         — App-only fails closed, it never falls through to another auth."""
         row = {
             "user_id":         "u1",
