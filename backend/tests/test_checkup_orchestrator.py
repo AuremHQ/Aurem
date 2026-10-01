@@ -7,6 +7,7 @@ critical/high items — a false alarm costs more trust than a miss.
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 
 from services.checkup_orchestrator import iter_checkup, run_checkup, seo_cards_to_items
@@ -101,7 +102,7 @@ def test_crashing_check_is_reported_unverified_not_passed(monkeypatch):
 
 
 def test_budget_exhaustion_marks_remaining_unverified():
-    ticks = iter(range(0, 1000, 100))
+    ticks = itertools.count(0, 100)
     res = run_checkup(CLEAN, include_scanners=False, budget_s=150, clock=lambda: next(ticks))
     assert res["unverified"], "later checks must be flagged, not silently skipped"
 
