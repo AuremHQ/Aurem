@@ -130,6 +130,27 @@ def can_transition(current: Optional[str], new: str) -> bool:
     return cur == new or new in _TRANSITIONS.get(cur, set())
 
 
+def _first(doc: dict, *keys: str, default=None):
+    """First truthy value among `keys` — keeps legacy/new field fallbacks flat."""
+    for k in keys:
+        if doc.get(k):
+            return doc[k]
+    return default
+
+
+def _default_evidence(doc: dict) -> dict:
+    return {
+        "file": doc.get("file") or "",
+        "line": doc.get("line") or 0,
+        "rule": doc.get("rule_id") or "",
+        "detail": _first(doc, "message", "title", default=""),
+    }
+
+
+def _default_fix(doc: dict) -> Optional[dict]:
+    return {"hint": doc["fix_hint"]} if doc.get("fix_hint") else None
+
+
 def to_fix_item(doc: dict) -> dict:
     """Project a `cto_open_findings` row (old or new shape) into the
     fix_items shape.  Pure; never mutates the input; tolerates rows that
@@ -137,28 +158,24 @@ def to_fix_item(doc: dict) -> dict:
     scanner = doc.get("scanner")
     rule_id = doc.get("rule_id")
     title_plain, impact_plain = plain_copy(scanner, rule_id)
+    stage = stage_for(scanner, rule_id)
     return {
         "id": doc.get("finding_id") or "",
         "project_id": doc.get("project_id"),
-        "category": doc.get("category") or stage_for(scanner, rule_id),
-        "stage": doc.get("stage") or stage_for(scanner, rule_id),
+        "category": doc.get("category") or stage,
+        "stage": doc.get("stage") or stage,
         "severity": normalize_severity(doc.get("severity")),
         "title_plain": doc.get("title_plain") or title_plain,
         "impact_plain": doc.get("impact_plain") or impact_plain,
-        "evidence": doc.get("evidence") or {
-            "file": doc.get("file") or "",
-            "line": doc.get("line") or 0,
-            "rule": rule_id or "",
-            "detail": doc.get("message") or doc.get("title") or "",
-        },
+        "evidence": doc.get("evidence") or _default_evidence(doc),
         "confidence": doc.get("confidence") or "high",
-        "fix": doc.get("fix") or ({"hint": doc["fix_hint"]} if doc.get("fix_hint") else None),
+        "fix": doc.get("fix") or _default_fix(doc),
         "status": normalize_status(doc.get("status")),
         "question": doc.get("question"),
-        "found_at": doc.get("found_at") or doc.get("first_seen_at"),
+        "found_at": _first(doc, "found_at", "first_seen_at"),
         "fixed_at": doc.get("fixed_at"),
         "fixed_by": doc.get("fixed_by"),
-        "last_checked_at": doc.get("last_checked_at") or doc.get("last_seen_at"),
+        "last_checked_at": _first(doc, "last_checked_at", "last_seen_at"),
         "rule_id": rule_id,
     }
 
@@ -169,76 +186,96 @@ def score_for(items: list[dict]) -> int:
     live = [
         {"severity": normalize_severity(i.get("severity"))}
         for i in items
-        if normalize_status(i.get("status")) in ("open", "your_answer", "fixing", "regressed")
+        if _is_live(i)
     ]
     return _score_for_findings(live)
+
+
+_LIVE = ("open", "your_answer", "fixing", "regressed")
+
+
+def _is_live(item: dict) -> bool:
+    return normalize_status(item.get("status")) in _LIVE
+
+
+def _stage_verdict(open_items: list[dict]) -> str:
+    if not open_items:
+        return "ok"
+    severities = {normalize_severity(i.get("severity")) for i in open_items}
+    return "problem" if "critical" in severities else "attention"
 
 
 def stage_summary(items: list[dict]) -> list[dict]:
     """Per-stage verdict used by the checkup screen: ok/attention/problem."""
     out = []
     for stage in STAGES:
-        mine = [
-            i for i in items
-            if (i.get("stage") or i.get("category")) == stage
-            and normalize_status(i.get("status")) in ("open", "your_answer", "fixing", "regressed")
-        ]
-        if any(normalize_severity(i.get("severity")) == "critical" for i in mine):
-            verdict = "problem"
-        elif any(normalize_severity(i.get("severity")) == "high" for i in mine):
-            verdict = "attention"
-        elif mine:
-            verdict = "attention"
-        else:
-            verdict = "ok"
+        mine = [i for i in items
+                if (i.get("stage") or i.get("category")) == stage and _is_live(i)]
         out.append({"stage": stage, "title": _STAGE_TITLES[stage],
-                    "verdict": verdict, "open_count": len(mine)})
+                    "verdict": _stage_verdict(mine), "open_count": len(mine)})
     return out
 
 
 # ── Persistence (additive over cto_open_findings) ─────────────────────
+def _item_identity(item: dict) -> tuple[str, str, int, str]:
+    """(scanner, rule_id, line, finding_id) with the backlog's id shape so
+    rows written by older code and by the checkup dedupe."""
+    ev = item.get("evidence") or {}
+    scanner = item.get("scanner") or "checkup"
+    rule_id = item.get("rule_id") or "unknown"
+    file_ = ev.get("file") or item.get("file") or ""
+    line_ = int(ev.get("line") or item.get("line") or 0)
+    return scanner, rule_id, line_, item.get("id") or f"{scanner}::{file_}:{line_}:{rule_id}"
+
+
+def _item_fields(item: dict, status: str, now: datetime, source: str) -> dict:
+    scanner, rule_id, line_, _ = _item_identity(item)
+    ev = item.get("evidence") or {}
+    stage = item.get("stage") or stage_for(scanner, rule_id)
+    title_plain, impact_plain = plain_copy(scanner, rule_id)
+    return {
+        "scanner": scanner,
+        "rule_id": rule_id,
+        "severity": normalize_severity(item.get("severity")),
+        "file": ev.get("file") or item.get("file") or "",
+        "line": line_,
+        "category": item.get("category") or stage,
+        "stage": stage,
+        "title_plain": item.get("title_plain") or title_plain,
+        "impact_plain": item.get("impact_plain") or impact_plain,
+        "evidence": ev,
+        "confidence": item.get("confidence") or "high",
+        "fix": item.get("fix"),
+        "question": item.get("question"),
+        "status": status,
+        "last_seen_at": now,
+        "last_checked_at": now,
+        "source": source,
+    }
+
+
+def _status_on_redetect(current: Optional[str]) -> str:
+    """`fixed` seen again => `regressed`; anything else keeps its status."""
+    return "regressed" if current == "fixed" else (current or "open")
+
+
 async def upsert_item(db, *, user_id: str, project_id: str, item: dict,
                       source: str = "checkup") -> str:
     """Insert/refresh one item.  Never downgrades a fixed/ignored row:
     re-detection of a `fixed` item becomes `regressed`; `ignored` stays
     ignored.  Returns the resulting status."""
-    scanner = item.get("scanner") or "checkup"
-    rule_id = item.get("rule_id") or "unknown"
-    file_ = (item.get("evidence") or {}).get("file") or item.get("file") or ""
-    line_ = int((item.get("evidence") or {}).get("line") or item.get("line") or 0)
-    finding_id = item.get("id") or f"{scanner}::{file_}:{line_}:{rule_id}"
+    finding_id = _item_identity(item)[3]
     key = {"user_id": user_id, "project_id": project_id, "finding_id": finding_id}
     now = _now()
     existing = await db.cto_open_findings.find_one(key, projection={"status": 1})
-    cur = normalize_status((existing or {}).get("status")) if existing else None
+    cur = normalize_status(existing.get("status")) if existing else None
     if cur == "ignored":
         return "ignored"
-    status = "regressed" if cur == "fixed" else (cur or "open")
-    title_plain, impact_plain = plain_copy(scanner, rule_id)
+    status = _status_on_redetect(cur)
     await db.cto_open_findings.update_one(
         key,
-        {
-            "$setOnInsert": {**key, "first_seen_at": now, "found_at": now},
-            "$set": {
-                "scanner": scanner,
-                "rule_id": rule_id,
-                "severity": normalize_severity(item.get("severity")),
-                "file": file_,
-                "line": line_,
-                "category": item.get("category") or stage_for(scanner, rule_id),
-                "stage": item.get("stage") or stage_for(scanner, rule_id),
-                "title_plain": item.get("title_plain") or title_plain,
-                "impact_plain": item.get("impact_plain") or impact_plain,
-                "evidence": item.get("evidence") or {},
-                "confidence": item.get("confidence") or "high",
-                "fix": item.get("fix"),
-                "question": item.get("question"),
-                "status": status,
-                "last_seen_at": now,
-                "last_checked_at": now,
-                "source": source,
-            },
-        },
+        {"$setOnInsert": {**key, "first_seen_at": now, "found_at": now},
+         "$set": _item_fields(item, status, now, source)},
         upsert=True,
     )
     return status
