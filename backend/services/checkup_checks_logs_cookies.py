@@ -125,3 +125,9 @@ def check_insecure_cookies(tc: dict[str, str]) -> list[dict]:
                 file=path, line=_line_of(text, idx), detail=what,
                 fix_hint="Set HttpOnly, Secure and SameSite on every login/session cookie."))
     return out
+
+
+CHECKS = [
+    ("safe", "sensitive_logs", check_sensitive_logs),
+    ("safe", "insecure_cookies", check_insecure_cookies),
+]
