@@ -65,6 +65,14 @@ def _install(monkeypatch, cur):
         m, fn = t.rsplit(".", 1)
         monkeypatch.setattr(importlib.import_module(m), fn, _noop)
 
+    # A project is selected in the real session; skip only the part that
+    # needs a GitHub token (ownership/PAT/repo fetch), nothing downstream.
+    import services.ora_context as ora_context
+    monkeypatch.setattr(ora_context, "build_ora_context", _noop)
+    for mod in (chat_mod.turn, chat_mod.stream, chat_mod.worker):
+        if hasattr(mod, "get_repo_context"):
+            monkeypatch.setattr(mod, "get_repo_context", _noop)
+
     async def _llm(messages=None, system="", **kw):
         return ORA[cur[0]]
 
@@ -85,7 +93,7 @@ async def _replay_send(cur):
     for i, u in enumerate(USER):
         cur[0] = i
         r = await turn_mod.chat_send(
-            body=turn_mod.ChatBody(prompt=u, session_id="replay-send"), authorization="Bearer x")
+            body=turn_mod.ChatBody(prompt=u, session_id="replay-send", project_id="proj1"), authorization="Bearer x")
         out.append({"text": r.get("content") or "", "interaction": r.get("interaction") or {}})
     return out
 
@@ -99,7 +107,7 @@ def _replay_stream(cur):
     for i, u in enumerate(USER):
         cur[0] = i
         r = c.post("/api/aurem-dev/chat/stream",
-                   json={"prompt": u, "session_id": "replay-stream"},
+                   json={"prompt": u, "session_id": "replay-stream", "project_id": "proj1"},
                    headers={"Authorization": "Bearer x"})
         toks, inter = [], {}
         for line in r.text.splitlines():
@@ -135,13 +143,13 @@ def replay(request):
 _BUG = "Phase 0 — reproduces the production defect; fixed by the PR named in the reason"
 
 
-@pytest.mark.xfail(strict=True, reason=_BUG + " (PR C: greetings must not assert scan/review state without a record)")
 def test_turns_1_2_greeting_makes_no_unfounded_status_claim(replay):
     for t in (replay[0], replay[1]):
-        assert not re.search(r"clean bill|checklist|ready for your review|scans?\b", t["text"], re.I)
+        # the replay DB holds no findings and no pending change
+        assert not re.search(r"clean bill|checklist|ready for your review|nothing urgent", t["text"], re.I)
+        assert "No scan results are recorded" in t["text"]
 
 
-@pytest.mark.xfail(strict=True, reason=_BUG + " (PR B guards the casual path against prompt echo; this replay has no admin house rule seeded, so the leak source is unverified)")
 def test_turn_4_no_leaked_internal_instruction(replay):
     assert "short and simple" not in replay[3]["text"].lower()
 
@@ -163,12 +171,15 @@ def test_code_blocks_are_never_empty_or_unclosed(replay):
 
 
 def test_promise_without_action_is_never_labelled_delivered(replay):
-    for idx in (5, 9):
-        assert replay[idx]["interaction"].get("outcome") == "NOTHING_DONE"
-        assert replay[idx]["interaction"].get("reason") == "announced_not_done"
+    # turn 6: the model promises a draft it did not make
+    assert replay[5]["interaction"].get("outcome") == "NOTHING_DONE"
+    assert replay[5]["interaction"].get("reason") == "announced_not_done"
+    # turn 10 ("next ?"): answered from stored state, no promise to break
+    assert replay[9]["interaction"].get("outcome") == "NOTHING_DONE"
+    assert "submit" not in replay[9]["text"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason=_BUG + " (PR C: drafting a file stores a pending change)")
+@pytest.mark.xfail(strict=True, reason=_BUG + " (PR D: drafting a file stores a pending change)")
 def test_turn_11_ok_finds_the_pending_draft(replay):
     assert "don't have a change waiting" not in replay[10]["text"].lower()
 
