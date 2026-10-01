@@ -87,3 +87,9 @@ def check_secrets_in_history(tc: dict[str, str]) -> list[dict]:
             fix_hint="Treat the key as leaked: create a new one, switch your app to it, and disable the old one.")
         out.append({**item, "id": f"secrets::{f['path']}:{f['commit']}:{f['type']}"})
     return out
+
+
+CHECKS = [
+    ("safe", "env_files", check_env_files),
+    ("safe", "secrets_in_history", check_secrets_in_history),
+]
