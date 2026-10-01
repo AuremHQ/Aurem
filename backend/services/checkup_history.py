@@ -25,16 +25,23 @@ _CONCURRENCY = 4
 _SKIP_SUFFIXES = (".lock", ".min.js", ".map", "package-lock.json")
 
 
+def _scannable(path: str) -> bool:
+    return bool(path) and not _is_vendored(path) and not path.endswith(_SKIP_SUFFIXES)
+
+
+def _added_text(patch: str) -> str:
+    return "\n".join(ln[1:] for ln in patch.splitlines()
+                     if ln.startswith("+") and not ln.startswith("+++"))
+
+
 def secrets_in_patch(files: list[dict]) -> list[tuple[str, str]]:
     """[(path, type)] for credentials on ADDED lines of one commit's files."""
-    out = []
+    out: list[tuple[str, str]] = []
     for f in files or []:
         path = f.get("filename") or ""
-        if not path or _is_vendored(path) or path.endswith(_SKIP_SUFFIXES):
-            continue
-        added = "\n".join(ln[1:] for ln in (f.get("patch") or "").splitlines()
-                          if ln.startswith("+") and not ln.startswith("+++"))
-        out.extend({(path, kind) for kind, _ in find_secrets(added)})
+        if _scannable(path):
+            kinds = {kind for kind, _ in find_secrets(_added_text(f.get("patch") or ""))}
+            out.extend((path, k) for k in sorted(kinds))
     return out
 
 
