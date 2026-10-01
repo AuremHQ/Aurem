@@ -1,12 +1,145 @@
 {
-  "base_url": "http://127.0.0.1:8091",
-  "gate1": [],
-  "gate2": [],
-  "gate3": [],
+  "base_url": "https://bin-context-pat.preview.emergentagent.com",
+  "gate1": [
+    {
+      "turn": 1,
+      "prompt": "hi, what can you do for my website?",
+      "reply": "I can help improve your website by reviewing your content, suggesting fixes, and even submitting Review requests directly — just share your website!",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "casual",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 2,
+      "prompt": "please put our opening hours at the top of our main page",
+      "reply": "Got it! I'll update your main page to feature the opening hours prominently. I'll submit a Review request shortly with the change.",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "clarify",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 3,
+      "prompt": "9am to 5pm every day",
+      "reply": "Perfect—I'll update the site to show \"Open daily 9am–5pm\" and send the change for your review shortly.",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "casual",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 4,
+      "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
+      "reply": "I'm having trouble connecting to your website right now — the system isn't letting me see your files. This usually means we need to reconnect your site first.\n\n**But I can still help!** Here's what we need to do:\n\n1. Make sure your website is connected to ORA (you might need to link your GitHub account or reconnect if the link expired)\n2. Once connected, I'll add \"Call us: 1-800-555-0199\" to the bottom of your main page along with those opening hours we discussed\n\n**Can you check if your site is still connected?** If you're not sure how, let me know and I'll walk you through it. Once we're reconnected, I'll have your phone number and hours updated in under a minute.",
+      "checks": {
+        "no_jargon": false,
+        "jargon_hits": [
+          "file"
+        ],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "agentic",
+      "bail_reason": null,
+      "ship_suppressed": false
+    }
+  ],
+  "gate2": [
+    {
+      "prompt": "can you redesign our brand identity?",
+      "reply": "I'm focused on publishing content fixes and Review requests—brand design isn't in my wheelhouse. Happy to help with website issues though!",
+      "checks": {
+        "no_refusal": true,
+        "no_session_jargon": true,
+        "has_can_do_now": false,
+        "has_concrete_directions": false,
+        "at_most_one_question": true,
+        "has_scope_line": false,
+        "question_count": 0
+      },
+      "provider": "ORA",
+      "tier": "casual"
+    },
+    {
+      "prompt": "our site looks dated — can you modernize it?",
+      "reply": "Absolutely! I'll analyze your website and propose a sleek, modern refresh—let me check your current setup first.",
+      "checks": {
+        "no_refusal": true,
+        "no_session_jargon": true,
+        "has_can_do_now": false,
+        "has_concrete_directions": false,
+        "at_most_one_question": true,
+        "has_scope_line": false,
+        "question_count": 0
+      },
+      "provider": "ORA",
+      "tier": "casual"
+    }
+  ],
+  "gate3": [
+    {
+      "prompt": "the approve button isn't showing",
+      "reply": "You're right, and I'm sorry — that's on me, not your website. Let me try that again, and I've flagged it so we fix it properly.",
+      "checks": {
+        "has_ownership_early": true,
+        "no_user_blame": true,
+        "has_path_forward": true,
+        "no_error_code_or_stack": true,
+        "compliant": true
+      },
+      "provider": "ORA",
+      "fallback_chain": null
+    },
+    {
+      "prompt": "I clicked it and nothing happened, and you keep saying try again — what do I even try?",
+      "reply": "You're right, and I'm sorry — that's on me, not your website. Let me try that again, and I've flagged it so we fix it properly.",
+      "checks": {
+        "has_ownership_early": true,
+        "no_user_blame": true,
+        "has_path_forward": true,
+        "no_error_code_or_stack": true,
+        "compliant": true
+      },
+      "provider": "ORA",
+      "fallback_chain": null
+    }
+  ],
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "",
+      "reply": "Hey there! How can I help you with your content today?",
       "provider": "ORA",
       "tier": "casual"
     }

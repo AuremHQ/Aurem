@@ -223,6 +223,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // preserves the app shell and lets us pass project_id explicitly.
   const navigate = useNavigate();
   const [messages, setMessages] = useState([WELCOME]);
+  // 2026-10 — "empty chat" for GraphReadyCard/IdleStartHelper means only
+  // the WELCOME sentinel is present (see those render calls below) —
+  // `messages` is never a literal `[]` in this component. Also treat
+  // the auto-selected `onboard-nudge-{project_id}` session (services/
+  // onboarding_first_task_nudge.py, auto-written the moment the first
+  // scan completes) as "empty enough": without this, that older
+  // text-only nudge always lands first and permanently blocks this
+  // card from ever rendering for any real user. Can't match on
+  // `provider` — GET /chat/history sanitizes every turn's provider to
+  // the generic "ORA" label before it reaches the client (Iter
+  // 2026-09-28 privacy fix) — so this matches the session's own
+  // deterministic naming convention instead.
+  const isWelcomeOnlyChat = messages.length === 0
+    || (messages.length === 1 && messages[0] === WELCOME)
+    || (messages.length === 1
+        && sessionId === `onboard-nudge-${activeProject?.project_id}`);
   const [input, setInput] = useState("");
   // 2026-09-09 — founder ticket Part 0 (round 2): the removed
   // FirstScanNudge banner used a local `messages.some(role==="user")`
@@ -602,6 +618,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // its own finally) so a stuck lock can't perma-block sends.
   const sendInFlightRef = useRef(false);
   const sendLockTimeoutRef = useRef(null);
+  // 2026-10 — always holds the latest `send` closure; see the
+  // `aurem:starter-autosend` listener below for why this exists.
+  const sendRef = useRef(null);
   useEffect(() => {
     if (!busy && sendInFlightRef.current) {
       sendInFlightRef.current = false;
@@ -1220,16 +1239,25 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // first click starts a real task immediately"). This is the one
   // place in the app that calls `send()` directly instead of just
   // filling the composer.
+  //
+  // 2026-10 — ROOT FIX: the listener below used to call `send` from
+  // an effect with `[]` deps, so it permanently closed over the
+  // `send`/`sessionId` captured at ChatPanel's VERY FIRST mount —
+  // before a project/session was ever selected. `send()` early-
+  // returns on `!sessionId` (see its guard clause), so every click
+  // silently no-op'd: the card disappeared (dismissed locally) but
+  // no message was ever sent. A ref always holding the latest `send`
+  // fixes it without re-subscribing the listener on every render.
+  sendRef.current = send;
   useEffect(() => {
     const onAutosend = (e) => {
       const text = e?.detail?.text;
       if (typeof text === "string" && text.trim()) {
-        send(null, { promptOverride: text.trim() });
+        sendRef.current(null, { promptOverride: text.trim() });
       }
     };
     window.addEventListener("aurem:starter-autosend", onAutosend);
     return () => window.removeEventListener("aurem:starter-autosend", onAutosend);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Iter 163 — chat toolbar (Show all / Clear chat) auto-hide on
@@ -5224,14 +5252,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       )}
       {/* 2026-02 — "STUCK USERS FIX" Part 1: only for a genuinely
           empty chat on a real connected project — never competes with
-          WarmStatusBar's skeleton bars once real content exists. */}
+          WarmStatusBar's skeleton bars once real content exists.
+          2026-10 — ROOT FIX: `messages` defaults to `[WELCOME]` (both
+          the initial useState and the confirmed-empty-history branch
+          above), so `messages.length === 0` was NEVER true in
+          practice — this card and IdleStartHelper never rendered for
+          any real user. "Empty chat" means only the WELCOME sentinel
+          is present, not a literal zero-length array. */}
       <GraphReadyCard
         projectId={activeProject?.project_id}
-        visible={messages.length === 0 && !!activeProject?.project_id}
+        visible={isWelcomeOnlyChat && !!activeProject?.project_id}
       />
       <IdleStartHelper
         projectId={activeProject?.project_id}
-        visible={messages.length === 0 && !!activeProject?.project_id}
+        visible={isWelcomeOnlyChat && !!activeProject?.project_id}
       />
       <div
         data-testid="chat-messages"
