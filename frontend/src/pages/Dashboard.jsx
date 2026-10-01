@@ -42,6 +42,7 @@ import {
 } from "../components/TabBar";
 import NewUserWizard from "../components/NewUserWizard";
 import StarterChoiceModal from "../components/StarterChoiceModal";
+import CheckupHost from "../components/checkup/CheckupHost";
 import VisibilityKitPanel from "../components/VisibilityKitPanel";
 import { EngagementNudge } from "../components/EngagementNudge";
 import RepoCleanupBanner from "../components/RepoCleanupBanner";
@@ -770,6 +771,10 @@ function DashboardV2Body() {
           repo-connect gate's Skip action and the post_skip mascot
           nudge both fire that event. */}
       <StarterChoiceModal />
+
+      {/* Checkup-first. Renders nothing unless the `checkup_flow` flag is on
+          for this user (default OFF); never blocks chat. */}
+      <CheckupHost projectId={activeProject?.project_id} />
 
       {/* 2026-08-30 — Visibility Kit visual panel (spec §6), the
           "Kit" tab. Only renders when a project with a repo is active
