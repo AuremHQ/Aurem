@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 
+from services.checkup_meta import strip_meta
 from services.checkup_common import _JS_EXT, _files, _is_client, _item, _line_of
 
 _NODE_BUILTINS = {
@@ -65,7 +66,7 @@ def _unresolved_in_file(paths: set[str], path: str, text: str) -> list[dict]:
 
 
 def check_unresolved_imports(tc: dict[str, str]) -> list[dict]:
-    paths = {p.lstrip("/") for p in tc}
+    paths = {p.lstrip("/") for p in strip_meta(tc)}
     out: list[dict] = []
     for path, text in _files(tc):
         if path.endswith(_JS_EXT):
@@ -186,7 +187,7 @@ def _route_defined(route: str, paths: list[str], server_text: str) -> bool:
 
 def check_missing_routes(tc: dict[str, str]) -> list[dict]:
     server_text = _server_route_text(tc)
-    paths = [p.lstrip("/") for p in tc]
+    paths = [p.lstrip("/") for p in strip_meta(tc)]
     out = []
     for path, text in _files(tc):
         if not path.endswith(_JS_EXT) or not _is_client(path):

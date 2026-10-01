@@ -22,6 +22,7 @@ from cto_services.db import get_db
 from services import fix_items as fi
 from services.checkup_runner import FETCH_TIMEOUT_S, run_stream
 from services.feature_flags import is_enabled
+from services.checkup_meta import read_with_meta
 from services.repo_text_cache import build_text_cache as _build_text_cache
 from services.team_permissions import check_permission
 
@@ -106,7 +107,7 @@ async def run(body: dict, authorization: Optional[str] = Header(None)):
     answers = await _saved_answers(db, account_id, project_id)
     guardian = await is_enabled("guardian_rescan", user_id=account_id, tier=user.get("tier"))
     stream = run_stream(db, account_id=account_id, project_id=project_id, answers=answers,
-                        read_cache=lambda: _build_text_cache(owner, repo, pat), guardian=guardian)
+                        read_cache=lambda: read_with_meta(owner, repo, pat, _build_text_cache), guardian=guardian)
     return StreamingResponse(stream, media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
