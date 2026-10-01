@@ -70,12 +70,25 @@ async def _seo_items(db, project_id: str) -> list[dict]:
             for x in seo_cards_to_items((seo or {}).get("cards") or [])]
 
 
-async def _persist(db, *, account_id: str, project_id: str, final: dict) -> None:
+async def _rescan(db, account_id: str, project_id: str, items: list[dict], final: dict) -> None:
+    """Guardian: items that vanished are fixed (the re-run is the proof, S8)."""
+    closed = await fi.reconcile(
+        db, user_id=account_id, project_id=project_id,
+        detected_ids={it["id"] for it in items},
+        unverified_stages={u["stage"] for u in final["unverified"]})
+    for _ in closed:
+        await fi.record_event(db, user_id=account_id, project_id=project_id,
+                              event="fix_verified", meta={"where": "rescan"})
+
+
+async def _persist(db, *, account_id: str, project_id: str, final: dict, guardian: bool) -> None:
     items = list(final["items"]) + await _seo_items(db, project_id)
     for it in items:
         status = await fi.upsert_item(db, user_id=account_id, project_id=project_id, item=it)
         if status == "regressed":
             await fi.record_event(db, user_id=account_id, project_id=project_id, event="item_regressed")
+    if guardian:
+        await _rescan(db, account_id, project_id, items, final)
     await fi.save_checkup(db, user_id=account_id, project_id=project_id, items=items,
                           duration_ms=final["duration_ms"], stack=final["stack"]["label"])
     await fi.record_event(db, user_id=account_id, project_id=project_id,
@@ -86,7 +99,8 @@ async def _persist(db, *, account_id: str, project_id: str, final: dict) -> None
 
 
 async def run_stream(db, *, account_id: str, project_id: str,
-                     read_cache: Callable[[], Awaitable[dict]], answers: dict) -> AsyncIterator[str]:
+                     read_cache: Callable[[], Awaitable[dict]], answers: dict,
+                     guardian: bool = False) -> AsyncIterator[str]:
     await fi.record_event(db, user_id=account_id, project_id=project_id, event="checkup_started")
     yield sse({"type": "reading_code"})
     tc, err = await _read_code(read_cache, project_id)
@@ -104,7 +118,7 @@ async def run_stream(db, *, account_id: str, project_id: str,
     if final is None:
         return
     try:
-        await _persist(db, account_id=account_id, project_id=project_id, final=final)
+        await _persist(db, account_id=account_id, project_id=project_id, final=final, guardian=guardian)
     except Exception as e:                              # noqa: BLE001
         logger.warning("[checkup] persist failed project=%s: %r", project_id, e)
     yield sse(final)
