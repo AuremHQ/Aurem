@@ -105,3 +105,10 @@ def check_paid_from_redirect(tc: dict[str, str]) -> list[dict]:
                 detail="paid status is written on a checkout success/return page without asking the provider to confirm the payment",
                 fix_hint="Only mark an account as paid from the verified webhook (or after confirming the session with the provider on the server)."))
     return out
+
+
+CHECKS = [
+    ("safe", "webhook_signature", check_webhook_signature),
+    ("safe", "webhook_idempotency", check_webhook_idempotency),
+    ("safe", "paid_from_redirect", check_paid_from_redirect),
+]
