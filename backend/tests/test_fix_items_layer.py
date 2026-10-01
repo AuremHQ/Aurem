@@ -22,8 +22,9 @@ class _Coll:
     def _match(self, r, q):
         return all(r.get(k) == v for k, v in q.items())
 
-    async def find_one(self, q, projection=None):
-        return next((dict(r) for r in self.rows if self._match(r, q)), None)
+    async def find_one(self, q, projection=None, sort=None):
+        hits = [dict(r) for r in self.rows if self._match(r, q)]
+        return hits[-1] if sort else (hits[0] if hits else None)
 
     async def update_one(self, q, upd, upsert=False):
         row = next((r for r in self.rows if self._match(r, q)), None)
@@ -31,7 +32,7 @@ class _Coll:
         if row is None:
             if not upsert:
                 return _Res()
-            row = {}
+            row = dict(q)  # Mongo copies equality fields of the filter on upsert
             row.update(upd.get("$setOnInsert", {}))
             self.rows.append(row)
             created = len(self.rows)
