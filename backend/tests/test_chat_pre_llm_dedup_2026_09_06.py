@@ -220,7 +220,7 @@ async def test_casual_direct_reply_unified_shape(monkeypatch):
         AsyncMock(side_effect=lambda ora_panel, text, *a, **kw: text),
     )
     outcome = await resolve_pre_llm(
-        db=None, user=USER, body=_Body("hi"), bin_ctx=None,
+        db=None, user=USER, body=_Body("thanks a lot"), bin_ctx=None,
         prior_fix_signal=False, prior_turn_text="", session_summary="",
         allowed_modes=["swift"], req_mode="swift",
         run_confirm_boundary=False,
@@ -243,7 +243,7 @@ async def test_casual_direct_reply_exception_falls_through(monkeypatch):
         AsyncMock(side_effect=RuntimeError("llm down")),
     )
     outcome = await resolve_pre_llm(
-        db=None, user=USER, body=_Body("hi"), bin_ctx=None,
+        db=None, user=USER, body=_Body("thanks a lot"), bin_ctx=None,
         prior_fix_signal=False, prior_turn_text="", session_summary="",
         allowed_modes=["swift"], req_mode="swift",
         run_confirm_boundary=False,
