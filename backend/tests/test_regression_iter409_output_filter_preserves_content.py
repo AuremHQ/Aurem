@@ -78,7 +78,7 @@ def test_regression_iter409_prompt_echo_keeps_normal_replies():
 
 
 def test_regression_iter409_user_named_files_reads_session_history(monkeypatch):
-    from mongomock_motor import AsyncMongoMockClient
+    from tests._mini_motor import AsyncMongoMockClient
     from cto_services.db import set_db
     from services.reply_integrity import user_named_files
     db = AsyncMongoMockClient()["t"]

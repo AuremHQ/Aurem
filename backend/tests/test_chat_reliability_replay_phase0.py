@@ -43,7 +43,7 @@ ORA = [
 def _install(monkeypatch, cur):
     import importlib
 
-    from mongomock_motor import AsyncMongoMockClient
+    from tests._mini_motor import AsyncMongoMockClient
 
     import routers.chat as chat_mod
     import services.llm as llm
