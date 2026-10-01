@@ -95,40 +95,61 @@ def _syntax_error(path: str, content: str) -> Optional[str]:
     return None
 
 
+def _short(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
+def _syntax_violations(path: str, new: str) -> list[dict]:
+    err = _syntax_error(path, new)
+    if not err:
+        return []
+    return [{"rule": "syntax", "path": path, "detail": err,
+             "plain": f"the new version of {_short(path)} has a typing mistake that would break it"}]
+
+
+def _ratio_violations(path: str, old: str, new: str) -> list[dict]:
+    old_lines, new_lines = old.splitlines(), new.splitlines()
+    if len(old_lines) < MIN_LINES_FOR_RATIOS:
+        return []
+    out = []
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    removed = sum(i2 - i1 for tag, i1, i2, _, _ in sm.get_opcodes() if tag in ("delete", "replace"))
+    if removed / len(old_lines) > MAX_DELETE_RATIO:
+        out.append({"rule": "mass_delete", "path": path,
+                    "detail": f"{removed}/{len(old_lines)} lines removed",
+                    "plain": f"it would remove {round(100 * removed / len(old_lines))}% of {_short(path)}"})
+    if len(new) < MIN_SIZE_RATIO * len(old):
+        out.append({"rule": "shrunk", "path": path,
+                    "detail": f"{len(new)} bytes vs {len(old)}",
+                    "plain": f"{_short(path)} would end up less than half its size"})
+    return out
+
+
+def _removed_symbols(path: str, old: str, new: str) -> list[str]:
+    if path.endswith(".py"):
+        a, b = _py_symbols(old), _py_symbols(new)
+        return sorted(a - b) if a is not None and b is not None else []
+    if path.endswith((".js", ".jsx", ".ts", ".tsx")):
+        return sorted(_js_symbols(old) - _js_symbols(new))
+    return []
+
+
+def _symbol_violations(path: str, old: str, new: str) -> list[dict]:
+    gone = _removed_symbols(path, old, new)
+    if not gone:
+        return []
+    return [{"rule": "symbol_removed", "path": path, "detail": "removed: " + ", ".join(gone[:8]),
+             "plain": f"it would delete existing code that wasn't part of the request ({gone[0]})"}]
+
+
 def evaluate_file(path: str, old: Optional[str], new: str) -> list[dict]:
     """Pure.  Returns violations (possibly empty).  `old=None` = new file."""
     if is_vendored(path):
         return []
-    out: list[dict] = []
-    err = _syntax_error(path, new)
-    if err:
-        out.append({"rule": "syntax", "path": path, "detail": err,
-                    "plain": f"the new version of {path.rsplit('/', 1)[-1]} has a typing mistake that would break it"})
+    out = _syntax_violations(path, new)
     if not old or not old.strip():
         return out
-    old_lines, new_lines = old.splitlines(), new.splitlines()
-    if len(old_lines) >= MIN_LINES_FOR_RATIOS:
-        sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
-        removed = sum(i2 - i1 for tag, i1, i2, _, _ in sm.get_opcodes() if tag in ("delete", "replace"))
-        if removed / len(old_lines) > MAX_DELETE_RATIO:
-            out.append({"rule": "mass_delete", "path": path,
-                        "detail": f"{removed}/{len(old_lines)} lines removed",
-                        "plain": f"it would remove {round(100 * removed / len(old_lines))}% of {path.rsplit('/', 1)[-1]}"})
-        if len(new) < MIN_SIZE_RATIO * len(old):
-            out.append({"rule": "shrunk", "path": path,
-                        "detail": f"{len(new)} bytes vs {len(old)}",
-                        "plain": f"{path.rsplit('/', 1)[-1]} would end up less than half its size"})
-    if path.endswith(".py"):
-        a, b = _py_symbols(old), _py_symbols(new)
-        gone = sorted((a or set()) - (b or set())) if b is not None and a is not None else []
-    elif path.endswith((".js", ".jsx", ".ts", ".tsx")):
-        gone = sorted(_js_symbols(old) - _js_symbols(new))
-    else:
-        gone = []
-    if gone:
-        out.append({"rule": "symbol_removed", "path": path, "detail": "removed: " + ", ".join(gone[:8]),
-                    "plain": f"it would delete existing code that wasn't part of the request ({gone[0]})"})
-    return out
+    return out + _ratio_violations(path, old, new) + _symbol_violations(path, old, new)
 
 
 def evaluate_files(files: dict[str, str], olds: dict[str, Optional[str]]) -> list[dict]:
@@ -148,6 +169,34 @@ async def _fetch_old(client, headers: dict, base: str, ref: str, path: str) -> O
         return None
 
 
+async def _gather_violations(files: dict[str, str], *, owner: str, repo: str, head_sha: str,
+                             headers: dict, client, api: str) -> list[dict]:
+    targets = {p: c for p, c in files.items() if not is_vendored(p)}
+    if not targets:
+        return []
+    base = f"{api}/repos/{owner}/{repo}"
+    paths = list(targets)[:MAX_FILES_CHECKED]
+    olds_list = await asyncio.gather(*[_fetch_old(client, headers, base, head_sha, p) for p in paths])
+    olds = dict(zip(paths, olds_list))
+    return await asyncio.to_thread(evaluate_files, {p: targets[p] for p in paths}, olds)
+
+
+async def _record(db, mode: str, violations: list[dict], owner: str, repo: str, branch: str) -> None:
+    event = "CG_BLOCK" if mode == "block" else "CG_WARN"
+    logger.warning("[commit_guards] %s %s/%s@%s: %s", event, owner, repo, branch,
+                   [(v["rule"], v["path"]) for v in violations])
+    if db is None:
+        return
+    try:
+        await db.guardrail_events.insert_one({
+            "event": event, "rule": RULE_COMMIT_SAFETY, "mode": mode,
+            "violations": [{k: v[k] for k in ("rule", "path", "detail")} for v in violations],
+            "owner": owner, "repo": repo, "branch": branch, "ts": datetime.now(timezone.utc),
+        })
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 async def check_commit(db, *, files: dict[str, str], owner: str, repo: str, branch: str,
                        head_sha: str, token: str, headers: dict, client, api: str) -> list[dict]:
     """Evaluate a pending commit.  Warn mode (default): log + record, return
@@ -156,34 +205,15 @@ async def check_commit(db, *, files: dict[str, str], owner: str, repo: str, bran
     try:
         from services.write_guard import get_mode
         mode = await get_mode(db, RULE_COMMIT_SAFETY)
-        targets = {p: c for p, c in files.items() if not is_vendored(p)}
-        if not targets:
-            return []
-        base = f"{api}/repos/{owner}/{repo}"
-        paths = list(targets)[:MAX_FILES_CHECKED]
-
-        async def run():
-            olds_list = await asyncio.gather(*[_fetch_old(client, headers, base, head_sha, p) for p in paths])
-            olds = dict(zip(paths, olds_list))
-            return await asyncio.to_thread(evaluate_files, {p: targets[p] for p in paths}, olds)
-        violations = await asyncio.wait_for(run(), TOTAL_BUDGET_S)
+        violations = await asyncio.wait_for(_gather_violations(
+            files, owner=owner, repo=repo, head_sha=head_sha, headers=headers,
+            client=client, api=api), TOTAL_BUDGET_S)
     except Exception as e:                                  # noqa: BLE001
         logger.warning("[commit_guards] failed open: %r", e)
         return []
     if not violations:
         return []
-    event = "CG_BLOCK" if mode == "block" else "CG_WARN"
-    logger.warning("[commit_guards] %s %s/%s@%s: %s", event, owner, repo, branch,
-                   [(v["rule"], v["path"]) for v in violations])
-    if db is not None:
-        try:
-            await db.guardrail_events.insert_one({
-                "event": event, "rule": RULE_COMMIT_SAFETY, "mode": mode,
-                "violations": [{k: v[k] for k in ("rule", "path", "detail")} for v in violations],
-                "owner": owner, "repo": repo, "branch": branch, "ts": datetime.now(timezone.utc),
-            })
-        except Exception:                                   # noqa: BLE001
-            pass
+    await _record(db, mode, violations, owner, repo, branch)
     if mode == "block":
         raise CommitGuardBlockedError(violations)
     return violations
