@@ -5,6 +5,9 @@
 import { api, API_BASE, getToken } from "./api";
 
 export async function fetchCheckupFlags() {
+  // Anonymous visitors (landing/signup) have no token; a 401 here would fire
+  // the global session-expired handler, so don't even ask.
+  if (!getToken()) return {};
   try {
     const { data } = await api.get("/checkup/flags");
     return data || {};

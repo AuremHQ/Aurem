@@ -4,8 +4,9 @@
  * failure collapses to rendering nothing — chat is never blocked (S11).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import useCheckupFlags from "../../hooks/useCheckupFlags";
 import {
-  fetchCheckupFlags, fetchLatest, streamCheckup, ignoreItem, answerQuestion, skipCheckup,
+  fetchLatest, streamCheckup, ignoreItem, answerQuestion, skipCheckup,
 } from "../../lib/checkupApi";
 import CheckupScreen from "./CheckupScreen";
 import FixListPanel from "./FixListPanel";
@@ -17,14 +18,12 @@ const writeSeen = (pid) => { try { localStorage.setItem(seenKey(pid), "1"); } ca
 const IDLE = { phase: "idle", stages: {}, result: null, error: null };
 
 export default function CheckupHost({ projectId }) {
-  const [flags, setFlags] = useState(null);
+  const flags = useCheckupFlags();
   const [state, setState] = useState(IDLE);
   const [screenOpen, setScreenOpen] = useState(false);
   const [fixOpen, setFixOpen] = useState(false);
   const [latest, setLatest] = useState(null);
   const abortRef = useRef(null);
-
-  useEffect(() => { let on = true; fetchCheckupFlags().then((f) => on && setFlags(f)); return () => { on = false; }; }, []);
 
   const run = useCallback(() => {
     if (!projectId) return;
