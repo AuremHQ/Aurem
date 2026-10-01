@@ -27,6 +27,7 @@ import { FixJobProvider } from "./components/FixJobContext";
 import PersistentFixBar from "./components/PersistentFixBar";
 import CookieConsentBanner from "./components/CookieConsentBanner";
 import OraGuideMascot from "./components/OraGuideMascot";
+import { useCleanChatUi } from "./hooks/useCheckupFlags";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import MaintenanceGate from "./components/MaintenanceGate";  // 2026-08
 import { PrivateRoute, AdminRoute } from "./components/PrivateRoute";
@@ -216,6 +217,7 @@ function SessionExpiredListener() {
 }
 
 export default function App() {
+  const cleanChatUi = useCleanChatUi();
   // Iter 101 — Capture `?ref=<uid>` on any landing, stash in localStorage
   // so Signup can attribute the referrer after account creation.
   // Also pings the public /referrals/track endpoint so the referrer
@@ -347,7 +349,7 @@ export default function App() {
       <MetaPixelRouteTracker />
       <SessionExpiredListener />
       <Toaster />
-      <OraGuideMascot />
+      {!cleanChatUi && <OraGuideMascot />}
       {/* 2026-09-21 — global mount (was previously inside Shell, gated
           behind an auth token) so a first-time anonymous visitor on
           Landing/Signup can also be prompted to install the PWA, not

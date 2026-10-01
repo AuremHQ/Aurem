@@ -17,6 +17,7 @@ vi.mock("../../lib/checkupApi", async () => {
 
 import * as api from "../../lib/checkupApi";
 import CheckupHost from "../checkup/CheckupHost";
+import { resetCheckupFlagsCache } from "../../hooks/useCheckupFlags";
 
 const ITEM = { id: "a", stage: "safe", severity: "critical", title_plain: "A master key is visible to every visitor",
                impact_plain: "Anyone can copy it." };
@@ -31,6 +32,7 @@ const DONE = {
 };
 
 beforeEach(() => {
+  resetCheckupFlagsCache();
   localStorage.clear();
   vi.clearAllMocks();
   api.fetchLatest.mockResolvedValue({ checkup: null, items: [] });
