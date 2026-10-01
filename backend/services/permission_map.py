@@ -30,7 +30,8 @@ _SENSITIVE_BUCKETS = ("invoice", "receipt", "document", "private", "kyc", "passp
 _NAME = r'(?:"?public"?\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?'
 _CREATE_TABLE = re.compile(r"create\s+table\s+(?:if\s+not\s+exists\s+)?" + _NAME + r"\s*\(", re.I)
 _RLS = re.compile(r"alter\s+table\s+(?:only\s+)?" + _NAME + r"\s+(enable|disable)\s+row\s+level\s+security", re.I)
-_POLICY = re.compile(r"create\s+policy\s+(?:\"[^\"]*\"|\w+)\s+on\s+" + _NAME + r"([^;]*);", re.I | re.S)
+_POLICY = re.compile(r"create\s+policy\s+(\"[^\"]*\"|\w+)\s+on\s+" + _NAME + r"([^;]*);", re.I | re.S)
+_DROP_POLICY = re.compile(r"drop\s+policy\s+(?:if\s+exists\s+)?(\"[^\"]*\"|\w+)\s+on\s+" + _NAME, re.I)
 _VIEW = re.compile(r"create\s+(?:or\s+replace\s+)?view\s+" + _NAME + r"([^;]*);", re.I | re.S)
 _FUNC = re.compile(r"create\s+(?:or\s+replace\s+)?function\s+" + _NAME + r"\s*\(([^;]*?)\$\$.*?\$\$([^;]*);", re.I | re.S)
 _BUCKET = re.compile(r"storage\.buckets[^;]*?values\s*\(\s*'([^']+)'\s*,\s*'?[^,)]*'?\s*,\s*(true|false)", re.I | re.S)
@@ -97,9 +98,11 @@ def build_permission_map(tc: dict[str, str], answers: Optional[dict[str, str]] =
     tables: dict[str, dict] = {}
     items: list[dict] = []
 
-    def mk(table, **kw):
+    def mk(table, policy=None, **kw):
         it = _item(**kw)
         it["evidence"]["table"] = table
+        if policy:
+            it["evidence"]["policy"] = policy
         return it
 
     for path, text in sql_files:
@@ -109,16 +112,31 @@ def build_permission_map(tc: dict[str, str], answers: Optional[dict[str, str]] =
             tables[name] = {"name": name, "file": path, "line": _line_of(text, m.start()),
                             "columns": cols, "rls": False, "policies": [],
                             "class": _classify(name, cols)}
-    for path, text in sql_files:
+    # Apply RLS/policy statements in migration order (files sorted by path,
+    # statements by position) so a later `drop policy` really removes it.
+    for path, text in sorted(sql_files):
+        events = []
         for m in _RLS.finditer(text):
-            t = tables.get(m.group(1).lower())
-            if t:
-                t["rls"] = m.group(2).lower() == "enable"
+            events.append((m.start(), "rls", m))
         for m in _POLICY.finditer(text):
-            t = tables.get(m.group(1).lower())
-            if t:
-                t["policies"].append({**_parse_policy(m.group(2)), "file": path,
-                                      "line": _line_of(text, m.start())})
+            events.append((m.start(), "policy", m))
+        for m in _DROP_POLICY.finditer(text):
+            events.append((m.start(), "drop", m))
+        for _, kind, m in sorted(events, key=lambda e: e[0]):
+            if kind == "rls":
+                t = tables.get(m.group(1).lower())
+                if t:
+                    t["rls"] = m.group(2).lower() == "enable"
+            elif kind == "policy":
+                t = tables.get(m.group(2).lower())
+                if t:
+                    t["policies"].append({**_parse_policy(m.group(3)), "name": m.group(1).strip('"'),
+                                          "file": path, "line": _line_of(text, m.start())})
+            else:
+                t = tables.get(m.group(2).lower())
+                if t:
+                    nm = m.group(1).strip('"')
+                    t["policies"] = [p for p in t["policies"] if p["name"] != nm]
 
     # user answers override the guess (public/private)
     for t in tables.values():
@@ -133,7 +151,7 @@ def build_permission_map(tc: dict[str, str], answers: Optional[dict[str, str]] =
     for t in tables.values():
         fn = friendly(t["name"])
         if not t["rls"]:
-            items.append(mk(t["name"], 
+            items.append(mk(t["name"],
                 scanner="database", rule_id="rls_disabled",
                 severity=sev_for(t, "critical", "high"),
                 title=f"Anyone on the internet can read and change your {fn.lower()} data",
@@ -151,7 +169,7 @@ def build_permission_map(tc: dict[str, str], answers: Optional[dict[str, str]] =
                 _is_open(p["using"]) or _is_open(p["check"]))
             if writes and (wide or authed):
                 who = "Any visitor" if wide else "Any signed-in user"
-                items.append(mk(t["name"], 
+                items.append(mk(t["name"], policy=p["name"],
                     scanner="database", rule_id="policy_open_write",
                     severity=sev_for(t, "critical", "high") if wide else sev_for(t, "high", "medium"),
                     title=f"{who} can change your {fn.lower()} data",
@@ -161,7 +179,7 @@ def build_permission_map(tc: dict[str, str], answers: Optional[dict[str, str]] =
                     fix_hint="Limit the rule to the row's owner."))
             elif reads and t["class"] != "public" and (wide or authed):
                 who = "Any visitor" if wide else "Any signed-in user"
-                items.append(mk(t["name"], 
+                items.append(mk(t["name"], policy=p["name"],
                     scanner="database", rule_id="policy_open_read",
                     severity=sev_for(t, "critical", "high") if wide else sev_for(t, "high", "medium"),
                     title=f"{who} can see everyone's {fn.lower()}",
@@ -251,6 +269,7 @@ def build_permission_map(tc: dict[str, str], answers: Optional[dict[str, str]] =
                        "signed_in": access(("authenticated", "anon", "public")),
                        "developer": {"table": t["name"], "rls": t["rls"], "policies": t["policies"],
                                      "used_by_app": sorted(usage.get(t["name"], []))}})
-    return {"supported": True, "tables": [{"name": t["name"], "class": t["class"], "rls": t["rls"]}
+    return {"supported": True, "tables": [{"name": t["name"], "class": t["class"], "rls": t["rls"],
+                                           "columns": t["columns"], "file": t["file"]}
                                           for t in tables.values()],
             "items": items, "questions": questions, "matrix": matrix}

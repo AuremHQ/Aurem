@@ -50,6 +50,24 @@ async def _ctx(authorization: Optional[str], project_id: Optional[str]):
     return user, db, account_id
 
 
+async def _project_access(db, account_id: str, project_id: str):
+    proj = await db.cto_projects.find_one(
+        {"project_id": project_id, "user_id": account_id},
+        {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,
+         "github_branch": 1, "auth_method": 1, "installation_id": 1, "user_id": 1})
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    from services.pat_vault import get_repo_token, GithubAppAuthError
+    try:
+        pat = await get_repo_token(proj)
+    except GithubAppAuthError as e:
+        raise HTTPException(400 if e.code in ("app_installation_missing", "app_installation_revoked") else 502, e.detail)
+    owner, repo = proj.get("github_owner") or "", proj.get("github_repo") or ""
+    if not (owner and repo and pat):
+        raise HTTPException(400, "Project missing GitHub linkage")
+    return proj, owner, repo, pat
+
+
 @router.get("/flags")
 async def flags(authorization: Optional[str] = Header(None)) -> dict:
     user = await current_dev(authorization)
@@ -78,20 +96,7 @@ async def run(body: dict, authorization: Optional[str] = Header(None)):
         raise HTTPException(429, "A checkup just ran for this project. Give it a few seconds.")
     _last_run[key] = now
 
-    proj = await db.cto_projects.find_one(
-        {"project_id": project_id, "user_id": account_id},
-        {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,
-         "github_branch": 1, "auth_method": 1, "installation_id": 1, "user_id": 1})
-    if not proj:
-        raise HTTPException(404, "Project not found")
-    from services.pat_vault import get_repo_token, GithubAppAuthError
-    try:
-        pat = await get_repo_token(proj)
-    except GithubAppAuthError as e:
-        raise HTTPException(400 if e.code in ("app_installation_missing", "app_installation_revoked") else 502, e.detail)
-    owner, repo = proj.get("github_owner") or "", proj.get("github_repo") or ""
-    if not (owner and repo and pat):
-        raise HTTPException(400, "Project missing GitHub linkage")
+    proj, owner, repo, pat = await _project_access(db, account_id, project_id)
 
     answers = {}
     async for a in db.permission_answers.find({"user_id": account_id, "project_id": project_id}, {"_id": 0}):
@@ -145,7 +150,17 @@ async def run(body: dict, authorization: Optional[str] = Header(None)):
                 {**x, "id": f"seo::{x['evidence']['file']}:0:seo_page_basics"}
                 for x in seo_cards_to_items((seo or {}).get("cards") or [])]
             for it in items:
-                await fi.upsert_item(db, user_id=account_id, project_id=project_id, item=it)
+                st = await fi.upsert_item(db, user_id=account_id, project_id=project_id, item=it)
+                if st == "regressed":
+                    await fi.record_event(db, user_id=account_id, project_id=project_id, event="item_regressed")
+            if await is_enabled("guardian_rescan", user_id=account_id, tier=user.get("tier")):
+                closed = await fi.reconcile(
+                    db, user_id=account_id, project_id=project_id,
+                    detected_ids={it["id"] for it in items},
+                    unverified_stages={u["stage"] for u in final["unverified"]})
+                for _ in closed:
+                    await fi.record_event(db, user_id=account_id, project_id=project_id, event="fix_verified",
+                                          meta={"where": "rescan"})
             await fi.save_checkup(db, user_id=account_id, project_id=project_id, items=items,
                                   duration_ms=final["duration_ms"], stack=final["stack"]["label"])
             await fi.record_event(db, user_id=account_id, project_id=project_id,
@@ -191,3 +206,36 @@ async def skip(body: dict, authorization: Optional[str] = Header(None)) -> dict:
     _, db, account_id = await _ctx(authorization, project_id)
     await fi.record_event(db, user_id=account_id, project_id=project_id, event="checkup_skipped")
     return {"ok": True}
+
+
+async def _fix_ctx(authorization, body):
+    project_id = (body or {}).get("project_id")
+    user, db, account_id = await _ctx(authorization, project_id)
+    if not await is_enabled("fix_loop_v2", user_id=account_id, tier=user.get("tier")):
+        raise HTTPException(404, "not_enabled")
+    proj, owner, repo, pat = await _project_access(db, account_id, project_id)
+    from services.fix_loop import GithubAdapter
+    from services.git_identity import resolve_git_identity
+    git = GithubAdapter(owner=owner, repo=repo, token=pat,
+                        author=await resolve_git_identity(db, account_id))
+    return project_id, db, account_id, owner, repo, pat, proj.get("github_branch") or "main", git
+
+
+@router.post("/items/fix")
+async def fix(body: dict, authorization: Optional[str] = Header(None)) -> dict:
+    project_id, db, account_id, owner, repo, pat, branch, git = await _fix_ctx(authorization, body)
+    try:
+        tc = await asyncio.wait_for(_build_text_cache(owner, repo, pat), _FETCH_TIMEOUT_S)
+    except Exception:                                   # noqa: BLE001
+        return {"ok": False, "reason": "read_failed", "message": "We couldn't read your code right now. Nothing was changed."}
+    from services.fix_loop import run_fix
+    return await run_fix(db, user_id=account_id, project_id=project_id,
+                         item_id=(body or {}).get("item_id") or "", tc=tc, base_branch=branch, git=git)
+
+
+@router.post("/items/undo")
+async def undo(body: dict, authorization: Optional[str] = Header(None)) -> dict:
+    project_id, db, account_id, *_rest, git = await _fix_ctx(authorization, body)
+    from services.fix_loop import undo_fix
+    return await undo_fix(db, user_id=account_id, project_id=project_id,
+                          item_id=(body or {}).get("item_id") or "", git=git)

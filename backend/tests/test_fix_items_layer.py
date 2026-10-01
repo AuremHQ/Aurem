@@ -20,7 +20,8 @@ class _Coll:
         self.rows: list[dict] = []
 
     def _match(self, r, q):
-        return all(r.get(k) == v for k, v in q.items())
+        return all((r.get(k) in v["$in"]) if isinstance(v, dict) and "$in" in v else r.get(k) == v
+                   for k, v in q.items())
 
     async def find_one(self, q, projection=None, sort=None):
         hits = [dict(r) for r in self.rows if self._match(r, q)]

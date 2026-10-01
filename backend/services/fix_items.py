@@ -327,3 +327,24 @@ async def ensure_flags(db) -> int:
         if getattr(res, "upserted_id", None) is not None:
             created += 1
     return created
+
+
+async def reconcile(db, *, user_id: str, project_id: str, detected_ids: set[str],
+                    unverified_stages: set[str]) -> list[str]:
+    """Guardian re-scan: after a fresh checkup, an item the checkup used to
+    report that no longer shows up is FIXED — the re-run itself is the proof
+    (S8).  Stages whose checks could not run are never closed (S9), and rows
+    from other writers (not `source == "checkup"`) are left alone."""
+    closed: list[str] = []
+    q = {"user_id": user_id, "project_id": project_id, "source": "checkup",
+         "status": {"$in": ["open", "your_answer", "fixing"]}}
+    async for d in db.cto_open_findings.find(q, {"_id": 0, "finding_id": 1, "stage": 1}):
+        fid = d.get("finding_id")
+        if fid in detected_ids or (d.get("stage") or "") in unverified_stages:
+            continue
+        await db.cto_open_findings.update_one(
+            {"user_id": user_id, "project_id": project_id, "finding_id": fid},
+            {"$set": {"status": "fixed", "fixed_at": _now(), "fixed_by": "proof_rerun",
+                      "last_checked_at": _now()}})
+        closed.append(fid)
+    return closed

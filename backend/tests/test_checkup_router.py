@@ -25,7 +25,7 @@ class _DB:
 @pytest.fixture
 def env(monkeypatch):
     db = _DB()
-    state = {"enabled": True, "tc": {
+    state = {"enabled": True, "off": set(), "tc": {
         "package.json": json.dumps({"dependencies": {"react": "18"}}),
         "src/App.jsx": "import X from './Nope';\nexport default 1;\n"}}
 
@@ -36,7 +36,7 @@ def env(monkeypatch):
         return {"effective_account_id": "acct"}
 
     async def enabled(flag, **_k):
-        return state["enabled"]
+        return state["enabled"] and flag not in state["off"]
 
     async def tok(_p):
         return "tok"
@@ -110,3 +110,26 @@ def test_answer_validated_and_ignore_requires_valid_transition(env):
     item_id = db.cto_open_findings.rows[0]["finding_id"]
     assert c.post("/api/aurem-dev/checkup/items/ignore", json={"project_id": "p", "item_id": item_id}).json()["ok"]
     assert not c.post("/api/aurem-dev/checkup/items/ignore", json={"project_id": "p", "item_id": "nope"}).json()["ok"]
+
+
+def test_fix_and_undo_404_when_fix_loop_flag_off_but_checkup_on(env):
+    c, _, st = env
+    st["off"] = {"fix_loop_v2"}
+    assert c.post("/api/aurem-dev/checkup/items/fix", json={"project_id": "p", "item_id": "x"}).status_code == 404
+    assert c.post("/api/aurem-dev/checkup/items/undo", json={"project_id": "p", "item_id": "x"}).status_code == 404
+
+
+def test_guardian_closes_vanished_items_only_when_flag_on(env):
+    c, db, st = env
+    st["off"] = {"guardian_rescan"}
+    c.post("/api/aurem-dev/checkup/run", json={"project_id": "p"})
+    n = len(db.cto_open_findings.rows)
+    assert n and all(r["status"] == "open" for r in db.cto_open_findings.rows)
+    st["tc"] = {"package.json": json.dumps({"dependencies": {"react": "18"}}), "src/App.jsx": "export default 1;\n"}
+    ck._last_run.clear()
+    c.post("/api/aurem-dev/checkup/run", json={"project_id": "p"})
+    assert all(r["status"] == "open" for r in db.cto_open_findings.rows)       # flag off: untouched
+    st["off"] = set()
+    ck._last_run.clear()
+    c.post("/api/aurem-dev/checkup/run", json={"project_id": "p"})
+    assert all(r["status"] == "fixed" and r["fixed_by"] == "proof_rerun" for r in db.cto_open_findings.rows)
