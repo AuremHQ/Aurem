@@ -50,7 +50,7 @@ async def resolve_turn_start(
 
 async def propose_from_turn(
     db, *, session_id: str, user_id: str, project_id: Optional[str],
-    provider: str, assistant_reply: str, bin_ctx=None,
+    provider: str, assistant_reply: str, bin_ctx=None, user_prompt: str = "",
 ) -> None:
     """Called once per real turn at persist-time — the ONLY place a
     confirmable action can be created."""
@@ -59,6 +59,7 @@ async def propose_from_turn(
         await _propose(
             db, session_id=session_id, user_id=user_id, project_id=project_id,
             provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
+            user_prompt=user_prompt,
         )
         return
     from services.confirm_execution import (

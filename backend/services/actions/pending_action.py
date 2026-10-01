@@ -93,6 +93,9 @@ PROVIDER_DISAMBIGUATE = "commit-boundary-disambiguate"
 PROVIDER_CANCELLED = "commit-boundary-cancelled"
 PROVIDER_CANCEL_NOOP = "commit-boundary-cancel-noop"
 PROVIDER_ERROR = "commit-boundary-error"
+# A reply read from stored records ("continue", "?") is not a new topic: it
+# must not cancel the change the user is waiting on.
+PROVIDER_STATE_ANSWER = "state-answer"
 
 
 # ── deterministic pre-LLM intent classifier ─────────────────────────
@@ -294,6 +297,9 @@ async def validate_payload(type_: str, payload: dict, *, ctx: Optional[dict] = N
         return await _validate_edit_payload(payload, ctx=ctx)
     if type_ == "insert":
         return await _validate_insert_payload(payload, ctx=ctx)
+    if type_ == "create_file":
+        from services.actions.create_file_action import validate_create
+        return await validate_create(payload, ctx=ctx)
     if type_ == "upgrade":
         plan = (payload or {}).get("plan")
         if plan not in ("starter", "pro", "team"):
@@ -381,7 +387,7 @@ async def _cancel_actions(db, actions: list[dict], *, reason: str) -> None:
 
 async def propose_from_turn(
     db, *, session_id: str, user_id: str, project_id: Optional[str],
-    provider: str, assistant_reply: str, bin_ctx=None,
+    provider: str, assistant_reply: str, bin_ctx=None, user_prompt: str = "",
 ) -> None:
     """Called exactly once per real chat turn (persist-time). This is
     the ONLY place a PendingAction can be created — never from a raw
@@ -405,7 +411,15 @@ async def propose_from_turn(
     try:
         edit = extract_deterministic_edit(assistant_reply)
         insert = None if edit else extract_deterministic_insert(assistant_reply)
-        if edit:
+        from services.actions.create_file_action import extract_create
+        create = None if (edit or insert) else extract_create(user_prompt, assistant_reply)
+        if create:
+            await propose_action(
+                db, session_id=session_id, user_id=user_id, project_id=project_id,
+                type_="create_file", raw_payload=create,
+                ctx={"user_id": user_id, "project_id": project_id, "bin_ctx": bin_ctx},
+            )
+        elif edit:
             await propose_action(
                 db, session_id=session_id, user_id=user_id, project_id=project_id,
                 type_="edit", raw_payload=edit,
@@ -422,7 +436,7 @@ async def propose_from_turn(
                 db, session_id=session_id, user_id=user_id, project_id=project_id,
                 type_="upgrade", raw_payload={"plan": "pro"},
             )
-        elif provider not in (PROVIDER_EXECUTOR, PROVIDER_EXECUTING):
+        elif provider not in (PROVIDER_EXECUTOR, PROVIDER_EXECUTING, PROVIDER_STATE_ANSWER):
             # No clean (path, old, new) triple or (path, anchor,
             # content) pair could be extracted from the prose — CBR-1,
             # no action created at all. The multi-file/complex case
@@ -467,6 +481,8 @@ def _describe_action(action: dict) -> str:
         return f"update `{p.get('path')}`: \"{p.get('old_value')}\" -> \"{p.get('new_value')}\""
     if t == "insert":
         return f"add new content to `{p.get('path')}` right after \"{p.get('anchor')}\""
+    if t == "create_file":
+        return f"create `{p.get('path')}` ({len((p.get('content') or '').splitlines())} lines) on a new branch and open a pull request"
     if t == "upgrade":
         return f"upgrade to the {str(p.get('plan', 'pro')).title()} plan"
     return f"a {t} action"
@@ -714,6 +730,10 @@ async def execute_action(db, action: dict, *, user: dict, project_id: Optional[s
                 outcome = await _execute_edit(claimed, user=user, project_id=project_id, bin_ctx=bin_ctx)
             else:
                 outcome = await _execute_insert(claimed, user=user, project_id=project_id, bin_ctx=bin_ctx)
+        elif t == "create_file":
+            from services.actions.create_file_action import execute_create
+            r = await execute_create(db, claimed, user=user, project_id=project_id, bin_ctx=bin_ctx)
+            outcome = _Outcome(r["ok"], r["content"], verification_result=r["verification"], extra=r["extra"])
         elif t == "upgrade":
             outcome = await _execute_upgrade(db, claimed, user=user)
         else:

@@ -322,10 +322,14 @@ async def resolve_pre_llm(
             and tier in ("casual", "clarify", "query"):
         from services.session_state import load_state, render, route_kind
         _kind = route_kind(body.prompt or "", body.project_id)
+        _state = None
         if _kind:
             _state = await load_state(
                 db, user_id=(user or {}).get("user_id"),
                 project_id=body.project_id, session_id=body.session_id)
+            if _kind == "continue" and not _state["waiting_changes"]:
+                _kind = None  # nothing stored to continue: normal pipeline
+        if _kind:
             result = _shape_short_circuit(
                 render(_kind, _state, bool(body.project_id) and body.project_id != "home"),
                 "state-answer", intent_result=intent_result, tier=tier,

@@ -21,6 +21,8 @@ _ISSUE_WORDS = re.compile(
     r"\b(?:issues?|problems?|bugs?|vulnerabilit\w+|findings?|errors?|risks?)\b", re.I)
 # Asking about GitHub's own Issues tracker / PRs is a different request.
 _GITHUB_ISSUES = re.compile(r"\bgit\s?hub\b.*\bissues?\b|\bissues?\s*#?\d+|\bpull requests?\b|\bprs?\b", re.I)
+_CONTINUE = re.compile(
+    r"^(?:please )?(?:continue|go on|keep going|proceed|next)(?: next| from where you left off)?(?: ?\?)?$")
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
@@ -36,6 +38,8 @@ def route_kind(prompt: str, project_id: str | None) -> str | None:
         return "greeting"
     if text in _STATUS:
         return "status"
+    if _CONTINUE.match(text):
+        return "continue"
     has_project = bool(project_id) and project_id != "home"
     if has_project and len(text.split()) <= 12 and _ISSUE_WORDS.search(text) \
             and not _GITHUB_ISSUES.search(text):
@@ -46,7 +50,7 @@ def route_kind(prompt: str, project_id: str | None) -> str | None:
 async def load_state(db, *, user_id: str, project_id: str | None, session_id: str) -> dict:
     """What the database actually holds. Any DB problem yields an empty
     state, which the renderers describe honestly as "nothing on record"."""
-    state = {"recorded": 0, "open": [], "waiting_changes": 0}
+    state = {"recorded": 0, "open": [], "waiting_changes": 0, "waiting": []}
     try:
         if project_id and project_id != "home":
             base = {"user_id": user_id, "project_id": project_id}
@@ -56,10 +60,13 @@ async def load_state(db, *, user_id: str, project_id: str | None, session_id: st
                 {"_id": 0, "severity": 1, "title": 1, "file": 1}).to_list(200)
             state["open"] = sorted(rows, key=lambda r: _SEV_ORDER.get(r.get("severity"), 9))
         if session_id:
-            state["waiting_changes"] = await db.pending_actions.count_documents(
-                {"session_id": session_id, "user_id": user_id, "status": "AWAITING_CONFIRM"})
+            docs = await db.pending_actions.find(
+                {"session_id": session_id, "user_id": user_id, "status": "AWAITING_CONFIRM"},
+                {"_id": 0, "type": 1, "payload": 1}).to_list(5)
+            state["waiting_changes"] = len(docs)
+            state["waiting"] = [d for d in docs]
     except Exception:  # noqa: BLE001
-        return {"recorded": 0, "open": [], "waiting_changes": 0}
+        return {"recorded": 0, "open": [], "waiting_changes": 0, "waiting": []}
     return state
 
 
@@ -77,9 +84,26 @@ def _waiting_line(state: dict) -> str:
     return f"{n} change{'s' if n != 1 else ''} waiting for your approval." if n else ""
 
 
+def render_waiting(state: dict) -> str:
+    """The stored change(s) the user is continuing: what it is and how to
+    approve it. Nothing is described that is not in `pending_actions`."""
+    lines = []
+    for d in state["waiting"]:
+        p = d.get("payload") or {}
+        if d.get("type") == "create_file":
+            n = len((p.get("content") or "").splitlines())
+            lines.append(f"- create `{p.get('path')}` ({n} lines) on a new branch and open a pull request")
+        else:
+            lines.append(f"- a {d.get('type')} change")
+    return ("This is what is waiting for your approval:\n" + "\n".join(lines)
+            + "\nSay ok to apply it, or tell me what to change first.")
+
+
 def render(kind: str, state: dict, has_project: bool) -> str:
     if kind == "issues":
         return render_issues(state)
+    if kind == "continue":
+        return render_waiting(state)
     lines = [_findings_line(state)] if has_project else []
     if _waiting_line(state):
         lines.append(_waiting_line(state))
