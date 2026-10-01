@@ -1356,6 +1356,8 @@ async def chat_stream(
         interaction = finalize(result, content, prompt=body.prompt,
                                session_id=body.session_id or "", request_id=interaction_request_id,
                                low_confidence=state.low_confidence)
+        from services.chat_metrics import record_turn as _record_turn_metrics
+        asyncio.ensure_future(_record_turn_metrics(get_db(), result, interaction))
         if interaction:
             result["turn_state"] = interaction["turn_state"]
             result["continue_available"] = interaction["continue_available"]

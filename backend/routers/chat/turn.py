@@ -719,6 +719,8 @@ async def chat_send(
                            low_confidence=_low_confidence)
     if interaction:
         result["turn_state"] = interaction["turn_state"]
+    from services.chat_metrics import record_turn as _record_turn_metrics
+    asyncio.ensure_future(_record_turn_metrics(_db, result, interaction))
     await _persist_turn(user["user_id"], body.session_id or "",
                         body.prompt, content, provider, watchdog=watchdog,
                         project_id=body.project_id,
