@@ -8,10 +8,9 @@ texts ORA produced. Everything after the LLM (pre-LLM routing, intent
 tiers, output guards, business-voice filter, interaction contract,
 session state) is the real code.
 
-Each test states the CORRECT behaviour and is `xfail(strict=True)`: it
-fails today (that is the bug), and the strict flag forces whoever fixes
-it to delete the marker, so a fix can't ship without this test going
-green. See docs/chat_reliability/PHASE0_REPORT.md.
+Each test states the CORRECT behaviour. Phase 0 added them as strict
+xfails (they all failed); each fix PR removed the markers it fixed.
+See docs/chat_reliability/PHASE0_REPORT.md.
 """
 import asyncio
 import json
@@ -141,9 +140,6 @@ def replay(request):
         os.environ.pop("INTERACTION_CONTRACT_V1", None)
 
 
-_BUG = "Phase 0 — reproduces the production defect; fixed by the PR named in the reason"
-
-
 def test_turns_1_2_greeting_makes_no_unfounded_status_claim(replay):
     for t in (replay[0], replay[1]):
         # the replay DB holds no findings and no pending change
@@ -180,9 +176,15 @@ def test_promise_without_action_is_never_labelled_delivered(replay):
     assert "submit" not in replay[9]["text"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason=_BUG + " (PR D: drafting a file stores a pending change)")
-def test_turn_11_ok_finds_the_pending_draft(replay):
-    assert "don't have a change waiting" not in replay[10]["text"].lower()
+def test_turn_11_ok_is_truthful_when_no_draft_was_ever_stored(replay):
+    # In the owner's transcript the model never produced a real draft (empty
+    # numbered lines, narration), so nothing could be stored and "I don't
+    # have a change waiting" was TRUE. The failure was upstream; the success
+    # path (draft stored -> "ok" -> PR link) is proven in
+    # test_regression_iter415_create_file_end_to_end.py.
+    assert replay[10]["interaction"].get("outcome") == "NOTHING_DONE"
+    assert replay[10]["interaction"].get("reason") == "nothing_pending"
+
 
 
 def test_outcome_label_reflects_what_happened(replay):

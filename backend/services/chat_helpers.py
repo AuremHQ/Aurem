@@ -928,6 +928,7 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                 await propose_from_turn(
                     db, session_id=session_id, user_id=user_id, project_id=project_id,
                     provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
+                    user_prompt=user_prompt,
                 )
         except Exception as e:                             # noqa: BLE001
             logger.debug("pending_action registration skipped: %r", e)
