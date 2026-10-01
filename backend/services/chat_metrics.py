@@ -23,21 +23,25 @@ def _day(now: datetime | None = None) -> str:
     return (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
 
 
+def _tool_counters(result: dict) -> dict[str, int]:
+    counts = {"tool_failures": 0, "tool_retries": 0, "state_answers": 0}
+    for inv in result.get("tool_invocations") or []:
+        if isinstance(inv, dict):
+            counts["tool_failures"] += inv.get("ok") is False
+            counts["tool_retries"] += bool(inv.get("retried"))
+    counts["state_answers"] = int(result.get("provider") == "state-answer")
+    return {k: v for k, v in counts.items() if v}
+
+
+def _outcome_counters(interaction: dict | None) -> dict[str, int]:
+    if not (interaction and interaction.get("outcome")):
+        return {}
+    return {f"turns.{interaction['outcome']}": 1,
+            f"reasons.{interaction.get('reason') or 'none'}": 1}
+
+
 def counters_for_turn(result: dict, interaction: dict | None) -> dict:
-    inc: dict[str, int] = {}
-    if interaction and interaction.get("outcome"):
-        inc[f"turns.{interaction['outcome']}"] = 1
-        inc[f"reasons.{interaction.get('reason') or 'none'}"] = 1
-    invocations = [i for i in (result.get("tool_invocations") or []) if isinstance(i, dict)]
-    failed = sum(1 for i in invocations if i.get("ok") is False)
-    retried = sum(1 for i in invocations if i.get("retried"))
-    if failed:
-        inc["tool_failures"] = failed
-    if retried:
-        inc["tool_retries"] = retried
-    if result.get("provider") == "state-answer":
-        inc["state_answers"] = 1
-    return inc
+    return {**_outcome_counters(interaction), **_tool_counters(result)}
 
 
 async def record_turn(db, result: dict, interaction: dict | None) -> None:
