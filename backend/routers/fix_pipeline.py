@@ -505,6 +505,15 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     db=db, user=user, project_id=project_id,
                     full_sha=res.get("full_sha"),
                 )
+                # 2026-10 — Guardian re-scan: run the full category
+                # scanner against the final patched file content so
+                # the drawer can show "verified clean" / "N other
+                # issues remain" instead of going silent after a fix.
+                guardian = _guardian_rescan(
+                    finding.get("category") or "",
+                    res.get("file") or path,
+                    res.get("patched_content") or "",
+                )
                 fjm.emit(job_id, "fix-done",
                          ok=True, finding_id=finding_id,
                          commit_sha=res.get("commit_sha"),
@@ -524,7 +533,8 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                          # commit may well be fine, just unconfirmed.
                          # The drawer must show a "Check now" retry for
                          # None, not silently treat it like False.
-                         verified=verified)
+                         verified=verified,
+                         guardian_rescan=guardian)
                 await fjm.persist_event(db, job_id)
                 fixes_summary.append({
                     "index":      global_idx,
@@ -665,6 +675,34 @@ def _interleave_by_severity(findings: list[dict]) -> list[dict]:
                 out.append(buckets[k].pop(0))
     out.extend(trailing)
     return out
+
+
+def _guardian_rescan(category: str, path: str, patched_content: str) -> Optional[dict]:
+    """2026-10 — "Guardian re-scan" (founder spec, roadmap.sh "safe fix
+    loop" criterion: verify the fix actually worked, not just that the
+    LLM said so). `apply_finding_fix()` already re-validates the ONE
+    specific `rule_id` that triggered this fix before committing
+    (`_finding_still_present`, services/finding_fix_applier.py) — that
+    check is narrow by design (one rule, pre-commit). This runs the
+    FULL category scanner (every rule in that category, not just the
+    one that was fixed) against the final committed file content, so
+    the user gets an honest "this file is now clean for this category"
+    / "N other issues of this type remain in this file" signal instead
+    of silence after a fix lands. Best-effort: unknown category or a
+    scanner exception must never fail the fix itself — the commit
+    already succeeded and was verified independently.
+    """
+    try:
+        from services.codebase_health_core import SCANNERS
+        scanner = SCANNERS.get(category)
+        if not scanner or not path:
+            return None
+        remaining = scanner({path: patched_content or ""})
+        return {"category": category, "clean": len(remaining) == 0,
+                "remaining_in_file": len(remaining)}
+    except Exception:                                      # noqa: BLE001
+        return None
+
 
 
 async def _verify_commit_exists(*, db, user: dict, project_id: str,

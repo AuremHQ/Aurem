@@ -281,6 +281,18 @@ function CompletedRow({ row }) {
               color: "#86efac",
             }}>GitHub verified ✓</span>
           )}
+          {row.guardian_rescan && (
+            <span data-testid={`guardian-rescan-${row.finding_id}`} style={{
+              padding: "2px 6px", borderRadius: 999,
+              background: row.guardian_rescan.clean ? "rgba(34,197,94,0.10)" : "rgba(250,204,21,0.10)",
+              border: `1px solid ${row.guardian_rescan.clean ? "rgba(34,197,94,0.30)" : "rgba(250,204,21,0.35)"}`,
+              color: row.guardian_rescan.clean ? "#86efac" : "#fde68a",
+            }} title="Guardian re-scan: the full category scanner was re-run against the committed file">
+              {row.guardian_rescan.clean
+                ? "Guardian re-scan: clean ✓"
+                : `Guardian re-scan: ${row.guardian_rescan.remaining_in_file} other issue(s) remain`}
+            </span>
+          )}
         </div>
       )}
       {isFailed && row.error && (

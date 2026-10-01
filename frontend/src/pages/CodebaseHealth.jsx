@@ -23,6 +23,8 @@ import { useNavigate } from "react-router-dom";
 import {
   Shield, Zap, Code2, Package, Database, RefreshCw, Loader2,
   ChevronDown, ChevronRight, Sparkles, ExternalLink, Bug, Container,
+  TestTube, KeyRound, ShieldCheck, Accessibility, Search, GitBranch,
+  AlertTriangle, Smartphone, FileText,
 } from "lucide-react";
 import { api } from "../lib/api";
 import useFixQuota from "../lib/useFixQuota";
@@ -43,6 +45,28 @@ const CATS = [
     blurb: "Nuclei-template-inspired deep scan: 50+ patterns for leaked secrets, RCE primitives, exposed admin endpoints, and CVE-vulnerable dependencies" },
   { key: "docker",       label: "Docker CIS",    icon: Container, tone: "#22d3ee", cost: 5, isNew: true,
     blurb: "CIS Docker Benchmark checks: root containers, unpinned images, baked-in secrets, privileged mode, and docker.sock exposure" },
+  // 2026-10 — "Launch-ready X / 16" scorecard: 9 new categories
+  // researched against roadmap.sh's Vibe Coding / AI Product Builder /
+  // API Security Best Practices guides (see services/
+  // codebase_health_extra.py for the real detectors + source mapping).
+  { key: "test_coverage",         label: "Automated Tests", icon: TestTube,       tone: "#34d399", cost: 6, isNew: true,
+    blurb: "No tests means every change is a gamble — bugs only get caught by real users" },
+  { key: "api_security",          label: "API & Auth Security", icon: KeyRound,   tone: "#fb7185", cost: 6, isNew: true,
+    blurb: "JWT, OAuth and ID-guessing issues that let someone else access data that isn't theirs" },
+  { key: "security_headers",      label: "Security Headers", icon: ShieldCheck,  tone: "#f87171", cost: 5, isNew: true,
+    blurb: "Missing browser-level protections (CSP, HSTS, X-Frame-Options) that stop clickjacking and content sniffing" },
+  { key: "accessibility",         label: "Accessibility",   icon: Accessibility, tone: "#60a5fa", cost: 4, isNew: true,
+    blurb: "Screen-reader and keyboard users hitting dead ends — missing alt text and labels" },
+  { key: "seo_basics",            label: "SEO Basics",      icon: Search,        tone: "#fbbf24", cost: 4, isNew: true,
+    blurb: "Missing titles, descriptions and social preview tags that hurt how your site shows up in Google and shared links" },
+  { key: "git_hygiene",           label: "Git Hygiene",     icon: GitBranch,     tone: "#c084fc", cost: 3, isNew: true,
+    blurb: "Missing .gitignore, README or .env.example — the basics that keep a repo usable by anyone else" },
+  { key: "error_handling",        label: "Error Handling",  icon: AlertTriangle, tone: "#fb923c", cost: 4, isNew: true,
+    blurb: "Silently swallowed errors — your app fails with zero feedback instead of a helpful message" },
+  { key: "mobile_responsiveness", label: "Mobile Friendly", icon: Smartphone,    tone: "#22d3ee", cost: 4, isNew: true,
+    blurb: "Pages that break, overflow or go tiny on a real phone screen" },
+  { key: "documentation",         label: "Documentation",   icon: FileText,      tone: "#94a3b8", cost: 4, isNew: true,
+    blurb: "No README or setup steps — nobody (including future-you) can pick this project back up easily" },
 ];
 
 const SEV_META = {
@@ -58,13 +82,20 @@ const SEV_META = {
   other:    { color: "#cbd5e1", bg: "rgba(148,163,184,0.08)",br: "rgba(148,163,184,0.30)",label: "OTHER",    emoji: "⚪" },
 };
 
-function HealthBadge({ score, label, tone }) {
+function HealthBadge({ score, label, tone, breakdown }) {
   const palette = {
     critical: { bg: "linear-gradient(135deg, #4c0a0a 0%, #2a0606 100%)", border: "rgba(239,68,68,0.65)", glow: "rgba(239,68,68,0.45)", emoji: "☠️" },
     warn:     { bg: "linear-gradient(135deg, #4a2a06 0%, #2a1804 100%)", border: "rgba(245,158,11,0.55)", glow: "rgba(245,158,11,0.30)", emoji: "⚠️" },
     good:     { bg: "linear-gradient(135deg, #06294c 0%, #03182a 100%)", border: "rgba(56,189,248,0.55)", glow: "rgba(56,189,248,0.30)", emoji: "🔵" },
     healthy:  { bg: "linear-gradient(135deg, #06402a 0%, #032416 100%)", border: "rgba(34,197,94,0.55)",  glow: "rgba(34,197,94,0.30)",  emoji: "✅" },
   }[tone] || { bg: "#1a1f2e", border: "rgba(148,163,184,0.40)", glow: "transparent", emoji: "ℹ️" };
+  // 2026-10 — "Launch-ready X / 16" scorecard (founder spec): a category
+  // counts as "ready" once it has zero open findings, or its own
+  // per-category score is already in the GOOD/HEALTHY band (>=80) —
+  // same thresholds as `_category_label` in codebase_health_core.py.
+  const entries = Object.entries(breakdown || {});
+  const readyCount = entries.filter(([, v]) => (v?.total ?? 0) === 0 || (v?.score ?? 0) >= 80).length;
+  const totalCats = entries.length;
   return (
     <div data-testid="health-score" style={{
       padding: "28px 32px", borderRadius: 18, background: palette.bg,
@@ -93,6 +124,21 @@ function HealthBadge({ score, label, tone }) {
           background: palette.border, transition: "width 1.2s cubic-bezier(0.4, 0, 0.2, 1)",
         }} />
       </div>
+      {totalCats > 0 && (
+        <div data-testid="launch-ready-score" style={{
+          marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)",
+          display: "flex", alignItems: "baseline", gap: 10,
+        }}>
+          <span style={{ fontSize: 13, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: 0.5, textTransform: "uppercase" }}>
+            Launch-ready
+          </span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: readyCount === totalCats ? "#4ade80" : "#fff" }}>
+            {readyCount} / {totalCats}
+          </span>
+          <span style={{ fontSize: 13, color: "#94a3b8" }}>categories</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -712,7 +758,7 @@ function CodebaseHealthInner() {
         {/* Results */}
         {data && !scanning && (
           <>
-            <HealthBadge score={data.score} label={data.label} tone={data.tone} />
+            <HealthBadge score={data.score} label={data.label} tone={data.tone} breakdown={data.breakdown} />
             <p style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 22, lineHeight: 1.6 }}>
               Your codebase has <strong>{data.total}</strong> issues that could
               cause production outages, data leaks, and slow response times.

@@ -26,6 +26,7 @@ import LiveTaskPopup from "./LiveTaskPopup";
 import WarmStatusBar from "./WarmStatusBar";
 import GraphReadyCard from "./GraphReadyCard";
 import IdleStartHelper from "./IdleStartHelper";
+import FixListPanel from "./FixListPanel";
 import { useWarmStart } from "../hooks/useWarmStart";
 import GraphPanel from "./GraphPanel";
 import TemperatureBadge from "./TemperatureBadge";
@@ -5266,6 +5267,14 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       <IdleStartHelper
         projectId={activeProject?.project_id}
         visible={isWelcomeOnlyChat && !!activeProject?.project_id}
+      />
+      {/* 2026-10 — "Fix List" panel: unlike GraphReadyCard/IdleStartHelper
+          above, this stays available for the whole life of the chat
+          (not just the empty-chat moment) — a vibecoder comes back to
+          it over multiple sessions as they work through real findings. */}
+      <FixListPanel
+        projectId={activeProject?.project_id}
+        visible={!!activeProject?.project_id}
       />
       <div
         data-testid="chat-messages"
