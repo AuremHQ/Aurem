@@ -88,3 +88,24 @@ def test_unverified_confidence_items_are_never_shown_as_findings(monkeypatch):
     res = run_checkup({"a.py": "x"}, include_scanners=False)
     assert res["items"] == [] and res["score"] == run_checkup({}, include_scanners=False)["score"]
     assert [u["check"] for u in res["unverified"]] == ["maybe_bad"]
+
+
+def test_group_modules_register_themselves_without_a_shared_list(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from services import checkup_checks as cc
+    mod = types.ModuleType("services.checkup_checks_zz_probe")
+    mod.CHECKS = [("safe", "probe", lambda _tc: [])]
+    monkeypatch.setitem(sys.modules, "services.checkup_checks_zz_probe", mod)
+    real_iter = cc.pkgutil.iter_modules
+    monkeypatch.setattr(cc.pkgutil, "iter_modules",
+                        lambda path: list(real_iter(path)) + [types.SimpleNamespace(name="checkup_checks_zz_probe")])
+    assert ("safe", "probe", mod.CHECKS[0][2]) in cc._discover_v2()
+
+
+def test_stages_run_grouped_in_the_documented_order():
+    res = list(iter_checkup({"a.js": "x"}, include_scanners=False))
+    stages = [e["stage"] for e in res if e["type"] == "stage_started"]
+    assert stages == sorted(set(stages), key=stages.index)          # no stage announced twice
+    assert stages == [s for s in ("runs", "safe", "permissions", "launch") if s in stages]
