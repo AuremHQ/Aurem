@@ -78,4 +78,5 @@ async def casual_direct_reply(prompt: str, prior_assistant_text: str | None = No
         [{"role": "user", "content": prompt or ""}],
         system=system, max_tokens=200, temperature=0.6, user_id=user_id,
     )
-    return (reply or "").strip() or "Hey! How can I help you ship today?"
+    from services.reply_integrity import strip_prompt_echo
+    return strip_prompt_echo((reply or "").strip(), system, prompt or "") or "Hey! How can I help you ship today?"

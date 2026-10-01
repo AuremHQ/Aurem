@@ -136,6 +136,7 @@ def test_fenced_code_block_content_is_never_touched():
     assert 'f"File not found: {gif_path}"' in out
     assert "gif_path.stat().st_size" in out
     assert "except Exception:" in out
-    # The prose OUTSIDE the fence is still humanized as before.
-    assert "that file" in out.lower()
-    assert "validators.py" not in out.split("```")[0]
+    # CHANGED (chat-reliability PR B, owner directive "never alter code
+    # fences, inline code, paths"): a file name inside inline code is
+    # content, not prose, so it is no longer swapped for "that file".
+    assert "`validators.py`" in out.split("```")[0]
