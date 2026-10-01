@@ -72,3 +72,8 @@ def check_custom_auth_code(tc: dict[str, str]) -> list[dict]:
                     detail=f"{what} ({kind})",
                     fix_hint="Use a proven login provider or library (bcrypt/argon2 for passwords, secure random tokens) instead of custom code."))
     return out
+
+
+CHECKS = [
+    ("safe", "custom_auth_code", check_custom_auth_code),
+]
