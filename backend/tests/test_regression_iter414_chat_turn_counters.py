@@ -6,7 +6,7 @@ import asyncio
 import json
 
 import pytest
-from mongomock_motor import AsyncMongoMockClient
+from tests._mini_motor import AsyncMongoMockClient
 
 from services import chat_metrics
 
