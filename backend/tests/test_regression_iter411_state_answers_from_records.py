@@ -6,7 +6,7 @@ Found by the ORA chat reliability replay (turns 1, 2, 3, 4, 5).
 import asyncio
 
 import pytest
-from mongomock_motor import AsyncMongoMockClient
+from tests._mini_motor import AsyncMongoMockClient
 
 from services.session_state import load_state, render, route_kind
 
