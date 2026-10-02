@@ -21,7 +21,7 @@
  * lives in the top bar; merging would either break mobile help or
  * reintroduce the composer-overlap bug Advisor was moved to avoid).
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { Sparkles, Bug, CheckCircle2, Zap, ShieldCheck } from "lucide-react";
 import { api } from "../lib/api";
@@ -39,6 +39,7 @@ import { SLASH_COMMANDS } from "./SlashCommandMenu";
 // of the generic "How can I help?" menu — same underlying data source
 // PromptStarterPanel used (`/findings/starter-suggestions`).
 const SUGGESTION_ICONS = { sparkles: Sparkles, bug: Bug, check: CheckCircle2, zap: Zap, shield: ShieldCheck };
+const FIXLIST_SEV_DOT = { critical: "#ef4444", high: "#f97316", medium: "#facc15", low: "#38bdf8", info: "#94a3b8" };
 const FALLBACK_SUGGESTIONS = [
   { slug: "build-something-new", icon_hint: "sparkles", label: "Build something new", example: "I want a contact form on my website" },
   { slug: "somethings-broken", icon_hint: "bug", label: "Something's broken", example: "The login button doesn't work, please fix it" },
@@ -82,6 +83,29 @@ function markShownThisSession(group) {
 
 const POLL_MS = 15000;
 
+// 2026-10 — "Fix List → robot" spec. The old top-of-chat bar is gone;
+// its data (GET /findings/fix-list) now feeds this mascot instead.
+// Severity order comes pre-sorted from the backend; this only adds
+// the "never start with a test/vendor file" rule the backend has no
+// concept of — a stable push-to-the-back of anything that looks like
+// a test or third-party path, so the FIRST card shown is always a
+// real, fixable issue in the user's own code.
+const FIXLIST_NUDGE_KEY_PREFIX = "aurem_fixlist_nudge_v1_";
+function isLowPriorityFixFile(path) {
+  if (!path) return false;
+  const p = String(path).toLowerCase();
+  const base = p.split("/").pop() || "";
+  return /(^|\/)(tests?|__tests__|__mocks__|spec|node_modules|vendor|third[-_]?party|dist|build|\.venv|venv|site-packages)(\/|$)/.test(p)
+    || /\.(test|spec)\.[jt]sx?$/.test(base)
+    || /^test_.*\.py$/.test(base);
+}
+function orderFixListItems(items) {
+  const primary = [];
+  const deprioritized = [];
+  for (const it of items) (isLowPriorityFixFile(it.file) ? deprioritized : primary).push(it);
+  return [...primary, ...deprioritized];
+}
+
 // 2026-09-09 — founder ticket Part 0 (round 2): three separate
 // floating nudges (this mascot's own stage bubble, the standalone
 // "Try a task"/"Connect repo" EngagementNudge badge, and the
@@ -117,6 +141,53 @@ export default function OraGuideMascot() {
   const [hasUserMessage, setHasUserMessage] = useState(false);
   const firstScanCheckedForRef = useRef(null); // project_id already checked, so remounts don't re-fire
 
+  // 2026-10 — Fix List state (moved here from the old top-of-chat bar).
+  const [fixListItems, setFixListItems] = useState([]);
+  const [fixListTotal, setFixListTotal] = useState(0);
+  const [fixListIndex, setFixListIndex] = useState(0);
+  const oraBusyRef = useRef({ busy: false, typing: false });
+  const fixListNudgeTimerRef = useRef(null);
+
+  const loadFixList = useCallback(() => {
+    if (!effectiveProjectId) { setFixListItems([]); setFixListTotal(0); return; }
+    api.get("/findings/fix-list", { params: { project_id: effectiveProjectId, limit: 20 } })
+      .then((r) => {
+        const d = r?.data || r;
+        setFixListItems(orderFixListItems(Array.isArray(d.items) ? d.items : []));
+        setFixListTotal(d.total_open || 0);
+        setFixListIndex(0);
+      })
+      .catch(() => { /* soft-fail — badge just stays hidden */ });
+  }, [effectiveProjectId]);
+  useEffect(() => { loadFixList(); }, [loadFixList]);
+
+  // Live-remove an item the instant a real fix actually ships — same
+  // global event the old bar listened to (fired by FixJobContext on
+  // a confirmed commit), so the robot never shows a stale count.
+  useEffect(() => {
+    const onFixed = (e) => {
+      const fid = e?.detail?.finding_id;
+      if (!fid) return;
+      setFixListItems((prev) => {
+        const next = prev.filter((it) => it.finding_id !== fid);
+        setFixListIndex((i) => (next.length ? i % next.length : 0));
+        return next;
+      });
+      setFixListTotal((n) => Math.max(0, n - 1));
+    };
+    window.addEventListener("aurem:finding-fixed", onFixed);
+    return () => window.removeEventListener("aurem:finding-fixed", onFixed);
+  }, []);
+
+  // Track ORA-busy / user-typing (broadcast by ChatPanel) purely to
+  // gate the ONE-TIME auto-nudge below — manual clicks on the
+  // mascot are never blocked by this.
+  useEffect(() => {
+    const onStatus = (e) => { oraBusyRef.current = e?.detail || { busy: false, typing: false }; };
+    window.addEventListener("aurem:ora-busy-status", onStatus);
+    return () => window.removeEventListener("aurem:ora-busy-status", onStatus);
+  }, []);
+
   useEffect(() => {
     setLoggedIn(!!localStorage.getItem("aurem_token"));
     const onStorage = (e) => { if (e.key === "aurem_token") setLoggedIn(!!e.newValue); };
@@ -125,6 +196,32 @@ export default function OraGuideMascot() {
   }, [pathname]);
 
   const hidden = !loggedIn || shouldHide(pathname);
+
+  // At most one gentle nudge per session: once Fix List has open
+  // items for the active project, wait a moment (so it never wins a
+  // race against a page-load burst of other panels), then open IF
+  // nothing else is already showing/pending and ORA isn't busy/typing
+  // right now. Never auto-opens a second time this session even if
+  // conditions become true again later.
+  useEffect(() => {
+    if (fixListNudgeTimerRef.current) { clearTimeout(fixListNudgeTimerRef.current); fixListNudgeTimerRef.current = null; }
+    if (hidden || !effectiveProjectId || fixListItems.length === 0) return undefined;
+    const key = FIXLIST_NUDGE_KEY_PREFIX + effectiveProjectId;
+    let shown = false;
+    try { shown = sessionStorage.getItem(key) === "1"; } catch { /* ignore */ }
+    if (shown) return undefined;
+    fixListNudgeTimerRef.current = setTimeout(() => {
+      try { sessionStorage.setItem(key, "1"); } catch { /* ignore */ }
+      if (oraBusyRef.current.busy || oraBusyRef.current.typing) return;
+      setOpen((wasOpen) => {
+        if (wasOpen || autoGroup || secondaryNudge) return wasOpen;
+        setPanelMode("fixlist");
+        return true;
+      });
+    }, 4000);
+    return () => { if (fixListNudgeTimerRef.current) clearTimeout(fixListNudgeTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden, effectiveProjectId, fixListItems.length]);
 
   // Poll the live stage. Fires the auto-bubble the first time a
   // stage-group is seen this session; auto-closes if the user
@@ -268,11 +365,39 @@ export default function OraGuideMascot() {
   function toggleOpen() {
     if (open) { setOpen(false); return; }
     // Manual click shows the onboarding stage bubble if one's still
-    // pending; else a secondary nudge if one's eligible; otherwise
-    // once a project is active, project suggestions/issues; else the
-    // generic help menu.
-    setPanelMode(autoGroup ? "stage" : (secondaryNudge ? secondaryNudge.kind : (effectiveProjectId ? "suggestions" : "general")));
+    // pending; else a secondary nudge if one's eligible; else the
+    // Fix List if there's anything open; otherwise once a project is
+    // active, project suggestions/issues; else the generic help menu.
+    // Manual clicks are NEVER gated by busy/typing — only the
+    // one-time auto-nudge is.
+    setPanelMode(autoGroup
+      ? "stage"
+      : (secondaryNudge
+        ? secondaryNudge.kind
+        : (fixListItems.length > 0
+          ? "fixlist"
+          : (effectiveProjectId ? "suggestions" : "general"))));
     setOpen(true);
+  }
+
+  // "Fix" never writes to the repo by itself — it prefills the same
+  // composer the chat uses (identical to a suggestion-chip pick) so
+  // the request goes through the exact same scan → propose → ship-
+  // approval pipeline as if the user had typed it, never a direct
+  // /fix-pipeline call from this component.
+  function fixItem(it) {
+    if (!it) return;
+    const where = it.file ? ` in ${it.file}${it.line ? `:${it.line}` : ""}` : "";
+    const prompt = `Fix: ${it.title || it.rule_id}${where}`;
+    window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt } }));
+    dismiss();
+  }
+  function fixCurrentItem() { fixItem(fixListItems[fixListIndex]); }
+  function nextFixItem() {
+    setFixListIndex((i) => (fixListItems.length ? (i + 1) % fixListItems.length : 0));
+  }
+  function openFixListAll() {
+    setPanelMode("fixlist-all");
   }
 
   function dismiss() {
@@ -375,7 +500,7 @@ export default function OraGuideMascot() {
           data-testid="ora-guide-bubble"
           style={{
             position: "absolute", bottom: 52, right: 0,
-            width: panelMode === "suggestions" ? 300 : 280, background: "#141414",
+            width: (panelMode === "suggestions" || panelMode === "fixlist-all") ? 300 : 280, background: "#141414",
             border: "1px solid rgba(255,102,8,0.28)",
             borderRadius: 12, padding: "14px 16px",
             boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
@@ -383,9 +508,10 @@ export default function OraGuideMascot() {
             // 2026-09-21 — the "suggestions" panel now also lists the
             // 5 scan commands below the project suggestions; cap the
             // height so it scrolls instead of overflowing the
-            // viewport on shorter screens.
-            maxHeight: panelMode === "suggestions" ? "min(70vh, 560px)" : undefined,
-            overflowY: panelMode === "suggestions" ? "auto" : undefined,
+            // viewport on shorter screens. 2026-10 — "fixlist-all" can
+            // list up to 20 items, same cap/scroll treatment.
+            maxHeight: (panelMode === "suggestions" || panelMode === "fixlist-all") ? "min(70vh, 560px)" : undefined,
+            overflowY: (panelMode === "suggestions" || panelMode === "fixlist-all") ? "auto" : undefined,
           }}
         >
           <div style={{
@@ -534,6 +660,96 @@ export default function OraGuideMascot() {
             </>
           )}
 
+          {panelMode === "fixlist" && (
+            <>
+              {fixListItems[fixListIndex] ? (
+                <>
+                  <div data-testid="ora-guide-fixlist-sev"
+                       style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <span style={{
+                      width: 7, height: 7, borderRadius: 999, flexShrink: 0,
+                      background: FIXLIST_SEV_DOT[fixListItems[fixListIndex].severity] || FIXLIST_SEV_DOT.medium,
+                    }} />
+                    <span style={{ fontSize: 10, color: "#9aa0aa", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      {fixListItems[fixListIndex].severity || "medium"} · {fixListIndex + 1} of {fixListItems.length}
+                    </span>
+                  </div>
+                  <div data-testid="ora-guide-fixlist-title"
+                       style={{ fontSize: 13, color: "#f8fafc", fontWeight: 600, lineHeight: 1.4, marginBottom: 4 }}>
+                    {fixListItems[fixListIndex].title || fixListItems[fixListIndex].rule_id}
+                  </div>
+                  {fixListItems[fixListIndex].message && (
+                    <div style={{ fontSize: 12, color: "#9aa0aa", lineHeight: 1.45, marginBottom: 6 }}>
+                      {fixListItems[fixListIndex].message}
+                    </div>
+                  )}
+                  {fixListItems[fixListIndex].file && (
+                    <div data-testid="ora-guide-fixlist-file"
+                         style={{ fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono', monospace",
+                                  marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {fixListItems[fixListIndex].file}{fixListItems[fixListIndex].line ? `:${fixListItems[fixListIndex].line}` : ""}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button data-testid="ora-guide-fixlist-fix" type="button" onClick={fixCurrentItem} style={primaryBtnStyle}>
+                      Fix
+                    </button>
+                    {fixListItems.length > 1 && (
+                      <button data-testid="ora-guide-fixlist-next" type="button" onClick={nextFixItem} style={menuBtnStyle}>
+                        Next
+                      </button>
+                    )}
+                    <button data-testid="ora-guide-fixlist-seeall" type="button" onClick={openFixListAll} style={linkBtnStyle}>
+                      See all ({fixListTotal})
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 13, color: "#f8fafc" }}>Nothing open right now — you're all caught up.</div>
+              )}
+            </>
+          )}
+
+          {panelMode === "fixlist-all" && (
+            <>
+              <div data-testid="ora-guide-fixlist-all-intro"
+                   style={{ fontSize: 12, color: "#9aa0aa", marginBottom: 8 }}>
+                {fixListTotal} open issue{fixListTotal === 1 ? "" : "s"}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {fixListItems.map((it) => (
+                  <div key={it.finding_id} data-testid={`ora-guide-fixlist-all-item-${it.finding_id}`}
+                       style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
+                                borderTop: "1px solid rgba(148,163,184,0.10)" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: 999, flexShrink: 0,
+                                   background: FIXLIST_SEV_DOT[it.severity] || FIXLIST_SEV_DOT.medium }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 500 }}>{it.title || it.rule_id}</div>
+                      {it.file && (
+                        <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace",
+                                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {it.file}{it.line ? `:${it.line}` : ""}
+                        </div>
+                      )}
+                    </div>
+                    <button data-testid={`ora-guide-fixlist-all-fix-${it.finding_id}`} type="button"
+                            onClick={() => fixItem(it)} style={{ ...menuBtnStyle, padding: "4px 10px", fontSize: 11 }}>
+                      Fix
+                    </button>
+                  </div>
+                ))}
+                {fixListTotal > fixListItems.length && (
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                    + {fixListTotal - fixListItems.length} more — open Codebase Health to see everything.
+                  </div>
+                )}
+              </div>
+              <button data-testid="ora-guide-close" type="button" onClick={dismiss} style={linkBtnStyle}>
+                Close
+              </button>
+            </>
+          )}
+
           {panelMode === "escalating" && (
             <div style={{ fontSize: 12, color: "var(--text-faint, #999)" }}>Sending…</div>
           )}
@@ -567,6 +783,21 @@ export default function OraGuideMascot() {
                        background: "#0b0b0b", borderRadius: "50%", animation: "oraGuideBlink 4.5s infinite 0.08s" }} />
         <span style={{ position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)",
                        width: 12, height: 3, background: "#0b0b0b", borderRadius: 2 }} />
+        {fixListTotal > 0 && (
+          <span
+            data-testid="ora-guide-fixlist-badge"
+            aria-label={`${fixListTotal} open issue${fixListTotal === 1 ? "" : "s"}`}
+            style={{
+              position: "absolute", top: -4, right: -4,
+              minWidth: 17, height: 17, padding: "0 4px", borderRadius: 999,
+              background: "#ef4444", color: "#fff",
+              fontSize: 10, fontWeight: 700, lineHeight: "17px", textAlign: "center",
+              border: "2px solid #0b0b0b", fontFamily: "var(--font-mono, ui-monospace, monospace)",
+            }}
+          >
+            {fixListTotal > 99 ? "99+" : fixListTotal}
+          </span>
+        )}
       </button>
     </div>
   );

@@ -27,6 +27,7 @@ from services.chat_helpers import (
     _maybe_set_title,
     _persist_turn,
     retrieved_context_for_grounding, run_rendering_pipeline,
+    scan_findings_context_for_grounding,
 )
 from .misc import (
     PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT,
@@ -974,9 +975,13 @@ async def chat_stream(
         # chat_helpers.py) — the exact same call turn.py makes, so
         # the two call sites can never silently drift out of
         # order/sync.
+        # 2026-10 — C1 fix: same scan-findings grounding fold as
+        # turn.py's chat_send path (see chat_helpers.
+        # scan_findings_context_for_grounding's docstring).
+        _scan_ctx = await scan_findings_context_for_grounding(body.project_id)
         content, _render_trace = await run_rendering_pipeline(
             body.prompt or "", content, state.prior_fix_signal,
-            retrieved_context_for_grounding(extra_sys, result),
+            retrieved_context_for_grounding(extra_sys, result) + "\n" + _scan_ctx,
             skip=bool(result.get("_skip_output_guards")),
             tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
             session_id=body.session_id, user_id=user_id,

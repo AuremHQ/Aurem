@@ -421,6 +421,75 @@ def apply_live_content_claim_guard(reply: str, tool_calls_run: int) -> str:
     return UNGROUNDED_LIVE_CONTENT_MESSAGE
 
 
+# ─── 2026-10 · C1 fix — security-finding / CVE grounding ───────────
+#
+# Founder report: in casual (short-message) mode — "?", "continue",
+# anything with no new scan/tool call this turn — ORA sometimes
+# states specific security findings and CVE IDs that were never in
+# any real scan. Neither `apply_fabricated_content_guard` (scoped to
+# "line N shows 'X'" content quotes) nor `apply_live_content_claim_
+# guard` (scoped to "I checked the live site" claims) recognizes a
+# security-finding-shaped claim at all — this is a genuine coverage
+# gap, not a narrower version of either existing guard.
+#
+# Rule: a reply may state a finding only if it comes from a stored
+# scan record or a file read this same turn. Operationally: the CVE
+# ID / finding title it names must be an exact substring of
+# `retrieved_context` — which, per the chat_helpers.py wiring, is now
+# this turn's tool results PLUS the project's stored
+# `cto_open_findings` rows (see scan_findings_context_for_grounding).
+# A CVE-pattern match is the hard, zero-ambiguity trigger (a real CVE
+# ID is either in the grounding text or it was invented — there is no
+# middle ground); this deliberately does NOT try to pattern-match
+# every possible way of phrasing "I found a vulnerability" (that is
+# the softer, log-only job `run_post_response_check`/`classify_claims`
+# already do for fabricated FILE paths).
+_CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+
+UNGROUNDED_SECURITY_FINDING_MESSAGE = (
+    "I don't have a stored scan result or a file I've read this turn "
+    "confirming that CVE / finding — I shouldn't state it as fact. "
+    "Want me to run a real scan (or open the specific file) before we "
+    "talk about what it actually found?"
+)
+
+
+def extract_cve_claims(reply: str) -> list[str]:
+    """De-duped list of CVE IDs mentioned in `reply`, original casing
+    preserved from first occurrence."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _CVE_RE.finditer(reply or ""):
+        cve = m.group(0)
+        key = cve.upper()
+        if key not in seen:
+            seen.add(key)
+            out.append(cve)
+    return out
+
+
+def contains_ungrounded_security_finding_claim(reply: str, grounding_text: str) -> bool:
+    """True iff `reply` names a CVE ID that is not an exact substring
+    of `grounding_text` (this turn's tool results + the project's
+    stored scan findings)."""
+    cves = extract_cve_claims(reply)
+    if not cves:
+        return False
+    ctx = grounding_text or ""
+    return any(cve.upper() not in ctx.upper() for cve in cves)
+
+
+def apply_ungrounded_security_finding_guard(reply: str, grounding_text: str) -> str:
+    """Swaps the ENTIRE reply for an honest message when it names a
+    CVE ID that isn't backed by a stored scan record or a file read
+    this turn. Same "replace the whole turn" posture as the two
+    guards above — a fabricated CVE sitting next to otherwise-real
+    content is still a fabricated CVE."""
+    if not contains_ungrounded_security_finding_claim(reply, grounding_text):
+        return reply
+    return UNGROUNDED_SECURITY_FINDING_MESSAGE
+
+
 def extract_unknown_commands(reply: str) -> list[str]:
     """Slash-command tokens in the reply that are NOT real ORA
     commands (e.g. an invented `/deploy-production`).

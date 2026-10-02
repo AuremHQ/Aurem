@@ -339,21 +339,37 @@ async def _call_longcat(system: str, user: str,
     # and the frontend sanitizer collapses them to empty → the ugly
     # "no visible reply" placeholder the founder saw on prod.
     #
-    # Fix: treat a tool-call-only response the same way as a truly
-    # empty one — flip LONGCAT_LIVE=false so the next call goes
-    # straight to GLM, then fall through to GLM for THIS request too.
-    # No user-visible retry latency change vs. the existing empty-body
-    # branch below.
+    # 2026-10 — C2 fix. The ABOVE comment is only half the bug. When
+    # LongCat emits a MIXED reply — real prose PLUS a tool-call tag
+    # (e.g. "Let me check that file.\n<longcat_tool_call>read_repo_file
+    # {...}</longcat_tool_call>") — `_stripped_len` is > 0 (the prose
+    # survives), so this branch never fired and `return content` below
+    # sent the RAW, UNSTRIPPED tag straight into the user-facing reply:
+    # the collapsed header showed the truncated tag text
+    # ("<longcat_tool_c...") and the pipeline never executed it either
+    # way (same "we only route real OpenAI-format tool_calls" limit
+    # applies to mixed replies too) — yet the turn still closed as a
+    # normal, successful reply. A promised-and-never-run action must
+    # never read as delivered, so ANY detected tag now falls back to
+    # GLM-5.2 for a complete, properly-tool-executing answer — not
+    # just the no-prose-left case.
+    _raw_len = len((content or "").strip())
     _stripped_len = _strip_tool_call_xml_len(content or "")
-    if _stripped_len == 0 and (content or "").strip():
-        if _p.LONGCAT_LIVE:
+    if _raw_len and _stripped_len < _raw_len:
+        if _p.LONGCAT_LIVE and _stripped_len == 0:
+            # Only flip the live flag off for the pure-tool-call-only
+            # shape — that one means LongCat gave up on prose entirely
+            # for this turn. A mixed reply still had real prose; one
+            # leaked tag alongside it isn't proof the model is down.
             _p.set_longcat_live(False)
-            logger.warning(
-                "_call_longcat: %s returned tool-call-only content "
-                "(len_raw=%d, len_after_strip=0) — flipping LONGCAT_LIVE=False, "
-                "Council A on GLM-5.2 until next restart.",
-                _LONGCAT_MODEL, len(content or ""),
-            )
+        logger.warning(
+            "_call_longcat: %s returned a tool-call tag the pipeline "
+            "can't execute (len_raw=%d, len_after_strip=%d, "
+            "mixed_with_prose=%s) — falling back to GLM-5.2 so the "
+            "turn resolves with a real answer instead of a leaked tag.",
+            _LONGCAT_MODEL, len(content or ""), _stripped_len,
+            _stripped_len > 0,
+        )
         try:
             return await _call_glm(
                 system=system, user=user,

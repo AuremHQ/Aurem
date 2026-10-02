@@ -26,7 +26,7 @@ import LiveTaskPopup from "./LiveTaskPopup";
 import WarmStatusBar from "./WarmStatusBar";
 import GraphReadyCard from "./GraphReadyCard";
 import IdleStartHelper from "./IdleStartHelper";
-import FixListPanel from "./FixListPanel";
+
 import { useWarmStart } from "../hooks/useWarmStart";
 import GraphPanel from "./GraphPanel";
 import TemperatureBadge from "./TemperatureBadge";
@@ -570,6 +570,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     window.addEventListener("aurem:composer-status-request", onRequest);
     return () => window.removeEventListener("aurem:composer-status-request", onRequest);
   }, [detectedMode, serverMode]);
+  // 2026-10 — "Fix List → robot" spec: OraGuideMascot must never
+  // auto-pop its Fix List nudge while ORA is working (`busy`) or
+  // while the user is mid-keystroke (`input` non-empty). Broadcast
+  // both so the mascot (which has no other way to see chat state)
+  // can gate its own auto-open logic — manual clicks on the mascot
+  // itself are NOT gated by this, only the one-per-session nudge is.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent("aurem:ora-busy-status", {
+        detail: { busy, typing: input.length > 0 },
+      }));
+    } catch { /* noop */ }
+  }, [busy, input]);
   // Iter 330 — F12 action listeners moved further down (after taRef
   // + lastF12PayloadRef are declared). See the useEffect block after
   // taRef around line ~395 in this file. Split here to avoid TDZ
@@ -638,11 +651,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // exactly once so Shell.jsx can hide the sidebar after the first
   // send (not on every keystroke).
   const sessionStartedRef = useRef(false);
+  // 2026-10 — Sidebar "AUTO" root-cause fix. This used to be the
+  // SAME ref the real-send dispatch below (~line 2300) checked —
+  // but the history-restore effect (~line 1806) fires FIRST on any
+  // reload where the session already has turns (i.e. almost every
+  // real session) and flips `sessionStartedRef.current = true` while
+  // dispatching `restored: true` — which RailShell.jsx intentionally
+  // ignores. With a shared ref, the REAL send dispatch a few lines
+  // down was then permanently gated off (`if (!sessionStartedRef...)`)
+  // for the rest of that session, so "AUTO" never collapsed the rail
+  // for any returning user. Separate ref, separate concern.
+  const realSendStartedRef = useRef(false);
   // Reset the flag whenever the session changes (new chat, switched
   // project) so the sidebar reappears in the fresh session until the
   // user actually sends something.
   useEffect(() => {
     sessionStartedRef.current = false;
+    realSendStartedRef.current = false;
     // TC-11 fix (Feb 2026) — clear the textarea composer whenever the
     // session rotates so the "New run" button leaves the composer
     // visibly empty. Without this, rotating `sessionId` cleared the
@@ -2280,12 +2305,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     //
     // Fix: hoist the dispatch here — AFTER input-validity guard has
     // passed (so we only fire on real user sends) but BEFORE any
-    // mode-specific branching. The `sessionStartedRef` gate keeps
-    // this idempotent across the rest of a session; `promptOverride`
+    // mode-specific branching. `realSendStartedRef` (own ref, not
+    // shared with the history-restore path above) keeps this
+    // idempotent across the rest of a session; `promptOverride`
     // (internal re-invocations like plan-approve execute-phase) also
     // reuse the same ref so they never re-fire.
-    if (!sessionStartedRef.current && promptOverride == null) {
-      sessionStartedRef.current = true;
+    if (!realSendStartedRef.current && promptOverride == null) {
+      realSendStartedRef.current = true;
       try {
         window.dispatchEvent(new CustomEvent("aurem:chat-session-started", {
           detail: { session_id: sessionId },
@@ -5290,19 +5316,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         projectId={activeProject?.project_id}
         visible={isWelcomeOnlyChat && !!activeProject?.project_id}
       />
-      {/* 2026-10 — "Fix List" panel: unlike GraphReadyCard/IdleStartHelper
-          above, this stays available for the whole life of the chat
-          (not just the empty-chat moment) — a vibecoder comes back to
-          it over multiple sessions as they work through real findings. */}
-      {/* 2026-10 · width-rail fix — wrapped in `.chat-inline-card` so
-          the panel's left/right edges match the composer instead of
-          spanning full edge-to-edge chat-pane width. */}
-      <div className="chat-inline-card">
-        <FixListPanel
-          projectId={activeProject?.project_id}
-          visible={!!activeProject?.project_id}
-        />
-      </div>
+      {/* 2026-10 — "Fix List" top bar removed per founder spec: the
+          open-findings list now lives in the ORA mascot (bottom-right)
+          instead of a persistent bar at the top of chat. See
+          OraGuideMascot.jsx's "fixlist" / "fixlist-all" panel modes —
+          same /findings/fix-list data source, no parallel list. */}
       <div
         data-testid="chat-messages"
         style={{
