@@ -25,7 +25,7 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
-  CheckCircle2, FileText, X, Loader2, ExternalLink, ShieldAlert,
+  CheckCircle2, FileText, X, Loader2, ExternalLink, ShieldAlert, Check,
 } from "lucide-react";
 import { api } from "../lib/api";
 import useModalA11y from "../hooks/useModalA11y";
@@ -59,6 +59,9 @@ export default function ShipConfirmModal() {
   const [scan, setScan]         = useState(null);
   const [rbBusy, setRbBusy]     = useState(false);
   const [rbConfirmOpen, setRbConfirmOpen] = useState(false);
+  // 2026-10 · redesign — click-to-copy SHA chip now flips to a
+  // checkmark for 1.5s so copy success is visible, not just inferred.
+  const [shaCopied, setShaCopied] = useState(false);
   const [err, setErr]           = useState("");
   const pollRef = useRef(null);
 
@@ -422,18 +425,24 @@ export default function ShipConfirmModal() {
                   title={task?.full_sha || sha}
                   onClick={() => {
                     // Iter 212m-107 — click to copy full SHA to clipboard.
-                    try { navigator.clipboard?.writeText(task?.full_sha || sha); } catch { /* ignore */ }
+                    try {
+                      navigator.clipboard?.writeText(task?.full_sha || sha);
+                      setShaCopied(true);
+                      setTimeout(() => setShaCopied(false), 1500);
+                    } catch { /* ignore */ }
                   }}
                   style={{
                     marginLeft: "auto", padding: "2px 8px", borderRadius: 999,
-                    background: "rgba(255,102,8,0.10)",
-                    border: "1px solid rgba(255,102,8,0.32)",
-                    color: "#FF6608",
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: shaCopied ? "rgba(34,197,94,0.14)" : "rgba(255,102,8,0.10)",
+                    border: `1px solid ${shaCopied ? "rgba(34,197,94,0.5)" : "rgba(255,102,8,0.32)"}`,
+                    color: shaCopied ? "#4ade80" : "#FF6608",
                     fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
                     cursor: "pointer", userSelect: "all",
                   }}
                 >
-                  {sha.slice(0, 7)}
+                  {shaCopied ? <Check size={10} /> : null}
+                  {shaCopied ? "Copied" : sha.slice(0, 7)}
                 </span>
               )}
             </div>

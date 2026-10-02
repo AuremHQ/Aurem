@@ -9,7 +9,7 @@
  * already uses — no parallel fix machinery, no mocked data.
  */
 import React, { useEffect, useState, useCallback } from "react";
-import { ChevronDown, ChevronRight, Wrench, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Wrench, Loader2, X } from "lucide-react";
 import { api } from "../lib/api";
 
 const SEV_DOT = {
@@ -26,6 +26,11 @@ export default function FixListPanel({ projectId, visible = true }) {
   const [totalOpen, setTotalOpen] = useState(0);
   const [loading, setLoading] = useState(false);
   const [busyIds, setBusyIds] = useState(() => new Set());
+  // 2026-10 · founder spec — close (×) toggle. Session-scoped per
+  // project: dismissing hides the panel until the project changes or
+  // the page reloads, same pattern as the other chat-pane banners.
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => { setDismissed(false); }, [projectId]);
 
   const load = useCallback(() => {
     if (!projectId) return;
@@ -56,7 +61,7 @@ export default function FixListPanel({ projectId, visible = true }) {
     return () => window.removeEventListener("aurem:finding-fixed", onFixed);
   }, []);
 
-  if (!visible || !projectId || (!loading && items.length === 0)) return null;
+  if (!visible || !projectId || dismissed || (!loading && items.length === 0)) return null;
 
   async function fixItem(it) {
     if (busyIds.has(it.finding_id)) return;
@@ -89,24 +94,40 @@ export default function FixListPanel({ projectId, visible = true }) {
       border: "1px solid rgba(148,163,184,0.18)",
       background: "rgba(15,23,42,0.55)", overflow: "hidden",
     }}>
-      <button
-        data-testid="fix-list-panel-toggle"
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          width: "100%", display: "flex", alignItems: "center", gap: 10,
-          padding: "10px 14px", background: "transparent", border: "none",
-          cursor: "pointer", color: "#e2e8f0", fontSize: 13, fontWeight: 600,
-        }}>
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Wrench size={14} style={{ color: "#fbbf24" }} />
-        <span>Fix List</span>
-        <span style={{
-          marginLeft: "auto", fontSize: 12, color: "#94a3b8",
-          fontFamily: "'JetBrains Mono', monospace",
-        }}>
-          {loading ? <Loader2 size={12} className="anim-spin" /> : `${totalOpen} open`}
-        </span>
-      </button>
+      <div style={{ display: "flex", alignItems: "center" }}>
+        <button
+          data-testid="fix-list-panel-toggle"
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            flex: 1, display: "flex", alignItems: "center", gap: 10,
+            padding: "10px 14px", background: "transparent", border: "none",
+            cursor: "pointer", color: "#e2e8f0", fontSize: 13, fontWeight: 600,
+          }}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <Wrench size={14} style={{ color: "#fbbf24" }} />
+          <span>Fix List</span>
+          <span style={{
+            marginLeft: "auto", fontSize: 12, color: "#94a3b8",
+            fontFamily: "'JetBrains Mono', monospace",
+          }}>
+            {loading ? <Loader2 size={12} className="anim-spin" /> : `${totalOpen} open`}
+          </span>
+        </button>
+        <button
+          type="button"
+          data-testid="fix-list-panel-close"
+          aria-label="Close fix list"
+          title="Close"
+          onClick={(e) => { e.stopPropagation(); setDismissed(true); }}
+          style={{
+            flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+            width: 28, height: 28, margin: "0 8px 0 0",
+            background: "transparent", border: "none", borderRadius: 6,
+            color: "#64748b", cursor: "pointer",
+          }}>
+          <X size={14} />
+        </button>
+      </div>
       {open && (
         <div style={{ padding: "0 14px 12px" }}>
           {items.map((it) => (

@@ -17,7 +17,7 @@ import { hasVerifiedReview } from "../utils/interactionState";
 import { InteractionStatus } from "./InteractionStatus";
 import {
   User, Bot, Loader2, ShieldCheck, AlertTriangle, RefreshCw,
-  Copy as CopyIcon, ThumbsUp, ThumbsDown, Zap, X,
+  Copy as CopyIcon, Check, ThumbsUp, ThumbsDown, Zap, X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
@@ -894,7 +894,9 @@ export default function MessageBubble({
             whiteSpace: "pre-wrap", wordBreak: "break-word",
           }}
         >
-          {/* Floating copy button for USER bubbles — appears on hover only */}
+          {/* Floating copy button for USER bubbles — appears on hover only.
+              2026-10 · redesign — icon swaps to a checkmark (not just a
+              color/title change) so "copied" is unmistakable at a glance. */}
           {showUserCopy && (
             <button
               data-testid={`copy-user-${idx}`}
@@ -907,18 +909,18 @@ export default function MessageBubble({
                 width: 24, height: 24,
                 display: "inline-flex",
                 alignItems: "center", justifyContent: "center",
-                background: "var(--panel-2)",
-                border: "1px solid var(--border)",
+                background: copied ? "rgba(34,197,94,0.14)" : "var(--panel-2)",
+                border: `1px solid ${copied ? "rgba(34,197,94,0.5)" : "var(--border)"}`,
                 borderRadius: 4,
                 color: copied ? "var(--ok)" : "var(--text-dim)",
                 cursor: "pointer",
-                opacity: hover ? 1 : 0,
-                transition: "opacity 0.15s ease",
+                opacity: hover || copied ? 1 : 0,
+                transition: "opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease",
                 pointerEvents: hover ? "auto" : "none",
                 padding: 0,
               }}
             >
-              <CopyIcon size={12} />
+              {copied ? <Check size={12} /> : <CopyIcon size={12} />}
             </button>
           )}
           {/* Iter 148 — Monaco-powered code rendering for fenced blocks.
@@ -1448,7 +1450,7 @@ export default function MessageBubble({
             transition: "opacity 0.15s ease",
             pointerEvents: hover ? "auto" : "none",
           }}>
-            <ActionBtn testid={`copy-${idx}`} title={copied ? "Copied!" : "Copy"} onClick={copyText} Icon={CopyIcon} active={copied} color="rgba(234,179,8,0.55)" />
+            <ActionBtn testid={`copy-${idx}`} title={copied ? "Copied!" : "Copy"} onClick={copyText} Icon={copied ? Check : CopyIcon} active={copied} color="rgba(234,179,8,0.55)" />
             <ActionBtn testid={`thumbs-up-${idx}`} title="Good reply" onClick={() => sendVote("up")} Icon={ThumbsUp} active={vote === "up"} color="rgba(109,212,161,0.55)" />
             <ActionBtn testid={`thumbs-down-${idx}`} title="Bad reply — we'll refine" onClick={() => sendVote("down")} Icon={ThumbsDown} active={vote === "down"} color="rgba(255,107,107,0.55)" />
           </div>

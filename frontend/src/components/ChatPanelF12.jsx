@@ -15,6 +15,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Copy, Check } from "lucide-react";
 
 // ─── F12 error badge hook ──────────────────────────────────────────────────
 export function useF12Errors() {
@@ -89,7 +90,19 @@ export function detectMode(message) {
 //      ChatPanel.jsx (iter 212m-109) still runs on top of these
 //      changes as belt-and-suspenders defence.
 export function F12Badge({ errorCount, hasErrors, onSendToORA, onCopyPayload }) {
+  // 2026-10 · redesign — the actual clipboard write happens one level
+  // up in ChatPanel's `onCopyPayload` handler, so this button can't
+  // read a real "did it succeed" result back. It optimistically flips
+  // to a checkmark for 1.5s on click, same pattern as every other
+  // copy control in the app. (Hook must run before the early return
+  // below, per rules-of-hooks.)
+  const [copied, setCopied] = useState(false);
   if (!hasErrors) return null;
+  const handleCopyClick = () => {
+    onCopyPayload?.();
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   const badgeBase = {
     display: "inline-flex", alignItems: "center", gap: 6,
@@ -162,12 +175,13 @@ export function F12Badge({ errorCount, hasErrors, onSendToORA, onCopyPayload }) 
           type="button"
           data-testid="f12-badge-copy-action"
           aria-label="Copy captured console errors to clipboard (read-only, does not send)"
-          onClick={onCopyPayload}
+          onClick={handleCopyClick}
           style={{
             appearance: "none",
-            background: "transparent",
-            color: "#9aa0a8",
-            border: "1px solid #1f2937",
+            display: "inline-flex", alignItems: "center", gap: 4,
+            background: copied ? "#22c55e1a" : "transparent",
+            color: copied ? "#4ade80" : "#9aa0a8",
+            border: `1px solid ${copied ? "#22c55e66" : "#1f2937"}`,
             borderRadius: 6,
             padding: "3px 10px",
             fontSize: 11,
@@ -177,7 +191,8 @@ export function F12Badge({ errorCount, hasErrors, onSendToORA, onCopyPayload }) 
             cursor: "pointer",
           }}
         >
-          Copy
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+          {copied ? "Copied" : "Copy"}
         </button>
       )}
     </div>
