@@ -1364,6 +1364,24 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refreshUsage(); }, [refreshUsage]);
 
+  // 2026-10 — Bug fix: a user who upgrades their plan on /settings (or
+  // via a Stripe Checkout redirect/new tab) and then switches back to
+  // an already-open chat tab saw a STALE "251% tokens used" banner
+  // computed against their OLD tier's limit — `refreshUsage` only ran
+  // once on mount and had no mechanism to learn the plan changed.
+  // Same visibility-triggered re-check pattern as PaymentFailedBanner.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshUsage();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const interval = setInterval(onVisible, 60000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(interval);
+    };
+  }, [refreshUsage]);
+
   // Iter 364 · Phase 3 — Listen for the api.js 402 interceptor event
   // so a rejected /chat/send call shows the correct upgrade toast
   // instead of the generic "something went wrong" fallback, AND
