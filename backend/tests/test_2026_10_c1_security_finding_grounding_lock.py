@@ -35,6 +35,7 @@ if str(BACKEND) not in sys.path:
 from services.ora_chat.grounding_check import (          # noqa: E402
     apply_ungrounded_security_finding_guard,
     extract_cve_claims,
+    extract_security_finding_claims,
     UNGROUNDED_SECURITY_FINDING_MESSAGE,
 )
 
@@ -44,6 +45,20 @@ REAL_SCAN_FINDING_CTX = (
     "upgrade to >=3.1.3."
 )
 FABRICATED_CVE = "CVE-2019-99999"  # never appears in REAL_SCAN_FINDING_CTX
+
+# ─── 2026-10 round 2 — founder's real repro set was NOT only CVEs ───
+# Real stored finding this time: a rate-limit gap AND a bcrypt
+# version note, both genuinely in the scan record this turn.
+REAL_NON_CVE_CTX = (
+    "Login endpoint has no rate limit, allowing roughly 1000x more "
+    "attempts than a normal brute-force guard permits | "
+    "auth_rate_limit_missing | routers/auth.py:88 | "
+    "bcrypt 4.0.1 -> 4.1.2 is also recommended, current hashing is fine."
+)
+# Fabricated variants — plausible-sounding, but NOT the stored finding.
+FABRICATED_RATE_LIMIT = "the rate limit is broken, allowing 5000x more requests than intended"
+FABRICATED_VERSION_BUMP = "bcrypt 5.0.0 -> 5.1.0 fixes a timing side-channel"
+FABRICATED_WEAK_SECRET = "the JWT keys are weak and can be brute-forced offline"
 
 
 @pytest.mark.parametrize("prompt", ["?", "continue"])
@@ -95,6 +110,73 @@ def test_mixed_reply_real_cve_plus_fabricated_cve_is_still_blocked():
     )
     out = apply_ungrounded_security_finding_guard(reply, REAL_SCAN_FINDING_CTX)
     assert out == UNGROUNDED_SECURITY_FINDING_MESSAGE
+
+
+@pytest.mark.parametrize("prompt", ["?", "continue"])
+@pytest.mark.parametrize("real_reply", [
+    "Still open: no rate limit on login, ~1000x more attempts than a "
+    "normal guard allows (routers/auth.py:88) — want me to add one?",
+    "Also noted: bcrypt 4.0.1 -> 4.1.2 is recommended (current hashing is fine).",
+], ids=["rate-limit-claim", "version-bump-claim"])
+def test_real_non_cve_finding_passes_unchanged_3x(prompt, real_reply):
+    """Founder's actual repro set: rate-limit/version-bump claims that
+    genuinely match the stored finding must pass through untouched,
+    every time, for both "?" and "continue"."""
+    results = [
+        apply_ungrounded_security_finding_guard(real_reply, REAL_NON_CVE_CTX)
+        for _ in range(3)
+    ]
+    assert results == [real_reply, real_reply, real_reply], (
+        f"grounded non-CVE finding must pass through identically every "
+        f"time for prompt={prompt!r}, got: {results}"
+    )
+
+
+@pytest.mark.parametrize("prompt", ["?", "continue"])
+@pytest.mark.parametrize("fabricated_reply", [
+    FABRICATED_RATE_LIMIT, FABRICATED_VERSION_BUMP, FABRICATED_WEAK_SECRET,
+], ids=["rate-limit", "version-bump", "weak-secret"])
+def test_fabricated_non_cve_finding_blocked_every_time_3x(prompt, fabricated_reply):
+    """Founder's exact failures: "broken rate limits ... 1000x",
+    "outdated bcrypt 5.0.0 -> 5.1.0", "weak JWT keys" — none of these
+    name a CVE, so the old CVE-only gate let all three through. Each
+    must now be blocked identically 3/3, for both "?" and "continue"."""
+    results = [
+        apply_ungrounded_security_finding_guard(fabricated_reply, REAL_NON_CVE_CTX)
+        for _ in range(3)
+    ]
+    assert results == [UNGROUNDED_SECURITY_FINDING_MESSAGE] * 3, (
+        f"fabricated non-CVE finding must be blocked identically every "
+        f"time for prompt={prompt!r}, got: {results}"
+    )
+
+
+def test_vague_file_reference_with_no_real_backing_is_still_caught_via_other_claims():
+    """Founder also saw a finding pointed at vaguely as "that file"
+    with no real path. On its own, "that file" names nothing concrete
+    to verify — but it never travels alone: it always rides alongside
+    a hard-trigger claim (CVE / version-bump / weak-secret / rate-
+    limit-magnitude), and THAT claim is what the guard blocks on. This
+    locks the actual founder sentence end-to-end."""
+    reply = (
+        "That also has weak JWT keys — I found it in that file, same "
+        "RCE class as before."
+    )
+    out = apply_ungrounded_security_finding_guard(reply, REAL_NON_CVE_CTX)
+    assert out == UNGROUNDED_SECURITY_FINDING_MESSAGE
+    assert "that file" not in out
+
+
+def test_extract_security_finding_claims_covers_all_four_shapes():
+    reply = (
+        f"{FABRICATED_CVE}, {FABRICATED_RATE_LIMIT}, "
+        f"{FABRICATED_VERSION_BUMP}, {FABRICATED_WEAK_SECRET}"
+    )
+    claims = extract_security_finding_claims(reply)
+    assert any(FABRICATED_CVE in c for c in claims)
+    assert any("5000x" in c for c in claims)
+    assert any("5.0.0" in c and "5.1.0" in c for c in claims)  # version pair captured
+    assert any("weak" in c.lower() and "jwt" in c.lower() for c in claims)
 
 
 def test_no_cve_mentioned_is_a_pure_no_op():

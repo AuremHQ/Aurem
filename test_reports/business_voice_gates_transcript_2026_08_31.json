@@ -4,13 +4,13 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "Hey! I can help improve your website by fixing real issues, optimizing content, and suggesting enhancements—just point me to your website. 😊",
+      "reply": "I can help fix real issues in your website content—just point me to your website and I'll handle the rest!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
         "no_dead_end": true,
         "dead_end_hits": [],
-        "ends_with_terminal_punct": false,
+        "ends_with_terminal_punct": true,
         "no_dangling": true,
         "has_handoff_fence": false
       },
@@ -22,7 +22,7 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I'm ORA, by Aurem. I'd love to add your opening hours to the top of your main page, but I'm having trouble connecting to your website right now — the tools that read your site aren't responding at the moment.\n\nBut I can absolutely make this change once the connection is back. To get it exactly right, I just need one thing from you:\n\n**What are your opening hours?** For example: \"Mon–Fri 9am–5pm, Sat 10am–2pm, Sun closed.\"\n\nOnce you share those, I'll place them right at the top of your main page so visitors see them first.",
+      "reply": "Got it—I'll update your main page to feature the opening hours prominently. Share your site link and I'll handle it right away.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -33,14 +33,14 @@
         "has_handoff_fence": false
       },
       "provider": "ORA",
-      "tier": "agentic",
+      "tier": "clarify",
       "bail_reason": null,
       "ship_suppressed": false
     },
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Got it! I'll update your site to show \"9am–5pm daily\" as soon as the connection's working again.",
+      "reply": "Perfect—I'll update your homepage to display \"Open 9am-5pm daily\" in a prominent spot. Share your site link and I'll publish the change immediately.",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -51,17 +51,20 @@
         "has_handoff_fence": false
       },
       "provider": "ORA",
-      "tier": "casual",
+      "tier": "clarify",
       "bail_reason": null,
       "ship_suppressed": false
     },
     {
       "turn": 4,
       "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I'm still having trouble connecting to your website — the same issue from before is blocking me from reading your pages.\n\n**But I can make both changes as soon as the connection is back:**\n- Add \"9am–5pm daily\" at the top of your main page\n- Add \"1-800-555-0199\" at the bottom of your main page\n\nI've got both ready to go. The connection issue is on my end, not yours — your site is fine. I'll keep trying, and the moment it's working again, I'll update your page with both the hours and the phone number.\n\nWhat else would you like ready for when we're back online?",
+      "reply": "I'm ready to add \"1-800-555-0199\" to the bottom of your main page, but I can't reach your website files yet — it looks like no GitHub repository is connected to this session.\n\nTo make this change live, I need you to connect your website's GitHub repository. Once that's linked, I can update your main page with both the opening hours (\"Open 9am–5pm daily\") at the top and your phone number at the bottom in one go.\n\nCan you connect your repo, or share the GitHub link to your website?",
       "checks": {
-        "no_jargon": true,
-        "jargon_hits": [],
+        "no_jargon": false,
+        "jargon_hits": [
+          "file",
+          "session"
+        ],
         "no_dead_end": true,
         "dead_end_hits": [],
         "ends_with_terminal_punct": true,
@@ -77,7 +80,7 @@
   "gate2": [
     {
       "prompt": "can you redesign our brand identity?",
-      "reply": "Branding isn't my forte—I focus on publishing content fixes to your Website. Let me know if you have any technical issues to tackle!",
+      "reply": "I’d focus on publishing content fixes first—let’s tackle that before creative work.",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
@@ -92,7 +95,7 @@
     },
     {
       "prompt": "our site looks dated — can you modernize it?",
-      "reply": "Absolutely! I can give it a fresh, modern look—just point me to the website and I'll start drafting updates.",
+      "reply": "Absolutely! Share the website and I'll whip up a fresh design with a Review request.",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
@@ -137,7 +140,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey there! 👋 Ready to help you build something awesome—what's on your mind?",
+      "reply": "Hey! Ready to help — just let me know what you're working on.",
       "provider": "ORA",
       "tier": "casual"
     }

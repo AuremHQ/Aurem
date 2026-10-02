@@ -48,6 +48,99 @@ def test_redact_secrets_in_text_no_secret_is_a_pure_no_op():
     assert redact_secrets_in_text(text) == text
 
 
+# ─── 2026-10 round 2 — founder's exact leaked shapes ────────────────
+def test_name_password_assignment_shape_is_masked():
+    """`NAME_PASSWORD = "<value>"` — a secret keyword used as a SUFFIX
+    of a longer identifier (not a bare `password` on its own), the
+    exact shape the founder's own test leaked."""
+    text = 'DB_PASSWORD = "hunter2superSecretValue"'
+    out = redact_secrets_in_text(text)
+    assert "hunter2superSecretValue" not in out
+    assert "DB_PASSWORD" in out, "the variable NAME must survive untouched"
+    assert "hu" in out and "ue" in out
+
+
+def test_os_environ_get_default_value_shape_is_masked():
+    """`os.environ.get("..._KEY", "<value>")` — the secret-shaped
+    indicator lives in the KEY-NAME argument; the value that must be
+    masked is the DEFAULT (second) argument, a structurally different
+    shape than a `KEYWORD = value` assignment."""
+    text = 'os.environ.get("STRIPE_SECRET_KEY", "sk_live_abcdefgh12345")'
+    out = redact_secrets_in_text(text)
+    assert "sk_live_abcdefgh12345" not in out
+    assert '"STRIPE_SECRET_KEY"' in out, "the env var NAME must survive untouched"
+    assert "sk" in out and "45" in out
+
+
+def test_os_getenv_default_value_shape_is_masked():
+    text = "os.getenv('DB_PASSWORD', 'fallback-dev-password-value')"
+    out = redact_secrets_in_text(text)
+    assert "fallback-dev-password-value" not in out
+    assert "'DB_PASSWORD'" in out
+
+
+def test_masking_never_alters_code_ora_writes_into_the_repo():
+    """The masker must only ever be applied to DISPLAY/stored finding
+    text — never to the actual file content ORA generates/writes as
+    a fix. This locks that `redact_secrets_in_text` is a pure, opt-in
+    function call: nothing in `finding_fix_applier`'s write path may
+    invoke it on the content it's about to commit."""
+    import inspect
+    from services import finding_fix_applier
+    src = inspect.getsource(finding_fix_applier)
+    assert "redact_secrets_in_text" not in src, (
+        "masking must never touch the content ORA actually writes to the repo"
+    )
+    assert "mask_secret_value" not in src
+
+
+def test_fix_pipeline_uses_live_file_content_not_the_stored_snippet():
+    """Founder's concern: does `finding_fix_applier` use the stored
+    (now-masked) `snippet` to LOCATE the line? It does not — it sends
+    the LLM the full, freshly-fetched, REAL file content every time;
+    `snippet` is only a short label in the prompt's finding summary.
+    Proven here by inspecting the actual prompt built for a finding
+    whose stored snippet IS masked: the real secret must still be
+    present in the file-content section (so the LLM can locate/patch
+    it), while the masked snippet is just inert context text."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from services.finding_fix_applier import _generate_patched_content
+
+    real_secret = "sk-liveRealSecretValue99887"
+    current_content = f'API_KEY = "{real_secret}"\n'
+    masked_snippet = redact_secrets_in_text(f'API_KEY = "{real_secret}"')
+    assert real_secret not in masked_snippet, "sanity: snippet really is masked"
+
+    finding = {
+        "rule_id": "generic_api_key", "severity": "critical", "line": 1,
+        "title": "Hardcoded API key", "message": "API key hardcoded in source.",
+        "snippet": masked_snippet,
+    }
+
+    captured_prompt = {}
+
+    async def _fake_llm(**kwargs):
+        captured_prompt["user"] = kwargs.get("user")
+        return {"content": f'API_KEY = os.environ.get("API_KEY")\n'}
+
+    with patch("services.llm.call_llm_with_meta", new=AsyncMock(side_effect=_fake_llm)):
+        patched, err = asyncio.get_event_loop().run_until_complete(
+            _generate_patched_content(
+                path="config.py", current_content=current_content,
+                finding=finding, user_id="pytest_user", db=None,
+            )
+        )
+    assert err is None
+    assert patched.strip() == 'API_KEY = os.environ.get("API_KEY")'
+    # The real secret WAS in the prompt (via live file content) even
+    # though the stored finding's snippet was masked — proving the
+    # masked snippet never stood in the way of locating/fixing it.
+    assert real_secret in captured_prompt["user"], (
+        "fix pipeline must still see the REAL file content, not the masked snippet"
+    )
+
+
 def test_vanguard_scanner_snippet_is_masked_not_raw():
     from services.vanguard_scanner import scan_text
     code = 'API_KEY = "sk-abcdefghijklmnop1234"\n'

@@ -35,6 +35,7 @@ import logging
 import os
 import re as _re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -279,6 +280,34 @@ def _strip_tool_call_xml_len(raw: str) -> int:
 
 # ── LongCat-2.0 path (Iter 212m-159 — Council A primary) ─────
 
+async def _record_longcat_tool_call_fallback(*, mixed_with_prose: bool, feature: Optional[str]) -> None:
+    """2026-10 — C2 instrumentation. Persists one row per LongCat
+    tool-call-tag leak so the real frequency can be queried (founder
+    asked "how often does this happen", not a log line they'd have to
+    grep). Root cause (confirmed against services/tools_bridge.py):
+    LongCat emits its OWN native tag name `<longcat_tool_call>` with a
+    `tool_name {json_args}` body — a shape `extract_tool_calls()` has
+    never recognized (it only parses `<tool_call>/<function_call>/
+    <tool>/<function>` tags containing a `{"name"/"tool": ...}`
+    envelope, or bare/fenced JSON, or DeepSeek's Python-call mimic).
+    So this isn't "sometimes fails to execute" — it's a tag name +
+    body shape the extractor was never built to parse, for every
+    single occurrence. Never raises — a failed metric write must not
+    break the chat turn."""
+    try:
+        from cto_services.db import get_db
+        db = get_db()
+        await db.llm_fallback_events.insert_one({
+            "created_at":      datetime.now(timezone.utc).isoformat(),
+            "event":           "longcat_tool_call_tag_leaked",
+            "mixed_with_prose": mixed_with_prose,
+            "feature":         feature,
+            "fallback_model":  _GLM_MODEL,
+        })
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("_record_longcat_tool_call_fallback: write failed: %r", e)
+
+
 async def _call_longcat(system: str, user: str,
                         max_tokens: int = 3500,
                         temperature: float = 0.0,
@@ -369,6 +398,9 @@ async def _call_longcat(system: str, user: str,
             "turn resolves with a real answer instead of a leaked tag.",
             _LONGCAT_MODEL, len(content or ""), _stripped_len,
             _stripped_len > 0,
+        )
+        await _record_longcat_tool_call_fallback(
+            mixed_with_prose=_stripped_len > 0, feature=feature,
         )
         try:
             return await _call_glm(

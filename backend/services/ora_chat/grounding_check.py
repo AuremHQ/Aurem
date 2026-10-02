@@ -440,11 +440,46 @@ def apply_live_content_claim_guard(reply: str, tool_calls_run: int) -> str:
 # `cto_open_findings` rows (see scan_findings_context_for_grounding).
 # A CVE-pattern match is the hard, zero-ambiguity trigger (a real CVE
 # ID is either in the grounding text or it was invented — there is no
-# middle ground); this deliberately does NOT try to pattern-match
-# every possible way of phrasing "I found a vulnerability" (that is
-# the softer, log-only job `run_post_response_check`/`classify_claims`
-# already do for fabricated FILE paths).
+# middle ground).
+#
+# 2026-10 round 2 — founder's REAL repro set was NOT only CVE IDs:
+# "broken rate limits ... 1000x", "outdated bcrypt 5.0.0 -> 5.1.0",
+# "weak JWT keys". None of those name a CVE, so the CVE-only gate let
+# all three straight through. These three shapes are, like the CVE
+# case, hard zero-ambiguity triggers — a specific version-bump pair,
+# a specific magnitude tied to a security term, or a "weak <secret
+# type>" claim is either backed by the stored finding text or it was
+# invented; there's no legitimate "the model just phrased a real
+# finding differently" middle ground for a VERSION NUMBER or an "Nx"
+# figure the way there might be for free prose.
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+
+_VERSION_BUMP_RE = re.compile(
+    r"\b[A-Za-z][\w.+-]{1,30}\s+(\d+\.\d+(?:\.\d+)?)\s*(?:->|→|to)\s*(\d+\.\d+(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+
+_WEAK_SECRET_RE = re.compile(
+    r"\bweak\b[\w\s]{0,24}?\b(?:jwt|key|keys|token|tokens|secret|secrets|"
+    r"password|passwords|cipher|hash|hashing)\b"
+    r"|\b(?:jwt|key|keys|token|tokens|secret|secrets|password|passwords|"
+    r"cipher|hash|hashing)\b[\w\s]{0,24}?\bweak\b",
+    re.IGNORECASE,
+)
+
+_SECRET_TYPE_RE = re.compile(
+    r"\b(?:jwt|key|keys|token|tokens|secret|secrets|password|passwords|"
+    r"cipher|hash|hashing)\b",
+    re.IGNORECASE,
+)
+
+_MAGNITUDE_RE = re.compile(r"\b\d+(?:,\d{3})*x\b", re.IGNORECASE)
+
+_MAGNITUDE_SECURITY_RE = re.compile(
+    r"\b\d+(?:,\d{3})*x\b[^.\n]{0,40}?\b(?:rate\s*limit|throttl\w*|brute[\s-]?force|abuse)\b"
+    r"|\b(?:rate\s*limit|throttl\w*|brute[\s-]?force|abuse)[^.\n]{0,40}?\b\d+(?:,\d{3})*x\b",
+    re.IGNORECASE,
+)
 
 UNGROUNDED_SECURITY_FINDING_MESSAGE = (
     "I don't have a stored scan result or a file I've read this turn "
@@ -468,15 +503,79 @@ def extract_cve_claims(reply: str) -> list[str]:
     return out
 
 
+def extract_security_finding_claims(reply: str) -> list[str]:
+    """De-duped list of claim spans covering ALL hard-trigger finding
+    shapes: CVE IDs, version-bump pairs ("bcrypt 5.0.0 -> 5.1.0"),
+    weak-secret claims ("weak JWT keys" / "JWT keys are weak"), and
+    magnitude-tied-to-a-security-term claims ("1000x" near "rate
+    limit"). Each returned string is the exact matched span — used as
+    the human-facing claim list (e.g. for logging)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for regex in (_CVE_RE, _VERSION_BUMP_RE, _WEAK_SECRET_RE, _MAGNITUDE_SECURITY_RE):
+        for m in regex.finditer(reply or ""):
+            span = m.group(0)
+            key = span.upper()
+            if key not in seen:
+                seen.add(key)
+                out.append(span)
+    return out
+
+
+def _version_bump_grounded(reply: str, ctx_upper: str) -> bool:
+    """A version-bump claim is grounded iff BOTH version numbers it
+    names are present somewhere in the grounding text. Checking the
+    two numbers independently (not the whole sentence as one span)
+    deliberately tolerates the model paraphrasing the surrounding
+    prose — a real finding reworded slightly is still real; only the
+    version numbers themselves are the hard, non-negotiable fact."""
+    for m in _VERSION_BUMP_RE.finditer(reply or ""):
+        v_from, v_to = m.group(1), m.group(2)
+        if v_from.upper() not in ctx_upper or v_to.upper() not in ctx_upper:
+            return False
+    return True
+
+
+def _magnitude_grounded(reply: str, ctx_upper: str) -> bool:
+    """A magnitude-tied-to-a-security-term claim is grounded iff the
+    specific "Nx" figure it names is present in the grounding text —
+    same "check the hard number, tolerate reworded prose around it"
+    posture as the version-bump check above."""
+    for m in _MAGNITUDE_SECURITY_RE.finditer(reply or ""):
+        mag = _MAGNITUDE_RE.search(m.group(0))
+        if mag and mag.group(0).upper() not in ctx_upper:
+            return False
+    return True
+
+
+def _weak_secret_grounded(reply: str, ctx_upper: str) -> bool:
+    """A "weak <secret type>" claim is grounded iff that secret TYPE
+    (jwt / key / token / password / ...) is itself named somewhere in
+    the grounding text — "weak" is the model's own characterization,
+    not a fact to verify; which secret it's talking about is."""
+    for m in _WEAK_SECRET_RE.finditer(reply or ""):
+        secret_type = _SECRET_TYPE_RE.search(m.group(0))
+        if secret_type and secret_type.group(0).upper() not in ctx_upper:
+            return False
+    return True
+
+
 def contains_ungrounded_security_finding_claim(reply: str, grounding_text: str) -> bool:
-    """True iff `reply` names a CVE ID that is not an exact substring
-    of `grounding_text` (this turn's tool results + the project's
-    stored scan findings)."""
+    """True iff `reply` makes ANY hard-trigger security-finding claim
+    (CVE ID, version-bump pair, weak-secret claim, or magnitude-tied-
+    to-rate-limit claim) that is not backed by `grounding_text` (this
+    turn's tool results + the project's stored scan findings)."""
+    ctx = (grounding_text or "").upper()
     cves = extract_cve_claims(reply)
-    if not cves:
-        return False
-    ctx = grounding_text or ""
-    return any(cve.upper() not in ctx.upper() for cve in cves)
+    if any(cve.upper() not in ctx for cve in cves):
+        return True
+    if not _version_bump_grounded(reply, ctx):
+        return True
+    if not _magnitude_grounded(reply, ctx):
+        return True
+    if not _weak_secret_grounded(reply, ctx):
+        return True
+    return False
 
 
 def apply_ungrounded_security_finding_guard(reply: str, grounding_text: str) -> str:

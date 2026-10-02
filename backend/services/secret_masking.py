@@ -30,7 +30,19 @@ _SECRET_INDICATOR = (
     r"auth[_-]?token|bearer)"
 )
 _QUOTED_SECRET_RE = re.compile(
-    rf"\b{_SECRET_INDICATOR}\s*[=:]\s*(['\"])([^'\"]{{4,}})\1",
+    rf"\b[A-Za-z0-9_]*{_SECRET_INDICATOR}[A-Za-z0-9_]*\s*[=:]\s*(['\"])([^'\"]{{4,}})\1",
+    re.IGNORECASE,
+)
+
+# `os.environ.get("SOME_KEY", "default-value")` / `os.getenv(...)` —
+# the secret-shaped indicator lives in the FIRST (key-name) argument,
+# but the VALUE that needs masking is the SECOND (default) argument —
+# a structurally different shape than `KEYWORD = "value"` above, so
+# it needs its own pattern rather than a tweak to `_QUOTED_SECRET_RE`.
+_ENV_GETTER_DEFAULT_RE = re.compile(
+    rf"\b(?:os\.environ\.get|os\.getenv|config\.get)\s*\(\s*"
+    rf"(['\"])([A-Za-z0-9_]*{_SECRET_INDICATOR}[A-Za-z0-9_]*)\1\s*,\s*"
+    rf"(['\"])([^'\"]{{4,}})\3",
     re.IGNORECASE,
 )
 
@@ -55,18 +67,28 @@ def mask_secret_value(raw: str) -> str:
 
 def redact_secrets_in_text(text: str) -> str:
     """Mask any secret-shaped value found in free text — a
-    `KEYWORD = "value"` / `KEYWORD: 'value'` assignment, or a bare
-    well-known vendor key shape — leaving the surrounding prose,
-    file name, and line number untouched."""
+    `KEYWORD = "value"` / `KEYWORD: 'value'` assignment (any
+    identifier ENDING in a secret keyword, e.g. `DB_PASSWORD`, not
+    just a bare `password`), an `os.environ.get("KEY", "default")` /
+    `os.getenv(...)` default-value argument, or a bare well-known
+    vendor key shape — leaving the surrounding prose, file name,
+    key NAME, and line number untouched."""
     if not text:
         return text
 
     def _sub_quoted(m: re.Match) -> str:
         quote, value = m.group(1), m.group(2)
-        full = m.group(0)
-        masked = mask_secret_value(value)
-        return full[: full.index(quote) + 1] + masked + quote
+        return m.group(0)[: -(len(value) + 1)] + mask_secret_value(value) + quote
 
-    out = _QUOTED_SECRET_RE.sub(_sub_quoted, text)
+    def _sub_env_default(m: re.Match) -> str:
+        key_quote, key_name, val_quote, value = m.group(1), m.group(2), m.group(3), m.group(4)
+        return (
+            f"{m.group(0).split(key_quote, 1)[0]}"
+            f"{key_quote}{key_name}{key_quote}, "
+            f"{val_quote}{mask_secret_value(value)}{val_quote}"
+        )
+
+    out = _ENV_GETTER_DEFAULT_RE.sub(_sub_env_default, text)
+    out = _QUOTED_SECRET_RE.sub(_sub_quoted, out)
     out = _BARE_SECRET_SHAPE_RE.sub(lambda m: mask_secret_value(m.group(0)), out)
     return out
