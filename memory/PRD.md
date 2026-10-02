@@ -52,6 +52,39 @@ live-testable items passed, rest code-verified (gated states like
 TokenBanner/PaymentFailedBanner need real usage/billing conditions
 not present for the test account). No bugs found, no regressions.
 
+## Billing: stale token-usage banner after upgrade + "Cancel plan" link (2026-10-02)
+
+Founder reported: `admin@reroots.ca` upgraded Free → Starter (Settings
+page correctly showed "STARTER / CURRENT" — webhook DID fire, payment
+DID go through), but the chat page still showed a stale "251% tokens
+used · 0 remaining" banner computed against the OLD Free-tier limit.
+Root cause: `ChatPanel.jsx`'s `refreshUsage()` (hits `GET /usage/me`)
+only ran once on mount — no polling, no visibility-refresh, no
+"plan changed" signal — so a tab left open across a Stripe Checkout
+redirect/new-tab upgrade never re-fetched. **Fix**: added a
+`visibilitychange` listener + 60s interval (same pattern as
+`PaymentFailedBanner`) so `refreshUsage()` re-runs whenever the chat
+tab regains focus. A production-data debug request was also sent via
+the deployer agent to confirm the webhook/DB tier update actually
+succeeded for this specific user (confirms root-cause attribution;
+separate from this fix).
+
+Also added (separate founder ask, same session): a "Cancel" link next
+to the "Current" plan badge on `/settings?tab=plans` — previously the
+only cancel path was the generic "Manage billing" button → Stripe
+portal home. `POST /payments/portal` now accepts an optional
+`{"flow": "cancel"}` body (`PortalBody` model, `routers/payments.py`)
+that adds Stripe's `flow_data: {type: "subscription_cancel", ...}` so
+the hosted portal opens directly on the cancellation screen — Stripe
+remains the sole cancellation authority, no new backend cancel logic.
+Verified live end-to-end (JWT-minted test session, tier=pro test
+user): "CURRENT"/"CANCEL" render correctly side-by-side, click sends
+`POST /payments/portal {"flow":"cancel"}`, error path (no real Stripe
+subscription in this sandbox) handled gracefully, no regressions in
+`test_iter124d_stripe_async_offload.py` / `test_iter179_payments_defensive.py`
+/ `test_stripe_invoice_payment_failed.py` / `test_subscription_tiers.py`
+(25 passed).
+
 ## Security audit fixes — 2 PRs (2026-09-30)
 
 Founder ran a manual code-read security audit (not live-exploited) and

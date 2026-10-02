@@ -826,10 +826,20 @@ async def my_plan(authorization: Optional[str] = Header(None)) -> dict:
     }
 
 
+class PortalBody(BaseModel):
+    # 2026-10 — founder ask: the "Current" plan chip had no direct
+    # cancel affordance, only the generic "Manage billing" → portal
+    # home. `flow="cancel"` jumps the user straight to Stripe's own
+    # hosted cancellation screen (still Stripe-controlled — we never
+    # cancel the subscription ourselves, no new cancel logic here).
+    flow: Optional[str] = None
+
+
 # ── /payments/portal — Stripe-hosted billing management ────────────────
 @router.post("/payments/portal")
 async def billing_portal(
     http_request: Request,
+    body: PortalBody = PortalBody(),
     authorization: Optional[str] = Header(None),
 ) -> dict:
     _require_stripe()
@@ -852,10 +862,15 @@ async def billing_portal(
             _frontend_url()
             or str(http_request.base_url).rstrip("/")
         ) + "/settings"
+        portal_kwargs = dict(customer=customer_id, return_url=return_url)
+        if body.flow == "cancel":
+            portal_kwargs["flow_data"] = {
+                "type": "subscription_cancel",
+                "subscription_cancel": {"subscription": sub_id},
+            }
         portal = await _stripe_call(
             stripe.billing_portal.Session.create,
-            customer=customer_id,
-            return_url=return_url,
+            **portal_kwargs,
         )
     except HTTPException:
         raise
