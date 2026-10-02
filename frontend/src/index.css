@@ -21,6 +21,16 @@
      --ds2-bg. Currently unreferenced by any component (grep-confirmed,
      dead token) — bumped anyway per audit ask, zero risk. */
   --ds2-border:             #5e5e5e;
+  /* 2026-10 · BUG FIX — `--ds2-primary` was only ever defined in the
+     light-theme override below, never here in the default dark
+     theme. `bg-primary` (tailwind.config.js → var(--ds2-primary))
+     therefore resolved to nothing/transparent in dark mode, so any
+     element relying purely on `bg-primary` + `text-primary-foreground`
+     (e.g. the Ask Advisor user-message bubble, its send button) was
+     rendering near-black text (--ds2-primary-fg below) on a
+     transparent background over the near-black page — effectively
+     invisible. Brand orange, matching the light theme's value. */
+  --ds2-primary:            #FF6608;
   --ds2-primary-fg:         #0A0A0A;
   --ds2-secondary:          #1F1F1F;
   --ds2-secondary-fg:       #F5F5F5;

@@ -52,7 +52,26 @@ live-testable items passed, rest code-verified (gated states like
 TokenBanner/PaymentFailedBanner need real usage/billing conditions
 not present for the test account). No bugs found, no regressions.
 
-## Billing: stale token-usage banner after upgrade + "Cancel plan" link (2026-10-02)
+## Bug fix: Ask Advisor — user's own message invisible in dark mode (2026-10-02)
+
+Founder reported: in "Ask Advisor", user's own sent prompt doesn't
+show. **Root cause (not Advisor-specific)**: `--ds2-primary` — the
+CSS var `bg-primary`/`text-primary-foreground` resolve to
+(`tailwind.config.js`) — was only ever defined inside
+`.ds2-root[data-theme="light"]` in `index.css`. The default DARK
+theme block never defined it, so in dark mode `bg-primary` resolved
+to transparent while `text-primary-foreground` stayed near-black
+(`--ds2-primary-fg: #0A0A0A`) — any element relying on that combo with
+no other override rendered near-invisible text on a transparent
+background over the near-black page. Affected the Advisor's own
+user-message bubble AND its send button, plus every other `bg-primary`
+usage across `dashboard/v2/*` (Sidebar, TopBar, ChatView, PreviewPanel,
+ProjectSwitcher, UserNotificationBell) in dark mode — same latent bug,
+just most visible here. **Fix**: added `--ds2-primary: #FF6608;`
+(brand orange, matching the light theme's value) to the default dark
+`.ds2-root` block — single-line root-cause fix, no component changes
+needed. Verified live via screenshot: user bubble + send button now
+render with the orange background clearly.
 
 Founder reported: `admin@reroots.ca` upgraded Free → Starter (Settings
 page correctly showed "STARTER / CURRENT" — webhook DID fire, payment
