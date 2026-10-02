@@ -91,7 +91,7 @@ const POLL_MS = 15000;
 // a test or third-party path, so the FIRST card shown is always a
 // real, fixable issue in the user's own code.
 const FIXLIST_NUDGE_KEY_PREFIX = "aurem_fixlist_nudge_v1_";
-function isLowPriorityFixFile(path) {
+export function isLowPriorityFixFile(path) {
   if (!path) return false;
   const p = String(path).toLowerCase();
   const base = p.split("/").pop() || "";
@@ -99,7 +99,7 @@ function isLowPriorityFixFile(path) {
     || /\.(test|spec)\.[jt]sx?$/.test(base)
     || /^test_.*\.py$/.test(base);
 }
-function orderFixListItems(items) {
+export function orderFixListItems(items) {
   const primary = [];
   const deprioritized = [];
   for (const it of items) (isLowPriorityFixFile(it.file) ? deprioritized : primary).push(it);
@@ -499,7 +499,11 @@ export default function OraGuideMascot() {
         <div
           data-testid="ora-guide-bubble"
           style={{
-            position: "absolute", bottom: 52, right: 0,
+            // 2026-10 — was `bottom: 52`; founder-requested proof check found
+            // a 6px overlap between the bubble's bottom-left corner and the
+            // chat composer's top-right corner on 1920x900. Bumped for a real
+            // margin, not just clearing the measured overlap.
+            position: "absolute", bottom: 68, right: 0,
             width: (panelMode === "suggestions" || panelMode === "fixlist-all") ? 300 : 280, background: "#141414",
             border: "1px solid rgba(255,102,8,0.28)",
             borderRadius: 12, padding: "14px 16px",
