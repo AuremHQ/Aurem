@@ -1,6 +1,56 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-30 (Security audit fixes — OAuth High + 2 Medium, see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-10-02 (Chat-pane width-rail fix + close/copy-tick UX, see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## Chat-pane width-rail fix + close (×) buttons + copy-tick redesign (2026-10-02)
+
+Founder-reported bug (Hindi/Hinglish): informational cards above the
+chat composer (Fix List, Token/Payment banners, Scan status strip,
+Findings teaser, loop/ship cards) were overflowing past the chat
+input's left/right edges, and didn't resize consistently with it.
+
+**Root cause**: some cards had zero horizontal margin (edge-to-edge);
+others hardcoded a literal `clamp(16px, 17.25%, 240px)` inline style
+that never picked up the composer's own 900px/600px container-query
+breakpoint overrides — so they silently drifted out of sync at
+narrower widths (e.g. with Preview/Advisor panel open, or mobile).
+
+**Fix**: introduced `--chat-rail-x` CSS custom property (`index.css`,
+on `[data-testid="chat-panel"]`) as the single source of truth for
+this rail, including the two breakpoint overrides. Every consumer —
+composer, message list, `.chat-inline-card`, and every inline-styled
+card (`WorkCard`, `FounderOfferCard`, `FirstScanCard`,
+`RepoCleanupBanner`, `LoopStepBar`, `ScanStatusStrip`) — now reads
+`var(--chat-rail-x)` instead of its own hardcoded value. Verified via
+precise `getBoundingClientRect()` measurement (not just screenshots)
+at 1920/1366/900/820/600/390px — 0px delta at every width.
+
+**Close (×) buttons added** (founder-approved scope — informational
+cards only, NOT action-required gates):
+- `FixListPanel.jsx` — `dismissed` state, resets on `projectId` change.
+- `chat/TokenBanner.jsx` — `dismissedTone` state keyed by warning/
+  blocked so an escalation (warning → blocked) re-surfaces it.
+- `PaymentFailedBanner.jsx` — session-scoped `dismissed` state (real
+  `payment_failed` flag still re-drives it next session).
+- `ScanStatusStrip.jsx` / `FindingsTeaserStrip.jsx` already had an X
+  dismiss in the right corner — verified, not regressed.
+
+**Copy → ✅ tick redesign** (founder-approved: ALL copy buttons
+app-wide, 10+ places): every copy control's icon/text now visibly
+swaps to a checkmark / "Copied" for ~1.5s on click, not just a color
+change. Touched: `MessageBubble.jsx` (user + assistant bubble copy),
+`OraWrapped.jsx`, `ReferralShare.jsx`, `TwoFactorEnrollPanel.jsx`,
+`ChatPanelF12.jsx` (top-bar debug COPY), `PreviewPanel.jsx`,
+`TopBarStatusSlot.jsx`, `LoopFailureCard.jsx`, `ShipConfirmModal.jsx`
+(SHA chip), `Integrations.jsx`, `AdminApiKeys.jsx`, `OpsRecipes.jsx`,
+`OraDirect.jsx`, `Projects.jsx`, `ShipWall.jsx`,
+`AdminInspectScopeDriftAudit.jsx`, `AdminInspectSpeedDiagnostic.jsx`.
+`CodeBlock.jsx` and `MermaidBlock.jsx` already had this — left as-is.
+
+Tested via `testing_agent` (iteration_400.json) — 100% of
+live-testable items passed, rest code-verified (gated states like
+TokenBanner/PaymentFailedBanner need real usage/billing conditions
+not present for the test account). No bugs found, no regressions.
 
 ## Security audit fixes — 2 PRs (2026-09-30)
 
