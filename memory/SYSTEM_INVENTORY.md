@@ -1024,3 +1024,9 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-10-01
 
 - `services/codebase_health_extra.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-01T23:32:00.299148Z] <!-- inv:service:services/codebase_health_extra.py -->
+
+### Iter 0 · 2026-10-02
+
+- `SOME_KEY` — auto-detected in backend/services/secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224478Z] <!-- inv:envvar:SOME_KEY -->
+- `KEY` — auto-detected in backend/services/secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224504Z] <!-- inv:envvar:KEY -->
+- `API_KEY` — auto-detected in backend/tests/test_2026_10_c3_secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224543Z] <!-- inv:envvar:API_KEY -->
