@@ -5173,8 +5173,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           directly; see githubConn below. */}
 
       {/* 2026-08-22 — Payment-Failed Banner. Unrelated to GitHub
-          connection status (Stripe billing) — kept as-is. */}
-      <PaymentFailedBanner />
+          connection status (Stripe billing) — kept as-is.
+          2026-10 · width-rail fix — wrapped in `.chat-inline-card` so
+          it sits on the SAME left/right edges as the composer at
+          every container width (previously edge-to-edge, visibly
+          wider than the chat input). */}
+      <div className="chat-inline-card"><PaymentFailedBanner /></div>
 
       {/* Iter 212m-49 — "⚡ free mode" pill. Surfaces when the most
           recent assistant turn was served by the Groq emergency
@@ -5272,10 +5276,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           above, this stays available for the whole life of the chat
           (not just the empty-chat moment) — a vibecoder comes back to
           it over multiple sessions as they work through real findings. */}
-      <FixListPanel
-        projectId={activeProject?.project_id}
-        visible={!!activeProject?.project_id}
-      />
+      {/* 2026-10 · width-rail fix — wrapped in `.chat-inline-card` so
+          the panel's left/right edges match the composer instead of
+          spanning full edge-to-edge chat-pane width. */}
+      <div className="chat-inline-card">
+        <FixListPanel
+          projectId={activeProject?.project_id}
+          visible={!!activeProject?.project_id}
+        />
+      </div>
       <div
         data-testid="chat-messages"
         style={{
@@ -5766,8 +5775,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           the message list and the composer so it's the last thing the
           user sees before typing. Auto-cleared on next submit. */}
       {modeAmbiguous && (
-        <div data-testid="mode-ambiguous-banner" style={{
-          margin: "0 16px 8px",
+        <div data-testid="mode-ambiguous-banner" className="chat-inline-card" style={{
+          margin: "0 0 8px",
           padding: "10px 14px",
           background: "var(--accent-soft)",
           border: "1px solid var(--border-strong)",
@@ -5812,7 +5821,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           on the same row block. Rendered below just before the
           composer form opens.
       */}
-      <TokenBanner usage={usage} />
+      <div className="chat-inline-card"><TokenBanner usage={usage} /></div>
       <UsageLimitModal
         open={showUsageLimitModal}
         usage={usage}
@@ -5904,13 +5913,24 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           />
         </div>
       )}
-      <SelfHealIndicator
-        visible={selfHeal.visible}
-        attempt={selfHeal.attempt}
-        max={selfHeal.max}
-        errorPreview={selfHeal.errorPreview}
-        startedAt={selfHeal.startedAt}
-      />
+      {/* 2026-10 · width-rail fix — the six cards below previously
+          used their own fixed px margins (or none) and drifted off
+          the composer's left/right rail, especially on wide screens
+          where the composer's clamp() padding grows up to 240px.
+          `.chat-inline-card` is the single source of truth (index.css)
+          for this rail — same padding the composer + messages use,
+          including the 900px/600px container-query overrides, so
+          these cards resize in lockstep with the input on every
+          viewport. */}
+      <div className="chat-inline-card">
+        <SelfHealIndicator
+          visible={selfHeal.visible}
+          attempt={selfHeal.attempt}
+          max={selfHeal.max}
+          errorPreview={selfHeal.errorPreview}
+          startedAt={selfHeal.startedAt}
+        />
+      </div>
       {/* Iter 362 · Bug (Part B) — surface actual verify lint/type
           errors on terminal FAILED. Was previously just a generic
           "Verify failed after 2 attempts" narration with zero detail. */}
@@ -5926,42 +5946,50 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         </div>
       )}
       {userAction && (
-        <UserActionCard
-          phase={userAction.phase}
-          message={userAction.message}
-          errors={userAction.errors}
-          gateType={userAction.gateType}
-          testsTouched={userAction.testsTouched}
-          busy={userActionBusy}
-          onAction={handlePauseAction}
-          expiresAt={loopExpiresAt}
-        />
+        <div className="chat-inline-card">
+          <UserActionCard
+            phase={userAction.phase}
+            message={userAction.message}
+            errors={userAction.errors}
+            gateType={userAction.gateType}
+            testsTouched={userAction.testsTouched}
+            busy={userActionBusy}
+            onAction={handlePauseAction}
+            expiresAt={loopExpiresAt}
+          />
+        </div>
       )}
       {loopExpired && (
-        <LoopExpiredCard
-          phase={loopExpired.phase}
-          onRestart={handleRestartLoop}
-          onDismiss={handleDismissExpired}
-        />
+        <div className="chat-inline-card">
+          <LoopExpiredCard
+            phase={loopExpired.phase}
+            onRestart={handleRestartLoop}
+            onDismiss={handleDismissExpired}
+          />
+        </div>
       )}
       {shipResult && (
-        <ShipSuccessCard
-          result={shipResult}
-          onDismiss={() => setShipResult(null)}
-        />
+        <div className="chat-inline-card">
+          <ShipSuccessCard
+            result={shipResult}
+            onDismiss={() => setShipResult(null)}
+          />
+        </div>
       )}
       {shipPending && (
-        <ShipPendingCard
-          pending={shipPending}
-          busy={shipBusy}
-          onConfirm={(approved) => approved ? handleShipConfirm() : handleShipCancel()}
-          expiresAt={loopExpiresAt}
-        />
+        <div className="chat-inline-card">
+          <ShipPendingCard
+            pending={shipPending}
+            busy={shipBusy}
+            onConfirm={(approved) => approved ? handleShipConfirm() : handleShipCancel()}
+            expiresAt={loopExpiresAt}
+          />
+        </div>
       )}
       {f12ConfirmPayload && isAdminOrFounder((typeof getUser === "function" && getUser()) || null) && (
         <div
           data-testid="f12-send-confirm-card"
-          className="mx-4 mb-2 rounded-lg border border-border bg-card px-4 py-3 text-sm"
+          className="chat-inline-card mb-2 rounded-lg border border-border bg-card px-4 py-3 text-sm"
         >
           <p className="mb-2 text-foreground">
             Send the captured F12 errors to ORA for analysis?{" "}
@@ -6033,16 +6061,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           teaser, keyed by session so its internal dedup/expand state
           resets cleanly on a session switch instead of leaking a
           previous chat's findings into a new one. */}
-      <FindingsTeaserStrip
-        key={sessionId || "no-session"}
-        projectId={activeProject?.project_id}
-        newFindings={findingsThisSession}
-      />
+      <div className="chat-inline-card">
+        <FindingsTeaserStrip
+          key={sessionId || "no-session"}
+          projectId={activeProject?.project_id}
+          newFindings={findingsThisSession}
+        />
+      </div>
 
       {/* Iter 212m-190 · Session 3 — Chat-native scan strip. Sits
           just above the composer form so scan lifecycle events
           (in-progress, just-completed, backlog reminder) surface
-          without blocking the input. `projectId=null` hides it. */}
+          without blocking the input. `projectId=null` hides it.
+          2026-10 · width-rail fix — margin now lives INSIDE
+          ScanStatusStrip's own StripShell/WorkCard branches (matching
+          the composer's clamp) instead of a wrapper here, because
+          the WorkCard branch already carries its own clamp margin —
+          an outer `.chat-inline-card` wrapper would have doubled it. */}
       <ScanStatusStrip
         projectId={activeProject?.project_id}
         scanState={scanState}

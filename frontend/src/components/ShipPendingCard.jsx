@@ -243,7 +243,7 @@ export default function ShipPendingCard({ pending, busy, onConfirm, expiresAt })
       role="region"
       aria-label="Ready to ship — manual confirmation required"
       style={{
-        margin: "10px 12px",
+        margin: "10px 0",
         padding: 16,
         background: "linear-gradient(135deg, rgba(255,102,8,0.10), rgba(255,166,0,0.05))",
         border: "1px solid rgba(255,102,8,0.45)",

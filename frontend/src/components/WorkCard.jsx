@@ -46,7 +46,7 @@ export default function WorkCard({
       role="status"
       aria-live="polite"
       style={{
-        margin: "0 clamp(16px, 17.25%, 240px)",
+        margin: "0 var(--chat-rail-x)",
         padding: "10px 16px",
         display: "flex",
         flexDirection: "column",

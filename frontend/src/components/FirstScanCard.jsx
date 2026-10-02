@@ -345,7 +345,7 @@ export default function FirstScanCard({ projectId, dismissOnFirstMessage }) {
 // flipping the flag off restores exactly this.
 function LegacyFirstScanCard({ state, applying, applyResult, handleFix, onDismiss }) {
   const cardStyle = {
-    margin: "0 clamp(16px, 17.25%, 240px)",
+    margin: "0 var(--chat-rail-x)",
     padding: "10px 16px",
     display: "flex",
     flexDirection: "column",

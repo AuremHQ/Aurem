@@ -119,7 +119,7 @@ export default function RepoCleanupBanner() {
           // left/right rail. Previous `margin: 6px 12px 0` +
           // `width: calc(100% - 24px)` made the banner span nearly
           // full chat-pane width (~2x wider than the input).
-          margin: "6px clamp(16px, 17.25%, 240px) 0",
+          margin: "6px var(--chat-rail-x) 0",
           padding: "8px 14px",
           background: "rgba(245,158,11,0.10)",
           border: "1px solid rgba(245,158,11,0.45)",

@@ -1169,41 +1169,49 @@ table { max-width: 100%; }
 [data-testid="chat-panel"] {
   container-type: inline-size;
   container-name: chat-panel;
+  /* 2026-10 · width-rail fix — SINGLE source of truth for the
+     horizontal inset every chat-pane card/banner must share with the
+     composer. Previously several cards (WorkCard, FounderOfferCard,
+     FirstScanCard, RepoCleanupBanner, LoopStepBar, ScanStatusStrip)
+     each hardcoded the literal `clamp(16px, 17.25%, 240px)` inline,
+     which matched the DEFAULT rail but silently drifted out of sync
+     with the two overrides below at narrower container widths (every
+     card kept using the raw clamp() value while the composer itself
+     snapped to a flat 24px/12px) — the exact "banner is wider/
+     narrower than the chat input, and doesn't resize with it" bug.
+     Now every consumer (CSS below AND inline JS styles) reads
+     `var(--chat-rail-x)`, so overriding it once here keeps literally
+     everything on the same left/right edges at every screen size. */
+  --chat-rail-x: clamp(16px, 17.25%, 240px);
 }
 
 [data-testid="chat-messages"] {
-  padding: 24px clamp(16px, 17.25%, 240px);
+  padding: 24px var(--chat-rail-x);
 }
 
 [data-testid="chat-form"].glass-composer {
-  padding: 14px clamp(16px, 17.25%, 240px);
+  padding: 14px var(--chat-rail-x);
 }
 
 /* Iter 285 — Plan approval, LoopLiveFeed, agent-status-bar etc.
    are sibling cards to the composer, but their default styling
    spanned full container width — leaving them visibly wider than
-   the composer inset.  Match the SAME horizontal clamp so all
+   the composer inset.  Match the SAME horizontal rail so all
    cards sit on the same left/right edges as the messages + form. */
 .chat-inline-card {
-  padding-left: clamp(16px, 17.25%, 240px);
-  padding-right: clamp(16px, 17.25%, 240px);
+  padding-left: var(--chat-rail-x);
+  padding-right: var(--chat-rail-x);
 }
 
 @container chat-panel (max-width: 900px) {
-  [data-testid="chat-messages"],
-  [data-testid="chat-form"].glass-composer,
-  .chat-inline-card {
-    padding-left: 24px;
-    padding-right: 24px;
+  [data-testid="chat-panel"] {
+    --chat-rail-x: 24px;
   }
 }
 
 @container chat-panel (max-width: 600px) {
-  [data-testid="chat-messages"],
-  [data-testid="chat-form"].glass-composer,
-  .chat-inline-card {
-    padding-left: 12px;
-    padding-right: 12px;
+  [data-testid="chat-panel"] {
+    --chat-rail-x: 12px;
   }
 }
 
