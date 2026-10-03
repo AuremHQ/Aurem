@@ -15,6 +15,8 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import MarketingNav from "../components/marketing/MarketingNav";
+import usePageMeta from "../lib/usePageMeta";
+import { pageTitle } from "../lib/siteConfig";
 
 const CSS = `
 .wo {
@@ -74,7 +76,7 @@ const CSS = `
 /* Feature grid */
 .wo .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 16px;
 }
 .wo .card {
@@ -317,6 +319,7 @@ const TIERS = [
 
 
 export default function WhyOra() {
+  usePageMeta({ title: pageTitle("Why ORA") });
   return (
     <div className="wo" data-testid="why-ora-page">
       <style>{CSS}</style>

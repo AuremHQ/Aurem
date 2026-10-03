@@ -132,6 +132,11 @@ def test_ci_env_names_match_production_readers() -> None:
         "API_KEY",                  # PromptFoo expects generic API_KEY name
         # Secret-scan job auth — POSTed to backend, not read via os.environ:
         "CI_TOKEN",
+        # Read by the test suite and the frontend jobs, never by app code.
+        # ci.yml's backend-tests sets REACT_APP_BACKEND_URL to a refused
+        # address so live-env tests skip instead of reaching the real deployment.
+        "REACT_APP_BACKEND_URL",
+        "AUREM_API_URL",            # base URL for the lighthouse / vitest / promptfoo jobs
     }
 
     dead_config = (ci_vars - referenced) - ci_only_whitelist

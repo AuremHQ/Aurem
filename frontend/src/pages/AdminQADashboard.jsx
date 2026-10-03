@@ -169,7 +169,11 @@ export default function AdminQADashboard() {
         `${API}/api/aurem-dev/admin/qa/status`,
         { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 20000 },
       );
-      setData(r.data);
+      const d = r.data;
+      if (!d?.test_counts || !d.test_style || !d.a11y || !d.ci_status) {
+        throw new Error("Unexpected response from /admin/qa/status (missing test_counts, test_style, a11y or ci_status)");
+      }
+      setData(d);
     } catch (e) {
       setError(e?.response?.data?.detail || e.message || "unknown error");
     } finally {

@@ -26,7 +26,7 @@ afterEach(() => cleanup());
 describe("TeamManagementPanel — owner view", () => {
   beforeEach(() => {
     api.get.mockImplementation((path) => {
-      if (path === "/team/me") return Promise.resolve({ data: { is_owner: true, permissions: { team_management: "read_write" } } });
+      if (path === "/team/me") return Promise.resolve({ data: { is_owner: true, tier: "team", team_feature_enabled: true, permissions: { team_management: "read_write" } } });
       if (path === "/team/resources") return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
       if (path === "/team/members") return Promise.resolve({ data: { members: [
         { member_id: "m1", email: "teammate@example.com", status: "pending", role_label: "viewer",
@@ -69,13 +69,42 @@ describe("TeamManagementPanel — owner view", () => {
 describe("TeamManagementPanel — non-owner/non-admin view", () => {
   it("shows a no-access message instead of the invite form", async () => {
     api.get.mockImplementation((path) => {
-      if (path === "/team/me") return Promise.resolve({ data: { is_owner: false, permissions: { team_management: "read" } } });
+      if (path === "/team/me") return Promise.resolve({ data: { is_owner: false, team_feature_enabled: true, permissions: { team_management: "read" } } });
       if (path === "/team/resources") return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
       if (path === "/team/members") return Promise.reject({ response: { status: 403 } });
       return Promise.resolve({ data: {} });
     });
     render(<TeamManagementPanel />);
     expect(await screen.findByTestId("team-panel-no-access")).toBeTruthy();
+    expect(screen.queryByTestId("team-invite-email-input")).toBeNull();
+  });
+});
+
+describe("TeamManagementPanel — free user upgrade view", () => {
+  it("shows the Team upgrade card for a free user", async () => {
+    api.get.mockImplementation((path) => {
+      if (path === "/team/me") {
+        return Promise.resolve({
+          data: {
+            is_owner: true,
+            tier: "free",
+            team_feature_enabled: false,
+            permissions: { team_management: "read_write" },
+          },
+        });
+      }
+      if (path === "/team/resources") {
+        return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
+      }
+      if (path === "/team/members") {
+        return Promise.resolve({ data: { members: [] } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<TeamManagementPanel />);
+
+    expect(await screen.findByTestId("team-panel-upgrade-required")).toBeTruthy();
     expect(screen.queryByTestId("team-invite-email-input")).toBeNull();
   });
 });

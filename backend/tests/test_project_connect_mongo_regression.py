@@ -3,6 +3,7 @@
 Authentication is a test-only account resolver; ownership checks stay real.
 Each test owns and drops a unique database. No preview users or repos change.
 """
+import os
 import time
 import uuid
 from pathlib import Path
@@ -24,7 +25,14 @@ async def flow(monkeypatch):
     from routers.cto_projects import management
     from services import github_app, onboarding_first_scan, project_onboarding_scan
 
-    env = dotenv_values(Path(__file__).parents[1] / ".env")
+    # 2026-09-29 · regression — dotenv_values() alone reads the physical
+    # backend/.env FILE, not os.environ. GitHub Actions sets MONGO_URL/
+    # DB_NAME via the job's `env:` block (real os.environ), but never
+    # writes an actual .env file to disk, so this raised KeyError on
+    # every CI run. os.environ first, then the file layered on top so
+    # a real local .env (if present) still wins, matches how every
+    # other test in this suite resolves these two values.
+    env = {**os.environ, **dotenv_values(Path(__file__).parents[1] / ".env")}
     mongo = AsyncIOMotorClient(env["MONGO_URL"], serverSelectionTimeoutMS=5000)
     db_name = f"{env['DB_NAME'][:20]}_connect_test_{uuid.uuid4().hex[:10]}"
     db = mongo[db_name]
@@ -93,7 +101,8 @@ async def test_regression_callback_then_explicit_add_persists_across_clients(flo
     probe.assert_awaited_once_with(42001, "fixture-org", "new-repo")
 
     # A new database client proves persistence is not an in-memory response.
-    cfg = dotenv_values(Path(__file__).parents[1] / ".env")
+    # See the `flow` fixture above for why os.environ is merged in here too.
+    cfg = {**os.environ, **dotenv_values(Path(__file__).parents[1] / ".env")}
     fresh_client = AsyncIOMotorClient(cfg["MONGO_URL"])
     try:
         persisted = await fresh_client[db.name].cto_projects.find_one({"project_id": project_id})

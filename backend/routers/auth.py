@@ -67,6 +67,8 @@ async def _enforce_login_guard(db, client_ip: str) -> None:
           attempts inside LOGIN_LOCKOUT_MIN (default 15) minutes → 429
           for the remainder of the window. Survives restarts.
     """
+    if os.getenv("DISABLE_LOGIN_RATE_LIMIT", "false").lower() == "true":
+        return
     # Layer 1 — burst rate limit
     if not await check_rate_limit_async(f"login-ip:{client_ip}", _LOGIN_RATE_PER_MIN):
         raise HTTPException(
