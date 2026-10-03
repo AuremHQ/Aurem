@@ -9,7 +9,7 @@
  * substitutes for that.
  */
 import React, { useEffect, useState, useCallback } from "react";
-import { UserPlus, Trash2, RotateCcw, Shield, Loader2 } from "lucide-react";
+import { UserPlus, Trash2, RotateCcw, Shield, Loader2, Link2, Check } from "lucide-react";
 import { api } from "../lib/api";
 
 const LEVELS = ["none", "read", "write", "read_write"];
@@ -27,6 +27,7 @@ export default function TeamManagementPanel() {
   const [inviteRole, setInviteRole] = useState("viewer");
   const [inviting, setInviting] = useState(false);
   const [expanded, setExpanded] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -100,8 +101,19 @@ export default function TeamManagementPanel() {
       if (r.data.email_sent === false) {
         setError(`Couldn't resend the email (${r.data.email_error || "unknown error"}).`);
       }
+      await load();
     } catch (e) {
       setError(e?.response?.data?.detail || "Couldn't resend invite.");
+    }
+  }
+
+  async function copyLink(memberId, link) {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiedId(memberId);
+      setTimeout(() => setCopiedId((id) => (id === memberId ? null : id)), 2000);
+    } catch (e) {
+      setError("Couldn't copy the link — copy it manually from your browser.");
     }
   }
 
@@ -181,7 +193,9 @@ export default function TeamManagementPanel() {
         </form>
         <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 10, marginBottom: 0 }}>
           New invites start with the preset's access — you can fine-tune any resource
-          per person below. They see nothing beyond what's granted.
+          per person below. They see nothing beyond what's granted. Prefer not to wait on
+          email? Use the <Link2 size={11} style={{ verticalAlign: "-1px" }} /> icon next to
+          a pending invite below to copy its link and share it yourself.
         </p>
       </section>
 
@@ -214,6 +228,13 @@ export default function TeamManagementPanel() {
                       <button className="btn-ghost" data-testid={`team-member-resend-${m.member_id}`}
                               onClick={() => resend(m.member_id)} title="Resend invite">
                         <RotateCcw size={14} />
+                      </button>
+                    )}
+                    {m.status === "pending" && m.invite_link && (
+                      <button className="btn-ghost" data-testid={`team-member-copy-link-${m.member_id}`}
+                              onClick={() => copyLink(m.member_id, m.invite_link)}
+                              title="Copy invite link">
+                        {copiedId === m.member_id ? <Check size={14} /> : <Link2 size={14} />}
                       </button>
                     )}
                     {m.status !== "revoked" && (
