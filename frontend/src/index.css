@@ -382,6 +382,16 @@ a:hover { color: var(--accent); }
   outline-offset: 2px;
 }
 
+/* Bug fix — native <select> dropdown list (the <option> popup) isn't
+   covered by the .input background rule above; Chromium inherits
+   `color` from the select onto its options but NOT `background`,
+   so unselected options rendered light-on-white (invisible). Force
+   both together so the popup matches the dark theme. */
+.input option {
+  background: var(--bg-elev, #0d1018);
+  color: var(--text);
+}
+
 /* Iter 388t — Bug 24 fix.  The rail nav buttons (RailShell.jsx) are
    real `<button>` elements so Tab lands on them, but they had NO
    focus-visible styling — the founder pressed Tab, focus was in fact

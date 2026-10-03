@@ -990,7 +990,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             _iv_result = await verify_task_completion(
                 _pkg.get_db(), task_id=task_id, project_id=proj.get("project_id"),
                 user_id=proj.get("user_id"), task_text=task, files=edits,
-                executed_by=_executed_by,
+                before_files=contents, executed_by=_executed_by,
             )
         except Exception as _iv_e:                             # noqa: BLE001
             logger.warning("[cto-task %s] independent verifier crashed (non-blocking): %r",
