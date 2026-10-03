@@ -30,8 +30,9 @@ def test_existing_checks_ignore_meta_keys():
     plain = {"package.json": '{"dependencies":{"react":"18"}}',
              "src/App.jsx": "export default function A(){return <p>hi</p>}\n"}
     with_m = cm.with_meta(plain, ["package.json", "src/App.jsx"], {})
+    meta_only = {"no_project_memory"}        # needs the file list, so only appears when meta is present
     assert {i["rule_id"] for i in run_checkup(plain, include_scanners=False)["items"]} == \
-           {i["rule_id"] for i in run_checkup(with_m, include_scanners=False)["items"]}
+           {i["rule_id"] for i in run_checkup(with_m, include_scanners=False)["items"]} - meta_only
 
 
 def test_scanners_never_see_meta_keys(monkeypatch):

@@ -52,7 +52,7 @@ def env(monkeypatch):
     monkeypatch.setattr(ck, "_build_text_cache", cache)
 
     async def no_meta(*_a):
-        return ["src/App.jsx"], {}
+        return ["src/App.jsx", "AGENTS.md"], {}
     monkeypatch.setattr("services.checkup_meta.fetch_repo_meta", no_meta)
     monkeypatch.setattr("services.pat_vault.get_repo_token", tok)
     ck._last_run.clear()
@@ -137,3 +137,17 @@ def test_guardian_closes_vanished_items_only_when_flag_on(env):
     ck._last_run.clear()
     c.post("/api/aurem-dev/checkup/run", json={"project_id": "p"})
     assert all(r["status"] == "fixed" and r["fixed_by"] == "proof_rerun" for r in db.cto_open_findings.rows)
+
+
+def test_project_memory_preview_is_read_only_and_flag_gated(env):
+    c, db, st = env
+    r = c.post("/api/aurem-dev/checkup/project-memory/preview",
+               json={"project_id": "p", "app_purpose": "A booking app."}).json()
+    assert r["ok"] and r["committed"] is False
+    assert "A booking app." in r["files"]["AGENTS.md"] and "CLAUDE.md" in r["files"]
+    assert not db.cto_open_findings.rows and not db.project_checkups.rows
+    st["tc"] = RuntimeError("github down")
+    bad = c.post("/api/aurem-dev/checkup/project-memory/preview", json={"project_id": "p"}).json()
+    assert bad["ok"] is False and "Nothing was changed" in bad["message"]
+    st["enabled"] = False
+    assert c.post("/api/aurem-dev/checkup/project-memory/preview", json={"project_id": "p"}).status_code == 404
