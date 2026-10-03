@@ -78,11 +78,9 @@ def test_regression_iter409_prompt_echo_keeps_normal_replies():
 
 
 def test_regression_iter409_user_named_files_reads_session_history(monkeypatch):
-    from tests._mini_motor import AsyncMongoMockClient
-    from cto_services.db import set_db
+    from tests._mini_motor import install_mini_db
     from services.reply_integrity import user_named_files
-    db = AsyncMongoMockClient()["t"]
-    set_db(db)
+    db = install_mini_db(monkeypatch)
 
     async def go():
         await db.chat_sessions.insert_one({"session_id": "s", "user_id": "u", "turns": [
