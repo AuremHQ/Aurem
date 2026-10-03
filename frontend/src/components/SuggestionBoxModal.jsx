@@ -8,10 +8,12 @@
  */
 import React, { useState } from "react";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 export default function SuggestionBoxModal({ open, onClose }) {
   const [text, setText] = useState("");
   const [state, setState] = useState({ kind: "idle" });
+  useEscapeKey(onClose, !!open);
 
   if (!open) return null;
 
