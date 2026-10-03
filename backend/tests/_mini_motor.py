@@ -241,3 +241,32 @@ class AsyncMongoMockClient:
 
     def __getitem__(self, name):
         return self._dbs.setdefault(name, _Database())
+
+
+def _from_tests(fn) -> bool:
+    return "/tests/" in getattr(getattr(fn, "__code__", None), "co_filename", "")
+
+
+def install_mini_db(monkeypatch, name="t"):
+    """Point `cto_services.db` at a fresh mini database and undo any stale
+    `get_db` that an earlier test left behind.
+
+    Why: some tests patch `cto_services.db.get_db` with a lambda and do not
+    restore it, and modules that did `from cto_services.db import get_db`
+    keep whatever function they saw at import time. `set_db()` then no
+    longer reaches them, so a later test silently reads the earlier test's
+    fake DB (order-dependent failures that only show in a full CI shard)."""
+    import sys
+
+    from cto_services import db as _dbmod
+
+    def _live():
+        return _dbmod._db
+
+    for mod_name, mod in list(sys.modules.items()):
+        if mod_name.startswith(("services", "routers", "core", "cto_services")) \
+                and _from_tests(getattr(mod, "get_db", None)):
+            monkeypatch.setattr(mod, "get_db", _live)
+    db = AsyncMongoMockClient()[name]
+    _dbmod.set_db(db)
+    return db
