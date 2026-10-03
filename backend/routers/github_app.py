@@ -352,7 +352,7 @@ async def install_callback(
             _existing_row = await db.github_installations.find_one(
                 {"installation_id": int(installation_id)}
             )
-            if _existing_row and _existing_row.get("user_id"):
+            if (_existing_row and _existing_row.get("user_id") and not _existing_row.get("suspended_at") and not _existing_row.get("deleted_at")):
                 _recovered_user_id = _existing_row["user_id"]
                 logger.info(
                     "GH_CONNECT_STATE_MISSING_REUSED_EXISTING_LINK "
@@ -376,6 +376,9 @@ async def install_callback(
                 installation_id, _recovered_user_id,
             )
         if _recovered_user_id is None:
+            if _existing_row and (_existing_row.get("suspended_at") or _existing_row.get("deleted_at")):
+                return RedirectResponse(url=_dashboard_url(request, _DEEP_LINK_ERR_STATE), status_code=302)
+
             # Truly orphaned — no user_id, no DB row, no recoverable
             # state string, no existing link. Enrich the log with
             # account/repo context (best-effort; installation_id alone
@@ -492,6 +495,12 @@ async def install_callback(
         user_id=user_id_to_link,
         repositories=repos_slim,
     )
+
+    if state_row and state_row.get("user_id"):
+        await db.github_installations.update_one(
+            {"installation_id": int(installation_id)},
+            {"$set": {"install_initiated_by": state_row["user_id"]}},
+        )
     if _recovered_user_id:
         logger.info(
             "GH_CONNECT_STATE_RECOVERED installation_id=%s user_id=%s "
@@ -1050,6 +1059,9 @@ async def claim_installation(
     installed_at = row.get("installed_at") or 0
     if (_now_utc_epoch() - installed_at) > _CLAIM_WINDOW_SECONDS:
         raise HTTPException(409, "installation_too_old_to_claim")
+
+    if row.get("install_initiated_by") != account_id:
+        raise HTTPException(403, "installation_claim_not_authorized")
 
     await db.github_installations.update_one(
         {"installation_id": int(body.installation_id)},
