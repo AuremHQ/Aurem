@@ -326,15 +326,19 @@ async def install_callback(
         #       truthy, so case (b) fell straight through to an
         #       orphaned/unlinked install (2026-09-04 fix).
         if state and state.startswith("gha:"):
-            # Case (a) with a still-recognisable string. Our own state
-            # string is `gha:<user_id>:<random 24-byte token>` — the
-            # random suffix makes it unforgeable, so on TTL-expiry or a
-            # benign double-fire (GitHub occasionally redirects the
-            # callback twice) it is safe to recover `user_id` from the
-            # string itself rather than dropping the link entirely.
-            _parts = state.split(":", 2)
-            if len(_parts) == 3 and _parts[1]:
-                _recovered_user_id = _parts[1]
+            # Case (a): on TTL-expiry or a benign double-fire (GitHub
+            # occasionally redirects the callback twice) recover the user
+            # from the row /install stored for this exact state token. The
+            # string alone proves nothing: `gha:<user_id>:<anything>` is
+            # trivially forgeable, and this endpoint is unauthenticated, so
+            # parsing the user id out of it let anyone link any installation
+            # to any account. Only a token we minted (and can find) counts.
+            _prior = await db.oauth_states.find_one(
+                {"state": state, "kind": "github_app_install"},
+                {"user_id": 1},
+            )
+            if _prior and _prior.get("user_id"):
+                _recovered_user_id = _prior["user_id"]
         if _recovered_user_id is None:
             # Case (b), or a case (a) string that doesn't match our
             # format. Last resort before declaring this orphaned: if
@@ -428,6 +432,25 @@ async def install_callback(
 
     user_id_to_link = (state_row or {}).get("user_id") or _recovered_user_id
     funnel_session  = (state_row or {}).get("funnel_session")
+
+    # An installation that already belongs to another account is never
+    # re-pointed from this callback (same rule /claim enforces with 403
+    # installation_belongs_to_another_user). Moving one is an admin action.
+    _owned = await db.github_installations.find_one(
+        {"installation_id": int(installation_id)}, {"user_id": 1},
+    )
+    _owner = (_owned or {}).get("user_id")
+    if _owner and _owner != user_id_to_link:
+        logger.warning(
+            "GH_CONNECT_CALLBACK_REFUSED_OWNED installation_id=%s "
+            "owner=%s requested_by=%s — installation already linked to a "
+            "different account; not reassigning",
+            installation_id, _owner, user_id_to_link,
+        )
+        return RedirectResponse(
+            url=_dashboard_url(request, _DEEP_LINK_ERR_STATE),
+            status_code=302,
+        )
 
     # ── Fetch installation metadata from GitHub ───────────────────────
     try:
