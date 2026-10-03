@@ -55,10 +55,9 @@ def test_regression_iter414_chat_send_records_the_turn(monkeypatch):
     import os
     os.environ["INTERACTION_CONTRACT_V1"] = "1"
     try:
-        from cto_services.db import set_db
         from routers.chat import turn as turn_mod
-        db = AsyncMongoMockClient()["t"]
-        set_db(db)
+        from tests._mini_motor import install_mini_db
+        db = install_mini_db(monkeypatch)
 
         async def dev(*a, **k):
             return {"user_id": "u1", "email": "u@example.com", "tier": "pro"}
