@@ -61,6 +61,15 @@ def repo_paths(tc: dict[str, str]) -> list[str]:
     return [p for p in tc[_PATHS_KEY].split("\n") if p]
 
 
+def known_paths(tc: dict[str, str]) -> set[str]:
+    """Every path we can name: scanned files plus, when it was fetched, the whole
+    repo listing (so a file the text cache skipped — too big, `.mjs`, `.vue` — still counts)."""
+    paths = {p.lstrip("/") for p in strip_meta(tc)}
+    if _PATHS_KEY in tc:
+        paths |= {p.lstrip("/") for p in repo_paths(tc)}
+    return paths
+
+
 def meta_file(tc: dict[str, str], name: str) -> str | None:
     """Content of a `META_FILES` entry, or None when the repo has no such file.
 
