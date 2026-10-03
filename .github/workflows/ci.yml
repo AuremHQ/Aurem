@@ -906,12 +906,12 @@ jobs:
     needs: [frontend-build, backend-tests, backend-tests-aggregate, simulated-user-qa, security-scan, secret-scan, absolute-claim-lint]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
-    env:
-      # Iter 306 — hoist secret to job-level env so the step below can
-      # gate on `env.API_KEY != ''` (secrets context is disallowed
-      # inside step-level `if:`).
-      API_KEY: ${{ secrets.AUREM_API_KEY }}
     steps:
+      # "All checks passed" is NOT "deployed". This job used to POST a
+      # "success" deploy report to auremcto.com here, which made the
+      # dashboard show a deploy that never happened. Deploy results are
+      # reported only by AUREM Auto-Deploy, after the `production`
+      # environment approval, with the real webhook result.
       - name: All checks passed
         run: |
           echo "✅ Frontend build: passed"
@@ -919,16 +919,7 @@ jobs:
           echo "✅ Simulated-user QA: passed"
           echo "✅ Security scan: passed"
           echo "✅ Secret scan:   passed"
-          echo "🚀 Safe to deploy to auremcto.com"
-
-      - name: Notify AUREM dashboard
-        if: env.API_KEY != ''
-        run: |
-          curl -s -X POST \
-            "https://auremcto.com/api/aurem-dev/github-deploy/report" \
-            -H "Content-Type: application/json" \
-            -d "{\"api_key\":\"$API_KEY\",\"commit\":\"${{ github.sha }}\",\"status\":\"success\",\"repo\":\"${{ github.repository }}\"}" \
-            || echo "notify done"
+          echo "All checks passed. Nothing is deployed by this job."
 
   # ────────────────────────────────────────────────────────────────
   # Iter 331 — DELETE GATE (see docs/DELETE_GATE.md)
