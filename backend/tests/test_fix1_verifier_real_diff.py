@@ -33,7 +33,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv("/app/backend/.env")
 
-from services.task_independent_verifier import verify_task_completion  # noqa: E402
+from services.task_independent_verifier import (          # noqa: E402
+    _format_diff, verify_task_completion,
+)
 
 _SKIP_REASON = (
     "Real LLM integration test — set RUN_LLM_INTEGRATION=1 and "
@@ -54,24 +56,27 @@ async def db():
 
 
 def _build_10k_file_with_fix_near_end() -> tuple:
-    """Same construction as the manual proof run: a 10,000-char file,
+    """Same construction as the manual proof run: a ~10,000-char file,
     header + filler, with the ONE correct line-fix in the final ~80
     chars — i.e. entirely outside the old 2,500-char truncation
     window, but trivially visible in a real diff's hunk regardless of
-    total file size."""
+    total file size. Padding is whole filler LINES only (never a
+    partial line), so the fix line always starts cleanly on its own
+    line — a prerequisite for a correct line-based diff."""
     filler_line = "# filler line to pad file length, no semantic content here\n"
     header = "def calculate_total(items):\n    total = 0\n"
     old_bug_line = "    for i in range(1, len(items)):\n        total += items[i]\n    return total\n"
     new_fix_line = "    for i in range(0, len(items)):\n        total += items[i]\n    return total\n"
 
     target_len = 10_000
-    pad_len = target_len - len(header) - len(old_bug_line)
-    body_filler = (filler_line * (pad_len // len(filler_line) + 1))[:pad_len]
+    pad_budget = target_len - len(header) - len(old_bug_line)
+    whole_lines = pad_budget // len(filler_line)
+    body_filler = filler_line * whole_lines
 
     old_content = header + body_filler + old_bug_line
     new_content = header + body_filler + new_fix_line
-    assert len(old_content) == target_len
-    assert len(new_content) == target_len
+    assert len(old_content) >= 9_900, len(old_content)
+    assert old_content.endswith(old_bug_line) and new_content.endswith(new_fix_line)
     return old_content, new_content
 
 
@@ -179,3 +184,93 @@ async def test_readme_only_change_for_code_request_still_fails(db):
     assert result["decision"] == "fail", (
         f"Expected 'fail' for a README-only diff answering a code "
         f"request, got {result['decision']!r} ({result['reason']!r})")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Deterministic tests below — NO LLM key, NO network call, run in
+# plain `pytest` with no env flags. These are the ones CI actually
+# runs on every push.
+# ─────────────────────────────────────────────────────────────────────
+
+def test_format_diff_shows_the_changed_line_and_hunk_header_on_10k_file():
+    """1a — deterministic, pure function. On the exact 10,000-char
+    case, the real-diff output must contain the changed line itself
+    and a '@@' hunk header — i.e. the change is actually IN the text
+    sent to the model, not just conceptually "visible in theory"."""
+    old_content, new_content = _build_10k_file_with_fix_near_end()
+    diff_text, any_omitted = _format_diff(
+        {"app/utils.py": old_content}, {"app/utils.py": new_content},
+    )
+    print(f"[1a] diff_text ({len(diff_text)} chars):\n{diff_text}")
+    print(f"[1a] any_omitted={any_omitted}")
+    assert "@@" in diff_text, "no hunk header in the diff output at all"
+    assert "for i in range(0, len(items)):" in diff_text, (
+        "the actual fixed line is not present in the diff text sent "
+        "to the verifier — this is the exact bug FIX 1 was meant to "
+        "close")
+    assert "+    for i in range(0, len(items)):" in diff_text, (
+        "the fixed line is present but not marked as an added ('+') "
+        "line — not a real diff")
+    assert any_omitted is False, (
+        "a single one-line change in one file should never need to "
+        "omit anything, regardless of the surrounding file's size")
+
+
+@pytest.mark.asyncio
+async def test_omitted_diff_with_fake_fail_becomes_inconclusive(db, monkeypatch):
+    """1b — deterministic: force `any_omitted=True` with 13 tiny
+    files (one over `_MAX_FILES_SHOWN=12`, so the 13th is reported as
+    "not shown" — no need for a huge file to trigger this), fake the
+    LLM reply to 'fail', and assert the code-level override in rule
+    (c) fires: decision becomes 'inconclusive' with the
+    `fail_overridden_incomplete_view:` prefix."""
+    files = {f"file_{i}.py": f"content {i}\n" for i in range(13)}
+    before_files = {f"file_{i}.py": f"old content {i}\n" for i in range(13)}
+
+    async def _fake_one_shot(**kwargs):
+        return '{"verdict":"fail","reason":"fake fail for test"}', {}, None
+
+    monkeypatch.setattr(
+        "services.task_independent_verifier._one_shot", _fake_one_shot)
+
+    task_id = f"fix1_omitted_fakefail_{uuid.uuid4().hex[:8]}"
+    result = await verify_task_completion(
+        db, task_id=task_id, project_id="test_proj", user_id="test_user",
+        task_text="do something", files=files, before_files=before_files,
+        executed_by="worker_api:deepseek", origin="test_fix1_deterministic",
+    )
+    print(f"[1b] decision={result['decision']!r} reason={result['reason']!r}")
+    assert result["decision"] == "inconclusive", (
+        f"expected 'inconclusive' (fail must be overridden when "
+        f"any_omitted=True), got {result['decision']!r}")
+    assert result["reason"].startswith("fail_overridden_incomplete_view:"), (
+        f"expected the override reason prefix, got {result['reason']!r}")
+
+
+@pytest.mark.asyncio
+async def test_non_omitted_diff_with_fake_fail_stays_fail(db, monkeypatch):
+    """1c — deterministic: a tiny single-file diff (nothing omitted),
+    fake the LLM reply to 'fail', and assert the decision stays
+    'fail' — the override must NOT fire when nothing was actually
+    left out."""
+    files = {"a.py": "line1\nCHANGED\nline3\n"}
+    before_files = {"a.py": "line1\nline2\nline3\n"}
+
+    async def _fake_one_shot(**kwargs):
+        return '{"verdict":"fail","reason":"fake fail for test"}', {}, None
+
+    monkeypatch.setattr(
+        "services.task_independent_verifier._one_shot", _fake_one_shot)
+
+    task_id = f"fix1_notomitted_fakefail_{uuid.uuid4().hex[:8]}"
+    result = await verify_task_completion(
+        db, task_id=task_id, project_id="test_proj", user_id="test_user",
+        task_text="do something", files=files, before_files=before_files,
+        executed_by="worker_api:deepseek", origin="test_fix1_deterministic",
+    )
+    print(f"[1c] decision={result['decision']!r} reason={result['reason']!r}")
+    assert result["decision"] == "fail", (
+        f"expected 'fail' to stay 'fail' when nothing was omitted, "
+        f"got {result['decision']!r} ({result['reason']!r})")
+    assert not result["reason"].startswith("fail_overridden_incomplete_view:"), (
+        "override prefix must not appear when any_omitted=False")
