@@ -4,7 +4,20 @@ import { api, API_BASE, getToken } from "../lib/api";
 import { trackFunnel } from "../lib/githubFunnel";
 
 const POLL_INTERVAL_MS = 2500;
-const MAX_WAIT_MS = 60_000;
+// 2026-02 — Part 2.1 (stuck-users fix, "OUR bug" per founder): this
+// was 60_000 (60s). Root cause of the `client_timeout` reason logged
+// for sidban15 — the GitHub App install popup can genuinely take
+// longer than 60s for real flows (org-admin-approval prompts, 2FA,
+// reviewing the repo-access picker slowly) WHILE THE POPUP IS STILL
+// OPEN and the user is still actively working through it. The old
+// 60s budget declared failure on those users even though nothing
+// was actually broken. Raised to match this same codebase's own
+// evidence-based budget for the closely related repo-access-
+// propagation lag (`NewUserWizard.jsx`'s `_REPO_ACCESS_RETRY_BUDGET_MS
+// = 2 * 60_000`) — this only extends patience while the popup is
+// open; a closed popup still resolves immediately via the separate
+// `popup_closed` branch below, unaffected.
+const MAX_WAIT_MS = 3 * 60_000;
 const SYNC_INTERVAL_MS = 5000;
 const SYNC_MAX_MS = 120_000;
 const IDLE_STATUS = {

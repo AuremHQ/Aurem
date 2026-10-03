@@ -80,14 +80,32 @@ def finalize(result: dict, content: str, *, prompt: str, session_id: str,
         state = "blocked"
     elif "That was my next planned step" in content or _is_intent_only_announcement(content):
         state = "partial"
+    elif _promises_a_tool_action_it_never_ran(content, result):
+        # 2026-10 — C2 fix, second half. A model reply that still
+        # carries an unexecuted tool-call tag (LongCat's own
+        # `<longcat_tool_call>...` or any generic `<tool_call>` /
+        # `<function_call>` the pipeline never ran) must not close as
+        # "Response delivered" — same promised-and-never-run class as
+        # the intent-only-announcement check above, just a structural
+        # signal (a tag literally present with zero tool_calls_run)
+        # instead of a text-phrase heuristic. Defense in depth:
+        # `_call_longcat` already swaps this content out before it
+        # gets here, but any OTHER path that lets a tag through must
+        # not silently report success either.
+        state = "partial"
     elif state not in {"success", "partial", "blocked", "error"}:
         state = "success"
+    from services.turn_outcome import decide
+    verdict = decide(result, content, state)
     return {
         "version": 1, "request_id": request_id, "session_id": session_id,
         "request_hash": hashlib.sha256(prompt.encode()).hexdigest(),
         "content_hash": hashlib.sha256(content.encode()).hexdigest(),
         "turn_state": state,
-        "completion_basis": "response_delivered" if state == "success" else state,
+        # `outcome` is decided from evidence (services/turn_outcome.py); a
+        # delivered reply alone is never a completion.
+        **verdict,
+        "completion_basis": verdict["reason"] if state == "success" else state,
         "continue_available": state == "partial",
         "failure_mode": result.get("failure_mode"),
         "recovery_action": "continue" if state == "partial" else (
@@ -98,6 +116,27 @@ def finalize(result: dict, content: str, *, prompt: str, session_id: str,
         "suggested_actions": [],
         "verified_paths": list(result.get("verified_paths") or []),
     }
+
+
+def _promises_a_tool_action_it_never_ran(content: str, result: dict) -> bool:
+    """True iff `content` still contains an unexecuted tool-call tag
+    (any of `<tool_call>`, `<function_call>`, `<tool>`, `<function>`,
+    or LongCat's native `<longcat_tool_call>`) AND no tool actually
+    ran this turn (`tool_calls_run == 0`). A tag present with real
+    invocations alongside it (`tool_calls_run > 0`) is not this bug —
+    that's a different model genuinely running one tool while also
+    leaving stray text; THIS check is specifically "promised, zero
+    delivered"."""
+    if int(result.get("tool_calls_run") or 0) > 0:
+        return False
+    text = content or ""
+    if not text:
+        return False
+    import re as _re
+    return bool(_re.search(
+        r"<\s*/?\s*(?:tool_call|function_call|tool|function|longcat_tool_call)\b",
+        text, _re.IGNORECASE,
+    ))
 
 
 def new_request_id() -> str:

@@ -25,6 +25,8 @@ import UsageHistoryCard from "../components/UsageHistoryCard";
 import ReferralShare from "../components/ReferralShare";
 import TrustLevelCard from "../components/TrustLevelCard";
 import DangerZone from "../components/DangerZone";
+import ModalCloseButton from "../components/ModalCloseButton";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import ChangePasswordCard from "../components/ChangePasswordCard";
 import PhoneNumberCard from "../components/PhoneNumberCard";
 import ShipWallOptInCard from "../components/ShipWallOptInCard";
@@ -527,6 +529,7 @@ function Row({ k, v }) {
 function TrackSwitcher({ currentTrack, onSwitched }) {
   const [showConfirm, setShowConfirm] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  useEscapeKey(() => { if (!busy) setShowConfirm(false); }, showConfirm);
   const nav = useNavigate();
   const target = currentTrack === "personal" ? "developer" : "personal";
   const targetLabel = target === "personal" ? "Personal Track" : "Developer Track";
@@ -583,12 +586,16 @@ function TrackSwitcher({ currentTrack, onSwitched }) {
             role="dialog" aria-modal="true"
             onClick={(e) => e.stopPropagation()}
             style={{
-              maxWidth: 440, width: "100%",
+              maxWidth: 440, width: "100%", position: "relative",
               background: "var(--bg, #0a0e1a)",
               border: "1px solid var(--border)",
               borderRadius: 12, padding: 24,
             }}
           >
+            <ModalCloseButton
+              onClick={() => setShowConfirm(false)} disabled={busy}
+              testId="track-switch-close"
+            />
             <h3 style={{ fontSize: 18, margin: "0 0 8px", color: "var(--text)" }}>
               Switch to {targetLabel}?
             </h3>

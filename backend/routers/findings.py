@@ -260,6 +260,62 @@ async def backlog_list(
 
 
 # ══════════════════════════════════════════════════════════════════════
+# GET /findings/fix-list
+#
+# 2026-10 — "Fix List" panel inside chat (founder spec, roadmap.sh-
+# validated gap: findings existed in `cto_open_findings` already, but
+# a vibecoder had no simple, un-gated checklist of everything still
+# open for their project without leaving chat for the separate
+# /codebase-health page). Unlike /backlog above (30-day-idle +
+# once-a-week-cadence gated, built for the push-notification strip),
+# this returns the CURRENT real list on demand, every severity, no
+# cadence gate — the user explicitly asked to see it.
+# ══════════════════════════════════════════════════════════════════════
+@router.get("/fix-list")
+async def fix_list(
+    project_id: str,
+    limit: int = 20,
+    authorization: Optional[str] = Header(None),
+):
+    user = await current_dev(authorization)
+    db = get_db()
+    ctx = await check_permission(user, "projects", "read", db=db)
+    user_id = ctx["effective_account_id"]
+    await _assert_owns_project(db, user_id, project_id)
+
+    cursor = db.cto_open_findings.find({
+        "user_id":    user_id,
+        "project_id": project_id,
+        "status":     "open",
+    }).sort([("severity", 1), ("last_seen_at", -1)]).limit(max(1, min(limit, 100)))
+    rows = await cursor.to_list(max(1, min(limit, 100)))
+    sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    items = []
+    for f in rows:
+        items.append({
+            "finding_id": f.get("finding_id"),
+            "rule_id":    f.get("rule_id"),
+            "category":   f.get("category") or "",
+            "severity":   f.get("severity") or "medium",
+            "file":       f.get("file") or "",
+            "line":       f.get("line") or 0,
+            "title":      f.get("title") or "",
+            "message":    f.get("message") or "",
+            "fix_hint":   f.get("fix_hint") or "",
+        })
+    items.sort(key=lambda f: sev_rank.get(f["severity"], 9))
+    total_open = await db.cto_open_findings.count_documents({
+        "user_id": user_id, "project_id": project_id, "status": "open",
+    })
+    return {
+        "ok":         True,
+        "project_id": project_id,
+        "items":      items,
+        "total_open": total_open,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
 # GET /findings/starter-suggestions
 #
 # 2026-08-22 — powers the PromptStarterPanel's rotating/personalized

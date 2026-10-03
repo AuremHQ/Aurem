@@ -24,6 +24,9 @@ import ModeSelector from "./ModeSelector";
 import ThinkingHint from "./ThinkingHint";
 import LiveTaskPopup from "./LiveTaskPopup";
 import WarmStatusBar from "./WarmStatusBar";
+import GraphReadyCard from "./GraphReadyCard";
+import IdleStartHelper from "./IdleStartHelper";
+
 import { useWarmStart } from "../hooks/useWarmStart";
 import GraphPanel from "./GraphPanel";
 import TemperatureBadge from "./TemperatureBadge";
@@ -221,6 +224,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // preserves the app shell and lets us pass project_id explicitly.
   const navigate = useNavigate();
   const [messages, setMessages] = useState([WELCOME]);
+  // 2026-10 — "empty chat" for GraphReadyCard/IdleStartHelper means only
+  // the WELCOME sentinel is present (see those render calls below) —
+  // `messages` is never a literal `[]` in this component. Also treat
+  // the auto-selected `onboard-nudge-{project_id}` session (services/
+  // onboarding_first_task_nudge.py, auto-written the moment the first
+  // scan completes) as "empty enough": without this, that older
+  // text-only nudge always lands first and permanently blocks this
+  // card from ever rendering for any real user. Can't match on
+  // `provider` — GET /chat/history sanitizes every turn's provider to
+  // the generic "ORA" label before it reaches the client (Iter
+  // 2026-09-28 privacy fix) — so this matches the session's own
+  // deterministic naming convention instead.
+  const isWelcomeOnlyChat = messages.length === 0
+    || (messages.length === 1 && messages[0] === WELCOME)
+    || (messages.length === 1
+        && sessionId === `onboard-nudge-${activeProject?.project_id}`);
   const [input, setInput] = useState("");
   // 2026-09-09 — founder ticket Part 0 (round 2): the removed
   // FirstScanNudge banner used a local `messages.some(role==="user")`
@@ -551,6 +570,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     window.addEventListener("aurem:composer-status-request", onRequest);
     return () => window.removeEventListener("aurem:composer-status-request", onRequest);
   }, [detectedMode, serverMode]);
+  // 2026-10 — "Fix List → robot" spec: OraGuideMascot must never
+  // auto-pop its Fix List nudge while ORA is working (`busy`) or
+  // while the user is mid-keystroke (`input` non-empty). Broadcast
+  // both so the mascot (which has no other way to see chat state)
+  // can gate its own auto-open logic — manual clicks on the mascot
+  // itself are NOT gated by this, only the one-per-session nudge is.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent("aurem:ora-busy-status", {
+        detail: { busy, typing: input.length > 0 },
+      }));
+    } catch { /* noop */ }
+  }, [busy, input]);
   // Iter 330 — F12 action listeners moved further down (after taRef
   // + lastF12PayloadRef are declared). See the useEffect block after
   // taRef around line ~395 in this file. Split here to avoid TDZ
@@ -600,6 +632,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // its own finally) so a stuck lock can't perma-block sends.
   const sendInFlightRef = useRef(false);
   const sendLockTimeoutRef = useRef(null);
+  // 2026-10 — always holds the latest `send` closure; see the
+  // `aurem:starter-autosend` listener below for why this exists.
+  const sendRef = useRef(null);
   useEffect(() => {
     if (!busy && sendInFlightRef.current) {
       sendInFlightRef.current = false;
@@ -616,11 +651,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // exactly once so Shell.jsx can hide the sidebar after the first
   // send (not on every keystroke).
   const sessionStartedRef = useRef(false);
+  // 2026-10 — Sidebar "AUTO" root-cause fix. This used to be the
+  // SAME ref the real-send dispatch below (~line 2300) checked —
+  // but the history-restore effect (~line 1806) fires FIRST on any
+  // reload where the session already has turns (i.e. almost every
+  // real session) and flips `sessionStartedRef.current = true` while
+  // dispatching `restored: true` — which RailShell.jsx intentionally
+  // ignores. With a shared ref, the REAL send dispatch a few lines
+  // down was then permanently gated off (`if (!sessionStartedRef...)`)
+  // for the rest of that session, so "AUTO" never collapsed the rail
+  // for any returning user. Separate ref, separate concern.
+  const realSendStartedRef = useRef(false);
   // Reset the flag whenever the session changes (new chat, switched
   // project) so the sidebar reappears in the fresh session until the
   // user actually sends something.
   useEffect(() => {
     sessionStartedRef.current = false;
+    realSendStartedRef.current = false;
     // TC-11 fix (Feb 2026) — clear the textarea composer whenever the
     // session rotates so the "New run" button leaves the composer
     // visibly empty. Without this, rotating `sessionId` cleared the
@@ -1210,6 +1257,35 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     return () => window.removeEventListener("ora-inject", onInject);
   }, []);
 
+  // 2026-02 — "STUCK USERS FIX" Part 1. Unlike `ora-inject` / `aurem:
+  // starter-pick` above (which deliberately only prefill — "never
+  // auto-sends"), the graph-ready card's 3 starter buttons and the
+  // 3-minute idle helper's "Yes, start" button must genuinely START
+  // a real task with zero typing (explicit founder requirement: "The
+  // first click starts a real task immediately"). This is the one
+  // place in the app that calls `send()` directly instead of just
+  // filling the composer.
+  //
+  // 2026-10 — ROOT FIX: the listener below used to call `send` from
+  // an effect with `[]` deps, so it permanently closed over the
+  // `send`/`sessionId` captured at ChatPanel's VERY FIRST mount —
+  // before a project/session was ever selected. `send()` early-
+  // returns on `!sessionId` (see its guard clause), so every click
+  // silently no-op'd: the card disappeared (dismissed locally) but
+  // no message was ever sent. A ref always holding the latest `send`
+  // fixes it without re-subscribing the listener on every render.
+  sendRef.current = send;
+  useEffect(() => {
+    const onAutosend = (e) => {
+      const text = e?.detail?.text;
+      if (typeof text === "string" && text.trim()) {
+        sendRef.current(null, { promptOverride: text.trim() });
+      }
+    };
+    window.addEventListener("aurem:starter-autosend", onAutosend);
+    return () => window.removeEventListener("aurem:starter-autosend", onAutosend);
+  }, []);
+
   // Iter 163 — chat toolbar (Show all / Clear chat) auto-hide on
   // typing, mirroring the top tabbar pattern. INDEPENDENT hot-zone:
   // hovering the very top edge of the chat-messages area brings the
@@ -1312,6 +1388,24 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { refreshUsage(); }, [refreshUsage]);
+
+  // 2026-10 — Bug fix: a user who upgrades their plan on /settings (or
+  // via a Stripe Checkout redirect/new tab) and then switches back to
+  // an already-open chat tab saw a STALE "251% tokens used" banner
+  // computed against their OLD tier's limit — `refreshUsage` only ran
+  // once on mount and had no mechanism to learn the plan changed.
+  // Same visibility-triggered re-check pattern as PaymentFailedBanner.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshUsage();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const interval = setInterval(onVisible, 60000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(interval);
+    };
+  }, [refreshUsage]);
 
   // Iter 364 · Phase 3 — Listen for the api.js 402 interceptor event
   // so a rejected /chat/send call shows the correct upgrade toast
@@ -2211,12 +2305,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     //
     // Fix: hoist the dispatch here — AFTER input-validity guard has
     // passed (so we only fire on real user sends) but BEFORE any
-    // mode-specific branching. The `sessionStartedRef` gate keeps
-    // this idempotent across the rest of a session; `promptOverride`
+    // mode-specific branching. `realSendStartedRef` (own ref, not
+    // shared with the history-restore path above) keeps this
+    // idempotent across the rest of a session; `promptOverride`
     // (internal re-invocations like plan-approve execute-phase) also
     // reuse the same ref so they never re-fire.
-    if (!sessionStartedRef.current && promptOverride == null) {
-      sessionStartedRef.current = true;
+    if (!realSendStartedRef.current && promptOverride == null) {
+      realSendStartedRef.current = true;
       try {
         window.dispatchEvent(new CustomEvent("aurem:chat-session-started", {
           detail: { session_id: sessionId },
@@ -5122,8 +5217,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           directly; see githubConn below. */}
 
       {/* 2026-08-22 — Payment-Failed Banner. Unrelated to GitHub
-          connection status (Stripe billing) — kept as-is. */}
-      <PaymentFailedBanner />
+          connection status (Stripe billing) — kept as-is.
+          2026-10 · width-rail fix — wrapped in `.chat-inline-card` so
+          it sits on the SAME left/right edges as the composer at
+          every container width (previously edge-to-edge, visibly
+          wider than the chat input). */}
+      <div className="chat-inline-card"><PaymentFailedBanner /></div>
 
       {/* Iter 212m-49 — "⚡ free mode" pill. Surfaces when the most
           recent assistant turn was served by the Groq emergency
@@ -5200,6 +5299,28 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       {messages.length === 0 && (
         <WarmStatusBar status={warmStatus} progress={warmProgress} />
       )}
+      {/* 2026-02 — "STUCK USERS FIX" Part 1: only for a genuinely
+          empty chat on a real connected project — never competes with
+          WarmStatusBar's skeleton bars once real content exists.
+          2026-10 — ROOT FIX: `messages` defaults to `[WELCOME]` (both
+          the initial useState and the confirmed-empty-history branch
+          above), so `messages.length === 0` was NEVER true in
+          practice — this card and IdleStartHelper never rendered for
+          any real user. "Empty chat" means only the WELCOME sentinel
+          is present, not a literal zero-length array. */}
+      <GraphReadyCard
+        projectId={activeProject?.project_id}
+        visible={isWelcomeOnlyChat && !!activeProject?.project_id}
+      />
+      <IdleStartHelper
+        projectId={activeProject?.project_id}
+        visible={isWelcomeOnlyChat && !!activeProject?.project_id}
+      />
+      {/* 2026-10 — "Fix List" top bar removed per founder spec: the
+          open-findings list now lives in the ORA mascot (bottom-right)
+          instead of a persistent bar at the top of chat. See
+          OraGuideMascot.jsx's "fixlist" / "fixlist-all" panel modes —
+          same /findings/fix-list data source, no parallel list. */}
       <div
         data-testid="chat-messages"
         style={{
@@ -5689,8 +5810,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           the message list and the composer so it's the last thing the
           user sees before typing. Auto-cleared on next submit. */}
       {modeAmbiguous && (
-        <div data-testid="mode-ambiguous-banner" style={{
-          margin: "0 16px 8px",
+        <div data-testid="mode-ambiguous-banner" className="chat-inline-card" style={{
+          margin: "0 0 8px",
           padding: "10px 14px",
           background: "var(--accent-soft)",
           border: "1px solid var(--border-strong)",
@@ -5735,7 +5856,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           on the same row block. Rendered below just before the
           composer form opens.
       */}
-      <TokenBanner usage={usage} />
+      <div className="chat-inline-card"><TokenBanner usage={usage} /></div>
       <UsageLimitModal
         open={showUsageLimitModal}
         usage={usage}
@@ -5827,13 +5948,24 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           />
         </div>
       )}
-      <SelfHealIndicator
-        visible={selfHeal.visible}
-        attempt={selfHeal.attempt}
-        max={selfHeal.max}
-        errorPreview={selfHeal.errorPreview}
-        startedAt={selfHeal.startedAt}
-      />
+      {/* 2026-10 · width-rail fix — the six cards below previously
+          used their own fixed px margins (or none) and drifted off
+          the composer's left/right rail, especially on wide screens
+          where the composer's clamp() padding grows up to 240px.
+          `.chat-inline-card` is the single source of truth (index.css)
+          for this rail — same padding the composer + messages use,
+          including the 900px/600px container-query overrides, so
+          these cards resize in lockstep with the input on every
+          viewport. */}
+      <div className="chat-inline-card">
+        <SelfHealIndicator
+          visible={selfHeal.visible}
+          attempt={selfHeal.attempt}
+          max={selfHeal.max}
+          errorPreview={selfHeal.errorPreview}
+          startedAt={selfHeal.startedAt}
+        />
+      </div>
       {/* Iter 362 · Bug (Part B) — surface actual verify lint/type
           errors on terminal FAILED. Was previously just a generic
           "Verify failed after 2 attempts" narration with zero detail. */}
@@ -5849,42 +5981,50 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         </div>
       )}
       {userAction && (
-        <UserActionCard
-          phase={userAction.phase}
-          message={userAction.message}
-          errors={userAction.errors}
-          gateType={userAction.gateType}
-          testsTouched={userAction.testsTouched}
-          busy={userActionBusy}
-          onAction={handlePauseAction}
-          expiresAt={loopExpiresAt}
-        />
+        <div className="chat-inline-card">
+          <UserActionCard
+            phase={userAction.phase}
+            message={userAction.message}
+            errors={userAction.errors}
+            gateType={userAction.gateType}
+            testsTouched={userAction.testsTouched}
+            busy={userActionBusy}
+            onAction={handlePauseAction}
+            expiresAt={loopExpiresAt}
+          />
+        </div>
       )}
       {loopExpired && (
-        <LoopExpiredCard
-          phase={loopExpired.phase}
-          onRestart={handleRestartLoop}
-          onDismiss={handleDismissExpired}
-        />
+        <div className="chat-inline-card">
+          <LoopExpiredCard
+            phase={loopExpired.phase}
+            onRestart={handleRestartLoop}
+            onDismiss={handleDismissExpired}
+          />
+        </div>
       )}
       {shipResult && (
-        <ShipSuccessCard
-          result={shipResult}
-          onDismiss={() => setShipResult(null)}
-        />
+        <div className="chat-inline-card">
+          <ShipSuccessCard
+            result={shipResult}
+            onDismiss={() => setShipResult(null)}
+          />
+        </div>
       )}
       {shipPending && (
-        <ShipPendingCard
-          pending={shipPending}
-          busy={shipBusy}
-          onConfirm={(approved) => approved ? handleShipConfirm() : handleShipCancel()}
-          expiresAt={loopExpiresAt}
-        />
+        <div className="chat-inline-card">
+          <ShipPendingCard
+            pending={shipPending}
+            busy={shipBusy}
+            onConfirm={(approved) => approved ? handleShipConfirm() : handleShipCancel()}
+            expiresAt={loopExpiresAt}
+          />
+        </div>
       )}
       {f12ConfirmPayload && isAdminOrFounder((typeof getUser === "function" && getUser()) || null) && (
         <div
           data-testid="f12-send-confirm-card"
-          className="mx-4 mb-2 rounded-lg border border-border bg-card px-4 py-3 text-sm"
+          className="chat-inline-card mb-2 rounded-lg border border-border bg-card px-4 py-3 text-sm"
         >
           <p className="mb-2 text-foreground">
             Send the captured F12 errors to ORA for analysis?{" "}
@@ -5956,16 +6096,23 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           teaser, keyed by session so its internal dedup/expand state
           resets cleanly on a session switch instead of leaking a
           previous chat's findings into a new one. */}
-      <FindingsTeaserStrip
-        key={sessionId || "no-session"}
-        projectId={activeProject?.project_id}
-        newFindings={findingsThisSession}
-      />
+      <div className="chat-inline-card">
+        <FindingsTeaserStrip
+          key={sessionId || "no-session"}
+          projectId={activeProject?.project_id}
+          newFindings={findingsThisSession}
+        />
+      </div>
 
       {/* Iter 212m-190 · Session 3 — Chat-native scan strip. Sits
           just above the composer form so scan lifecycle events
           (in-progress, just-completed, backlog reminder) surface
-          without blocking the input. `projectId=null` hides it. */}
+          without blocking the input. `projectId=null` hides it.
+          2026-10 · width-rail fix — margin now lives INSIDE
+          ScanStatusStrip's own StripShell/WorkCard branches (matching
+          the composer's clamp) instead of a wrapper here, because
+          the WorkCard branch already carries its own clamp margin —
+          an outer `.chat-inline-card` wrapper would have doubled it. */}
       <ScanStatusStrip
         projectId={activeProject?.project_id}
         scanState={scanState}

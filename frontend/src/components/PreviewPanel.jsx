@@ -23,7 +23,7 @@
  * them as intentional.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { X, Copy, RefreshCw, Code2, Eye, ExternalLink, Loader2, Rocket, Smartphone, Tablet, Monitor, Camera } from "lucide-react";
+import { X, Copy, Check, RefreshCw, Code2, Eye, ExternalLink, Loader2, Rocket, Smartphone, Tablet, Monitor, Camera } from "lucide-react";
 import { toast } from "./Toast";
 import { api } from "../lib/api";
 import DeployPanel from "./DeployPanel";
@@ -550,10 +550,13 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
     }
   }, [viewMode, codeSubTab, activeProject?.project_id]);
 
+  const [codeCopied, setCodeCopied] = useState(false);
   const copyCode = () => {
     if (!effectiveCode) return;
     navigator.clipboard.writeText(effectiveCode);
     toast({ message: "Code copied.", kind: "success", duration: 1800 });
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 1500);
   };
 
   const canShowCodeToggle = (
@@ -1255,9 +1258,9 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
           data-testid="preview-copy"
           className="btn-ghost"
           onClick={copyCode}
-          style={{ padding: "4px 10px", fontSize: 11 }}
+          style={codeCopied ? { padding: "4px 10px", fontSize: 11, color: "#4ade80", borderColor: "rgba(34,197,94,0.45)" } : { padding: "4px 10px", fontSize: 11 }}
         >
-          <Copy size={11} /> Copy
+          {codeCopied ? <Check size={11} /> : <Copy size={11} />} {codeCopied ? "Copied" : "Copy"}
         </button>
         {isRenderable && (
           <button

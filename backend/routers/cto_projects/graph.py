@@ -50,8 +50,8 @@ async def build_project_graph(
     gh_repo  = proj.get("github_repo") or ""
     if not (gh_token and gh_owner and gh_repo):
         raise HTTPException(400, "GitHub not connected")
-    from services.graph_builder import build_graph
-    asyncio.create_task(build_graph(
+    from services.graph_builder import build_graph_guarded
+    asyncio.create_task(build_graph_guarded(
         db, project_id, user_id, gh_token, gh_owner, gh_repo,
     ))
     return {"ok": True, "message": "Graph building in background"}
@@ -81,7 +81,12 @@ async def get_project_graph(
     )
     if not doc:
         return {"ok": True, "status": "not_built", "graph": None}
-    return {"ok": True, "status": "ready", "graph": doc}
+    # 2026-02 — Part 2.4: `doc["status"]` can now be "error" (both
+    # build attempts failed/timed out — see `build_graph_guarded`),
+    # not just "ready". Surface it instead of hardcoding "ready" so
+    # the frontend can show a real retry message instead of polling
+    # a build that will never finish.
+    return {"ok": True, "status": doc.get("status") or "ready", "graph": doc}
 
 
 # Iter 212m-215 — Mermaid architecture diagram (GitDiagram approach)

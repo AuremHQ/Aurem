@@ -42,6 +42,16 @@ RESOURCE = MCP_URL
 ADMIN_EMAIL = "test@aurem.dev"
 ADMIN_PASSWORD = "AuremTest2026!"
 
+# 2026-09-30 — SECURITY FIX regression coverage update: the ORA Chat MCP
+# resource now ONLY accepts the real, Anthropic-owned claude.ai callback
+# for its redirect_uri (see routers/oauth.py LEGACY_CLAUDE_REDIRECT_HOST /
+# _validate_redirect_uri_for_client) — DCR registration alone is no
+# longer sufficient for THIS specific resource, even for a client that
+# legitimately registered some other https/localhost redirect_uri. Every
+# test below that authorizes against the ORA Chat resource now uses this
+# constant instead of the generic dcr_client fixture's redirect_uri.
+CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
+
 
 def _pkce_pair():
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
@@ -127,33 +137,33 @@ def _authorize_and_login(client_id, redirect_uri, email, password, resource=RESO
 
 class TestAuthorizeAdminGating:
     def test_get_authorize_renders_login_form(self, dcr_client):
-        client_id, redirect_uri = dcr_client
+        client_id, _redirect_uri = dcr_client
         _, challenge = _pkce_pair()
         r = requests.get(f"{API}/oauth/authorize", params={
-            "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
+            "response_type": "code", "client_id": client_id, "redirect_uri": CLAUDE_REDIRECT_URI,
             "code_challenge": challenge, "code_challenge_method": "S256", "resource": RESOURCE,
         }, timeout=10)
         assert r.status_code == 200
         assert "oauth-login-form" in r.text
 
     def test_wrong_password_redirects_with_invalid_credentials(self, dcr_client):
-        client_id, redirect_uri = dcr_client
-        r, _ = _authorize_and_login(client_id, redirect_uri, ADMIN_EMAIL, "wrong-password-entirely")
+        client_id, _redirect_uri = dcr_client
+        r, _ = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, "wrong-password-entirely")
         assert r.status_code == 302
         assert "error=invalid_credentials" in r.headers["location"]
 
     def test_admin_login_for_ora_chat_resource_issues_code(self, dcr_client):
-        client_id, redirect_uri = dcr_client
-        r, _ = _authorize_and_login(client_id, redirect_uri, ADMIN_EMAIL, ADMIN_PASSWORD)
+        client_id, _redirect_uri = dcr_client
+        r, _ = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, ADMIN_PASSWORD)
         assert r.status_code == 302
         q = parse_qs(urlparse(r.headers["location"]).query)
         assert "code" in q
         assert q["state"][0] == "s1"
 
     def test_nonadmin_login_for_ora_chat_resource_rejected(self, dcr_client):
-        client_id, redirect_uri = dcr_client
+        client_id, _redirect_uri = dcr_client
         email, password = _fresh_nonadmin_creds()
-        r, _ = _authorize_and_login(client_id, redirect_uri, email, password)
+        r, _ = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, email, password)
         assert r.status_code == 302
         assert "error=admin_required" in r.headers["location"]
         assert "code=" not in r.headers["location"]
@@ -162,7 +172,9 @@ class TestAuthorizeAdminGating:
         """Regression: the general MCP 'Claude Directory' resource
         (or no resource at all) must stay open to any dev_user —
         admin-gating here is scoped ONLY to the ORA Chat MCP
-        resource, not the whole shared OAuth server."""
+        resource, not the whole shared OAuth server. Not the claude.ai-
+        only resource, so the client's own registered (localhost)
+        redirect_uri is still correctly accepted here."""
         client_id, redirect_uri = dcr_client
         email, password = _fresh_nonadmin_creds()
         r, _ = _authorize_and_login(client_id, redirect_uri, email, password,
@@ -171,19 +183,41 @@ class TestAuthorizeAdminGating:
         q = parse_qs(urlparse(r.headers["location"]).query)
         assert "code" in q
 
-    def test_redirect_uri_not_registered_for_dcr_client_rejected(self, dcr_client):
-        client_id, _ = dcr_client
-        r, _ = _authorize_and_login(client_id, "http://localhost:9999/wrong-path",
-                                     ADMIN_EMAIL, ADMIN_PASSWORD)
+    def test_non_claude_redirect_rejected_for_ora_chat_even_if_dcr_registered(self, dcr_client):
+        """2026-09-30 SECURITY FIX: the ORA Chat resource used to accept
+        ANY redirect_uri the client had registered via DCR. Now it must
+        reject even a client's OWN correctly-registered redirect_uri if
+        its host isn't claude.ai — this is the actual High-severity fix
+        (an attacker can self-register a client the normal way and
+        still not get an ORA-chat admin auth code redirected anywhere
+        but claude.ai)."""
+        client_id, redirect_uri = dcr_client  # redirect_uri == "http://localhost:9999/callback", genuinely registered
+        r = requests.get(f"{API}/oauth/authorize", params={
+            "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
+            "code_challenge": _pkce_pair()[1], "code_challenge_method": "S256", "resource": RESOURCE,
+        }, timeout=10)
         assert r.status_code == 400
+
+    def test_unregistered_client_and_unregistered_redirect_rejected(self):
+        """The actual attack described in the audit: an attacker who
+        never registered anything, using a client_id no one issued and
+        a redirect_uri they control, must be rejected outright — not
+        silently allowed through because "no DCR record exists"."""
+        r = requests.get(f"{API}/oauth/authorize", params={
+            "response_type": "code", "client_id": "attacker-controlled-client-id-12345",
+            "redirect_uri": "https://evil.example/cb",
+            "code_challenge": _pkce_pair()[1], "code_challenge_method": "S256", "resource": RESOURCE,
+        }, timeout=10)
+        assert r.status_code == 400
+
 
 
 class TestTokenExchange:
     def test_full_exchange_and_single_use_code(self, dcr_client):
-        client_id, redirect_uri = dcr_client
-        r, verifier = _authorize_and_login(client_id, redirect_uri, ADMIN_EMAIL, ADMIN_PASSWORD, state="s3")
+        client_id, _redirect_uri = dcr_client
+        r, verifier = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, ADMIN_PASSWORD, state="s3")
         code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
-        body = {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+        body = {"grant_type": "authorization_code", "code": code, "redirect_uri": CLAUDE_REDIRECT_URI,
                 "client_id": client_id, "code_verifier": verifier}
         tok = requests.post(f"{API}/oauth/token", data=body, timeout=15)
         assert tok.status_code == 200, tok.text
@@ -196,23 +230,53 @@ class TestTokenExchange:
         assert tok2.status_code == 400
 
     def test_wrong_pkce_verifier_rejected(self, dcr_client):
-        client_id, redirect_uri = dcr_client
-        r, _verifier = _authorize_and_login(client_id, redirect_uri, ADMIN_EMAIL, ADMIN_PASSWORD, state="s4")
+        client_id, _redirect_uri = dcr_client
+        r, _verifier = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, ADMIN_PASSWORD, state="s4")
         code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
         tok = requests.post(f"{API}/oauth/token", data={
-            "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code", "code": code, "redirect_uri": CLAUDE_REDIRECT_URI,
             "client_id": client_id, "code_verifier": "totally-wrong-verifier",
         }, timeout=15)
         assert tok.status_code == 400
 
+    def test_token_exchange_rejects_client_id_mismatch(self, dcr_client):
+        """2026-09-30 SECURITY FIX: /oauth/token used to accept any
+        client_id (or none) at the token step, never checking it
+        against the client_id the code was actually issued to."""
+        client_id, _redirect_uri = dcr_client
+        r, verifier = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, ADMIN_PASSWORD, state="s6")
+        code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
+        tok = requests.post(f"{API}/oauth/token", data={
+            "grant_type": "authorization_code", "code": code, "redirect_uri": CLAUDE_REDIRECT_URI,
+            "client_id": "a-totally-different-client-id", "code_verifier": verifier,
+        }, timeout=15)
+        assert tok.status_code == 400
+        assert "client_id" in tok.text
+
+    def test_token_exchange_rejects_redirect_uri_mismatch(self, dcr_client):
+        """2026-09-30 SECURITY FIX: /oauth/token used to skip the
+        redirect_uri check entirely whenever the caller simply omitted
+        the field."""
+        client_id, _redirect_uri = dcr_client
+        r, verifier = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, ADMIN_PASSWORD, state="s7")
+        code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
+        # Omitting redirect_uri must now be a hard 400 (missing param),
+        # not a silently-skipped check.
+        tok = requests.post(f"{API}/oauth/token", data={
+            "grant_type": "authorization_code", "code": code,
+            "client_id": client_id, "code_verifier": verifier,
+        }, timeout=15)
+        assert tok.status_code == 400
+        assert "redirect_uri" in tok.text
+
 
 @pytest.fixture()
 def ora_chat_oauth_token(dcr_client):
-    client_id, redirect_uri = dcr_client
-    r, verifier = _authorize_and_login(client_id, redirect_uri, ADMIN_EMAIL, ADMIN_PASSWORD, state="s5")
+    client_id, _redirect_uri = dcr_client
+    r, verifier = _authorize_and_login(client_id, CLAUDE_REDIRECT_URI, ADMIN_EMAIL, ADMIN_PASSWORD, state="s5")
     code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
     tok = requests.post(f"{API}/oauth/token", data={
-        "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code", "code": code, "redirect_uri": CLAUDE_REDIRECT_URI,
         "client_id": client_id, "code_verifier": verifier,
     }, timeout=15)
     assert tok.status_code == 200

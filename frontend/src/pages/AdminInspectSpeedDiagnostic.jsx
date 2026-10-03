@@ -135,7 +135,9 @@ function StatCell({ label, stat, unit = "s", testid }) {
 function Btn({ children, onClick, testid, kind = "default" }) {
   const styles = kind === "primary"
     ? { background: "#1e3a8a", borderColor: "#3b82f6", color: "#e0e7ff" }
-    : { background: "#1f2937", borderColor: C.border, color: C.text };
+    : kind === "success"
+      ? { background: "rgba(52,211,153,0.14)", borderColor: C.green, color: C.green }
+      : { background: "#1f2937", borderColor: C.border, color: C.text };
   return (
     <button
       type="button"
@@ -180,10 +182,13 @@ export default function AdminInspectSpeedDiagnostic() {
     }
   }, [windowDays, sample]);
 
+  const [copied, setCopied] = useState(false);
   const copyJson = useCallback(async () => {
     if (!data) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard permission denied — silently skip; the pre block is
       // already selectable manually.
@@ -282,8 +287,8 @@ export default function AdminInspectSpeedDiagnostic() {
             title={`RESULT · fetched at ${fetchedAt || "—"}`}
             testid="speed-diag-result-card"
             right={
-              <Btn testid="speed-diag-copy-btn" onClick={copyJson}>
-                Copy JSON
+              <Btn testid="speed-diag-copy-btn" onClick={copyJson} kind={copied ? "success" : "default"}>
+                {copied ? "Copied ✓" : "Copy JSON"}
               </Btn>
             }
           >

@@ -465,3 +465,13 @@ SCANNERS = {
     "bug_hunt":     scan_bug_hunt,
     "docker":       _scan_docker_cis,
 }
+
+# 2026-10 — "Launch-ready X / 16" scorecard: 9 additional categories
+# researched against real roadmap.sh guides (Vibe Coding, AI Product
+# Builder, API Security Best Practices) — see services/
+# codebase_health_extra.py module docstring and /app/memory/PRD.md for
+# the source mapping. Same pure-function `(text_cache) -> list[finding]`
+# contract as every scanner above, so they slot into every existing
+# endpoint (scan/fix/score) with zero special-casing.
+from services.codebase_health_extra import EXTRA_SCANNERS  # noqa: E402
+SCANNERS.update(EXTRA_SCANNERS)

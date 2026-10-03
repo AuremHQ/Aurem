@@ -1040,7 +1040,7 @@ export default function Landing() {
               ["01","⚡","Connect","Authorize GitHub once. ORA reads your repo, commits, branches."],
               ["02","✎","Describe","\"Fix the login bug\" — in plain English, in the chat or in your terminal."],
               ["03","▶","Ship","ORA writes the patch, runs security checks, commits the branch."],
-              ["04","✓","Done","GitHub commit hash. ORA opens the PR. No manual push."],
+              ["04","✓","Done","GitHub commit hash. Live on your branch. No manual push."],
             ].map(([n, ic, t, d]) => (
               <div className="step" key={n}>
                 <div className="step-num">{n}</div>

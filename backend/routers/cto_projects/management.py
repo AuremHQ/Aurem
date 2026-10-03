@@ -289,6 +289,23 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
             github_token=_ix_token, github_owner=owner, github_repo=repo,
             branch=body.branch or "main",
         ))
+        # 2026-02 — Part 1.1 (stuck-users fix): the codebase knowledge
+        # graph (services/graph_builder.py) used to ONLY build lazily
+        # when a user manually opened the GraphPanel drawer — most
+        # users never did, so `graph_built` (the funnel/Journey-Watch
+        # stage "waiting for the codebase graph to build" → "starting
+        # their first task") silently never fired for them at all.
+        # Auto-trigger it here, same fire-and-forget contract as the
+        # indexing/scan tasks above, through the safety-net wrapper
+        # (bounded wall-clock, one auto-retry, explicit error status —
+        # see build_graph_guarded's docstring) so a slow/huge repo
+        # can't hang silently the way it did for sidban15 (33 min,
+        # SLO 15).
+        from services.graph_builder import build_graph_guarded
+        asyncio.create_task(build_graph_guarded(
+            db, proj_id, account_id, _ix_token, owner, repo,
+            body.branch or "main",
+        ))
         # 2026-08-22 — auto background deep-scan so the Prompt Starter
         # panel has real "FROM YOUR REPO" findings the moment the user
         # lands on the empty chat, instead of waiting for their first

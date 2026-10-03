@@ -48,7 +48,7 @@ export function SelfHealIndicator({ visible, attempt = 1, max = 2,
       aria-live="polite"
       style={{
         display: "flex", alignItems: "center", gap: 10,
-        margin: "8px 12px",
+        margin: "8px 0",
         padding: "8px 14px",
         borderRadius: 10,
         background: "linear-gradient(90deg, rgba(168,85,247,0.10), rgba(99,102,241,0.06))",
@@ -125,7 +125,7 @@ export function UserActionCard({ phase, message, errors,
         role="region"
         aria-label="Human review required before ship"
         style={{
-          margin: "10px 12px",
+          margin: "10px 0",
           padding: 14,
           background: "linear-gradient(135deg, rgba(34,197,94,0.10), rgba(16,185,129,0.05))",
           border: "1px solid rgba(34,197,94,0.40)",
@@ -200,7 +200,7 @@ export function UserActionCard({ phase, message, errors,
       role="region"
       aria-label="Loop paused — your input needed"
       style={{
-        margin: "10px 12px",
+        margin: "10px 0",
         padding: 14,
         background: "linear-gradient(135deg, rgba(244,63,94,0.10), rgba(244,114,182,0.05))",
         border: "1px solid rgba(244,63,94,0.40)",
@@ -317,7 +317,7 @@ export function LoopExpiredCard({ phase, onRestart, onDismiss }) {
       aria-live="polite"
       aria-label="Loop session expired — awaiting your decision"
       style={{
-        margin: "10px 12px",
+        margin: "10px 0",
         padding: 14,
         background: "linear-gradient(135deg, rgba(148,163,184,0.10), rgba(148,163,184,0.04))",
         border: "1px solid rgba(148,163,184,0.35)",

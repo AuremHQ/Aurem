@@ -131,6 +131,8 @@ async def call_openrouter_model(
     max_tokens: int = 1000,
     temperature: float = 0.2,
     feature: Optional[str] = None,
+    reasoning: Optional[dict] = None,
+    provider_prefs: Optional[dict] = None,
 ) -> str:
     """Iter 165 — generic OpenRouter caller for the agents pipeline.
 
@@ -153,6 +155,15 @@ async def call_openrouter_model(
     user-facing traffic in openrouter.ai/logs — previously every
     caller shared one generic "AUREM" title. Optional, defaults to
     the generic title for any caller that hasn't been tagged yet.
+
+    2026-02 — `reasoning` (OpenRouter's unified reasoning-tokens
+    param, e.g. `{"effort": "high"}`) and `provider_prefs` (OpenRouter's
+    `provider` routing-preferences block, e.g. `{"data_collection":
+    "deny"}`) are passed straight through into the request payload
+    when given. Both default to `None` (omitted from the payload) so
+    every existing caller keeps today's exact request shape — only
+    call-sites that explicitly opt in (e.g. `_call_glm_review` for
+    Maxx review depth + private-repo data handling) are affected.
 
     Returns "" on any failure; the agents layer handles fallback so we
     keep this function thin and predictable.
@@ -256,6 +267,17 @@ async def call_openrouter_model(
             # cold replica each time. Harmless if the model/provider
             # ignores it.
             payload["session_id"] = _sticky_session_id
+        if reasoning:
+            # 2026-02 — unified OpenRouter reasoning-tokens param
+            # (e.g. {"effort": "high"}). Passed through verbatim only
+            # when a caller opts in — see _call_glm_review.
+            payload["reasoning"] = reasoning
+        if provider_prefs:
+            # 2026-02 — OpenRouter provider-routing preferences (e.g.
+            # {"data_collection": "deny"} to restrict which upstream
+            # hosts may serve the request). Passed through verbatim
+            # only when a caller opts in — see _call_glm / _call_glm_review.
+            payload["provider"] = provider_prefs
         # 2026-09-27 — OpenRouter's own documented end-user attribution
         # field (see openrouter.ai/docs/cookbook/administration/user-
         # tracking). Only set when a real caller tagged the ambient

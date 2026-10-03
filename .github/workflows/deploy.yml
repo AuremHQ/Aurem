@@ -28,6 +28,9 @@ jobs:
   deploy:
     needs: [interaction-reliability]
     runs-on: ubuntu-latest
+    # Same manual approval gate as AUREM Auto-Deploy: any job that calls a
+    # production deploy hook runs inside the `production` environment.
+    environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4

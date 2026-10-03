@@ -131,6 +131,11 @@ jobs:
     if: github.event_name == 'push'
     needs: [gate-on-ci, interaction-reliability]
     runs-on: ubuntu-latest
+    # Manual approval gate: this job calls the production deploy webhook,
+    # so it waits for a required reviewer on the `production` GitHub
+    # Environment (Settings -> Environments). gate-on-ci above still has
+    # to pass first; approval is in addition to green CI, never instead.
+    environment: production
     env:
       # Iter 306 — `secrets` context is not allowed inside step-level
       # `if:`. Hoist secrets into job-level env so the individual
@@ -155,10 +160,13 @@ jobs:
             cat /tmp/deploy_resp.txt
           fi
       - name: Report to AUREM
-        if: env.API_KEY != ''
+        # Report only what actually happened. If the trigger step did not
+        # run (no hook configured) there is no result, so nothing is
+        # reported — never a default "success".
+        if: env.API_KEY != '' && steps.trigger.outputs.result != ''
         env:
           REPORT_URL: ${{ vars.AUREM_REPORT_URL }}
-          RESULT:     ${{ steps.trigger.outputs.result || 'success' }}
+          RESULT:     ${{ steps.trigger.outputs.result }}
           REPO:       ${{ github.repository }}
           COMMIT:     ${{ github.sha }}
         run: |

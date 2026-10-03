@@ -139,3 +139,21 @@ describe("D2 — already-connected redirect", () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 });
+
+it("t_message_origin_rejects_untrusted_install_message", async () => {
+  api.post.mockResolvedValue({ data: { project_id: "px-origin" } });
+  render(<NewUserWizard onComplete={vi.fn()} />);
+
+  await act(async () => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: "https://evil.test",
+        data: { type: "aurem-app-installed", status: "err" },
+      }),
+    );
+  });
+
+  expect(
+    screen.queryByText("Install did not complete — please try again."),
+  ).toBeNull();
+});

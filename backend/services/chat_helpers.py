@@ -57,6 +57,42 @@ def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) 
     return "\n".join(parts)
 
 
+# 2026-10 — C1 fix. `retrieved_context_for_grounding` above only ever
+# folded in THIS TURN's tool-call results — for a short, casual
+# follow-up ("?", "continue") with no new tool call, that context is
+# empty, so a security-finding or CVE claim in the reply had nothing
+# to be checked against (the two existing guards below,
+# `apply_fabricated_content_guard`/`apply_live_content_claim_guard`,
+# are scoped to file-content-quote and live-site claims respectively
+# — neither one recognizes a "finding" or "CVE" shaped claim at all).
+# Founder repro: casual mode invents specific CVE IDs / vulnerability
+# descriptions that were never in any real scan. Fix: fold the
+# project's actual STORED scan findings (cto_open_findings) into the
+# grounding text too, so "a finding may be stated only if it comes
+# from a stored scan record or a file read this same turn" is an
+# actual substring check, not just a prompt instruction.
+async def scan_findings_context_for_grounding(project_id: str | None) -> str:
+    if not project_id:
+        return ""
+    try:
+        db = get_db()
+        cursor = db.cto_open_findings.find(
+            {"project_id": project_id},
+            {"_id": 0, "title": 1, "message": 1, "rule_id": 1, "file": 1, "line": 1},
+        ).limit(200)
+        rows = await cursor.to_list(length=200)
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning("scan_findings_context_for_grounding: db read failed: %r", e)
+        return ""
+    parts: list[str] = []
+    for r in rows:
+        parts.append(
+            f"{r.get('title','')} | {r.get('rule_id','')} | "
+            f"{r.get('file','')}:{r.get('line','')} | {r.get('message','')}"
+        )
+    return "\n".join(parts)
+
+
 # 2026-02 — Gap 1 fix (see apply_output_guards' own comment below for
 # full context): fire-and-forget self_bug.emit(), since
 # apply_output_guards is sync and must not force its 2 production
@@ -157,6 +193,14 @@ def apply_output_guards(
     except Exception as e:                                # noqa: BLE001
         logger.debug("live_content_claim guard skipped: %r", e)
     try:
+        from services.ora_chat.grounding_check import apply_ungrounded_security_finding_guard
+        before = content
+        content = apply_ungrounded_security_finding_guard(content, retrieved_context)
+        if content != before:
+            _fire_self_bug("tool_error", before[:300], ctx, source="ungrounded_security_finding_guard")
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("ungrounded_security_finding guard skipped: %r", e)
+    try:
         from services.internal_directive_guard import strip_leaked_tool_directives
         before = content
         content = strip_leaked_tool_directives(content)
@@ -164,6 +208,16 @@ def apply_output_guards(
             _fire_self_bug("tool_error", before[:300], ctx, source="internal_directive_guard")
     except Exception as e:                                # noqa: BLE001
         logger.debug("internal_directive guard skipped: %r", e)
+    # 2026-10 — C3 fix: runs LAST so it masks whatever every guard
+    # above produced — covers chat answers (this is the return value
+    # every caller sends to the client) AND stored chat history going
+    # forward (both turn.py/stream.py persist THIS function's return
+    # value, not the pre-guard raw model output).
+    try:
+        from services.secret_masking import redact_secrets_in_text
+        content = redact_secrets_in_text(content)
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("secret_masking guard skipped: %r", e)
     return content
 
 
@@ -228,6 +282,10 @@ async def run_rendering_pipeline(
     what any individual pass's own internal logic decides to do."""
     trace: list[dict] = []
 
+    from services.reply_integrity import repair_code_blocks, user_named_files
+    content = repair_code_blocks(content)
+    _named_files = await user_named_files(session_id, user_id, user_message)
+
     from services.interaction_contract import enabled as interaction_enabled
     if interaction_enabled():
         from services.interaction_rendering import render_safe_content
@@ -279,12 +337,12 @@ async def run_rendering_pipeline(
     output_guard_ref_id = None
     if content and not skip and "aurem-handoff" not in content:
         try:
-            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
+            from services.output_guard import strip_machinery_leak, enforce_length_cap
             from core.errors import new_ref_id
             before = content
             content, leak_stripped = strip_machinery_leak(
                 content, universal_only=not plain_english_active,
-                user_named_files=extract_named_files(user_message),
+                user_named_files=_named_files,
             )
             _record("output_guard_leak_strip", before, content)
             before = content
@@ -924,6 +982,7 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                 await propose_from_turn(
                     db, session_id=session_id, user_id=user_id, project_id=project_id,
                     provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
+                    user_prompt=user_prompt,
                 )
         except Exception as e:                             # noqa: BLE001
             logger.debug("pending_action registration skipped: %r", e)

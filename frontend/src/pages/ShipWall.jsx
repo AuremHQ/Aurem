@@ -5,6 +5,7 @@
  */
 import React, { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
+import { Check } from "lucide-react";
 import { api } from "../lib/api";
 import usePageMeta from "../lib/usePageMeta";
 import MarketingNav from "../components/marketing/MarketingNav";
@@ -121,6 +122,8 @@ function StatNum({ label, value }) {
 function ShipCard({ ship, sharing, onShare }) {
   const timeAgo = useTimeAgo(ship.shipped_at);
   const dev = ship.developer || {};
+  // 2026-10 · redesign — copy-link button flips to a checkmark for 1.5s.
+  const [linkCopied, setLinkCopied] = useState(false);
   const tweetText = encodeURIComponent(
     `Just shipped to ${ship.repo} with @AUREMcto\n\n${ship.summary}\n\n${ship.commit_url || ""}\n\n#AUREM #ShipWithAI`
   );
@@ -194,13 +197,20 @@ function ShipCard({ ship, sharing, onShare }) {
               style={{ fontSize: 11, padding: "5px 14px", background: "#000", color: "#fff", borderRadius: 6, textDecoration: "none" }}>
               Post on X
             </a>
-            <button onClick={() => navigator.clipboard.writeText(ship.share_url)}
+            <button onClick={() => {
+                navigator.clipboard.writeText(ship.share_url);
+                setLinkCopied(true);
+                setTimeout(() => setLinkCopied(false), 1500);
+              }}
               style={{
                 fontSize: 11, padding: "5px 14px", cursor: "pointer", borderRadius: 6,
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)",
-                color: "var(--text-dim)",
+                display: "inline-flex", alignItems: "center", gap: 6,
+                background: linkCopied ? "rgba(34,197,94,0.14)" : "rgba(255,255,255,0.08)",
+                border: `1px solid ${linkCopied ? "rgba(34,197,94,0.45)" : "rgba(255,255,255,0.12)"}`,
+                color: linkCopied ? "#4ade80" : "var(--text-dim)",
               }}>
-              Copy link
+              {linkCopied ? <Check size={11} /> : null}
+              {linkCopied ? "Copied" : "Copy link"}
             </button>
           </div>
           <div style={{ marginTop: 10 }}>

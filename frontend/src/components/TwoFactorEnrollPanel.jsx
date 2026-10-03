@@ -4,13 +4,23 @@
  * mechanical split — no behaviour change) to keep that file under the
  * platform's file-size guard.
  */
-import React from "react";
-import { Copy as CopyIcon } from "lucide-react";
+import React, { useState } from "react";
+import { Copy as CopyIcon, Check } from "lucide-react";
 import { toast } from "./Toast";
 
 export function EnrollPanel({ enroll, code, onCode, onConfirm, onCancel, busy }) {
-  const copy = async (text, label) => {
-    try { await navigator.clipboard.writeText(text); toast({ message: `${label} copied`, kind: "info" }); }
+  // 2026-10 — redesign: copy buttons swap to a checkmark + "Copied"
+  // for ~1.5s on click (toast still fires for a11y/screen-reader
+  // users who don't see the icon state). Keyed by target so the
+  // secret and backup-codes buttons track independently.
+  const [copiedKey, setCopiedKey] = useState(null);
+  const copy = async (text, label, key) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ message: `${label} copied`, kind: "info" });
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+    }
     catch { /* ignore */ }
   };
   return (
@@ -39,19 +49,19 @@ export function EnrollPanel({ enroll, code, onCode, onConfirm, onCancel, busy })
           <span className="label-mini">Manual entry secret</span>
           <div
             data-testid="admin-2fa-secret"
-            onClick={() => copy(enroll.secret, "Secret")}
+            onClick={() => copy(enroll.secret, "Secret", "secret")}
             style={{
               fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
               padding: "6px 8px", marginTop: 4, marginBottom: 12,
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
+              background: copiedKey === "secret" ? "rgba(34,197,94,0.08)" : "rgba(255,255,255,0.04)",
+              border: `1px solid ${copiedKey === "secret" ? "rgba(34,197,94,0.35)" : "rgba(255,255,255,0.08)"}`,
               borderRadius: 4, cursor: "pointer",
               display: "flex", alignItems: "center", gap: 6,
               wordBreak: "break-all",
             }}
             title="Click to copy"
           >
-            <CopyIcon size={11} />
+            {copiedKey === "secret" ? <Check size={11} color="#4ade80" /> : <CopyIcon size={11} />}
             <span>{enroll.secret}</span>
           </div>
 
@@ -74,11 +84,14 @@ export function EnrollPanel({ enroll, code, onCode, onConfirm, onCancel, busy })
           <button
             type="button"
             data-testid="admin-2fa-copy-backups"
-            onClick={() => copy((enroll.backup_codes || []).join("\n"), "Backup codes")}
+            onClick={() => copy((enroll.backup_codes || []).join("\n"), "Backup codes", "backups")}
             className="btn-ghost"
             style={{ fontSize: 10, marginTop: 6 }}
           >
-            <CopyIcon size={10} style={{ marginRight: 4 }} /> Copy all
+            {copiedKey === "backups"
+              ? <Check size={10} color="#4ade80" style={{ marginRight: 4 }} />
+              : <CopyIcon size={10} style={{ marginRight: 4 }} />}
+            {copiedKey === "backups" ? "Copied" : "Copy all"}
           </button>
         </div>
       </div>

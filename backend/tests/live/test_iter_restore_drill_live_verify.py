@@ -109,6 +109,18 @@ def test_test_restore_regression(admin_headers):
     src = data["source_counts"]
     rest = data["restored_counts"]
     assert isinstance(src, dict) and isinstance(rest, dict)
-    # every source coll should appear in restored (possibly with mismatch)
-    missing = [c for c in src.keys() if c not in rest]
+    # every source coll should appear in restored (possibly with
+    # mismatch) — EXCEPT `backup_history` itself, which is structurally
+    # exempt: `run_backup()` dumps every OTHER collection first, then
+    # writes ITS OWN row to `backup_history` (services/db_backup.py's
+    # `run_backup`, step 1 dump / step 3 write). So the backup this
+    # endpoint restores can never contain the history row it is about
+    # to create, and — on a brand-new DB whose very first backup ever
+    # is the one restored here — `backup_history` may not exist in
+    # that archive at all yet. Confirmed live 2026-09-29: this is the
+    # ONLY collection that ever shows up here; every other collection
+    # round-trips exactly, proving the restore mechanism itself is
+    # sound (see test_regression_iter7_test_restore_ignores_self_referential_backup_history.py).
+    missing = [c for c in src.keys() if c not in rest and c != "backup_history"]
     assert not missing, f"restored_counts missing collections: {missing[:5]}"
+

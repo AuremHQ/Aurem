@@ -5,6 +5,7 @@
  * Pulls live data from `GET /api/aurem-dev/referrals/my`. No mocks.
  */
 import React, { useEffect, useState } from "react";
+import { Check, Copy as CopyIcon } from "lucide-react";
 import { api } from "../lib/api";
 
 export default function ReferralShare() {
@@ -92,13 +93,14 @@ export default function ReferralShare() {
           data-testid="copy-referral-link"
           onClick={copy}
           style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
             padding: "10px 14px", fontSize: 11, fontWeight: 600,
             background: copied ? "#6dd4a1" : "var(--accent, #ff8a2a)",
             color: "var(--bg, #0a0c10)",
             border: "none", cursor: "pointer",
             letterSpacing: ".04em",
           }}
-        >{copied ? "Copied ✓" : "Copy"}</button>
+        >{copied ? <Check size={13} /> : <CopyIcon size={13} />}{copied ? "Copied" : "Copy"}</button>
       </div>
 
       <div style={{ display: "flex", gap: 8 }}>

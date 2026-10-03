@@ -57,10 +57,13 @@ describe("ChatPanel.send() — Iter 388-af routing", () => {
     expect(dispatchIdx).toBeLessThan(loopIdx);
   });
 
-  it("still gates on sessionStartedRef.current for idempotency", () => {
+  it("still gates on realSendStartedRef.current for idempotency", () => {
     // Otherwise every keystroke (via the auto-send retry logic in
     // the LOOP queue path) would re-fire the event.
-    expect(src).toMatch(/if \(!sessionStartedRef\.current && promptOverride == null\)/);
+    // 2026-10 — renamed from `sessionStartedRef` to its own
+    // `realSendStartedRef` (see RailShell.iter2026_10.autoCollapseRestoredSession.test.js
+    // for why the two dispatches can no longer share one ref).
+    expect(src).toMatch(/if \(!realSendStartedRef\.current && promptOverride == null\)/);
   });
 
   it("guards against internal re-invocations (promptOverride != null)", () => {

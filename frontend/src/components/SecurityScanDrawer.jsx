@@ -25,6 +25,7 @@ import { toast } from "../lib/toastApi";
 import SecretScanCard from "./SecretScanCard";
 import BulkFixConfirmModal from "./BulkFixConfirmModal";
 import useFixQuota from "../lib/useFixQuota";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -68,6 +69,7 @@ export default function SecurityScanDrawer({ open, onClose, projectId, projectLa
   const [reportOpen, setReportOpen] = useState(false);
   // Iter 212m-121 — bulk fix modal state
   const [bulkOpen, setBulkOpen] = useState(false);
+  useEscapeKey(onClose, !!open && !bulkOpen);
   // Iter 212m-190 — task-quota gating: vanguard fixes need Starter+,
   // bulk fix is Team-only. 1 successful fix = 1 task.
   const { quota } = useFixQuota();

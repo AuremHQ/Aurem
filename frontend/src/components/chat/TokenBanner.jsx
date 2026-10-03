@@ -29,9 +29,14 @@
  * tasks — the unit this app's own pricing page advertises ("flat
  * pricing, no token meters").
  */
-import React from "react";
+import React, { useState } from "react";
+import { X } from "lucide-react";
 
 export default function TokenBanner({ usage }) {
+  // 2026-10 · founder spec — close (×) toggle. Keyed by tone so if the
+  // state escalates (warning → blocked) the banner resurfaces even if
+  // the warning version was already dismissed this session.
+  const [dismissedTone, setDismissedTone] = useState(null);
   if (!usage) return null;
   const pct = usage.pct_used || 0;
   // 2026-09-27 — the token counter was decoupled from gating (only
@@ -57,6 +62,9 @@ export default function TokenBanner({ usage }) {
   const tone = blocked
     ? { bg: "rgba(255,77,77,0.10)",  border: "rgba(255,77,77,0.45)",  color: "#ff8585", icon: "🚫" }
     : { bg: "rgba(255,196,0,0.10)", border: "rgba(255,196,0,0.45)", color: "#ffcf5c", icon: "⚠️" };
+
+  const toneKey = blocked ? "blocked" : "warning";
+  if (dismissedTone === toneKey) return null;
 
   return (
     <div
@@ -110,6 +118,20 @@ export default function TokenBanner({ usage }) {
       >
         Upgrade →
       </a>
+      <button
+        type="button"
+        data-testid="token-banner-close"
+        aria-label="Close"
+        title="Close"
+        onClick={() => setDismissedTone(toneKey)}
+        style={{
+          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+          width: 22, height: 22, background: "transparent", border: "none",
+          borderRadius: 6, color: tone.color, opacity: 0.7, cursor: "pointer",
+        }}
+      >
+        <X size={13} />
+      </button>
     </div>
   );
 }

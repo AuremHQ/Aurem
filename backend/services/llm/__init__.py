@@ -245,9 +245,12 @@ def _openrouter_key() -> str:
 from .openrouter_providers import (
     _CLAUDE_MODEL,
     _GLM_MODEL,
+    _GLM_REVIEW_MODEL,
+    _GLM_PROVIDER_PREFS,
     _LONGCAT_MODEL,
     _call_claude,
     _call_glm,
+    _call_glm_review,
     _call_longcat,
     # Session D · D-2d — DeepSeek path.
     _DEEPSEEK_DIRECT_URL,
@@ -330,10 +333,14 @@ from ._meta import call_llm_with_meta, _call_llm_with_meta_inner
 # ── Watchdog (Maxx mode review pass) ─────────────────────────────────────────
 
 async def call_emergent_watchdog(text_to_review: str) -> dict:
-    """Maxx mode: ask Claude (via OpenRouter) to grade DeepSeek's output.
+    """Maxx mode: ask GLM-5.3 (via OpenRouter) to grade DeepSeek's output.
 
     Iter 166 — name kept for backwards-compat with existing imports, but
     the implementation now uses OpenRouter exclusively.
+
+    2026-02 cost-optimization — swapped Claude Sonnet → GLM-5.3
+    (`_GLM_REVIEW_MODEL`) for the same reason as the Maxx review pass
+    in `_meta.py`: ~1/3 the per-token cost, comparable grading quality.
 
     Returns {ok, score, issues, review, error}. passed=True iff score >= 7.
     """
@@ -351,12 +358,14 @@ async def call_emergent_watchdog(text_to_review: str) -> dict:
     )
     try:
         review_txt = await call_openrouter_model(
-            model=_CLAUDE_MODEL,
+            model=_GLM_REVIEW_MODEL,
             system=system,
             user=f"Review (score 1-10):\n\n{text_to_review[:3000]}",
             max_tokens=cap_for("review"),
             temperature=temperature_for("review"),
             feature="Watchdog Review",
+            reasoning={"effort": "high"},
+            provider_prefs=_GLM_PROVIDER_PREFS,
         )
         review_txt = (review_txt or "").strip()
         if not review_txt:

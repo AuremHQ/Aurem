@@ -13,6 +13,7 @@
  */
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { Check } from "lucide-react";
 import { api, getToken } from "../lib/api";
 import { cleanErr } from "../lib/cleanErr";
 import { toast } from "../components/Toast";
@@ -35,6 +36,8 @@ export default function AdminApiKeys() {
   const [busy, setBusy]         = useState(false);
   // The newly-minted full key — shown ONCE then cleared from state.
   const [newKey, setNewKey]     = useState(null);
+  // 2026-10 · redesign — copy buttons flip to a checkmark for 1.5s.
+  const [copiedKey, setCopiedKey] = useState(null);
 
   const load = useCallback(async () => {
     setErr("");
@@ -99,9 +102,11 @@ export default function AdminApiKeys() {
     }
   };
 
-  const copy = (text) => {
+  const copy = (text, key) => {
     navigator.clipboard.writeText(text);
     toast({ message: "Copied to clipboard.", kind: "success", duration: 1500 });
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
   };
 
   return (
@@ -160,10 +165,10 @@ export default function AdminApiKeys() {
             </code>
             <button
               data-testid="copy-mcp-key"
-              onClick={() => copy(newKey)}
-              style={btnGhost}
+              onClick={() => copy(newKey, "mcp-key")}
+              style={copiedKey === "mcp-key" ? { ...btnGhost, color: "#4ade80", borderColor: "rgba(34,197,94,0.45)" } : btnGhost}
             >
-              Copy
+              {copiedKey === "mcp-key" ? <><Check size={11} style={{ marginRight: 4 }} />Copied</> : "Copy"}
             </button>
             <button
               data-testid="dismiss-mcp-key"
@@ -290,6 +295,8 @@ function OraChatMcpCard() {
   const [testBusy, setTestBusy] = useState(false);
   const [oauthClients, setOauthClients] = useState([]);
   const [oauthLoading, setOauthLoading] = useState(true);
+  // 2026-10 · redesign — copy buttons flip to a checkmark for 1.5s.
+  const [copiedKey2, setCopiedKey2] = useState(null);
   const mcpUrl = `${window.location.origin}/api/aurem-dev/mcp/ora-chat`;
   const asMetadataUrl = `${window.location.origin}/.well-known/oauth-authorization-server`;
   const prmUrl = `${window.location.origin}/.well-known/oauth-protected-resource`;
@@ -392,10 +399,15 @@ function OraChatMcpCard() {
     }
   };
 
-  const copy = (text) => {
+  const copy = (text, key) => {
     navigator.clipboard.writeText(text);
     toast({ message: "Copied.", kind: "success", duration: 1500 });
+    setCopiedKey2(key);
+    setTimeout(() => setCopiedKey2((k) => (k === key ? null : k)), 1500);
   };
+  const copyBtnStyle = (key) => (copiedKey2 === key
+    ? { ...btnGhost, color: "#4ade80", borderColor: "rgba(34,197,94,0.45)", display: "inline-flex", alignItems: "center", gap: 4 }
+    : btnGhost);
 
   return (
     <div style={{ ...hintBox, marginTop: 40, borderColor: "rgba(255,180,84,0.35)" }} data-testid="ora-mcp-card">
@@ -427,12 +439,16 @@ function OraChatMcpCard() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, color: "var(--text-faint)" }}>AS metadata</span>
           <code data-testid="ora-oauth-as-url" style={{ ...codeChip, fontSize: 11 }}>{asMetadataUrl}</code>
-          <button style={btnGhost} onClick={() => copy(asMetadataUrl)} data-testid="ora-oauth-copy-as-url">Copy</button>
+          <button style={copyBtnStyle("as-url")} onClick={() => copy(asMetadataUrl, "as-url")} data-testid="ora-oauth-copy-as-url">
+            {copiedKey2 === "as-url" ? <><Check size={11} />Copied</> : "Copy"}
+          </button>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, color: "var(--text-faint)" }}>Resource metadata</span>
           <code data-testid="ora-oauth-prm-url" style={{ ...codeChip, fontSize: 11 }}>{prmUrl}</code>
-          <button style={btnGhost} onClick={() => copy(prmUrl)} data-testid="ora-oauth-copy-prm-url">Copy</button>
+          <button style={copyBtnStyle("prm-url")} onClick={() => copy(prmUrl, "prm-url")} data-testid="ora-oauth-copy-prm-url">
+            {copiedKey2 === "prm-url" ? <><Check size={11} />Copied</> : "Copy"}
+          </button>
         </div>
 
         {oauthLoading ? (
@@ -475,7 +491,9 @@ function OraChatMcpCard() {
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>MCP URL</span>
         <code data-testid="ora-mcp-url" style={{ ...codeChip, fontSize: 12 }}>{mcpUrl}</code>
-        <button style={btnGhost} onClick={() => copy(mcpUrl)} data-testid="ora-mcp-copy-url">Copy</button>
+        <button style={copyBtnStyle("mcp-url")} onClick={() => copy(mcpUrl, "mcp-url")} data-testid="ora-mcp-copy-url">
+          {copiedKey2 === "mcp-url" ? <><Check size={11} />Copied</> : "Copy"}
+        </button>
       </div>
 
       {newKey && (
@@ -486,7 +504,9 @@ function OraChatMcpCard() {
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <code data-testid="ora-mcp-new-key-value" style={keyDisplay}>{newKey}</code>
-            <button style={btnGhost} onClick={() => copy(newKey)} data-testid="ora-mcp-copy-key">Copy</button>
+            <button style={copyBtnStyle("mcp-key")} onClick={() => copy(newKey, "mcp-key")} data-testid="ora-mcp-copy-key">
+              {copiedKey2 === "mcp-key" ? <><Check size={11} />Copied</> : "Copy"}
+            </button>
             <button style={btnGhost} onClick={() => setNewKey(null)} data-testid="ora-mcp-dismiss-key">
               I&apos;ve saved it
             </button>

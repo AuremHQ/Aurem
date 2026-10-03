@@ -108,6 +108,16 @@ export default function RailShell({
   // unlike the other nav items which fail open).
   const [canManageTeam, setCanManageTeam] = useState(null);
   const wrapRef = useRef(null);
+  // 2026-10 — AUTO-mode hover flyout. Debounced so moving the
+  // pointer from an icon onto its own flyout (a real gap exists
+  // between them) doesn't close it; closes shortly after the pointer
+  // leaves the icon+flyout area entirely, on top of the existing
+  // click-outside/Esc/item-chosen closes below.
+  const hoverCloseTimerRef = useRef(null);
+  const clearHoverCloseTimer = useCallback(() => {
+    if (hoverCloseTimerRef.current) { clearTimeout(hoverCloseTimerRef.current); hoverCloseTimerRef.current = null; }
+  }, []);
+  useEffect(() => () => clearHoverCloseTimer(), [clearHoverCloseTimer]);
 
   // Feb 2026 · Auto-hide rail on chat typing.
   // Mirrors the existing Shell.jsx `hiddenForTyping` pattern:
@@ -518,6 +528,12 @@ export default function RailShell({
   const rail = (
     <div ref={wrapRef} data-testid="rail-shell"
       data-hidden-typing={hiddenForTyping ? "true" : "false"}
+      onMouseEnter={clearHoverCloseTimer}
+      onMouseLeave={() => {
+        if (!autoHideEnabled || !open) return;
+        clearHoverCloseTimer();
+        hoverCloseTimerRef.current = setTimeout(() => setOpen(null), 220);
+      }}
       style={{
         position: "relative", display: "flex",
         flexShrink: 0, zIndex: 1200,
@@ -577,7 +593,10 @@ export default function RailShell({
                 cursor: "pointer",
                 transition: "background-color 140ms ease, color 140ms ease",
               }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = "#e2e8f0"; }}
+              onMouseEnter={(e) => {
+                if (!active) e.currentTarget.style.color = "#e2e8f0";
+                if (autoHideEnabled) { clearHoverCloseTimer(); setOpen(s.id); }
+              }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = "rgba(148,163,184,0.85)"; }}
             >
               <I size={18} strokeWidth={1.9} />

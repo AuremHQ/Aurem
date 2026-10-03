@@ -1849,6 +1849,16 @@ async def chat_with_tools(
                                         # local_tools.py has this BEFORE
                                         # the model makes its first tool
                                         # call, not only after a read.
+    force_read_only: bool = False,      # 2026-09-29 — admin-errors autofix
+                                        # hardening (see admin_error_autofix.py).
+                                        # Unlike interaction_contract's
+                                        # read_only_request() heuristic, this
+                                        # is an explicit, caller-set gate that
+                                        # attacker-controlled prompt content
+                                        # (e.g. an error report body) cannot
+                                        # talk its way around: write_repo_file
+                                        # / patch_repo_file are blocked
+                                        # unconditionally for the whole run.
 ) -> dict:
     """Run the LLM tool-call loop until final answer (no more tool calls)
     or `max_iters` cap is hit.  Every tool call goes through `tools_bridge`
@@ -1890,6 +1900,7 @@ async def chat_with_tools(
         # the repo tree, instead of the model guessing a filename.
         "user_prompt":   prompt,
         "is_founder":    bool(is_founder),   # Iter 212m-168 — gates execute_bash
+        "force_read_only": bool(force_read_only),  # 2026-09-29 — see param doc above
         "bin_ctx":       bin_ctx,            # Iter 212m-169 — locked user+project+PAT
         # Iter 388t — Bug 20 fix.  Founder-pod-debug mode unlocks
         # execute_bash on the pod filesystem WHEN the caller is
@@ -3101,16 +3112,28 @@ async def chat_with_tools(
             # pattern as R10_TIMING) so a repeat of this class of
             # per-tool stall shows up immediately in logs.
             _t0_tool = time.monotonic()
-            try:
-                res = await asyncio.wait_for(
+
+            async def _invoke_once():
+                _res = await asyncio.wait_for(
                     invoke_local_tool(tool_name, tool_args, local_ctx),
                     timeout=45.0,
                 )
-                if res is None:
-                    res = await asyncio.wait_for(
+                if _res is None:
+                    _res = await asyncio.wait_for(
                         invoke_tool(tool_name, tool_args, jwt_token),
                         timeout=45.0,
                     )
+                return _res
+
+            try:
+                res = await _invoke_once()
+                from services.tool_retry import RETRY_DELAY_S, should_retry
+                if should_retry(tool_name, res):
+                    # One repeat of a read-only call that failed fast for a
+                    # transient reason (services/tool_retry.py).
+                    await asyncio.sleep(RETRY_DELAY_S)
+                    entry["retried"] = True
+                    res = await _invoke_once()
                 logger.info("R10_TIMING tool=%s dur=%.2fs ok=%s", tool_name,
                             time.monotonic() - _t0_tool, (res or {}).get("ok"))
             except asyncio.TimeoutError:

@@ -21,6 +21,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
+import ModalCloseButton from "./ModalCloseButton";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const REASON_LABEL = {
   repo_not_found: "Repo deleted or renamed on GitHub",
@@ -34,6 +36,7 @@ export default function RepoCleanupBanner() {
   const [open, setOpen]     = useState(false);
   const [busy, setBusy]     = useState(false);
   const [selected, setSelected] = useState(() => new Set());
+  useEscapeKey(() => setOpen(false), open);
 
   const refresh = useCallback(async () => {
     try {
@@ -119,7 +122,7 @@ export default function RepoCleanupBanner() {
           // left/right rail. Previous `margin: 6px 12px 0` +
           // `width: calc(100% - 24px)` made the banner span nearly
           // full chat-pane width (~2x wider than the input).
-          margin: "6px clamp(16px, 17.25%, 240px) 0",
+          margin: "6px var(--chat-rail-x) 0",
           padding: "8px 14px",
           background: "rgba(245,158,11,0.10)",
           border: "1px solid rgba(245,158,11,0.45)",
@@ -157,6 +160,7 @@ export default function RepoCleanupBanner() {
             aria-labelledby="repo-cleanup-title"
             style={{
               width: "min(560px, 100%)", maxHeight: "80vh",
+              position: "relative",
               background: "rgba(20,20,22,0.96)",
               border: "1px solid rgba(245,158,11,0.45)",
               borderRadius: 14,
@@ -166,6 +170,7 @@ export default function RepoCleanupBanner() {
               fontFamily: "'JetBrains Mono', monospace",
             }}
           >
+            <ModalCloseButton onClick={() => setOpen(false)} testId="repo-cleanup-close" />
             <div id="repo-cleanup-title"
                  style={{ fontSize: 14, color: "#fbbf24",
                           letterSpacing: "0.06em" }}>

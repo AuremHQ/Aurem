@@ -78,7 +78,7 @@ def test_service_role_secret_value_never_in_output():
 
 def test_clean_repo_has_zero_false_alarms():
     from services.checkup_meta import with_meta
-    clean = with_meta(CLEAN, list(CLEAN) + ["AGENTS.md"], {})
+    clean = with_meta(CLEAN, list(CLEAN), {".gitignore": ".env\n"}, history=[])
     res = run_checkup(clean, include_scanners=True)
     bad = [i for i in res["items"] if i["severity"] in ("critical", "high")]
     assert bad == [], bad

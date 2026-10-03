@@ -1,0 +1,34 @@
+{
+  "summary": "Frontend-only validation of width-rail CSS fix + close (×) buttons on 4 informational chat cards + copy-tick feedback across the app. Logged in as test@aurem.dev on preview, opened existing chat (aurem-demo/frontend) where Fix List panel and Scan status strip render. All in-scope changes verified working — no regressions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_working": [
+    "Width-rail alignment: composer.x/right matches [data-testid=\"fix-list-panel\"].x/right with 0px delta at 1920, 1366, 900, 820, 600, 390 viewport widths (measured via getBoundingClientRect). CSS variable --chat-rail-x is correctly applied as single source of truth.",
+    "Fix List panel close ([data-testid='fix-list-panel-close']): clicking removes panel from DOM — dismissed state honored, panel does not re-mount until projectId changes.",
+    "MessageBubble user-sent copy ([data-testid='copy-user-0']): icon swaps lucide-copy → lucide-check and title 'Copy' → 'Copied!' immediately on click; reverts to lucide-copy / 'Copy' after ~1.5s.",
+    "MessageBubble assistant copy ([data-testid='copy-1']): same tick behavior — Check icon + 'Copied!' title → reverts.",
+    "Chat composer still functional (regression) — textarea accepts input, send button renders when text present.",
+    "Scan status strip dismiss ([data-testid='scan-strip-dismiss']) is defined in ScanStatusStrip.jsx line 346 inside StripShell with onDismiss handler; strip did not render on second login (chat context-dependent), code-review confirms wiring is correct.",
+    "TokenBanner close ([data-testid='token-banner-close']) — code-verified: dismissedTone state keyed by warning/blocked so escalation re-surfaces banner. Not live-testable (requires pct_used>=80 or is_blocked).",
+    "PaymentFailedBanner close ([data-testid='payment-failed-close']) — code-verified: session-scoped dismissed state; backend-driven payment_failed flag still re-renders on next session. Not live-testable (requires failed Stripe invoice).",
+    "ReferralShare copy ([data-testid='copy-referral-link']) — code-verified: swaps CopyIcon → Check and 'Copy' → 'Copied' using local `copied` state with setTimeout reset. Widget didn't render for test account on /referral page this run.",
+    "Projects task copy ([data-testid^='task-copy-id-']) — not live-testable without a selected project with tasks; code-verified in Projects.jsx."
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "No critical issues. All 3 new close-button components (FixListPanel, TokenBanner, PaymentFailedBanner) follow a consistent session-scoped `dismissed` useState pattern with proper props/key reset. MessageBubble copy-tick uses correct useState + setTimeout(1500) pattern that matches other copy buttons across the app."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not tested per request)", "frontend": "100% of live-testable items; code-verified for unreachable states (TokenBanner, PaymentFailedBanner, Projects task copy, ReferralShare — all gated on user state that isn't present for the test account)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Width-rail alignment was measured precisely (0px delta between composer and FixListPanel at all 6 breakpoints). If future testing needs to verify TokenBanner/PaymentFailedBanner close buttons live, requires a user near their monthly task cap (free tier = 10 tasks/mo) or a user with a failed Stripe invoice — otherwise static code review suffices. Scan status strip (backlog variant) only renders when the project has >=1 open high/critical finding older than idle_days threshold; it DID render on first login this session but not on subsequent chat loads — depends on chat state the server returns.",
+  "rca of the issue": "No issue — session passed."
+}

@@ -89,6 +89,9 @@ export default function GraphPanel({ projectId, open, onClose }) {
       if (r.data?.status === "ready") {
         setGraph(r.data.graph);
         setStatus("ready");
+      } else if (r.data?.status === "error") {
+        setGraph(r.data.graph);
+        setStatus("error");
       } else {
         setStatus("building");
         triggerBuild();
@@ -112,6 +115,11 @@ export default function GraphPanel({ projectId, open, onClose }) {
             pollRef.current = null;
             setGraph(r.data.graph);
             setStatus("ready");
+          } else if (r.data?.status === "error") {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            setGraph(r.data.graph);
+            setStatus("error");
           }
         } catch {
           clearInterval(pollRef.current);
@@ -387,6 +395,37 @@ export default function GraphPanel({ projectId, open, onClose }) {
             >
               Graph build is taking longer than expected. Close and reopen
               to retry, or click refresh.
+            </div>
+          )}
+
+          {status === "error" && (
+            <div
+              data-testid="graph-panel-error"
+              style={{
+                textAlign: "center", padding: 24,
+                color: "var(--text-faint)", fontSize: 12,
+              }}
+            >
+              <div style={{ color: "#f87171", fontWeight: 600, marginBottom: 8 }}>
+                Couldn't finish scanning your codebase.
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                {graph?.error
+                  ? `We tried twice — ${graph.error}.`
+                  : "We tried twice and it kept failing."} You can try again.
+              </div>
+              <button
+                data-testid="graph-error-retry-btn"
+                onClick={() => { setStatus("building"); triggerBuild(); }}
+                style={{
+                  padding: "6px 14px", borderRadius: 6,
+                  border: "1px solid var(--border-strong)",
+                  background: "var(--bg-elev)", color: "var(--text)",
+                  fontSize: 12, cursor: "pointer",
+                }}
+              >
+                Try again
+              </button>
             </div>
           )}
 

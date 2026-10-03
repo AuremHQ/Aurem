@@ -35,6 +35,7 @@ _COST_PER_M_TOKENS: dict[str, tuple[float, float]] = {
     "deepseek/deepseek-r1":                                      (0.55,  2.19),
     "perplexity/llama-3.1-sonar-large-128k-online":              (1.00,  1.00),
     "z-ai/glm-5.2":                                              (0.30,  0.60),
+    "z-ai/glm-5.3":                                              (1.40,  4.40),
     "anthropic/claude-sonnet-4.5":                               (3.00, 15.00),
     "gpt-5.4-mini":                                               (0.75,  4.50),
     "gemini-3.1-pro-preview":                                     (2.00, 12.00),

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from services import llm as llm_mod
-from services.llm import call_llm_with_meta, _GLM_MODEL, _CLAUDE_MODEL
+from services.llm import call_llm_with_meta, _GLM_MODEL, _CLAUDE_MODEL, _GLM_REVIEW_MODEL
 
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -59,7 +59,7 @@ def test_call_glm_function_exists():
 async def test_swift_mode_uses_glm_only(monkeypatch):
     glm_calls = []
 
-    async def fake_glm(system, user, max_tokens=3500, temperature=0.0):
+    async def fake_glm(system, user, max_tokens=3500, temperature=0.0, feature=None):
         glm_calls.append((system[:20], user[:20], max_tokens, temperature))
         return "Hello from GLM"
 
@@ -100,9 +100,9 @@ async def test_pro_mode_uses_glm_when_non_empty(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pro_mode_falls_back_to_claude_when_glm_empty(monkeypatch):
-    async def fake_glm(system="", user="", max_tokens=3500, temperature=0.0):
+    async def fake_glm(system="", user="", max_tokens=3500, temperature=0.0, feature=None):
         return ""        # GLM returned empty
-    async def fake_claude(system="", user="", max_tokens=3500, temperature=0.0):
+    async def fake_claude(system="", user="", max_tokens=3500, temperature=0.0, feature=None):
         return "claude saved the day"
     monkeypatch.setattr(llm_mod, "_call_glm", fake_glm)
     monkeypatch.setattr(llm_mod, "_call_claude", fake_claude)
@@ -128,47 +128,52 @@ async def test_pro_mode_falls_back_to_claude_when_glm_raises(monkeypatch):
     assert res["provider"] == "claude-sonnet-pro-fallback"
 
 
-# ── Maxx mode → GLM then Claude review+improve ────────────────────
+# ── Maxx mode → GLM then GLM-5.3 review+improve ────────────────────
+# 2026-02 cost-optimization — the Maxx reviewer swapped from Claude
+# Sonnet to GLM-5.3 (`_call_glm_review`, `_GLM_REVIEW_MODEL`). See
+# `_GLM_REVIEW_MODEL`'s comment in openrouter_providers.py.
 
 
 @pytest.mark.asyncio
-async def test_maxx_mode_calls_both_glm_then_claude_review(monkeypatch):
-    calls = {"glm": 0, "claude": 0, "claude_user": ""}
+async def test_maxx_mode_calls_both_glm_then_glm_review(monkeypatch):
+    calls = {"glm": 0, "glm_review": 0, "review_user": ""}
 
-    async def fake_glm(system="", user="", max_tokens=3500, temperature=0.0):
+    async def fake_glm(system="", user="", max_tokens=3500, temperature=0.0, feature=None):
         calls["glm"] += 1
         return "draft from glm"
 
-    async def fake_claude(system="", user="", max_tokens=3500, temperature=0.0):
-        calls["claude"] += 1
-        calls["claude_user"] = user
-        return "improved by claude"
+    async def fake_glm_review(system="", user="", max_tokens=3500, temperature=0.0, feature=None):
+        calls["glm_review"] += 1
+        calls["review_user"] = user
+        return "improved by glm-5.3"
 
-    monkeypatch.setattr(llm_mod, "_call_glm",    fake_glm)
-    monkeypatch.setattr(llm_mod, "_call_claude", fake_claude)
+    monkeypatch.setattr(llm_mod, "_call_glm",        fake_glm)
+    monkeypatch.setattr(llm_mod, "_call_glm_review", fake_glm_review)
 
     res = await call_llm_with_meta(
         system="s", user="u", review_mode="maxx",
     )
     assert calls["glm"] == 1
-    assert calls["claude"] == 1
-    # Claude must receive the GLM draft inside its user prompt — that's
-    # the "review and improve" handoff the user spec explicitly asks for.
-    assert "draft from glm" in calls["claude_user"]
-    assert "review" in calls["claude_user"].lower() or \
-           "improve" in calls["claude_user"].lower()
-    assert res["provider"] == "glm-5.2+claude-review"
-    assert res["content"] == "improved by claude"
-    assert res["fallback_chain"] == ["glm-5.2", "claude-sonnet-review"]
+    assert calls["glm_review"] == 1
+    # The reviewer must receive the GLM draft inside its user prompt —
+    # that's the "review and improve" handoff the user spec explicitly
+    # asks for.
+    assert "draft from glm" in calls["review_user"]
+    assert "review" in calls["review_user"].lower() or \
+           "improve" in calls["review_user"].lower()
+    assert res["provider"] == "glm-5.2+glm-review"
+    assert res["content"] == "improved by glm-5.3"
+    assert res["model"] == _GLM_REVIEW_MODEL
+    assert res["fallback_chain"] == ["glm-5.2", "glm-5.3-review"]
 
 
 @pytest.mark.asyncio
-async def test_maxx_mode_returns_glm_draft_when_claude_review_fails(
+async def test_maxx_mode_returns_glm_draft_when_glm_review_fails(
         monkeypatch):
     async def fake_glm(*a, **k): return "glm draft survives"
-    async def fake_claude(*a, **k): raise RuntimeError("Claude down")
-    monkeypatch.setattr(llm_mod, "_call_glm",    fake_glm)
-    monkeypatch.setattr(llm_mod, "_call_claude", fake_claude)
+    async def fake_glm_review(*a, **k): raise RuntimeError("GLM-5.3 down")
+    monkeypatch.setattr(llm_mod, "_call_glm",        fake_glm)
+    monkeypatch.setattr(llm_mod, "_call_glm_review", fake_glm_review)
     res = await call_llm_with_meta(
         system="s", user="u", review_mode="maxx",
     )
@@ -197,7 +202,7 @@ async def test_maxx_mode_falls_back_to_claude_direct_when_glm_empty(
 async def test_legacy_chat_mode_still_uses_deepseek(monkeypatch):
     """When no `review_mode` is passed, behaviour must be identical to
     pre-iter-212m-18 (DeepSeek for chat, Claude for code)."""
-    async def fake_deepseek(messages, system, max_tokens, temperature):
+    async def fake_deepseek(messages, system, max_tokens, temperature, feature=None):
         return "deepseek says hi"
     async def fake_glm(*a, **k):
         raise AssertionError("GLM must NOT be called on legacy path")
@@ -229,9 +234,9 @@ async def test_step_hook_fires_thinking_label_in_swift_mode(monkeypatch):
 @pytest.mark.asyncio
 async def test_step_hook_fires_review_label_in_maxx_mode(monkeypatch):
     async def fake_glm(*a, **k): return "draft"
-    async def fake_claude(*a, **k): return "reviewed"
+    async def fake_glm_review(*a, **k): return "reviewed"
     monkeypatch.setattr(llm_mod, "_call_glm", fake_glm)
-    monkeypatch.setattr(llm_mod, "_call_claude", fake_claude)
+    monkeypatch.setattr(llm_mod, "_call_glm_review", fake_glm_review)
     seen = []
     await call_llm_with_meta(
         system="s", user="u", review_mode="maxx",
