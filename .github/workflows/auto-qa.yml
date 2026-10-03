@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     timeout-minutes: 20
     services:
       mongodb:
@@ -99,7 +100,7 @@ jobs:
           path: .emergent/latest-qa-report.md
           retention-days: 14
 
-      - name: Commit report back to repo (admin dashboard reads this file)
+      - name: Commit report back to repo (main only — admin dashboard reads this file)
         # 2026-09-09 — routers/admin_qa.py's GET /admin/qa/latest-report
         # (the "Auto-QA report" card on the founder's QA dashboard) reads
         # this exact path off the LIVE production filesystem. The step
@@ -111,7 +112,16 @@ jobs:
         # (its own comment: "GITHUB_TOKEN-authored pushes don't
         # re-trigger push-based workflows" — safe to push here, no
         # infinite-CI-loop risk).
-        if: always() && github.event_name == 'push'
+        #
+        # 2026-09-29 — restricted to `main` only. This step used to run
+        # (and push) on every branch, including branches that are the
+        # HEAD of an open PR. That push moved the PR's head commit,
+        # which invalidates any required-status-check state pinned to
+        # the old SHA and cancels the very CI run that was in flight for
+        # that PR (see PR #194-era incident). `main` has no PR pointing
+        # at it, so pushing here is still safe; every other branch now
+        # gets the report as a PR comment instead (next step).
+        if: always() && github.event_name == 'push' && github.ref_name == 'main'
         run: |
           if [ ! -f .emergent/latest-qa-report.md ]; then
             echo "No report file to commit (run step failed before writing it) — skipping."
@@ -125,4 +135,36 @@ jobs:
             exit 0
           fi
           git commit -m "chore: update auto-qa regression report [auto-qa-bot]"
-          git push origin HEAD:"${GITHUB_REF#refs/heads/}"
+          # Publishing the report is a side effect, not the gate. The
+          # push fails whenever the branch moved during the run or is
+          # protected (main), and that used to turn the whole job red
+          # even though every regression lock had passed. A real lock
+          # failure still fails the "Run Auto-QA" step above.
+          git push origin HEAD:"${GITHUB_REF#refs/heads/}" || echo "::warning::Could not push the QA report (branch moved or protected). The regression locks themselves passed; the report was not committed."
+
+      - name: Post report as a PR comment (non-main branches)
+        # 2026-09-29 — replaces the old "commit back to the PR branch"
+        # side effect for every branch that isn't main. Never pushes to
+        # the branch, so it cannot move a PR's head or cancel an
+        # in-flight required check. No-op if the branch has no open PR
+        # (e.g. a scratch branch) or the report wasn't written.
+        if: always() && github.event_name == 'push' && github.ref_name != 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f .emergent/latest-qa-report.md ]; then
+            echo "No report file to comment (run step failed before writing it) — skipping."
+            exit 0
+          fi
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "${GITHUB_REF#refs/heads/}" --state open --json number --jq '.[0].number' || true)
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "No open PR for branch ${GITHUB_REF#refs/heads/} — report is still available as the auto-qa-regression-report artifact."
+            exit 0
+          fi
+          {
+            echo "### Auto-QA regression report — \`$(git rev-parse --short HEAD)\`"
+            echo ""
+            cat .emergent/latest-qa-report.md
+          } > /tmp/pr_comment_body.md
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/pr_comment_body.md
+

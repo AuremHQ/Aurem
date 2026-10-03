@@ -33,7 +33,9 @@ export default function DuplicationWidget() {
   const { data, isProcessing, isFailed, run } = useAsyncState(65000);
 
   const load = useCallback(() => {
-    return run(() => api.get("/admin/duplication").then((r) => r.data));
+    // run() rethrows after recording the failed state this widget renders;
+    // without this catch every failed load is an unhandled rejection.
+    return run(() => api.get("/admin/duplication").then((r) => r.data)).catch(() => {});
   }, [run]);
 
   useEffect(() => { load(); }, [load]);

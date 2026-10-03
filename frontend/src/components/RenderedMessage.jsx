@@ -216,7 +216,7 @@ function renderInline(text, keyPrefix) {
   // a strictly shorter string (delimiters stripped each call), so it
   // terminates naturally — no infinite-loop risk.
   const parts = text.split(
-    /(\[!\[[^\]]*\]\([^)\s]+\)\]\([^)\s]+\)|!\[[^\]]*\]\([^)\s]+\)|\[[^\]]*\]\([^)\s]+\)|`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
+    /(\[!\[[^\]]*\]\([^)\s]+\)\]\([^)\s]+\)|!\[[^\]]*\]\([^)\s]+\)|\[[^\]]*\]\([^)\s]+\)|`[^`\n]+`|\*\*[^*\n][^*\n]*\*\*|(?<![\w`*_])__[^_\n]+__(?![\w`*_])|(?<![\w`*_])_[^_\n]+_(?![\w`*_]))/g,
   );
   return parts.map((p, i) => {
     // Image-in-link badge: [![alt](src)](href)
@@ -267,6 +267,13 @@ function renderInline(text, keyPrefix) {
         }}>
           {p.slice(1, -1)}
         </code>
+      );
+    }
+    if (p.startsWith("__") && p.endsWith("__") && p.length > 4) {
+      return (
+        <strong key={`${keyPrefix}-${i}`} style={{ fontWeight: 700 }}>
+          {renderInline(p.slice(2, -2), `${keyPrefix}-${i}-b`)}
+        </strong>
       );
     }
     if (p.startsWith("**") && p.endsWith("**") && p.length > 4) {
@@ -424,11 +431,41 @@ function renderTextSegment(text, keyPrefix) {
   return _renderTextSegmentLines(text, keyPrefix);
 }
 
+// Block-level lines the model emits constantly: "## Heading", "- item",
+// "* item", "1. item". Block elements carry their own line break, so the
+// caller drops the trailing "\n" for them.
+function _blockLine(line) {
+  const h = /^\s{0,3}#{1,6}\s+(\S.*)$/.exec(line);
+  if (h) return { kind: "heading", body: h[1].replace(/\s+#+\s*$/, "") };
+  const b = /^\s*[-*+]\s+(\S.*)$/.exec(line);
+  if (b) return { kind: "item", marker: "•", body: b[1] };
+  const n = /^\s*(\d{1,3})[.)]\s+(\S.*)$/.exec(line);
+  if (n) return { kind: "item", marker: `${n[1]}.`, body: n[2] };
+  return null;
+}
+
 function _renderTextSegmentLines(text, keyPrefix) {
   if (!text) return null;
   const lines = text.split("\n");
   return lines.map((line, li) => {
     const rule = TAG_RULES.find((r) => r.re.test(line));
+    const block = rule ? null : _blockLine(line);
+    if (block) {
+      return (
+        <React.Fragment key={`${keyPrefix}-l${li}`}>
+          {block.kind === "heading" ? (
+            <strong data-testid="ora-heading" style={{ display: "block", fontWeight: 700, margin: "6px 0 2px" }}>
+              {renderInline(block.body, `${keyPrefix}-l${li}-h`)}
+            </strong>
+          ) : (
+            <span data-testid="ora-list-item" style={{ display: "block", paddingLeft: 16, textIndent: -12 }}>
+              <span aria-hidden="true">{block.marker}</span>{" "}
+              {renderInline(block.body, `${keyPrefix}-l${li}-li`)}
+            </span>
+          )}
+        </React.Fragment>
+      );
+    }
     if (!rule) {
       return (
         <React.Fragment key={`${keyPrefix}-l${li}`}>

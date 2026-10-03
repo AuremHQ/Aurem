@@ -76,6 +76,9 @@ export default function AdminFunnelPage() {
     setErr(null);
     try {
       const r = await api.get("/admin/funnel/activation", { params: { start, end }, timeout: 20000 });
+      if (!r.data?.funnel || !r.data.first_task_tokens || !r.data.drop_reasons) {
+        throw new Error("Unexpected response (missing funnel, first_task_tokens or drop_reasons)");
+      }
       setData(r.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || e?.message || "failed to load");
@@ -150,7 +153,7 @@ export default function AdminFunnelPage() {
             {data.note && (
               <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 10 }}>{data.note}</div>
             )}
-            {data.funnel.map((step, i) => (
+            {(data.funnel || []).map((step, i) => (
               <FunnelBar key={step.step} step={step}
                          prevCount={i > 0 ? data.funnel[i - 1].count : null} />
             ))}
@@ -162,11 +165,11 @@ export default function AdminFunnelPage() {
               <b style={{ fontSize: 13, color: "var(--text)" }}>
                 Dropped between "sent first message" and "first task completed"
               </b>
-              <Badge>{data.drop_reasons.cohort} users</Badge>
+              <Badge>{data.drop_reasons?.cohort ?? 0} users</Badge>
             </div>
             <Table
               cols={["Reason", "Users"]}
-              rows={(data.drop_reasons.reasons || []).map((r) => [
+              rows={(data.drop_reasons?.reasons || []).map((r) => [
                 REASON_LABEL[r.reason] || r.reason,
                 r.count,
               ])}

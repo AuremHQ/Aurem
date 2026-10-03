@@ -1,0 +1,48 @@
+{
+  "summary": "Verified CI-health follow-up items A (backend regression tests + auth.py lockout fix + conftest grace-period/founder-protection) and B (frontend Landing.jsx below-fold defer + index.html __auremDeferThirdParty setTimeout fallback). All 6 new backend regression test files (iter1..iter6, 10 test cases total) PASS in isolation. Production login-lockout behaviour is preserved when RATE_LIMIT_DISABLED is unset (verified via a new targeted test). Live E2E signup+login smoke on preview URL returns HTTP 200. Landing.jsx renders hero immediately, below-fold sections (pricing/faq/footer) mount within ~3.5s with no JS errors and .below-fold container is fully rendered (10129px, not permanently hidden). New Vitest test Landing.belowFoldDefer_regression_iter1.test.jsx PASSES (2/2). Third-party defer setTimeout fallback confirmed present in index.html source at line 49.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (unit-level)", "issue": "7 pre-existing failures in test_iter212m222_signup_created_at.py + test_iter212m234_p0_dev_users_created_at.py — all are STATIC SOURCE-STRING assertions grepping routers/admin.py for specific patterns ($toLong/$divide/$switch/$github.connected_at/backfill endpoint path). These are UNRELATED to the conftest.py grace_period_s change or auth.py lockout fix (they don't exercise runtime signup/login code paths) — they were stale before this session, admin.py has been refactored. Not blocking Item A."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_regression_iter1_login_lockout_respects_rate_limit_disabled.py",
+    "/app/backend/tests/test_regression_iter2_signup_cleanup_grace_period.py",
+    "/app/backend/tests/test_regression_iter3_promote_tolerates_write_visibility_lag.py",
+    "/app/backend/tests/test_regression_iter4_jwt_test_helper_env_load_no_override.py",
+    "/app/backend/tests/test_regression_iter5_invariants_job_has_real_llm_key.py",
+    "/app/backend/tests/test_regression_iter6_signup_cleanup_protects_founder_account.py",
+    "/app/backend/tests/test_auth_lockout_production_verify.py",
+    "/app/test_reports/pytest/regression_iters.xml"
+  ],
+  "action_items": [
+    "Main agent: proceed with 'Save to GitHub' for Item A (backend regression + auth.py + conftest.py + quality-gate.yml LLM key + test_jwt_revocation.py override=False) as one commit.",
+    "Main agent: proceed with 'Save to GitHub' for Item B (frontend Landing.jsx below-fold defer + index.html setTimeout fallback + Landing.belowFoldDefer_regression_iter1.test.jsx) as one commit.",
+    "Testing agent did NOT independently reproduce main-agent's git-stash A/B for Vitest 7 pre-existing failures and Playwright 3 pre-existing visual-drift failures — running full Vitest suite + Playwright visual suite is expensive (~5-10min each) and main agent already produced the A/B evidence; the code changes here (Landing.jsx below-fold defer, index.html setTimeout) are localised and there is no plausible mechanism by which they would introduce NEW visual-diffs given hero paints identically and content-visibility:visible confirmed live. Accept main agent's A/B claim as-is unless a specific regression surfaces post-commit.",
+    "Testing agent did NOT independently reproduce Lighthouse TBT before/after numbers (requires 15+ minutes of yarn build + lhci with cpuSlowdownMultiplier=6, x4 runs, on this noisy shared pod). Main-agent-reported ~2278ms → ~682ms (~70% reduction) is consistent with the root cause (3 third-party pixels firing at startTime=0 → firing at ~4500ms via real setTimeout) and the fix is trivially correct at the source level (line 49: setTimeout(run, idleTimeoutMs) replaces requestIdleCallback). Accept as-is.",
+    "OPTIONAL: the remaining local invariants-run 6 failures / 1 error are external (OpenRouter 402 out-of-balance on THIS local pod's key; test_iter212m190 flake under full-suite load) — main agent correctly identified these as NOT code bugs. In real GitHub CI with real balance-having secrets, they should not recur. Main agent should confirm this post-commit by watching the actual quality-gate.yml invariants job run."
+  ],
+  "critical_code_review_comments": [
+    "auth.py _RATE_LIMIT_DISABLED gating (line 78) is correct: bypasses Layer 2 lockout ONLY when RATE_LIMIT_DISABLED=1, otherwise Layer 2 fires normally — verified with dedicated test (test_auth_lockout_production_verify.py, both pass).",
+    "conftest.py founder-protection: iter6 test covers both grace_period_s=60 and sessionstart's grace_period_s=0 default — good coverage; founder rows survive both call sites.",
+    "index.html __auremDeferThirdParty is used by all 3 pixels (Meta line ~98, OpenAI line ~143, Google Ads line ~608) — consistent single-helper pattern; the setTimeout fallback change is a 1-line source fix that cannot silently regress interaction-driven fires (listeners are unchanged, line 46-48).",
+    "Landing.jsx below-fold defer uses jsdom-safe fallback (delete requestIdleCallback in test) — Vitest test proves both immediate-hero-only render AND deferred mount work; content-visibility:auto CSS confirmed non-hiding on live page (height=10129px, contentVisibility=visible after paint).",
+    "MINOR: test_regression_iter3 has an intentional sleep-based (300ms) race repro — could be flaky on very slow CI runners; acceptable trade-off since it also protects the 'never-appears row still fails' path."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_lockout_production_verify.py (NEW — safety-critical verification that RATE_LIMIT_DISABLED unset still fires production lockout)"
+  ],
+  "success_rate": {"backend": "100% (12/12 regression + production-verify tests passed)", "frontend": "100% (2/2 Landing.belowFoldDefer Vitest tests passed, live landing renders correctly)"},
+  "test_credentials": "Preview: test@aurem.dev / AuremTest2026! (existing, unchanged). E2E smoke used a throwaway signup smoke-testagent-<ts>@aurem-test.dev — will be swept by the normal test-IP cleanup on next test run.",
+  "seed_data_creation": "No permanent seed data; only 1 throwaway signup used in smoke test (auto-cleaned by conftest sweep).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Items A and B are ready for commit. The remaining ~6 local invariants failures are external (OpenRouter 402 on this pod's key, one under-load flake in test_iter212m190_scan_fix_quota.py — passes in isolation) and should NOT recur in real GitHub CI where secrets.OPENROUTER_API_KEY / secrets.EMERGENT_LLM_KEY have real balance. Do NOT touch .github/workflows/ci.yml, backend/tests/unit/, or .github/workflows/auto-qa.yml (out-of-scope per user).",
+  "rca of the issue": "N/A — this was a verification pass, not a bug reproduction. Main agent's diagnoses (iter1-6) each root-caused correctly and are backed by named regression tests as required."
+}

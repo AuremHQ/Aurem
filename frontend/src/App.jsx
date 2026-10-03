@@ -27,6 +27,7 @@ import { FixJobProvider } from "./components/FixJobContext";
 import PersistentFixBar from "./components/PersistentFixBar";
 import CookieConsentBanner from "./components/CookieConsentBanner";
 import OraGuideMascot from "./components/OraGuideMascot";
+import { useCleanChatUi } from "./hooks/useCheckupFlags";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import MaintenanceGate from "./components/MaintenanceGate";  // 2026-08
 import { PrivateRoute, AdminRoute } from "./components/PrivateRoute";
@@ -87,7 +88,6 @@ const BugHunt           = lazy(() => import("./pages/BugHunt"));        // Iter 
 const SidebarPreview    = lazy(() => import("./pages/SidebarPreview")); // Iter 212m-80
 const DashboardPreviewV2 = lazy(() => import("./pages/DashboardPreviewV2")); // Iter 212m-81
 const AdminApiKeys      = lazy(() => import("./pages/AdminApiKeys"));
-const OAuthAuthorize    = lazy(() => import("./pages/OAuthAuthorize"));  // 2026-09-29 OAuth 2.1 consent (ORA Chat MCP)
 const AdminSystemHealth = lazy(() => import("./pages/AdminSystemHealth"));   // Iter 212m-205
 const AdminInspectLoop  = lazy(() => import("./pages/AdminInspectLoop"));    // Iter 309 · Batch-2 aftermath
 const AdminInspectSpeedDiagnostic = lazy(() => import("./pages/AdminInspectSpeedDiagnostic")); // Iter 314
@@ -217,6 +217,7 @@ function SessionExpiredListener() {
 }
 
 export default function App() {
+  const cleanChatUi = useCleanChatUi();
   // Iter 101 — Capture `?ref=<uid>` on any landing, stash in localStorage
   // so Signup can attribute the referrer after account creation.
   // Also pings the public /referrals/track endpoint so the referrer
@@ -348,7 +349,7 @@ export default function App() {
       <MetaPixelRouteTracker />
       <SessionExpiredListener />
       <Toaster />
-      <OraGuideMascot />
+      {!cleanChatUi && <OraGuideMascot />}
       {/* 2026-09-21 — global mount (was previously inside Shell, gated
           behind an auth token) so a first-time anonymous visitor on
           Landing/Signup can also be prompted to install the PWA, not
@@ -483,7 +484,6 @@ export default function App() {
           <Route path="/sidebar-preview"    element={<PrivateRoute><SidebarPreview /></PrivateRoute>} />
           <Route path="/dashboard-preview-v2" element={<PrivateRoute><DashboardPreviewV2 /></PrivateRoute>} />
           <Route path="/admin/api-keys"     element={<AdminRoute><AdminApiKeys /></AdminRoute>} />
-          <Route path="/oauth/authorize"    element={<AdminRoute><OAuthAuthorize /></AdminRoute>} />
           <Route path="/admin/system-health" element={<AdminRoute><AdminSystemHealth /></AdminRoute>} />
           <Route path="/admin/inspect-loop/:loopId" element={<AdminRoute><AdminInspectLoop /></AdminRoute>} />
           {/* Iter 314 — universal admin-inspect wrappers so admin

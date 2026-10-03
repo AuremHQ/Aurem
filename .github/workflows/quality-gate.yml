@@ -123,6 +123,9 @@ jobs:
 
   invariants:
     name: Fitness-function invariants (always green on main)
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -211,10 +214,40 @@ jobs:
           FOUNDER_EMAILS: test@aurem.dev
           ADMIN_EMAIL: test@aurem.dev
           LOGIN_RATE_PER_MIN: "1000"
+          # 2026-09-29 · CI-trustworthiness audit — root cause of ~24
+          # of this job's 35 real GH Actions failures (run 36621460624,
+          # main @ 5f97cc88): services/signup_guards.py's
+          # SIGNUP_RATE_LIMIT_PER_IP defaults to 3 signups/24h and, unlike
+          # every other limiter here, is NOT gated by RATE_LIMIT_DISABLED
+          # below — it's a separate, independent check. This job's own
+          # seed signup (below) plus every live-HTTP test that signs up a
+          # fresh account (test_isolation_exploit.py, test_loop_gate_*,
+          # test_jwt_revocation.py, ...) all share this one runner's IP,
+          # so the 4th signup onward got a hard 429 — including, on this
+          # exact run, the seed signup itself (its `|| true` swallowed
+          # the 429 silently), which is why test_rollback_v2_pillar1.py
+          # and friends then failed founder LOGIN with 401 (the account
+          # was never created). Same pattern as LOGIN_RATE_PER_MIN above.
+          SIGNUP_RATE_LIMIT_PER_IP: "1000"
           # CI-only: the booted server is a SEPARATE process from pytest, so
           # conftest's per-test bucket reset can't reach it — live-HTTP
           # tests share one runner IP and tripped the 10/min login limit.
           RATE_LIMIT_DISABLED: "1"
+          # 2026-09-29 · confirmed real bug diagnosing this job: no LLM
+          # key was set anywhere in this workflow, so every live
+          # chat-reply test (casual hello / greeting / chat-history /
+          # loop-trip-incident / commit-boundary / prompt-caching) got
+          # an empty reply or a 499 upstream-disconnect, always. Tried
+          # MOCK_LLM=true first — that fixed those but broke a
+          # DIFFERENT set (intent-classification tests like
+          # test_intent_gateway_points_4_6_2026_01.py need a real
+          # model's understanding of "casual" vs "tool request"; the
+          # canned mock can't tell the difference). A real key is the
+          # only fix that satisfies both — same secrets already used
+          # by the "Simulated-user QA" job below (ci.yml) for the same
+          # reason.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EMERGENT_LLM_KEY:   ${{ secrets.EMERGENT_LLM_KEY }}
         run: |
           uvicorn main:app --host 0.0.0.0 --port 8001 &
           echo $! > /tmp/backend.pid
@@ -279,13 +312,83 @@ jobs:
           # heart; regressions here (stuck states, missing heartbeats,
           # phase-mapping drift) must fail the gate immediately, not
           # hide inside the wider ci.yml suite.
+          #
+          # 2026-09-29 · same PIPESTATUS trap as ci.yml's "Run tests"
+          # step (see its own comment) — `set -o pipefail` plus
+          # capturing ${PIPESTATUS[0]} immediately after the
+          # `| tee` pipe, so a real pytest failure still fails this
+          # step even though later lines in this script also run.
+          # --junitxml feeds the new "Upload JUnit XML" step below;
+          # the tee'd file feeds the new "Summarise failing tests"
+          # step, same pattern ci.yml already uses per PR #191.
+          set -o pipefail
           python -m pytest tests/ \
             -k "regression or invariant or iter309 or ci_canary or frontend_sync or execute_stuck_recovery or jwt_revocation or self_heal_paused or loop" \
             --tb=short -q \
+            --junitxml=invariants_junit.xml \
             --reruns 1 --reruns-delay 3 \
             --only-rerun "ConnectionError|ConnectionRefusedError|TimeoutError|RemoteDisconnected|ConnectionResetError" \
             --ignore=tests/test_iter138_acceptance_seven.py \
-            --ignore=tests/test_iter212m163_aggression_chat.py
+            --ignore=tests/test_iter212m163_aggression_chat.py \
+            --deselect=tests/test_regression_iter289_track1_lane_a.py::test_backend_coverage_json_written \
+            --deselect=tests/test_regression_iter289_track1_lane_a.py::test_frontend_coverage_summary_written \
+            2>&1 | tee /tmp/invariants_pytest_output.txt
+          PYTEST_EXIT=${PIPESTATUS[0]}
+          echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
+          exit "$PYTEST_EXIT"
+          # 2026-09-29 · same class of false positive as the deselect
+          # above, just the frontend twin: asserts
+          # frontend/coverage/coverage-summary.json exists, which is
+          # only ever written by quality-gate.yml's SEPARATE
+          # "frontend-vitest" job (a different job/checkout, no
+          # artifact sharing into this one, and this job never installs
+          # node/yarn deps or runs vitest). Swept in for the same
+          # "regression" filename-substring reason. Still runs (and is
+          # enforced) in that job where its precondition is real.
+          # 2026-09-29 · confirmed real bug diagnosing this job: the
+          # deselected test asserts backend/coverage.json exists —
+          # that file is only ever written by ci.yml's SEPARATE
+          # "Backend — pytest" job (`--cov-report=json:coverage.json`),
+          # a different job/checkout with no artifact sharing into
+          # this one. It got swept into THIS job's selection only
+          # because its filename contains "regression"; it always
+          # fails on a genuinely fresh checkout here. Still runs (and
+          # is enforced) in ci.yml where its precondition is real.
+
+      - name: Summarise failing tests
+        # Same pattern as ci.yml's per-shard step (PR #191): puts the
+        # failing test ids in the job summary so they're visible
+        # without downloading the raw log.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "### Failing / erroring tests — Fitness-function invariants"
+            if [ -f /tmp/invariants_pytest_output.txt ]; then
+              grep -E '^(FAILED|ERROR) ' /tmp/invariants_pytest_output.txt | sort -u | head -200 || true
+              tail -n 1 /tmp/invariants_pytest_output.txt
+            else
+              echo "no pytest output captured"
+            fi
+          } > /tmp/failing_summary.md
+          cat /tmp/failing_summary.md >> "$GITHUB_STEP_SUMMARY"
+          # The job summary is not readable through the API, and the raw log tail is
+          # service-container noise, so also post the list on the PR (PR runs only).
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failing_summary.md || true
+          fi
+
+      - name: Upload JUnit XML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invariants-junit-xml
+          path: backend/invariants_junit.xml
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Guard — Source-of-truth trip-wires (isolated, must never be silently red)
         # W3 · 2026-08 — same governance rule as ci.yml's dedicated
         # step: this exact job's broad -k filter above already ran
@@ -303,6 +406,214 @@ jobs:
           AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
           AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
         run: python -m pytest -m source_of_truth -v --tb=short --timeout=30
+      - name: Stop backend
+        if: always()
+        run: |
+          if [[ -f /tmp/backend.pid ]]; then kill "$(cat /tmp/backend.pid)" || true; fi
+
+  # 2026-09-30 · the files in tests/live_env_quarantine.txt need a running
+  # backend at REACT_APP_BACKEND_URL. ci.yml has none (and must not point at
+  # the real deployment), so they skip there. Without this job they would run
+  # nowhere in CI; here the backend is booted on localhost so the conftest
+  # probe passes and they run for real.
+  live-env-tests:
+    name: Live-env tests (backend booted, quarantined files)
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      # Iter 347 — the invariants subset includes DB-touching suites;
+      # the job env already pointed MONGO_URL at localhost:27017 but
+      # no Mongo was ever started on the runner. Root fix: real
+      # service container (same pattern as ci.yml backend-tests).
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          # Iter 306 — emergentintegrations is served from Emergent's
+          # private index (not on public PyPI). Without this URL the
+          # install fails on GH-hosted runners and blocks the whole
+          # gate. Source: `pip install emergentintegrations
+          # --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/`
+          # 2026-08-26 — CI Retry mechanism: 3 attempts w/ backoff for
+          # this network install only — never applied to test results
+          # (see --only-rerun on the test step below for that half).
+          for attempt in 1 2 3; do
+            pip install -r requirements.txt \
+              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+              && break
+            echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 5))
+          done
+      # 2026-08-25 — same CI-tooling gap fix as ci.yml: this job runs
+      # test_iter212m62_loop_verify.py (via the "loop" keyword filter
+      # below) which shells out to real `ruff`/`eslint` binaries;
+      # neither was ever installed on this runner, so every linter-
+      # outcome assertion there saw the documented graceful "skip"
+      # fallback instead of a real lint result.
+      - name: Install ruff + eslint (for loop_verify tests)
+        run: |
+          pip install --quiet ruff
+          npm install -g eslint@8 --quiet
+      - name: Map workspace to /app (legacy hardcoded test paths)
+        # Iter 349 — 35 collection errors on runners: older tests
+        # exec scripts via hardcoded /app/backend/... paths (pod
+        # convention). A symlink makes the whole class work on
+        # GH-hosted runners without touching 35 files.
+        run: sudo ln -sfn "$GITHUB_WORKSPACE" /app
+      - name: Boot backend in background
+        # 2026-08-26 — ROOT FIX: this job never started a backend, but
+        # a real chunk of the "invariant" selection (test_loop_gate_*,
+        # test_regression_iter297_p0_journey_coverage, etc.) makes
+        # REAL `requests.post(REACT_APP_BACKEND_URL + ...)` HTTP calls
+        # (signup/login/loop-start) and asserts against a `mongo`
+        # fixture reading the SAME MONGO_URL/DB_NAME below. With no
+        # server listening on :8001, every such test either connection-
+        # errors outright, or — if a stray process happens to answer on
+        # :8001 pointed at a DIFFERENT database — passes signup but
+        # fails the Mongo assertion ("no dev_users row for X") because
+        # the HTTP call and the Mongo read land in two different DBs.
+        # Verified live: running this exact test selection locally with
+        # a real backend bound to the SAME MONGO_URL/DB_NAME as this
+        # job eliminates the "no dev_users row" failure class entirely.
+        # Same uvicorn-boot pattern already used by visual-regression
+        # (below) and ci.yml's Simulated-user QA job.
+        working-directory: backend
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME:   aurem_ci_smoke
+          JWT_SECRET: ci-test-secret-32-chars-minimum!!
+          AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
+          AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
+          # Seeded CI founder (see seed step below) + a login rate-limit
+          # high enough that ~100 test logins from one runner IP don't
+          # trip the 10/min production default (429 cascade).
+          FOUNDER_EMAILS: test@aurem.dev
+          ADMIN_EMAIL: test@aurem.dev
+          LOGIN_RATE_PER_MIN: "1000"
+          # 2026-09-29 · CI-trustworthiness audit — root cause of ~24
+          # of this job's 35 real GH Actions failures (run 36621460624,
+          # main @ 5f97cc88): services/signup_guards.py's
+          # SIGNUP_RATE_LIMIT_PER_IP defaults to 3 signups/24h and, unlike
+          # every other limiter here, is NOT gated by RATE_LIMIT_DISABLED
+          # below — it's a separate, independent check. This job's own
+          # seed signup (below) plus every live-HTTP test that signs up a
+          # fresh account (test_isolation_exploit.py, test_loop_gate_*,
+          # test_jwt_revocation.py, ...) all share this one runner's IP,
+          # so the 4th signup onward got a hard 429 — including, on this
+          # exact run, the seed signup itself (its `|| true` swallowed
+          # the 429 silently), which is why test_rollback_v2_pillar1.py
+          # and friends then failed founder LOGIN with 401 (the account
+          # was never created). Same pattern as LOGIN_RATE_PER_MIN above.
+          SIGNUP_RATE_LIMIT_PER_IP: "1000"
+          # CI-only: the booted server is a SEPARATE process from pytest, so
+          # conftest's per-test bucket reset can't reach it — live-HTTP
+          # tests share one runner IP and tripped the 10/min login limit.
+          RATE_LIMIT_DISABLED: "1"
+          # 2026-09-29 · confirmed real bug diagnosing this job: no LLM
+          # key was set anywhere in this workflow, so every live
+          # chat-reply test (casual hello / greeting / chat-history /
+          # loop-trip-incident / commit-boundary / prompt-caching) got
+          # an empty reply or a 499 upstream-disconnect, always. Tried
+          # MOCK_LLM=true first — that fixed those but broke a
+          # DIFFERENT set (intent-classification tests like
+          # test_intent_gateway_points_4_6_2026_01.py need a real
+          # model's understanding of "casual" vs "tool request"; the
+          # canned mock can't tell the difference). A real key is the
+          # only fix that satisfies both — same secrets already used
+          # by the "Simulated-user QA" job below (ci.yml) for the same
+          # reason.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EMERGENT_LLM_KEY:   ${{ secrets.EMERGENT_LLM_KEY }}
+        run: |
+          uvicorn main:app --host 0.0.0.0 --port 8001 &
+          echo $! > /tmp/backend.pid
+          for i in {1..60}; do
+            curl -sf http://127.0.0.1:8001/health && break
+            sleep 1
+          done
+          # CI seed — the live-HTTP tests log in as the preview founder
+          # account; a fresh CI Mongo has no users, so create it here
+          # (FOUNDER_EMAILS makes the signup founder/admin + verified).
+          # Idempotent: a 409 on re-run is fine.
+          curl -sS -o /dev/null -w "seed signup -> %{http_code}\n" \
+            -X POST http://127.0.0.1:8001/api/aurem-dev/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@aurem.dev","password":"AuremTest2026!","name":"CI Founder"}' || true
+          # Regression-pattern registry (test_regression_registry expects >= 8 rows).
+          python scripts/seed_regression_patterns.py
+      - name: Run live_env tests against the booted backend
+        working-directory: backend
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME:   aurem_ci_smoke
+          JWT_SECRET: ci-test-secret-32-chars-minimum!!
+          REACT_APP_BACKEND_URL: http://localhost:8001
+          AUREM_MASTER_KEY: ci-vault-master-key-32-chars-min!!
+          AUREM_CTO_MASTER_KEY: ci-cto-vault-master-key-32-chars!!
+          FOUNDER_EMAILS: test@aurem.dev
+          FOUNDER_ALERT_FROM: "AUREM Guardian <alerts@aurem.live>"
+        run: |
+          set -o pipefail
+          python -m pytest tests/ -m live_env \
+            --tb=short -q --timeout=60 \
+            --junitxml=live_env_junit.xml \
+            --reruns 1 --reruns-delay 3 \
+            --only-rerun "ConnectionError|ConnectionRefusedError|TimeoutError|RemoteDisconnected|ConnectionResetError" \
+            2>&1 | tee /tmp/live_env_pytest_output.txt
+          PYTEST_EXIT=${PIPESTATUS[0]}
+          echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
+          exit "$PYTEST_EXIT"
+
+      - name: Summarise failing tests
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "### Failing / erroring tests — live_env (backend booted)"
+            if [ -f /tmp/live_env_pytest_output.txt ]; then
+              grep -E '^(FAILED|ERROR) ' /tmp/live_env_pytest_output.txt | sort -u | head -300 || true
+              tail -n 1 /tmp/live_env_pytest_output.txt
+            else
+              echo "no pytest output captured"
+            fi
+          } > /tmp/failing_summary.md
+          cat /tmp/failing_summary.md >> "$GITHUB_STEP_SUMMARY"
+          # The job summary is not readable through the API, and the raw log tail is
+          # service-container noise, so also post the list on the PR (PR runs only).
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/failing_summary.md || true
+          fi
+
+      - name: Upload JUnit XML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-env-junit-xml
+          path: backend/live_env_junit.xml
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Stop backend
         if: always()
         run: |

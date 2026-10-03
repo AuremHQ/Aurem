@@ -1,11 +1,11 @@
-# QA Report — commit a1c1eb4 (2026-09-29T07:37:08+00:00)
+# QA Report — commit 162298f (2026-09-29T19:49:22+00:00)
 
-**Commit message**: Merge main into fix-stream-golden; keep main's auto-QA report
+**Commit message**: Merge remote-tracking branch 'origin/main' into claude/eloquent-goodall-2cty9y
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01WPa883iUzoDcy4gKuDZJv5
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
+# Conflicts:
+#	.emergent/latest-qa-report.md
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |

@@ -120,10 +120,21 @@ async def test_live_confirm_upgrade_action_does_not_hit_dead_end(
             f"Got the founder's dead-end reply for a seeded pending action! "
             f"provider={provider} content={content[:300]}"
         )
-        # provider should be commit-boundary-* since resolve_confirm handled it
-        assert "commit-boundary" in provider, (
-            f"Expected commit-boundary provider (resolve_confirm path), "
-            f"got provider={provider} content={content[:200]}"
+        # 2026-09-29 · stale test found diagnosing quality-gate.yml's
+        # "invariants" job: routers/chat sanitizes every `provider`
+        # field before it reaches the client (never leak the raw
+        # internal name — intentional, applied everywhere). Can no
+        # longer check "commit-boundary" in the public provider value;
+        # instead confirm the executor actually ran by checking the
+        # seeded pending_actions doc left AWAITING_CONFIRM (see
+        # services/actions/pending_action.py's STATUS_VERIFIED /
+        # STATUS_APPLIED_FAILED) — a stronger, sanitization-proof
+        # signal than the provider string ever was.
+        resolved = await mongo_db.pending_actions.find_one({"id": doc["id"]})
+        assert resolved and resolved["status"] in ("VERIFIED", "APPLIED_FAILED"), (
+            f"Expected the executor to resolve the pending action "
+            f"(resolve_confirm path), got status={resolved and resolved.get('status')} "
+            f"provider={provider} content={content[:200]}"
         )
     finally:
         await mongo_db.pending_actions.delete_many({"session_id": session_id})
@@ -177,10 +188,14 @@ async def test_live_confirm_insert_action_addition_style_e2e(
             f"content={content[:400]}"
         )
         # provider should indicate the executor path was entered
-        assert "commit-boundary" in provider, (
-            f"resolve_confirm did NOT execute (should return "
-            f"commit-boundary-executor/executing); got provider={provider} "
-            f"content={content[:300]}"
+        # 2026-09-29 · see test_live_confirm_upgrade_action_does_not_hit_dead_end
+        # for why "commit-boundary in provider" no longer works
+        # (sanitize_provider_for_user strips it for the client).
+        resolved = await mongo_db.pending_actions.find_one({"id": doc["id"]})
+        assert resolved and resolved["status"] in ("VERIFIED", "APPLIED_FAILED"), (
+            f"resolve_confirm did NOT execute (should have resolved "
+            f"the pending action), got status={resolved and resolved.get('status')} "
+            f"provider={provider} content={content[:300]}"
         )
     finally:
         await mongo_db.pending_actions.delete_many({"session_id": session_id})
@@ -224,8 +239,14 @@ async def test_live_confirm_replace_edit_still_works_regression(
             f"Replacement-edit regression: got dead-end. provider={provider} "
             f"content={content[:300]}"
         )
-        assert "commit-boundary" in provider, (
-            f"Expected commit-boundary-* provider, got {provider}"
+        # 2026-09-29 · see test_live_confirm_upgrade_action_does_not_hit_dead_end
+        # for why "commit-boundary in provider" no longer works
+        # (sanitize_provider_for_user strips it for the client).
+        resolved = await mongo_db.pending_actions.find_one({"id": doc["id"]})
+        assert resolved and resolved["status"] in ("VERIFIED", "APPLIED_FAILED"), (
+            f"Expected commit-boundary-* to have resolved the pending "
+            f"action, got status={resolved and resolved.get('status')} "
+            f"provider={provider}"
         )
     finally:
         await mongo_db.pending_actions.delete_many({"session_id": session_id})

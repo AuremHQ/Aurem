@@ -85,8 +85,15 @@ class TestGuardHooks:
     async def test_g19_loop_trip_opens_incident(self, monkeypatch):
         monkeypatch.setattr(pr, "LOOP_THRESHOLD", 3)
         db = FakeDB(); db.incidents = _Coll()
+        # 2026-09-29 · stale test found diagnosing quality-gate.yml's
+        # "invariants" job: record_boot's loop-trip check only counts
+        # reason == "crash_or_kill" (2026-09-09 fix, matching
+        # recovery_status()'s own crash-only filter — see the comment
+        # on that line in services/process_recovery.py). This test
+        # passed the old, no-longer-matched "crash" placeholder, so
+        # crash_boots_in_window was always 0 and G19 never tripped.
         for _ in range(3):
-            await pr.record_boot(db, reason="crash")
+            await pr.record_boot(db, reason="crash_or_kill")
         rows = await il.list_incidents(db, status="open")
         assert any(r["guard"] == "G19"
                    and r["source_key"] == "process_recovery" for r in rows)

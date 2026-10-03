@@ -15,7 +15,24 @@
          anything. Real visitors almost always scroll/tap within the
          first second, so this pushes the third-party JS parse/eval
          cost further past LCP/TBT measurement without losing
-         PageView/conversion data. -->
+         PageView/conversion data.
+
+         2026-09-29 · confirmed real bug diagnosing docs/performance_budget.md's
+         TBT<=200ms budget: requestIdleCallback's `timeout` option is a
+         CEILING, not a delay — it fires on the FIRST idle slot, which
+         in a synthetic/automated page load (Lighthouse, CI, this had
+         zero real user activity to compete with) arrives almost
+         immediately. Verified live: every one of these scripts'
+         network requests started at startTime=0ms, not ~4500ms — the
+         opposite of the comment's stated intent, and the single
+         biggest contributor to main-thread blocking time in a 6x-CPU
+         Lighthouse trace (fbevents.js + gtag.js + Meta's signals/config
+         request together outweighed our OWN app bundle's scripting
+         time). Fixed with a real setTimeout for the no-interaction
+         fallback — the interaction listeners below are unchanged (a
+         real visitor who scrolls/taps still fires it instantly), only
+         the "nobody interacted" path now genuinely waits the full
+         idleTimeoutMs instead of firing on the next idle tick. -->
     <script>
     window.__auremDeferThirdParty = function(fn, idleTimeoutMs) {
       var fired = false;
@@ -29,33 +46,27 @@
       events.forEach(function(ev) {
         window.addEventListener(ev, run, { passive: true, once: true });
       });
-      if ('requestIdleCallback' in window) {
-        window.requestIdleCallback(run, { timeout: idleTimeoutMs });
-      } else {
-        setTimeout(run, idleTimeoutMs);
-      }
+      setTimeout(run, idleTimeoutMs);
     };
+    // Consent gate for third-party trackers. Reads the same record the
+    // cookie banner writes (`aurem_consent`, see cookieConsentStorage.js)
+    // and honours Global Privacy Control. Nothing below loads until the
+    // visitor has opted in; `__auremBootPixels` lets the banner start a
+    // loader later, when consent is granted after the page has loaded.
+    window.__auremHasConsent = function(cat) {
+      try {
+        if (navigator.globalPrivacyControl) return false;
+        var r = JSON.parse(localStorage.getItem('aurem_consent') || 'null');
+        return !!(r && r.v === 1 && r.cats && r.cats[cat]);
+      } catch (e) { return false; }
+    };
+    window.__auremBootPixels = {};
     </script>
 
-    <!-- Meta Pixel Code — Iter 388-ag (2026-02-14) · consent gate
-         REMOVED per founder decision. The pixel now fires for EVERY
-         visitor regardless of consent state or jurisdiction.
-
-         ⚠️ COMPLIANCE NOTE (retained for future audits):
-         This configuration is NOT GDPR / DPDP / CCPA compliant. If
-         Aurem scales into EU, UK, California, India, Brazil, or any
-         other opt-in jurisdiction, the consent-gated variant needs
-         to come back OR founder must accept the regulatory risk
-         (Meta itself is on the hook for its downstream tracking, but
-         the DATA CONTROLLER — Aurem — is on the hook for lawful
-         basis of collection). Global Privacy Control (GPC) is also
-         no longer respected.
-
-         Prior consent-gated version lived in this file at
-         Iter 388-af (see git blame). To restore, wrap the loader
-         below in `if (canLoad) { … }` where `canLoad` reads
-         `aurem_consent.cats.marketing` from localStorage and
-         checks `navigator.globalPrivacyControl`. -->
+    <!-- Meta Pixel Code — consent-gated (was ungated 2026-02-14 → 2026-09,
+         Iter 388-ag). The loader only runs once the visitor has opted in
+         to the "marketing" category and Global Privacy Control is off;
+         see `window.__auremHasConsent` above. -->
     <script>
     // Iter 391 · Deferred Meta Pixel bootstrap.
     // -----------------------------------------
@@ -82,11 +93,12 @@
         f.fbq('init','1571887197933821');
         f.fbq('track','PageView');
       };
-      window.__auremDeferThirdParty(boot, 4500);
+      window.__auremBootPixels.meta = boot;
+      window.__auremDeferThirdParty(function(){ if(window.__auremHasConsent('marketing')) boot(); }, 4500);
     }(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
     </script>
-    <!-- Note: <noscript> fallback for the pixel lives at the very top of
-         <body> (HTML5 spec disallows <img> inside <head><noscript>). -->
+    <!-- No <noscript> pixel image: without JS there is no way to record
+         consent, so nothing may be sent. -->
     <!-- End Meta Pixel Code -->
 
     <!-- =============================================================== -->
@@ -127,7 +139,8 @@
           debug: /(?:^\?|&)oaiq_debug=1(?:&|$)/.test(w.location.search),
         });
       };
-      window.__auremDeferThirdParty(boot, 4500);
+      window.__auremBootPixels.openai = boot;
+      window.__auremDeferThirdParty(function () { if (window.__auremHasConsent('marketing')) boot(); }, 4500);
     })(window, document, "script", "https://bzrcdn.openai.com/sdk/oaiq.min.js");
     </script>
     <!-- End OpenAI Ads Pixel -->
@@ -499,13 +512,6 @@
     </script>
   </head>
   <body class="bg-cto-bg">
-    <!-- Meta Pixel <noscript> fallback (moved here to satisfy the
-         HTML5 spec — <noscript> inside <head> may only contain
-         <link>/<style>/<meta>; <img> must live in <body>). The
-         <script> half of the pixel still loads from <head>. -->
-    <noscript><img height="1" width="1" style="display:none"
-    src="https://www.facebook.com/tr?id=1571887197933821&ev=PageView&noscript=1"
-    /></noscript>
     <!-- Server-rendered fallback so non-JS crawlers (older Bingbot, some AI
          crawlers, and the Lighthouse SEO audit) still see the brand entity
          and a meaningful first paragraph. Hidden when React mounts. -->
@@ -592,7 +598,10 @@
           s.src='https://www.googletagmanager.com/gtag/js?id=AW-18239920865';
           document.head.appendChild(s);
         };
-        window.__auremDeferThirdParty(loadGtag, 4500);
+        window.__auremBootPixels.gtag = loadGtag;
+        window.__auremDeferThirdParty(function(){
+          if(window.__auremHasConsent('analytics')||window.__auremHasConsent('marketing')) loadGtag();
+        }, 4500);
       })();
     </script>
 

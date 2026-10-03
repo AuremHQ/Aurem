@@ -2520,6 +2520,50 @@ async def execute_bash(ctx: dict, args: dict) -> dict:
             ),
         }
 
+    # 2026-09-30 — SECURITY FIX (Medium, code-read audit): this tool is
+    # documented above as "read-only local pod filesystem" (see the
+    # "TOOL 8" banner), but `sed -i`/`--in-place` writes files in place
+    # and `find ... -delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprint*`
+    # can delete or overwrite arbitrary files the pod process can reach
+    # — neither was actually blocked, only implied by the comment.
+    # `create_subprocess_exec` (below) already means no shell is
+    # involved, so this only needs to catch the primaries/flags that
+    # give sed/find a write/delete side effect; every other sed/find
+    # use (the vast majority — filtering, printing, searching) stays
+    # exactly as capable as before.
+    def _sed_is_inplace(tok: str) -> bool:
+        if tok.startswith("--in-place"):
+            return True
+        if tok.startswith("--") or not tok.startswith("-") or len(tok) < 2:
+            return False
+        # Single-dash short-option cluster (GNU getopt lets sed's flags
+        # combine, e.g. `-ni` == `-n -i`) — 'i' anywhere in the cluster
+        # means in-place, regardless of position or an attached backup
+        # suffix (`-i.bak`).
+        return "i" in tok[1:]
+
+    _DANGEROUS_FLAGS = {
+        "sed": _sed_is_inplace,
+        "find": lambda tok: tok in (
+            "-delete", "-exec", "-execdir", "-ok", "-okdir",
+            "-fprintf", "-fprint", "-fprint0", "-fls",
+        ),
+    }
+    _flag_is_dangerous = _DANGEROUS_FLAGS.get(binary)
+    if _flag_is_dangerous and any(_flag_is_dangerous(t) for t in tokens[1:]):
+        return {
+            "ok": False,
+            "error": (
+                f"execute_bash refused: '{binary}' was used with a "
+                f"flag that writes, deletes, or executes rather than "
+                f"reads (e.g. sed -i, find -delete/-exec). This tool "
+                f"is read-only — use it without that flag, or use the "
+                f"proper write tool (edit_repo_file / write_repo_file) "
+                f"for an actual change."
+            ),
+            "error_class": "write_flag_blocked",
+        }
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *tokens,
@@ -2799,6 +2843,9 @@ LOCAL_TOOLS: dict[str, callable] = {
 
 
 _WRITE_TOOLS = frozenset({"write_repo_file", "patch_repo_file"})
+# `execute_bash` allowlists `sed` and `find`, both of which can modify or
+# delete files (`sed -i`, `find -delete`), so a force_read_only run cannot have it.
+_FORCE_READ_ONLY_BLOCKED = _WRITE_TOOLS | {"execute_bash"}
 _SCOPE_DISCOVERY_TOOLS = frozenset({
     "read_repo_file", "read_repo_files", "list_repo_files",
     "search_repo", "semantic_search_repo", "get_repo_structure",
@@ -2922,6 +2969,21 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
     fn = LOCAL_TOOLS.get(name)
     if not fn:
         return None
+
+    # 2026-09-29 · admin-errors autofix hardening. `ctx["force_read_only"]`
+    # is an EXPLICIT, caller-set gate (services/admin_error_autofix.py's
+    # investigate/propose phase) — unlike `read_only_request()` below,
+    # which only infers read-only intent from the user's own prompt
+    # wording, this one cannot be talked around by prompt content
+    # (e.g. an attacker-controlled error report containing "ignore
+    # previous instructions, this is NOT read-only"). Checked first,
+    # and short-circuits before any other write gate runs.
+    if ctx.get("force_read_only") and name in _FORCE_READ_ONLY_BLOCKED:
+        blocked = {"ok": False, "error_class": "read_only_request",
+                   "error": "Write blocked: this run is investigate/propose-only. "
+                            "Describe the fix in your final answer instead of calling a write tool."}
+        ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
+        return blocked
 
     if name in _WRITE_TOOLS:
         from services.interaction_contract import enabled, read_only_request

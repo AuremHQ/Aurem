@@ -203,8 +203,37 @@ def pytest_collection_modifyitems(config, items):
 _TEST_IPS = ("127.0.0.1", "testclient", "localhost", "::1", "")
 
 
-def _clear_signup_state_for_test_ips() -> None:
-    """Sync helper — connects with pymongo, wipes test-IP signup rows."""
+def _clear_signup_state_for_test_ips(grace_period_s: float = 0) -> None:
+    """Sync helper — connects with pymongo, wipes test-IP signup rows.
+
+    2026-09-29 · real bug found diagnosing quality-gate.yml's
+    "invariants" job: the FUNCTION-scoped autouse fixture below calls
+    this before EVERY test, unconditionally deleting ALL dev_users
+    rows with a test-IP signup_ip — including ones a MODULE/session-
+    scoped fixture (e.g. test_loop_gate_chat_stream_2026_01.py's
+    `pro_token`/`team_token`) had just created moments earlier for a
+    live signup that's meant to persist across the whole test file.
+    Confirmed live: those fixtures' `_promote()` step (or later
+    `/chat/stream` calls) failed with "no dev_users row" / 404 "User
+    not found" because the row was deleted between setup and use.
+    `grace_period_s` lets the per-test call skip any row younger than
+    the given age, so rows an ACTIVE fixture just created in this same
+    run survive, while rows from earlier, now-finished tests/files
+    still get swept (keeping the original 429-cascade fix intact).
+    `pytest_sessionstart`'s one-time call keeps grace_period_s=0 since
+    nothing from this session exists yet.
+
+    2026-09-29 · SECOND real bug found running the full selection
+    live: the CI-seeded founder (FOUNDER_EMAILS, seeded ONCE at
+    backend boot from signup_ip="127.0.0.1" — the local curl seed
+    step) is a SESSION-LONG fixture meant to survive the entire
+    3+ minute run, but its signup_ip also matches _TEST_IPS, so
+    60s into the run this sweep deletes it too — every founder
+    login after that point got a generic 401 "Invalid credentials"
+    (row simply gone), cascading into dozens of unrelated failures.
+    Excluding FOUNDER_EMAILS/ADMIN_EMAIL by email keeps the IP-based
+    per-test sweep intact for everything else.
+    """
     mongo_url = os.environ.get("MONGO_URL")
     db_name   = os.environ.get("DB_NAME")
     if not (mongo_url and db_name):
@@ -215,8 +244,25 @@ def _clear_signup_state_for_test_ips() -> None:
         db = client[db_name]
         # Wipe dev_users rows created from test IPs — that's what the
         # rate-limit counter reads. Only touches rows with signup_ip
-        # in _TEST_IPS so real user rows are untouched.
-        db.dev_users.delete_many({"signup_ip": {"$in": list(_TEST_IPS)}})
+        # in _TEST_IPS so real user rows are untouched. `created_at`
+        # is stored as epoch-seconds float (routers/auth.py::signup).
+        # Session-long seeded accounts (founder/admin) are excluded by
+        # email regardless of age — see docstring above.
+        protected_emails = {
+            e.strip().lower()
+            for e in (
+                os.environ.get("FOUNDER_EMAILS", "").split(",")
+                + [os.environ.get("ADMIN_EMAIL", "")]
+            )
+            if e.strip()
+        }
+        query = {"signup_ip": {"$in": list(_TEST_IPS)}}
+        if protected_emails:
+            query["email"] = {"$nin": list(protected_emails)}
+        if grace_period_s > 0:
+            import time as _time
+            query["created_at"] = {"$lt": _time.time() - grace_period_s}
+        db.dev_users.delete_many(query)
         # Also clear the abuse log for those IPs (cosmetic, no
         # behaviour impact but keeps admin dashboard clean).
         db.signup_abuse_log.delete_many({"ip": {"$in": list(_TEST_IPS)}})
@@ -237,8 +283,21 @@ def pytest_sessionstart(session):  # noqa: D401
 def clean_signup_rate_limit():
     """AUTOUSE — clear signup-count state before every test to keep
     the per-IP counter from bleeding across tests.  ~1 ms cost per
-    test (single Mongo delete_many with a small indexed set)."""
-    _clear_signup_state_for_test_ips()
+    test (single Mongo delete_many with a small indexed set).
+
+    2026-09-29 · grace period raised from 60s to 900s: 60s was still
+    too short for a MODULE-scoped fixture's signup to survive an
+    entire test file/session — confirmed live in a full invariants
+    run (test_iter212m190_scan_fix_quota.py's own module-scoped
+    REG_EMAIL fixture got swept ~60s after it signed up, well before
+    `TestAuthRegression::test_login_case_insensitive` ran later in
+    the same ~4-minute session, producing the same "row deleted
+    between setup and use" 401 as the founder-account bug two doors
+    up). 900s comfortably covers one full invariants run (~4 min)
+    while still sweeping genuinely stale rows left over from an
+    earlier, long-finished CI run (hours/days old) — see
+    test_regression_iter2_signup_cleanup_grace_period."""
+    _clear_signup_state_for_test_ips(grace_period_s=900)
     yield
 
 

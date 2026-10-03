@@ -86,13 +86,20 @@ def _signup(email: str, password: str) -> str:
 
 
 def _promote(mongo, email: str, tier: str):
-    res = mongo.dev_users.update_one(
-        {"email": email.lower()},
-        {"$set": {
-            "tier": tier, "is_admin": False, "is_unlimited": False,
-            "email_verified": True,
-        }},
-    )
+    # 2026-09-29 · see test_loop_gate_chat_stream_2026_01.py::_promote —
+    # same under-load Mongo write-visibility lag, same bounded retry fix.
+    import time as _t
+    for attempt in range(90):
+        res = mongo.dev_users.update_one(
+            {"email": email.lower()},
+            {"$set": {
+                "tier": tier, "is_admin": False, "is_unlimited": False,
+                "email_verified": True,
+            }},
+        )
+        if res.matched_count == 1:
+            return
+        _t.sleep(0.3)
     assert res.matched_count == 1, f"no dev_users row for {email}"
 
 

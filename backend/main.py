@@ -76,9 +76,13 @@ from routers.stripe_webhook_compat import router as stripe_webhook_compat_router
 from routers.mcp import router as mcp_router, mcp_discovery_root
 from routers.mcp_ora_chat import router as mcp_ora_chat_router  # 2026-09-28 ORA Chat MCP (admin-only, Part A)
 from routers.admin_gateway import router as admin_gateway_router  # 2026-09-28 ORA Chat MCP/Gateway key admin API
-from routers.oauth_mcp import router as oauth_mcp_router  # 2026-09-29 OAuth 2.1 for ORA Chat MCP
 from routers.vercel import router as vercel_router  # Iter 212m-84 — Vercel platform tools for ORA
-from routers.oauth import router as oauth_router
+from routers.oauth import (
+    router as oauth_router,
+    oauth_discovery_root,
+    oauth_protected_resource_root,
+    openid_configuration_root,
+)  # iter 182 — OAuth 2.1 + PKCE; 2026-09-29 — DCR + ORA Chat MCP admin-only resource
 from routers.usage import router as usage_router
 from routers.lint_preview import router as lint_preview_router
 from routers.shipwall import router as shipwall_router
@@ -99,6 +103,7 @@ from routers.vanguard_ci import router as vanguard_ci_router        # Iter 212m-
 from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 2026-08-20 · G1/G15 CI ingest
 from routers.fix_pipeline import router as fix_pipeline_router      # Iter 212m-121 bulk + SSE fix pipeline
 from routers.repo_status import router as repo_status_router        # Iter 212m-125 live repo connection ping
+from routers.checkup import router as checkup_router  # checkup-first (flag-gated, default OFF)
 from routers.codebase_health import router as codebase_health_router # Iter 212m-72 5-category health scanner
 from routers.evidence import router as evidence_router  # 2026-09-20 — pointer+preview resolver (scan / loop_run)
 from routers.verification import router as verification_router  # Trust & Verification round
@@ -3997,6 +4002,7 @@ app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-120 Phase 1: trufflehog CI ingest
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline
 app.include_router(repo_status_router,    prefix="/api/aurem-dev")  # Iter 212m-125 live repo connection ping
+app.include_router(checkup_router, prefix="/api/aurem-dev")  # checkup-first; every route 404s unless `checkup_flow` is on
 app.include_router(codebase_health_router, prefix="/api/aurem-dev")  # Iter 212m-72 5-cat health
 app.include_router(evidence_router, prefix="/api/aurem-dev")  # 2026-09-20 — evidence pointer resolver
 app.include_router(verification_router, prefix="/api/aurem-dev")  # Trust & Verification round
@@ -4040,9 +4046,8 @@ app.include_router(feature_window_router, prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(mcp_router,            prefix="/api/aurem-dev")  # iter 173 — MCP server
 app.include_router(mcp_ora_chat_router,   prefix="/api/aurem-dev")  # 2026-09-28 ORA Chat MCP (admin-only)
 app.include_router(admin_gateway_router,  prefix="/api/aurem-dev")  # 2026-09-28 ORA Chat MCP/Gateway key admin API
-app.include_router(oauth_mcp_router,      prefix="/api/aurem-dev")  # 2026-09-29 OAuth 2.1 for ORA Chat MCP
 app.include_router(vercel_router,         prefix="/api/aurem-dev")  # Iter 212m-84 — Vercel tools for ORA
-app.include_router(oauth_router,          prefix="/api/aurem-dev")  # iter 182 — OAuth 2.1 + PKCE for Claude Directory
+app.include_router(oauth_router,          prefix="/api/aurem-dev")  # iter 182 — OAuth 2.1 + PKCE for Claude Directory / ORA Chat MCP
 from routers.visibility import router as visibility_router          # Phase 3 · Visibility Kit Phase B (2026-08-28)
 app.include_router(visibility_router,     prefix="/api/aurem-dev")
 # Iter 174 — root-level alias for the MCP well-known discovery URL so
@@ -4051,5 +4056,27 @@ app.include_router(visibility_router,     prefix="/api/aurem-dev")
 app.add_route(
     "/.well-known/mcp",
     mcp_discovery_root,
+    methods=["GET"],
+)
+# 2026-09-30 — root-level aliases for OAuth 2.1 discovery (RFC 8414 +
+# RFC 9728). Claude's MCP client (and any spec-compliant OAuth client)
+# looks for these at the BARE domain root, not under /api/aurem-dev —
+# see routers/oauth.py for why this bit us in production (Claude
+# couldn't connect: these paths returned the frontend's HTML shell,
+# not JSON, because nginx/the SPA router owns everything outside
+# /api/*). Same content as the /api/aurem-dev-prefixed versions.
+app.add_route(
+    "/.well-known/oauth-authorization-server",
+    oauth_discovery_root,
+    methods=["GET"],
+)
+app.add_route(
+    "/.well-known/oauth-protected-resource",
+    oauth_protected_resource_root,
+    methods=["GET"],
+)
+app.add_route(
+    "/.well-known/openid-configuration",
+    openid_configuration_root,
     methods=["GET"],
 )
