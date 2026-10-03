@@ -162,10 +162,10 @@ def test_code_blocks_are_never_empty_or_unclosed(replay):
             assert re.sub(r"[\d.\s]", "", body), "block contains only empty numbered lines"
 
 
-@pytest.mark.xfail(strict=True, reason=_BUG + " (PR A: narrated action with no tool result is not DONE)")
 def test_promise_without_action_is_never_labelled_delivered(replay):
     for idx in (5, 9):
-        assert replay[idx]["interaction"].get("completion_basis") != "response_delivered"
+        assert replay[idx]["interaction"].get("outcome") == "NOTHING_DONE"
+        assert replay[idx]["interaction"].get("reason") == "announced_not_done"
 
 
 @pytest.mark.xfail(strict=True, reason=_BUG + " (PR C: drafting a file stores a pending change)")
@@ -173,7 +173,6 @@ def test_turn_11_ok_finds_the_pending_draft(replay):
     assert "don't have a change waiting" not in replay[10]["text"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason=_BUG + " (PR A: one outcome vocabulary, not 'Response delivered' for everything)")
 def test_outcome_label_reflects_what_happened(replay):
-    labels = [t["interaction"].get("completion_basis") for t in replay]
-    assert labels.count("response_delivered") < len(labels) // 2
+    assert all(t["interaction"].get("outcome") for t in replay)
+    assert not any(t["interaction"].get("completion_basis") == "response_delivered" for t in replay)
