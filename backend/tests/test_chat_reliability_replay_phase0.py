@@ -44,14 +44,13 @@ ORA = [
 def _install(monkeypatch, cur):
     import importlib
 
-    from tests._mini_motor import AsyncMongoMockClient
+    from tests._mini_motor import install_mini_db
 
     import routers.chat as chat_mod
     import services.llm as llm
     import services.orchestrator as orch
-    from cto_services.db import set_db
 
-    set_db(AsyncMongoMockClient()["t"])
+    install_mini_db(monkeypatch)
 
     async def _dev(*a, **k):
         return {"user_id": "u1", "email": "u@example.com", "tier": "pro", "is_founder": False}
