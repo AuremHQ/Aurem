@@ -68,7 +68,7 @@ Per-turn output (identical on `chat_send` and `chat_stream`):
 - "Short and simple!" does not exist anywhere in the repo (case-insensitive
   search of `.py/.md/.json/.txt`). It came from the model, probably from
   context outside this repo (recalled past answer, user memory or
-  preferences). **Source NOT VERIFIED.** A fix by adding this phrase to a
+  preferences). **Source NOT VERIFIED.** Most likely source: the casual path prepends an admin-editable house-rules block read from the database (`services/intent_gateway_casual_reply.py`, `get_active_house_rules("advisor")`), which is not in the repo. Needs the owner to look at that rule text. A fix by adding this phrase to a
   blocklist would be wrong (R5); PR B must address it structurally.
 
 ### H3 — wrong routing, lost state: CONFIRMED
@@ -133,3 +133,13 @@ A outcome decided by evidence · B output filter never damages content ·
 C routing and state · D "create a file" end to end · E tool-failure
 handling · F canary and metrics. Each PR deletes the matching `xfail`
 markers in this file.
+
+## Addendum (found while fixing PR B)
+
+- With `INTERACTION_CONTRACT_V1` on, `run_rendering_pipeline` takes a
+  different branch (`render_safe_content`) that skips the business-voice
+  pass; with it off, the legacy branch runs. Which one production uses is
+  NOT VERIFIED, so both are covered by the fix.
+- On `chat_stream`, when CitationGuard retried, the rewritten text was sent
+  as a `reset` frame without going through the output guards again
+  (`routers/chat/stream.py`, the `guard_out["retried"]` block). Fixed in PR B.

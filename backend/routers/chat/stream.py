@@ -1315,7 +1315,17 @@ async def chat_stream(
                 guard_fetched    = list((guard_out.get("fetched") or {}).keys())
                 # Re-emit the rewritten content as a single token frame
                 # so the frontend overwrites the (hallucinated) draft.
-                content = guard_out["text"]
+                # The retry is a fresh model output: it must pass the same
+                # guards as the first draft before it replaces it.
+                content, _ = await run_rendering_pipeline(
+                    body.prompt or "", guard_out["text"], state.prior_fix_signal,
+                    retrieved_context_for_grounding(extra_sys, result),
+                    skip=bool(result.get("_skip_output_guards")),
+                    tool_calls_run=result.get("tool_calls_run", 0),
+                    session_id=body.session_id, user_id=user_id,
+                    plain_english_active=_plain_english_active,
+                    ora_panel=getattr(body, "ora_panel", False),
+                )
                 yield f"data: {json.dumps({'token': content, 'reset': True})}\n\n"
 
                 # 2026-08 — Fabrication learning loop. Log every real
