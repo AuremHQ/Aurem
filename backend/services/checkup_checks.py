@@ -56,25 +56,47 @@ def check_service_role_in_client(tc: dict[str, str]) -> list[dict]:
 
 _CORS_PY = re.compile(r"allow_origins\s*=\s*\[\s*[\"']\*[\"']\s*\]", re.S)
 _CORS_JS = re.compile(r"origin\s*:\s*[\"']\*[\"']")
+_CORS_PAIR_WINDOW = 800          # wildcard origin and credentials belong to the same CORS setup
+_TEST_PATH = re.compile(r"(?:^|/)(?:tests?|__tests__|fixtures?|e2e)/|\.(?:test|spec)\.|(?:^|/)test_", re.I)
+_PY_COMMENT = re.compile(r"^[ \t]*#.*$", re.M)
+_JS_COMMENT = re.compile(r"^[ \t]*//.*$|/\*.*?\*/", re.M | re.S)
+
+
+def _blank_comments(path: str, text: str) -> str:
+    """Whole-line comments replaced by spaces (newlines kept, so line numbers stay right):
+    a comment that merely *mentions* `allow_origins=["*"]` is not a setting."""
+    rx = _PY_COMMENT if path.endswith(".py") else _JS_COMMENT
+    return rx.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+
+
+def _cors_wildcard_with_creds(path: str, text: str):
+    if path.endswith(".py"):
+        hit, cred_rx = _CORS_PY, re.compile(r"allow_credentials\s*=\s*True")
+    elif path.endswith(_JS_EXT):
+        hit, cred_rx = _CORS_JS, re.compile(r"credentials\s*:\s*true")
+    else:
+        return None
+    code = _blank_comments(path, text)
+    for m in hit.finditer(code):
+        near = code[max(0, m.start() - _CORS_PAIR_WINDOW): m.end() + _CORS_PAIR_WINDOW]
+        if cred_rx.search(near):
+            return m
+    return None
 
 
 def check_cors_open_with_credentials(tc: dict[str, str]) -> list[dict]:
+    from services.scanner_utils import is_scanner_rule_file
     out = []
     for path, text in _files(tc):
-        if path.endswith(".py"):
-            hit = _CORS_PY.search(text)
-            creds = re.search(r"allow_credentials\s*=\s*True", text)
-        elif path.endswith(_JS_EXT):
-            hit = _CORS_JS.search(text)
-            creds = re.search(r"credentials\s*:\s*true", text)
-        else:
+        if _TEST_PATH.search(path) or is_scanner_rule_file(path):
             continue
-        if hit and creds:
+        m = _cors_wildcard_with_creds(path, text)
+        if m:
             out.append(_item(
                 scanner="security", rule_id="cors_open_with_credentials", severity="high",
                 title="Any website can act as your logged-in users",
                 impact="Your server accepts requests with login cookies from every other website.",
-                file=path, line=_line_of(text, hit.start()),
+                file=path, line=_line_of(text, m.start()),
                 detail="CORS allows all origins together with credentials",
                 fix_hint="List only your own site addresses."))
     return out

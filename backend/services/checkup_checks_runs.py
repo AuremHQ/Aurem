@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 
-from services.checkup_meta import strip_meta
+from services.checkup_meta import known_paths, strip_meta
 from services.checkup_common import _JS_EXT, _files, _is_client, _item, _line_of
 
 _NODE_BUILTINS = {
@@ -20,7 +20,7 @@ _NODE_BUILTINS = {
 _IMPORT_RE = re.compile(
     r"""(?:import\s+(?:[^'"\n;]*?\sfrom\s+)?|export\s+[^'"\n;]*?\sfrom\s+|require\(\s*|import\(\s*)["']([^"']+)["']""")
 _ASSET_RE = re.compile(r"\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|mp4|css|scss)$")
-_RESOLVE_EXT = _JS_EXT + (".json", ".css", ".scss", ".svg", ".png", ".jpg")
+_RESOLVE_EXT = _JS_EXT + (".json", ".css", ".scss", ".svg", ".png", ".jpg", ".vue", ".svelte")
 _NON_PACKAGE_PREFIXES = (".", "/", "node:", "http", "@/", "~/", "#")
 
 
@@ -66,7 +66,7 @@ def _unresolved_in_file(paths: set[str], path: str, text: str) -> list[dict]:
 
 
 def check_unresolved_imports(tc: dict[str, str]) -> list[dict]:
-    paths = {p.lstrip("/") for p in strip_meta(tc)}
+    paths = known_paths(tc)
     out: list[dict] = []
     for path, text in _files(tc):
         if path.endswith(_JS_EXT):
@@ -100,6 +100,33 @@ def _package_name(spec: str) -> str:
 
 def _is_known_package(name: str, declared: set[str]) -> bool:
     return name in declared or name in _NODE_BUILTINS or name.startswith("virtual:")
+
+
+_BASE_URL = re.compile(r'"baseUrl"\s*:\s*"([^"]*)"')
+_PATHS_BLOCK = re.compile(r'"paths"\s*:\s*\{(.*?)\}', re.S)
+_PATHS_KEY = re.compile(r'"([A-Za-z0-9_.-]+)(?:/\*)?"\s*:')
+
+
+def _config_alias_names(cfg: str, text: str, paths: set[str]) -> set[str]:
+    block = _PATHS_BLOCK.search(text)
+    names = set(_PATHS_KEY.findall(block.group(1))) if block else set()
+    m = _BASE_URL.search(text)
+    if m:
+        base = _normalize(cfg.lstrip("/"), m.group(1) or ".")
+        prefix = base + "/" if base else ""
+        names |= {p[len(prefix):].split("/")[0].rsplit(".", 1)[0] for p in paths if p.startswith(prefix)}
+    return names
+
+
+def _alias_roots(tc: dict[str, str]) -> set[str]:
+    """Bare names that tsconfig/jsconfig `baseUrl` / `paths` make importable (`utils/x`,
+    `styles/a.css`): they're project files, not npm packages."""
+    paths = known_paths(tc)
+    names: set[str] = set()
+    for cfg, text in _files(tc):
+        if cfg.rsplit("/", 1)[-1] in ("tsconfig.json", "jsconfig.json"):
+            names |= _config_alias_names(cfg, text, paths)
+    return names
 
 
 def _undeclared_in_file(path: str, text: str, declared: set[str]) -> list[dict]:
@@ -138,6 +165,7 @@ def check_undeclared_packages(tc: dict[str, str]) -> list[dict]:
     pkgs = _package_roots(tc)
     if not pkgs:
         return []
+    aliases = _alias_roots(tc)
     out: list[dict] = []
     for path, text in _files(tc):
         if not path.endswith(_JS_EXT):
@@ -145,7 +173,7 @@ def check_undeclared_packages(tc: dict[str, str]) -> list[dict]:
         p = path.lstrip("/")
         root = max((r for r in pkgs if p.startswith(r)), key=len, default=None)
         if root is not None:
-            out.extend(_undeclared_in_file(path, text, pkgs[root]))
+            out.extend(_undeclared_in_file(path, text, pkgs[root] | aliases))
     return _dedupe_by_detail(out)
 
 
