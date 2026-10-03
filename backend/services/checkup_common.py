@@ -10,6 +10,8 @@ import json
 import re
 from typing import Iterator, Optional
 
+from services.checkup_meta import is_meta_key
+
 _SKIP_DIRS = ("node_modules/", "vendor/", ".agent/", "dist/", "build/",
               "benchmarks/", ".next/", "coverage/", ".git/")
 _JS_EXT = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
@@ -27,7 +29,7 @@ def _is_vendored(path: str) -> bool:
 
 def _files(tc: dict[str, str]) -> Iterator[tuple[str, str]]:
     for path, text in tc.items():
-        if isinstance(text, str) and not _is_vendored(path):
+        if isinstance(text, str) and not is_meta_key(path) and not _is_vendored(path):
             yield path, text
 
 

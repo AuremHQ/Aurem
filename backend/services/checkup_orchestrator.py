@@ -17,6 +17,7 @@ from typing import Iterator, Optional
 
 from services import fix_items as fi
 from services.checkup_checks import CHECKS, detect_stack
+from services.checkup_meta import strip_meta
 from services.permission_map import build_permission_map
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,10 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
     def add(it: dict, stage: str) -> Optional[dict]:
         it = dict(it)
         it.setdefault("stage", stage)
+        if it.get("confidence") == "unverified":        # C2: unsure is never shown as a problem
+            unverified.append({"stage": it["stage"], "check": it.get("rule_id"),
+                               "reason": "couldn't confirm it"})
+            return None
         ev = it.get("evidence") or {}
         key = f"{it.get('scanner')}::{ev.get('file')}:{ev.get('line')}:{it.get('rule_id')}"
         if key in seen:
@@ -94,11 +99,13 @@ def iter_checkup(tc: dict[str, str], *, budget_s: float = DEFAULT_BUDGET_S,
         items.append(it)
         return it
 
-    pmap = build_permission_map(tc, answers)
+    plain = strip_meta(tc)
+    pmap = build_permission_map(plain, answers)
     plan = list(CHECKS)
     plan.append(("permissions", "permission_map", lambda _tc: pmap["items"]))
     if include_scanners:
-        plan.append(("safe", "scanners", lambda tc_: list(_scanner_items(tc_))))
+        plan.append(("safe", "scanners", lambda _tc: list(_scanner_items(plain))))
+    plan.sort(key=lambda c: fi.STAGES.index(c[0]) if c[0] in fi.STAGES else len(fi.STAGES))
     current = None
     for stage, name, fn in plan:
         if stage != current:

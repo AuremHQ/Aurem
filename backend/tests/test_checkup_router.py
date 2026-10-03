@@ -50,6 +50,10 @@ def env(monkeypatch):
     monkeypatch.setattr(ck, "is_enabled", enabled)
     monkeypatch.setattr(ck, "get_db", lambda: db)
     monkeypatch.setattr(ck, "_build_text_cache", cache)
+
+    async def no_meta(*_a):
+        return ["src/App.jsx"], {}
+    monkeypatch.setattr("services.checkup_meta.fetch_repo_meta", no_meta)
     monkeypatch.setattr("services.pat_vault.get_repo_token", tok)
     ck._last_run.clear()
     app = FastAPI()
