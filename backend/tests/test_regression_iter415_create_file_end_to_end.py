@@ -39,16 +39,14 @@ class FakeGit:
 
 
 def _setup(monkeypatch, git):
-    from tests._mini_motor import AsyncMongoMockClient
+    from tests._mini_motor import install_mini_db
 
     import routers.chat as chat_mod
     import services.llm as llm
     import services.ora_context as ora_context
     import services.orchestrator as orch
-    from cto_services.db import set_db
 
-    db = AsyncMongoMockClient()["t"]
-    set_db(db)
+    db = install_mini_db(monkeypatch)
     cur = [0]
     bin_ctx = SimpleNamespace(bin_id="u1", repo_owner="o", repo_name="r", branch="main",
                               pat="tok", is_founder=False, pid="proj1")
