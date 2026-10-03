@@ -10,6 +10,7 @@ import { Bell, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "./Toast";
 import useModalA11y from "../hooks/useModalA11y";
+import ModalCloseButton from "./ModalCloseButton";
 
 const THRESHOLDS = [500, 200, 100, 50, 10];
 const SEEN_KEY = "aurem_token_warn_seen";
@@ -166,7 +167,7 @@ export default function TokenBell({ tokens, unlimited, collapsed }) {
   );
 }
 
-function RechargeModal({ tokens, onRecharge, onDismiss }) {
+export function RechargeModal({ tokens, onRecharge, onDismiss }) {
   // Iter 388t · Bug 27 · Escape + focus-trap for the low-tokens modal.
   // Users on 10-tokens threshold were UI-blocked with no keyboard exit.
   const modalRef = useRef(null);
@@ -193,6 +194,7 @@ function RechargeModal({ tokens, onRecharge, onDismiss }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           maxWidth: 440,
+          position: "relative",
           background: "var(--panel)",
           border: "1px solid var(--danger)",
           borderRadius: 6,
@@ -202,6 +204,7 @@ function RechargeModal({ tokens, onRecharge, onDismiss }) {
           boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7), 0 0 24px -8px var(--danger)",
         }}
       >
+        <ModalCloseButton onClick={onDismiss} testId="recharge-modal-close" />
         <Zap
           size={28}
           style={{ color: "var(--danger)", marginBottom: 12 }}

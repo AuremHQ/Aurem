@@ -14,8 +14,11 @@
  *   onOpenProjects   "Open Projects →" navigation handler.
  */
 import React from "react";
+import ModalCloseButton from "../ModalCloseButton";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 export default function RepoHelpDialog({ project, onClose, onOpenProjects }) {
+  useEscapeKey(onClose);
   return (
     <div
       data-testid="repo-help-overlay"
@@ -33,6 +36,7 @@ export default function RepoHelpDialog({ project, onClose, onOpenProjects }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(520px, 100%)",
+          position: "relative",
           background: "linear-gradient(180deg, rgba(20,24,34,0.95), rgba(13,16,24,0.95))",
           border: "1px solid rgba(255,138,42,0.28)",
           borderRadius: 14,
@@ -41,6 +45,7 @@ export default function RepoHelpDialog({ project, onClose, onOpenProjects }) {
           color: "var(--text)",
         }}
       >
+        <ModalCloseButton onClick={onClose} testId="repo-help-close" />
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
           <span
             style={{

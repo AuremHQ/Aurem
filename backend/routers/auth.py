@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import bcrypt
+from services.password_hash import bcrypt_check, bcrypt_hash
 from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel
 
@@ -315,7 +315,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
     if existing:
         raise HTTPException(409, "Email already registered")
     phone = _validate_phone_optional(body.phone)
-    hashed = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+    hashed = await asyncio.to_thread(bcrypt_hash, body.password)
     user_id = uuid.uuid4().hex
     # Founder allow-list: anyone on the list signs up directly into the
     # `founder` tier with admin rights so first-time onboarding doesn't
@@ -370,7 +370,6 @@ async def signup(body: SignupBody, request: Request) -> dict:
         try:
             from services.verification_email import send_verification_email
             from services.bg_safe import safe_bg
-            import asyncio
             _safe_send = safe_bg(send_verification_email)
             asyncio.create_task(_safe_send(
                 db,
@@ -423,7 +422,7 @@ async def login(body: LoginBody, request: Request) -> dict:
             401,
             "This account uses GitHub sign-in. Use 'Continue with GitHub'.",
         )
-    if not bcrypt.checkpw(body.password.encode(), user["password"].encode()):
+    if not await asyncio.to_thread(bcrypt_check, body.password, user["password"]):
         await _record_login_failure(db, client_ip, email)
         raise HTTPException(401, "Invalid credentials")
     # Iter 212m-48 — password check passed. Clear the lockout state for
@@ -598,7 +597,7 @@ async def reset_password(body: ResetPasswordBody) -> dict:
     row = await db.password_reset_tokens.find_one({"token": body.token})
     if not row or row.get("used") or row.get("expires_at", 0) < time.time():
         raise HTTPException(400, "Invalid or expired reset link. Request a new one.")
-    hashed = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    hashed = await asyncio.to_thread(bcrypt_hash, body.new_password)
     await db.dev_users.update_one(
         {"user_id": row["user_id"]}, {"$set": {"password": hashed}},
     )
@@ -711,9 +710,9 @@ async def change_password(
             400,
             "This account signs in via GitHub/Google and has no password to change.",
         )
-    if not bcrypt.checkpw(body.current_password.encode(), user["password"].encode()):
+    if not await asyncio.to_thread(bcrypt_check, body.current_password, user["password"]):
         raise HTTPException(401, "Current password is incorrect")
-    hashed = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    hashed = await asyncio.to_thread(bcrypt_hash, body.new_password)
     await db.dev_users.update_one(
         {"user_id": payload["user_id"]}, {"$set": {"password": hashed}},
     )
