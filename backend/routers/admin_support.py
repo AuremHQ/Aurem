@@ -6,7 +6,8 @@ Extracted from routers/admin.py during the Phase 2 architecture split
   GET  /admin/support           GET  /admin/errors           GET  /admin/alerts
   POST /admin/support/{ticket_id}/reply       POST /admin/errors/{error_id}/autofix
   POST /admin/support/{ticket_id}/resolve     POST /admin/errors/{error_id}/resolve
-  POST /admin/alerts/{alert_id}/dismiss
+  POST /admin/alerts/{alert_id}/dismiss       POST /admin/errors/{error_id}/autofix/apply
+                                               POST /admin/errors/{error_id}/autofix/reject
 
 Every handler + helper is COPIED VERBATIM from the pre-split admin.py.
 """
@@ -27,7 +28,9 @@ from cto_services.db import require_db
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
-from services.admin_error_autofix import build_autofix_prompt, run_error_autofix
+from services.admin_error_autofix import (
+    build_autofix_prompt, run_error_autofix, apply_error_autofix,
+)
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on
@@ -233,7 +236,13 @@ async def list_errors(
             "last_seen":     d.get("last_seen", ""),
             "resolved":      bool(d.get("resolved", False)),
             "autofix_status": d.get("autofix_status", "idle"),
+            "autofix_proposal": d.get("autofix_proposal", ""),
             "user_agent":    (d.get("user_agent") or "")[:200],
+            # 2026-09-29 — every row from POST /admin/errors/report is
+            # unauthenticated by construction (see admin_public.py);
+            # the frontend renders an "untrusted" badge off this flag
+            # and must never interpret message/stack as markup.
+            "trusted":       bool(d.get("trusted", False)),
         })
     return {"ok": True, "errors": items, "total": len(items)}
 
@@ -243,10 +252,12 @@ async def autofix_error(
     error_id: str,
     authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Admin only — kick ORA off to investigate + fix the error.
-
-    Fires `chat_with_tools` in the background so this endpoint returns
-    fast. Status moves `idle → queued → done|failed` on the error doc.
+    """Admin only — kick ORA off to *investigate* the error and propose
+    a fix. This never writes or commits anything: the run is forced
+    into read-only mode (services/local_tools.py blocks every write
+    tool call regardless of what the agent tries). Status moves
+    `idle → proposing → proposed|failed`. A human must separately call
+    POST /errors/{error_id}/autofix/apply to actually apply the fix.
     """
     admin = await _require_admin(authorization)
     db = require_db()
@@ -262,7 +273,7 @@ async def autofix_error(
 
     await db.frontend_errors.update_one(
         {"_id": oid},
-        {"$set": {"autofix_status": "queued",
+        {"$set": {"autofix_status": "proposing",
                   "autofix_started": datetime.now(timezone.utc).isoformat()}},
     )
 
@@ -271,12 +282,71 @@ async def autofix_error(
         url=doc.get("url", ""),
         stack=doc.get("stack", ""),
     )
-
+    jwt_token = (authorization or "").replace("Bearer ", "", 1).strip()
     asyncio.create_task(run_error_autofix(
-        db, admin_user_id=admin.get("user_id"),
+        db, admin_user_id=admin.get("user_id"), jwt_token=jwt_token,
         error_id=error_id, oid=oid, prompt=prompt,
     ))
     return {"ok": True, "queued": True, "error_id": error_id}
+
+
+@router.post("/errors/{error_id}/autofix/apply")
+async def apply_autofix(
+    error_id: str,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Admin only — the explicit human-confirmation step. Only usable
+    once a proposal exists (`autofix_status == "proposed"`); re-runs
+    the agent with writes allowed, quoting back exactly the proposal
+    the admin already read. This is the ONLY code path in the autofix
+    flow that can result in a write or a commit."""
+    admin = await _require_admin(authorization)
+    db = require_db()
+    from bson import ObjectId
+    try:
+        oid = ObjectId(error_id)
+    except Exception as _bie:
+        raise HTTPException(status_code=400, detail="bad_error_id") from _bie
+
+    # Atomic claim: two concurrent clicks must not both start a writing agent.
+    doc = await db.frontend_errors.find_one_and_update(
+        {"_id": oid, "autofix_status": "proposed"},
+        {"$set": {"autofix_status": "applying"}},
+    )
+    if not doc:
+        if not await db.frontend_errors.find_one({"_id": oid}, {"_id": 1}):
+            raise HTTPException(status_code=404, detail="error_not_found")
+        raise HTTPException(status_code=409, detail="no_pending_proposal")
+
+    jwt_token = (authorization or "").replace("Bearer ", "", 1).strip()
+    asyncio.create_task(apply_error_autofix(
+        db, admin_user_id=admin.get("user_id"), jwt_token=jwt_token,
+        error_id=error_id, oid=oid, proposal=doc.get("autofix_proposal", ""),
+    ))
+    return {"ok": True, "applying": True, "error_id": error_id}
+
+
+@router.post("/errors/{error_id}/autofix/reject")
+async def reject_autofix(
+    error_id: str,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Admin only — discard a proposal without applying it."""
+    await _require_admin(authorization)
+    db = require_db()
+    from bson import ObjectId
+    try:
+        oid = ObjectId(error_id)
+    except Exception as _bie:
+        raise HTTPException(status_code=400, detail="bad_error_id") from _bie
+    r = await db.frontend_errors.update_one(
+        {"_id": oid, "autofix_status": "proposed"},
+        {"$set": {"autofix_status": "idle"},
+         "$unset": {"autofix_proposal": ""}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=409, detail="no_pending_proposal")
+    return {"ok": True, "rejected": True}
 
 
 @router.post("/errors/{error_id}/resolve")

@@ -175,6 +175,11 @@ async def chat_stream(
     # covered too, not just the non-streaming /chat/send fallback.
     from .turn import _fire_task_sent_bg
     asyncio.ensure_future(_fire_task_sent_bg(user["user_id"], body.prompt))
+    # Funnel: the SSE path is the product's real send path, so it must
+    # stamp `first_chat_sent` too (it never did — admin funnel read 0).
+    from services.signup_guards import stamp_first_chat as _stamp_first_chat
+    from cto_services.db import get_db as _ffc_db
+    asyncio.ensure_future(_stamp_first_chat(_ffc_db(), user_id=user["user_id"], mode=None))
     # Overnight loop W2 Step 2 (2026-08-29) — MOCK_LLM short-circuit,
     # BEFORE any provider routing/tool/repo-context construction. The
     # live main-chat path (this function) was the one surface

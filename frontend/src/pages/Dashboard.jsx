@@ -42,6 +42,8 @@ import {
 } from "../components/TabBar";
 import NewUserWizard from "../components/NewUserWizard";
 import StarterChoiceModal from "../components/StarterChoiceModal";
+import CheckupHost from "../components/checkup/CheckupHost";
+import { useCleanChatUi } from "../hooks/useCheckupFlags";
 import VisibilityKitPanel from "../components/VisibilityKitPanel";
 import { EngagementNudge } from "../components/EngagementNudge";
 import RepoCleanupBanner from "../components/RepoCleanupBanner";
@@ -78,6 +80,7 @@ export default function Dashboard() {
 function DashboardV2Body() {
   const { sessionId, setSessionId, refreshSessions } = useChatSession();
   const activeProject = useActiveProject();
+  const cleanChatUi = useCleanChatUi();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [showWizard, setShowWizard] = useState(false);
@@ -723,10 +726,10 @@ function DashboardV2Body() {
                 skipped that gate. Two competing always-visible
                 banners was the exact clutter problem being fixed. */}
             <RepoCleanupBanner />
-            {projectCount === 0 && gateSkipped === true && (
+            {!cleanChatUi && projectCount === 0 && gateSkipped === true && (
               <EngagementNudge variant="post_skip" />
             )}
-            {!!activeProject && (
+            {!cleanChatUi && !!activeProject && (
               <EngagementNudge variant="post_scan" projectId={activeProject.project_id} />
             )}
             <div data-testid="chat-pane"
@@ -746,11 +749,13 @@ function DashboardV2Body() {
             2026-08 — the "ORA GUIDE" suggestions card (topSlot) moved off this
             sidebar and into the floating OraGuideMascot bubble (bottom-right),
             per founder direction — one robot does all the guiding. */}
-        <AskAdvisorReal
-          collapsed={advisorCollapsed}
-          onCollapse={setAdvisorCollapsed}
-          projectId={activeProject?.project_id || null}
-        />
+        {!cleanChatUi && (
+          <AskAdvisorReal
+            collapsed={advisorCollapsed}
+            onCollapse={setAdvisorCollapsed}
+            projectId={activeProject?.project_id || null}
+          />
+        )}
       </div>
 
       {showWizard && <NewUserWizard onComplete={onWizardComplete} />}
@@ -770,6 +775,10 @@ function DashboardV2Body() {
           repo-connect gate's Skip action and the post_skip mascot
           nudge both fire that event. */}
       <StarterChoiceModal />
+
+      {/* Checkup-first. Renders nothing unless the `checkup_flow` flag is on
+          for this user (default OFF); never blocks chat. */}
+      <CheckupHost projectId={activeProject?.project_id} />
 
       {/* 2026-08-30 — Visibility Kit visual panel (spec §6), the
           "Kit" tab. Only renders when a project with a repo is active

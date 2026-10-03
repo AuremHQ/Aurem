@@ -264,6 +264,15 @@ async def commit_files(
         head = await _get_branch_head(owner, repo, branch, token)
         await _p(f"✅ HEAD @ {head['sha'][:7]}", "success")
 
+        # S7 commit safety guards (shadow/"warn" by default; owner flips the
+        # `commit_safety` guard_config rule to "block").  Fails open.
+        from services.commit_guards import check_commit as _check_commit
+        await _check_commit(
+            _guard_db, files=files, owner=owner, repo=repo, branch=branch,
+            head_sha=head["sha"], token=token, headers=_headers(token),
+            client=client, api=GITHUB_API,
+        )
+
         # 1. Upload every file as a blob IN PARALLEL → returns sha each
         await _p(f"📦 Uploading {len(files)} blob(s) in parallel…")
 
