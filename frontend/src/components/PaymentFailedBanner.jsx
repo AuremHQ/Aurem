@@ -9,13 +9,18 @@
  * Stripe eventually cancels the subscription.
  */
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, CreditCard, Loader2 } from "lucide-react";
+import { AlertTriangle, CreditCard, Loader2, X } from "lucide-react";
 import { api } from "../lib/api";
 
 export default function PaymentFailedBanner() {
   const [paymentFailed, setPaymentFailed] = useState(false);
   const [tier, setTier] = useState("");
   const [opening, setOpening] = useState(false);
+  // 2026-10 · founder spec — close (×) toggle, session-scoped (this
+  // is a real billing issue — dismissing it only hides it for the
+  // current session, the real `payment_failed` flag keeps driving it
+  // on the next visit until the card is actually fixed).
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +50,7 @@ export default function PaymentFailedBanner() {
     }
   }
 
-  if (!paymentFailed) return null;
+  if (!paymentFailed || dismissed) return null;
 
   return (
     <div
@@ -82,6 +87,20 @@ export default function PaymentFailedBanner() {
         {opening
           ? <><Loader2 size={12} className="animate-spin" /> Opening…</>
           : <><CreditCard size={12} /> Update card</>}
+      </button>
+      <button
+        type="button"
+        data-testid="payment-failed-close"
+        aria-label="Close"
+        title="Close"
+        onClick={() => setDismissed(true)}
+        style={{
+          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+          width: 22, height: 22, background: "transparent", border: "none",
+          borderRadius: 6, color: "#fca5a5", opacity: 0.7, cursor: "pointer",
+        }}
+      >
+        <X size={13} />
       </button>
     </div>
   );

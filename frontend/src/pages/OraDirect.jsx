@@ -16,7 +16,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Lock, Settings, LogOut, ArrowUp, RefreshCw, Zap, Clock, Plus, Square, Copy, Play, Paperclip, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Lock, Settings, LogOut, ArrowUp, RefreshCw, Zap, Clock, Plus, Square, Copy, Check, Play, Paperclip, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { api, setToken, getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "../components/OraChatHouseRulesPanel";
 import VideoGenPanel from "../components/VideoGenPanel";
@@ -1646,10 +1646,12 @@ function Bubble({ m, debug = false, onOpenPreview }) {
                            transition: "color 120ms, background 120ms, border-color 120ms" }}
                 onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = PAL.muted; }}
                 onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = PAL.faint; }}>
-          {/* Iter 212m-261 — Icon stays SAME (Copy) always.
-              Only the color + background flashes sky-blue for 1.5 s
-              on click as confirmation. No tick swap. */}
-          <Copy size={11} />
+          {/* Iter 212m-261 — previously icon stayed static (color-only
+              flash). 2026-10 · redesign — founder now wants an
+              explicit tick on every copy control app-wide, so the
+              icon swaps to Check too, on top of the existing
+              color/background flash. */}
+          {copied ? <Check size={11} /> : <Copy size={11} />}
         </button>
       )}
     </div>

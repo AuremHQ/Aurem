@@ -45,7 +45,7 @@ async def test_call_claude_routes_via_openrouter(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     captured = {}
 
-    async def fake_or(model, system, user, max_tokens=1000, temperature=0.2):
+    async def fake_or(model, system, user, max_tokens=1000, temperature=0.2, feature=None):
         captured["model"] = model
         captured["system"] = system
         captured["user"] = user
@@ -67,7 +67,7 @@ async def test_call_claude_falls_back_when_no_openrouter_key(monkeypatch):
     from services import llm
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
-    async def fake_deepseek(messages, system, max_tokens, temperature):
+    async def fake_deepseek(messages, system, max_tokens, temperature, feature=None):
         return "deepseek-fallback"
 
     with patch.object(llm, "_call_deepseek", side_effect=fake_deepseek):
@@ -77,11 +77,15 @@ async def test_call_claude_falls_back_when_no_openrouter_key(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_watchdog_uses_openrouter(monkeypatch):
+    """2026-02 cost-optimization: watchdog reviewer is GLM-5.3
+    (z-ai/glm-5.3), not Claude Sonnet — see call_emergent_watchdog's
+    docstring in services/llm/__init__.py."""
     from services import llm
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
-    async def fake_or(model, system, user, max_tokens=1000, temperature=0.2):
-        assert model.startswith("anthropic/claude")
+    async def fake_or(model, system, user, max_tokens=1000, temperature=0.2,
+                       feature=None, reasoning=None, provider_prefs=None):
+        assert model.startswith("z-ai/glm")
         return "SCORE: 9\nISSUES: none\nVERDICT: looks good"
 
     with patch.object(llm, "call_openrouter_model", side_effect=fake_or):
@@ -106,7 +110,7 @@ async def test_call_llm_with_meta_code_mode_uses_claude(monkeypatch):
     from services import llm
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
-    async def fake_claude(system, user, max_tokens, temperature):
+    async def fake_claude(system, user, max_tokens, temperature, feature=None):
         return "claude-code-out"
 
     with patch.object(llm, "_call_claude", side_effect=fake_claude):
@@ -121,7 +125,7 @@ async def test_call_llm_with_meta_chat_mode_uses_deepseek(monkeypatch):
     from services import llm
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
-    async def fake_ds(messages, system, max_tokens, temperature):
+    async def fake_ds(messages, system, max_tokens, temperature, feature=None):
         return "deepseek-chat-out"
 
     with patch.object(llm, "_call_deepseek", side_effect=fake_ds):

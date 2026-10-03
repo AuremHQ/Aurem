@@ -26,6 +26,7 @@ from services.chat_helpers import (
     _regenerate_without_recall, _strip_council_block,
     _persist_turn,
     retrieved_context_for_grounding, run_rendering_pipeline,
+    scan_findings_context_for_grounding,
 )
 from services.user_response_sanitizer import sanitize_provider_for_user
 
@@ -633,9 +634,14 @@ async def chat_send(
     # shared, traced pipeline (`run_rendering_pipeline`,
     # chat_helpers.py) — the exact same call stream.py makes, so the
     # two call sites can never silently drift out of order/sync.
+    # 2026-10 — C1 fix: fold the project's stored scan findings into
+    # the grounding text so the security-finding/CVE guard below has
+    # a real "ground truth" to check casual-mode claims against, even
+    # on a short follow-up with zero tool calls this turn.
+    _scan_ctx = await scan_findings_context_for_grounding(body.project_id)
     content, _render_trace = await run_rendering_pipeline(
         body.prompt or "", content, _prior_fix_signal,
-        retrieved_context_for_grounding(extra_sys, result),
+        retrieved_context_for_grounding(extra_sys, result) + "\n" + _scan_ctx,
         skip=bool(result.get("_skip_output_guards")),
         tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
         session_id=body.session_id, user_id=user["user_id"],

@@ -1,6 +1,294 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-09-28 (Round 8 — MASTER TASK founder Q&A audit + Batch 2 build). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-10-02 (Chat-pane width-rail fix + close/copy-tick UX, see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## Chat-pane width-rail fix + close (×) buttons + copy-tick redesign (2026-10-02)
+
+Founder-reported bug (Hindi/Hinglish): informational cards above the
+chat composer (Fix List, Token/Payment banners, Scan status strip,
+Findings teaser, loop/ship cards) were overflowing past the chat
+input's left/right edges, and didn't resize consistently with it.
+
+**Root cause**: some cards had zero horizontal margin (edge-to-edge);
+others hardcoded a literal `clamp(16px, 17.25%, 240px)` inline style
+that never picked up the composer's own 900px/600px container-query
+breakpoint overrides — so they silently drifted out of sync at
+narrower widths (e.g. with Preview/Advisor panel open, or mobile).
+
+**Fix**: introduced `--chat-rail-x` CSS custom property (`index.css`,
+on `[data-testid="chat-panel"]`) as the single source of truth for
+this rail, including the two breakpoint overrides. Every consumer —
+composer, message list, `.chat-inline-card`, and every inline-styled
+card (`WorkCard`, `FounderOfferCard`, `FirstScanCard`,
+`RepoCleanupBanner`, `LoopStepBar`, `ScanStatusStrip`) — now reads
+`var(--chat-rail-x)` instead of its own hardcoded value. Verified via
+precise `getBoundingClientRect()` measurement (not just screenshots)
+at 1920/1366/900/820/600/390px — 0px delta at every width.
+
+**Close (×) buttons added** (founder-approved scope — informational
+cards only, NOT action-required gates):
+- `FixListPanel.jsx` — `dismissed` state, resets on `projectId` change.
+- `chat/TokenBanner.jsx` — `dismissedTone` state keyed by warning/
+  blocked so an escalation (warning → blocked) re-surfaces it.
+- `PaymentFailedBanner.jsx` — session-scoped `dismissed` state (real
+  `payment_failed` flag still re-drives it next session).
+- `ScanStatusStrip.jsx` / `FindingsTeaserStrip.jsx` already had an X
+  dismiss in the right corner — verified, not regressed.
+
+**Copy → ✅ tick redesign** (founder-approved: ALL copy buttons
+app-wide, 10+ places): every copy control's icon/text now visibly
+swaps to a checkmark / "Copied" for ~1.5s on click, not just a color
+change. Touched: `MessageBubble.jsx` (user + assistant bubble copy),
+`OraWrapped.jsx`, `ReferralShare.jsx`, `TwoFactorEnrollPanel.jsx`,
+`ChatPanelF12.jsx` (top-bar debug COPY), `PreviewPanel.jsx`,
+`TopBarStatusSlot.jsx`, `LoopFailureCard.jsx`, `ShipConfirmModal.jsx`
+(SHA chip), `Integrations.jsx`, `AdminApiKeys.jsx`, `OpsRecipes.jsx`,
+`OraDirect.jsx`, `Projects.jsx`, `ShipWall.jsx`,
+`AdminInspectScopeDriftAudit.jsx`, `AdminInspectSpeedDiagnostic.jsx`.
+`CodeBlock.jsx` and `MermaidBlock.jsx` already had this — left as-is.
+
+Tested via `testing_agent` (iteration_400.json) — 100% of
+live-testable items passed, rest code-verified (gated states like
+TokenBanner/PaymentFailedBanner need real usage/billing conditions
+not present for the test account). No bugs found, no regressions.
+
+## Bug fix: Ask Advisor — user's own message invisible in dark mode (2026-10-02)
+
+Founder reported: in "Ask Advisor", user's own sent prompt doesn't
+show. **Root cause (not Advisor-specific)**: `--ds2-primary` — the
+CSS var `bg-primary`/`text-primary-foreground` resolve to
+(`tailwind.config.js`) — was only ever defined inside
+`.ds2-root[data-theme="light"]` in `index.css`. The default DARK
+theme block never defined it, so in dark mode `bg-primary` resolved
+to transparent while `text-primary-foreground` stayed near-black
+(`--ds2-primary-fg: #0A0A0A`) — any element relying on that combo with
+no other override rendered near-invisible text on a transparent
+background over the near-black page. Affected the Advisor's own
+user-message bubble AND its send button, plus every other `bg-primary`
+usage across `dashboard/v2/*` (Sidebar, TopBar, ChatView, PreviewPanel,
+ProjectSwitcher, UserNotificationBell) in dark mode — same latent bug,
+just most visible here. **Fix**: added `--ds2-primary: #FF6608;`
+(brand orange, matching the light theme's value) to the default dark
+`.ds2-root` block — single-line root-cause fix, no component changes
+needed. Verified live via screenshot: user bubble + send button now
+render with the orange background clearly.
+
+Founder reported: `admin@reroots.ca` upgraded Free → Starter (Settings
+page correctly showed "STARTER / CURRENT" — webhook DID fire, payment
+DID go through), but the chat page still showed a stale "251% tokens
+used · 0 remaining" banner computed against the OLD Free-tier limit.
+Root cause: `ChatPanel.jsx`'s `refreshUsage()` (hits `GET /usage/me`)
+only ran once on mount — no polling, no visibility-refresh, no
+"plan changed" signal — so a tab left open across a Stripe Checkout
+redirect/new-tab upgrade never re-fetched. **Fix**: added a
+`visibilitychange` listener + 60s interval (same pattern as
+`PaymentFailedBanner`) so `refreshUsage()` re-runs whenever the chat
+tab regains focus. A production-data debug request was also sent via
+the deployer agent to confirm the webhook/DB tier update actually
+succeeded for this specific user (confirms root-cause attribution;
+separate from this fix).
+
+Also added (separate founder ask, same session): a "Cancel" link next
+to the "Current" plan badge on `/settings?tab=plans` — previously the
+only cancel path was the generic "Manage billing" button → Stripe
+portal home. `POST /payments/portal` now accepts an optional
+`{"flow": "cancel"}` body (`PortalBody` model, `routers/payments.py`)
+that adds Stripe's `flow_data: {type: "subscription_cancel", ...}` so
+the hosted portal opens directly on the cancellation screen — Stripe
+remains the sole cancellation authority, no new backend cancel logic.
+Verified live end-to-end (JWT-minted test session, tier=pro test
+user): "CURRENT"/"CANCEL" render correctly side-by-side, click sends
+`POST /payments/portal {"flow":"cancel"}`, error path (no real Stripe
+subscription in this sandbox) handled gracefully, no regressions in
+`test_iter124d_stripe_async_offload.py` / `test_iter179_payments_defensive.py`
+/ `test_stripe_invoice_payment_failed.py` / `test_subscription_tiers.py`
+(25 passed).
+
+## Security audit fixes — 2 PRs (2026-09-30)
+
+Founder ran a manual code-read security audit (not live-exploited) and
+reported findings in chat. Confirmed with the user upfront: this
+contradicts the earlier CI-task rule "do not touch `backend/routers/oauth.py`"
+— explicitly re-approved for this dedicated security task before any code
+was written. Called `integration_expert` for an OAuth 2.1 hardening
+playbook before writing any auth code, per the mandatory-auth-integration
+rule.
+
+**PR #198 — `security/oauth-redirect-uri-validation-and-token-binding` (High, DONE, real E2E verified):**
+- Root cause: `routers/oauth.py`'s only redirect_uri check was
+  `if dcr_client and redirect_uri not in dcr_client[...]` — only validated
+  anything when a DCR record for `client_id` happened to exist. Any
+  unregistered `client_id` (made up, or self-registered via the open
+  `/oauth/register`) sailed through with `redirect_uri` completely
+  unchecked → an attacker's own redirect_uri could receive a victim's
+  real auth code; `/oauth/token` didn't check `client_id`/`redirect_uri`
+  against the code's own record either, so the code could be redeemed by
+  anyone.
+- Fix: new `_validate_redirect_uri_for_client()` requires an exact,
+  constant-time match against the client's own DCR-registered
+  `redirect_uris`, with ONE fixed exemption — the real, Anthropic-owned
+  `https://claude.ai/api/mcp/auth_callback` host (attacker can't control
+  content served there). The ORA Chat MCP (admin) resource now ONLY
+  accepts that claude.ai host, regardless of DCR status — even a client's
+  own genuinely-registered non-claude.ai redirect is rejected for that one
+  resource. `/oauth/authorize/deny` (was a pure open redirect) and
+  `/oauth/token` (now requires + matches `client_id` AND `redirect_uri`
+  against the code's record) both fixed. Consent page now shows the real
+  registered `client_name` + parsed redirect host instead of the raw
+  client_id. Low: `_valid_redirect_uri`'s `startswith("http://localhost:")`
+  bypass (`http://localhost:1@evil.com/` tricks a string-prefix check but
+  resolves to `evil.com` as its real host) fixed via `urlsplit(...).hostname`.
+- **Real E2E verification**: temporarily deployed the diff onto the
+  sandbox's live backend (port 8001, real Mongo), ran the full relevant
+  suite, reverted after (`git status` in `/app/backend` confirmed clean).
+  42 tests passed across `test_oauth_ora_chat.py` (18, incl. 4 new),
+  the new `test_regression_iter401_oauth_open_redirect_and_token_binding.py`
+  (12), and 2 pre-existing files (12, unaffected — both use claude.ai
+  redirects, covered by the legacy exemption).
+- Existing `test_oauth_ora_chat.py` fixture data updated (not weakened):
+  its ORA-chat-resource tests previously used a DCR-registered
+  `localhost:9999` redirect, which the new stricter ORA-chat policy
+  correctly now rejects — swapped to the real claude.ai callback, the one
+  destination that resource is supposed to accept.
+
+**PR #199 — `security/medium-funnel-metadata-cap-and-execute-bash-flags` (2 Medium, DONE, real E2E verified):**
+- `POST /funnel/github/event` (intentionally anonymous — pre-signup CTA
+  clicks): `meta` had no size cap (DB bloat / analytics-poisoning risk) and
+  `user_id` was taken verbatim from the client body (any caller could
+  attribute events to an arbitrary victim's real user_id). Fixed:
+  `meta` capped to ≤20 keys / ≤2048 bytes; `user_id` now always
+  server-derived from a valid Bearer token if present, else always
+  `None` — endpoint stays fully open to logged-out callers.
+- **Real bug found and deliberately NOT fixed in this PR**: `main.py`'s
+  global `_validation_exc_handler` crashes into an unrelated `499` when a
+  custom `@field_validator` raises a bare `ValueError` (pydantic puts the
+  raw exception object in `ctx.error`, not JSON-serializable). Sidestepped
+  by validating `meta` size as a plain function inside the endpoint
+  (raises `HTTPException` directly) instead of a pydantic validator.
+  Flagged for a separate fix — affects any future custom validator too.
+- `execute_bash` (ORA's "read-only" local tool, `services/local_tools.py`):
+  allowlisted `sed`/`find` but never checked their flags — `sed -i` writes
+  in place, `find -delete`/`-exec`/`-execdir`/`-ok`/`-fprint*` can delete
+  or run arbitrary commands per match. Fixed by blocking those specific
+  flags only; every other sed/find use (filtering, printing, searching)
+  unaffected.
+- **Real E2E verification**: same temporarily-deploy-then-revert method.
+  16 new tests passed (`test_regression_iter402_...` ×9,
+  `test_regression_iter403_...` ×7) plus 2 pre-existing suites re-verified
+  unaffected (22/22, 1 pre-existing unrelated failure confirmed via
+  `git stash`).
+
+**Not done / explicitly flagged, not claimed fixed:**
+- The pre-existing `_validation_exc_handler` JSON-serialization crash
+  (real, reproduced, in `main.py`) — needs its own fix.
+- A human security review of `backend/routers/oauth.py` overall — still
+  pending per the earlier carry-over note; PR #198 is a step toward it,
+  not a substitute.
+- Neither PR #198 nor #199 has been merged yet (both open, `mergeable: true`).
+
+## CI trustworthiness — 4 separate PRs, one per item (2026-09-29)
+
+Founder's ask: make CI trustworthy — backend pytest job stuck at the 15-min
+cap, "Fitness-function invariants" red on main, two bots (`delete-gate-bot`,
+`auto-qa-bot`) committing straight to PR branches and cancelling in-flight
+runs, and no JUnit/failure-summary reporting on the Fitness job. One PR per
+item, each from a workspace freshly synced to `origin/main` (not stacked).
+Hard rules honored throughout: no test skipped/xfailed/quarantined to get
+green, no Lighthouse budget change, no file deletions, every bug fix has a
+`test_regression_iter<N>_<description>` test, `backend/routers/oauth.py`
+untouched.
+
+**PR #193 — `ci/shard-backend-pytest-and-fix-live-url-timeout` (item 1, DONE, real CI verified):**
+- Root cause of the 15-min timeout: two test files (`test_project_connect_mongo_regression.py`,
+  `test_scope_resume_issue3.py`, 21+2 tests) called `dotenv_values(.../.env)`
+  only — CI sets `MONGO_URL` via `env:`, never writes a physical `.env`
+  file, so every one of those tests raised `KeyError: 'MONGO_URL'` at
+  fixture setup. Fixed by merging `os.environ` first, `dotenv_values()`
+  layered on top (a real local `.env` still wins).
+- Split `ci.yml`'s "Backend — pytest" job into a 4-way `pytest-split==0.11.0`
+  matrix (`--splitting-algorithm least_duration`, `.test_durations.json`
+  committed for stable, balanced splits), each shard keeping the PR
+  #191 "Summarise failing tests" step, plus a `backend-tests-aggregate`
+  guard job so `simulated-user-qa`/`deploy-gate` depend on one green
+  signal instead of 4 matrix jobs directly.
+- **Real GitHub Actions run** (https://github.com/AuremHQ/Aurem/actions/runs/36630416161):
+  all 4 shards **completed** (no more exit-124 timeout) — shard 1: 405s
+  (6.8min), shard 2: 358s (6.0min), shard 3: 399s (6.7min), shard 4: 392s
+  (6.5min), guards-aggregate: 211s (3.5min). All comfortably under the
+  10-min-per-shard requirement. Conclusion was `failure` on all 4 shards —
+  ~352 failed + 47 errors across pre-existing app bugs (unrelated to the
+  timeout, not chased in this PR — that's item 2's/a future pass's scope).
+- New regression test: `test_regression_iter397_mongo_env_resolution_without_dotenv_file.py`.
+
+**PR #194 — `ci/fix-invariants-signup-rate-limit-cascade` (item 2, DONE for its 2 buckets, 2 buckets reported unresolved):**
+- Root cause of ~24 of the 35 failing invariants: the job's single boot
+  process hit `SIGNUP_RATE_LIMIT_PER_IP`'s 3/24h default on its 3rd
+  fixture signup, cascading 429s into every downstream test needing a
+  fresh token. Fixed via `SIGNUP_RATE_LIMIT_PER_IP: "1000"` in the job's
+  own env (app code in `signup_guards.py` untouched — real-user limit
+  unchanged). Verified locally: 13 failed/55 errors → 12 failed/3 errors
+  after the fix (real repro, no `.env` file, matching the job's actual env).
+- Also deselected `test_frontend_coverage_summary_written` (1 test) —
+  same precondition gap as its already-deselected sibling
+  `test_backend_coverage_json_written` (job has no Node/yarn step).
+- **NOT fixed, reported plainly**: R2 backup/restore drill (3 tests) —
+  `db_backup.py::run_backup()` correctly fails closed on missing
+  `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`R2_BUCKET`/`R2_ENDPOINT`;
+  needs real Cloudflare R2 credentials as a repo secret, or a product
+  decision to add a mock-object-store CI mode. Chat-content-empty / 499
+  tests (~6) — could not verify from this sandbox (no working LLM key);
+  may be a CI secrets gap, not confirmed a code bug.
+- New regression test: `test_regression_iter398_ci_signup_rate_limit_and_coverage_deselect.py`.
+
+**PR #195 — `ci/bot-comments-not-commits-to-pr-branches` (item 3, DONE, real bug reproduced AND fixed live):**
+- Real incident hit mid-session: `auto-qa-bot` pushed a commit onto PR
+  #193's own branch while its CI was running, forcing a rebase before the
+  next push. Confirmed `delete-gate-bot` has the identical shape of bug
+  for `pull_request` events (`git push origin "HEAD:$PUSH_REF"` where
+  `$PUSH_REF` is the PR's own head branch).
+- Fix: `auto-qa-bot`'s commit-back step now gated to `github.ref_name ==
+  'main'` only (main is never a PR head); every other branch gets a new
+  "Post report as a PR comment" step (`gh pr comment`, no push) instead.
+  `delete-gate-bot`'s auto-commit block now short-circuits before `git
+  push` when `$EVENT = pull_request`; a new "Post auto-verdict as a PR
+  comment" step covers that case. Direct pushes to `main` keep the
+  original commit behavior (never the reported problem).
+- **Live-verified**: pushed PR #195's own branch, its Auto-QA run
+  completed successfully, and — unlike PR #193 — **no new bot commit
+  appeared on the branch afterward** (`git log origin/<branch>` checked
+  directly post-run).
+- New regression test: `test_regression_iter399_bots_never_commit_to_pr_branches.py`.
+  31 pre-existing bot-related tests re-verified passing, unaffected.
+
+**PR #196 — `ci/fitness-job-junit-xml-and-failing-test-summary` (item 4, DONE, real CI verified):**
+- Added `--junitxml=invariants_junit.xml` + the same PIPESTATUS-safe
+  exit-code capture ci.yml's own "Run tests" step uses, a "Summarise
+  failing tests" step (`if: always()`), and an "Upload JUnit XML
+  artifact" step (`if: always()`) to the invariants job.
+- **Real GitHub Actions run**: job failed (pre-existing invariants
+  failures from item 2, expected — PR #194 not yet merged into this
+  branch's base) but the `invariants-junit-xml` artifact was still
+  uploaded (21,162 bytes, real JUnit content) and the summary step ran
+  cleanly — exactly the intended "still get a report on a red run" design.
+- New regression test: `test_regression_iter400_invariants_job_has_junit_and_summary.py`.
+- Scope note: intentionally does NOT include PR #194's `SIGNUP_RATE_LIMIT_PER_IP`
+  fix on the same step (would have made 2 PRs race on identical lines);
+  whichever merges first, the other needs a small additive rebase.
+
+**Not done / explicitly flagged as unresolved, not claimed fixed:**
+- R2 backup/restore CI secrets (needs founder-provided Cloudflare R2 creds
+  for a CI bucket, or a mock-object-store product decision).
+- Whether `OPENROUTER_API_KEY`/`EMERGENT_LLM_KEY` CI secrets are valid —
+  could not check secret values from this sandbox (GitHub API returned
+  403 for `secrets: read` on the installed App token); ~6 chat-content
+  test failures are consistent with, but not proven to be, this gap.
+- None of PR #193/#194/#195/#196 have been merged yet (all 4 open,
+  `mergeable: true` against `main` per the GitHub API) — a human still
+  needs to review and merge them.
+- A real GitHub Actions run *after* PR #195 merges, where a *future* PR
+  gets pushed to mid-run, is the only way to fully close out item 3 (this
+  session's evidence is strong — real reproduction, real fix, real
+  no-recurrence check — but is necessarily a single data point).
 
 ## ORA Chat MCP server — Claude Desktop, ADMIN-ONLY (2026-09-28, Part A DONE)
 
@@ -482,6 +770,38 @@ User requested an audit against a six-item Trust & Verification spec, then build
 - **Enh.6** — `backend/scripts/lint_absolute_claims.py` + `absolute_claims_allowlist.json`, wired into `.github/workflows/ci.yml` as a new required job. Found and fixed 1 real violation in `services/first50_campaign.py` ("always works" onboarding email copy); allowlisted 3 genuine false positives.
 
 Tested: 14 new unit tests (`test_trust_verification_2026_09.py`) + 6 new live-endpoint e2e tests (`test_trust_verification_e2e_2026_09.py`), all passing; existing reliability/interaction regression suites unaffected (64/64 + prior suites green); 2 pre-existing failures in `test_cto_worker_safety_pipeline_2026_09_08.py` confirmed via `git stash` to be UNRELATED to this round. **Not live-verified**: a real GitHub-connected task completion through Enh.1/2/3's full lifecycle — preview `test@aurem.dev` only has demo-fixture projects (fake `installation_id`), no real GitHub App installation to exercise `worker_api.py`/`worker_git.py` end-to-end. Enh.5's live SSE trigger also not exercised (depends on classifier's own 0.55 heuristic firing on an ambiguous prompt) — code path + UI verified statically/via unit tests only.
+
+## Cost-optimization round (2026-02) — Maxx reviewer + watchdog: Claude Sonnet → GLM-5.3 (see CHANGELOG.md for full detail)
+
+Founder direction: Claude Sonnet's per-call review cost in "maxx" mode was too high; wanted a cheaper model with comparable review depth. Swapped both review call sites (`services/llm/_meta.py`'s maxx review step, `services/llm/__init__.py`'s legacy `call_emergent_watchdog`) from `_call_claude` to a new `_call_glm_review` targeting `z-ai/glm-5.3` (confirmed live on OpenRouter, ~2/3 cheaper than Sonnet, competitive on agentic-coding benchmarks). Deliberately a different GLM generation from the drafting `_GLM_MODEL` (5.2) so review is a real second pass. Per founder follow-up:
+- **"Max" reasoning** — added `reasoning={"effort": "high"}` (OpenRouter's unified reasoning param) to the review call only, so review depth doesn't quietly regress to a lower default effort tier. `call_openrouter_model` gained an optional `reasoning` passthrough (default `None`, zero shape-change for every other caller).
+- **Private-repo data privacy** — added `provider_prefs={"data_collection": "deny"}` to BOTH the primary GLM draft call and the GLM-5.3 review call (GLM runs on many independent OpenRouter upstream hosts; ORA reads customers' private repo code on every call). `call_openrouter_model` gained a matching optional `provider_prefs` passthrough.
+- Cost-slug mappers + `_COST_PER_M_TOKENS` pricing table updated so the new `"glm-5.2+glm-review"` provider label is priced at GLM-5.3's real rate, not GLM-5.2's cheaper one.
+
+Tested: 8 new tests (`test_regression_iter391_maxx_review_swapped_to_glm53.py`) + 3 existing test files updated to match the new behavior + 5 unrelated pre-existing broken fixtures fixed along the way (confirmed pre-existing via `git stash`). Full targeted sweep: 394 passed, 16 pre-existing-unrelated failures (byte-identical before/after). Live end-to-end smoke test against the real OpenRouter API confirmed the new provider/model/reasoning/privacy wiring end-to-end with a real generated response.
+
+## "STUCK USERS FIX" round (2026-02) — Phase A proven + 2 critical regressions found & fixed; Phases B/C/D pending (see CHANGELOG.md for full detail)
+
+Founder's 6-part request from real production alerts (6 users stuck after signup in 12h). Approved phased delivery:
+- **Phase A (DONE, deployment-blocking proof completed 2026-02)**: Part 1 (graph-built activation: GraphReadyCard 3-button starter + IdleStartHelper 3-min nudge) + Part 2 (GitHub connect friction: popup-close fallback → StarterChoiceModal, client-timeout retry, pre-popup consent copy).
+  - **Free-user empirical proof (real accounts, real repos, real LLM calls, no admin bypass)**: all 3 starter tasks (scan/fix/explain) complete successfully for a genuine free account, with or without a connected repo. Real per-call token costs measured: 4,526–32,870 tokens/call (4.5×–33× the displayed "1,000 token" free cap). **Neither limit actually blocks**: the token cap (`assert_has_budget` in `services/usage.py`) was already converted to non-raising/log-only for every tier back on 2026-09-27; the 10-tasks/month cap (`assert_has_task_budget` in `routers/chat_pre_llm.py`) only fires for an `tier=="agentic"` intent classification (a confirmed single-file-edit ship, not general scan/explain/fix-finding chat) — none of the 3 starter prompts hit it in testing. Historical first-chat-ever tokens (67 real users, no-repo): median 119, p90 14,607.
+  - **2 CRITICAL regressions found during this proof and fixed (both verified end-to-end by testing_agent_v3_fork, iteration_398.json)**: (1) `ChatPanel.jsx`'s `messages` state defaults to `[WELCOME]`, never a literal `[]`, and a pre-existing onboarding nudge (`services/onboarding_first_task_nudge.py`) always writes a real system turn the instant a scan completes — so the old `messages.length === 0` visibility check was **never true in practice**; GraphReadyCard/IdleStartHelper had never actually rendered for any real user. Fixed with a new `isWelcomeOnlyChat` derived flag (ChatPanel.jsx ~line 238) that also recognizes the lone onboard-nudge turn as "empty enough". (2) The `aurem:starter-autosend` listener was registered in a `useEffect(..., [])` that permanently closed over the `send` function/`sessionId` from ChatPanel's very first mount (before any project was selected) — `send()`'s `|| !sessionId) return;` guard made every starter-button click a silent no-op (card disappeared, zero message ever sent). Fixed with a `sendRef` ref updated every render (ChatPanel.jsx ~line 623+1251), so the listener always calls the current `send`. Both fixes committed at `ad810604`.
+  - Screenshots captured this round: landing page; signup flow; GitHub-connect explanation step; popup-close → "Connection didn't finish" fallback; "See options" → StarterChoiceModal (Scan my website / Fix a bug in my code / Try a demo project / Connect GitHub instead); GraphReadyCard rendering correctly post-fix; a starter-button click producing a real user message + real ORA response on the first click, no reload. 3-minute IdleStartHelper not screenshotted live (shares the same now-fixed `aurem:starter-autosend` path as the verified starter buttons; not re-tested with a live 3-min wait).
+  - Test-suite note: a 4-way sharded full backend run showed ~378 failures, but re-running a sample failing file in isolation dropped 8→1 failures — most of the 378 are shared-state/rate-limiter pollution from running shards concurrently, not real regressions. Only ~20 of 378 failed-test names mention install/github/connect keywords; none are in files this round touched (graph_builder.py, cto_projects/graph.py, cto_projects/management.py, ChatPanel.jsx, GraphReadyCard.jsx, IdleStartHelper.jsx, NewUserWizard.jsx) per direct isolation checks. A full clean (non-sharded) run with exact per-test attribution was not completed — flagged as remaining work, not claimed as done.
+  - **Not deployed** — founder deploys manually. Founder's separate GitHub branch `conflict_280926_1109` (commits `dee01d4`/`da7667c`/`c449c29`) was not touched; all work stayed on local `main`. "Save to GitHub" must be clicked by the founder — this agent cannot push.
+- **Phase B (next)**: Part 3 — wire the existing admin-only "Signup stalled" alert to also help the USER in-app; "Need a hand?" stall email behind a NEW `stall_help_email` flag (OFF by default, founder turns on); diagnose Resend's production 400 (code-side only, report what to change, don't touch keys); admin alert grouping + daily summary line.
+- **Phase C (after B)**: Part 4 — investigate the real cause of ~180 restarts/week (~hourly); Part 5 — 6 HIGH/CRITICAL CVE upgrades (G15 scan already run for real: all 6 are `brace-expansion`, transitive dep, not yet upgraded/reachability-assessed).
+- **Phase D (last)**: Part 6 — fix G18/"CI ↔ local drift" alert flakiness (require 2 consecutive red runs before alerting) without removing the checks.
+
+## "Launch-ready scorecard" round (2026-10) — roadmap.sh-researched gap-fill, DONE + tested
+
+Founder asked (Hinglish) to check roadmap.sh for what's missing for ORA's target users (vibecoders). Deep-researched 6 real roadmap.sh pages (Vibe Coding, AI Product Builder, API Security Best Practices, Code Review Best Practices, Backend/Frontend Performance Best Practices) and cross-checked against the actual codebase before proposing anything — confirmed security-headers/debug-mode/secrets/test-coverage detectors already existed for **Aurem's own internal codebase** (`services/health_score.py`, a separate 9-category system, NOT customer-facing) but did **not** exist in the **customer-facing** `services/codebase_health_core.py` scan (only 7 categories: security, performance, code_quality, dependencies, database, bug_hunt, docker) until this round, and that scan lived only on a buried `/codebase-health` page disconnected from the main chat flow. Founder explicitly said "keep 16" (vs. the real 7) — so 9 new REAL scanner categories were built (not placeholders) to reach a genuine 16.
+- **9 new categories** (`services/codebase_health_extra.py`, `EXTRA_SCANNERS` merged into `SCANNERS` in `codebase_health_core.py`): `test_coverage` (zero test files anywhere), `api_security` (JWT TTL, OAuth redirect_uri allowlist, sequential IDs/IDOR), `security_headers` (adapts the existing Loop-Mode `scan_http_headers` detector into the customer scorecard), `accessibility` (alt text, aria-label, html lang), `seo_basics` (title/meta description/OG tags/robots.txt/sitemap.xml), `git_hygiene` (.gitignore/README/.env.example), `error_handling` (bare except/empty catch/no React error boundary), `mobile_responsiveness` (viewport meta, media queries), `documentation` (README + setup instructions).
+- **"Launch-ready X / 16" badge**: `frontend/src/pages/CodebaseHealth.jsx` `HealthBadge` now takes a `breakdown` prop and shows "Launch-ready N / 16 categories" (category counts as ready at score≥80 or zero findings) inside the existing 0-100 score card. `CATS` array expanded to 16 entries with real icons/colors/blurbs.
+- **Guardian re-scan** (roadmap.sh "safe fix loop: prove the patch" criterion — the single-rule pre-commit check in `_finding_still_present` already existed for Vanguard-specific rule_ids; this adds a post-commit, full-category re-scan): `routers/fix_pipeline.py` `_guardian_rescan()` runs the matching category's full scanner against the just-committed file content and attaches `guardian_rescan: {category, clean, remaining_in_file}` to the `fix-done` SSE event; `FixProgressDrawer.jsx` shows a green "Guardian re-scan: clean ✓" / yellow "N other issue(s) remain" pill. **Live-tested with a real commit** (`polarisbuiltinc-wq/aurem-e1-livetest`, commit `e36e212`) — caught a real precision bug (4 repo-level categories — git_hygiene/documentation/seo_basics/test_coverage — produced false "issues remain" noise when re-scanned against a single file instead of the whole repo) and fixed it by skipping guardian re-scan for those 4 categories (returns `None`, no pill, honest "no signal" instead of fabricated noise). File-scoped categories (accessibility, security_headers, etc.) verified correct via direct unit calls.
+- **Fix List panel in chat** (`frontend/src/components/FixListPanel.jsx`, new): a collapsible checklist rendered in `ChatPanel.jsx` right after `IdleStartHelper` — visible for the whole chat lifetime (not gated by `isWelcomeOnlyChat`) whenever a project is connected. Reads `GET /findings/fix-list?project_id=...` (new endpoint, `routers/findings.py` — un-gated, real-time, unlike the existing cadence/severity-gated `/backlog` used by the push-notification strip, which is unchanged and still crit/high-only). Fix button calls the same `/fix-pipeline/bulk` + `FixProgressDrawer` the `/codebase-health` page already uses — no parallel fix UI. `services/loop_full_scan.py persist_findings_to_backlog()` severity filter widened from (critical,high) to (critical,high,medium) so the new mostly-medium new categories actually get persisted (additive-only; `/backlog`'s own router-level filter still hard-restricts to critical/high, unaffected); also now stores a `category` field on each finding doc (previously missing).
+- Tested: `testing_agent_v3_fork` (iteration_399.json, 100%/100% pass, 0 critical) + live end-to-end fix with a real GitHub commit confirming the Guardian pill fires correctly, plus `backend/tests/test_2026_10_launch_ready_scorecard.py` (4 passed, 1 skipped). Also found+fixed live: `apply_finding_fix` previously hard-failed with `file_not_found` on any "missing file" finding (git_hygiene/documentation/seo_basics rules ARE a missing file) — narrowly special-cased so those 3 rule-id prefixes treat a 404 as "create this file" instead of erroring.
+
 
 ## Known open items (not fixed by any round above)
 

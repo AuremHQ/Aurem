@@ -806,11 +806,20 @@ async def me(authorization: Optional[str] = Header(None)) -> dict:
     automations_page_enabled = await is_enabled("user_automations_page", user_id=payload["user_id"])
     analytics_page_enabled = await is_enabled("user_analytics_page", user_id=payload["user_id"])
     ship_wall_enabled = await is_enabled("public_ship_wall", user_id=payload["user_id"])
+    # 2026-10 — C4 fix. PrMiniGuide / the pre-ship "What happens next"
+    # card used to unconditionally say "we'll open a pull request",
+    # regardless of this flag's real value — false in production,
+    # where every ship commits straight to the base branch. Same
+    # is_enabled() call that actually gates the ship behavior
+    # (routers/loop.py), so the copy can never drift from reality
+    # again without this value drifting with it.
+    ship_via_pr_enabled = await is_enabled("ship_via_pr", user_id=payload["user_id"])
     return {"ok": True, "user": user or payload, "token": fresh_token,
             "workcard_chip_v2_enabled": chip_v2_enabled,
             "automations_page_enabled": automations_page_enabled,
             "analytics_page_enabled": analytics_page_enabled,
-            "ship_wall_enabled": ship_wall_enabled}
+            "ship_wall_enabled": ship_wall_enabled,
+            "ship_via_pr_enabled": ship_via_pr_enabled}
 
 
 @router.get("/tokens")

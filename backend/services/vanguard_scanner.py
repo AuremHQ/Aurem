@@ -19,6 +19,12 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+# 2026-10 — C3 fix: `snippet` below is the raw matched SOURCE LINE —
+# for a secret-pattern match that line, by definition, contains the
+# actual secret value. Mask it the same way every other
+# ORA-shows-a-secret surface now does (first 2 + last 2 chars).
+from services.secret_masking import redact_secrets_in_text
+
 
 # ─── Secret patterns (Vanguard 007 catalog) ─────────────────────────────
 _SECRET_PATTERN_DEFS = [
@@ -187,7 +193,7 @@ def scan_text(
                         "severity": severity,
                         "filepath": filepath,
                         "line": line_no,
-                        "snippet": line_snippet[:120],
+                        "snippet": redact_secrets_in_text(line_snippet[:120]),
                         "source": "vanguard_007_secrets",
                     })
             continue
@@ -200,7 +206,7 @@ def scan_text(
                     "severity": severity,
                     "filepath": filepath,
                     "line": i,
-                    "snippet": line.strip()[:120],
+                    "snippet": redact_secrets_in_text(line.strip()[:120]),
                     "source": "vanguard_007_secrets",
                 })
                 break

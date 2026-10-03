@@ -207,10 +207,10 @@ export default function PricingCards({ currentTier = "free", compact = false }) 
     }
   }
 
-  async function openPortal() {
+  async function openPortal(flow) {
     setErr("");
     try {
-      const r = await api.post("/payments/portal");
+      const r = await api.post("/payments/portal", flow ? { flow } : {});
       const url = r.data?.portal_url || r.data?.url;
       if (url) window.location.href = url;
     } catch (e) {
@@ -332,14 +332,44 @@ export default function PricingCards({ currentTier = "free", compact = false }) 
               }}>Most popular</div>
             )}
             {isCurrent && (
-              <div data-testid={`pricing-current-${t.id}`} style={{
+              <div style={{
                 position: "absolute", top: 12, right: 12,
-                background: "rgba(109,212,161,0.16)",
-                color: "var(--ok, #6dd4a1)",
-                fontSize: 9, fontWeight: 700, letterSpacing: ".08em",
-                textTransform: "uppercase",
-                padding: "3px 8px", borderRadius: 4,
-              }}>Current</div>
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <div data-testid={`pricing-current-${t.id}`} style={{
+                  background: "rgba(109,212,161,0.16)",
+                  color: "var(--ok, #6dd4a1)",
+                  fontSize: 9, fontWeight: 700, letterSpacing: ".08em",
+                  textTransform: "uppercase",
+                  padding: "3px 8px", borderRadius: 4,
+                }}>Current</div>
+                {/* 2026-10 — founder ask: the Current chip had no
+                    direct cancel affordance, only the generic
+                    "Manage billing" CTA buried at the bottom of the
+                    card. Opens Stripe's own hosted cancellation
+                    screen directly (flow=cancel) — we never cancel
+                    the subscription ourselves, Stripe stays the
+                    source of truth. Paid plans only (nothing to
+                    cancel on Free). */}
+                {t.paid && (
+                  <button
+                    type="button"
+                    data-testid={`pricing-cancel-${t.id}`}
+                    onClick={() => openPortal("cancel")}
+                    title="Cancel this plan"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--text-faint)",
+                      fontSize: 9, fontWeight: 600, letterSpacing: ".06em",
+                      textTransform: "uppercase",
+                      cursor: "pointer", padding: 0,
+                      textDecoration: "underline",
+                      textDecorationColor: "rgba(255,255,255,0.25)",
+                    }}
+                  >Cancel</button>
+                )}
+              </div>
             )}
 
             <div style={{

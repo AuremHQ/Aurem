@@ -1015,3 +1015,18 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `services/user_response_sanitizer.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-09-28T06:21:04.172326Z] <!-- inv:service:services/user_response_sanitizer.py -->
 | `routers/admin_funnel.py` | `/admin` | 1 | auto-detected new router (verify) (Iter 0, 2026-09-28T17:28:42.827581Z) | <!-- inv:router:routers/admin_funnel.py -->
 - `BASE_URL` — auto-detected in backend/tests/test_activation_part3_guided_first_task.py (verify) (default: unset) [Iter 0, 2026-09-28T17:28:42.827638Z] <!-- inv:envvar:BASE_URL -->
+
+### Iter 0 · 2026-09-30
+
+- `GRAPH_FILE_READ_BUDGET_S` — auto-detected in backend/services/graph_builder.py (verify) (default: unset) [Iter 0, 2026-09-30T18:02:12.165597Z] <!-- inv:envvar:GRAPH_FILE_READ_BUDGET_S -->
+- `GRAPH_BUILD_TIMEOUT_S` — auto-detected in backend/services/graph_builder.py (verify) (default: unset) [Iter 0, 2026-09-30T18:02:12.165628Z] <!-- inv:envvar:GRAPH_BUILD_TIMEOUT_S -->
+
+### Iter 0 · 2026-10-01
+
+- `services/codebase_health_extra.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-01T23:32:00.299148Z] <!-- inv:service:services/codebase_health_extra.py -->
+
+### Iter 0 · 2026-10-02
+
+- `SOME_KEY` — auto-detected in backend/services/secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224478Z] <!-- inv:envvar:SOME_KEY -->
+- `KEY` — auto-detected in backend/services/secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224504Z] <!-- inv:envvar:KEY -->
+- `API_KEY` — auto-detected in backend/tests/test_2026_10_c3_secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224543Z] <!-- inv:envvar:API_KEY -->

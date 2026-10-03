@@ -57,6 +57,42 @@ def retrieved_context_for_grounding(extra_sys: str | None, result: dict | None) 
     return "\n".join(parts)
 
 
+# 2026-10 — C1 fix. `retrieved_context_for_grounding` above only ever
+# folded in THIS TURN's tool-call results — for a short, casual
+# follow-up ("?", "continue") with no new tool call, that context is
+# empty, so a security-finding or CVE claim in the reply had nothing
+# to be checked against (the two existing guards below,
+# `apply_fabricated_content_guard`/`apply_live_content_claim_guard`,
+# are scoped to file-content-quote and live-site claims respectively
+# — neither one recognizes a "finding" or "CVE" shaped claim at all).
+# Founder repro: casual mode invents specific CVE IDs / vulnerability
+# descriptions that were never in any real scan. Fix: fold the
+# project's actual STORED scan findings (cto_open_findings) into the
+# grounding text too, so "a finding may be stated only if it comes
+# from a stored scan record or a file read this same turn" is an
+# actual substring check, not just a prompt instruction.
+async def scan_findings_context_for_grounding(project_id: str | None) -> str:
+    if not project_id:
+        return ""
+    try:
+        db = get_db()
+        cursor = db.cto_open_findings.find(
+            {"project_id": project_id},
+            {"_id": 0, "title": 1, "message": 1, "rule_id": 1, "file": 1, "line": 1},
+        ).limit(200)
+        rows = await cursor.to_list(length=200)
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning("scan_findings_context_for_grounding: db read failed: %r", e)
+        return ""
+    parts: list[str] = []
+    for r in rows:
+        parts.append(
+            f"{r.get('title','')} | {r.get('rule_id','')} | "
+            f"{r.get('file','')}:{r.get('line','')} | {r.get('message','')}"
+        )
+    return "\n".join(parts)
+
+
 # 2026-02 — Gap 1 fix (see apply_output_guards' own comment below for
 # full context): fire-and-forget self_bug.emit(), since
 # apply_output_guards is sync and must not force its 2 production
@@ -157,6 +193,14 @@ def apply_output_guards(
     except Exception as e:                                # noqa: BLE001
         logger.debug("live_content_claim guard skipped: %r", e)
     try:
+        from services.ora_chat.grounding_check import apply_ungrounded_security_finding_guard
+        before = content
+        content = apply_ungrounded_security_finding_guard(content, retrieved_context)
+        if content != before:
+            _fire_self_bug("tool_error", before[:300], ctx, source="ungrounded_security_finding_guard")
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("ungrounded_security_finding guard skipped: %r", e)
+    try:
         from services.internal_directive_guard import strip_leaked_tool_directives
         before = content
         content = strip_leaked_tool_directives(content)
@@ -164,6 +208,16 @@ def apply_output_guards(
             _fire_self_bug("tool_error", before[:300], ctx, source="internal_directive_guard")
     except Exception as e:                                # noqa: BLE001
         logger.debug("internal_directive guard skipped: %r", e)
+    # 2026-10 — C3 fix: runs LAST so it masks whatever every guard
+    # above produced — covers chat answers (this is the return value
+    # every caller sends to the client) AND stored chat history going
+    # forward (both turn.py/stream.py persist THIS function's return
+    # value, not the pre-guard raw model output).
+    try:
+        from services.secret_masking import redact_secrets_in_text
+        content = redact_secrets_in_text(content)
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("secret_masking guard skipped: %r", e)
     return content
 
 

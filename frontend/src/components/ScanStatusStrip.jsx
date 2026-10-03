@@ -326,6 +326,12 @@ function StripShell({ tone, icon, label, cta, onDismiss, ...rest }) {
         "flex items-center gap-2 rounded-md border px-3 py-1.5 " +
         "text-[11px] " + toneCls
       }
+      // 2026-10 · width-rail fix — match the composer's own
+      // `padding: 14px clamp(16px, 17.25%, 240px)` so this strip sits
+      // on the same left/right edges as the chat input (same pattern
+      // WorkCard below already uses) instead of spanning full
+      // edge-to-edge chat-pane width.
+      style={{ margin: "0 var(--chat-rail-x)" }}
       role="status"
       aria-live="polite"
       {...rest}

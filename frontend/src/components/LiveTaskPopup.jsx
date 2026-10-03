@@ -294,9 +294,17 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
         // 2026-08-30 — once the user drags/resizes, `geom` (persisted)
         // takes over with an explicit left/top/width/height; until
         // then it keeps the original bottom-left-anchored default.
+        // 2026-10 — "ORA working/done" must never sit on top of the
+        // rail's 56px icon column: `left: 24` is relative to the
+        // viewport (position: fixed), not to the chat column as the
+        // comment above assumed, so it used to land UNDER the rail's
+        // 0–56px strip whenever the rail was visible — and this
+        // popup's z-index (7500) is well above the rail's (1200), so
+        // it silently covered the AUTO/logout icons. 64 = 56 (rail
+        // width) + 8 (gutter), clearing the rail in every state.
         ...(geom
           ? { left: geom.left, top: geom.top, width: geom.width, height: geom.height, maxHeight: "none" }
-          : { left: 24, bottom: 96, width: "min(380px, calc(100vw - 48px))", maxHeight: "60vh" }),
+          : { left: 64, bottom: 96, width: "min(380px, calc(100vw - 48px))", maxHeight: "60vh" }),
         minHeight: 80,
         background: "rgba(10, 12, 20, 0.72)",
         backdropFilter: "blur(12px)",

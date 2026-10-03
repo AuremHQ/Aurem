@@ -10,6 +10,7 @@ let _flags = {
   automations: false,
   analytics: false,
   wall: false,
+  shipViaPr: false,
 };
 
 export function setPageFlags(meResponseData) {
@@ -17,6 +18,7 @@ export function setPageFlags(meResponseData) {
     automations: meResponseData?.automations_page_enabled === true,
     analytics: meResponseData?.analytics_page_enabled === true,
     wall: meResponseData?.ship_wall_enabled === true,
+    shipViaPr: meResponseData?.ship_via_pr_enabled === true,
   };
 }
 
@@ -30,4 +32,14 @@ export function isAnalyticsPageEnabled() {
 
 export function isShipWallEnabled() {
   return _flags.wall;
+}
+
+// 2026-10 — C4 fix: the ONLY source of truth PrMiniGuide (and
+// anything else describing pre-ship behavior) should read. Comes
+// straight from /auth/me's `ship_via_pr_enabled`, itself the same
+// is_enabled("ship_via_pr", ...) call that gates the real ship path
+// — so this can never say something different from what will
+// actually happen.
+export function isShipViaPrEnabled() {
+  return _flags.shipViaPr;
 }

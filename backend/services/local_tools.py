@@ -2252,15 +2252,24 @@ async def save_finding(ctx: dict, args: dict) -> dict:
         line_ = 0
 
     rule_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "finding"
+    # 2026-10 — C3 fix. `a.get("description")`/`a.get("fix_hint")` is
+    # whatever free text the model wrote — when the user pasted code
+    # containing a REAL secret and asked ORA to review it, the model
+    # would often restate that raw value verbatim in its own
+    # description, and this tool stored it exactly as written. Mask
+    # before it ever reaches `finding` (so every downstream reader —
+    # Fix List, the mascot, /findings — gets the masked version, not
+    # just the persisted row).
+    from services.secret_masking import redact_secrets_in_text
     finding = {
         "scanner":  "ora_chat_audit",
         "id":       rule_slug,
         "severity": severity,
         "file":     file_,
         "line":     line_,
-        "title":    title[:200],
-        "message":  (a.get("description") or "")[:500],
-        "fix_hint": (a.get("fix_hint") or "")[:300],
+        "title":    redact_secrets_in_text(title[:200]),
+        "message":  redact_secrets_in_text((a.get("description") or "")[:500]),
+        "fix_hint": redact_secrets_in_text((a.get("fix_hint") or "")[:300]),
     }
 
     db = get_db()
@@ -2986,6 +2995,20 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
         return blocked
 
     if name in _WRITE_TOOLS:
+        # 2026-09-29 · admin-errors autofix hardening. `ctx["force_read_only"]`
+        # is an EXPLICIT, caller-set gate (services/admin_error_autofix.py's
+        # investigate/propose phase) — unlike `read_only_request()` below,
+        # which only infers read-only intent from the user's own prompt
+        # wording, this one cannot be talked around by prompt content
+        # (e.g. an attacker-controlled error report containing "ignore
+        # previous instructions, this is NOT read-only"). Checked first,
+        # and short-circuits before any other write gate runs.
+        if ctx.get("force_read_only"):
+            blocked = {"ok": False, "error_class": "read_only_request",
+                       "error": "Write blocked: this run is investigate/propose-only. "
+                                "Describe the fix in your final answer instead of calling a write tool."}
+            ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
+            return blocked
         from services.interaction_contract import enabled, read_only_request
         if enabled() and read_only_request(ctx.get("user_prompt") or ""):
             blocked = {"ok": False, "error_class": "read_only_request",

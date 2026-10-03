@@ -80,7 +80,17 @@ async def persist_findings_to_backlog(
     count = 0
     for f in findings:
         sev = (f.get("severity") or "").lower()
-        if sev not in ("critical", "high"):
+        # 2026-10 — widened critical/high -> critical/high/medium so
+        # the new in-chat "Fix List" panel (routers/findings.py
+        # GET /fix-list, reads this same collection, no severity
+        # filter) has real coverage of the 9 new "Launch-ready X/16"
+        # categories (services/codebase_health_extra.py), most of
+        # which are medium severity by design (accessibility, SEO,
+        # git hygiene, docs...). The notification-STRIP read path
+        # (GET /backlog above) still hard-filters to critical/high
+        # only, unchanged — this widening only feeds the on-demand
+        # Fix List, never the push-notification cadence.
+        if sev not in ("critical", "high", "medium"):
             continue
         # Stable, deterministic finding id — same rule on same file+line
         # collapses to one row even across scanner boundaries.
@@ -122,6 +132,7 @@ async def persist_findings_to_backlog(
                     "$set": {
                         "scanner":         f.get("scanner"),
                         "rule_id":         rule,
+                        "category":        f.get("category") or "",
                         "severity":        sev,
                         "file":            file_,
                         "line":            line_,

@@ -27,6 +27,7 @@ def test_estimate_tokens_basic():
     ("claude-sonnet-openrouter", "anthropic/claude-sonnet-4.5"),
     ("claude-sonnet-maxx-direct", "anthropic/claude-sonnet-4.5"),
     ("glm-5.2+claude-review", "z-ai/glm-5.2"),
+    ("glm-5.2+glm-review", "z-ai/glm-5.3"),
     ("glm-5.2-no-review", "z-ai/glm-5.2"),
     ("longcat-2.0", "deepseek/deepseek-chat"),
     ("deepseek", "deepseek/deepseek-chat"),

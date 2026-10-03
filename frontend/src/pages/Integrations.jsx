@@ -210,6 +210,8 @@ export default function Integrations() {
 
 function ApiKeyCard({ apiKey, isNew, endpoint, onCopy, onTestConnection, testResult }) {
   const [reveal, setReveal] = useState(isNew);
+  // 2026-10 · redesign — copy button flips to a checkmark for 1.5s.
+  const [copied, setCopied] = useState(false);
   const masked = apiKey ? `${apiKey.slice(0, 14)}…${apiKey.slice(-4)}` : "";
   return (
     <div data-testid="api-key-card" style={styles.card}>
@@ -236,9 +238,11 @@ function ApiKeyCard({ apiKey, isNew, endpoint, onCopy, onTestConnection, testRes
         <button onClick={() => setReveal(v => !v)}
           data-testid="api-key-reveal-btn"
           style={styles.miniBtn}>{reveal ? "Hide" : "Reveal"}</button>
-        <button onClick={() => onCopy(apiKey, "API key")}
+        <button onClick={() => { onCopy(apiKey, "API key"); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
           data-testid="api-key-copy-btn"
-          style={styles.miniBtnPrimary}>Copy</button>
+          style={copied ? { ...styles.miniBtnPrimary, background: "#22c55e", borderColor: "#22c55e" } : styles.miniBtnPrimary}>
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
       </div>
       <p style={styles.endpointLine}>
         Endpoint:&nbsp;
@@ -326,6 +330,8 @@ function ClaudeDesktopTab({ data, onCopy }) {
     () => JSON.stringify(data.config_json, null, 2),
     [data.config_json]
   );
+  // 2026-10 · redesign — copy button flips to a checkmark for 1.5s.
+  const [copied, setCopied] = useState(false);
   return (
     <div data-testid="claude-desktop-tab-content">
       <Step n={1} title="Open your Claude Desktop config">
@@ -344,9 +350,9 @@ function ClaudeDesktopTab({ data, onCopy }) {
           apiKey={data.api_key}
           testid="claude-desktop-config-json" />
         <button data-testid="claude-desktop-copy-config"
-          onClick={() => onCopy(configStr, "Claude Desktop config")}
-          style={{ ...styles.primaryBtn, marginTop: 8 }}>
-          Copy full config
+          onClick={() => { onCopy(configStr, "Claude Desktop config"); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          style={{ ...styles.primaryBtn, marginTop: 8, ...(copied ? { background: "#22c55e", borderColor: "#22c55e" } : {}) }}>
+          {copied ? "✓ Copied" : "Copy full config"}
         </button>
       </Step>
       <Step n={3} title="Restart Claude Desktop">
@@ -360,6 +366,8 @@ function ClaudeDesktopTab({ data, onCopy }) {
 }
 
 function ClaudeCodeTab({ data, onCopy }) {
+  // 2026-10 · redesign — copy link flips to a checkmark for 1.5s.
+  const [copied, setCopied] = useState(false);
   return (
     <div data-testid="claude-code-tab-content">
       <Step n={1} title="Install Claude Code CLI">
@@ -367,8 +375,8 @@ function ClaudeCodeTab({ data, onCopy }) {
           npm install -g @anthropic-ai/claude-code
         </code>
         <button
-          onClick={() => onCopy("npm install -g @anthropic-ai/claude-code", "Install cmd")}
-          style={styles.linkBtn}>copy</button>
+          onClick={() => { onCopy("npm install -g @anthropic-ai/claude-code", "Install cmd"); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          style={copied ? { ...styles.linkBtn, color: "#4ade80" } : styles.linkBtn}>{copied ? "✓ copied" : "copy"}</button>
       </Step>
       <Step n={2} title="Add ORA as an MCP server">
         <MaskedCommand command={data.claude_code_cli} apiKey={data.api_key}
@@ -403,6 +411,8 @@ function ConfigBlock({ json, onCopy, testid, apiKey }) {
   const [reveal, setReveal] = useState(false);
   // Overnight T6/P1e (2026-08-28) — themed confirm, not window.confirm().
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // 2026-10 · redesign — copy button flips to a checkmark for 1.5s.
+  const [copied, setCopied] = useState(false);
   const str = JSON.stringify(json, null, 2);
   const masked = apiKey ? `${apiKey.slice(0, 14)}…${apiKey.slice(-4)}` : "";
   const display = (!apiKey || reveal) ? str : str.split(apiKey).join(masked);
@@ -432,9 +442,9 @@ function ConfigBlock({ json, onCopy, testid, apiKey }) {
           </button>
         )}
         <button
-          onClick={() => onCopy(str, "Config JSON")}
-          style={styles.miniBtn}>
-          Copy
+          onClick={() => { onCopy(str, "Config JSON"); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          style={copied ? { ...styles.miniBtn, color: "#4ade80", borderColor: "rgba(34,197,94,0.45)" } : styles.miniBtn}>
+          {copied ? "✓ Copied" : "Copy"}
         </button>
       </div>
     </div>
@@ -448,6 +458,8 @@ function MaskedCommand({ command, apiKey, onCopy, copyLabel, testid }) {
   // doesn't apply — this is the string equivalent).
   const [reveal, setReveal] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // 2026-10 · redesign — copy button flips to a checkmark for 1.5s.
+  const [copied, setCopied] = useState(false);
   const masked = apiKey ? `${apiKey.slice(0, 14)}…${apiKey.slice(-4)}` : "";
   const display = (!apiKey || reveal) ? command : command.split(apiKey).join(masked);
   const toggleReveal = () => {
@@ -474,9 +486,9 @@ function MaskedCommand({ command, apiKey, onCopy, copyLabel, testid }) {
           {reveal ? "Hide key" : "Reveal key"}
         </button>
         <button data-testid={`${testid}-copy`}
-          onClick={() => onCopy(command, copyLabel)}
-          style={styles.miniBtn}>
-          Copy
+          onClick={() => { onCopy(command, copyLabel); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          style={copied ? { ...styles.miniBtn, color: "#4ade80", borderColor: "rgba(34,197,94,0.45)" } : styles.miniBtn}>
+          {copied ? "✓ Copied" : "Copy"}
         </button>
       </div>
     </div>

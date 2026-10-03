@@ -292,9 +292,25 @@ async def apply_finding_fix(
 
     # Step 1: fetch current file content
     content, fetch_err = await _fetch_file_content(owner, repo, branch, path, token)
+    # 2026-10 — a handful of the new "Launch-ready" scorecard rules
+    # (services/codebase_health_extra.py: git_hygiene, documentation,
+    # seo_basics) ARE the absence of a file — `.gitignore`/`README.md`/
+    # `.env.example`/`robots.txt`/`sitemap.xml` missing entirely is the
+    # finding itself, not damage to an existing file. A 404 there means
+    # "create this file", not a real error — narrowly scoped to those
+    # three rule-id prefixes so every other category's 404 (a file that
+    # vanished unexpectedly) still correctly hard-fails below.
+    rule_id = finding.get("rule_id") or finding.get("id") or ""
+    is_missing_file_rule = (
+        fetch_err == "file_not_found"
+        and rule_id.split("::", 1)[0] in ("git", "docs", "seo")
+        and ":missing" in rule_id
+    )
+    if is_missing_file_rule:
+        content, fetch_err = "", None
     if fetch_err:
         return {"ok": False, "error": fetch_err, "file": path}
-    if not content:
+    if not content and not is_missing_file_rule:
         return {"ok": False, "error": "file_empty_or_missing", "file": path}
 
     # Step 2: LLM patch (with Phase-2 recall — past successful fixes

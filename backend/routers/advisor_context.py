@@ -167,21 +167,18 @@ async def get_advisor_context(
         except Exception as e:
             deploy_sync["error"] = str(e)[:80]
 
-    # ── 4. Quota — ALLOWLIST projection (no api_key, no secrets) ─
-    quota = {"tokens_used": None, "tokens_limit": None, "period": None, "error": None}
-    try:
-        q = await db["dev_user_quota"].find_one(
-            {"user_id": user_id},
-            projection={"_id": 0, "tokens_used": 1, "tokens_limit": 1,
-                        "monthly_limit": 1, "period": 1, "month": 1},
-            max_time_ms=1500,
-        )
-        if q:
-            quota["tokens_used"] = q.get("tokens_used")
-            quota["tokens_limit"] = q.get("tokens_limit") or q.get("monthly_limit")
-            quota["period"] = q.get("period") or q.get("month")
-    except Exception as e:
-        quota["error"] = str(e)[:80]
+    # ── 4. Quota — REMOVED 2026-10 (C5). This read `dev_user_quota`,
+    # a collection nothing in the codebase ever WRITES to — confirmed
+    # by grep: zero `insert_one`/`update_one` calls against it
+    # anywhere. It always returned None/None, silently, and the
+    # Advisor UI showed it as a real "Tokens: X/Y" figure next to the
+    # ACTUAL plan-usage number from `/usage/me` — two numbers that
+    # looked like the same metric but one was permanently dead. Per
+    # founder's C5 decision, the single real usage source is the
+    # monthly TASK count (services/usage.py); this dead second read
+    # is deleted outright, not fixed, since nothing should replace it
+    # here — the Advisor should just use the one real source if it
+    # ever needs usage context again.
 
     # ── 5. Recent tasks (Iter 388j · Bug 3 fix) ─────────────────
     # Advisor previously had ZERO run-state data — so "Diagnose failed
@@ -283,7 +280,7 @@ async def get_advisor_context(
         "project_name": proj_name,
         "role":         "founder" if is_founder else "user",
         "findings":     findings,
-        "quota":        quota,
+        "quota":        None,
         # Iter 388j — three new blocks for the Advisor chip buttons.
         # Each block carries an `error` field so the LLM can honestly
         # say "yeh data abhi available nahi hai" when a source is
