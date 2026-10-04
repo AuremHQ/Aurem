@@ -24,7 +24,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from services.rate_limiter import (
-    client_ip_from_request, client_ip_trusted_from_request,
+    _LOG_SANITIZE_MAX_LEN, _sanitize_for_log, client_ip_from_request,
+    client_ip_trusted_from_request,
 )
 
 
@@ -84,9 +85,60 @@ def test_trusted_value_falls_back_gracefully_with_no_xff_header():
 
 
 def test_trusted_value_falls_back_when_chain_shorter_than_expected():
-    """Fewer hops than the expected trusted-hop-count (e.g. an
-    internal call that skipped part of the edge chain) must not
-    crash or return an empty string — best-effort fallback to the
-    first entry, same shape as the naive function."""
-    req = _fake_request(xff="10.1.1.1")  # only 1 hop, expected >= 3
-    assert client_ip_trusted_from_request(req) == "10.1.1.1"
+    """FIX from this turn: with 0, 1, or 2 X-Forwarded-For entries
+    (fewer than _TRUSTED_HOP_COUNT=2 requires to trust any position),
+    the header cannot be trusted AT ALL — every entry in it could be
+    caller-supplied. Must fall back to the raw SOCKET PEER address,
+    never to anything the caller put in the header."""
+    socket_host = "10.255.255.1"  # the pod's own internal peer IP, never attacker-reachable
+
+    # 0 entries — header missing entirely.
+    req0 = _fake_request(xff=None, socket_host=socket_host)
+    assert client_ip_trusted_from_request(req0) == socket_host
+
+    # 1 entry — a caller could have supplied this value outright.
+    req1 = _fake_request(xff="9.9.9.9", socket_host=socket_host)
+    trusted1 = client_ip_trusted_from_request(req1)
+    assert trusted1 == socket_host, (
+        f"expected fallback to socket peer {socket_host!r} with only "
+        f"1 XFF entry, got {trusted1!r} (would have been attacker-"
+        f"controlled if this fell back to the header instead)")
+
+    # 2 entries — still not enough to trust (need > _TRUSTED_HOP_COUNT=2).
+    req2 = _fake_request(xff="9.9.9.9, 8.8.8.8", socket_host=socket_host)
+    trusted2 = client_ip_trusted_from_request(req2)
+    assert trusted2 == socket_host, (
+        f"expected fallback to socket peer {socket_host!r} with only "
+        f"2 XFF entries, got {trusted2!r}")
+
+
+def test_log_sanitizer_strips_control_characters_and_caps_length():
+    """FIX from this turn: ip_naive is fully caller-controlled (that's
+    the whole documented gap). A crafted X-Forwarded-For value must
+    not be able to inject fake extra log lines (via \\n/\\r) or blow
+    up log size."""
+    malicious = "1.2.3.4\nFAKE LOG LINE: admin_login_success user=attacker\r\nmore evil"
+    cleaned = _sanitize_for_log(malicious)
+    assert "\n" not in cleaned and "\r" not in cleaned
+    assert cleaned == "1.2.3.4FAKE LOG LINE: admin_login_success user=attackermore evil"[:_LOG_SANITIZE_MAX_LEN]
+
+    huge = "9" * 10_000
+    assert len(_sanitize_for_log(huge)) == _LOG_SANITIZE_MAX_LEN
+
+    other_control_chars = "1.2.3.4\x00\x07\x1b[31mred\x7f"
+    cleaned2 = _sanitize_for_log(other_control_chars)
+    assert all(ord(c) >= 0x20 and ord(c) != 0x7f for c in cleaned2)
+
+
+def test_client_ip_from_request_logs_sanitized_values(caplog):
+    """End-to-end: client_ip_from_request() itself must not emit a
+    raw, un-sanitized caller-controlled value into the log record."""
+    import logging as _logging
+    malicious_chain = "1.2.3.4\nINJECTED LINE,35.193.209.116,104.22.62.82,34.160.159.238"
+    req = _fake_request(xff=malicious_chain)
+    with caplog.at_level(_logging.INFO, logger="services.rate_limiter"):
+        client_ip_from_request(req)
+    logged_text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "\nINJECTED LINE" not in logged_text, (
+        "a crafted header value reached the log as a literal newline "
+        "— log injection not actually prevented")

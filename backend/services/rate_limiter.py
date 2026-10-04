@@ -26,6 +26,7 @@ Suspended when env RATE_LIMIT_DISABLED=1 (tests).
 from __future__ import annotations
 import logging
 import os
+import re
 import time
 import uuid
 from collections import deque, defaultdict
@@ -71,6 +72,19 @@ def check_rate_limit(key: str, limit_per_minute: int) -> bool:
     return True
 
 
+_LOG_SANITIZE_MAX_LEN = 100
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_for_log(value: str) -> str:
+    """A caller fully controls `ip_naive` (that's the documented gap
+    this whole fix is about) — strip control characters (incl.
+    \\n/\\r, which could forge a fake extra log line) and cap length
+    before any caller-supplied value reaches a log call."""
+    cleaned = _CONTROL_CHARS_RE.sub("", value or "")
+    return cleaned[:_LOG_SANITIZE_MAX_LEN]
+
+
 def client_ip_from_request(request) -> str:
     """Extract the real client IP, honoring X-Forwarded-For when set by
     the K8s ingress.
@@ -93,7 +107,7 @@ def client_ip_from_request(request) -> str:
         logger.info(
             "rate_limiter: ip_naive=%s ip_trusted=%s (side-by-side diagnostic, "
             "FIX 2 step 2a — no behavior change, still keying on ip_naive)",
-            naive, trusted)
+            _sanitize_for_log(naive), _sanitize_for_log(trusted))
     except Exception:                                          # noqa: BLE001
         pass  # diagnostic-only; must never break the actual rate-limit path
     return naive
@@ -116,6 +130,14 @@ def client_ip_trusted_from_request(request) -> str:
     caller cannot influence — instead of the first (attacker-settable)
     entry that `client_ip_from_request()` uses.
 
+    A chain with fewer entries than `_TRUSTED_HOP_COUNT` cannot be
+    trusted AT ALL — every entry in it could be caller-supplied, since
+    our own edge hasn't appended enough of its own hops yet to push
+    any trustworthy value into a fixed position. In that case (and
+    when the header is missing entirely, e.g. an internal call that
+    goes straight to localhost) this falls back to the raw socket
+    peer address, NEVER to anything read from the header.
+
     NOT wired into any rate-limit caller yet (that's step 2b). Used
     this turn only for the side-by-side log above and the admin-only
     diagnostic endpoint.
@@ -124,11 +146,6 @@ def client_ip_trusted_from_request(request) -> str:
     chain = [p.strip() for p in fwd_raw.split(",") if p.strip()]
     if len(chain) > _TRUSTED_HOP_COUNT:
         return chain[-(_TRUSTED_HOP_COUNT + 1)]
-    if chain:
-        # Fewer hops recorded than expected (e.g. a direct/internal
-        # call that never passed through the full edge chain) — best
-        # effort, same fallback shape as the naive function.
-        return chain[0]
     return getattr(request.client, "host", "unknown") or "unknown"
 
 
