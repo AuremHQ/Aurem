@@ -58,7 +58,7 @@ RUN printf 'server {\n\
   # gets a real 404. Prerendered static dirs (about/, contact/,\n\
   # privacy/, vs/*, compare/) are matched by try_files BEFORE this\n\
   # regex even runs, so they keep serving their own real files.\n\
-  location ~ ^/(both|why-ora|demo|login|signup|reset-password|verify|support|dashboard|ora|build|integrations|deploy|domain|settings|profile|tokens|analytics|projects|admin|tools|feature-window|codebase-health|health|bug-hunt|sidebar-preview|dashboard-preview-v2|privacy|terms|acceptable-use|cookie-policy|cookie-preferences|refund-policy|ai-code-processing|subprocessors|dpa|security|status|policies|wall|wrapped|automations|oauth-finish|magic-login|vs|pricing|compare|dev|about|contact|developers|team)(/|$) {\n\
+  location ~ ^/(both|why-ora|demo|login|signup|reset-password|verify|support|dashboard|ora|build|integrations|deploy|domain|settings|profile|tokens|analytics|projects|admin|tools|feature-window|codebase-health|health|bug-hunt|sidebar-preview|dashboard-preview-v2|privacy|terms|acceptable-use|cookie-policy|cookie-preferences|refund-policy|ai-code-processing|subprocessors|dpa|security|status|policies|wall|wrapped|automations|oauth-finish|magic-login|vs|pricing|compare|dev|about|contact|developers|team|team-invite)(/|$) {\n\
     try_files $uri $uri/ /index.html;\n\
   }\n\
   location / {\n\

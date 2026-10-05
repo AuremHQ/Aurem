@@ -8,7 +8,7 @@
  * account Admin Team access. A SEPARATE feature from the existing
  * workspace Team's /team/accept-invite (AcceptInvite.jsx) — untouched.
  */
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { UserPlus, ShieldAlert, CheckCircle2 } from "lucide-react";
 import { api, getUser } from "../lib/api";
@@ -17,11 +17,21 @@ export default function TeamInviteAccept() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get("token") || "";
-  const me = getUser();
+  const [me, setMe] = useState(getUser());
 
   const [status, setStatus] = useState("idle"); // idle | busy | done | error
   const [error, setError] = useState("");
   const [role, setRole] = useState("");
+
+  useEffect(() => {
+    // Self-heal if the cached user object is missing/stale (e.g. a
+    // bookmarked invite link opened long after the last login) — the
+    // bearer token itself still works via PrivateRoute, we just need
+    // the email to show in the copy.
+    if (!me?.email) {
+      api.get("/auth/me").then((r) => setMe(r.data?.user)).catch(() => {});
+    }
+  }, [me]);
 
   async function accept() {
     setStatus("busy"); setError("");

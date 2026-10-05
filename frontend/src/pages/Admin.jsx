@@ -10,7 +10,7 @@ import {
   Cpu, CreditCard, Network as SitemapIcon, Settings as SettingsIcon,
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
-  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell,
+  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell, UserPlus,
 } from "lucide-react";
 import { api } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -2303,6 +2303,7 @@ const NAV = buildGroupedAdminNav({
   suggestions: MessageCircle,   // Iter 212m-193
   self_bugs: Bug,               // Item 3 (2026-08-31)
   audit: ShieldAlert,
+  team: UserPlus,
   feature_flags: Zap,
   house_rules: ShieldCheck,
   robot_guide: MessageCircle,

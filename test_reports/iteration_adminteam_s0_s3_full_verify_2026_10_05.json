@@ -1,0 +1,44 @@
+{
+  "summary": "Full S0-S3 Admin Team feature verification. Backend: 25/25 regression pytests pass (S0 allowlist 2, S2 enforcement 16, S3 invites 7). Curl E2E on Preview covered S0 secret-field exclusion, S3 owner-only team mgmt (members/invites/screens), invite creation + copy-link rotation + cancel, correct/wrong-email accept guards, non-admin 403 on /admin/team/members. Frontend UI E2E on Preview covered Admin Team page render (members table, invites table), Invite dialog -> token reveal (shown once), Overrides dialog save, Suspend/Resume, TeamInviteAccept page prompt -> success -> error-on-reaccept, and that the invitee's session token is unchanged after accept. Hit and FIXED two real blocking bugs during testing — see action_items.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Admin.jsx NAV iconMap (line ~2305)", "issue": "The 'team' nav entry added in adminNav.js has NO icon mapping in buildGroupedAdminNav({...}) in Admin.jsx. Icon is undefined, which crashes the ENTIRE Admin sidebar/panel with 'React.jsx: type is invalid' for every admin route (not just /admin/team) — RouteErrorBoundary catches it and shows 'Something went wrong loading this page.' I patched it in-place with `team: Users,` so I could continue testing. Main agent should pick a dedicated icon (e.g. UsersRound / UserPlus) if they want it visually distinct from the existing 'users' entry.", "selector": "/app/frontend/src/pages/Admin.jsx line ~2305 (iconMap passed to buildGroupedAdminNav)", "priority": "CRITICAL"},
+      {"component": "SPA route allowlist for /team-invite/*", "issue": "The new /team-invite/accept route defined in App.jsx is REJECTED by the SPA 404 guards: (1) vite-plugins/aurem-prod-fixes.mjs's KNOWN_PREFIXES Set, and (2) frontend/Dockerfile's matching nginx location regex (prod). Browsers hitting /team-invite/accept?token=... got a server-rendered 'Page not found' 404 — meaning the whole invite accept flow was unreachable from a browser even though backend + App.jsx route both worked. I added 'team-invite' to BOTH the Set and the nginx regex so dev + prod paths now both pass through to the SPA. Verified live via curl (200) and full browser E2E. Please keep these two lists in lockstep in future route adds (comment in the file already warns about this).", "selector": "/app/frontend/vite-plugins/aurem-prod-fixes.mjs KNOWN_PREFIXES + /app/frontend/Dockerfile nginx location regex", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "TeamInviteAccept prompt + success states", "issues": ["Minor cosmetic: in my test setup where I only injected the token into localStorage without the companion user object, the prompt rendered 'You're signed in as .' (empty email) and the success rendered 'signed in as .' — not reproducible in a real logged-in flow where getUser() returns the cached object. Not blocking, but consider falling back to GET /auth/me if the local user object is missing, so the page is self-healing when someone bookmarks the invite link and the cached user state has expired."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_regression_iter_adminteam_s0_allowlist.py",
+    "/app/backend/tests/test_regression_iter_adminteam_s2_enforcement.py",
+    "/app/backend/tests/test_regression_iter_adminteam_s3_invites.py",
+    "/app/test_reports/pytest/adminteam_results.xml",
+    "/app/test_reports/screenshots/s3_team_ok.png",
+    "/app/test_reports/screenshots/invite_accept_success2.png",
+    "/app/test_reports/screenshots/overrides_done.png"
+  ],
+  "action_items": [
+    "APPROVE / REPLACE my `team: Users,` icon stub in Admin.jsx NAV iconMap (currently just reuses the 'users' icon so the sidebar doesn't crash). Consider lucide-react `UsersRound` or `UserPlus` for visual distinction.",
+    "APPROVE my 'team-invite' additions to vite-plugins/aurem-prod-fixes.mjs KNOWN_PREFIXES and frontend/Dockerfile nginx regex. Without them the entire /team-invite/accept flow is a hard 404 in the browser.",
+    "OPTIONAL: TeamInviteAccept.jsx — fall back to GET /auth/me when getUser() lacks .email so the prompt/success copy never renders 'signed in as .' (empty)."
+  ],
+  "critical_code_review_comments": [
+    "Dockerfile nginx-regex + vite-plugin KNOWN_PREFIXES double-maintenance pattern is a known footgun (comment in the vite plugin literally says 'keep both lists in sync when routes are added/removed in src/App.jsx' and that was missed here). Consider extracting to a single JSON source read by both.",
+    "Admin.jsx buildGroupedAdminNav({...}) silently returns Icon=undefined for an unknown id instead of throwing — that's why a one-line omission in adminNav.js took out the entire admin panel. Suggest asserting iconMap[id] exists at build time, or defaulting to a safe fallback icon."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Admin.jsx (added `team: Users,` to NAV iconMap)",
+    "/app/frontend/vite-plugins/aurem-prod-fixes.mjs (added 'team-invite' to KNOWN_PREFIXES)",
+    "/app/frontend/Dockerfile (added |team-invite to nginx SPA location regex)"
+  ],
+  "success_rate": {"backend": "100% (25/25 pytests + 8/8 curl flows)", "frontend": "100% (6/6 UI flows after fixes)"},
+  "test_credentials": "Owner test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md). Throwaway invitees created live via /auth/signup: teammate-1791167199@example.com (via curl, accepted via curl), ui-invitee-1791167331@example.com (invited via UI, accepted via UI). TestPass2026! passwords. Not on founder allowlist, no persistent setup.",
+  "seed_data_creation": "Created 2 dev_users accounts (teammate-* and ui-invitee-*) and 2 admin_team_members rows via accept flow + 1 cancelled invite row — low noise; main agent may purge these from the Preview DB when ready.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "S0/S1/S2/S3 all functionally verified end-to-end on Preview as of 2026-10-05. The two frontend blockers I fixed (admin-panel crash + /team-invite/* 404) are both one-line config misses, not deep bugs — main agent just needs to review/approve/replace the stub icon and keep the two SPA allowlists in sync going forward. Backend tests must be run with PYTHONPATH=/app/backend (cwd /app/backend) because tests do `from server import app`.",
+  "rca of the issue": "BUG 1 (admin panel crash): adminNav.js added { id: 'team' } but Admin.jsx's buildGroupedAdminNav({...}) iconMap wasn't updated. React saw <undefined /> for one sidebar entry and threw 'type is invalid', boundary caught it and the ENTIRE /admin/* shell went to the retry fallback — including the Admin Team page itself and every other admin route. Repro: log in as owner, open any /admin/* URL (not just /admin/team). Fix: add any defined icon component to the iconMap under the `team:` key. BUG 2 (invite accept 404): the vite plugin aurem-prod-fixes.mjs enforces a hard 404 for any top-level path whose first segment isn't in KNOWN_PREFIXES, before Vite's SPA fallback runs; the matching nginx config in frontend/Dockerfile does the same in prod. 'team-invite' was never added when the new /team-invite/accept route was introduced, so browsers hitting the invite link got a server-rendered 404 even though App.jsx and the backend both knew about the route. Repro: curl -I /team-invite/accept -> HTTP 404. Fix: add 'team-invite' to both the Set and the nginx regex; restart frontend (vite middleware is set once at server start, hot reload doesn't rebuild it)."
+}
