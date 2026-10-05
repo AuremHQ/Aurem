@@ -13,14 +13,16 @@ S0 -> S1 -> S2 -> S3, each stage fully gated before the next starts.
   8aa59e3d. See STAGE-2.md. Build hash shown by /api/health lags one
   commit behind HEAD by design (documented in main.py's
   `_resolve_build_hash` docstring) — not a defect.
+- S3 (AT2 Team screen + invite flow) — GATE MET. Bulk code in the
+  "checkpoint before testing_agent_full_stack" commit, fixes in
+  3832ed9e. See STAGE-3.md.
 
 ## Next step
 
-S3 (AT2 — Team screen + invite flow): admin_team_members rows are
-currently only creatable by hand/script; S3 builds the actual UI +
-invite/accept endpoints (hashed one-time tokens per D8, no email
-sending — copy-link only, owner notification bell + admin_audit rows
-on every action per D11).
+Loop complete. S0 -> S1 -> S2 -> S3 all GATE MET. See
+MORNING-REPORT.md for the full summary, what's now true, and what's
+deliberately deferred (AT3 widget-level filtering, AT4 ADMIN_EMAIL
+removal, pin-login MFA-claim wiring).
 
 ## Out of scope reminders (unchanged all loop)
 
