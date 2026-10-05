@@ -21,7 +21,7 @@ from fastapi import APIRouter, Header, HTTPException, Depends
 from cto_services.auth import require_admin_dep
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev
+from cto_services.auth import current_dev, is_admin_or_founder
 from services.vanguard_config import get_config, save_config
 
 router = APIRouter(prefix="/admin/vanguard", tags=["Admin / Vanguard"],
@@ -29,7 +29,10 @@ router = APIRouter(prefix="/admin/vanguard", tags=["Admin / Vanguard"],
 
 
 def _require_admin(me: dict) -> None:
-    if not (me.get("is_admin") or me.get("tier") == "founder"):
+    # Admin Team S1 (AT1a) — delegates to the one shared predicate
+    # (cto_services.auth.is_admin_or_founder) instead of re-implementing
+    # the same `is_admin or tier=="founder"` check a second time.
+    if not is_admin_or_founder(me):
         raise HTTPException(403, "Admin access required")
 
 

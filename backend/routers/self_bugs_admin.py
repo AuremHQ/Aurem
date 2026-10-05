@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from cto_services.auth import require_admin
@@ -42,6 +42,7 @@ async def list_self_bugs(
     type: Optional[str] = None,
     limit: int = 200,
     authorization: Optional[str] = Header(None),
+    request: Request = None,
 ):
     """Listing, sorted by recurrence (times_seen) desc so the "this
     keeps happening" bugs bubble to the top — the whole point of P7's
@@ -54,7 +55,7 @@ async def list_self_bugs(
     one identical times_seen/last_seen. Part 3 adds first_seen/
     status/fixed_on/fixed_by. Part 4 surfaces any pending
     propose-only fix suggestion."""
-    await require_admin(authorization)
+    await require_admin(authorization, request=request)
     db = require_db()
     q: dict = {}
     if type in SELF_BUG_TYPES:
@@ -108,11 +109,12 @@ class _MarkFixedBody(BaseModel):
 async def mark_self_bug_fixed(
     body: _MarkFixedBody,
     authorization: Optional[str] = Header(None),
+    request: Request = None,
 ):
     """Part 3 — manual fix-status action. See services/self_bug.py's
     mark_fixed() docstring for why this is manual-only (no automatic
     deploy/commit linkage exists yet)."""
-    admin = await require_admin(authorization)
+    admin = await require_admin(authorization, request=request)
     if body.status not in ("fixed", "open"):
         raise HTTPException(400, "status must be fixed|open")
     ok = await mark_fixed(
@@ -133,6 +135,7 @@ class _ReviewProposalBody(BaseModel):
 async def review_self_bug_proposal(
     body: _ReviewProposalBody,
     authorization: Optional[str] = Header(None),
+    request: Request = None,
 ):
     """Part 4 — human review of a PROPOSE-ONLY fix suggestion (see
     services/self_bug.py::propose_fix). This ONLY records the human's
@@ -141,7 +144,7 @@ async def review_self_bug_proposal(
     Per spec, auto-apply for a bug CATEGORY would only ever be
     considered after several of these approvals accumulate for that
     exact category, as a separate future opt-in — not built here."""
-    admin = await require_admin(authorization)
+    admin = await require_admin(authorization, request=request)
     if body.decision not in ("approved", "rejected"):
         raise HTTPException(400, "decision must be approved|rejected")
     db = require_db()

@@ -35,7 +35,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev
+from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
 from services.mfa import (
     generate_secret,
@@ -51,11 +51,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/2fa", tags=["Admin 2FA"])
 
 
-async def _require_admin(authorization: Optional[str]) -> dict:
-    payload = await current_dev(authorization)
-    if not payload.get("is_admin"):
-        raise HTTPException(403, "Admin only")
-    return payload
+async def _require_admin(authorization: Optional[str], request=None) -> dict:
+    # Admin Team S1 (AT1a) — delegates to the one canonical gate. This was
+    # previously the weakest of the 6 duplicate rules (no tier=="founder"
+    # fast path, no stale-JWT DB fallback) — delegating fixes that drift
+    # without touching any of this file's 4 call sites.
+    return await require_admin(authorization, request=request)
 
 
 class CodeBody(BaseModel):

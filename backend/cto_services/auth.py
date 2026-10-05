@@ -6,7 +6,7 @@ import logging
 import os
 import time
 import jwt
-from fastapi import HTTPException, Header
+from fastapi import HTTPException, Header, Request
 from typing import Optional
 
 logger = logging.getLogger("aurem.auth")
@@ -129,7 +129,34 @@ def is_admin_or_founder(user: dict) -> bool:
     return bool(user.get("is_admin") or user.get("is_founder") or tier == "founder")
 
 
-async def require_admin(authorization: Optional[str] = None) -> dict:
+async def _record_would_refuse(request, user: dict, reason: str) -> None:
+    """Admin Team S1 (AT1a) — fire-and-forget audit of what the NEW rules
+    WOULD refuse today, with zero effect on the actual decision. Scoped to
+    D1 only (Owner = founder allow-list email; `is_admin`/`tier=="founder"`
+    alone grant nothing) — the other new rules (D2/D6/D12) need
+    infrastructure (admin_team_members, the 2FA-session claim) that does
+    not exist until AT1b/S2, so there is nothing further to simulate yet.
+    """
+    try:
+        from cto_services.db import get_db
+        db = get_db()
+        if db is None:
+            return
+        route = request.scope.get("route")
+        await db.admin_gate_would_refuse_log.insert_one({
+            "user_id": user.get("user_id"),
+            "email": user.get("email"),
+            "method": request.method,
+            "path": getattr(route, "path", request.url.path),
+            "reason": reason,
+            "ts": time.time(),
+        })
+    except Exception:
+        # Recording must never affect the real request.
+        pass
+
+
+async def require_admin(authorization: Optional[str] = None, request=None) -> dict:
     """Iter 212m-158 — Shared admin gate.
 
     Single-line check usable by any router: simply add
@@ -148,9 +175,22 @@ async def require_admin(authorization: Optional[str] = None) -> dict:
     endpoints, and any future admin-only feature.  Importing this
     helper is the *only* supported way to gate a route on admin
     status — do NOT re-implement the check inline.
+
+    Admin Team S1 (AT1a) — ``request`` is optional and, when FastAPI
+    injects it (any router-level ``Depends(require_admin_dep)`` caller,
+    automatically, plus the few inline callers passing it explicitly),
+    is used ONLY to record what D1 would decide; it never changes the
+    return value or the raised exception below. No behaviour change.
     """
     user = await current_dev(authorization)
     if user.get("is_admin") or user.get("tier") == "founder":
+        if request is not None:
+            from services.usage import is_founder_email
+            if not is_founder_email(user.get("email")):
+                await _record_would_refuse(
+                    request, user,
+                    "D1: is_admin/tier==founder granted access, but email is not on the founder allow-list",
+                )
         return user
     try:
         from cto_services.db import get_db
@@ -165,6 +205,13 @@ async def require_admin(authorization: Optional[str] = None) -> dict:
                 user["tier"]         = row.get("tier") or user.get("tier")
                 user["is_unlimited"] = bool(row.get("is_unlimited"))
                 user["email"]        = row.get("email") or user.get("email")
+                if request is not None:
+                    from services.usage import is_founder_email
+                    if not is_founder_email(user.get("email")):
+                        await _record_would_refuse(
+                            request, user,
+                            "D1: stale-JWT escape hatch granted access, but email is not on the founder allow-list",
+                        )
                 return user
     except Exception:
         # Swallow DB hiccups — fail closed below.
@@ -172,7 +219,7 @@ async def require_admin(authorization: Optional[str] = None) -> dict:
     raise HTTPException(403, "Admin access required")
 
 
-async def require_admin_dep(authorization: Optional[str] = Header(None)) -> dict:
+async def require_admin_dep(request: Request, authorization: Optional[str] = Header(None)) -> dict:
     """Iter 358 — router-level admin dependency (defense-in-depth).
 
     Same rule as ``require_admin`` but shaped for FastAPI's
@@ -181,8 +228,14 @@ async def require_admin_dep(authorization: Optional[str] = Header(None)) -> dict
     admin endpoint added later inherits the gate automatically — it
     cannot accidentally ship unprotected even if the author forgets the
     inline ``await _require_admin(...)`` call.
+
+    Admin Team S1 (AT1a) — now takes ``request: Request`` so the gate
+    can record what the new rules would refuse (see ``require_admin``
+    above); FastAPI injects this automatically for every one of the
+    ~24 router files using this as a router-level dependency, with no
+    edits needed to any of their individual route handlers.
     """
-    return await require_admin(authorization)
+    return await require_admin(authorization, request=request)
 
 
 def create_token(user_id: str, email: str, is_admin: bool = False) -> str:
