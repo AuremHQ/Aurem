@@ -334,6 +334,9 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // authoritative status endpoint is what actually drives correctness.
   useEffect(() => {
     function onMessage(e) {
+      const origin = new URL(API_BASE, window.location.origin).origin;
+      if (e.origin !== origin) return;
+
       const d = e.data;
       if (!d || d.type !== "aurem-app-installed") return;
       if (d.status === "err") {

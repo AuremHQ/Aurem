@@ -835,8 +835,22 @@ async def upsert_installation(
         "updated_at":            now,
     }
     if user_id:
-        set_doc["user_id"]   = user_id
-        set_doc["linked_at"] = now
+        # Never re-point an installation that already has a different owner:
+        # this is the last line of defence behind the callers' own checks, so
+        # a missed check upstream cannot hand one account's repo access to
+        # another. Moving an installation is an explicit admin action.
+        existing = await db.github_installations.find_one(
+            {"installation_id": installation_id}, {"user_id": 1},
+        )
+        current_owner = (existing or {}).get("user_id")
+        if current_owner and current_owner != user_id:
+            logger.warning(
+                "upsert_installation: refusing to reassign installation %s "
+                "from %s to %s", installation_id, current_owner, user_id,
+            )
+        else:
+            set_doc["user_id"]   = user_id
+            set_doc["linked_at"] = now
     if repositories is not None:
         set_doc["repositories"] = repositories
     if delivery_id:
