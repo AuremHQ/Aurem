@@ -46,6 +46,7 @@ const AdminSupportPageLazy = React.lazy(() => import("./AdminSupportPage"));
 const AdminArchitecturePageLazy = React.lazy(() => import("./AdminArchitecturePage"));
 const AdminSettingsPageLazy = React.lazy(() => import("./AdminSettingsPage"));
 const AdminAuditPageLazy = React.lazy(() => import("./AdminAuditPage"));
+const AdminTeamPageLazy = React.lazy(() => import("./AdminTeamPage"));
 const AdminFinancialsLazy = React.lazy(() => import("./AdminFinancials"));
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -2485,6 +2486,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "suggestions":    return <AdminSuggestions />;
       case "self_bugs":      return <AdminSelfBugs />;
       case "audit":          return <AdminAuditPageLazy />;
+      case "team":            return <AdminTeamPageLazy />;
       case "house_rules":    return <AdminHouseRules />;
       case "robot_guide":    return <AdminRobotGuide />;
       case "settings":       return <AdminSettingsPageLazy />;

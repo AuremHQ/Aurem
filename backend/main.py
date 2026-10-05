@@ -98,6 +98,8 @@ from routers.auth_verify import router as auth_verify_router        # 2026-09-26
 from routers.email_unsubscribe import router as email_unsubscribe_router  # 2026-02-12 · CAN-SPAM/GDPR one-click unsubscribe
 from routers.admin_vanguard import router as admin_vanguard_router  # Iter 212m-42 vanguard admin toggle
 from routers.admin_bin import router as admin_bin_router  # Iter 212m-171 admin panel rebuild
+from routers.admin_team import router as admin_team_router  # Admin Team S3 (AT2) — Team screen + invites
+from routers.team_invite_accept import router as team_invite_accept_router  # Admin Team S3 (AT2) — invite accept
 from routers.security_scan import router as security_scan_router    # Iter 212m-55 1-click vuln scanner
 from routers.vanguard_ci import router as vanguard_ci_router        # Iter 212m-120 Phase 1: trufflehog CI ingest
 from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 2026-08-20 · G1/G15 CI ingest
@@ -4014,6 +4016,8 @@ app.include_router(auth_verify_router,    prefix="/api/aurem-dev")  # 2026-09-26
 app.include_router(email_unsubscribe_router,        prefix="/api/aurem-dev")  # 2026-02-12 · one-click unsubscribe
 app.include_router(admin_vanguard_router, prefix="/api/aurem-dev")  # Iter 212m-42 vanguard config
 app.include_router(admin_bin_router,      prefix="/api/aurem-dev")  # Iter 212m-171 admin panel rebuild
+app.include_router(admin_team_router,         prefix="/api/aurem-dev")  # Admin Team S3 (AT2)
+app.include_router(team_invite_accept_router, prefix="/api/aurem-dev")  # Admin Team S3 (AT2)
 app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-55 1-click vuln scanner
 app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-120 Phase 1: trufflehog CI ingest
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline

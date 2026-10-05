@@ -411,6 +411,23 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("POST", "/api/aurem-dev/admin/status/notifications/{notif_id}/mark-read", "logs.notifications", VIEW),
     ("POST", "/api/aurem-dev/admin/alerts/{alert_id}/dismiss", "home.home", WORK),
     ("POST", "/api/aurem-dev/ora-chat/preview-scan", "ora.scanner", WORK),
+
+    # Admin Team S3 (AT2) — Team screen + invite management is itself
+    # owner-only (no team member manages the team, including their own
+    # role/overrides) — every route here is `screen_key=None`, which the
+    # gate treats the same as OWNER_ONLY (D9). `/team-invite/accept` is
+    # NOT here deliberately: it isn't admin-gated at all (any logged-in
+    # user with a valid invite token can call it).
+    ("GET", "/api/aurem-dev/admin/team/members", None, OWNER_ONLY),
+    ("GET", "/api/aurem-dev/admin/team/invites", None, OWNER_ONLY),
+    ("GET", "/api/aurem-dev/admin/team/screens", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/invites", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/invites/{invite_id}/copy-link", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/invites/{invite_id}/cancel", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/members/{user_id}/suspend", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/members/{user_id}/resume", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/members/{user_id}/remove", None, OWNER_ONLY),
+    ("PATCH", "/api/aurem-dev/admin/team/members/{user_id}/overrides", None, OWNER_ONLY),
 ]
 
 import re as _re
