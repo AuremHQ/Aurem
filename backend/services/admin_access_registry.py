@@ -66,7 +66,7 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("POST", "/api/aurem-dev/admin/loop-beta/kill-switch", "settings.switches", OWNER_ONLY),
     ("GET", "/api/aurem-dev/admin/loop-beta/status", "settings.switches", VIEW),
     ("GET", "/api/aurem-dev/admin/bin/{bin_id}/projects", "users.plans", VIEW),
-    ("POST", "/api/aurem-dev/admin/users/{user_id}/tier", "users.plans", MANAGE),
+    ("POST", "/api/aurem-dev/admin/users/{bin_id}/tier", "users.plans", MANAGE),
     ("GET", "/api/aurem-dev/admin/github/connections", "users.github", VIEW),
     ("GET", "/api/aurem-dev/admin/github/stuck-connections", "users.github", VIEW),
     ("POST", "/api/aurem-dev/admin/github/bulk-revoke", "users.github", OWNER_ONLY),
@@ -412,3 +412,49 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("POST", "/api/aurem-dev/admin/alerts/{alert_id}/dismiss", "home.home", WORK),
     ("POST", "/api/aurem-dev/ora-chat/preview-scan", "ora.scanner", WORK),
 ]
+
+import re as _re
+
+_PARAM_RE = _re.compile(r"\{[^{}]+\}")
+
+
+def _normalize_path(path: str) -> str:
+    """Collapse any `{param_name}` segment to `{*}`. The registry is
+    hand-written and the real route's path-param NAME (e.g. `{bin_id}`
+    vs `{user_id}`) is an implementation detail of whichever handler
+    owns that route — normalizing both sides before lookup means a
+    registry entry typo'd with the wrong param name fails LOUDLY (no
+    match at all, not a wrong-but-silent one) instead of this exact
+    class of bug (found live: `{user_id}` written for the real
+    `{bin_id}` on POST /admin/users/{bin_id}/tier) silently 403-ing a
+    team member who should have had access."""
+    return _PARAM_RE.sub("{*}", path)
+
+
+_REGISTRY_MAP: dict[tuple[str, str], tuple] = {
+    (method, _normalize_path(path)): (screen_key, level)
+    for method, path, screen_key, level in ADMIN_ROUTE_REGISTRY
+}
+
+
+def lookup_route(method: str, path: str):
+    """Returns (screen_key, level) or None if this exact (method, path)
+    isn't in the registry. D9/D19 — the gate treats None (not found) the
+    SAME as an explicit OWNER_ONLY entry: unregistered context is
+    owner-only, never silently open to a team member."""
+    return _REGISTRY_MAP.get((method, _normalize_path(path)))
+
+
+# Admin Team S2 (AT1b) / R4 — mfa.py's 4 self-service routes manage the
+# CALLING member's own 2FA and are therefore accessible to any active
+# team member regardless of their screen/role (hence `screen_key=None`
+# above), WITHOUT requiring the mfa-claim already being set for the 3
+# routes that bootstrap 2FA in the first place — `disable` is the
+# exception, since lifting 2FA protection is itself sensitive enough to
+# require an already-MFA-verified session (D6).
+MFA_SELF_SERVICE: dict[tuple[str, str], dict] = {
+    ("GET", "/api/aurem-dev/admin/2fa/status"):        {"require_mfa_claim": False},
+    ("POST", "/api/aurem-dev/admin/2fa/enroll-start"):  {"require_mfa_claim": False},
+    ("POST", "/api/aurem-dev/admin/2fa/enroll-verify"): {"require_mfa_claim": False},
+    ("POST", "/api/aurem-dev/admin/2fa/disable"):       {"require_mfa_claim": True},
+}

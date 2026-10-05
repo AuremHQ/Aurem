@@ -478,11 +478,17 @@ async def login(body: LoginBody, request: Request) -> dict:
     return _issue_session(user, is_admin, is_founder)
 
 
-def _issue_session(user: dict, is_admin: bool, is_founder: bool) -> dict:
+def _issue_session(user: dict, is_admin: bool, is_founder: bool, mfa_verified: bool = False) -> dict:
     """Iter 212m-20 — shared response builder used by both the
     single-step /auth/login (non-2FA path) and the two-step
-    /auth/login/2fa-verify endpoints."""
-    token = create_token(user["user_id"], user["email"], is_admin)
+    /auth/login/2fa-verify endpoints.
+
+    Admin Team S2 (AT1b) / D6 — `mfa_verified` is True ONLY on the call
+    from `login_2fa_verify` after it actually checks a TOTP/backup code
+    (see below); every other caller keeps the default `False`, so a
+    plain password login (no 2FA enabled) never carries the `mfa` claim.
+    """
+    token = create_token(user["user_id"], user["email"], is_admin, mfa_verified=mfa_verified)
     return {
         "ok": True,
         "token": token,
@@ -540,7 +546,11 @@ async def login_2fa_verify(body: TwoFAVerifyBody) -> dict:
 
     is_founder = is_founder_email(user["email"])
     is_admin = bool(user.get("is_admin")) or is_founder
-    return _issue_session(user, is_admin, is_founder)
+    # Admin Team S2 (AT1b) / D6 — a REAL TOTP/backup code was just
+    # verified above (the `ok` check), so this session gets the `mfa`
+    # claim. The leg-1/leg-2-disabled branch above does NOT verify
+    # anything and correctly keeps the default `mfa_verified=False`.
+    return _issue_session(user, is_admin, is_founder, mfa_verified=True)
 
 
 # ── 2026-08-19 SECURITY FOLLOW-UP — self-service password reset ────────
@@ -784,10 +794,17 @@ async def me(authorization: Optional[str] = Header(None)) -> dict:
     # call. The frontend already hits this on app boot and on focus,
     # so active users glide indefinitely while idle / leaked tokens
     # die within the new 7-day window.
+    # Admin Team S2 (AT1b) / D6 — preserve the INCOMING token's own
+    # `mfa` claim across this refresh. Without this, a team member who
+    # just completed 2FA login would lose admin access on the very
+    # next /auth/me call (fired on every app focus), since a refresh
+    # that always re-minted `mfa_verified=False` would silently drop
+    # the claim their session already earned.
     fresh_token = create_token(
         payload["user_id"],
         payload.get("email", (user or {}).get("email", "")),
         is_admin=bool((user or {}).get("is_admin") or payload.get("is_admin")),
+        mfa_verified=bool(payload.get("mfa")),
     )
     # 2026-08-27 · Phase E — workcard_chip_v2 flag (default OFF,
     # allowlist [test_admin_001]), same pattern as the existing

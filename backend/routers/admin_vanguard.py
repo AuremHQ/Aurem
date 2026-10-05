@@ -17,23 +17,23 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Depends
-from cto_services.auth import require_admin_dep
+from fastapi import APIRouter, Header, Depends
+from cto_services.auth import require_admin_dep, current_dev, _finish_admin_check
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, is_admin_or_founder
 from services.vanguard_config import get_config, save_config
 
 router = APIRouter(prefix="/admin/vanguard", tags=["Admin / Vanguard"],
                    dependencies=[Depends(require_admin_dep)])  # Iter 358 router-level gate
 
 
-def _require_admin(me: dict) -> None:
-    # Admin Team S1 (AT1a) — delegates to the one shared predicate
-    # (cto_services.auth.is_admin_or_founder) instead of re-implementing
-    # the same `is_admin or tier=="founder"` check a second time.
-    if not is_admin_or_founder(me):
-        raise HTTPException(403, "Admin access required")
+async def _require_admin(me: dict) -> None:
+    # Admin Team S2 (AT1b) — delegates to the one real decision function
+    # (D19). `request=None` here falls back to `_current_request` (set by
+    # the router-level `require_admin_dep` dependency moments earlier in
+    # THIS same request), so this redundant inline check sees the exact
+    # same route/registry context, not a weaker one.
+    await _finish_admin_check(me, request=None)
 
 
 @router.get("/config")
@@ -41,7 +41,7 @@ async def read_vanguard_config(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     me = await current_dev(authorization)
-    _require_admin(me)
+    await _require_admin(me)
     cfg = await get_config()
     # `updated_at` may be a tz-aware datetime; ISO-string it for JSON.
     ts = cfg.get("updated_at")
@@ -61,7 +61,7 @@ async def write_vanguard_config(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     me = await current_dev(authorization)
-    _require_admin(me)
+    await _require_admin(me)
     saved = await save_config(
         enabled=body.enabled,
         levels=body.levels or {},
