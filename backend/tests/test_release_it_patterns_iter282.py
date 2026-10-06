@@ -3,6 +3,8 @@ Iter 282 — Release It! patterns audit (Bulkhead / Steady State / Governor)
 
 Three permanent regression tests + fitness invariants that lock in
 the audit findings.
+
+# static-grep-ok: source-level invariants (bootstrap spec, TTLs, governors) that have no cheaper runtime seam; this PR only widened one lookahead window
 """
 from __future__ import annotations
 import os

@@ -18,6 +18,7 @@ Endpoints (all under /api/aurem-dev/team):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -331,7 +332,8 @@ async def accept_invite(body: AcceptInviteBody) -> dict:
         user_id = existing_user["user_id"]
     else:
         user_id = uuid.uuid4().hex
-        hashed = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+        hashed = await asyncio.to_thread(
+            lambda: bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode())
         await db.dev_users.insert_one({
             "user_id":  user_id,
             "email":    row["email"],

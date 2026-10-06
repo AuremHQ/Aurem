@@ -19,10 +19,10 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from cto_services.auth import current_dev
+from cto_services.auth import current_dev, require_admin_dep
 from cto_services.db import get_db
 from cto_services.auth import require_admin as _require_admin   # iter 212m-230 — was `from routers.admin import _require_admin` which created a routers→routers cycle
 from services.thinking_hints import bust_cache, pick_hint
@@ -85,7 +85,7 @@ async def get_thinking_hint(authorization: Optional[str] = Header(None)):
 
 # ── Admin CRUD ───────────────────────────────────────────────────────
 
-@router.get("/admin/thinking-hints")
+@router.get("/admin/thinking-hints", dependencies=[Depends(require_admin_dep)])
 async def admin_list_hints(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
     db = get_db()
@@ -99,7 +99,7 @@ async def admin_list_hints(authorization: Optional[str] = Header(None)):
     return {"ok": True, "items": rows, "count": len(rows)}
 
 
-@router.post("/admin/thinking-hints")
+@router.post("/admin/thinking-hints", dependencies=[Depends(require_admin_dep)])
 async def admin_create_hint(payload: HintIn,
                             authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
@@ -120,7 +120,7 @@ async def admin_create_hint(payload: HintIn,
     return {"ok": True, "hint_id": doc["hint_id"]}
 
 
-@router.put("/admin/thinking-hints/{hint_id}")
+@router.put("/admin/thinking-hints/{hint_id}", dependencies=[Depends(require_admin_dep)])
 async def admin_update_hint(hint_id: str, payload: HintIn,
                             authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
@@ -139,7 +139,7 @@ async def admin_update_hint(hint_id: str, payload: HintIn,
     return {"ok": True, "modified": res.modified_count}
 
 
-@router.delete("/admin/thinking-hints/{hint_id}")
+@router.delete("/admin/thinking-hints/{hint_id}", dependencies=[Depends(require_admin_dep)])
 async def admin_delete_hint(hint_id: str,
                             authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
@@ -160,7 +160,7 @@ class HintsConfigIn(BaseModel):
     delay_ms: int  = Field(600, ge=200, le=5000)
 
 
-@router.get("/admin/thinking-hints-config")
+@router.get("/admin/thinking-hints-config", dependencies=[Depends(require_admin_dep)])
 async def admin_get_config(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
     db = get_db()
@@ -175,7 +175,7 @@ async def admin_get_config(authorization: Optional[str] = Header(None)):
     }
 
 
-@router.post("/admin/thinking-hints-config")
+@router.post("/admin/thinking-hints-config", dependencies=[Depends(require_admin_dep)])
 async def admin_set_config(payload: HintsConfigIn,
                            authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)

@@ -191,6 +191,9 @@ export default function HealthScoreWidget() {
   const load = useCallback(async () => {
     try {
       const r = await api.get("/admin/health-score", { timeout: 40000 });
+      if (!r.data?.categories) {
+        throw new Error("Unexpected response from /admin/health-score (missing categories)");
+      }
       setData(r.data);
       hasDataRef.current = true;
       setErr(null);
@@ -307,7 +310,7 @@ export default function HealthScoreWidget() {
           <div style={{ fontSize: 11, color: C.faint, maxWidth: 460, marginBottom: 16 }}>
             This is <b style={{ color: C.dim }}>{data.overall_score}/100 scored across the
             {" "}{data.weight_scored_pct}% of weight that has fresh evidence</b> — NOT
-            {" "}{data.overall_score}/100 overall. <b style={{ color: C.amber }}>{data.unscored_categories
+            {" "}{data.overall_score}/100 overall. <b style={{ color: C.amber }}>{(data.unscored_categories || [])
               .map(k => LABELS[k]).join(", ")}</b> ({data.weight_unscored_pct}% of weight)
             has no fresh evidence and is excluded, never renormalized to hide the gap.
           </div>

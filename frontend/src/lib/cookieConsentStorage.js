@@ -42,26 +42,42 @@ export function saveConsent(choice, cats) {
 }
 
 /**
- * Disable / enable the browser trackers we ship in index.html.
- * We can't fully unload scripts already loaded, but we can:
- *   • Stub `fbq` so future calls no-op
- *   • Set gtag consent mode (`analytics_storage`, `ad_storage`) to denied
- *   • Dynamically load Meta Pixel if consent has just been granted and
- *     the loader in index.html skipped it (consent gate).
+ * Start / stop the browser trackers we ship in index.html.
+ * index.html loads none of them until the visitor has opted in (see
+ * `window.__auremHasConsent`), so a grant that arrives after page load
+ * has to start the loaders itself — `window.__auremBootPixels` holds
+ * them, each idempotent. A revoke can't unload a script that already
+ * ran, but it stops FUTURE events and updates gtag consent mode.
  */
+function bootTracker(key) {
+  try { window.__auremBootPixels?.[key]?.(); } catch (_) { /* never break page */ }
+}
+
+function silenceTracker(name, bootedFlag) {
+  const fn = window[name];
+  if (typeof fn !== "function") return;
+  if (window[bootedFlag]) {
+    // Script already loaded and running: swap in a no-op so later
+    // conversion events go nowhere.
+    window[name] = function noop() {};
+  } else if (Array.isArray(fn.queue)) {
+    fn.queue = [];
+  } else if (Array.isArray(fn.q)) {
+    fn.q = [];
+  }
+}
+
 export function applyConsentToTrackers(cats) {
   try {
-    if (!cats.marketing) {
-      if (typeof window !== "undefined") {
-        // Wipe queue + stub. Note: if the pixel script has already
-        // loaded and sent PageView, we can only prevent FUTURE events.
-        window.fbq = function noop() {};
-        window.fbq.q = [];
+    if (typeof window !== "undefined") {
+      if (cats.marketing) {
+        bootTracker("meta");
+        bootTracker("openai");
+      } else {
+        silenceTracker("fbq", "_fbqBooted");
+        silenceTracker("oaiq", "__oaiqBooted");
       }
-    } else if (typeof window !== "undefined" && (!window.fbq || !window.fbq.loaded)) {
-      // Marketing just granted AND pixel never loaded (index.html gate
-      // skipped it). Load it now.
-      loadMetaPixel();
+      if (cats.analytics || cats.marketing) bootTracker("gtag");
     }
     if (typeof window !== "undefined" && typeof window.gtag === "function") {
       window.gtag("consent", "update", {
@@ -72,24 +88,6 @@ export function applyConsentToTrackers(cats) {
       });
     }
   } catch (_) { /* never break page for consent-plumbing */ }
-}
-
-export function loadMetaPixel() {
-  if (typeof window === "undefined") return;
-  if (window.fbq && window.fbq.loaded) return;
-  !(function (f, b, e, v, n, t, s) {
-    if (f.fbq && f.fbq.loaded) return;
-    n = f.fbq = function () { n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments); };
-    if (!f._fbq) f._fbq = n; n.push = n; n.loaded = !0; n.version = "2.0";
-    n.queue = n.queue || []; t = b.createElement(e); t.async = !0;
-    t.src = v; s = b.getElementsByTagName(e)[0]; s.parentNode.insertBefore(t, s);
-  })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
-  try {
-    window.fbq("init", "1571887197933821");
-    window.fbq("track", "PageView");
-  } catch (_e) {
-    // Best-effort: pixel network blocked or fbq stub replaced.
-  }
 }
 
 export function isGpcOn() {

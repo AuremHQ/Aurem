@@ -282,6 +282,10 @@ async def run_rendering_pipeline(
     what any individual pass's own internal logic decides to do."""
     trace: list[dict] = []
 
+    from services.reply_integrity import repair_code_blocks, user_named_files
+    content = repair_code_blocks(content)
+    _named_files = await user_named_files(session_id, user_id, user_message)
+
     from services.interaction_contract import enabled as interaction_enabled
     if interaction_enabled():
         from services.interaction_rendering import render_safe_content
@@ -333,12 +337,12 @@ async def run_rendering_pipeline(
     output_guard_ref_id = None
     if content and not skip and "aurem-handoff" not in content:
         try:
-            from services.output_guard import strip_machinery_leak, enforce_length_cap, extract_named_files
+            from services.output_guard import strip_machinery_leak, enforce_length_cap
             from core.errors import new_ref_id
             before = content
             content, leak_stripped = strip_machinery_leak(
                 content, universal_only=not plain_english_active,
-                user_named_files=extract_named_files(user_message),
+                user_named_files=_named_files,
             )
             _record("output_guard_leak_strip", before, content)
             before = content
@@ -978,6 +982,7 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                 await propose_from_turn(
                     db, session_id=session_id, user_id=user_id, project_id=project_id,
                     provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
+                    user_prompt=user_prompt,
                 )
         except Exception as e:                             # noqa: BLE001
             logger.debug("pending_action registration skipped: %r", e)

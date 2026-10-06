@@ -308,16 +308,15 @@ async def apply_autofix(
     except Exception as _bie:
         raise HTTPException(status_code=400, detail="bad_error_id") from _bie
 
-    doc = await db.frontend_errors.find_one({"_id": oid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="error_not_found")
-    if doc.get("autofix_status") != "proposed":
-        raise HTTPException(status_code=409, detail="no_pending_proposal")
-
-    await db.frontend_errors.update_one(
-        {"_id": oid},
+    # Atomic claim: two concurrent clicks must not both start a writing agent.
+    doc = await db.frontend_errors.find_one_and_update(
+        {"_id": oid, "autofix_status": "proposed"},
         {"$set": {"autofix_status": "applying"}},
     )
+    if not doc:
+        if not await db.frontend_errors.find_one({"_id": oid}, {"_id": 1}):
+            raise HTTPException(status_code=404, detail="error_not_found")
+        raise HTTPException(status_code=409, detail="no_pending_proposal")
 
     jwt_token = (authorization or "").replace("Bearer ", "", 1).strip()
     asyncio.create_task(apply_error_autofix(

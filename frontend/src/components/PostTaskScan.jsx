@@ -16,14 +16,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 
-export default function PostTaskScan({ taskId, projectId, onFixRequest }) {
+export default function PostTaskScan({ taskId, onFixRequest }) {
   const [scan, setScan] = useState(null);
   const [dismissed, setDismissed] = useState(false);
   const [fixing, setFixing] = useState(null);
   const cancelRef = useRef(false);
 
   useEffect(() => {
-    if (!taskId || !projectId) return undefined;
+    if (!taskId) return undefined;
     cancelRef.current = false;
     const start = Date.now();
 
@@ -37,9 +37,7 @@ export default function PostTaskScan({ taskId, projectId, onFixRequest }) {
         return;
       }
       try {
-        const r = await api.get(
-          `/cto/projects/${projectId}/tasks/${taskId}/scan`
-        );
+        const r = await api.get(`/cto/tasks/${taskId}/scan`);
         const issues = r?.data?.scan?.issues || [];
         if (issues.length > 0 && !cancelRef.current) {
           setScan(r.data.scan);
@@ -54,7 +52,7 @@ export default function PostTaskScan({ taskId, projectId, onFixRequest }) {
       cancelRef.current = true;
       clearInterval(poll);
     };
-  }, [taskId, projectId]);
+  }, [taskId]);
 
   if (!scan || dismissed) return null;
   const issues = scan.issues || [];

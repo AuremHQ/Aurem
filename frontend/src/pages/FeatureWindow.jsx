@@ -37,7 +37,9 @@ export default function FeatureWindow() {
     setLoading(true); setErr(null);
     try {
       const r = await api.get("/feature-window/status");
-      setData(r?.data || r);
+      const d = r?.data || r;
+      if (!d?.tools) throw new Error("Unexpected response from /feature-window/status (missing tools)");
+      setData(d);
     } catch (e) {
       const code = e?.response?.status;
       // Iter 328 · #4 — gate anonymous access too. Backend already
