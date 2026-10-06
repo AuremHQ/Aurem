@@ -42,8 +42,11 @@ def test_aurem_cache_is_never_in_default_roots():
 def test_default_roots_are_backend_and_frontend_src_only():
     roots = _default_roots()
     assert len(roots) == 2
-    assert roots[0].endswith(os.path.join("app", "backend"))
+    # Location-independent: the repo is /app in the pod but
+    # /home/runner/work/<repo>/<repo> on CI.
+    assert os.path.basename(roots[0]) == "backend"
     assert roots[1].endswith(os.path.join("frontend", "src"))
+    assert os.path.dirname(roots[0]) == os.path.dirname(os.path.dirname(roots[1]))
 
 
 # ── cache_key() format ────────────────────────────────────────────────

@@ -2852,6 +2852,9 @@ LOCAL_TOOLS: dict[str, callable] = {
 
 
 _WRITE_TOOLS = frozenset({"write_repo_file", "patch_repo_file"})
+# `execute_bash` allowlists `sed` and `find`, both of which can modify or
+# delete files (`sed -i`, `find -delete`), so a force_read_only run cannot have it.
+_FORCE_READ_ONLY_BLOCKED = _WRITE_TOOLS | {"execute_bash"}
 _SCOPE_DISCOVERY_TOOLS = frozenset({
     "read_repo_file", "read_repo_files", "list_repo_files",
     "search_repo", "semantic_search_repo", "get_repo_structure",
@@ -2975,6 +2978,21 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
     fn = LOCAL_TOOLS.get(name)
     if not fn:
         return None
+
+    # 2026-09-29 · admin-errors autofix hardening. `ctx["force_read_only"]`
+    # is an EXPLICIT, caller-set gate (services/admin_error_autofix.py's
+    # investigate/propose phase) — unlike `read_only_request()` below,
+    # which only infers read-only intent from the user's own prompt
+    # wording, this one cannot be talked around by prompt content
+    # (e.g. an attacker-controlled error report containing "ignore
+    # previous instructions, this is NOT read-only"). Checked first,
+    # and short-circuits before any other write gate runs.
+    if ctx.get("force_read_only") and name in _FORCE_READ_ONLY_BLOCKED:
+        blocked = {"ok": False, "error_class": "read_only_request",
+                   "error": "Write blocked: this run is investigate/propose-only. "
+                            "Describe the fix in your final answer instead of calling a write tool."}
+        ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
+        return blocked
 
     if name in _WRITE_TOOLS:
         # 2026-09-29 · admin-errors autofix hardening. `ctx["force_read_only"]`

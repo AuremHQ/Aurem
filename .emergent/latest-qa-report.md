@@ -1,15 +1,17 @@
-# QA Report — commit 60e3eca (2026-07-30T05:32:43+00:00)
+# QA Report — commit 162298f (2026-09-29T19:49:22+00:00)
 
-**Commit message**: predeploy gate g20
-**Scope decided**: backend=False, ui=False, scenarios=['smoke_baseline']
+**Commit message**: Merge remote-tracking branch 'origin/main' into claude/eloquent-goodall-2cty9y
+
+# Conflicts:
+#	.emergent/latest-qa-report.md
+**Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
 |---|---|---|---|
-| smoke_baseline | health | PASS | GET http://localhost:8001/api/health → 200, ok=True |
-| regression_locks | regression-20260728-ship-gate-infinite-loop | OPEN | bug still open — not gating. test_iter332_ship_gate_skip.py:PASS (lock passing — consider status=fixed) |
-| regression_locks | regression-20260729-null-turn-prompt-mode-crash | PASS | test_iter339k_null_turn_prompt_mode.py:PASS |
+| regression_locks | regression-20260728-ship-gate-infinite-loop | OPEN | bug still open — not gating. test_iter332_ship_gate_skip.py:FAIL |
+| regression_locks | regression-20260729-null-turn-prompt-mode-crash | DEFERRED | live-server lock — runs in preview env, not runnable on a CI runner |
 | regression_locks | regression-20260729-freetier-499-unboundlocal | PASS | test_regression_iter339m_freetier_unboundlocal.py:PASS |
 | regression_locks | regression-20260729-rollback-button-dead-click | PASS | LoopLiveFeed.iter339j_rollback_remount.test.jsx:PASS; LoopLiveFeed.iter329_task2_shipped_row.test.jsx:PASS |
 

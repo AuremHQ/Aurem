@@ -23,7 +23,7 @@ export default function AdminArchitecturePage() {
   if (!d) return <div style={{ padding: 24, color: "var(--text-faint)" }}>Loading…</div>;
   // Iter 64 — sort: live → degraded → unreachable so green stays on top
   const order = { live: 0, degraded: 1, unreachable: 2, down: 3 };
-  const services = Object.entries(d.services).sort(
+  const services = Object.entries(d.services || {}).sort(
     ([, a], [, b]) => (order[a.status] ?? 9) - (order[b.status] ?? 9)
   );
   return (
@@ -63,7 +63,7 @@ export default function AdminArchitecturePage() {
                     color: "var(--text-faint)", margin: "0 0 8px" }}>Integrations</h3>
       <Card style={{ padding: 14 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {Object.entries(d.integrations).map(([k, v]) => (
+          {Object.entries(d.integrations || {}).map(([k, v]) => (
             <Badge key={k} color={v ? "var(--ok)" : "var(--text-faint)"}>
               {k} · {v ? "OK" : "missing"}
             </Badge>

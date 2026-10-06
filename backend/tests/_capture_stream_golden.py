@@ -31,6 +31,8 @@ def main():
     for name, runner in SCENARIOS.items():
         mp = MonkeyPatch()
         try:
+            # Same pin as test_stream_golden_regression.py.
+            mp.setenv("INTERACTION_CONTRACT_V1", "1")
             text = runner(mp)
             out[name] = text
             print(f"captured {name}: {len(text)} chars, "
