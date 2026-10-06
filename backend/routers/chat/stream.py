@@ -176,6 +176,11 @@ async def chat_stream(
     # covered too, not just the non-streaming /chat/send fallback.
     from .turn import _fire_task_sent_bg
     asyncio.ensure_future(_fire_task_sent_bg(user["user_id"], body.prompt))
+    # Funnel: the SSE path is the product's real send path, so it must
+    # stamp `first_chat_sent` too (it never did — admin funnel read 0).
+    from services.signup_guards import stamp_first_chat as _stamp_first_chat
+    from cto_services.db import get_db as _ffc_db
+    asyncio.ensure_future(_stamp_first_chat(_ffc_db(), user_id=user["user_id"], mode=None))
     # Overnight loop W2 Step 2 (2026-08-29) — MOCK_LLM short-circuit,
     # BEFORE any provider routing/tool/repo-context construction. The
     # live main-chat path (this function) was the one surface
@@ -1310,7 +1315,17 @@ async def chat_stream(
                 guard_fetched    = list((guard_out.get("fetched") or {}).keys())
                 # Re-emit the rewritten content as a single token frame
                 # so the frontend overwrites the (hallucinated) draft.
-                content = guard_out["text"]
+                # The retry is a fresh model output: it must pass the same
+                # guards as the first draft before it replaces it.
+                content, _ = await run_rendering_pipeline(
+                    body.prompt or "", guard_out["text"], state.prior_fix_signal,
+                    retrieved_context_for_grounding(extra_sys, result),
+                    skip=bool(result.get("_skip_output_guards")),
+                    tool_calls_run=result.get("tool_calls_run", 0),
+                    session_id=body.session_id, user_id=user_id,
+                    plain_english_active=_plain_english_active,
+                    ora_panel=getattr(body, "ora_panel", False),
+                )
                 yield f"data: {json.dumps({'token': content, 'reset': True})}\n\n"
 
                 # 2026-08 — Fabrication learning loop. Log every real
@@ -1341,6 +1356,8 @@ async def chat_stream(
         interaction = finalize(result, content, prompt=body.prompt,
                                session_id=body.session_id or "", request_id=interaction_request_id,
                                low_confidence=state.low_confidence)
+        from services.chat_metrics import record_turn as _record_turn_metrics
+        asyncio.ensure_future(_record_turn_metrics(get_db(), result, interaction))
         if interaction:
             result["turn_state"] = interaction["turn_state"]
             result["continue_available"] = interaction["continue_available"]

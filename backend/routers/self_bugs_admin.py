@@ -19,13 +19,15 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from cto_services.auth import require_admin
+from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import require_db
 from services.self_bug import SELF_BUG_TYPES, signature, mark_fixed
 
-router = APIRouter(prefix="/admin/self-bugs", tags=["Admin — Self-Repair"])
+router = APIRouter(prefix="/admin/self-bugs", tags=["Admin — Self-Repair"],
+                   dependencies=[Depends(require_admin_dep)])
 
 
 def _iso(ts: Optional[float]) -> Optional[str]:

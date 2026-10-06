@@ -23,6 +23,8 @@ import {
 import { api } from "../lib/api";
 import { toast } from "./Toast";
 import VerifyEngineCard from "./VerifyEngineCard";
+import ModalCloseButton from "./ModalCloseButton";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const POLL_INTERVAL_MS = 1500;
 const FINISHED = new Set(["ok", "failed", "timeout"]);
@@ -379,7 +381,8 @@ function HistoryList({ runs, onSelect, selectedRunId }) {
 
 // D2 — last look before "Go live": an honest, explicit confirmation
 // step so nothing ships silently. Cancel = no-op, Confirm = deploy.
-function LastLookModal({ host, verifyUrl, onCancel, onConfirm }) {
+export function LastLookModal({ host, verifyUrl, onCancel, onConfirm }) {
+  useEscapeKey(onCancel);
   return (
     <div
       data-testid="deploy-last-look-modal"
@@ -393,10 +396,11 @@ function LastLookModal({ host, verifyUrl, onCancel, onConfirm }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 420, maxWidth: "92vw", background: "var(--bg-elev)",
+          width: 420, maxWidth: "92vw", position: "relative", background: "var(--bg-elev)",
           border: "1px solid var(--border)", borderRadius: 8, padding: 20,
         }}
       >
+        <ModalCloseButton onClick={onCancel} testId="deploy-last-look-close" />
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <Rocket size={15} color="var(--accent-2)" />
           <h3 style={{

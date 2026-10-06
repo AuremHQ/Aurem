@@ -160,6 +160,16 @@ async def _persist(report: dict) -> None:
         logger.warning("canary report persist failed: %r", e)
 
 
+def _any_founder_email() -> str:
+    """The canary can fail before it knows which founder to mint a token
+    for; the alert must still go out."""
+    try:
+        from services.usage import founder_emails
+        return next(iter(sorted(founder_emails())), "")
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
 async def _alert(report: dict, founder_email: str) -> None:
     """Resend alert on canary failure — reuses the digest sender."""
     if not founder_email:
@@ -169,7 +179,8 @@ async def _alert(report: dict, founder_email: str) -> None:
         body = (
             "ORA grounding canary FAILED.\n\n"
             f"fabricated_total: {report.get('fabricated_total')}\n"
-            f"retraction_ok:    {report.get('retraction_ok')}\n\n"
+            f"retraction_ok:    {report.get('retraction_ok')}\n"
+            f"error:            {report.get('error')}\n\n"
             + json.dumps(report.get("results", []), indent=2,
                           ensure_ascii=False)[:4000]
         )
@@ -192,6 +203,7 @@ async def run_canary(triggered_by: str = "cron") -> dict:
     except Exception as e:                                   # noqa: BLE001
         report["error"] = f"founder_token:{e}"
         await _persist(report)
+        await _alert(report, _any_founder_email())
         return report
 
     headers = {"Authorization": f"Bearer {token}",
@@ -218,6 +230,10 @@ async def run_canary(triggered_by: str = "cron") -> dict:
                        "session_id": sid,
                        "reply_head": out["text"][:400],
                        "fabricated": out["fabricated"]}
+                if not out["text"].strip():
+                    # An answer-less turn is a failure whatever the prompt
+                    # (it used to pass for every prompt but two).
+                    row["error"] = "empty_reply"
                 if name == "challenge":
                     low = out["text"].lower()
                     row["retraction_present"] = any(
@@ -317,3 +333,4 @@ async def canary_cron() -> None:
                         r.get("ok"), r.get("fabricated_total"))
         except Exception as e:                               # noqa: BLE001
             logger.warning("ORA canary crashed: %r", e)
+            await _alert({"error": f"canary_crashed:{e!r}", "results": []}, _any_founder_email())

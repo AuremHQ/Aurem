@@ -666,8 +666,9 @@ async def pin_login(body: PinLoginBody,
         personal_hash = target.get("ora_pin_hash")
         if personal_hash:
             try:
-                ok = bcrypt.checkpw(body.pin.strip().encode("utf-8"),
-                                     personal_hash.encode("utf-8"))
+                ok = await asyncio.to_thread(
+                    bcrypt.checkpw, body.pin.strip().encode("utf-8"),
+                    personal_hash.encode("utf-8"))
             except Exception:                                  # noqa: BLE001
                 ok = False
         elif not body.identifier:
@@ -748,7 +749,8 @@ async def set_ora_pin(body: SetOraPinBody,
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database unavailable")
-    pin_hash = bcrypt.hashpw(body.pin.strip().encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    pin_hash = (await asyncio.to_thread(
+        bcrypt.hashpw, body.pin.strip().encode("utf-8"), bcrypt.gensalt())).decode("utf-8")
     await db.dev_users.update_one(
         {"user_id": user["user_id"]},
         {"$set": {"ora_pin_hash": pin_hash}},

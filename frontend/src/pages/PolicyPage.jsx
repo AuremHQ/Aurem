@@ -11,6 +11,8 @@
  */
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import usePageMeta from "../lib/usePageMeta";
+import { pageTitle } from "../lib/siteConfig";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import MarketingNav from "../components/marketing/MarketingNav";
@@ -34,6 +36,7 @@ export default function PolicyPage({ slug }) {
   const params = useParams();
   const key = slug || params.slug || "privacy";
   const meta = POLICY_MAP[key] || POLICY_MAP.privacy;
+  usePageMeta({ title: pageTitle(meta.title) });
   const [html, setHtml] = useState("");
   const [err, setErr]   = useState("");
 

@@ -1,9 +1,8 @@
 /**
- * useChatSession — session-level state: sessionId lifecycle, usage,
- * turn persistence.
+ * useChatSession — session-level state: sessionId lifecycle and usage.
  *
  * Iter 140 — extracted from ChatPanel.jsx. Holds the network calls
- * that need a session_id (POST /chat/history, GET /usage/me). Pure
+ * that need a session_id (GET /usage/me). Pure
  * side-effects, no DOM ownership.
  *
  * Iter 280 P0 fix — the hook now ALSO owns `sessionId` itself and
@@ -33,7 +32,7 @@ function _readOrCreateSessionId() {
   return fresh;
 }
 
-export function useChatSession({ sessionId: sessionIdProp, onTurnSaved } = {}) {
+export function useChatSession({ sessionId: sessionIdProp } = {}) {
   const [ownSessionId] = useState(
     () => sessionIdProp || _readOrCreateSessionId()
   );
@@ -50,22 +49,6 @@ export function useChatSession({ sessionId: sessionIdProp, onTurnSaved } = {}) {
     }
   }, []);
 
-  const persistTurn = useCallback(
-    async (userMsg, assistantMsg) => {
-      if (!sessionId) return;
-      try {
-        await api.post("/chat/history", {
-          session_id: sessionId,
-          turns: [userMsg, assistantMsg],
-        });
-        if (onTurnSaved) onTurnSaved();
-      } catch (_e) {
-        /* persistence failure logged server-side */
-      }
-    },
-    [sessionId, onTurnSaved],
-  );
-
   useEffect(() => {
     refreshUsage();
   }, [refreshUsage]);
@@ -74,6 +57,5 @@ export function useChatSession({ sessionId: sessionIdProp, onTurnSaved } = {}) {
     sessionId,
     usage,
     refreshUsage,
-    persistTurn,
   };
 }
