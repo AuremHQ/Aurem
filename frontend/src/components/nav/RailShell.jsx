@@ -25,7 +25,7 @@ import {
   Receipt, User as UserIcon, Plug, Lock, KeyRound, LayoutDashboard,
   Users as UsersIcon, Lightbulb, Landmark, X, Menu, LogOut,
 } from "lucide-react";
-import { api, getToken, logout as apiLogout, newSessionId } from "../../lib/api";
+import { api, getToken, logout as apiLogout, newSessionId, fetchMyAdminAccess } from "../../lib/api";
 import { setChipV2Enabled } from "../../lib/chipFlag";
 import { setPageFlags, isAutomationsPageEnabled, isAnalyticsPageEnabled, isShipWallEnabled } from "../../lib/pageFlags";
 import { useChatSession } from "../Shell";
@@ -77,7 +77,7 @@ const SECTIONS = [
   { id: "ship",     label: "Ship",     Icon: Rocket,        match: SHIP_ITEMS.map((i) => i.to) },
   { id: "insights", label: "Insights", Icon: BarChart3,     match: INSIGHT_ITEMS.map((i) => i.to) },
   { id: "settings", label: "Settings", Icon: Cog,           match: ["/settings", "/integrations"] },
-  { id: "admin",    label: "Admin",    Icon: ShieldCheck,   match: ["/admin"], founderOnly: true },
+  { id: "admin",    label: "Admin",    Icon: ShieldCheck,   match: ["/admin"], requiresAdminAccess: true },
 ];
 
 function sessionStorageKey(pid) {
@@ -107,6 +107,12 @@ export default function RailShell({
   // CLOSED, i.e. hidden, until we know — this is a sensitive area
   // unlike the other nav items which fail open).
   const [canManageTeam, setCanManageTeam] = useState(null);
+  // AT3 — Admin Team sidebar access. A non-founder who was invited
+  // onto the Admin Team (some granted screen access) also sees the
+  // "Admin" rail section, not just the founder/owner. Resolved
+  // server-side via /admin/team/my-access, same fail-closed-until-
+  // known pattern as canManageTeam above.
+  const [hasAdminTeamAccess, setHasAdminTeamAccess] = useState(false);
   const wrapRef = useRef(null);
   // 2026-10 — AUTO-mode hover flyout. Debounced so moving the
   // pointer from an icon onto its own flyout (a real gap exists
@@ -261,6 +267,17 @@ export default function RailShell({
     return () => { dead = true; };
   }, []);
 
+  // AT3 — resolve Admin Team access (see state comment above).
+  useEffect(() => {
+    if (!getToken()) return;
+    let dead = false;
+    fetchMyAdminAccess().then((result) => {
+      if (dead) return;
+      setHasAdminTeamAccess(!!result && Object.keys(result.screens || {}).length > 0);
+    });
+    return () => { dead = true; };
+  }, []);
+
   // Self-fetch repos when the host page didn't supply them.
   useEffect(() => {
     if (reposProp || !getToken()) return;
@@ -360,7 +377,7 @@ export default function RailShell({
   }, [navigate, setSessionId]);
 
   const sectionActive = (s) => s.match.some((m) => location.pathname.startsWith(m.split("?")[0]));
-  const visibleSections = SECTIONS.filter((s) => !s.founderOnly || isFounder);
+  const visibleSections = SECTIONS.filter((s) => !s.requiresAdminAccess || isFounder || hasAdminTeamAccess);
 
   /* ── sub-renderers ─────────────────────────────────────────────── */
 

@@ -71,11 +71,19 @@ export default function TeamInviteAccept() {
         <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>You're in!</h2>
         <p style={{ fontSize: 13, color: "var(--text-dim, #999)", marginBottom: 16 }}>
           You're now a {role} on the Admin Team, signed in as {me?.email}.
+          Look for the new "Admin" option in your sidebar any time you want
+          to go in — it opens only what you've been given access to.
         </p>
-        <button className="btn-primary" data-testid="team-invite-accept-go-dashboard-btn"
-                onClick={() => navigate("/dashboard", { replace: true })}>
-          Go to dashboard
-        </button>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          <button className="btn-ghost" data-testid="team-invite-accept-go-dashboard-btn"
+                  onClick={() => navigate("/dashboard", { replace: true })}>
+            Go to dashboard
+          </button>
+          <button className="btn-primary" data-testid="team-invite-accept-open-admin-btn"
+                  onClick={() => navigate("/admin", { replace: true })}>
+            Open admin panel
+          </button>
+        </div>
       </div>
     );
   }

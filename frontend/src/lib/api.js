@@ -226,6 +226,53 @@ export function isAdminOrFounder(u) {
   return !!(me.is_admin || me.is_founder || me.tier === "founder");
 }
 
+// AT3 — Admin Team sidebar access. Owner-ness is still the JWT-level
+// `isAdminOrFounder()` flag above (unchanged, used everywhere else);
+// this is the SEPARATE "is this an active admin_team_members row"
+// check for team members who are NOT founders but were granted some
+// admin screen access. Cached in localStorage so route-guard checks
+// (AdminRoute) and the sidebar link don't flash/refetch on every nav.
+const ADMIN_ACCESS_KEY = "aurem_admin_access";
+
+export function getCachedAdminAccess() {
+  try {
+    const raw = localStorage.getItem(ADMIN_ACCESS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedAdminAccess(data) {
+  try {
+    if (data) localStorage.setItem(ADMIN_ACCESS_KEY, JSON.stringify(data));
+    else localStorage.removeItem(ADMIN_ACCESS_KEY);
+  } catch { /* ignore */ }
+}
+
+/** Fetch + cache `{is_owner, role, screens}` for the signed-in user.
+ * Never throws — a logged-out or non-team user simply gets
+ * `{is_owner:false, role:null, screens:{}}` so callers can treat
+ * "no admin access" as a normal, renderable state. */
+export async function fetchMyAdminAccess() {
+  const token = getToken();
+  if (!token) {
+    setCachedAdminAccess(null);
+    return { is_owner: false, role: null, screens: {} };
+  }
+  try {
+    const { data } = await api.get("/admin/team/my-access");
+    const result = { is_owner: !!data.is_owner, role: data.role || null, screens: data.screens || {} };
+    setCachedAdminAccess(result);
+    return result;
+  } catch {
+    // Not a team member / not admin — normal, not an error state.
+    const result = { is_owner: false, role: null, screens: {} };
+    setCachedAdminAccess(result);
+    return result;
+  }
+}
+
 export function logout() {
   // Iter 307 — fire server-side revocation BEFORE we drop the token
   // locally. If the network call fails we still clear localStorage so
@@ -249,6 +296,7 @@ export function logout() {
   }
   setToken(null);
   setUser(null);
+  setCachedAdminAccess(null);
   window.location.href = "/login";
 }
 
