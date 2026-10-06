@@ -21,6 +21,13 @@
       "justification": "Placeholder/example text in an admin-only persona-rules editor instructing admins NOT to use the word \"guaranteed\" in ORA's own voice — the word appears as an example of banned phrasing, not as a claim being made to end users.",
       "owner": "aurem-backend",
       "expiry": "2027-03-01"
+    },
+    {
+      "file": "backend/services/task_independent_verifier.py",
+      "rule": "never_fails",
+      "justification": "Internal LLM system-prompt instruction telling the independent-review model how to grade a truncated diff ('say INCONCLUSIVE, never FAIL, for that specific situation') — not a user-visible reliability claim about AUREM's own service.",
+      "owner": "aurem-backend",
+      "expiry": "2027-03-01"
     }
   ]
 }
