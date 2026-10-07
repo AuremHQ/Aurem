@@ -180,3 +180,27 @@ def test_funnel_summary_counts_distinct_users_and_rates():
     assert out["rates"]["verdict_shown_of_started"] == 50.0
     assert out["rates"]["fix_applied_of_clicked"] == 0.0 or out["rates"]["fix_applied_of_clicked"] is None
     assert out["rates"]["fix_verified_of_applied"] is None                             # no divide-by-zero
+
+
+def test_regression_iter1_redetect_keeps_stored_question_and_fix():
+    db = _DB()
+    item = {"id": "x", "scanner": "security", "rule_id": "r",
+            "question": "Is this key public?", "fix": {"hint": "rotate"}}
+    run(fi.upsert_item(db, user_id="u", project_id="p", item=item))
+    run(fi.set_status(db, user_id="u", project_id="p", item_id="x", new_status="your_answer"))
+    run(fi.upsert_item(db, user_id="u", project_id="p",
+                       item={"id": "x", "scanner": "security", "rule_id": "r"}))
+    row = db.cto_open_findings.rows[0]
+    assert row["status"] == "your_answer"
+    assert row["question"] == "Is this key public?" and row["fix"] == {"hint": "rotate"}
+
+
+def test_regression_iter1_reconcile_closes_regressed_item_no_longer_detected():
+    db = _DB()
+    item = {"id": "x", "scanner": "security", "rule_id": "r"}
+    run(fi.upsert_item(db, user_id="u", project_id="p", item=item))
+    run(fi.set_status(db, user_id="u", project_id="p", item_id="x", new_status="fixing"))
+    run(fi.set_status(db, user_id="u", project_id="p", item_id="x", new_status="fixed", fixed_by="proof_rerun"))
+    assert run(fi.upsert_item(db, user_id="u", project_id="p", item=item)) == "regressed"
+    closed = run(fi.reconcile(db, user_id="u", project_id="p", detected_ids=set(), unverified_stages=set()))
+    assert closed == ["x"] and db.cto_open_findings.rows[0]["status"] == "fixed"
