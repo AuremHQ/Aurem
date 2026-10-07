@@ -25,11 +25,40 @@ from pydantic import BaseModel, Field
 from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import get_db
 from services.admin_audit_log import record_event
+from services import admin_team
+from services.admin_access_registry import ADMIN_ROUTE_REGISTRY
+from services.admin_audit_log import record_event
+from services.notifications import emit_notification
+from services.usage import founder_emails, is_founder_email
 
 router = APIRouter(prefix="/admin/team", tags=["Admin Team"],
                     dependencies=[Depends(require_admin_dep)])
 
 _VALID_LEVELS = {"off", "view", "work", "manage"}
+
+
+def _all_screen_keys() -> list[str]:
+    return sorted({key for (_m, _p, key, _lvl) in ADMIN_ROUTE_REGISTRY if key})
+
+
+class CreateAccessRequestBody(BaseModel):
+    screen_key: str = Field(..., min_length=1, max_length=100)
+    note: str = Field(default="", max_length=500)
+
+
+class ResolveAccessRequestBody(BaseModel):
+    action: str = Field(..., pattern="^(approve|deny)$")
+    note: str = Field(default="", max_length=500)
+
+
+async def _founder_user_ids(db) -> list[str]:
+    emails = list(founder_emails())
+    if not emails:
+        return []
+    rows = await db.dev_users.find(
+        {"email": {"$in": emails}}, {"user_id": 1},
+    ).to_list(len(emails))
+    return [r["user_id"] for r in rows if r.get("user_id")]
 
 
 class CreateInviteBody(BaseModel):
@@ -71,6 +100,7 @@ async def list_screen_keys(authorization: Optional[str] = Header(None)):
     await require_admin(authorization)
     from services.admin_access_registry import ADMIN_ROUTE_REGISTRY
     keys = sorted({key for (_m, _p, key, _lvl) in ADMIN_ROUTE_REGISTRY if key})
+    keys = _all_screen_keys()
     return {"ok": True, "screens": keys, "levels": ["off", "view", "work", "manage"]}
 
 
@@ -201,3 +231,99 @@ async def set_member_overrides(user_id: str, body: SetOverridesBody,
                         action="team_member_overrides_changed", target=user_id,
                         extra={"overrides": body.overrides})
     return {"ok": True}
+
+
+@router.get("/my-access")
+async def my_access(authorization: Optional[str] = Header(None)):
+    """Self-service (AT3) — any signed-in user can ask "what admin
+    access do I have, if any". Registered in MFA_SELF_SERVICE so an
+    active team member with zero screen overrides yet can still call
+    this (it's how the frontend decides whether to show the "Admin"
+    sidebar link at all — see docs/admin-team/STAGE-3.md's AT3 note).
+    Never 403s for a signed-in user; returns an empty access map
+    instead, so the frontend can treat "no access" as a normal state.
+    """
+    user = await require_admin(authorization)
+    if is_founder_email(user.get("email")):
+        return {"ok": True, "is_owner": True, "role": "owner",
+                "screens": {k: "manage" for k in _all_screen_keys()}}
+    member = await admin_team.get_active_member(user["user_id"])
+    if member is None:
+        return {"ok": True, "is_owner": False, "role": None, "screens": {}}
+    overrides = member.get("overrides") or {}
+    screens = {k: lvl for k in _all_screen_keys()
+               if (lvl := overrides.get(k, "off")) != "off"}
+    return {"ok": True, "is_owner": False, "role": member.get("role"), "screens": screens}
+
+
+@router.post("/access-requests")
+async def create_access_request(body: CreateAccessRequestBody,
+                                  authorization: Optional[str] = Header(None)):
+    """Self-service (AT3) — a team member who hits an Owner-only
+    screen (e.g. a provider secret in Settings) can ask the Owner for
+    it instead of just seeing a locked state. This NEVER grants access
+    by itself — Owner-only stays hard-locked regardless of overrides
+    (see cto_services/auth.py); approving a request is the Owner's own
+    signal to go act on it themselves, not an automatic access grant.
+    """
+    user = await require_admin(authorization)
+    db = get_db()
+    if is_founder_email(user.get("email")):
+        raise HTTPException(400, "The Owner already has full access")
+    request_id = uuid.uuid4().hex
+    now = _now()
+    await db.admin_access_requests.insert_one({
+        "request_id": request_id, "user_id": user["user_id"],
+        "email": user.get("email"), "screen_key": body.screen_key,
+        "note": body.note, "status": "pending",
+        "created_at": now, "updated_at": now,
+        "resolved_at": None, "resolved_by": None, "resolution_note": None,
+    })
+    for founder_id in await _founder_user_ids(db):
+        await emit_notification(
+            db, user_id=founder_id, type="admin_message",
+            text=f"{user.get('email')} is requesting access to "
+                 f"'{body.screen_key}' (request {request_id[:8]})."
+                 + (f" Note: {body.note}" if body.note else ""),
+        )
+    await record_event(db, actor=user.get("email") or user["user_id"],
+                        action="team_access_requested", target=body.screen_key,
+                        extra={"request_id": request_id, "note": body.note})
+    return {"ok": True, "request_id": request_id}
+
+
+@router.get("/access-requests")
+async def list_access_requests(authorization: Optional[str] = Header(None)):
+    await require_admin(authorization)
+    db = get_db()
+    rows = await db.admin_access_requests.find(
+        {}, {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+    return {"ok": True, "requests": rows}
+
+
+@router.post("/access-requests/{request_id}/resolve")
+async def resolve_access_request(request_id: str, body: ResolveAccessRequestBody,
+                                   authorization: Optional[str] = Header(None)):
+    owner = await require_admin(authorization)
+    db = get_db()
+    req = await db.admin_access_requests.find_one({"request_id": request_id, "status": "pending"})
+    if not req:
+        raise HTTPException(404, "Request not found or already resolved")
+    new_status = "approved" if body.action == "approve" else "denied"
+    await db.admin_access_requests.update_one(
+        {"request_id": request_id},
+        {"$set": {"status": new_status, "resolved_at": _now(),
+                   "resolved_by": owner.get("email") or owner["user_id"],
+                   "resolution_note": body.note, "updated_at": _now()}},
+    )
+    verb = "approved" if new_status == "approved" else "denied"
+    extra = f" — {body.note}" if body.note else ""
+    await emit_notification(
+        db, user_id=req["user_id"], type="admin_message",
+        text=f"The founder {verb} your request for '{req['screen_key']}'{extra}.",
+    )
+    await record_event(db, actor=owner.get("email") or owner["user_id"],
+                        action=f"team_access_request_{new_status}", target=req["email"],
+                        extra={"request_id": request_id, "screen_key": req["screen_key"]})
+    return {"ok": True, "status": new_status}

@@ -152,11 +152,13 @@ export default function AdminTeamPage() {
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);
   const [screens, setScreens] = useState([]);
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [showInvite, setShowInvite] = useState(false);
   const [revealToken, setRevealToken] = useState(null); // { token, email }
   const [overridesFor, setOverridesFor] = useState(null); // member row
+  const [resolvingId, setResolvingId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -165,16 +167,35 @@ export default function AdminTeamPage() {
         api.get("/admin/team/members"),
         api.get("/admin/team/invites"),
         api.get("/admin/team/screens"),
+      const [m, i, s, r] = await Promise.all([
+        api.get("/admin/team/members"),
+        api.get("/admin/team/invites"),
+        api.get("/admin/team/screens"),
+        api.get("/admin/team/access-requests"),
       ]);
       setMembers(m.data?.members || []);
       setInvites(i.data?.invites || []);
       setScreens(s.data?.screens || []);
+      setRequests(r.data?.requests || []);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message || "Failed to load the Admin Team screen");
     } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  async function resolveRequest(requestId, action) {
+    setResolvingId(requestId);
+    try {
+      await api.post(`/admin/team/access-requests/${requestId}/resolve`, { action });
+      toast(action === "approve" ? "Approved — go set it up for them" : "Request denied");
+      load();
+    } catch (e) {
+      toast({ message: e?.response?.data?.detail || "Failed to resolve request", kind: "error" });
+    } finally { setResolvingId(null); }
+  }
+
+  const pendingRequests = requests.filter((r) => r.status === "pending");
 
   async function cancelInvite(inviteId) {
     try {
@@ -223,6 +244,39 @@ export default function AdminTeamPage() {
 
       {!loading && !err && (
         <>
+          {pendingRequests.length > 0 && (
+            <section style={{ marginBottom: 28 }} data-testid="admin-team-access-requests-section">
+              <h3 style={sectionTitle}>Access requests</h3>
+              <div style={{ fontSize: 11, color: "var(--text-faint)", margin: "0 0 8px" }}>
+                Approving does NOT grant them the screen — it only tells them you'll set it up. Keys stay yours to enter.
+              </div>
+              <table data-testid="admin-team-access-requests-table" style={tableStyle}>
+                <thead>
+                  <tr style={theadRowStyle}><th style={th}>From</th><th style={th}>Screen</th><th style={th}>Note</th><th style={th}></th></tr>
+                </thead>
+                <tbody>
+                  {pendingRequests.map((req) => (
+                    <tr key={req.request_id} data-testid={`admin-team-access-request-row-${req.request_id}`} style={rowStyle}>
+                      <td style={td}>{req.email}</td>
+                      <td style={{ ...td, fontFamily: "monospace" }}>{req.screen_key}</td>
+                      <td style={td}>{req.note || "—"}</td>
+                      <td style={{ ...td, display: "flex", gap: 6 }}>
+                        <button onClick={() => resolveRequest(req.request_id, "approve")} disabled={resolvingId === req.request_id}
+                                data-testid={`admin-team-access-request-approve-btn-${req.request_id}`} className="btn-primary" style={{ fontSize: 11 }}>
+                          Approve
+                        </button>
+                        <button onClick={() => resolveRequest(req.request_id, "deny")} disabled={resolvingId === req.request_id}
+                                data-testid={`admin-team-access-request-deny-btn-${req.request_id}`} className="btn-ghost" style={{ fontSize: 11, color: "#ef4444" }}>
+                          Deny
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
           <section style={{ marginBottom: 28 }}>
             <h3 style={sectionTitle}>Members</h3>
             {members.length === 0 ? (
