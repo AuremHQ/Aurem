@@ -249,7 +249,8 @@ class TestClaimEndpoint:
             headers={"Authorization": "Bearer user-a"},
         )
         assert r.status_code == 403
-        row = next(x for x in fake_db.github_installations.rows if x["installation_id"] == 7004)
+        row = next(x for x in fake_db.github_installations.rows
+                   if x["installation_id"] == 7004)
         assert row["user_id"] is None
 
     def test_claim_noop_when_already_linked_to_caller(self, configured, client, fake_db):
