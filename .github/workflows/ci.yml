@@ -252,6 +252,10 @@ jobs:
           # scaled down to match its own much smaller 12-minute job
           # budget. Still a failing step (exit 124) if a shard's
           # timeout is ever hit again.
+          # GitHub's default `bash -e` aborts on the failing pipeline below,
+          # so on any red shard the exit-code capture and the coverage `mv`
+          # never ran and no coverage-shard artifact existed. +e until captured.
+          set +e
           timeout -s INT 8m python -m pytest \
             --splits 4 --group ${{ matrix.shard }} \
             --splitting-algorithm least_duration \
@@ -268,6 +272,7 @@ jobs:
             --ignore=tests/test_iter212m163_aggression_chat.py \
             2>&1 | tee /tmp/pytest_output.txt
           PYTEST_EXIT=${PIPESTATUS[0]}
+          set -e
           echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
           if [ "$PYTEST_EXIT" = "124" ]; then
             echo "::error::pytest hit shard ${{ matrix.shard }}/4's 8-minute cap — see the 'slowest durations' block above."
