@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from cto_services.auth import require_admin_dep
 from cto_services.db import get_db, require_db
 from services.usage import get_usage
+from services.admin_user_fields import DEV_USER_SAFE_PROJECTION
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
@@ -232,7 +233,7 @@ async def list_users(
             query.update(window_q)
 
     users = await db.dev_users.find(
-        query, {"_id": 0, "password": 0, "password_hash": 0, "github.access_token": 0}
+        query, DEV_USER_SAFE_PROJECTION
     ).sort("created_at", -1).limit(100).to_list(100)
 
     # Iter 120 — flatten 300 round-trips (3 count_documents per user) into
@@ -268,6 +269,9 @@ async def list_users(
         last_seen = u.get("last_seen_at")
         u["last_seen_at"] = last_seen
         u["is_online"] = bool(last_seen and (now - last_seen) <= 120)
+        # Defense-in-depth: DEV_USER_SAFE_PROJECTION already excludes `_id`,
+        # this guards against any future caller changing the projection.
+        u.pop("_id", None)
     return {"users": users, "bucket_counts": bucket_counts}
 
 
@@ -277,7 +281,7 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     db = require_db()
     user = await db.dev_users.find_one(
         {"user_id": user_id},
-        {"_id": 0, "password": 0, "password_hash": 0, "github.access_token": 0},
+        DEV_USER_SAFE_PROJECTION,
     )
     if not user:
         raise HTTPException(404, "User not found")
@@ -548,6 +552,9 @@ async def get_user(user_id: str, authorization: Optional[str] = Header(None)):
     ).sort("updated_at", -1).limit(20)
     user["support_tickets"] = await tickets_cur.to_list(20)
 
+    # Defense-in-depth: DEV_USER_SAFE_PROJECTION already excludes `_id`,
+    # this guards against any future caller changing the projection.
+    user.pop("_id", None)
     return user
 
 

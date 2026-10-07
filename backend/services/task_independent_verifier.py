@@ -43,6 +43,7 @@ from typing import Optional
 
 from services.ora_chat.providers import one_shot as _one_shot
 from services import verification as _v
+from services.task_diff import build_unified_diff_hunks as _build_hunks
 
 logger = logging.getLogger(__name__)
 
@@ -58,38 +59,112 @@ _MAX_FILES_SHOWN = 12
 
 _SYSTEM = (
     "You are an independent code reviewer. You are shown the user's "
-    "ORIGINAL request and the diff a coding agent is about to ship. "
-    "You do NOT see the agent's reasoning, plan, or self-assessment. "
-    "Your only job: does this diff actually do what the user asked?\n\n"
+    "ORIGINAL request and a real unified diff (old vs new, with "
+    "context lines around each hunk; brand-new files show their full "
+    "content) that a coding agent is about to ship. You do NOT see "
+    "the agent's reasoning, plan, or self-assessment. Your only job: "
+    "does this diff actually do what the user asked?\n\n"
     "Rules:\n"
     "- If the diff clearly implements the request, say PASS.\n"
     "- If the diff does something else, is incomplete, or is empty/"
     "unrelated to the request, say FAIL.\n"
-    "- Be blunt. Do not defend the agent's work.\n\n"
-    'Reply in strict JSON on one line: {"verdict":"pass"|"fail","reason":"one line, max 200 chars"}\n'
+    "- Be blunt. Do not defend the agent's work.\n"
+    "- Some hunks or files may be marked '(omitted for size)' below. "
+    "If the part of the diff that would show the requested change is "
+    "missing because of that, you cannot know it is wrong — say "
+    'INCONCLUSIVE, never FAIL, for that specific situation.\n\n'
+    'Reply in strict JSON on one line: '
+    '{"verdict":"pass"|"fail"|"inconclusive","reason":"one line, max 200 chars"}\n'
     "No prose outside the JSON."
 )
 
 
-def _format_diff(files: dict) -> str:
-    if not files:
-        return "(no files in diff)"
+def _format_diff(before: dict, after: dict) -> tuple:
+    """Real unified diff: old vs new content, with context lines
+    around each changed hunk (via services.task_diff's shared
+    difflib-based hunk builder — same engine the live task UI already
+    uses to show diffs to the user). Brand-new files (no entry in
+    `before`) get their full content, line-prefixed with '+'.
+
+    The total-size budget is enforced, but a cut can only land on a
+    whole-hunk boundary (or a whole-line boundary for a new file) —
+    never mid-line, so a line is either fully shown or fully omitted.
+    Returns (diff_text, any_omitted) — `any_omitted` is True if ANY
+    hunk, new-file tail, or whole file had to be left out, so the
+    caller can refuse to accept a "fail" verdict built on a partial
+    view.
+    """
+    if not after:
+        return "(no files in diff)", False
+
+    before = before or {}
+    items = list(after.items())
     parts: list = []
     used = 0
-    items = list(files.items())
-    for i, (path, content) in enumerate(items[:_MAX_FILES_SHOWN]):
-        head = (content or "")[:2500]
-        block = f"── {path} ──\n{head}"
+    any_omitted = False
+    files_shown = 0
+
+    for path, new_content in items:
+        if files_shown >= _MAX_FILES_SHOWN:
+            any_omitted = True
+            break
+
+        header = f"--- {path} (before)\n+++ {path} (after)\n"
+        old_content = before.get(path)
+
+        if old_content is None:
+            # Brand-new file → full content, cut only at line boundaries.
+            lines = (new_content or "").splitlines()
+            kept: list = []
+            for ln in lines:
+                candidate_len = used + len(header) + len("\n".join(kept + [ln])) + 1
+                if candidate_len > _MAX_DIFF_CHARS:
+                    break
+                kept.append(ln)
+            omitted_lines = len(lines) - len(kept)
+            body = "\n".join(f"+{ln}" for ln in kept)
+            block = header + body
+            if omitted_lines > 0:
+                block += f"\n… ({omitted_lines} more line(s) of this new file omitted for size)"
+        else:
+            hunks = _build_hunks(old_content, new_content, context=3)
+            hunk_texts: list = []
+            omitted_hunks = 0
+            for h in hunks:
+                hb = [f"@@ -{h['old_start']} +{h['new_start']} @@"]
+                for ln in h["lines"]:
+                    hb.append(f"{ln['tag']}{ln['text']}")
+                hunk_text = "\n".join(hb)
+                projected = used + len(header) + sum(len(x) + 1 for x in hunk_texts) + len(hunk_text)
+                if projected > _MAX_DIFF_CHARS:
+                    omitted_hunks += 1
+                    continue
+                hunk_texts.append(hunk_text)
+            if not hunk_texts and not omitted_hunks:
+                hunk_texts = ["(no textual difference)"]
+            block = header + "\n".join(hunk_texts)
+            if omitted_hunks > 0:
+                block += f"\n… ({omitted_hunks} more hunk(s) of this file omitted for size)"
+
         if used + len(block) > _MAX_DIFF_CHARS:
-            block = block[: max(_MAX_DIFF_CHARS - used, 0)]
+            # Doesn't fit at all even on its own — omit the whole file,
+            # never emit a mid-line/mid-hunk fragment of it.
+            any_omitted = True
+            parts.append(f"--- {path} --- (omitted entirely: too large for the remaining size budget)")
+            files_shown += 1
+            continue
+
+        if "omitted" in block:
+            any_omitted = True
         parts.append(block)
         used += len(block)
-        if used >= _MAX_DIFF_CHARS:
-            parts.append(f"…(truncated, {len(items) - i - 1} more files)")
-            break
-    if len(items) > _MAX_FILES_SHOWN:
-        parts.append(f"…(+{len(items) - _MAX_FILES_SHOWN} more file(s) not shown)")
-    return "\n\n".join(parts)
+        files_shown += 1
+
+    if len(items) > files_shown:
+        any_omitted = True
+        parts.append(f"…(+{len(items) - files_shown} more file(s) not shown)")
+
+    return "\n\n".join(parts), any_omitted
 
 
 def _parse(raw: str) -> tuple:
@@ -105,7 +180,7 @@ def _parse(raw: str) -> tuple:
         return "fail", "verifier_parse_error"
     v = str(j.get("verdict") or "").strip().lower()
     r = str(j.get("reason") or "").strip()[:200]
-    if v not in ("pass", "fail"):
+    if v not in ("pass", "fail", "inconclusive"):
         return "fail", "verifier_parse_error"
     return v, r or "(no reason)"
 
@@ -113,12 +188,21 @@ def _parse(raw: str) -> tuple:
 async def verify_task_completion(
     db, *, task_id: str, project_id: Optional[str], user_id: Optional[str],
     task_text: str, files: dict, executed_by: str,
+    before_files: Optional[dict] = None,
     verifier_model: Optional[str] = None, origin: str = "chat_task",
 ) -> dict:
     """Non-raising. ALWAYS returns the recorded ledger row (plus
     `latency_s`) and ALWAYS appends exactly one row to
     `task_verifications` via services.verification.record_verification
-    — a fail-closed audit trail even on infra error."""
+    — a fail-closed audit trail even on infra error.
+
+    `before_files` is the pre-edit content of every touched file
+    (same shape as `files`, the post-edit content) — pass the
+    `contents` dict the caller already has. Without it, every file
+    reads as brand-new, which is still correct (just less precise:
+    full content instead of a diff) but should only happen for a
+    caller that genuinely has no pre-edit content available.
+    """
     started = time.time()
     model = verifier_model or _DEFAULT_MODEL
     verified_by = f"independent_verifier:{model}"
@@ -133,10 +217,19 @@ async def verify_task_completion(
         )
         return {**row, "latency_s": round(time.time() - started, 2)}
 
+    diff_text, any_omitted = _format_diff(before_files, files)
+    omit_note = (
+        "\n\nNOTE: part of this diff was omitted above because of size "
+        "limits — see the '(omitted for size)' markers. If the change "
+        "the user asked for would only be visible in an omitted part, "
+        "say INCONCLUSIVE, not FAIL."
+        if any_omitted else ""
+    )
     user_prompt = (
         "USER'S ORIGINAL REQUEST:\n" + (task_text or "") + "\n\n"
-        "DIFF ABOUT TO SHIP (files with new content):\n"
-        + _format_diff(files)
+        "UNIFIED DIFF ABOUT TO SHIP (old vs new, with context lines; "
+        "brand-new files show full content):\n"
+        + diff_text + omit_note
         + "\n\nAnswer strictly in JSON as instructed."
     )
     try:
@@ -167,7 +260,19 @@ async def verify_task_completion(
         return {**row, "latency_s": round(time.time() - started, 2)}
 
     verdict, reason = _parse(text)
-    decision = _v.DECISION_PASS if verdict == "pass" else _v.DECISION_FAIL
+    if verdict == "pass":
+        decision = _v.DECISION_PASS
+    elif verdict == "inconclusive":
+        decision = _v.DECISION_INCONCLUSIVE
+    else:
+        decision = _v.DECISION_FAIL
+    # Rule: a verifier that could not see (part of) the change must
+    # never reject it outright — enforced here in code, not left to
+    # the model to remember. Any omission + a "fail" verdict becomes
+    # "inconclusive" instead, regardless of what the model said.
+    if any_omitted and decision == _v.DECISION_FAIL:
+        decision = _v.DECISION_INCONCLUSIVE
+        reason = f"fail_overridden_incomplete_view: {reason}"[:200]
     # Level answers "what was checked", independent of the verdict —
     # a real sandbox check ran either way. Only "inconclusive" (no
     # check actually completed) gets no level at all.

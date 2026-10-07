@@ -42,6 +42,7 @@ import Landing from "./pages/Landing";
 const Both              = lazy(() => import("./pages/Both"));
 const ResetPassword     = lazy(() => import("./pages/ResetPassword"));
 const AcceptInvite      = lazy(() => import("./pages/AcceptInvite"));  // 2026-02 · Phase 1 team RBAC
+const TeamInviteAccept  = lazy(() => import("./pages/TeamInviteAccept"));  // Admin Team S3 (AT2)
 const LoopLiveFeedDemo  = lazy(() => import("./pages/LoopLiveFeedDemo"));
 const ShippedRowHarness = lazy(() => import("./pages/ShippedRowHarness"));
 const VisualFixtures    = lazy(() => import("./pages/VisualFixtures"));
@@ -385,6 +386,7 @@ export default function App() {
           <Route path="/signup"          element={<Signup />} />
           <Route path="/reset-password"  element={<ResetPassword />} />
           <Route path="/team/accept-invite" element={<AcceptInvite />} />  {/* 2026-02 · Phase 1 team RBAC — public */}
+          <Route path="/team-invite/accept" element={<PrivateRoute><TeamInviteAccept /></PrivateRoute>} />  {/* Admin Team S3 (AT2) */}
           <Route path="/verify"          element={<Verify />} />
           <Route path="/support"         element={<Support />} />
           <Route path="/support/thread/:ticketId" element={<SupportThread />} />
@@ -444,6 +446,7 @@ export default function App() {
               "internal-state-switch" back-navigation gap. */}
           <Route path="/admin/support"        element={<AdminRoute><Admin initialTab="support" /></AdminRoute>} />
           <Route path="/admin/audit"          element={<AdminRoute><Admin initialTab="audit" /></AdminRoute>} />
+          <Route path="/admin/team"           element={<AdminRoute><Admin initialTab="team" /></AdminRoute>} />
           <Route path="/admin/house-rules"    element={<AdminRoute><Admin initialTab="house_rules" /></AdminRoute>} />
           <Route path="/admin/robot-guide"    element={<AdminRoute><Admin initialTab="robot_guide" /></AdminRoute>} />
           <Route path="/admin/payments"       element={<AdminRoute><Admin initialTab="payments" /></AdminRoute>} />

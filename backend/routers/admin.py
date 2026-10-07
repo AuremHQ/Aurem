@@ -19,7 +19,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin_dep
+from cto_services.auth import current_dev, require_admin_dep, require_admin
 from cto_services.db import get_db, require_db
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
 # (activation funnel, dev_users buckets, etc.). Founders click around
@@ -39,26 +39,12 @@ router = APIRouter(
 )
 
 
-async def _require_admin(authorization: Optional[str]) -> dict:
-    user = await current_dev(authorization)
-    if user.get("is_admin"):
-        return user
-    # Stale-JWT escape hatch: the JWT might be from before the user was
-    # promoted (e.g. founder allow-list added after their last login).
-    # Trust the live DB row over the cached claim.
-    db = get_db()
-    if db is not None:
-        row = await db.dev_users.find_one(
-            {"user_id": user.get("user_id")},
-            {"is_admin": 1, "tier": 1, "email": 1, "is_unlimited": 1},
-        )
-        if row and (row.get("is_admin") or row.get("tier") == "founder"):
-            user["is_admin"] = True
-            user["tier"] = row.get("tier") or user.get("tier")
-            user["is_unlimited"] = bool(row.get("is_unlimited"))
-            user["email"] = row.get("email") or user.get("email")
-            return user
-    raise HTTPException(403, "Admin access required")
+async def _require_admin(authorization: Optional[str], request=None) -> dict:
+    # Admin Team S1 (AT1a) — delegates to the one canonical gate
+    # (cto_services.auth.require_admin). admin_qa.py imports this
+    # function directly, so it stays live even though this file's
+    # own `router` is never mounted in main.py.
+    return await require_admin(authorization, request=request)
 
 
 # ── Auth check ──────────────────────────────────────────────────────────

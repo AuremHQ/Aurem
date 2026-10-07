@@ -344,3 +344,44 @@ def reset_circuit_breakers():
     reset_breakers_for_tests()
     yield
 
+
+# ── Admin Team S2 (AT1b) — legacy admin-gate compat (D15) ────────────
+#
+# The real gate (cto_services.auth._finish_admin_check) now requires
+# EITHER a FOUNDER_EMAILS allow-list email OR an accepted
+# admin_team_members row — `is_admin=True` / `tier=="founder"` alone no
+# longer grant anything (D1). ~265 pre-existing tests across this suite
+# construct a legacy "admin" user that way and call one of
+# require_admin's delegates directly (not via a router dependency
+# override, which this fixture has no effect on anyway). Rather than
+# edit every one of those call sites, this autouse fixture monkeypatches
+# the ONE hook `cto_services.auth._legacy_admin_bypass` — which is a
+# hardcoded `return False` in shipped code, not a flag/env var (D15) —
+# to restore the pre-S2 acceptance for the duration of each test.
+#
+# The handful of NEW Admin Team lock tests that must exercise the REAL
+# strict rule opt out with `@pytest.mark.real_admin_gate`.
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_admin_gate: run against the real Admin Team gate (no legacy "
+        "is_admin/tier=='founder' bypass) — for Admin Team S2 lock tests.",
+    )
+
+
+@_pytest.fixture(autouse=True)
+def _admin_team_s2_legacy_gate_compat(request, monkeypatch):
+    if request.node.get_closest_marker("real_admin_gate"):
+        yield
+        return
+    import cto_services.auth as _auth_mod
+
+    def _legacy_bypass(user: dict) -> bool:
+        return bool(
+            user.get("is_admin") or user.get("is_founder")
+            or user.get("tier") == "founder"
+        )
+
+    monkeypatch.setattr(_auth_mod, "_legacy_admin_bypass", _legacy_bypass)
+    yield
+

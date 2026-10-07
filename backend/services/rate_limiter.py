@@ -26,6 +26,7 @@ Suspended when env RATE_LIMIT_DISABLED=1 (tests).
 from __future__ import annotations
 import logging
 import os
+import re
 import time
 import uuid
 from collections import deque, defaultdict
@@ -71,12 +72,80 @@ def check_rate_limit(key: str, limit_per_minute: int) -> bool:
     return True
 
 
+_LOG_SANITIZE_MAX_LEN = 100
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_for_log(value: str) -> str:
+    """A caller fully controls `ip_naive` (that's the documented gap
+    this whole fix is about) — strip control characters (incl.
+    \\n/\\r, which could forge a fake extra log line) and cap length
+    before any caller-supplied value reaches a log call."""
+    cleaned = _CONTROL_CHARS_RE.sub("", value or "")
+    return cleaned[:_LOG_SANITIZE_MAX_LEN]
+
+
 def client_ip_from_request(request) -> str:
     """Extract the real client IP, honoring X-Forwarded-For when set by
-    the K8s ingress."""
+    the K8s ingress.
+
+    KNOWN GAP (FIX 2, step 2a, 2026-10-04): this takes the FIRST entry
+    in X-Forwarded-For, which is whatever the CALLER supplied — proven
+    live on Preview to be fully attacker-controlled (a made-up header
+    value changes this function's return value outright). See
+    `client_ip_trusted_from_request()` below for the hop-counted
+    alternative. Nothing switches to it yet (that's step 2b, pending
+    the user confirming production's own hop count) — this function's
+    return value and behavior are UNCHANGED in this turn; only a
+    side-by-side diagnostic log line was added so both values can be
+    compared on real traffic before any caller is switched over.
+    """
     fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if fwd:
-        return fwd
+    naive = fwd or (getattr(request.client, "host", "unknown") or "unknown")
+    try:
+        trusted = client_ip_trusted_from_request(request)
+        logger.info(
+            "rate_limiter: ip_naive=%s ip_trusted=%s (side-by-side diagnostic, "
+            "FIX 2 step 2a — no behavior change, still keying on ip_naive)",
+            _sanitize_for_log(naive), _sanitize_for_log(trusted))
+    except Exception:                                          # noqa: BLE001
+        pass  # diagnostic-only; must never break the actual rate-limit path
+    return naive
+
+
+# FIX 2, step 2a — number of hops OUR OWN edge appends to
+# X-Forwarded-For on Preview, confirmed empirically (4 live requests,
+# varying how many fake hops the client prepended): Cloudflare's
+# anycast edge IP, then a fixed ingress/load-balancer IP — always
+# exactly 2 appended hops, regardless of what the client sends. See
+# the FIX 2 step 2a report for the raw evidence. The genuine,
+# un-spoofable client IP is therefore the chain entry this many
+# positions plus one from the end.
+_TRUSTED_HOP_COUNT = 2
+
+
+def client_ip_trusted_from_request(request) -> str:
+    """Extract the client IP from the TRUSTED end of the
+    X-Forwarded-For chain — the hops appended by our own edge, which a
+    caller cannot influence — instead of the first (attacker-settable)
+    entry that `client_ip_from_request()` uses.
+
+    A chain with fewer entries than `_TRUSTED_HOP_COUNT` cannot be
+    trusted AT ALL — every entry in it could be caller-supplied, since
+    our own edge hasn't appended enough of its own hops yet to push
+    any trustworthy value into a fixed position. In that case (and
+    when the header is missing entirely, e.g. an internal call that
+    goes straight to localhost) this falls back to the raw socket
+    peer address, NEVER to anything read from the header.
+
+    NOT wired into any rate-limit caller yet (that's step 2b). Used
+    this turn only for the side-by-side log above and the admin-only
+    diagnostic endpoint.
+    """
+    fwd_raw = request.headers.get("x-forwarded-for") or ""
+    chain = [p.strip() for p in fwd_raw.split(",") if p.strip()]
+    if len(chain) > _TRUSTED_HOP_COUNT:
+        return chain[-(_TRUSTED_HOP_COUNT + 1)]
     return getattr(request.client, "host", "unknown") or "unknown"
 
 

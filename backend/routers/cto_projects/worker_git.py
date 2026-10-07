@@ -433,7 +433,7 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
             _iv_result = await verify_task_completion(
                 _guard_db, task_id=task_id, project_id=proj.get("project_id"),
                 user_id=proj.get("user_id"), task_text=task, files=edits,
-                executed_by="worker_git:codegen",
+                before_files=contents, executed_by="worker_git:codegen",
             )
         except Exception as _iv_e:                             # noqa: BLE001
             logger.warning("[cto-task %s] independent verifier crashed (non-blocking): %r",

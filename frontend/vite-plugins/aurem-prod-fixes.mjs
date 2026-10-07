@@ -47,6 +47,9 @@ const KNOWN_PREFIXES = new Set([
   // the existing "settings" prefix, but /team/accept-invite (public
   // invite-acceptance page, App.jsx) is its own top-level route.
   "team",
+  // Admin Team S3 (AT2) — /team-invite/accept standalone invite-accept
+  // page (frontend/src/pages/TeamInviteAccept.jsx).
+  "team-invite",
 ]);
 
 const HAS_EXTENSION = /\.[a-zA-Z0-9]+$/;

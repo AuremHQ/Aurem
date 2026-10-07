@@ -31,6 +31,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from cto_services.auth import create_token, current_dev
 from cto_services.db import get_db
+from services.team_invite_email import _invite_url as build_invite_link
 from services.team_permissions import (
     RESOURCES, ROLE_PRESETS, preset_matrix, require_permission,
     resolve_context, team_feature_enabled, write_audit_log,
@@ -50,7 +51,7 @@ def _require_db():
 
 
 def _public_member(row: dict) -> dict:
-    return {
+    out = {
         "member_id":   row.get("member_id"),
         "email":       row.get("email"),
         "status":      row.get("status"),
@@ -60,6 +61,14 @@ def _public_member(row: dict) -> dict:
         "created_at":  row.get("created_at"),
         "updated_at":  row.get("updated_at"),
     }
+    # Owner/admin already passed `require_permission("team_management", "read")`
+    # to reach this list — safe to hand back the copy-paste link for any
+    # still-pending invite (same token the email already carries, same
+    # account-owner-only read gate; nothing new is exposed to anyone who
+    # couldn't already see it by opening the email).
+    if row.get("status") == "pending" and row.get("invite_token"):
+        out["invite_link"] = build_invite_link(row["invite_token"])
+    return out
 
 
 @router.get("/resources")
@@ -173,7 +182,8 @@ async def invite_member(body: InviteBody,
         action="invite", new_value={"role_label": role_label, "permissions": matrix},
     )
     ok, err = await _send_invite(email, token, ctx["user"].get("email") or "", role_label)
-    return {"ok": True, "member_id": member_id, "email_sent": ok, "email_error": err}
+    return {"ok": True, "member_id": member_id, "email_sent": ok, "email_error": err,
+            "invite_link": build_invite_link(token)}
 
 
 async def _send_invite(email: str, token: str, owner_email: str, role_label: str):
@@ -280,7 +290,8 @@ async def resend_invite(member_id: str,
         target_member_id=member_id, target_email=row.get("email", ""),
         action="resend_invite",
     )
-    return {"ok": True, "email_sent": ok, "email_error": err}
+    return {"ok": True, "email_sent": ok, "email_error": err,
+            "invite_link": build_invite_link(token)}
 
 
 @router.get("/invite/{token}")

@@ -32,10 +32,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev
+from cto_services.auth import current_dev, require_admin, require_admin_dep
 from cto_services.db import get_db
 from services.mfa import (
     generate_secret,
@@ -48,14 +48,23 @@ from services.mfa import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/admin/2fa", tags=["Admin 2FA"])
+# Admin Team S2 (AT1b) — router-level gate added so `request` is always
+# available (via `_current_request`, see cto_services/auth.py) for this
+# router's own R4 self-service-MFA exemption lookup; previously this
+# router had NO router-level dependency at all (an outlier among the
+# ~24 admin routers), so a team member's calls here could never resolve
+# a matched route and were always refused. Same rule either way for the
+# Owner (unaffected) — purely enabling, not behaviour-changing for them.
+router = APIRouter(prefix="/admin/2fa", tags=["Admin 2FA"],
+                   dependencies=[Depends(require_admin_dep)])
 
 
-async def _require_admin(authorization: Optional[str]) -> dict:
-    payload = await current_dev(authorization)
-    if not payload.get("is_admin"):
-        raise HTTPException(403, "Admin only")
-    return payload
+async def _require_admin(authorization: Optional[str], request=None) -> dict:
+    # Admin Team S1 (AT1a) — delegates to the one canonical gate. This was
+    # previously the weakest of the 6 duplicate rules (no tier=="founder"
+    # fast path, no stale-JWT DB fallback) — delegating fixes that drift
+    # without touching any of this file's 4 call sites.
+    return await require_admin(authorization, request=request)
 
 
 class CodeBody(BaseModel):

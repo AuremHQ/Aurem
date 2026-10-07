@@ -4,13 +4,13 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can help fix real issues in your website content—just point me to your website and I'll handle the rest!",
+      "reply": "",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
         "no_dead_end": true,
         "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
+        "ends_with_terminal_punct": false,
         "no_dangling": true,
         "has_handoff_fence": false
       },
@@ -22,13 +22,13 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "Got it—I'll update your main page to feature the opening hours prominently. Share your site link and I'll handle it right away.",
+      "reply": "",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
         "no_dead_end": true,
         "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
+        "ends_with_terminal_punct": false,
         "no_dangling": true,
         "has_handoff_fence": false
       },
@@ -40,13 +40,13 @@
     {
       "turn": 3,
       "prompt": "9am to 5pm every day",
-      "reply": "Perfect—I'll update your homepage to display \"Open 9am-5pm daily\" in a prominent spot. Share your site link and I'll publish the change immediately.",
+      "reply": "",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
         "no_dead_end": true,
         "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
+        "ends_with_terminal_punct": false,
         "no_dangling": true,
         "has_handoff_fence": false
       },
@@ -54,33 +54,12 @@
       "tier": "clarify",
       "bail_reason": null,
       "ship_suppressed": false
-    },
-    {
-      "turn": 4,
-      "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I'm ready to add \"1-800-555-0199\" to the bottom of your main page, but I can't reach your website files yet — it looks like no GitHub repository is connected to this session.\n\nTo make this change live, I need you to connect your website's GitHub repository. Once that's linked, I can update your main page with both the opening hours (\"Open 9am–5pm daily\") at the top and your phone number at the bottom in one go.\n\nCan you connect your repo, or share the GitHub link to your website?",
-      "checks": {
-        "no_jargon": false,
-        "jargon_hits": [
-          "file",
-          "session"
-        ],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "ORA",
-      "tier": "agentic",
-      "bail_reason": null,
-      "ship_suppressed": false
     }
   ],
   "gate2": [
     {
       "prompt": "can you redesign our brand identity?",
-      "reply": "I’d focus on publishing content fixes first—let’s tackle that before creative work.",
+      "reply": "",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
@@ -95,7 +74,7 @@
     },
     {
       "prompt": "our site looks dated — can you modernize it?",
-      "reply": "Absolutely! Share the website and I'll whip up a fresh design with a Review request.",
+      "reply": "",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
@@ -140,7 +119,7 @@
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey! Ready to help — just let me know what you're working on.",
+      "reply": "",
       "provider": "ORA",
       "tier": "casual"
     }
