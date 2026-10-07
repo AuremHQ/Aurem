@@ -48,6 +48,17 @@ Strictly-ordered, unattended security/RBAC overhaul of the admin panel, authoriz
 - **Deliberately deferred, flagged not silently dropped**: AT3 (full widget-level 403 hiding for a team member's trimmed sidebar/UI — today their BACKEND access is correctly scoped, but the frontend nav/route-guard still reflects the old Owner-only set), AT4 (removing the now-inert `ADMIN_EMAIL`/`ADMIN_EMAILS` promotion code path), real MFA-claim wiring for the PIN-login flow. Canary code and pin-login code were not touched, per spec.
 
 
+## Admin Team and Roles — overnight loop, S0→S1→S2→S3 (2026-10-05, ALL GATES MET)
+
+Strictly-ordered, unattended security/RBAC overhaul of the admin panel, authorized overnight. Full detail: `docs/admin-team/MORNING-REPORT.md` + `docs/admin-team/STAGE-{0,1,2,3}.md` + `docs/admin-team/LOOP-STATE.md`.
+
+- **S0** (`6dbec14d`): allowlisted `dev_users` fields returned by `GET /admin/users`(+`/{id}`) — no more raw-document leakage.
+- **S1** (`0c552a95`): one shared, request-aware admin gate (`cto_services/auth.py`) + a 336-route access registry (`services/admin_access_registry.py`), legacy-behavior mode (audit only, no enforcement change yet) — avoided mass-editing ~265 existing inline admin checks via a request-scoped `ContextVar` decision cache instead.
+- **S2** (`8aa59e3d`): real enforcement — Owner is ONLY a `FOUNDER_EMAILS` email (legacy `is_admin`/`tier=="founder"`/`is_founder` flags now grant nothing by themselves, anywhere); new `admin_team_members` collection (`services/admin_team.py`) for a `developer` role, scoped per-screen by the registry; MFA session-claim (`mfa_verified`/`mfa`) required for non-Owner access, earned only by completing real 2FA; fails closed (no confirmed current `dev_users` row → 403, DB exception → 503). 20 lock tests passing.
+- **S3** (checkpoint commit + `3832ed9e`): Admin Team screen (`/admin/team`, `AdminTeamPage.jsx`) + invite lifecycle — `backend/routers/admin_team.py` (owner-only CRUD: invite/copy-link/cancel/suspend/resume/remove/overrides) + `backend/routers/team_invite_accept.py` (`POST /team-invite/accept`, authenticated but never mints a session). Invite tokens: random, only SHA-256 hash stored, raw value shown exactly once; "copy link" rotates/revokes the prior token. Reuses existing `admin_audit_log`/`notifications` infra — no new email sending. Separate feature from the pre-existing workspace Team (`/team`, `AcceptInvite.jsx`, `db.team_members`) — untouched. 7 new tests passing (27/27 total across S0-S3). First full-stack testing pass found + fixed 2 real bugs (`Admin.jsx` icon-map crash, SPA route-allowlist 404 for `/team-invite/*`) — both fixed and re-verified, 100% pass.
+- **Deliberately deferred, flagged not silently dropped**: AT3 (full widget-level 403 hiding for a team member's trimmed sidebar/UI — today their BACKEND access is correctly scoped, but the frontend nav/route-guard still reflects the old Owner-only set), AT4 (removing the now-inert `ADMIN_EMAIL`/`ADMIN_EMAILS` promotion code path), real MFA-claim wiring for the PIN-login flow. Canary code and pin-login code were not touched, per spec.
+
+
 ## Chat-pane width-rail fix + close (×) buttons + copy-tick redesign (2026-10-02)
 
 Founder-reported bug (Hindi/Hinglish): informational cards above the
