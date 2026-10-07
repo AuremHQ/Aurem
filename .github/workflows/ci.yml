@@ -320,6 +320,9 @@ jobs:
           name: coverage-shard-${{ matrix.shard }}
           path: backend/.coverage.shard${{ matrix.shard }}
           retention-days: 1
+          # upload-artifact@v4 skips dotfiles by default; without this the
+          # artifact is silently empty and the ratchet gets no coverage input.
+          include-hidden-files: true
           if-no-files-found: ignore
 
 
@@ -421,6 +424,9 @@ jobs:
           # .coverage.shard* SQLite files (standard parallel-coverage
           # pattern), then `coverage json` renders it same as the
           # single-job version always did.
+          # A stale tracked backend/.coverage must never stand in for the
+          # shards: coverage json falls back to it and dies on missing sources.
+          rm -f .coverage
           python -m coverage combine .coverage.shard1 .coverage.shard2 .coverage.shard3 .coverage.shard4 2>&1 || echo "::warning::coverage combine had issues — ratchet guard below may see partial data"
           python -m coverage json -o coverage.json 2>&1 || echo "::warning::coverage json render failed"
 
