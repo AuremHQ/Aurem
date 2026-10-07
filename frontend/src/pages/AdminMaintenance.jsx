@@ -115,6 +115,21 @@ export default function AdminMaintenance() {
     );
   }
 
+  if (!settings) {
+    return (
+      <div data-testid="admin-maintenance-error"
+           style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#0a0a0a", color: "#e5e5e5", textAlign: "center", padding: 24 }}>
+        <div>
+          <div style={{ marginBottom: 12 }}>Couldn't load the maintenance state.</div>
+          <button type="button" onClick={load} data-testid="admin-maintenance-retry"
+                  style={{ padding: "6px 12px", background: "#1a1a1a", color: "#e5e5e5", border: "1px solid #333", borderRadius: 6, cursor: "pointer" }}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0a", color: "#e5e5e5", fontFamily: "system-ui, -apple-system, sans-serif", padding: "28px 24px 60px" }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>

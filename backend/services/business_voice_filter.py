@@ -182,7 +182,10 @@ _URL_PLACEHOLDER = "\x00URL{}\x00"
 # code the user is looking at. Fix: same technique as URLs/labels
 # above, but MUST run FIRST — stash every ``` fenced block, verbatim,
 # before anything else in the pipeline gets a chance to touch it.
-_CODE_FENCE_RE = re.compile(r"```[\s\S]*?```")
+# A fence the model never closed (cut off, or stream ended mid-block)
+# runs to the end of the text: still code, still shielded.
+_CODE_FENCE_RE = re.compile(r"```[\s\S]*?(?:```|\Z)")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 _CODE_PLACEHOLDER = "\x00CODE{}\x00"
 
 # 2026-02 — confirmed live bug (same-engagement founder repro,
@@ -208,13 +211,16 @@ _CODE_PLACEHOLDER = "\x00CODE{}\x00"
 _LABEL_PLACEHOLDER = "\x00LBL{}\x00"
 
 
-def filter_for_business_owner(text: str) -> str:
+def filter_for_business_owner(text: str, keep_names: "set[str] | None" = None) -> str:
     """Deterministic — same input always produces the same output, no
     LLM call. Strips filenames-with-extension (replaced with a plain
     page reference) and rewrites dev terms to business-owner terms.
-    Any embedded URL is passed through byte-for-byte, untouched."""
+    Any embedded URL is passed through byte-for-byte, untouched.
+    Fenced and inline code, and any file name in `keep_names` (names the
+    user themselves used this conversation), are never rewritten."""
     if not text:
         return text
+    keep = {n.lower() for n in (keep_names or ())}
     codes: list[str] = []
     urls: list[str] = []
     labels: list[str] = []
@@ -228,10 +234,10 @@ def filter_for_business_owner(text: str) -> str:
         return _URL_PLACEHOLDER.format(len(urls) - 1)
 
     def _stash_label(m: re.Match) -> str:
-        labels.append(_humanize_filename(m))
+        labels.append(m.group(0) if m.group(0).lower() in keep else _humanize_filename(m))
         return _LABEL_PLACEHOLDER.format(len(labels) - 1)
 
-    shielded = _CODE_FENCE_RE.sub(_stash_code, text)
+    shielded = _INLINE_CODE_RE.sub(_stash_code, _CODE_FENCE_RE.sub(_stash_code, text))
     protected = _URL_RE.sub(_stash_url, shielded)
     out = _FILENAME_RE.sub(_stash_label, protected)
     out = _ACCESS_TO_RE.sub(lambda m: _preserve_case(m.group(0), "I can't see"), out)
@@ -246,7 +252,7 @@ def filter_for_business_owner(text: str) -> str:
     return out
 
 
-def apply_business_voice(ora_panel: bool, content: str) -> str:
+def apply_business_voice(ora_panel: bool, content: str, keep_names: "set[str] | None" = None) -> str:
     """Convenience wrapper for routers/chat.py's call sites — the ORA
     Admin/technical view (`ora_panel=True`) intentionally keeps real
     filenames and dev terms; the regular (business-owner) chat does
@@ -254,7 +260,7 @@ def apply_business_voice(ora_panel: bool, content: str) -> str:
     single-surface-drift discipline as apply_no_false_success_guard)."""
     if ora_panel:
         return content
-    return filter_for_business_owner(content)
+    return filter_for_business_owner(content, keep_names)
 
 
 async def apply_business_owner_guards(
@@ -280,9 +286,12 @@ async def apply_business_owner_guards(
     """
     if not content or "aurem-handoff" in content:
         return content
-    content = apply_business_voice(ora_panel, content)
+    from services.reply_integrity import repair_code_blocks, user_named_files
+    content = repair_code_blocks(content)
     if ora_panel:
         return content
+    content = apply_business_voice(
+        ora_panel, content, await user_named_files(session_id, user_id, user_prompt))
     from services.bail_reason import strip_banned_fallback_phrases
     from services.no_dead_end_guard import ensure_alternative, has_dead_end
     from services.incomplete_reply_guard import ensure_complete, is_incomplete

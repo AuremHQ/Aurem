@@ -19,6 +19,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Zap, GitMerge, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 export default function BulkFixConfirmModal({
   open, onClose, projectId, findings, category, tool = "health-scan",
@@ -27,6 +28,7 @@ export default function BulkFixConfirmModal({
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [starting, setStarting] = useState(false);
+  useEscapeKey(onClose, !!open);
 
   useEffect(() => {
     if (!open || !findings?.length) return;

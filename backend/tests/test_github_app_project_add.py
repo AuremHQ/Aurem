@@ -481,15 +481,28 @@ class TestGetRepoToken:
         assert exc2.value.code == "app_installation_missing"
 
     @pytest.mark.asyncio
-    async def test_github_app_revoked_installation_raises_revoked(self, configured):
-        """When GitHub returns 401/404 on token mint (installation
-        deleted or App uninstalled), helper raises app_installation_revoked
-        — App-only fails closed, it never falls through to another auth."""
+    async def test_github_app_revoked_installation_raises_revoked(
+        self, configured, monkeypatch,
+    ):
+        """A 404 on token mint is only *confirmed* as revoked when our
+        webhook-maintained records agree (suspended_at/deleted_at set) —
+        see services/pat_vault.py's 2026-08-23 bug fix. In that case the
+        helper raises app_installation_revoked. A bare 404 with an
+        installation our records still show as active raises
+        github_rejected (transient), so the two must not be conflated."""
         row = {
             "user_id":         "u1",
             "auth_method":     "github_app",
             "installation_id": 404,
         }
+
+        class _RevokedDB:
+            class github_installations:
+                @staticmethod
+                async def find_one(query, projection=None):
+                    return {"suspended_at": "2026-01-01T00:00:00+00:00"}
+
+        monkeypatch.setattr("cto_services.db.get_db", lambda: _RevokedDB())
 
         def handler(request):
             return httpx.Response(404, json={"message": "Not Found"})
@@ -498,3 +511,33 @@ class TestGetRepoToken:
             with pytest.raises(_pv.GithubAppAuthError) as exc:
                 await _pv.get_repo_token(row)
         assert exc.value.code == "app_installation_revoked"
+
+    @pytest.mark.asyncio
+    async def test_github_app_mint_rejection_with_active_installation_raises_rejected(
+        self, configured, monkeypatch,
+    ):
+        """Same 404 mint, but our records show the installation is still
+        active — this is the transient/JWT-hiccup class the 2026-08-23
+        fix exists for, so it surfaces github_rejected (retryable), NOT
+        app_installation_revoked."""
+        row = {
+            "user_id":         "u1",
+            "auth_method":     "github_app",
+            "installation_id": 500,
+        }
+
+        class _ActiveDB:
+            class github_installations:
+                @staticmethod
+                async def find_one(query, projection=None):
+                    return {"suspended_at": None, "deleted_at": None}
+
+        monkeypatch.setattr("cto_services.db.get_db", lambda: _ActiveDB())
+
+        def handler(request):
+            return httpx.Response(404, json={"message": "Not Found"})
+
+        with patch.object(httpx, "AsyncClient", _make_mock_client(handler)):
+            with pytest.raises(_pv.GithubAppAuthError) as exc:
+                await _pv.get_repo_token(row)
+        assert exc.value.code == "github_rejected"

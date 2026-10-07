@@ -105,6 +105,7 @@ from routers.vanguard_ci import router as vanguard_ci_router        # Iter 212m-
 from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 2026-08-20 · G1/G15 CI ingest
 from routers.fix_pipeline import router as fix_pipeline_router      # Iter 212m-121 bulk + SSE fix pipeline
 from routers.repo_status import router as repo_status_router        # Iter 212m-125 live repo connection ping
+from routers.checkup import router as checkup_router  # checkup-first (flag-gated, default OFF)
 from routers.codebase_health import router as codebase_health_router # Iter 212m-72 5-category health scanner
 from routers.evidence import router as evidence_router  # 2026-09-20 — pointer+preview resolver (scan / loop_run)
 from routers.verification import router as verification_router  # Trust & Verification round
@@ -4022,6 +4023,7 @@ app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-
 app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-120 Phase 1: trufflehog CI ingest
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline
 app.include_router(repo_status_router,    prefix="/api/aurem-dev")  # Iter 212m-125 live repo connection ping
+app.include_router(checkup_router, prefix="/api/aurem-dev")  # checkup-first; every route 404s unless `checkup_flow` is on
 app.include_router(codebase_health_router, prefix="/api/aurem-dev")  # Iter 212m-72 5-cat health
 app.include_router(evidence_router, prefix="/api/aurem-dev")  # 2026-09-20 — evidence pointer resolver
 app.include_router(verification_router, prefix="/api/aurem-dev")  # Trust & Verification round
