@@ -42,6 +42,7 @@ ecdsa==0.19.2
 email-validator==2.3.0
 emergentintegrations==0.1.2
 et_xmlfile==2.0.0
+execnet==2.1.2
 fal_client==1.0.1
 fastapi==0.115.0
 fastuuid==0.14.0
@@ -90,7 +91,7 @@ langfuse==4.12.0
 librt==0.11.0
 license-expression==30.4.4
 limits==5.8.0
-litellm @ https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl
+litellm @ https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl#sha256=adf398c513273de9341f61822296c6b2145f7f2dc4a69daf3ac04829f5bde3f8
 lxml==6.1.1
 magika==0.6.3
 mammoth==1.11.0
@@ -166,6 +167,7 @@ pytest-cov==7.1.0
 pytest-rerunfailures==16.6
 pytest-split==0.11.0
 pytest-timeout==2.4.0
+pytest-xdist==3.8.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-jose==3.5.0

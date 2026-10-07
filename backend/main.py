@@ -98,6 +98,8 @@ from routers.auth_verify import router as auth_verify_router        # 2026-09-26
 from routers.email_unsubscribe import router as email_unsubscribe_router  # 2026-02-12 · CAN-SPAM/GDPR one-click unsubscribe
 from routers.admin_vanguard import router as admin_vanguard_router  # Iter 212m-42 vanguard admin toggle
 from routers.admin_bin import router as admin_bin_router  # Iter 212m-171 admin panel rebuild
+from routers.admin_team import router as admin_team_router  # Admin Team S3 (AT2) — Team screen + invites
+from routers.team_invite_accept import router as team_invite_accept_router  # Admin Team S3 (AT2) — invite accept
 from routers.security_scan import router as security_scan_router    # Iter 212m-55 1-click vuln scanner
 from routers.vanguard_ci import router as vanguard_ci_router        # Iter 212m-120 Phase 1: trufflehog CI ingest
 from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 2026-08-20 · G1/G15 CI ingest
@@ -3792,7 +3794,6 @@ async def health_rate_limiter():
         },
     }
 
-
 # Iter 386 · Session 2 · Part reconcile — Diagnostic echo endpoint used
 # for reconciling burst-test discrepancies. Returns EXACTLY what the
 # global rate-limiter sees as the source-IP for this request (via the
@@ -3804,19 +3805,37 @@ async def health_rate_limiter():
 # different observers. Zero DB/upstream work; skip-listed via the
 # `/api/aurem-dev/health` prefix so hitting it doesn't itself pollute
 # the rate-limit bucket.
+#
+# FIX 2, step 2a (2026-10-04) — made admin-only: this echoes back the
+# full X-Forwarded-For chain, which is exactly the kind of internal
+# topology detail an attacker probing for a spoofing angle would want
+# to see. Same gate pattern as /api/aurem-dev/health/ora above.
 @app.get("/api/aurem-dev/health/echo-ip", tags=["Health"])
-async def health_echo_ip(request: Request):
-    """Echo back the IP the rate-limiter would key on for this request."""
-    from services.rate_limiter import client_ip_from_request
+async def health_echo_ip(request: Request, authorization: Optional[str] = Header(None)):
+    """Echo back the IP the rate-limiter would key on for this request,
+    the hop-counted trusted alternative, and the full raw chain."""
+    from cto_services.auth import current_dev
+    user = await current_dev(authorization)
+    if not (bool(user.get("is_admin")) or bool(user.get("is_unlimited"))
+            or user.get("tier") == "founder"):
+        raise HTTPException(403, "IP echo diagnostic is admin-only")
+    from services.rate_limiter import client_ip_from_request, client_ip_trusted_from_request
     h = request.headers
+    fwd_raw = h.get("x-forwarded-for") or ""
+    chain = [p.strip() for p in fwd_raw.split(",") if p.strip()]
     return {
         # This is EXACTLY the value main.py:1792 keys the sliding-window
-        # bucket on. If two burst requests return two different values
-        # here, they get two different budgets.
-        "effective_ip": client_ip_from_request(request),
+        # bucket on today. If two burst requests return two different
+        # values here, they get two different budgets.
+        "effective_ip_naive":   client_ip_from_request(request),
+        # FIX 2 step 2a — hop-counted alternative, NOT wired into any
+        # limiter yet (step 2b).
+        "effective_ip_trusted": client_ip_trusted_from_request(request),
+        "x_forwarded_for_chain": chain,
+        "x_forwarded_for_hop_count": len(chain),
         # Raw signals — useful to spot proxy chains / IP rewrites.
         "socket_client_host":  getattr(request.client, "host", None),
-        "x_forwarded_for":     h.get("x-forwarded-for"),
+        "x_forwarded_for":     fwd_raw or None,
         "x_real_ip":           h.get("x-real-ip"),
         "cf_connecting_ip":    h.get("cf-connecting-ip"),
         "true_client_ip":      h.get("true-client-ip"),
@@ -3998,6 +4017,8 @@ app.include_router(auth_verify_router,    prefix="/api/aurem-dev")  # 2026-09-26
 app.include_router(email_unsubscribe_router,        prefix="/api/aurem-dev")  # 2026-02-12 · one-click unsubscribe
 app.include_router(admin_vanguard_router, prefix="/api/aurem-dev")  # Iter 212m-42 vanguard config
 app.include_router(admin_bin_router,      prefix="/api/aurem-dev")  # Iter 212m-171 admin panel rebuild
+app.include_router(admin_team_router,         prefix="/api/aurem-dev")  # Admin Team S3 (AT2)
+app.include_router(team_invite_accept_router, prefix="/api/aurem-dev")  # Admin Team S3 (AT2)
 app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-55 1-click vuln scanner
 app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-120 Phase 1: trufflehog CI ingest
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline

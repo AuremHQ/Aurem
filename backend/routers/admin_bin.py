@@ -163,6 +163,14 @@ async def change_user_tier(
 ):
     """Change a user's subscription tier."""
     admin = await _require_admin(authorization)
+    # Admin Team S2 (AT1b) / D13 — setting tier="founder" is owner-only
+    # and affects PLAN ONLY, never access (D1 already ignores `tier` for
+    # the access decision entirely — only FOUNDER_EMAILS does). A team
+    # member with Manage on users.plans may still change OTHER tiers.
+    if body.tier == "founder":
+        from services.usage import is_founder_email
+        if not is_founder_email((admin.get("email") or "").strip().lower()):
+            raise HTTPException(403, "Only the Owner can set tier=founder")
     from cto_services.db import get_db
     db = get_db()
     if db is None:

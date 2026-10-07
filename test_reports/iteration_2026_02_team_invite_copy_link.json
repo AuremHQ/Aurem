@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend E2E of the 'Copy invite link' enhancement to Team Management. All 8 user-journey assertions passed on preview: button rendering (Link2 icon only on pending+invite_link rows next to RotateCcw/Trash2), clipboard write via navigator.clipboard, transient Check-icon feedback that reverts to Link2 after ~2s, helper-text update with inline Link2 icon mentioning the copy option, public /team/accept-invite page binds strictly to the invited email+role, password submission creates account whose /auth/me email EXACTLY matches the invited address (team_member tier, is_admin=false), resend rotates the invite_link token and the old token now returns {valid:false} from GET /team/invite/{token}. One environment issue surfaced below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "services/team_invite_email.py::_invite_url", "issue": "Hardcoded fallback 'https://auremcto.com' when FRONTEND_URL env var is unset. In this preview pod FRONTEND_URL is not set, so copied invite_link URLs point to the PROD domain (auremcto.com) even though the invite token exists only in preview Mongo — opening the copied link out-of-the-box in preview takes users to a page where the token is invalid. Prod itself is fine because FRONTEND_URL=auremcto.com effectively matches. Fix: set FRONTEND_URL=https://bin-context-pat.preview.emergentagent.com in /app/backend/.env, OR derive the base from the request's X-Forwarded-Host/origin header, OR use REACT_APP_BACKEND_URL (same host as frontend in this setup) as the fallback instead of a hardcoded prod URL."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Copy invite link in preview env", "issue": "Clipboard receives a prod-domain URL (https://auremcto.com/...) because of the backend FRONTEND_URL fallback — root cause is backend, not frontend code. Frontend copyLink() correctly writes whatever invite_link the API returned. Rewriting the host to the preview domain works and the full accept-invite + login flow verifies end-to-end.", "affected_selectors": ["team-member-copy-link-{member_id}"]}
+    ],
+    "design_issues": [
+      {"screen": "Settings → Team → helper text", "issues": ["The inline Link2 <svg> inside the helper paragraph renders on its own line (it inherits the paragraph's inline flow but visually looks orphaned between 'Use the' and 'icon next to a pending invite'). Minor polish only — consider wrapping with an inline-flex span or using &nbsp; glue so it reads 'Use the 🔗 icon' on one line. Not blocking."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Set FRONTEND_URL in /app/backend/.env to the preview frontend origin (or make _invite_url derive it from the incoming request / REACT_APP_BACKEND_URL) so copied invite links work in preview out of the box. Prod is unaffected.",
+    "(Optional polish) Tighten the inline Link2 icon layout inside the helper paragraph so it stays on the same line as its surrounding text."
+  ],
+  "critical_code_review_comments": [
+    "services/team_invite_email.py::_invite_url hardcodes a production URL as fallback — this is a classic source of 'invite links don't work after a stack rename / in staging' bugs. Prefer deriving from request origin or an explicit required env var that fails loudly in dev when unset.",
+    "TeamManagementPanel.jsx copyLink() surfaces a generic error toast on clipboard failure but doesn't offer a fallback (e.g., opening a textarea selection) — fine for modern browsers, but note that navigator.clipboard requires HTTPS + user gesture, which is already satisfied by the button click.",
+    "On resend, the frontend correctly re-fetches the member list via await load() so invite_link gets the new token — verified by test. Good."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not retested, per request)", "frontend": "100% of 8 feature assertions"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (preview admin, from /app/memory/test_credentials.md). Throwaway invitees used: teammate-test-263389@example.com, teammate-test-263390@example.com, teammate-test-652018@example.com, teammate-test-652019@example.com — all revoked at end of run.",
+  "seed_data_creation": "4 team_members rows created and all revoked during test run. One dev_users account was created from accept-invite flow: user_id=6114f1d21e474ccb85766d3a1ec9be11, email=teammate-test-263389@example.com, tier=team_member, is_admin=false (its parent invite row was then revoked by the admin, which is the normal lifecycle).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature-under-test (Copy invite link in Team panel + strict email-binding on accept-invite) is fully working end-to-end on the frontend. Only follow-up is the FRONTEND_URL env var / _invite_url fallback issue noted above — once that's set, no further UI change is needed. The accept-invite page already strictly binds the created account to the server-stored invited email (verified by /auth/me)."
+}

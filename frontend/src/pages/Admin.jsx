@@ -10,13 +10,13 @@ import {
   Cpu, CreditCard, Network as SitemapIcon, Settings as SettingsIcon,
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
-  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell,
+  Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell, UserPlus,
 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, getCachedAdminAccess, fetchMyAdminAccess, isAdminOrFounder } from "../lib/api";
 import { adminMeFailureAction } from "../lib/adminAccess";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
 import { toast } from "../components/Toast";
-import { buildGroupedAdminNav } from "../lib/adminNav";
+import { buildGroupedAdminNav, visibleAdminNav } from "../lib/adminNav";
 import AuremAdminPanel from "../components/AuremAdminPanel";
 import OraChatDrawer from "../components/OraChatDrawer";        // Iter 212m-238
 import NotificationBell from "../components/NotificationBell";   // Feb 2026 · cockpit bell
@@ -36,6 +36,7 @@ import AdminFunnelPage from "./AdminFunnelPage";                 // 2026-09-28 M
 import AdminFeatureFlags from "./AdminFeatureFlags";           // Iter 212m-171
 import { LLMCreditMonitor } from "./AdminLLMCredits";          // Iter 212m-171
 import { ParliamentLivePanel } from "./AdminParliamentLive";   // Iter 212m-171
+import RequestAccessModal from "../components/admin/RequestAccessModal";  // AT3
 
 // 2026-08-27 · Admin Compact M6 — these 5 tabs used to be defined
 // inline in this file (~1900 lines total: Support, Architecture,
@@ -47,6 +48,7 @@ const AdminSupportPageLazy = React.lazy(() => import("./AdminSupportPage"));
 const AdminArchitecturePageLazy = React.lazy(() => import("./AdminArchitecturePage"));
 const AdminSettingsPageLazy = React.lazy(() => import("./AdminSettingsPage"));
 const AdminAuditPageLazy = React.lazy(() => import("./AdminAuditPage"));
+const AdminTeamPageLazy = React.lazy(() => import("./AdminTeamPage"));
 const AdminFinancialsLazy = React.lazy(() => import("./AdminFinancials"));
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -2277,7 +2279,7 @@ export function LearningHealthTile() {
 
 
 //   • Warm Start + Post-scan Issues: merged into one "Reliability" tab.
-const NAV = buildGroupedAdminNav({
+const NAV_ICONS = {
   cockpit: Eye,
   overview: Eye,
   llm_credits: DollarSign,
@@ -2303,6 +2305,7 @@ const NAV = buildGroupedAdminNav({
   suggestions: MessageCircle,   // Iter 212m-193
   self_bugs: Bug,               // Item 3 (2026-08-31)
   audit: ShieldAlert,
+  team: UserPlus,
   feature_flags: Zap,
   house_rules: ShieldCheck,
   robot_guide: MessageCircle,
@@ -2319,7 +2322,7 @@ const NAV = buildGroupedAdminNav({
   failure_patterns: TrendingDown,
   reliability: ShieldAlert,
   settings: SettingsIcon,
-});
+};
 
 export default function Admin({ initialTab = "overview" }) {
   const navigate = useNavigate();
@@ -2329,6 +2332,39 @@ export default function Admin({ initialTab = "overview" }) {
   const [me, setMe] = useState(null);
   const [meError, setMeError] = useState(false);
   const [meAttempt, setMeAttempt] = useState(0);
+  // AT3 — Admin Team sidebar filtering. The Owner's own nav must
+  // never flicker/hide while this resolves, so it defaults to "full
+  // access" synchronously for the Owner and only fail-closed (empty)
+  // for everyone else until the real fetch resolves below.
+  const [adminAccess, setAdminAccess] = useState(() =>
+    isAdminOrFounder()
+      ? { is_owner: true, role: "owner", screens: {} }
+      : (getCachedAdminAccess() || { is_owner: false, role: null, screens: {} }));
+  const [accessResolved, setAccessResolved] = useState(() => isAdminOrFounder() || !!getCachedAdminAccess());
+  useEffect(() => {
+    fetchMyAdminAccess().then((result) => { setAdminAccess(result); setAccessResolved(true); });
+  }, []);
+  const NAV = useMemo(
+    () => buildGroupedAdminNav(NAV_ICONS, visibleAdminNav(adminAccess)),
+    [adminAccess],
+  );
+  const flatNav = useMemo(() => NAV.filter((n) => n.id), [NAV]);
+  // AT3 — a team member can land on a tab they don't hold (e.g. the
+  // default /admin → "cockpit" route, home.home) before they ever
+  // click a sidebar item. Bounce them to the first tab they DO hold
+  // instead of rendering a page whose own API calls will just 403.
+  useEffect(() => {
+    if (adminAccess?.is_owner || flatNav.length === 0) return;
+    if (flatNav.some((n) => n.id === page)) return;
+    const first = flatNav[0];
+    if (first.route) navigate(first.route, { replace: true });
+    else setPage(first.id);
+  }, [adminAccess, flatNav, page, navigate]);
+  // Genuinely nothing to show (e.g. their only override doesn't map
+  // to any visible nav item, or they hold none at all) — a friendly
+  // message instead of a Cockpit page full of 403s.
+  const noAccessibleScreens = accessResolved && !adminAccess?.is_owner && flatNav.length === 0;
+  const [showRequestAccess, setShowRequestAccess] = useState(false);
 
   // Feb 2026 · Sidebar Toggle — hamburger-controlled sidebar visibility.
   // Persisted per-device via localStorage so the founder's preference
@@ -2476,6 +2512,21 @@ export default function Admin({ initialTab = "overview" }) {
   function go(id) { setPage(id); setSelectedUser(null); }
 
   const renderPage = () => {
+    if (noAccessibleScreens) {
+      return (
+        <div data-testid="admin-no-access-state" style={{ padding: "60px 24px", maxWidth: 480, margin: "0 auto", textAlign: "center" }}>
+          <ShieldCheck size={28} style={{ opacity: 0.6, marginBottom: 12 }} />
+          <h3 style={{ fontSize: 15, color: "var(--text)", margin: "0 0 8px" }}>Nothing to show here yet</h3>
+          <p style={{ fontSize: 12, color: "var(--text-faint)", marginBottom: 16 }}>
+            You're on the Admin Team, but the founder hasn't turned on a screen for you yet.
+            Ask for one below and they'll be notified.
+          </p>
+          <button onClick={() => setShowRequestAccess(true)} className="btn-primary" data-testid="admin-no-access-request-btn" style={{ fontSize: 12 }}>
+            Request access
+          </button>
+        </div>
+      );
+    }
     if (page === "users" && selectedUser) {
       return <UserDetail user={selectedUser} onBack={() => setSelectedUser(null)} />;
     }
@@ -2511,6 +2562,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "suggestions":    return <AdminSuggestions />;
       case "self_bugs":      return <AdminSelfBugs />;
       case "audit":          return <AdminAuditPageLazy />;
+      case "team":            return <AdminTeamPageLazy />;
       case "house_rules":    return <AdminHouseRules />;
       case "robot_guide":    return <AdminRobotGuide />;
       case "settings":       return <AdminSettingsPageLazy />;
@@ -2596,6 +2648,19 @@ export default function Admin({ initialTab = "overview" }) {
         </div>
         <div style={{ marginTop: "auto", paddingTop: 12, flexShrink: 0,
                        borderTop: "1px solid var(--border)" }}>
+          {!adminAccess?.is_owner && (
+            <button
+              onClick={() => setShowRequestAccess(true)}
+              data-testid="admin-request-access-open-btn"
+              className="btn-ghost"
+              style={{ display: "flex", alignItems: "center", gap: 8,
+                        width: "100%", padding: "6px 8px", marginBottom: 8,
+                        fontSize: 11, color: "var(--accent)", textAlign: "left",
+                        border: "1px dashed var(--border)", borderRadius: 4,
+                        background: "transparent", cursor: "pointer" }}>
+              <ShieldCheck size={11} /> Request more access
+            </button>
+          )}
           <div style={{ fontSize: 11, color: "var(--text-faint)",
                          padding: "0 8px", marginBottom: 8,
                          overflowWrap: "anywhere" }}>
@@ -2673,6 +2738,12 @@ export default function Admin({ initialTab = "overview" }) {
       </main>
       {/* Iter 212m-238 — floating ORA Chat drawer, available on every admin tab */}
       <OraChatDrawer />
+      {showRequestAccess && (
+        <RequestAccessModal
+          accessibleIds={new Set(NAV.filter((n) => n.id).map((n) => n.id))}
+          onClose={() => setShowRequestAccess(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1030,3 +1030,13 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `SOME_KEY` — auto-detected in backend/services/secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224478Z] <!-- inv:envvar:SOME_KEY -->
 - `KEY` — auto-detected in backend/services/secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224504Z] <!-- inv:envvar:KEY -->
 - `API_KEY` — auto-detected in backend/tests/test_2026_10_c3_secret_masking.py (verify) (default: unset) [Iter 0, 2026-10-02T10:38:10.224543Z] <!-- inv:envvar:API_KEY -->
+
+### Iter 0 · 2026-10-04
+
+- `services/admin_user_fields.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-04T03:39:19.839439Z] <!-- inv:service:services/admin_user_fields.py -->
+
+### Iter 0 · 2026-10-05
+
+- `services/admin_access_registry.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-05T01:00:58.764872Z] <!-- inv:service:services/admin_access_registry.py -->
+- `ADMIN_TEAM_TEST_OWNER_PASSWORD` — auto-detected in backend/tests/test_regression_iter_adminteam_s1_would_refuse.py (verify) (default: unset) [Iter 0, 2026-10-05T01:00:58.764943Z] <!-- inv:envvar:ADMIN_TEAM_TEST_OWNER_PASSWORD -->
+- `services/admin_team.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-05T01:57:48.394598Z] <!-- inv:service:services/admin_team.py -->
