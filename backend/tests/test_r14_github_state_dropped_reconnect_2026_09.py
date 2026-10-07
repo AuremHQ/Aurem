@@ -153,6 +153,29 @@ class TestCallbackStateDroppedReconnect:
                    if x["installation_id"] == 9003)
         assert row["user_id"] == "user-b"
 
+    def test_state_absent_does_not_reactivate_suspended_install(self, configured, client, fake_db):
+        suspended_at = time.time() - 10
+        fake_db.github_installations.rows.append({
+            "installation_id": 9004,
+            "user_id":         "user-b",
+            "active":          False,
+            "suspended_at":    suspended_at,
+            "deleted_at":      None,
+            "installed_at":    time.time() - 10,
+        })
+        with patch.object(httpx, "AsyncClient", _make_mock_client(_github_handler(iid=9004))):
+            r = client.get(
+                "/api/aurem-dev/github/app/callback"
+                "?installation_id=9004&setup_action=install",
+                follow_redirects=False,
+            )
+        assert r.status_code == 302
+        assert "err=invalid_state" in r.headers["location"]
+        row = next(x for x in fake_db.github_installations.rows if x["installation_id"] == 9004)
+        assert row["active"] is False
+        assert row["suspended_at"] == suspended_at
+        assert row["user_id"] == "user-b"
+
 
     def test_state_absent_does_not_reactivate_suspended_install(self, configured, client, fake_db):
         suspended_at = time.time() - 10

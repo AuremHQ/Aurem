@@ -428,6 +428,20 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("POST", "/api/aurem-dev/admin/team/members/{user_id}/resume", None, OWNER_ONLY),
     ("POST", "/api/aurem-dev/admin/team/members/{user_id}/remove", None, OWNER_ONLY),
     ("PATCH", "/api/aurem-dev/admin/team/members/{user_id}/overrides", None, OWNER_ONLY),
+
+    # AT3 — the Owner's review side of the access-request flow above
+    # (MFA_SELF_SERVICE) stays owner-only like the rest of this router;
+    # only the two self-service routes (create + my-access) are exempt.
+    ("GET",  "/api/aurem-dev/admin/team/access-requests", None, OWNER_ONLY),
+    ("POST", "/api/aurem-dev/admin/team/access-requests/{request_id}/resolve", None, OWNER_ONLY),
+
+    # AT3 self-service routes — actually enforced via MFA_SELF_SERVICE
+    # below (screen_key=None here never matters, MFA_SELF_SERVICE short-
+    # circuits first); dual-registered only so the route-fitness test
+    # sees every admin-gated path accounted for, same convention as the
+    # existing /admin/2fa/* self-service rows above.
+    ("GET",  "/api/aurem-dev/admin/team/my-access", None, VIEW),
+    ("POST", "/api/aurem-dev/admin/team/access-requests", None, WORK),
 ]
 
 import re as _re
@@ -474,4 +488,20 @@ MFA_SELF_SERVICE: dict[tuple[str, str], dict] = {
     ("POST", "/api/aurem-dev/admin/2fa/enroll-start"):  {"require_mfa_claim": False},
     ("POST", "/api/aurem-dev/admin/2fa/enroll-verify"): {"require_mfa_claim": False},
     ("POST", "/api/aurem-dev/admin/2fa/disable"):       {"require_mfa_claim": True},
+
+    # Admin Team AT3 — "what access do I have, if any" and "ask the
+    # Owner for a screen I don't have" must both work for an active
+    # team member with ZERO screen overrides yet (that's the whole
+    # point of the first one), so neither can go through the normal
+    # screen_key/level check below.
+    ("GET",  "/api/aurem-dev/admin/team/my-access"):     {"require_mfa_claim": False},
+    ("POST", "/api/aurem-dev/admin/team/access-requests"): {"require_mfa_claim": False},
+
+    # The panel's own mount-time "am I allowed in" probe (Admin.jsx
+    # fetches this first, before any screen-specific call) must also
+    # succeed for an active team member, not just the Owner — it
+    # returns nothing sensitive (email/user_id/is_admin flag), and
+    # every OTHER admin route is still independently enforced by its
+    # own registry entry regardless of what this one returns.
+    ("GET",  "/api/aurem-dev/admin/me"):                  {"require_mfa_claim": False},
 }

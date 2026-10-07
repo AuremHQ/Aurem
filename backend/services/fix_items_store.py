@@ -46,12 +46,13 @@ def _item_fields(item: dict, status: str, now: datetime, source: str) -> dict:
         "impact_plain": item.get("impact_plain") or impact_plain,
         "evidence": ev,
         "confidence": item.get("confidence") or "high",
-        "fix": item.get("fix"),
-        "question": item.get("question"),
         "status": status,
         "last_seen_at": now,
         "last_checked_at": now,
         "source": source,
+        # A re-detection that carries no fix/question must not wipe the ones
+        # already stored (a `your_answer` item would lose its question).
+        **{k: item[k] for k in ("fix", "question") if item.get(k) is not None},
     }
 
 
@@ -175,7 +176,7 @@ async def reconcile(db, *, user_id: str, project_id: str, detected_ids: set[str]
     from other writers (not `source == "checkup"`) are left alone."""
     closed: list[str] = []
     q = {"user_id": user_id, "project_id": project_id, "source": "checkup",
-         "status": {"$in": ["open", "your_answer", "fixing"]}}
+         "status": {"$in": ["open", "your_answer", "fixing", "regressed"]}}
     async for d in db.cto_open_findings.find(q, {"_id": 0, "finding_id": 1, "stage": 1}):
         fid = d.get("finding_id")
         if fid in detected_ids or (d.get("stage") or "") in unverified_stages:

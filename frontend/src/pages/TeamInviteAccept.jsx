@@ -76,6 +76,19 @@ export default function TeamInviteAccept() {
                 onClick={() => navigate("/dashboard", { replace: true })}>
           Go to dashboard
         </button>
+          Look for the new "Admin" option in your sidebar any time you want
+          to go in — it opens only what you've been given access to.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          <button className="btn-ghost" data-testid="team-invite-accept-go-dashboard-btn"
+                  onClick={() => navigate("/dashboard", { replace: true })}>
+            Go to dashboard
+          </button>
+          <button className="btn-primary" data-testid="team-invite-accept-open-admin-btn"
+                  onClick={() => navigate("/admin", { replace: true })}>
+            Open admin panel
+          </button>
+        </div>
       </div>
     );
   }

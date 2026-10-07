@@ -10,5 +10,11 @@
     "package": "extract-zip",
     "reason": "Same package, same transitive path as CVE-2026-56876 above (dev-time only, via @lhci/cli → lighthouse → puppeteer-core → @puppeteer/browsers — never bundled or run in the production app). This is a Zip-Slip / symlink path-traversal flaw (CWE-22/CWE-59): exploitation requires extract-zip to unzip an ATTACKER-CONTROLLED archive. Our only call site has it unzip Chrome-for-Testing binaries downloaded by puppeteer from Google's own CDN during CI setup — never a user- or attacker-supplied zip. Maintainer is reported unresponsive; a fix landed on the extract-zip GitHub master branch but has not been published to npm as of this scan (fix=<0.0.0). Revisit alongside CVE-2026-56876 when upstream publishes a patched release or Lighthouse CI drops the dependency.",
     "expires": "2026-11-13"
+  },
+  {
+    "id": "CVE-2026-93687",
+    "package": "braces",
+    "reason": "Transitive dev-time dependency via tailwindcss → micromatch/chokidar (used only to glob-match Tailwind's own config `content` paths and watch files during the dev/build process — never bundled into the shipped frontend or exposed to end-user input). This is an uncontrolled-recursion DoS (CWE-674): a deeply nested brace pattern can exhaust the call stack. Our only inputs to braces are developer-authored tailwind.config content globs, never attacker- or user-supplied strings. No fix version exists upstream as of this scan (advisory reports fix=<0.0.0, tracked at micromatch/braces#73). Revisit when upstream publishes a patched release.",
+    "expires": "2026-11-13"
   }
 ]
