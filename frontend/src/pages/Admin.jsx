@@ -13,6 +13,7 @@ import {
   Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell, UserPlus,
 } from "lucide-react";
 import { api, getCachedAdminAccess, fetchMyAdminAccess, isAdminOrFounder } from "../lib/api";
+import { adminMeFailureAction } from "../lib/adminAccess";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
 import { toast } from "../components/Toast";
 import { buildGroupedAdminNav, visibleAdminNav } from "../lib/adminNav";
@@ -2329,6 +2330,8 @@ export default function Admin({ initialTab = "overview" }) {
   const [page, setPage] = useState(initialTab);
   const [selectedUser, setSelectedUser] = useState(null);
   const [me, setMe] = useState(null);
+  const [meError, setMeError] = useState(false);
+  const [meAttempt, setMeAttempt] = useState(0);
   // AT3 — Admin Team sidebar filtering. The Owner's own nav must
   // never flicker/hide while this resolves, so it defaults to "full
   // access" synchronously for the Owner and only fail-closed (empty)

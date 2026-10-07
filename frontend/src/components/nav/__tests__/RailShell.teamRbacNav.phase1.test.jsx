@@ -26,6 +26,9 @@ vi.mock("../../../lib/api", () => ({
   getToken: vi.fn(() => "fake-token"),
   logout: vi.fn(),
   newSessionId: vi.fn(() => "sess-1"),
+  // RailShell also resolves Admin Team access (AT3); fail-closed default here
+  // so these tests keep isolating the /team/me Team-nav behaviour.
+  fetchMyAdminAccess: vi.fn(() => Promise.resolve({ is_owner: false, role: null, screens: {} })),
 }));
 vi.mock("../../../lib/chipFlag", () => ({ setChipV2Enabled: vi.fn() }));
 
