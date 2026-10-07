@@ -252,6 +252,10 @@ jobs:
           # scaled down to match its own much smaller 12-minute job
           # budget. Still a failing step (exit 124) if a shard's
           # timeout is ever hit again.
+          # GitHub's default `bash -e` aborts on the failing pipeline below,
+          # so on any red shard the exit-code capture and the coverage `mv`
+          # never ran and no coverage-shard artifact existed. +e until captured.
+          set +e
           timeout -s INT 8m python -m pytest \
             --splits 4 --group ${{ matrix.shard }} \
             --splitting-algorithm least_duration \
@@ -268,6 +272,7 @@ jobs:
             --ignore=tests/test_iter212m163_aggression_chat.py \
             2>&1 | tee /tmp/pytest_output.txt
           PYTEST_EXIT=${PIPESTATUS[0]}
+          set -e
           echo "Pytest exit code (captured immediately): $PYTEST_EXIT"
           if [ "$PYTEST_EXIT" = "124" ]; then
             echo "::error::pytest hit shard ${{ matrix.shard }}/4's 8-minute cap — see the 'slowest durations' block above."
@@ -320,6 +325,9 @@ jobs:
           name: coverage-shard-${{ matrix.shard }}
           path: backend/.coverage.shard${{ matrix.shard }}
           retention-days: 1
+          # upload-artifact@v4 skips dotfiles by default; without this the
+          # artifact is silently empty and the ratchet gets no coverage input.
+          include-hidden-files: true
           if-no-files-found: ignore
 
 
@@ -421,6 +429,9 @@ jobs:
           # .coverage.shard* SQLite files (standard parallel-coverage
           # pattern), then `coverage json` renders it same as the
           # single-job version always did.
+          # A stale tracked backend/.coverage must never stand in for the
+          # shards: coverage json falls back to it and dies on missing sources.
+          rm -f .coverage
           python -m coverage combine .coverage.shard1 .coverage.shard2 .coverage.shard3 .coverage.shard4 2>&1 || echo "::warning::coverage combine had issues — ratchet guard below may see partial data"
           python -m coverage json -o coverage.json 2>&1 || echo "::warning::coverage json render failed"
 
