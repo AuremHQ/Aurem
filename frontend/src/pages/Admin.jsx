@@ -2432,22 +2432,27 @@ export default function Admin({ initialTab = "overview" }) {
       navigate("/login?next=/admin", { replace: true });
       return;
     }
+    setMeError(false);
     api.get("/admin/me")
       .then((r) => setMe(r.data))
       .catch((err) => {
-        const status = err?.response?.status;
-        if (status === 401) {
+        const action = adminMeFailureAction(err);
+        if (action === "login") {
           // Token expired / invalid — clear it and bounce to login
           localStorage.removeItem("aurem_token");
           localStorage.removeItem("aurem_user");
           navigate("/login?next=/admin", { replace: true });
-        } else {
-          // 403 or anything else — user is signed in but not admin
+        } else if (action === "denied") {
+          // 403 — signed in but not an admin
           toast({ message: "Admin access required", kind: "error" });
           navigate("/dashboard", { replace: true });
+        } else {
+          // 5xx / timeout / network: says nothing about access. Stay here
+          // and offer a retry rather than ejecting a real admin.
+          setMeError(true);
         }
       });
-  }, [navigate]);
+  }, [navigate, meAttempt]);
 
   // Toggle the network-mesh glass bg on body while the admin page is
   // mounted (Admin.jsx renders its own layout — it doesn't wrap in
@@ -2456,6 +2461,24 @@ export default function Admin({ initialTab = "overview" }) {
     document.body.classList.add("aurem-glass");
     return () => { document.body.classList.remove("aurem-glass"); };
   }, []);
+
+  if (!me && meError) return (
+    <div data-testid="admin-me-error"
+         style={{ minHeight: "100vh", display: "grid", placeItems: "center",
+                   background: "transparent", color: "var(--text-faint)",
+                   textAlign: "center", padding: 24 }}>
+      <div>
+        <div style={{ marginBottom: 12 }}>
+          Couldn't reach the server to verify admin access. This is usually
+          temporary (a deploy or restart).
+        </div>
+        <button type="button" className="btn-secondary" data-testid="admin-me-retry"
+                onClick={() => setMeAttempt((n) => n + 1)}>
+          Retry
+        </button>
+      </div>
+    </div>
+  );
 
   if (!me) return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",

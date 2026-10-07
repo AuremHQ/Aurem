@@ -34,8 +34,22 @@ async def test_pipeline_end_to_end_lands_on_that_file_not_that_page():
         skip=False, tool_calls_run=0, session_id="s1", user_id="u1",
         plain_english_active=False, ora_panel=False,
     )
+    # CHANGED (chat-reliability PR B, owner directive): a file the user
+    # named themselves keeps its real name. The "that file" swap still
+    # applies to paths the user never mentioned (next test).
+    assert "package.json" in content
+    assert "that page" not in content.lower()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_unnamed_file_still_lands_on_that_file():
+    content, _ = await run_rendering_pipeline(
+        "what is wrong with my project", "Let me check package.json first.", False, "",
+        skip=False, tool_calls_run=0, session_id="s1", user_id="u1",
+        plain_english_active=False, ora_panel=False,
+    )
     assert "package.json" not in content
-    assert "that file" in content.lower()          # presence, not just absence
+    assert "that file" in content.lower()
     assert "that page" not in content.lower()
 
 
@@ -43,7 +57,7 @@ async def test_pipeline_end_to_end_lands_on_that_file_not_that_page():
 async def test_pipeline_records_a_trace_entry_per_pass():
     raw = "Let me check main.py first."
     _, trace = await run_rendering_pipeline(
-        "check main.py", raw, False, "",
+        "check my project", raw, False, "",
         skip=False, tool_calls_run=0, session_id="s1", user_id="u1",
         plain_english_active=False, ora_panel=False,
     )

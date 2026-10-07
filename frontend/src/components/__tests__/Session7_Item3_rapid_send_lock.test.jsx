@@ -17,6 +17,8 @@
  * behavior end-to-end requires a full ChatPanel mount with mocked
  * axios + SSE, which is disproportionate for what is fundamentally
  * a single-ref-guard contract.
+ *
+ * # static-grep-ok: source-level lock contract; a full ChatPanel mount is disproportionate for a one-ref guard
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -35,9 +37,19 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
 
   it("send() checks the ref BEFORE any await point", () => {
     // The check must come BEFORE the busy-based guard so a stale
-    // closure of `busy=false` still gets blocked.
-    expect(CHAT_PANEL_SRC).toMatch(
-      /async function send\([\s\S]{0,2000}sendInFlightRef\.current[\s\S]{0,500}dropped rapid duplicate/);
+    // closure of `busy=false` still gets blocked. Asserted by POSITION
+    // inside the send() body, not a fixed character window — validity
+    // guards added ahead of it over time shifted it past 2000 chars
+    // without breaking the invariant.
+    const sendFnIdx = CHAT_PANEL_SRC.indexOf("async function send(");
+    expect(sendFnIdx).toBeGreaterThan(-1);
+    const sendFnBody = CHAT_PANEL_SRC.slice(sendFnIdx, sendFnIdx + 8000);
+    const refCheckIdx = sendFnBody.indexOf("if (sendInFlightRef.current)");
+    const droppedIdx = sendFnBody.indexOf("dropped rapid duplicate");
+    const firstAwaitIdx = sendFnBody.search(/^(?!\s*\/\/).*\bawait\s/m);
+    expect(refCheckIdx).toBeGreaterThan(-1);
+    expect(droppedIdx).toBeGreaterThan(refCheckIdx);
+    if (firstAwaitIdx !== -1) expect(refCheckIdx).toBeLessThan(firstAwaitIdx);
   });
 
   it("lock is armed AFTER validity guards, not before", () => {

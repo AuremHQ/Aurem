@@ -12,6 +12,8 @@
  *   onCancel      () => void         Close the modal without saving.
  */
 import React, { useState, useEffect } from "react";
+import ModalCloseButton from "./ModalCloseButton";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const RX = /^https?:\/\/[^\s]+$/i;
 
@@ -20,6 +22,7 @@ export default function AddLiveSiteModal({ projectName, onSave, onCancel, detect
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [detectedDismissed, setDetectedDismissed] = useState(false);
+  useEscapeKey(onCancel);
 
   // S1-P4 — prefill from auto-detection; user can still edit/clear it,
   // so the manual flow is never actually removed, just pre-filled.
@@ -60,6 +63,7 @@ export default function AddLiveSiteModal({ projectName, onSave, onCancel, detect
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(460px, 100%)",
+          position: "relative",
           background: "linear-gradient(180deg, rgba(20,24,34,0.98), rgba(13,16,24,0.98))",
           border: "1px solid rgba(245,158,11,0.4)",
           borderRadius: 12,
@@ -69,6 +73,7 @@ export default function AddLiveSiteModal({ projectName, onSave, onCancel, detect
           boxShadow: "0 30px 80px rgba(0,0,0,0.6)",
         }}
       >
+        <ModalCloseButton onClick={onCancel} testId="add-live-site-close" />
         <div style={{
           fontFamily: '"JetBrains Mono", monospace',
           fontSize: 10, letterSpacing: "0.18em", color: "#f59e0b",

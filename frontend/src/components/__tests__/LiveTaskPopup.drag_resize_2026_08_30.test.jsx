@@ -104,7 +104,8 @@ describe("2026-08-30 · LiveTaskPopup drag + resize + persisted geometry", () =>
   it("uses the original bottom-left default when no geometry was ever saved", async () => {
     render(<LiveTaskPopup taskId="t3" onClose={() => {}} onDone={() => {}} />);
     const root = await screen.findByTestId("live-task-popup");
-    expect(root.style.left).toBe("24px");
+    // 64 = 56px icon rail + 8px gap; 24 used to cover the rail's AUTO/logout icons.
+    expect(root.style.left).toBe("64px");
     expect(root.style.bottom).toBe("96px");
   });
 });

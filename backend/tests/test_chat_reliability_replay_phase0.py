@@ -1,0 +1,191 @@
+"""
+tests/test_chat_reliability_replay_phase0.py
+
+Replays the 11-turn production transcript (owner test on
+AuremHQ/secure-team-workspace) through the REAL chat pipeline —
+`chat_send` and `/chat/stream` — with only the LLM stubbed to the exact
+texts ORA produced. Everything after the LLM (pre-LLM routing, intent
+tiers, output guards, business-voice filter, interaction contract,
+session state) is the real code.
+
+Each test states the CORRECT behaviour. Phase 0 added them as strict
+xfails (they all failed); each fix PR removed the markers it fixed.
+See docs/chat_reliability/PHASE0_REPORT.md.
+"""
+import asyncio
+import json
+import os
+import re
+
+import pytest
+
+USER = [
+    "hi", "hi", "show me issues", "?", "any issue in my this project",
+    "docs/OPERATIONS.md build it", "Please continue from where you left off.",
+    "continue", "continue next", "next ?", "ok",
+]
+_EMPTY = lambda n: "\n".join(f"{i}." for i in range(1, n + 1))  # noqa: E731
+ORA = [
+    "Clean bill of health on the scans — nothing urgent to tackle. What's next on your mind?",
+    "Hey! That checklist PR is ready for your review. What else can I help you knock out?",
+    "I tried to pull your GitHub issues but the call failed on my end. Want me to try again?",
+    "I'm here and ready to help with the project — just let me know what you'd like me to tackle next from the Phase 1 checklist or anything else. Short and simple!",
+    "Neither of the requested documentation files exists in the verified content. docs/BLUPRINT.md was not found. docs/OPERATIONS.md was not found. I have no information about these files' contents to share.",
+    "I'll create a fresh docs/OPERATIONS.md with core operational guidelines. One moment while I draft it. (ORA begins silently assembling the page structure and content before showing the full draft)",
+    "Continuing — here's the draft docs/OPERATIONS.md I'm assembling:\n```markdown\n" + _EMPTY(15) + "\n```",
+    "Continuing — here's the rest of the draft for docs/OPERATIONS.md:\n```markdown\n" + _EMPTY(13) + "\n```",
+    "Here's the rest of the Security section draft for docs/OPERATIONS.md:\n```markdown\n4. Security\n- Rotate production credentials quarterly via `docs/OPERATIONS.md`.\n- All third-party dependencies must be pinned to exact versions in docs/OPERATIONS.md.\n",
+    "Let's finish the Scaling section in docs/OPERATIONS.md and then I'll submit the full draft as a PR for your review. (Standby — building that now...)",
+    "Okay.",
+]
+
+
+def _install(monkeypatch, cur):
+    import importlib
+
+    from tests._mini_motor import install_mini_db
+
+    import routers.chat as chat_mod
+    import services.llm as llm
+    import services.orchestrator as orch
+
+    install_mini_db(monkeypatch)
+
+    async def _dev(*a, **k):
+        return {"user_id": "u1", "email": "u@example.com", "tier": "pro", "is_founder": False}
+
+    async def _noop(*a, **k):
+        return None
+
+    for mod in (chat_mod.turn, chat_mod.stream, chat_mod.worker):
+        if hasattr(mod, "current_dev"):
+            monkeypatch.setattr(mod, "current_dev", _dev)
+    for t in ("services.usage.assert_has_budget", "services.usage.assert_has_task_budget"):
+        m, fn = t.rsplit(".", 1)
+        monkeypatch.setattr(importlib.import_module(m), fn, _noop)
+
+    # A project is selected in the real session; skip only the part that
+    # needs a GitHub token (ownership/PAT/repo fetch), nothing downstream.
+    import services.ora_context as ora_context
+    monkeypatch.setattr(ora_context, "build_ora_context", _noop)
+    for mod in (chat_mod.turn, chat_mod.stream, chat_mod.worker):
+        if hasattr(mod, "get_repo_context"):
+            monkeypatch.setattr(mod, "get_repo_context", _noop)
+
+    async def _llm(messages=None, system="", **kw):
+        return ORA[cur[0]]
+
+    async def _cwt(**kw):
+        return {"content": ORA[cur[0]], "provider": "stub", "tool_calls": [],
+                "tool_invocations": [], "tool_calls_run": 0, "messages": []}
+
+    monkeypatch.setattr(llm, "call_llm", _llm)
+    monkeypatch.setattr(orch, "chat_with_tools", _cwt)
+    for mod in (chat_mod.turn, chat_mod.stream, chat_mod.worker):
+        if hasattr(mod, "chat_with_tools"):
+            monkeypatch.setattr(mod, "chat_with_tools", _cwt)
+
+
+async def _replay_send(cur):
+    from routers.chat import turn as turn_mod
+    out = []
+    for i, u in enumerate(USER):
+        cur[0] = i
+        r = await turn_mod.chat_send(
+            body=turn_mod.ChatBody(prompt=u, session_id="replay-send", project_id="proj1"), authorization="Bearer x")
+        out.append({"text": r.get("content") or "", "interaction": r.get("interaction") or {}})
+    return out
+
+
+def _replay_stream(cur):
+    from fastapi.testclient import TestClient
+
+    from main import app
+    c = TestClient(app)
+    out = []
+    for i, u in enumerate(USER):
+        cur[0] = i
+        r = c.post("/api/aurem-dev/chat/stream",
+                   json={"prompt": u, "session_id": "replay-stream", "project_id": "proj1"},
+                   headers={"Authorization": "Bearer x"})
+        toks, inter = [], {}
+        for line in r.text.splitlines():
+            if line.startswith("data: "):
+                try:
+                    d = json.loads(line[6:])
+                except ValueError:
+                    continue
+                if d.get("reset"):
+                    toks = []
+                toks.append(d.get("token") or "")
+                inter = d.get("interaction") or inter
+        out.append({"text": "".join(toks), "interaction": inter})
+    return out
+
+
+@pytest.fixture(scope="module", params=["send", "stream"])
+def replay(request):
+    os.environ["INTERACTION_CONTRACT_V1"] = "1"
+    os.environ.setdefault("JWT_SECRET", "replay-test-secret-xxxxxxxxxxxxxxxxxxxxxxxx")
+    mp = pytest.MonkeyPatch()
+    cur = [0]
+    try:
+        _install(mp, cur)
+        if request.param == "send":
+            return asyncio.new_event_loop().run_until_complete(_replay_send(cur))
+        return _replay_stream(cur)
+    finally:
+        mp.undo()
+        os.environ.pop("INTERACTION_CONTRACT_V1", None)
+
+
+def test_turns_1_2_greeting_makes_no_unfounded_status_claim(replay):
+    for t in (replay[0], replay[1]):
+        # the replay DB holds no findings and no pending change
+        assert not re.search(r"clean bill|checklist|ready for your review|nothing urgent", t["text"], re.I)
+        assert "No scan results are recorded" in t["text"]
+
+
+def test_turn_4_no_leaked_internal_instruction(replay):
+    assert "short and simple" not in replay[3]["text"].lower()
+
+
+def test_no_turn_replaces_a_path_with_that_file(replay):
+    # turns 6-10: the user named docs/OPERATIONS.md in turn 6. Turn 5 is
+    # a routing problem (PR C), not a filter problem.
+    for t in replay[5:10]:
+        assert "that file" not in t["text"].lower()
+    assert "docs/OPERATIONS.md" in replay[8]["text"]
+
+
+def test_code_blocks_are_never_empty_or_unclosed(replay):
+    for t in replay:
+        text = t["text"]
+        assert text.count("```") % 2 == 0
+        for body in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
+            assert re.sub(r"[\d.\s]", "", body), "block contains only empty numbered lines"
+
+
+def test_promise_without_action_is_never_labelled_delivered(replay):
+    # turn 6: the model promises a draft it did not make
+    assert replay[5]["interaction"].get("outcome") == "NOTHING_DONE"
+    assert replay[5]["interaction"].get("reason") == "announced_not_done"
+    # turn 10 ("next ?"): answered from stored state, no promise to break
+    assert replay[9]["interaction"].get("outcome") == "NOTHING_DONE"
+    assert "submit" not in replay[9]["text"].lower()
+
+
+def test_turn_11_ok_is_truthful_when_no_draft_was_ever_stored(replay):
+    # In the owner's transcript the model never produced a real draft (empty
+    # numbered lines, narration), so nothing could be stored and "I don't
+    # have a change waiting" was TRUE. The failure was upstream; the success
+    # path (draft stored -> "ok" -> PR link) is proven in
+    # test_regression_iter415_create_file_end_to_end.py.
+    assert replay[10]["interaction"].get("outcome") == "NOTHING_DONE"
+    assert replay[10]["interaction"].get("reason") == "nothing_pending"
+
+
+
+def test_outcome_label_reflects_what_happened(replay):
+    assert all(t["interaction"].get("outcome") for t in replay)
+    assert not any(t["interaction"].get("completion_basis") == "response_delivered" for t in replay)

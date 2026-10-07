@@ -326,3 +326,20 @@ async def get_activation_funnel(
             "without_repo": _percentiles(without_repo_tokens),
         },
     }
+
+
+@router.get("/funnel/checkup")
+async def get_checkup_funnel(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """Checkup-first fix funnel (see services/fix_items.FUNNEL_EVENTS)."""
+    await _require_admin(authorization)
+    db = require_db()
+    start_ts, end_ts = _parse_range(start, end)
+    from services.fix_items import funnel_summary
+    out = await funnel_summary(
+        db, start=datetime.fromtimestamp(start_ts, tz=timezone.utc),
+        end=datetime.fromtimestamp(end_ts, tz=timezone.utc))
+    return {"ok": True, "range": {"start": _day(start_ts), "end": _day(end_ts)}, **out}
