@@ -225,6 +225,43 @@ export default function useGitHubConnectStatus() {
     return () => window.removeEventListener("message", onMessage);
   }, [completeCallback]);
 
+  // 2026-10 — real-user repro: GitHub's "manage installation" screen
+  // (an existing install, repo selection changed and Saved) never
+  // messages the opener and never redirects back — it's GitHub's own
+  // UI, not our /callback. Grant detection here already doesn't
+  // depend on that message (checkGrant diffs the polled /status
+  // signature instead — see grantSignature above), so GitHub's side
+  // completing is sufficient on its own for the next poll tick to
+  // pick it up. The actual gap: `setInterval` is throttled hard by
+  // the browser while the tab is hidden (same behavior this file's
+  // own MAX_WAIT_MS comment documents, and the exact reason
+  // NewUserWizard.jsx's *separate* OAuth-login flow already has a
+  // visibilitychange backstop) — and this tab IS backgrounded for the
+  // whole time the user is in the GitHub popup. So the poll that
+  // would otherwise catch the change within
+  // POLL_INTERVAL_MS/SYNC_INTERVAL_MS instead waits for whatever
+  // throttled interval the browser allows, which can run well past a
+  // minute — reading as "stuck" even though the backend already has
+  // the answer. Force one unthrottled check the instant the user
+  // comes back to this tab instead of waiting on that timer.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (pollRef.current) {
+        fetchStatus().then((data) => { if (mountedRef.current) checkGrant(data); });
+      } else if (syncRef.current) {
+        fetchStatus().then((data) => {
+          if (!mountedRef.current) return;
+          if (applyConfirmed(data, confirmedRef.current)) {
+            stopSync(); setSyncing(false); setConnectionError(null);
+          }
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchStatus, checkGrant, applyConfirmed, stopSync]);
+
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("flow") !== "connect-repo") return;
