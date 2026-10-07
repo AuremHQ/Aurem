@@ -163,6 +163,10 @@ export default function AdminTeamPage() {
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
+      const [m, i, s] = await Promise.all([
+        api.get("/admin/team/members"),
+        api.get("/admin/team/invites"),
+        api.get("/admin/team/screens"),
       const [m, i, s, r] = await Promise.all([
         api.get("/admin/team/members"),
         api.get("/admin/team/invites"),
