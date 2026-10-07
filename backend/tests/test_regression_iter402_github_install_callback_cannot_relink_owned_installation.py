@@ -75,6 +75,13 @@ class _Coll:
             return dict(new)
         return None
 
+    async def update_one(self, filt, upd):
+        for r in self.rows:
+            if self._match(r, filt):
+                r.update(upd.get("$set", {}))
+                return None
+        return None
+
     async def update_many(self, *a, **k):
         return None
 
