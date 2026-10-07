@@ -149,10 +149,14 @@ def test_cto_projects_has_get_graph_endpoint():
 
 
 def test_build_graph_endpoint_is_non_blocking():
+    """2026-02 — Part 2.4 (stuck-users fix): the endpoint now uses
+    `build_graph_guarded` (bounded timeout + auto-retry-once + error
+    status on failure), not bare `build_graph` directly."""
     src = cto_projects_src()
     fn = src[src.find("async def build_project_graph"):]
     fn = fn[:fn.find("@router.")] if "@router." in fn else fn
-    assert "asyncio.create_task(build_graph(" in fn
+    assert "asyncio.create_task(build_graph_guarded(" in fn
+    assert "await build_graph_guarded(" not in fn
     assert "await build_graph(" not in fn
 
 

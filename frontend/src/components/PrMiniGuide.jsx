@@ -14,7 +14,8 @@
  * with zero risk to the surrounding approve/ship logic.
  */
 import React, { useState } from "react";
-import { X, GitPullRequest } from "lucide-react";
+import { X, GitPullRequest, GitCommitHorizontal } from "lucide-react";
+import { isShipViaPrEnabled } from "../lib/pageFlags";
 
 const SEEN_KEY = "aurem_pr_mini_guide_seen_v1";
 
@@ -30,6 +31,13 @@ export default function PrMiniGuide() {
     setDismissed(true);
   }
 
+  // 2026-10 — C4 fix. This used to hard-code the pull-request story
+  // regardless of whether ship_via_pr was actually on — false in
+  // production, where every ship commits straight to the base
+  // branch. Reads the SAME flag the real ship path checks (see
+  // lib/pageFlags.js), so the copy can't drift from reality again.
+  const prMode = isShipViaPrEnabled();
+
   return (
     <div
       data-testid="pr-mini-guide"
@@ -42,14 +50,24 @@ export default function PrMiniGuide() {
         maxWidth: 420,
       }}
     >
-      <GitPullRequest size={16} style={{ flexShrink: 0, marginTop: 1, color: "#FF6608" }} />
+      {prMode
+        ? <GitPullRequest size={16} style={{ flexShrink: 0, marginTop: 1, color: "#FF6608" }} />
+        : <GitCommitHorizontal size={16} style={{ flexShrink: 0, marginTop: 1, color: "#FF6608" }} />}
       <div style={{ flex: 1, lineHeight: 1.55 }}>
         <strong>What happens next:</strong>
-        <ol style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-          <li>We'll open a pull request on your GitHub.</li>
-          <li>Review it there if you like, or just click Merge.</li>
-          <li>Done — it's live on your site.</li>
-        </ol>
+        {prMode ? (
+          <ol data-testid="pr-mini-guide-pr-copy" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            <li>We'll open a pull request on your GitHub.</li>
+            <li>Review it there if you like, or just click Merge.</li>
+            <li>Done — it's live on your site.</li>
+          </ol>
+        ) : (
+          <ol data-testid="pr-mini-guide-direct-copy" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            <li>ORA commits directly to your main branch.</li>
+            <li>No PR to review first — it's live right away.</li>
+            <li>Changed your mind? You can roll back anytime.</li>
+          </ol>
+        )}
       </div>
       <button
         type="button"

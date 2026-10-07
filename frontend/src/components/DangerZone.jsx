@@ -22,6 +22,7 @@ import { AlertTriangle, Trash2 } from "lucide-react";
 import { api, logout as apiLogout } from "../lib/api";
 import { maskEmail } from "../lib/mask";
 import useModalA11y from "../hooks/useModalA11y";
+import ModalCloseButton from "./ModalCloseButton";
 
 export default function DangerZone({ email }) {
   const [open, setOpen] = useState(false);
@@ -139,7 +140,9 @@ export default function DangerZone({ email }) {
             borderRadius: 10,
             width: "100%", maxWidth: 520,
             padding: 22,
+            position: "relative",
           }}>
+            <ModalCloseButton onClick={reset} testId="danger-zone-close" />
             <h4
               id="danger-zone-modal-title"
               style={{

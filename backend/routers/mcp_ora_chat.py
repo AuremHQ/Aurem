@@ -31,7 +31,7 @@ now, is not revoked, is under its per-key rate limit, and (for
 ask_ora_chat) is under its monthly spend cap.
 
 2026-09-30 — a prior version of this file shipped its OWN separate,
-parallel OAuth implementation. Deleted:
+parallel OAuth implementation (routers/oauth_mcp.py). Deleted:
 production evidence showed Claude couldn't connect because (a) that
 system's bare `.well-known/*` paths were only ever served correctly
 by a Vite dev-server plugin, which real production does NOT run

@@ -4,7 +4,7 @@
     {
       "turn": 1,
       "prompt": "hi, what can you do for my website?",
-      "reply": "I can analyze your website's content, fix issues, and suggest improvements—just share your website link and I'll get to work!",
+      "reply": "I can help fix real issues in your website content—just point me to your website and I'll handle the rest!",
       "checks": {
         "no_jargon": true,
         "jargon_hits": [],
@@ -14,7 +14,7 @@
         "no_dangling": true,
         "has_handoff_fence": false
       },
-      "provider": "intent-gateway-casual",
+      "provider": "ORA",
       "tier": "casual",
       "bail_reason": null,
       "ship_suppressed": false
@@ -22,7 +22,43 @@
     {
       "turn": 2,
       "prompt": "please put our opening hours at the top of our main page",
-      "reply": "I can't reach your website's files right now — it looks like no site is connected to this session, so I can't make the change yet.\n\nTo get this done, I need two things:\n\n1. **Connect your website's GitHub repository** so I can read and update your pages directly.\n2. **Your opening hours** — tell me exactly what they should say (e.g. \"Mon–Fri 9am–5pm, Sat 10am–2pm, Sun closed\").\n\nOnce those are in place, I'll put your hours right at the top of your main page and make it live for you. What are the hours you'd like displayed?",
+      "reply": "Got it—I'll update your main page to feature the opening hours prominently. Share your site link and I'll handle it right away.",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "clarify",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 3,
+      "prompt": "9am to 5pm every day",
+      "reply": "Perfect—I'll update your homepage to display \"Open 9am-5pm daily\" in a prominent spot. Share your site link and I'll publish the change immediately.",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": true,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "clarify",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 4,
+      "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
+      "reply": "I'm ready to add \"1-800-555-0199\" to the bottom of your main page, but I can't reach your website files yet — it looks like no GitHub repository is connected to this session.\n\nTo make this change live, I need you to connect your website's GitHub repository. Once that's linked, I can update your main page with both the opening hours (\"Open 9am–5pm daily\") at the top and your phone number at the bottom in one go.\n\nCan you connect your repo, or share the GitHub link to your website?",
       "checks": {
         "no_jargon": false,
         "jargon_hits": [
@@ -35,45 +71,7 @@
         "no_dangling": true,
         "has_handoff_fence": false
       },
-      "provider": "glm-5.2",
-      "tier": "agentic",
-      "bail_reason": null,
-      "ship_suppressed": false
-    },
-    {
-      "turn": 3,
-      "prompt": "9am to 5pm every day",
-      "reply": "Got it! Once you connect the Website, I'll update your site to show \"Open daily 9am–5pm\" right away.",
-      "checks": {
-        "no_jargon": true,
-        "jargon_hits": [],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "intent-gateway-casual",
-      "tier": "clarify",
-      "bail_reason": null,
-      "ship_suppressed": false
-    },
-    {
-      "turn": 4,
-      "prompt": "add our phone number 1-800-555-0199 to the bottom of my main page",
-      "reply": "I'll add your phone number to the bottom of your main page as soon as you connect your website's GitHub repository to this session.\n\nOnce connected, I'll place \"1-800-555-0199\" at the bottom of your main page and make it live for you.\n\nWhat else would you like updated on your site?",
-      "checks": {
-        "no_jargon": false,
-        "jargon_hits": [
-          "session"
-        ],
-        "no_dead_end": true,
-        "dead_end_hits": [],
-        "ends_with_terminal_punct": true,
-        "no_dangling": true,
-        "has_handoff_fence": false
-      },
-      "provider": "longcat-2.0",
+      "provider": "ORA",
       "tier": "agentic",
       "bail_reason": null,
       "ship_suppressed": false
@@ -82,7 +80,7 @@
   "gate2": [
     {
       "prompt": "can you redesign our brand identity?",
-      "reply": "I can suggest improvements to your brand identity based on your current design assets - just point me to your logo, colors, or style guide.",
+      "reply": "I’d focus on publishing content fixes first—let’s tackle that before creative work.",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
@@ -92,12 +90,12 @@
         "has_scope_line": false,
         "question_count": 0
       },
-      "provider": "intent-gateway-casual",
+      "provider": "ORA",
       "tier": "casual"
     },
     {
       "prompt": "our site looks dated — can you modernize it?",
-      "reply": "Happy to help modernize the design! Just point me to the website and I'll whip up a fresh look with a Review request.",
+      "reply": "Absolutely! Share the website and I'll whip up a fresh design with a Review request.",
       "checks": {
         "no_refusal": true,
         "no_session_jargon": true,
@@ -107,7 +105,7 @@
         "has_scope_line": false,
         "question_count": 0
       },
-      "provider": "intent-gateway-casual",
+      "provider": "ORA",
       "tier": "casual"
     }
   ],
@@ -122,7 +120,7 @@
         "no_error_code_or_stack": true,
         "compliant": true
       },
-      "provider": "self-bug-reply",
+      "provider": "ORA",
       "fallback_chain": null
     },
     {
@@ -135,15 +133,15 @@
         "no_error_code_or_stack": true,
         "compliant": true
       },
-      "provider": "self-bug-reply",
+      "provider": "ORA",
       "fallback_chain": null
     }
   ],
   "regression": [
     {
       "prompt": "hello!",
-      "reply": "Hey there! Ready to dive into your content? Let me know what you're working on.",
-      "provider": "intent-gateway-casual",
+      "reply": "Hey! Ready to help — just let me know what you're working on.",
+      "provider": "ORA",
       "tier": "casual"
     }
   ]

@@ -248,6 +248,20 @@ function ToastItem({ t, onDismiss }) {
             {secondsLeft}s
           </span>
         )}
+        <button
+          type="button"
+          data-testid={`toast-close-${t.id}`}
+          aria-label="Dismiss notification"
+          title="Dismiss"
+          onClick={(ev) => { ev.stopPropagation(); onDismiss(); }}
+          style={{
+            background: "transparent", border: "none", color: "inherit",
+            opacity: 0.7, cursor: "pointer", fontSize: 16, lineHeight: 1,
+            padding: "2px 6px", borderRadius: 4,
+          }}
+        >
+          ×
+        </button>
       </div>
       {Array.isArray(t.actions) && t.actions.length > 0 && (
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

@@ -298,7 +298,7 @@ export default function LoopStepBar({
            space. Tighter padding, zero bottom margin so it hugs the
            chat input, smaller type. */
         padding: "6px 12px",
-        margin: "4px clamp(16px, 17.25%, 240px) 0",
+        margin: "4px var(--chat-rail-x) 0",
         background: "#161616",
         border: "1px solid #2A2A2A",
         borderRadius: 10,

@@ -7048,3 +7048,172 @@ Also added a defensive optimization to `frontend/src/pages/Landing.jsx`: below-t
 
 **Verification labels**: all `SANDBOX-REPRODUCED` against this pod's real backend + real Mongo + real LLM key + real headless Chrome — not run against the actual GitHub Actions runner. No git commits made this round — user handles "Save to GitHub" themselves, one item at a time, per their explicit instruction.
 
+
+## 2026-09-29 — PR A (security-only): admin errors-report hardening + autofix safety
+
+Scoped to items 1 & 2 of a larger 7-item admin-audit request; per user
+instruction this ships as its own branch/PR, kept small and separate
+from the invariants-red-on-main carry-over and from PR B (items 3-7:
+circular-import fix, admin retry UX, phone shell padding, admin nav
+"More" group, response schemas). Full writeup: `/app/PR_A_DESCRIPTION.md`.
+
+**Item 1 — `POST /api/aurem-dev/admin/errors/report` (`routers/admin_public.py`):**
+was unauthenticated (by design), globally exempt from the shared rate
+limiter, and had no per-IP throttle, no cap on distinct rows created,
+no `type` allowlist. Fixed, staying unauthenticated + always HTTP 200
+(the frontend ErrorBoundary/console hook retries on failure, so a 429
+would storm it harder): per-IP 30/min cap via `services.rate_limiter`;
+global cap of 200 NEW distinct rows/rolling-hour (counted via the
+Mongo `_id`'s embedded timestamp — no new index needed; repeat reports
+of an existing `(message,url)` stay free); `type` allowlisted to the 3
+values `errorReporter.js` actually sends (coerced to `console_error`
+otherwise, not rejected); field caps lowered (msg 4000→1000, stack
+16000→4000, url 1000→400); every row now stamped `trusted: false`.
+6 new tests: `test_regression_iter9_admin_errors_report_hardening.py`.
+
+**Item 2 — autofix safety (`services/admin_error_autofix.py`,
+`routers/admin_support.py`):** also surfaced that **the autofix
+feature has never worked** — the pre-existing `chat_with_tools()` call
+passed `history_lines=[]` (not a real param) and omitted the required
+`jwt_token`, so every click raised `TypeError` before reaching the
+LLM; and there is **no frontend UI anywhere** that calls `GET
+/admin/errors` or `POST .../autofix*` — fully unreachable in practice.
+Left as-is (product decision, out of scope), but fixed the underlying
+safety gap for whenever it IS wired up: split into
+Propose (`POST /errors/{id}/autofix`, runs with a new
+`force_read_only=True` `chat_with_tools()` kwarg that
+`services/local_tools.py::invoke_local_tool()` enforces
+unconditionally on `write_repo_file`/`patch_repo_file` — checked
+before `args` are even inspected, so prompt-injection in the
+attacker-controlled report text cannot argue it open) → Apply (`POST
+.../autofix/apply`, new, the ONLY path that can write; 409s unless
+`autofix_status=="proposed"`, i.e. a human must already have a
+proposal to review) → Reject (`POST .../autofix/reject`, new,
+discards a proposal). `GET /errors` now also returns `trusted` and
+`autofix_proposal`. 9 new tests:
+`test_regression_iter10_admin_errors_autofix_safety.py`.
+
+**Reconciled against `claude/eloquent-goodall-2cty9y` (PR #190, open,
+NOT merged @ `15033a93`, main @ `2c8947e2` — fetched live via this
+repo's own installed GitHub App, `services/github_app`, since no git
+remote is configured in this sandbox):** that branch independently
+added `_FENCE`/`_FENCE_END`/`_scrub`/`build_autofix_prompt` (the
+prompt-fencing partial mitigation, plus
+`test_regression_iter396_autofix_prompt_treats_report_as_untrusted.py`
+asserting on them) to the same file this PR touches. Kept those 4
+symbols byte-for-byte from the real branch content (fetched via the
+GitHub Contents API, not guessed) and layered the `force_read_only`/
+propose-apply-reject split on top; re-verified iter396's 6 assertions
+pass unchanged against the reconciled file. If PR #190 merges before
+this PR is reviewed, re-diff both files against the new main tip once
+more — the reconciliation should already cover it.
+
+**Regression sweep:** all 15 new tests pass. Ran the full ~650-file
+`chat_with_tools`/`invoke_local_tool`-touching test surface
+(`grep -rl` across `tests/`) before and after via `git stash` — 35
+pre-existing failures reproduce byte-identically both with and
+without this change (confirmed via spot-check + full-batch dot
+pattern comparison); this diff adds zero regressions. Also confirmed
+2 unrelated pre-existing failures (`test_iter138_acceptance_seven.py`,
+2 stale-string-match tests in `test_iter212h_production_readiness.py`
+checking `routers/admin.py` for a route that lives in
+`admin_support.py` post-split) exist identically on baseline.
+
+**Verification labels:** `SANDBOX-REPRODUCED` (real Mongo, real
+backend restart, live curl smoke test of all 5 endpoints incl. 401
+gating with no auth). **Not pushed** — no git remote configured in
+this sandbox (`git remote -v` empty); repo/branch/merge state was
+read via the GitHub REST API through the app's own installed GitHub
+App token, not `git fetch`. Diff is committed locally on `main`; user
+asked to hand this off via "Save to GitHub" as **its own branch**,
+separate from `main`/PR #190/PR B.
+
+## 2026-02 — Maxx-mode reviewer + watchdog: Claude Sonnet → GLM-5.3
+(cost-optimization, per founder direction: "sonnet bhoot mehenga pad
+rha hai review main")
+
+**Model swap.** `services/llm/openrouter_providers.py`: new
+`_call_glm_review` (mirrors `_call_glm`'s shape) targets a NEW
+`_GLM_REVIEW_MODEL` env var (default `z-ai/glm-5.3`, confirmed live
+on OpenRouter, $1.40/$4.40 per 1M vs Sonnet's $3/$15 — ~2/3 cheaper).
+Deliberately a different GLM generation from the drafting `_GLM_MODEL`
+(still 5.2) so the review pass is a real second look, not the same
+weights grading their own homework. Two call sites switched from
+`_call_claude` to `_call_glm_review`:
+  1. `services/llm/_meta.py`'s "maxx" review step (GLM-5.2 drafts →
+     GLM-5.3 reviews+improves). Claude is now ONLY invoked as the
+     rare-edge-case fallback when the primary GLM draft itself comes
+     back empty (unrelated to the review-cost concern, kept for
+     reliability).
+  2. `services/llm/__init__.py`'s legacy `call_emergent_watchdog`
+     grader (only fires on the old `body.maxx_mode` flag path).
+Provider labels changed accordingly: `"glm-5.2+claude-review"` →
+`"glm-5.2+glm-review"`; `fallback_chain` `"claude-sonnet-review"` →
+`"glm-5.3-review"`. Both cost-slug mappers
+(`_meta._provider_to_model_slug`, `customer_cost_tracker.
+model_slug_for_provider`) updated to price the new label at GLM-5.3's
+rate (added to `ora_chat/cost_tracker.py`'s `_COST_PER_M_TOKENS`), not
+GLM-5.2's cheaper one — so the cost ledger doesn't silently
+under-count the review pass. Legacy `"...+claude-review"` label still
+maps correctly for old DB rows.
+
+**"Max" reasoning.** Per founder clarification — "Max" is not a
+separate model, it's the same GLM-5.3 call at high reasoning effort.
+`call_openrouter_model` (`openrouter_client.py`) gained two new
+optional passthrough params, `reasoning` and `provider_prefs`, both
+`None` by default (zero payload-shape change for every existing
+caller that doesn't opt in). `_call_glm_review` passes
+`reasoning={"effort": "high"}` (OpenRouter's unified reasoning-tokens
+param) so review depth doesn't quietly regress to a lower default
+effort tier — verified via web search that GLM-5.3 on OpenRouter
+supports `low`/`high`/`max` effort explicitly.
+
+**Private-repo data privacy.** New `_GLM_PROVIDER_PREFS =
+{"data_collection": "deny"}` constant — GLM runs on many independent
+OpenRouter upstream hosts, and ORA reads customers' private repo code
+on every GLM call, so both `_call_glm` (primary draft) AND
+`_call_glm_review` (reviewer) now pin `data_collection: "deny"` via
+the new `provider_prefs` param, restricting OpenRouter to hosts that
+don't store/train on the request. `_call_glm` does NOT get the forced
+`reasoning=high` override (only the review pass needed that pin).
+
+**Verification:** `test_regression_iter391_maxx_review_swapped_to_glm53.py`
+(8 new tests: model-generation-difference guard, no-Claude-for-review
+guard, watchdog-targets-GLM-5.3 guard, cost-slug-pricing guard,
+reasoning/provider_prefs wiring guards for both `_call_glm` and
+`_call_glm_review`, payload-shape-unchanged guard for every other
+caller). Updated 3 existing test files whose fixtures encoded the old
+Claude-review behavior
+(`test_iter212m18_glm_primary_claude_watchdog_sse_steps.py`,
+`test_iter166_no_emergent_sdk.py`, `test_2026_08_19_customer_cost_tracker.py`)
+— also fixed 5 unrelated pre-existing broken fixtures in those same
+files (missing `feature=None` kwarg, confirmed via `git stash` to
+predate this change) while already editing them. Full targeted sweep
+(`-k "llm or watchdog or maxx or cost_tracker or smart_router or
+openrouter or agents"`): 394 passed, 16 pre-existing-and-unrelated
+failures (confirmed byte-identical via `git stash` before/after) —
+zero regressions introduced. Live end-to-end smoke test against the
+real OpenRouter API (real key, real network call, no mocks) confirmed
+`provider="glm-5.2+glm-review"`, `model="z-ai/glm-5.3"`,
+`fallback_chain=["glm-5.2","glm-5.3-review"]`, real improved-code
+content returned.
+
+## 2026-02 — "STUCK USERS FIX" Phase A: Part 1 (graph-built activation) + Part 2 (GitHub connect friction)
+
+Founder-reported real production incidents (6 stuck users in 12h): graph built with no first task started (jasonoskins6, davis.scott29, kesseguillaume), GitHub App install popup_closed (jhmoutreach, kesseguillaume), client_timeout "OUR bug" (sidban15), codebase graph build stuck 33 min vs 15 min SLO (sidban15), stuck on GitHub auth screen 20+ min (jhmoutreach, nathannolette). User approved phased delivery — this is Phase A only (Parts 3/4/5/6 not started).
+
+**Part 1.1 — graph-ready starter card.** Root cause: the codebase knowledge graph (`services/graph_builder.py`) only ever built LAZILY when a user manually opened the GraphPanel drawer — most users never did, so the `graph_built` funnel event silently never fired and users landed in an empty chat with zero next step. Fixed: `routers/cto_projects/management.py`'s `/cto/projects/add` now also fire-and-forget triggers the graph build right after connect. New `GraphReadyCard.jsx` polls `GET /cto/projects/{id}/graph` and shows "✅ Your project is connected. ORA read {N} files." + 3 one-click buttons (Scan for problems / Fix most important issue / Explain project) — each dispatches a NEW `aurem:starter-autosend` window event that `ChatPanel.jsx` listens for and calls `send(null, {promptOverride})` directly (unlike the pre-existing `ora-inject`/`aurem:starter-pick` events, which deliberately only prefill — this is the one place that truly auto-sends with zero typing, per explicit founder spec). "First task free" needed no new billing code — ORA's free tier already grants 10 tasks/month, so a brand-new user's first click is automatically covered.
+
+**Part 1.2 — 3-minute idle helper.** New `IdleStartHelper.jsx`: 3-min idle timer + reuses the EXISTING `/onboarding/nudge/post-scan-state` endpoint (unchanged) as the eligibility check, shows "Want me to start?" banner capped at once per session (sessionStorage), "Yes, start" fires the same `aurem:starter-autosend` mechanism. Deliberately separate from the pre-existing `EngagementNudge`/`OraGuideMascot` "post_scan" mascot bubble (different, earlier-round spec/copy; not touched to avoid regressing it).
+
+**Part 2.1 — client_timeout root cause ("OUR bug").** `useGitHubConnectStatus.js`'s `MAX_WAIT_MS` was 60_000 (60s) — too short for real GitHub App install flows (org-approval, 2FA, slow repo-picker review) that are still genuinely in progress in an OPEN popup. Raised to 3 min, matching this codebase's own evidence-based budget for the related repo-access-propagation lag. Also found and fixed a SEPARATE, more severe silent-failure bug in `NewUserWizard.jsx`'s plain-OAuth `connectGithub()` path (reached via the "disconnected" error-recovery state): on timeout (was 90s, silent) or popup-close, it just cleared the poll interval with ZERO feedback. Now both branches set `oauthStuck`, rendering a real "GitHub is taking longer than usual" / "No problem, try without GitHub" fallback with working Retry + See-options buttons.
+
+**Part 2.2 — consent copy + popup_closed fallback.** Both pre-button explainer paragraphs (plain OAuth + App-install) now explicitly state: only the repo you choose, never changes anything without your OK, revoke any time. New fallback block on `appDenied` (popup_closed): "No problem — you can still try ORA without GitHub" → opens the existing `StarterChoiceModal` (scan website / demo project / connect GitHub instead) via the existing `aurem:open-starter-choices` event — distinct from `appTimedOut`'s plain retry-only copy.
+
+**Part 2.3 — 10-min stuck-on-auth-screen backstop.** New `visibilitychange` listener (both the App-install hook's own budget AND `connectGithub`'s new listener) forces the same fallback UI if the user returns to our tab after 10+ min with the popup still open and unresolved — a backstop independent of `setInterval`, which browsers throttle hard in backgrounded tabs.
+
+**Part 2.4 — graph build safety net.** `services/graph_builder.py`: new `build_graph_guarded()` wraps `build_graph()` with a 240s overall timeout (`asyncio.wait_for`), exactly one automatic retry, and writes an explicit `project_graphs` doc with `status: "error"` if both attempts fail — previously a hang left NOTHING in the DB, stuck forever with zero feedback (matches sidban15's 33-min stall). Step 1C's sequential GitHub file-read loop now has a 75s internal budget — a huge repo ships a REAL partial graph (`partial: true`, `files_total` vs `file_count`) instead of an unbounded wait, bounding even large repos to a fast result. Fixed a real bug in `GET /cto/projects/{id}/graph`: it HARDCODED `status: "ready"` regardless of the doc's actual status — now passes through `doc.get("status")` so "error" surfaces correctly. `GraphPanel.jsx` gained a matching "error" status UI branch with a retry button.
+
+**Testing:** `testing_agent_v3_fork` ran Phase A end-to-end — 0 critical/minor issues, 8/8 new backend tests (`test_iter398_phaseA_stuck_users_fix.py` + main agent's own `test_regression_iter392_graph_build_stuck_users_fix.py`, 4 tests) passing against a real test MongoDB, all new frontend data-testids/wiring code-verified correct. Main agent additionally added 6 source-level regression tests for the `connectGithub()`/visibilitychange fix (`NewUserWizard.oauthStuckFallback.test.js`). Full suite re-run after all additions: backend targeted sweep clean; frontend full suite 847→853 passed (6 new, 0 regressions), same 7 pre-existing-and-unrelated failures confirmed byte-identical via `git stash` before/after (RailShell/TeamManagementPanel RBAC nav — unrelated feature; Session7_Item3_rapid_send_lock — pre-existing).
+
+**Not done / deferred (explicitly out of scope for Phase A):** Part 3 (auto-help wiring for the existing "Signup stalled" admin-only alert, "Need a hand?" stall email behind a new OFF-by-default flag, Resend 400 diagnosis, admin alert grouping/daily summary), Part 4 (180 restarts/week root-cause investigation), Part 5 (6 HIGH/CRITICAL CVE upgrades — real G15 scan already run, confirmed 6 findings, all `brace-expansion` transitive dep, not yet upgraded), Part 6 (G18/CI-drift alert flakiness).

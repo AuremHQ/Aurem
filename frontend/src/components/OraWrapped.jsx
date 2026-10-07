@@ -5,6 +5,7 @@
  * Used inside Dashboard or Settings. Shows this month by default.
  */
 import React, { useEffect, useState } from "react";
+import { Check } from "lucide-react";
 import { api } from "../lib/api";
 
 export default function OraWrapped({ defaultPeriod = "this_month" }) {
@@ -155,14 +156,17 @@ export default function OraWrapped({ defaultPeriod = "this_month" }) {
                 Post on X
               </a>
               <button
+                data-testid="ora-wrapped-copy-text"
                 onClick={copyShareText}
                 style={{
                   fontSize: 11, padding: "6px 14px", borderRadius: 6, cursor: "pointer",
-                  background: "rgba(255,255,255,0.07)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  color: "var(--text-dim)",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  background: copied ? "rgba(34,197,94,0.14)" : "rgba(255,255,255,0.07)",
+                  border: `1px solid ${copied ? "rgba(34,197,94,0.45)" : "rgba(255,255,255,0.12)"}`,
+                  color: copied ? "#4ade80" : "var(--text-dim)",
                 }}
               >
+                {copied ? <Check size={12} /> : null}
                 {copied ? "Copied!" : "Copy text"}
               </button>
             </div>

@@ -380,9 +380,6 @@ export default function AskAdvisorReal({ collapsed = false, onCollapse, projectI
                         : <>pata nahi</>}
                   </>
                 )}
-                {ctx.quota?.tokens_used != null && ctx.quota?.tokens_limit != null
-                  ? <> · Tokens: {ctx.quota.tokens_used}/{ctx.quota.tokens_limit}</>
-                  : null}
               </>
             ) : (
               effectiveProjectId

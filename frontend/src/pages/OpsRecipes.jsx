@@ -8,7 +8,7 @@
  */
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Copy, ExternalLink, Terminal } from "lucide-react";
+import { ArrowLeft, Copy, Check, ExternalLink, Terminal } from "lucide-react";
 
 const RECIPES = [
   {
@@ -141,12 +141,12 @@ export default function OpsRecipes() {
                     onClick={() => copyCmd(s.cmd, key)}
                     className="btn-ghost"
                     style={{ padding: "3px 7px", fontSize: 10,
+                              display: "inline-flex", alignItems: "center", gap: 4,
                               color: copied === key
                                 ? "var(--ok)" : "var(--text-faint)" }}
                     title="Copy"
                   >
-                    <Copy size={10} />
-                    {copied === key ? " ✓" : ""}
+                    {copied === key ? <Check size={10} /> : <Copy size={10} />}
                   </button>
                 </div>
                 {s.note && (

@@ -44,16 +44,30 @@ from motor.motor_asyncio import AsyncIOMotorClient
 # test_regression_iter4_jwt_test_helper_env_load_no_override.
 load_dotenv("/app/backend/.env")
 
-API = "http://localhost:8001/api/aurem-dev"
+# 2026-09-29 · second real bug found in the SAME diagnosis: this used
+# to hardcode port 8001, unlike every other live-HTTP test file in
+# this suite (see test_loop_gate_chat_stream_2026_01.py,
+# test_iter_restore_drill_live_verify.py, etc.), which all read
+# REACT_APP_BACKEND_URL. That only "worked" by coincidence whenever
+# whatever backend happened to be booted on :8001 was ALSO the one
+# holding the ci-test JWT_SECRET — confirmed live: booting the CI
+# backend on a different port (e.g. to avoid a stale process already
+# bound to :8001) makes this test hit the WRONG backend (one signing
+# tokens with a different secret), reproducing the exact same
+# InvalidSignatureError this file's own `override=True` fix (above)
+# was written to prevent. See
+# test_regression_iter8_jwt_revocation_respects_backend_url_env.
+_BACKEND_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
+API = f"{_BACKEND_URL}/api/aurem-dev"
 
 
 def _backend_reachable() -> bool:
-    """Quick TCP probe — returns True if uvicorn/gunicorn on :8001
-    responds to /health within 500 ms. Used to skip the end-to-end
-    HTTP tests in environments (like ci.yml's backend-tests job)
-    that run pytest WITHOUT booting the backend."""
+    """Quick TCP probe — returns True if uvicorn/gunicorn on the
+    configured backend responds to /health within 500 ms. Used to
+    skip the end-to-end HTTP tests in environments (like ci.yml's
+    backend-tests job) that run pytest WITHOUT booting the backend."""
     try:
-        r = httpx.get("http://localhost:8001/health", timeout=0.5)
+        r = httpx.get(f"{_BACKEND_URL}/health", timeout=0.5)
         return r.status_code < 500
     except Exception:
         return False

@@ -18,7 +18,7 @@
  */
 import React, { useState } from "react";
 import {
-  AlertTriangle, Copy, ChevronDown, ChevronUp, FileCode, LinkIcon,
+  AlertTriangle, Copy, Check, ChevronDown, ChevronUp, FileCode, LinkIcon,
 } from "lucide-react";
 import { translateGithubConnectError } from "../lib/githubConnectErrors";
 
@@ -225,16 +225,16 @@ export default function LoopFailureCard({
             style={{
               display: "inline-flex", alignItems: "center", gap: 6,
               padding: "5px 10px",
-              background: "transparent",
-              color: "#c2c9d6",
-              border: "1px solid rgba(255,255,255,0.15)",
+              background: copied ? "rgba(34,197,94,0.10)" : "transparent",
+              color: copied ? "#4ade80" : "#c2c9d6",
+              border: `1px solid ${copied ? "rgba(34,197,94,0.4)" : "rgba(255,255,255,0.15)"}`,
               borderRadius: 6,
               fontSize: 10.5, fontWeight: 500,
               cursor: "pointer",
               textTransform: "uppercase", letterSpacing: 0.04,
             }}
           >
-            <Copy size={11} strokeWidth={2.5} />
+            {copied ? <Check size={11} strokeWidth={2.5} /> : <Copy size={11} strokeWidth={2.5} />}
             {copied ? "Copied" : "Copy details"}
           </button>
           <span style={{

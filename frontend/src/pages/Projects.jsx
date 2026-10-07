@@ -1886,6 +1886,8 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
 function TaskRow({ t, onRollback }) {
   const [open, setOpen] = useState(["pulling", "reading", "fixing", "pushing"].includes(t.status));
   const [rbConfirmOpen, setRbConfirmOpen] = useState(false);
+  // 2026-10 · redesign — copy button flips to a checkmark for 1.5s.
+  const [idCopied, setIdCopied] = useState(false);
   const STATUS_COLOR = {
     queued: "var(--text-faint)", pulling: "#60a5fa", reading: "#60a5fa",
     fixing: "var(--accent-2)", pushing: "var(--accent-2)",
@@ -1923,6 +1925,8 @@ function TaskRow({ t, onRollback }) {
   // showing" — they couldn't discover the hover affordance.
   function copyTaskId() {
     navigator.clipboard?.writeText(t.task_id);
+    setIdCopied(true);
+    setTimeout(() => setIdCopied(false), 1500);
   }
   const commitUrl = t.commit_sha && t.project_id
     ? `https://github.com/${t.github_owner || ""}/${t.github_repo || ""}/commit/${t.commit_sha}`
@@ -2005,11 +2009,11 @@ function TaskRow({ t, onRollback }) {
           <button
             data-testid={`task-copy-id-${t.task_id}`}
             onClick={copyTaskId}
-            title="Copy task ID"
+            title={idCopied ? "Copied!" : "Copy task ID"}
             className="btn-ghost"
-            style={{ padding: "4px 8px", fontSize: 11 }}
+            style={idCopied ? { padding: "4px 8px", fontSize: 11, color: "#4ade80" } : { padding: "4px 8px", fontSize: 11 }}
           >
-            <CopyIcon size={11} />
+            {idCopied ? <Check size={11} /> : <CopyIcon size={11} />}
           </button>
           {canRollback && (
             <button

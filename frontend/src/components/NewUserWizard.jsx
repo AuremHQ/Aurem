@@ -57,6 +57,15 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   const [reposBusy, setReposBusy] = useState(false);
   const pollRef = useRef(null);
   const popupRef = useRef(null);
+  // 2026-02 — Part 2.1/2.3 (stuck-users fix). The plain OAuth
+  // `connectGithub()` popup+poll loop below used to silently give up
+  // on timeout/popup-close with ZERO feedback — no error, no retry,
+  // the button just sat there looking clickable while doing nothing.
+  // This is the FIRST connect button every new user sees, so this
+  // was a high-impact silent failure (matches "stuck on the GitHub
+  // authorization screen 20+ min" and "popup_closed" reports).
+  const [oauthStuck, setOauthStuck] = useState(false);
+  const oauthStartedRef = useRef(0);
 
   // ─── 2026-08 hardening (GitHub Connect: PERMANENT fix) ───────────
   // ONE shared hook (also used by AddProjectWizard.jsx) — the wizard
@@ -325,6 +334,9 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   // authoritative status endpoint is what actually drives correctness.
   useEffect(() => {
     function onMessage(e) {
+      const origin = new URL(API_BASE, window.location.origin).origin;
+      if (e.origin !== origin) return;
+
       const d = e.data;
       if (!d || d.type !== "aurem-app-installed") return;
       if (d.status === "err") {
@@ -360,6 +372,8 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
     // session ids. githubFunnel is now statically imported so the URL is
     // stitched synchronously and the popup navigates exactly once.
     trackFunnel("cta_click", "wizard", { has_token: true });
+    trackFunnel("connect_repo_click", "wizard", {});
+    setOauthStuck(false); setErr("");
     const url = withFunnelParams(
       `${API_BASE}/github/oauth/connect?auth=${encodeURIComponent(token)}`,
       "wizard",
@@ -377,11 +391,14 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       setErr("Popup blocked — please allow popups for this site and try again.");
       return;
     }
-    // Poll status every 2 s until either: connected, popup closed by user,
-    // or 90 s timeout.  This is more reliable than postMessage across
-    // GitHub's domain handoff.
+    // Poll status every 2 s until either: connected, popup closed by
+    // user, or timeout. 2026-02 — was 90s with NO failure feedback at
+    // all on either branch (see `oauthStuck` comment above); now 3 min
+    // (matches the App-install flow's evidence-based budget) and both
+    // branches surface the same "try without GitHub" fallback UI.
     if (pollRef.current) clearInterval(pollRef.current);
     const started = Date.now();
+    oauthStartedRef.current = started;
     pollRef.current = setInterval(async () => {
       try {
         const r = await api.get("/github/oauth/status");
@@ -391,19 +408,45 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
           setGhStatus("connected");
           setGhLogin(r.data.login || "");
           fetchRepos();
+          return;
         }
       } catch { /* keep polling */ }
       if (popupRef.current?.closed) {
         // user closed the window without finishing
         if (ghStatus !== "connected") {
           clearInterval(pollRef.current); pollRef.current = null;
+          trackFunnel("app_install_denied", "wizard", { reason: "popup_closed" });
+          setOauthStuck(true);
         }
-      }
-      if (Date.now() - started > 90_000) {
+      } else if (Date.now() - started > 3 * 60_000) {
         clearInterval(pollRef.current); pollRef.current = null;
+        trackFunnel("app_install_denied", "wizard", { reason: "client_timeout" });
+        setOauthStuck(true);
       }
     }, 2000);
   }
+
+  // 2026-02 — Part 2.3: "stuck on the GitHub auth screen >10 min,
+  // show fallback when they return to our tab". The poll above can
+  // eventually self-resolve this via its own 3-min budget even in a
+  // backgrounded tab, but browsers throttle `setInterval` heavily
+  // once a tab is hidden — this listener is the reliable backstop
+  // that fires the instant the user actually comes back to us.
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== "visible") return;
+      if (!popupRef.current || popupRef.current.closed) return;
+      if (ghStatus === "connected" || oauthStuck) return;
+      if (oauthStartedRef.current && Date.now() - oauthStartedRef.current > 10 * 60_000) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        trackFunnel("app_install_denied", "wizard", { reason: "auth_screen_stuck_10min" });
+        setOauthStuck(true);
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ghStatus, oauthStuck]);
 
   function close() {
     dismissWizard();
@@ -707,10 +750,11 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
               {ghStatus === "disconnected" && (
                 <div data-testid="wizard-gh-disconnected">
                   <p style={pStyle}>
-                    Connect GitHub once — this lets AUREM see your
-                    website's code (your "repo"), make changes, and open
-                    a request for you to approve before anything goes
-                    live. We never store your access key in plain text.
+                    Connect GitHub once — this lets AUREM see only the
+                    repo you choose (your website's code), and it never
+                    changes anything or goes live without your OK first.
+                    Remove access any time from your GitHub settings. We
+                    never store your access key in plain text.
                   </p>
                   <div style={{ position: "relative" }}>
                     <div data-testid="wizard-pulse-ring" style={oraPulseRingStyle} />
@@ -732,6 +776,52 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
                     Opens in a popup. After authorising, this wizard will
                     pick up automatically.
                   </div>
+                  {oauthStuck && (
+                    <div data-testid="wizard-oauth-stuck" style={{
+                      marginTop: 10, padding: "8px 10px",
+                      background: "rgba(255,255,255,0.03)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 6,
+                      display: "flex", flexDirection: "column", gap: 8,
+                    }}>
+                      <span style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
+                        GitHub is taking longer than usual. No problem — you
+                        can try again, or use ORA without GitHub for now.
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          type="button"
+                          data-testid="wizard-oauth-stuck-retry-btn"
+                          onClick={connectGithub}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 6,
+                            padding: "6px 12px",
+                            background: "var(--accent, #ff6608)",
+                            color: "#fff", border: "none",
+                            borderRadius: 5, fontSize: 11.5, fontWeight: 600,
+                            cursor: "pointer",
+                          }}>
+                          <RefreshCw size={11} /> Try again
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="wizard-oauth-stuck-fallback-btn"
+                          onClick={() => {
+                            close();
+                            window.dispatchEvent(new Event("aurem:open-starter-choices"));
+                          }}
+                          style={{
+                            padding: "6px 12px", fontSize: 11.5, fontWeight: 600,
+                            background: "transparent",
+                            border: "1px solid rgba(255,255,255,0.2)",
+                            color: "var(--text)", borderRadius: 5,
+                            cursor: "pointer",
+                          }}>
+                          See options
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {err && <div data-testid="wizard-error" style={errStyle}>{err}</div>}
                   <Footer
                     busy={false}
@@ -807,17 +897,25 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
                               display: "flex", flexDirection: "column", gap: 8,
                             }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                {/* 2026-08-27 — founder-reported: a real
-                                    GitHub install whose popup closed before
-                                    our poll caught "connected" (the common,
-                                    fast-install case — `denied`, not the 60s
-                                    `appTimedOut`) used to silently revert to
-                                    the plain install CTA below with NO
-                                    feedback at all. Same retry copy either
-                                    way; the fix is "try again" regardless of
-                                    which of the two the poll landed on. */}
+                                {/* 2026-02 — Part 2.1/2.2 (stuck-users
+                                    fix): these two cases now get
+                                    DIFFERENT copy. `appTimedOut`
+                                    (client_timeout — "OUR bug" per
+                                    founder) means the popup may still
+                                    be genuinely in progress; a plain
+                                    "taking longer than usual" message
+                                    + retry is the honest framing (the
+                                    3-min budget fix lives in
+                                    useGitHubConnectStatus.js). `denied`
+                                    (popup_closed) means the user
+                                    deliberately closed it — offer the
+                                    no-GitHub fallback instead of just
+                                    "try again" on the same thing they
+                                    just declined. */}
                                 <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
-                                  Connection didn't finish — please try again.
+                                  {appTimedOut
+                                    ? "GitHub is taking longer than usual."
+                                    : "Connection didn't finish — please try again."}
                                 </span>
                                 <button
                                   type="button"
@@ -834,6 +932,36 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
                                   <RefreshCw size={11} /> Try again
                                 </button>
                               </div>
+                              {appDenied && (
+                                <div style={{
+                                  marginTop: 2, padding: "8px 10px",
+                                  background: "rgba(255,255,255,0.03)",
+                                  border: "1px solid rgba(255,255,255,0.1)",
+                                  borderRadius: 6,
+                                  display: "flex", alignItems: "center",
+                                  justifyContent: "space-between", gap: 8,
+                                }}>
+                                  <span style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
+                                    No problem — you can still try ORA without GitHub.
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-testid="wizard-no-github-fallback-btn"
+                                    onClick={() => {
+                                      close();
+                                      window.dispatchEvent(new Event("aurem:open-starter-choices"));
+                                    }}
+                                    style={{
+                                      padding: "5px 10px", fontSize: 11, fontWeight: 600,
+                                      background: "transparent",
+                                      border: "1px solid rgba(255,255,255,0.2)",
+                                      color: "var(--text)", borderRadius: 5,
+                                      cursor: "pointer", whiteSpace: "nowrap",
+                                    }}>
+                                    See options
+                                  </button>
+                                </div>
+                              )}
                               {appInstallUrl && (
                                 <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
                                   Or{" "}
@@ -872,7 +1000,9 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
                             margin: "0 0 12px", lineHeight: 1.5,
                           }}>
                             One click — no token to manage. You pick which
-                            repos Aurem can see. Revoke any time from GitHub.
+                            repos Aurem can see (only the ones you choose).
+                            It never changes anything in your code without
+                            your OK first. Revoke access any time from GitHub.
                           </p>
                           <button
                             data-testid="wizard-app-install-btn"

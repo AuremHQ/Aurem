@@ -94,10 +94,12 @@ async def _call_llm_with_meta_impl(system: str, user: str,
       • swift → GLM-5.2 only (no Claude under any circumstance)
       • pro   → GLM-5.2 first; if it returns empty or raises, fall back
                 to Claude Sonnet so the user never sees a blank reply
-      • maxx  → GLM-5.2 produces the initial response, then Claude is
+      • maxx  → GLM-5.2 produces the initial response, then GLM-5.3 is
                 given that output with a "Review and improve this
                 code:" instruction and the IMPROVED text is what
-                ships to the user
+                ships to the user (2026-02 — swapped from Claude
+                Sonnet to GLM-5.3 for the review pass: ~1/3 the
+                per-token cost, comparable/better SWE-bench score)
     Legacy callers that don't pass `review_mode` keep the original
     behaviour. `step_hook(text, done=False)` is invoked at phase
     boundaries so the chat SSE worker can stream progress frames.
@@ -235,6 +237,8 @@ def _provider_to_model_slug(provider: str) -> str:
     own conservative default for anything unrecognized (e.g. longcat,
     not yet in the price table)."""
     p = (provider or "").lower()
+    if "glm-review" in p:
+        return "z-ai/glm-5.3"
     if "claude" in p:
         return "anthropic/claude-sonnet-4.5"
     if "glm" in p:
@@ -267,12 +271,14 @@ async def _call_llm_with_meta_inner(system: str, user: str,
         _CLAUDE_MODES,
         _CLAUDE_MODEL,
         _GLM_MODEL,
+        _GLM_REVIEW_MODEL,
         _LONGCAT_MODEL,
         LONGCAT_ENABLED,
         COUNCIL_B_GLM_ENABLED,
         _call_claude,
         _call_deepseek,
         _call_glm,
+        _call_glm_review,
         _call_longcat,
         _deepseek_model,
         _openrouter_key,
@@ -462,12 +468,16 @@ async def _call_llm_with_meta_inner(system: str, user: str,
 
         if step_hook:
             try:
-                step_hook("🔍 Claude reviewing & improving…")
+                step_hook("🔍 GLM-5.3 reviewing & improving…")
             except Exception:
                 pass
-        # NB: the original `system` is preserved so Claude keeps the same
-        # persona/safety rules. The review instruction lives in the user
-        # turn so the orchestrator's tool-call grammar isn't disturbed.
+        # 2026-02 cost-optimization — the Maxx reviewer is now GLM-5.3
+        # (`_call_glm_review`), not Claude Sonnet. See `_GLM_REVIEW_MODEL`
+        # comment in openrouter_providers.py for the cost/benchmark
+        # rationale. NB: the original `system` is preserved so the
+        # reviewer keeps the same persona/safety rules — the review
+        # instruction lives in the user turn so the orchestrator's
+        # tool-call grammar isn't disturbed.
         review_user = (
             "The following is an initial response. Review it for "
             "correctness, hallucinations, and code quality. Improve it "
@@ -477,14 +487,14 @@ async def _call_llm_with_meta_inner(system: str, user: str,
             f"---\n{glm_content}\n---"
         )
         try:
-            claude_content = await _call_claude(
+            reviewed_content = await _call_glm_review(
                 system=system, user=review_user,
                 max_tokens=actual_tokens, temperature=temperature,
                 feature=feature,
             )
         except Exception as e:
             logger.warning(
-                f"Maxx mode: Claude review failed ({e!r}) — returning {primary_provider} draft"
+                f"Maxx mode: GLM-5.3 review failed ({e!r}) — returning {primary_provider} draft"
             )
             return {
                 "ok":             bool(glm_content.strip()),
@@ -498,10 +508,10 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 "maxx_capped":    maxx_capped,
                 "maxx_overage":   maxx_overage,
                 "maxx_remaining": maxx_remaining,
-                "error": f"Claude review unavailable: {e}",
+                "error": f"GLM-5.3 review unavailable: {e}",
             }
-        if not claude_content.strip():
-            # Claude returned empty — keep the primary draft, never blank-ship.
+        if not reviewed_content.strip():
+            # Reviewer returned empty — keep the primary draft, never blank-ship.
             return {
                 "ok":             True,
                 "provider":       f"{primary_provider}-no-review",
@@ -526,13 +536,13 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                 logger.warning(f"maxx counter incr failed: {e!r}")
         return {
             "ok":             True,
-            "provider":       f"{primary_provider}+claude-review",
-            "content":        claude_content,
+            "provider":       f"{primary_provider}+glm-review",
+            "content":        reviewed_content,
             "temperature":    temperature,
             "mode":           mode,
             "review_mode":    "maxx",
-            "model":          _CLAUDE_MODEL,
-            "fallback_chain": [primary_provider, "claude-sonnet-review"],
+            "model":          _GLM_REVIEW_MODEL,
+            "fallback_chain": [primary_provider, "glm-5.3-review"],
             "maxx_capped":    maxx_capped,
             "maxx_overage":   maxx_overage,
             "maxx_remaining": maxx_remaining,

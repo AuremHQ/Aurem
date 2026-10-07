@@ -19,6 +19,7 @@
  * Rendered by Dashboard.jsx via TopBar's new `statusSlot` prop.
  */
 import { useEffect, useState } from "react";
+import { Check } from "lucide-react";
 import { useF12Errors, F12Badge, ModePill } from "./ChatPanelF12";
 import { getUser, isAdminOrFounder } from "../lib/api";
 
@@ -126,7 +127,8 @@ export default function TopBarStatusSlot({ sessionId }) {
             cursor: "pointer", transition: "color .15s, border-color .15s",
           }}
         >
-          {copied ? "Copied ✓" : `Session: ${sessionId.slice(0, 10)}…`}
+          {copied ? <Check size={11} /> : null}
+          {copied ? "Copied" : `Session: ${sessionId.slice(0, 10)}…`}
         </button>
       )}
     </div>

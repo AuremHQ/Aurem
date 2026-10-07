@@ -19,16 +19,18 @@ clicks are captured. Admin-only /stats aggregates counts per stage.
 Mounted at /api/aurem-dev/funnel/github/*
 """
 from __future__ import annotations
+import json
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from cto_services.auth import current_dev
+from cto_services.auth import JWT_ALGORITHM, JWT_SECRET, current_dev
 from cto_services.db import get_db
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,64 @@ class FunnelEvent(BaseModel):
     meta: Optional[dict] = None
 
 
+def _check_meta_size(meta: Optional[dict]) -> None:
+    """2026-09-30 — SECURITY FIX (Medium, code-read audit): this
+    endpoint is intentionally anonymous (pre-signup CTA clicks have no
+    session yet), which meant `meta` was an arbitrary, unauthenticated
+    client-controlled dict with no size limit at all — a caller could
+    bloat github_funnel_events with huge documents (DB/storage cost)
+    or poison the /stats aggregation (meta.reason/meta.outcome feed
+    directly into the admin funnel report). Capped to a size generous
+    enough for real telemetry (short reason/outcome strings) but far
+    too small to be useful for abuse.
+
+    Deliberately a plain function raising HTTPException from inside
+    the endpoint, NOT a pydantic @field_validator: this app's global
+    `_validation_exc_handler` (main.py) calls `exc.errors()` and JSON-
+    encodes it directly — pydantic puts the raw exception object in
+    `ctx.error` for a validator-raised ValueError, which is not JSON
+    serializable and crashes that handler into an unrelated 499. Not
+    fixing that shared, pre-existing handler here to keep this PR
+    scoped to the actual finding; this sidesteps it entirely.
+    """
+    if meta is None:
+        return
+    if len(meta) > 20:
+        raise HTTPException(422, "meta: too many keys (max 20)")
+    try:
+        encoded = json.dumps(meta)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "meta: must be JSON-serializable")
+    if len(encoded) > 2048:
+        raise HTTPException(422, "meta: too large (max 2048 bytes serialized)")
+
+
+def _best_effort_authenticated_user_id(authorization: Optional[str]) -> Optional[str]:
+    """2026-09-30 — SECURITY FIX (Medium): `user_id` on this anonymous
+    endpoint used to be taken verbatim from the client body — any
+    unauthenticated caller could claim to BE any real user_id, poisoning
+    that user's funnel/conversion data. This endpoint must stay open to
+    logged-out callers (that's the whole point — pre-signup CTA clicks),
+    so we can't require auth here. Instead: if a valid session token is
+    present, the SERVER derives user_id from it (client's own body value
+    is ignored either way); if not, user_id is always None. Deliberately
+    NOT `current_dev()` — that raises 401, which would break the
+    anonymous case this endpoint exists for. Never raises; any decode
+    failure just means "anonymous", the same as no header at all.
+    """
+    if not authorization:
+        return None
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    try:
+        payload = jwt.decode(parts[1], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+    uid = payload.get("user_id")
+    return uid if isinstance(uid, str) else None
+
+
 async def track_server_side(
     stage: str,
     *,
@@ -129,23 +189,32 @@ async def track_server_side(
 
 
 @router.post("/event")
-async def ingest_event(evt: FunnelEvent, request: Request) -> dict:
+async def ingest_event(
+    evt: FunnelEvent,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> dict:
     """Anonymous ingestion endpoint. Frontend fires this at each
     client-side stage (cta_click, repo_selected). No auth required so
     logged-out users' CTA clicks on /login and /signup are captured.
     """
     if evt.stage not in STAGES:
         raise HTTPException(400, f"unknown stage: {evt.stage}")
+    _check_meta_size(evt.meta)
     src = evt.source if evt.source in SOURCES else "unknown"
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
+    # 2026-09-30 — SECURITY FIX: user_id is now always server-derived
+    # (see _best_effort_authenticated_user_id docstring), never taken
+    # from evt.user_id — an anonymous caller can no longer attribute
+    # events to an arbitrary victim's user_id.
     doc = {
         "event_id":   uuid.uuid4().hex,
         "stage":      evt.stage,
         "source":     src,
         "session_id": evt.session_id,
-        "user_id":    evt.user_id,
+        "user_id":    _best_effort_authenticated_user_id(authorization),
         "meta":       evt.meta or {},
         "ts":         time.time(),
         "created_at": datetime.now(timezone.utc),
@@ -232,8 +301,19 @@ async def funnel_stats(
         if source in per_source_stage and stage in per_source_stage[source]:
             per_source_stage[source][stage] += 1
         if stage == "callback_received":
-            outcome = row.get("outcomes", [None])[0]
-            reason  = row.get("reasons", [None])[0]
+            # 2026-09-30 — SECURITY/DEPLOY FIX: `.get("reasons", [None])[0]`
+            # only falls back to `[None]` when the key is entirely
+            # MISSING. If `$push` produced an empty list `[]` for this
+            # group (real production/Atlas data shape that didn't
+            # reproduce with this sandbox's local Mongo — e.g. a
+            # `$group` re-run against a stage that predates the `meta`
+            # field existing at all), `.get(...)` returns that empty
+            # list as-is (the default only applies to a missing key,
+            # not a falsy value), and `[][0]` raises IndexError,
+            # crashing every subsequent call to this endpoint. `or`
+            # falls back to `[None]` for BOTH "missing" and "empty".
+            outcome = (row.get("outcomes") or [None])[0]
+            reason  = (row.get("reasons") or [None])[0]
             key = reason if (outcome and outcome != "success" and reason) else (outcome or "success")
             callback_outcomes[key] = callback_outcomes.get(key, 0) + 1
 

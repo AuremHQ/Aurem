@@ -77,7 +77,9 @@ function Pre({ value, testid, maxHeight = 480 }) {
 function Btn({ children, onClick, testid, kind = "default" }) {
   const styles = kind === "primary"
     ? { background: "#1e3a8a", borderColor: "#3b82f6", color: "#e0e7ff" }
-    : { background: "#1f2937", borderColor: C.border, color: C.text };
+    : kind === "success"
+      ? { background: "rgba(52,211,153,0.14)", borderColor: C.green, color: C.green }
+      : { background: "#1f2937", borderColor: C.border, color: C.text };
   return (
     <button
       type="button"
@@ -122,10 +124,13 @@ export default function AdminInspectScopeDriftAudit() {
     }
   }, [days, limit]);
 
+  const [copied, setCopied] = useState(false);
   const copyJson = useCallback(async () => {
     if (!data) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard permission denied — pre block is still selectable.
     }
@@ -219,8 +224,8 @@ export default function AdminInspectScopeDriftAudit() {
             title={`RESULT · fetched at ${fetchedAt || "—"}`}
             testid="scope-drift-result-card"
             right={
-              <Btn testid="scope-drift-copy-btn" onClick={copyJson}>
-                Copy JSON
+              <Btn testid="scope-drift-copy-btn" onClick={copyJson} kind={copied ? "success" : "default"}>
+                {copied ? "Copied ✓" : "Copy JSON"}
               </Btn>
             }
           >

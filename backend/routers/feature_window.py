@@ -10,6 +10,7 @@ for the FeatureWindow.jsx renderer.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -76,9 +77,10 @@ async def feature_window_status(
         except Exception:                                # noqa: BLE001
             return 0
 
-    backend_routes = _route_count()
-    frontend_pages = _wc("*.jsx", "/app/frontend/src/pages")
-    frontend_components = _wc("*.jsx", "/app/frontend/src/components")
+    backend_routes = await asyncio.to_thread(_route_count)
+    frontend_pages = await asyncio.to_thread(_wc, "*.jsx", "/app/frontend/src/pages")
+    frontend_components = await asyncio.to_thread(
+        _wc, "*.jsx", "/app/frontend/src/components")
     try:
         mongo_collections = len(await db.list_collection_names())
     except Exception:                                    # noqa: BLE001

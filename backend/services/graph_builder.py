@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 import time
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,26 @@ import os
 # GitHub-API-rate-limit + wall-clock cost, not a memory problem).
 MAX_FILES = int(os.environ.get("GRAPH_MAX_FILES", "600"))
 TOP_FILES_FOR_LLM = 20
+
+# 2026-02 — Part 2.4 (stuck-users investigation): MAX_FILES=600 was
+# already documented above as "a real GitHub-API-rate-limit + wall-
+# clock cost" — for a large repo, Step 1C's sequential batched content
+# reads are the dominant cost (each batch bounded at 10s by its own
+# per-file timeout, but 60 batches of 10 can still stretch past 10
+# min under a slow/degraded GitHub API, with zero user-visible
+# feedback in between). Two independent safety nets:
+#   • _FILE_READ_BUDGET_S — Step 1C stops reading MORE files once this
+#     wall-clock budget is spent, and ships a REAL (not fake) graph
+#     built from however many files it got to, marked `partial: true`.
+#     This is what makes "a partial graph within 2 minutes" true for
+#     a huge repo instead of an unbounded wait.
+#   • _BUILD_OVERALL_TIMEOUT_S — a hard outer ceiling (see
+#     `build_graph_guarded` below) for anything else that could hang
+#     (tree fetch, the LLM describe call, network stalls) so a build
+#     NEVER goes silent for 33 minutes the way it did for sidban15 —
+#     it fails fast, visibly, and retries once automatically.
+_FILE_READ_BUDGET_S = int(os.environ.get("GRAPH_FILE_READ_BUDGET_S", "75"))
+_BUILD_OVERALL_TIMEOUT_S = int(os.environ.get("GRAPH_BUILD_TIMEOUT_S", "240"))
 
 
 def detect_layer(path: str) -> str:
@@ -341,7 +362,22 @@ async def build_graph(
         return path, ""
 
     all_contents: dict[str, str] = {}
+    _read_t0 = time.monotonic()
+    partial = False
     for i in range(0, len(all_files), 10):
+        if time.monotonic() - _read_t0 > _FILE_READ_BUDGET_S:
+            # Budget spent — ship a REAL graph for whatever we already
+            # read rather than an unbounded wait on a large repo. The
+            # remaining files simply aren't in `nodes` below; the next
+            # rebuild (staleness-triggered or a manual refresh) picks
+            # up more via the same incremental blob-SHA diffing.
+            partial = True
+            logger.info(
+                "graph build: file-read budget (%ss) hit after %d/%d "
+                "files — shipping partial graph",
+                _FILE_READ_BUDGET_S, len(all_contents), len(all_files),
+            )
+            break
         batch = all_files[i:i + 10]
         results = await asyncio.gather(
             *[_read(p) for p in batch], return_exceptions=True,
@@ -415,6 +451,13 @@ async def build_graph(
         "tree_sha_prev": prior_tree_sha,
         "llm_changed":  len(changed_top),
         "llm_reused":   len(reused_top),
+        # 2026-02 — Part 2.4: true when Step 1C hit _FILE_READ_BUDGET_S
+        # before reading every candidate file (large-repo case).
+        # `files_total` is how many candidates were FOUND (tree scan,
+        # always fast/complete) vs `file_count` = how many actually
+        # got READ + described this build.
+        "partial":      partial,
+        "files_total":  len(all_files),
     }
 
     if db is not None:
@@ -446,12 +489,60 @@ async def build_graph(
 
     logger.info(
         "graph built: project=%s user=%s | %d files | %d described "
-        "(%d new + %d cached) | %d edges | tree_sha=%s",
+        "(%d new + %d cached) | %d edges | tree_sha=%s%s",
         project_id, user_id,
         len(nodes), described_count, len(changed_top), len(reused_top),
         len(edges), tree_sha[:8] if tree_sha else "?",
+        " | PARTIAL (budget hit)" if partial else "",
     )
     return graph
+
+
+# 2026-02 — Part 2.4 (stuck-users investigation). `build_graph()` had
+# no outer ceiling at all — a hang anywhere inside it (network stall,
+# an LLM call that doesn't time out for some unforeseen reason, etc.)
+# left the project stuck on "Scanning your codebase…" forever, with
+# nothing in `project_graphs` and no error ever recorded. This wrapper
+# is the safety net every caller should use instead of calling
+# `build_graph` directly: a hard wall-clock ceiling, one automatic
+# retry on timeout/exception (per the founder's spec — "auto-retry
+# once"), and — only if BOTH attempts fail — an explicit `status:
+# "error"` doc so the frontend can show a real retry message instead
+# of polling a build that will never finish.
+async def build_graph_guarded(
+    db, project_id: str, user_id: str,
+    gh_token: str, gh_owner: str, gh_repo: str,
+    branch: str = "HEAD",
+) -> dict:
+    last_err: Optional[BaseException] = None
+    for attempt in range(2):  # 1 try + 1 automatic retry
+        try:
+            return await asyncio.wait_for(
+                build_graph(db, project_id, user_id, gh_token, gh_owner,
+                            gh_repo, branch),
+                timeout=_BUILD_OVERALL_TIMEOUT_S,
+            )
+        except Exception as e:                                   # noqa: BLE001
+            last_err = e
+            logger.warning(
+                "graph build attempt %d/2 failed for project=%s: %r",
+                attempt + 1, project_id, e,
+            )
+    if db is not None:
+        try:
+            await db.project_graphs.update_one(
+                {"project_id": project_id, "user_id": user_id},
+                {"$set": {
+                    "project_id": project_id, "user_id": user_id,
+                    "status": "error",
+                    "error": (str(last_err) or "timed out")[:300],
+                    "built_at": time.time(),
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning("graph error-status save failed: %r", e)
+    return {}
 
 
 # 2026-09-17 bug fix — founder-reported: the Codebase Graph stayed 5.5
