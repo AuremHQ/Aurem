@@ -28,9 +28,7 @@ from cto_services.db import require_db
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
 # aggregations against Mongo.
-from services.admin_error_autofix import (
-    build_autofix_prompt, run_error_autofix, apply_error_autofix,
-)
+from services.admin_error_autofix import build_autofix_prompt, run_error_autofix
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import get_db
+from services.admin_audit_log import record_event
 from services import admin_team
 from services.admin_access_registry import ADMIN_ROUTE_REGISTRY
 from services.admin_audit_log import record_event
@@ -97,6 +98,8 @@ async def list_screen_keys(authorization: Optional[str] = Header(None)):
     """Distinct screen keys the Owner can grant a level on, for the
     Team screen's override picker."""
     await require_admin(authorization)
+    from services.admin_access_registry import ADMIN_ROUTE_REGISTRY
+    keys = sorted({key for (_m, _p, key, _lvl) in ADMIN_ROUTE_REGISTRY if key})
     keys = _all_screen_keys()
     return {"ok": True, "screens": keys, "levels": ["off", "view", "work", "manage"]}
 
