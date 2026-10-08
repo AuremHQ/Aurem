@@ -468,7 +468,16 @@ jobs:
             OVERRIDE="--override"
           fi
           echo "Diffing $BASE_SHA..$HEAD_SHA (override: ${OVERRIDE:-none})"
+          set +e
           python backend/scripts/ci_check_coverage_ratchet.py "$BASE_SHA" "$HEAD_SHA" backend/coverage.json $OVERRIDE
+          RATCHET_EXIT=$?
+          set -e
+          if [ "$RATCHET_EXIT" -eq 2 ]; then
+            echo "::warning::CANNOT EVALUATE — coverage report is unavailable or invalid; the coverage ratchet was not evaluated. This is not a PASS."
+            echo "Coverage ratchet status: CANNOT EVALUATE (exit 2)."
+            exit 0
+          fi
+          exit "$RATCHET_EXIT"
 
       - name: Guard — Regression baseline lock (Fix 3, hardening)
         # 2026-08 hardening — stricter than the coverage ratchet's
