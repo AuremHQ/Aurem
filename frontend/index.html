@@ -552,6 +552,31 @@
       </main>
     </noscript>
     <div id="root"></div>
+    <!-- 2026-10-06 — stale-bundle mount watchdog. A founder-reported
+         bug showed the homepage stuck on the static SEO snapshot
+         baked into #root above, with the real app never mounting —
+         most likely a stale index.html referencing a JS asset hash a
+         newer deploy rotated out from under it (plain 404 on the
+         module script tag below; nothing in that failure mode can
+         run JS to recover on its own, since the bundle never
+         executes at all). This plain inline script runs regardless
+         of whether the module script below succeeds, waits a
+         generous 8s for main.jsx to set `window.__auremAppMounted`,
+         and does ONE forced reload if it never does — a reload
+         re-fetches a fresh index.html, which should reference
+         whatever asset hashes are actually live right now. Guarded
+         by sessionStorage so a genuinely broken deploy can't loop. -->
+    <script>
+    (function () {
+      if (sessionStorage.getItem("aurem_stale_reload_attempted")) return;
+      setTimeout(function () {
+        if (!window.__auremAppMounted) {
+          sessionStorage.setItem("aurem_stale_reload_attempted", "1");
+          location.reload();
+        }
+      }, 8000);
+    })();
+    </script>
     <!-- Iter 42 — F12 error capture. Hooks console.error / fetch / XHR so
          the chat panel can attach captured errors as `f12_payload` to the
          next chat request. Pure client-side; no auto-upload. -->
