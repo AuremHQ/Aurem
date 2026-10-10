@@ -224,13 +224,27 @@ async def require_admin(authorization: Optional[str] = None, request=None) -> di
          never looks at or implies ``dev_users.is_admin``). Their access is
          capped by the route registry's required (screen_key, level) for
          THIS request (D9 — no key/registry entry => owner-only => always
-         refused here) and requires the session's ``mfa`` claim (D6)
-         UNLESS the route is one of mfa.py's self-service exemptions
-         (R4) — see ``admin_access_registry.MFA_SELF_SERVICE``.
+         refused here). The session's ``mfa`` claim (D6) is only required
+         when ADMIN_TEAM_REQUIRE_MFA is on (off by default — see
+         ``_team_mfa_required``); mfa.py's self-service exemptions (R4)
+         are unchanged — see ``admin_access_registry.MFA_SELF_SERVICE``.
       6. Otherwise => 403.
     """
     user = await current_dev(authorization)
     return await _finish_admin_check(user, request)
+
+
+def _team_mfa_required() -> bool:
+    """Whether an Admin Team MEMBER (never the Owner) must carry the `mfa`
+    session claim to use a screen-level admin route.
+
+    Owner decision (2026-10): team members no longer need 2FA — a member
+    who never enrolled got a permanent "2FA session required" 403 with no
+    way to satisfy it. Opt back in with ADMIN_TEAM_REQUIRE_MFA=1 (restores
+    the original D6 rule). The mfa.py `disable` route is unaffected: lifting
+    2FA protection still needs an already-verified session.
+    """
+    return os.getenv("ADMIN_TEAM_REQUIRE_MFA", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 async def _finish_admin_check(user: dict, request=None) -> dict:
@@ -271,7 +285,7 @@ async def _finish_admin_check(user: dict, request=None) -> dict:
     screen_key, level = entry
     if level == OWNER_ONLY or screen_key is None:
         raise HTTPException(403, "Admin access required")
-    if not user.get("mfa"):
+    if _team_mfa_required() and not user.get("mfa"):
         raise HTTPException(403, "2FA session required")
     eff = await admin_team.effective_level(member, screen_key)
     if eff >= level:
