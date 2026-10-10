@@ -1,6 +1,6 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-10-06 (code review fixes + production homepage incident resolved — see below — then CI pipeline unblocked, then Admin Team AT3). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-10-10 (admin page total crash hotfix — see below — then deployment boot-congestion hardening, code review fixes, CI pipeline unblocked, Admin Team AT3). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
 
 ## CI pipeline unblocked — 3 gate failures fixed (2026-10-06, DONE)
 
@@ -12,7 +12,14 @@ Founder reported every GitHub Actions job failing (screenshots of `interaction-c
 - Verified all 3 scripts clean locally post-fix, frontend still builds/serves correctly after the yarn resolutions bump (screenshot-confirmed), backend/frontend supervisor status unaffected throughout. Admin Team/registry pytest suites re-run clean. One unrelated, confirmed-pre-existing (stash A/B tested) collection error (`test_iter138_acceptance_seven.py`, depends on the `execute_bash` tool being callable at import time) and one unrelated live-LLM network flake (`test_phase2c_chat_live_smoke.py`) were left untouched — neither is caused by or related to this fix.
 - **Not yet pushed** — founder needs to use "Save to GitHub" to push commits `4b465338` + `0bb42bbd` so the next Actions run picks these up.
 
-## Deployment boot-congestion hardening (2026-10-10, DONE)
+## Admin page total crash hotfix (2026-10-10, DONE)
+
+Founder reported "admin page not opening" (then, in Hindi/Hinglish: "admin sidebar ke bhooot sara pages open nhi ho rha founder account se bhe" — a lot of admin sidebar pages not opening, even from the founder account). Reproduced immediately via screenshot: `/admin` error-boundary'd to "Something went wrong" for BOTH the Owner and a team-member test account.
+
+- **Root cause**: a regression from the earlier same-day "code review fixes" pass — `financials` was added to `lib/adminNav.js`'s `ADMIN_NAV` (closing a gap where `/admin/financials` was reachable via the rail shortcut but invisible to AT3's filtering system) but its matching icon entry was never added to `pages/Admin.jsx`'s `NAV_ICONS` lookup. Every nav item renders its icon as `<Icon .../>` from that lookup — a missing key resolves to `undefined`, and React throws `Element type is invalid ... got: undefined` the instant that item appears anywhere in the rendered list. Since the Owner's nav includes every item, this took down the WHOLE page for the founder too, not just team members.
+- **Fix**: added `financials: Landmark` to `NAV_ICONS`, then wrote a quick audit (`node -e` diffing every `ADMIN_NAV` id against every `NAV_ICONS` key) confirming all 33 are now matched with zero gaps — catches this exact class of bug if it recurs.
+- Verified live for both the Owner (full sidebar + Cockpit renders) and the AT3 test team member (filtered 2-item sidebar + "Request more access" button, no crash). Committed `97e6aa3e`.
+
 
 Founder reported a deployment with `nginx ... upstream timed out ... GET /health` errors during boot (app ultimately booted fine and served traffic afterward). Ran `deployment_agent` per founder's explicit request — confirmed WARN-level, not a hard blocker, but flagged as "recurring, worth profiling further" given the extensive pre-existing "boot-stagger fix" comment trail in `main.py` already describing this exact failure class (concurrent startup work congesting the event loop during the first ~15-20s, delaying `/health` responses past nginx's readiness-probe timeout).
 - Root cause this round: `services/health_notifier.py`'s `notifier_loop()` only waited 5s before its first tick, which runs EVERY registered health check concurrently via `asyncio.gather` — including `_check_github_webhook_fence` (a real `GET https://api.github.com/app` + webhook-deliveries call). That landed right in the middle of the same window `main.py`'s lifespan is still creating ~41 Mongo indexes + its own GitHub config probe + an object-storage init call.
