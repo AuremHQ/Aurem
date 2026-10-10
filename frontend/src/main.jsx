@@ -30,3 +30,12 @@ mountApp(
     <App />
   </React.StrictMode>,
 );
+
+// 2026-10-06 — mount watchdog counterpart. `main.jsx` reaching this
+// line means the entry bundle actually loaded and executed (it never
+// runs at all on a 404/parse-error script tag — the stale-index.html-
+// vs-rotated-asset-hash failure mode a code review flagged after a
+// founder report of the homepage staying stuck on the static SEO
+// snapshot baked into `#root`). The watchdog in index.html reloads
+// once if this flag never gets set.
+window.__auremAppMounted = true;

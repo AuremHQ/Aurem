@@ -57,7 +57,7 @@ const SETTINGS_ITEMS = [
   // (see the /team/me fetch + SETTINGS_ITEMS filtering near renderLinks).
   { to: "/settings?tab=team",         label: "Team",            icon: UsersIcon, testid: "nav-team", requiresTeamManagement: true },
 ];
-import { findAdminNavItem } from "../../lib/adminNav";
+import { findAdminNavItem, canOpenAdminNavItem } from "../../lib/adminNav";
 
 // 2026-08-27 · Admin Compact M4/M5 — labels/routes now sourced from the
 // single shared `ADMIN_NAV` (lib/adminNav.js) instead of a separately
@@ -65,11 +65,11 @@ import { findAdminNavItem } from "../../lib/adminNav";
 // (M5) — it was pointing at Cockpit because this list drifted out of
 // sync with the sidebar's own copy. Icons stay rail-specific.
 const ADMIN_ITEMS = [
-  { to: findAdminNavItem("cockpit").route,  label: findAdminNavItem("cockpit").label,  icon: LayoutDashboard, testid: "rail-item-admin-overview" },
-  { to: "/admin/financials", label: "Financials",  icon: Landmark,        testid: "rail-item-admin-financials" },
-  { to: findAdminNavItem("users").route,    label: "Users",       icon: UsersIcon,       testid: "rail-item-admin-users" },
-  { to: findAdminNavItem("suggestions").route, label: "Suggestions", icon: Lightbulb,    testid: "rail-item-admin-suggestions" },
-  { to: findAdminNavItem("api_keys").route, label: "API keys",    icon: KeyRound,        testid: "rail-item-admin-apikeys" },
+  { id: "cockpit",      to: findAdminNavItem("cockpit").route,  label: findAdminNavItem("cockpit").label,  icon: LayoutDashboard, testid: "rail-item-admin-overview" },
+  { id: "financials",   to: findAdminNavItem("financials").route, label: findAdminNavItem("financials").label, icon: Landmark, testid: "rail-item-admin-financials" },
+  { id: "users",        to: findAdminNavItem("users").route,    label: "Users",       icon: UsersIcon,       testid: "rail-item-admin-users" },
+  { id: "suggestions",  to: findAdminNavItem("suggestions").route, label: "Suggestions", icon: Lightbulb,    testid: "rail-item-admin-suggestions" },
+  { id: "api_keys",     to: findAdminNavItem("api_keys").route, label: "API keys",    icon: KeyRound,        testid: "rail-item-admin-apikeys" },
 ];
 
 const SECTIONS = [
@@ -113,6 +113,12 @@ export default function RailShell({
   // server-side via /admin/team/my-access, same fail-closed-until-
   // known pattern as canManageTeam above.
   const [hasAdminTeamAccess, setHasAdminTeamAccess] = useState(false);
+  // AT3 code-review follow-up — the compact flyout's ADMIN_ITEMS list
+  // was unfiltered (any team member with ANY screen saw all 5 rail
+  // shortcuts, unlike the real Admin.jsx sidebar). Backend still 403s
+  // on the ones they don't hold, but the rail shouldn't dangle a dead
+  // link — keep the raw screens map too, not just the boolean.
+  const [teamScreens, setTeamScreens] = useState(null); // null = owner (no filtering)
   const wrapRef = useRef(null);
   // 2026-10 — AUTO-mode hover flyout. Debounced so moving the
   // pointer from an icon onto its own flyout (a real gap exists
@@ -273,7 +279,8 @@ export default function RailShell({
     let dead = false;
     fetchMyAdminAccess().then((result) => {
       if (dead) return;
-      setHasAdminTeamAccess(!!result && Object.keys(result.screens || {}).length > 0);
+      setHasAdminTeamAccess(!!result && (result.is_owner || Object.keys(result.screens || {}).length > 0));
+      setTeamScreens(result && !result.is_owner ? (result.screens || {}) : null);
     });
     return () => { dead = true; };
   }, []);
@@ -538,7 +545,15 @@ export default function RailShell({
       return <>{flyoutHeader("Insights")}{renderLinks(insightItems)}</>;
     }
     if (id === "settings") return <>{flyoutHeader("Settings")}{renderLinks(SETTINGS_ITEMS.filter((it) => !it.requiresTeamManagement || canManageTeam === true))}</>;
-    if (id === "admin")    return <>{flyoutHeader("Admin · founder")}{renderLinks(ADMIN_ITEMS)}</>;
+    if (id === "admin") {
+      // AT3 code-review follow-up — filter the same way Admin.jsx's
+      // real sidebar does, instead of showing all 5 shortcuts to any
+      // team member with any screen access at all.
+      const adminItems = teamScreens === null
+        ? ADMIN_ITEMS
+        : ADMIN_ITEMS.filter((it) => canOpenAdminNavItem(findAdminNavItem(it.id), { is_owner: false, screens: teamScreens }));
+      return <>{flyoutHeader(isFounder ? "Admin · founder" : "Admin")}{renderLinks(adminItems)}</>;
+    }
     return null;
   };
 

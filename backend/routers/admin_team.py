@@ -267,6 +267,15 @@ async def create_access_request(body: CreateAccessRequestBody,
     db = get_db()
     if is_founder_email(user.get("email")):
         raise HTTPException(400, "The Owner already has full access")
+    # AT3 code-review follow-up — without this, repeatedly tapping
+    # "Send request" for the same screen spams the Owner's bell with
+    # duplicate notifications. Re-use the existing pending one instead
+    # of creating a new row each time.
+    existing = await db.admin_access_requests.find_one({
+        "user_id": user["user_id"], "screen_key": body.screen_key, "status": "pending",
+    })
+    if existing:
+        return {"ok": True, "request_id": existing["request_id"], "already_pending": True}
     request_id = uuid.uuid4().hex
     now = _now()
     await db.admin_access_requests.insert_one({

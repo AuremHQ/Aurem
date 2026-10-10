@@ -22,6 +22,21 @@
  * that's ever used — this plugin is the Emergent-path twin, reusing
  * the identical content sources (src/data/companyInfo.mjs, the real
  * privacy-policy.md) so the two can never show different text.
+ *
+ * 2026-10-06 · RE-OPENED by a code review after a founder-reported
+ * production bug: the live homepage was stuck showing the static
+ * snapshot instead of the real app. The visible snapshot's footer
+ * link row had 6 links (About/Compare/Pricing/Developers/API
+ * Docs/Start free) with the `dist/index.html` build's exact embedded
+ * dark-theme CSS — this plugin's own `homeBody()` below only emits 4
+ * links with NO styling at all, so what the founder saw does not
+ * match what this dev-server plugin would have produced. That means
+ * the "confirmed twice" claim above may no longer hold — something
+ * may have changed the actual prod serving path to `yarn build` +
+ * static `dist/` since 2026-08-30. A deploy-agent debug pass has been
+ * requested to re-confirm the real prod command before this comment
+ * (and the "dead code" claim about scripts/seo-prerender.mjs /
+ * Dockerfile below) is trusted again either way.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
