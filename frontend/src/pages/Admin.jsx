@@ -11,6 +11,7 @@ import {
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
   Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell, UserPlus,
+  Landmark,
 } from "lucide-react";
 import { api, getCachedAdminAccess, fetchMyAdminAccess, isAdminOrFounder } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -2312,6 +2313,7 @@ const NAV_ICONS = {
   // rail-only ADMIN_ITEMS; previously unreachable from the sidebar.
   api_keys: KeyRound,
   payments: DollarSign,
+  financials: Landmark,
   tokens: Cpu,
   dash: LayoutDashboard,
   projects: Folder,
