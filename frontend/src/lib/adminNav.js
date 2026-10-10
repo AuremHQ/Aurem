@@ -31,22 +31,9 @@ export const ADMIN_NAV = [
   // into "Onboarding Funnel" above — that page reads /admin/funnel's
   // `nudge_stages` (a different, coarser cron-nudge classification)
   // and this page must not disturb that existing consumer.
-  { id: "activation_funnel", label: "Activation Funnel",  route: "/admin/funnel",        group: "USERS" },
-  { id: "bin_tracker",     label: "BIN Tracker",          route: "/admin/bin-tracker",    group: "USERS" },
-  { id: "github_bulk_revoke", label: "GitHub Bulk Revoke", route: "/admin/github-bulk-revoke", group: "USERS" },
-  { id: "visibility_kit",  label: "Visibility Kit",       route: "/admin/visibility-kit", group: "USERS" },
-  { id: "users",           label: "Users (Legacy)",       route: "/admin/users",          group: "USERS" },
-  { id: "support",         label: "Support",              route: "/admin/support",        group: "USERS" },
-  { id: "suggestions",     label: "Suggestions",          route: "/admin/suggestions",    group: "USERS" },
-  { id: "self_bugs",       label: "Self-Repair Log",      route: "/admin/self-bugs",       group: "USERS" },
-  { id: "audit",           label: "Audit Log",            route: "/admin/audit",          group: "USERS" },
   // Admin Team S3 (AT2) — Owner-only invite/manage UI for
   // admin_team_members (a separate collection/feature from the
   // existing workspace Team at /team, untouched by this entry).
-  { id: "team",            label: "Admin Team",           route: "/admin/team",           group: "USERS" },
-  { id: "feature_flags",   label: "Feature Flags",        route: "/admin/feature-flags",  group: "CONFIG" },
-  { id: "house_rules",     label: "House Rules V2",       route: "/admin/house-rules",    group: "CONFIG" },
-  { id: "robot_guide",     label: "Robot Guide",          route: "/admin/robot-guide",    group: "CONFIG" },
   { id: "activation_funnel", label: "Activation Funnel",  route: "/admin/funnel",        group: "USERS", screenKeys: ["growth.activation"] },
   { id: "bin_tracker",     label: "BIN Tracker",          route: "/admin/bin-tracker",    group: "USERS", screenKeys: ["users.plans"] },
   { id: "github_bulk_revoke", label: "GitHub Bulk Revoke", route: "/admin/github-bulk-revoke", group: "USERS", screenKeys: ["users.github"] },
