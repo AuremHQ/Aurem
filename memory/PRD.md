@@ -12,7 +12,15 @@ Founder reported every GitHub Actions job failing (screenshots of `interaction-c
 - Verified all 3 scripts clean locally post-fix, frontend still builds/serves correctly after the yarn resolutions bump (screenshot-confirmed), backend/frontend supervisor status unaffected throughout. Admin Team/registry pytest suites re-run clean. One unrelated, confirmed-pre-existing (stash A/B tested) collection error (`test_iter138_acceptance_seven.py`, depends on the `execute_bash` tool being callable at import time) and one unrelated live-LLM network flake (`test_phase2c_chat_live_smoke.py`) were left untouched — neither is caused by or related to this fix.
 - **Not yet pushed** — founder needs to use "Save to GitHub" to push commits `4b465338` + `0bb42bbd` so the next Actions run picks these up.
 
-## Code review fixes + production homepage incident resolved (2026-10-06, DONE)
+## Deployment boot-congestion hardening (2026-10-10, DONE)
+
+Founder reported a deployment with `nginx ... upstream timed out ... GET /health` errors during boot (app ultimately booted fine and served traffic afterward). Ran `deployment_agent` per founder's explicit request — confirmed WARN-level, not a hard blocker, but flagged as "recurring, worth profiling further" given the extensive pre-existing "boot-stagger fix" comment trail in `main.py` already describing this exact failure class (concurrent startup work congesting the event loop during the first ~15-20s, delaying `/health` responses past nginx's readiness-probe timeout).
+- Root cause this round: `services/health_notifier.py`'s `notifier_loop()` only waited 5s before its first tick, which runs EVERY registered health check concurrently via `asyncio.gather` — including `_check_github_webhook_fence` (a real `GET https://api.github.com/app` + webhook-deliveries call). That landed right in the middle of the same window `main.py`'s lifespan is still creating ~41 Mongo indexes + its own GitHub config probe + an object-storage init call.
+- Fix: pushed the first tick's warm-up delay from 5s → 25s, clear of that window — live-verified post-restart (the GitHub API call now fires ~26s after boot instead of ~8s).
+- Deployment scan's other finding (no `.gitignore` for `memory/test_credentials.md`) was stale/incorrect — confirmed already correctly excluded (`.gitignore:79`, not tracked by git) — no action needed.
+- Code-only change, no Docker/infra touched, per founder's constraint.
+
+
 
 Ran a full code review (`code_review_agent`) covering the AT3, CI-fix, and G0 changes above, plus the open production-homepage report. Findings and fixes:
 - **HIGH — no client-side recovery if the entry bundle fails to load**: `frontend/index.html` pre-fills `#root` with a static SEO snapshot meant to be overwritten once `main.jsx` mounts; if the bundle 404s/fails to execute (e.g. a stale `index.html` referencing an asset hash a newer deploy rotated out), nothing can run to recover — the snapshot stays stuck forever, which is exactly what the founder saw live on `auremcto.com`. Added a mount watchdog: `main.jsx` sets `window.__auremAppMounted = true` right after calling `render()`; a plain inline `<script>` in `index.html` (runs regardless of whether the module script succeeds) waits 8s and does one `location.reload()` if that flag never appears, guarded by `sessionStorage` so a genuinely broken deploy can't loop.

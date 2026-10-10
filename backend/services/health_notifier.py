@@ -290,8 +290,19 @@ async def notifier_loop() -> None:
     """Long-lived cron. Registered via supervise() so a crash lands
     as a G-F1 incident (see services/supervised_tasks.py)."""
     logger.info("[health-notifier] starting · interval=%ds", _INTERVAL_S)
-    # Small warm-up delay so the aggregator cache is populated first.
-    await asyncio.sleep(5.0)
+    # 2026-10-10 boot-congestion fix — was 5.0s. `_tick_once()` runs
+    # EVERY registered check sequentially on its first pass, including
+    # `_check_github_webhook_fence` (a real GitHub API call + webhook
+    # deliveries fetch, services/health_checks.py). A 5s warm-up landed
+    # that network call right in the middle of the same ~15-20s window
+    # `main.py`'s lifespan is still creating ~41 Mongo indexes + its own
+    # GitHub App config probe + the object-storage init call — exactly
+    # the event-loop-congestion class that's already been staggered
+    # piecemeal elsewhere in `main.py` (search "boot-stagger fix",
+    # "Iter 336") after it previously caused nginx `GET /health`
+    # upstream-timeout flaps during deploy. Pushed well past that
+    # window so this cron's own network calls stop contributing to it.
+    await asyncio.sleep(25.0)
     while True:
         try:
             await _tick_once()
