@@ -2321,6 +2321,7 @@ const NAV_ICONS = {
   mcp: Plug,
   failure_patterns: TrendingDown,
   reliability: ShieldAlert,
+  financials: DollarSign,
   settings: SettingsIcon,
 };
 
@@ -2624,7 +2625,9 @@ export default function Admin({ initialTab = "overview" }) {
               </div>
             );
           }
-          const { id, label, Icon, route } = item;
+          const { id, label, route } = item;
+          // A nav entry without an icon mapping must not blank the whole console.
+          const Icon = item.Icon || Eye;
           const active = route ? location.pathname === route : page === id;
           return (
             <button
