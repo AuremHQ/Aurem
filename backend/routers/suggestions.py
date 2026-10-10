@@ -32,10 +32,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 
-from cto_services.auth import current_dev, require_admin
+from cto_services.auth import current_dev, require_admin, require_admin_dep
 from cto_services.db import get_db, require_db
 from services.bg_safe import safe_bg
 
@@ -257,7 +257,7 @@ async def submit_suggestion(
 # ══════════════════════════════════════════════════════════════════════
 # Admin endpoints (founder-gated via require_admin).
 # ══════════════════════════════════════════════════════════════════════
-@router.get("/admin/list")
+@router.get("/admin/list", dependencies=[Depends(require_admin_dep)])
 async def list_suggestions_admin(
     status: Optional[str] = None,
     sort:   Optional[str] = "recent",
@@ -289,7 +289,7 @@ class DecideBody(BaseModel):
     decision: str = Field(..., pattern="^(approved|rejected)$")
 
 
-@router.post("/admin/{sid}/decide")
+@router.post("/admin/{sid}/decide", dependencies=[Depends(require_admin_dep)])
 async def decide_suggestion(
     sid: str,
     body: DecideBody,

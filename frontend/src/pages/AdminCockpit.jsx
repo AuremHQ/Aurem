@@ -321,7 +321,10 @@ function EnvBadge({ env, dbHost }) {
   );
 }
 
-function AnalogGauge({ value, max, label, sublabel, color, testId }) {
+function AnalogGauge({ value: rawValue, max, label, sublabel, color, testId }) {
+  // The presence endpoint can omit a field (fresh DB, older backend);
+  // a missing number must render as 0, not crash the whole cockpit.
+  const value = Number.isFinite(Number(rawValue)) ? Number(rawValue) : 0;
   // 2026-09-28 MASTER TASK Part B — semi-circle needle gauge. Distinct
   // on purpose from MetricCard/HealthDonut below (plain numbers) — a
   // literal analog dial per the founder's spec for these 3 activity
@@ -414,10 +417,10 @@ function PresenceGauges() {
         value={d.total_users} max={totalMilestone} color={C.amber}
         label="TOTAL USERS" sublabel={`of ${totalMilestone} milestone`} />
       <AnalogGauge testId="cockpit-gauge-live-now"
-        value={d.live_now} max={Math.max(1, d.total_users)} color={C.green}
+        value={d.live_now} max={Math.max(1, Number(d.total_users) || 0)} color={C.green}
         label="LIVE NOW" sublabel="active in the last 2 min" />
       <AnalogGauge testId="cockpit-gauge-active-24h"
-        value={d.active_24h} max={Math.max(1, d.total_users)} color={C.amber}
+        value={d.active_24h} max={Math.max(1, Number(d.total_users) || 0)} color={C.amber}
         label="ACTIVE LAST 24H" sublabel="of total user base" />
     </div>
   );

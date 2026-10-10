@@ -26,6 +26,9 @@ vi.mock("../../../lib/api", () => ({
   getToken: vi.fn(() => "fake-token"),
   logout: vi.fn(),
   newSessionId: vi.fn(() => "sess-1"),
+  // RailShell also resolves Admin Team access (AT3); fail-closed default here
+  // so these tests keep isolating the /team/me Team-nav behaviour.
+  fetchMyAdminAccess: vi.fn(() => Promise.resolve({ is_owner: false, role: null, screens: {} })),
 }));
 vi.mock("../../../lib/chipFlag", () => ({ setChipV2Enabled: vi.fn() }));
 
@@ -37,11 +40,12 @@ beforeEach(() => { api.get.mockReset(); api.post.mockReset(); });
 
 function mockApiFor({ canManageTeam }) {
   api.get.mockImplementation((url) => {
-    if (url === "/auth/me") return Promise.resolve({ data: { user: { tier: "owner" } } });
+    if (url === "/auth/me") return Promise.resolve({ data: { user: { tier: "team" } } });
     if (url === "/team/me") {
       return Promise.resolve({
         data: {
           is_owner: canManageTeam,
+          team_feature_enabled: canManageTeam,
           permissions: { team_management: canManageTeam ? "read_write" : "none" },
         },
       });
@@ -95,7 +99,7 @@ describe("RailShell — Phase 1 team-management nav visibility", () => {
     renderRail();
     await openSettingsFlyout();
     expect(screen.queryByTestId("nav-team")).toBeNull();
-    resolveTeamMe({ data: { is_owner: true, permissions: { team_management: "read_write" } } });
+    resolveTeamMe({ data: { is_owner: true, tier: "team", team_feature_enabled: true, permissions: { team_management: "read_write" } } });
     expect(await screen.findByTestId("nav-team")).toBeTruthy();
   });
 });

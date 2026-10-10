@@ -13,8 +13,11 @@ import { Link, useSearchParams } from "react-router-dom";
 import WalkthroughPlayer from "../components/demo/WalkthroughPlayer";
 import { FULL_STEPS, TEASER_STEPS } from "../components/demo/demoSteps";
 import MarketingNav from "../components/marketing/MarketingNav";
+import usePageMeta from "../lib/usePageMeta";
+import { pageTitle } from "../lib/siteConfig";
 
 export default function Demo() {
+  usePageMeta({ title: pageTitle("Demo") });
   const [sp] = useSearchParams();
   const mode = sp.get("mode") === "teaser" ? "teaser" : "full";
   const steps = mode === "teaser" ? TEASER_STEPS : FULL_STEPS;

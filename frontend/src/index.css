@@ -1398,3 +1398,7 @@ table { max-width: 100%; }
   .chip-row { max-width: 100%; }
   .chip-row.chip-row-status { flex-basis: 100%; width: 100%; }
 }
+
+/* Footer links are 11-13px text; give them a 32px+ hit area. Padding on an
+   inline element grows the tap target without changing line layout. */
+footer > a { padding: 10px 2px; }

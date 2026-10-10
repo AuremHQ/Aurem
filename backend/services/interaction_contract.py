@@ -95,12 +95,17 @@ def finalize(result: dict, content: str, *, prompt: str, session_id: str,
         state = "partial"
     elif state not in {"success", "partial", "blocked", "error"}:
         state = "success"
+    from services.turn_outcome import decide
+    verdict = decide(result, content, state)
     return {
         "version": 1, "request_id": request_id, "session_id": session_id,
         "request_hash": hashlib.sha256(prompt.encode()).hexdigest(),
         "content_hash": hashlib.sha256(content.encode()).hexdigest(),
         "turn_state": state,
-        "completion_basis": "response_delivered" if state == "success" else state,
+        # `outcome` is decided from evidence (services/turn_outcome.py); a
+        # delivered reply alone is never a completion.
+        **verdict,
+        "completion_basis": verdict["reason"] if state == "success" else state,
         "continue_available": state == "partial",
         "failure_mode": result.get("failure_mode"),
         "recovery_action": "continue" if state == "partial" else (

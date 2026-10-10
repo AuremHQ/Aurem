@@ -285,6 +285,37 @@ async def emit_funnel_event(
         logger.debug("funnel_event %s failed: %r", event_type, e)
 
 
+async def stamp_first_chat(db, *, user_id: str, provider: Optional[str] = None,
+                           mode: Optional[str] = None) -> bool:
+    """Idempotently stamp `dev_users.first_chat_at` and emit `first_chat_sent`.
+
+    Shared by the non-streaming `/chat/send` and the SSE `/chat/stream`
+    path.  Root cause of the admin funnel showing "Sent first message = 0":
+    only `/chat/send` did this, but the product's real send path
+    (ChatPanel -> `/chat/stream`) never did, so the step undercounted
+    every real user.  Best-effort; never raises.  Returns True only for
+    the call that actually stamped (the user's first message).
+    """
+    if db is None or not user_id:
+        return False
+    try:
+        stamped = await db.dev_users.find_one_and_update(
+            {"user_id": user_id, "first_chat_at": {"$exists": False}},
+            {"$set": {"first_chat_at": time.time()}},
+            projection={"_id": 0, "user_id": 1},
+        )
+        if not stamped:
+            return False
+        await emit_funnel_event(
+            db, user_id=user_id, event_type="first_chat_sent",
+            metadata={"provider": provider, "mode": mode},
+        )
+        return True
+    except Exception as e:
+        logger.debug("first_chat_sent funnel emit failed: %r", e)
+        return False
+
+
 # ── Onboarding Step 4 — first-scan-aha funnel events (2026-08-26) ──
 # Thin, named wrappers around `emit_funnel_event` so call sites read
 # as intent, not a bare string literal. `first_scan_started` /

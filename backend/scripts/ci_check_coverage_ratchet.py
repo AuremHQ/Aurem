@@ -149,7 +149,7 @@ def main(argv: list[str]) -> int:
         with open(cov_path, encoding="utf-8") as f:
             report = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
-        print(f"::error::could not read coverage report at {cov_path}: {e}", file=sys.stderr)
+        print(f"::warning::CANNOT EVALUATE — could not read coverage report at {cov_path}: {e}", file=sys.stderr)
         return 2
 
     baseline = _load_baseline()

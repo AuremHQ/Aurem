@@ -34,6 +34,26 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────
 
 _RULES: List[Dict[str, Any]] = [
+    # ── LLM provider auth (must come BEFORE the GitHub 401 rule below) ─
+    # The error names the model provider, so the fix is the provider key,
+    # not the GitHub App. Matching on the provider named in the error —
+    # not on a bare "401" — is what keeps the two apart.
+    {
+        "pattern": re.compile(
+            r"(?:openrouter|deepseek|anthropic|openai|generativelanguage|llm|ai provider)"
+            r"[^\n]{0,200}?(?:401|403|unauthori[sz]ed|no auth|missing authentication|"
+            r"invalid api key|api key not set|not set)"
+            r"|(?:401|unauthori[sz]ed)[^\n]{0,200}?(?:openrouter\.ai|api\.anthropic\.com|api\.openai\.com)"
+            r"|(?:openrouter|deepseek|anthropic|openai)_api_key",
+            re.I),
+        "plain":   "The AI model provider rejected our key, so ORA could not think this turn. This is not a problem with your GitHub connection.",
+        "steps":   [
+            "Nothing to change on your side or in GitHub",
+            "The AUREM team needs to check the AI provider key",
+            "Retry in a few minutes",
+        ],
+        "suggestion": "Your code and connection are untouched; no work was lost.",
+    },
     # ── GitHub App auth issues (2026-06 · English-only + App-era copy) ─
     {
         "pattern": re.compile(r"app_installation_missing|no\s+pat\b|pat\s+missing|missing\s+pat", re.I),
@@ -47,7 +67,9 @@ _RULES: List[Dict[str, Any]] = [
         "suggestion": "PAT support was removed — the GitHub App is more secure and never expires like a token.",
     },
     {
-        "pattern": re.compile(r"app_installation_revoked|invalid[_\s-]?token|401|bad\s+credentials", re.I),
+        "pattern": re.compile(
+            r"app_installation_revoked|invalid[_\s-]?token|bad\s+credentials"
+            r"|(?:github|installation)[^\n]{0,200}?401|401[^\n]{0,200}?(?:github|installation)", re.I),
         "plain":   "GitHub rejected the App installation for this repo — it may have been suspended or uninstalled.",
         "steps":   [
             "Open GitHub → Settings → Applications → Installed GitHub Apps",

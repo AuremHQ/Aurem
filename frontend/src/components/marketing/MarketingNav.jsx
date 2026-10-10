@@ -42,19 +42,27 @@ const CSS = `
 }
 .aurem-marketing-nav .mn-left { display: flex; align-items: center; gap: 14px; text-decoration: none; }
 .aurem-marketing-nav .mn-logo-img { width: 38px; height: 38px; border-radius: 9px; }
-.aurem-marketing-nav .mn-logo-text { font-family: var(--mn-font-mono); font-weight: 800; font-size: 22px; letter-spacing: -1px; color: var(--mn-accent); }
+.aurem-marketing-nav .mn-logo-text { font-family: var(--mn-font-mono); font-weight: 800; font-size: 22px; letter-spacing: -1px; color: var(--mn-accent); white-space: nowrap; }
 .aurem-marketing-nav .mn-logo-text span { color: var(--mn-muted-2); font-weight: 400; font-size: 13px; margin-left: 6px; letter-spacing: 0; }
 .aurem-marketing-nav .mn-links { display: flex; align-items: center; gap: 28px; }
-.aurem-marketing-nav .mn-link { font-family: var(--mn-font-mono); font-size: 13px; color: var(--mn-muted-1); text-decoration: none; transition: color 0.15s; }
+.aurem-marketing-nav .mn-link { font-family: var(--mn-font-mono); font-size: 13px; color: var(--mn-muted-1); text-decoration: none; transition: color 0.15s; white-space: nowrap; padding: 9px 2px; }
 .aurem-marketing-nav .mn-link:hover { color: var(--mn-accent); }
 .aurem-marketing-nav .mn-cta {
   font-family: var(--mn-font-mono); font-size: 13px;
   background: var(--mn-accent); color: #000; padding: 9px 18px;
-  border-radius: 8px; text-decoration: none; font-weight: 600;
+  border-radius: 8px; text-decoration: none; font-weight: 600; white-space: nowrap;
   transition: opacity 0.15s, transform 0.08s;
 }
 .aurem-marketing-nav .mn-cta:hover { opacity: 0.92; }
 .aurem-marketing-nav .mn-cta:active { transform: translateY(1px); }
+/* Tablets (721-1000px): the full link row plus the logo tagline does not
+   fit, so the links used to wrap onto two lines ("Bug / Hunt"). Drop the
+   tagline and tighten spacing instead. */
+@media (max-width: 1000px) {
+  .aurem-marketing-nav { padding: 14px 20px; }
+  .aurem-marketing-nav .mn-logo-text span { display: none; }
+  .aurem-marketing-nav .mn-links { gap: 14px; }
+}
 @media (max-width: 720px) {
   .aurem-marketing-nav { padding: 12px 20px; }
   .aurem-marketing-nav .mn-links { gap: 16px; }

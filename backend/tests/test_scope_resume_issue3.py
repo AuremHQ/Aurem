@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import os
+
 import httpx
 import pytest
 import pytest_asyncio
@@ -30,7 +32,13 @@ async def env(monkeypatch):
     from services import chat_helpers, ora_context, session_summary
     from services.ora_chat_v2 import llm_client
 
-    cfg = dotenv_values(Path(__file__).parents[1] / ".env")
+    # 2026-09-29 · regression — dotenv_values() alone reads the physical
+    # backend/.env FILE, not os.environ. GitHub Actions sets MONGO_URL via
+    # the job's `env:` block (real os.environ) but there is no .env file on
+    # disk in CI, so dotenv_values() returned {} and cfg["MONGO_URL"] raised
+    # KeyError on every test in this file. os.environ first, then the file
+    # layered on top so a real local .env still wins over a stale shell var.
+    cfg = {**os.environ, **dotenv_values(Path(__file__).parents[1] / ".env")}
     mongo = AsyncIOMotorClient(cfg["MONGO_URL"], serverSelectionTimeoutMS=5000)
     db = mongo[f"scope_resume_test_{uuid.uuid4().hex[:12]}"]
     project = {"project_id": "p1", "user_id": "u1", "github_owner": "fixture",

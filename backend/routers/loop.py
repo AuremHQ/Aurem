@@ -1108,6 +1108,7 @@ async def cancel_loop(loop_id: str,
                 # Also drop an event row into `loop_events` so any
                 # /stream consumer polling the log picks up the terminal
                 # marker on its next tick.
+                terminal_event_written = False
                 try:
                     await db.loop_events.insert_one({
                         "loop_id":  loop_id,
@@ -1120,8 +1121,9 @@ async def cancel_loop(loop_id: str,
                         "data":     {"origin": "cancel_fallback"},
                         "created_at": terminal_dt,
                     })
+                    terminal_event_written = True
                 except Exception as e:                        # noqa: BLE001
-                    logger.debug(
+                    logger.warning(
                         "loop %s — fallback loop_events insert failed: %r",
                         loop_id, e,
                     )
@@ -1129,6 +1131,7 @@ async def cancel_loop(loop_id: str,
                 # held captive by a ghost loop. Pulls owner out of the
                 # persisted doc — _no_project for legacy / no-project
                 # runs.
+                lock_released = False
                 try:
                     from services.loop_safety import release_loop_lock
                     proj_key = doc.get("project_id") or "_no_project"
@@ -1136,14 +1139,17 @@ async def cancel_loop(loop_id: str,
                         db, proj_key, doc.get("user_id") or user["user_id"],
                         loop_id,
                     )
+                    lock_released = True
                 except Exception as e:                          # noqa: BLE001
-                    logger.debug(
+                    logger.warning(
                         "loop %s — fallback release_loop_lock failed: %r",
                         loop_id, e,
                     )
+                # The flags below report what actually happened: a
+                # swallowed failure must not reach the caller as "done".
                 return {"loop_id": loop_id, "state": "aborted",
-                        "lock_released": True,
-                        "terminal_event_written": True}
+                        "lock_released": lock_released,
+                        "terminal_event_written": terminal_event_written}
         raise HTTPException(404, "Loop not found")
     if engine.user_id != user["user_id"]:
         # SEC-004 fix (2026-08-19): uniform 404 for both "doesn't exist"
@@ -1160,6 +1166,7 @@ async def cancel_loop(loop_id: str,
     # clean terminal DB state before the HTTP response returns to the
     # user, so an immediately-following /loop/start acquire_loop_lock
     # succeeds.
+    force_released = False
     try:
         db2 = get_db()
         if db2 is not None:
@@ -1187,10 +1194,11 @@ async def cancel_loop(loop_id: str,
                 "user_id":    user["user_id"],
                 "loop_id":    loop_id,
             })
+            force_released = True
     except Exception as e:                                # noqa: BLE001
-        logger.debug("iter279 force-clean after cancel failed: %r", e)
+        logger.warning("iter279 force-clean after cancel failed: %r", e)
     return {"loop_id": loop_id, "state": engine.state.value,
-            "lock_force_released": True}
+            "lock_force_released": force_released}
 
 
 # ── Iter 212m-146 — Force-release loop lock (safety hatch) ───────────

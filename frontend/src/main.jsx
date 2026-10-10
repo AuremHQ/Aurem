@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { mountApp } from "./lib/mountApp";
 // Iter 388-p1 — Frontend Sentry wiring (Item #20).  NO-OP unless
 // REACT_APP_SENTRY_DSN is set in frontend/.env — safe to import
 // unconditionally.  See src/lib/sentry.js for activation steps.
@@ -11,6 +12,8 @@ initSentry();
 // and unhandledrejection to /admin/errors/report so prod bugs surface
 // in the Admin → Errors tab instead of disappearing into the void.
 import "./utils/errorReporter";
+import { installChunkReload } from "./lib/chunkReload";
+installChunkReload();
 
 // PWA — register the service worker (sw.js) once the page is settled.
 // Stays no-op in dev (Vite serves over HTTP, browsers refuse SW on http://).
@@ -22,10 +25,12 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   });
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(
+mountApp(
+  ReactDOM.createRoot,
+  document.getElementById("root"),
   <React.StrictMode>
     <App />
-  </React.StrictMode>
+  </React.StrictMode>,
 );
 
 // 2026-10-06 — mount watchdog counterpart. `main.jsx` reaching this

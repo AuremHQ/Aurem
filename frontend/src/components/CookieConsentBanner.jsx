@@ -118,6 +118,27 @@ export default function CookieConsentBanner() {
           on wider screens instead; keep full-width bottom sheet on
           mobile where a corner toast would be too cramped. */}
       <style>{`
+        /* Phones: the full-size card covered ~45% of a 390px screen,
+           hiding the hero and the sign-in button. Keep it compact:
+           Reject / Accept side by side, Manage as a text link below. */
+        @media (max-width: 639px) {
+          .aurem-cookie-banner {
+            left: 12px !important;
+            right: 12px !important;
+            bottom: 12px !important;
+            padding: 14px !important;
+            font-size: 12px !important;
+            line-height: 1.45 !important;
+          }
+          .aurem-cookie-title { font-size: 13px !important; margin-bottom: 4px !important; }
+          .aurem-cookie-body { margin-bottom: 10px !important; }
+          .aurem-cookie-actions { gap: 6px !important; justify-content: stretch !important; }
+          .aurem-cookie-actions button { flex: 1 1 calc(50% - 3px) !important; padding: 9px 10px !important; }
+          .aurem-cookie-actions .aurem-cookie-manage {
+            order: 3; flex: 1 1 100% !important; border: none !important;
+            padding: 4px !important; text-decoration: underline;
+          }
+        }
         @media (min-width: 640px) {
           .aurem-cookie-banner {
             left: auto !important;
@@ -156,10 +177,10 @@ export default function CookieConsentBanner() {
       >
       {!showPrefs ? (
         <>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+          <div className="aurem-cookie-title" style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
             We use cookies to improve your experience
           </div>
-          <div style={{ color: "var(--text-dim, #a39d8a)", marginBottom: 14 }}>
+          <div className="aurem-cookie-body" style={{ color: "var(--text-dim, #a39d8a)", marginBottom: 14 }}>
             Strictly-necessary cookies keep you logged in. With your permission,
             we also use analytics and marketing cookies to measure conversions.
             Read our{" "}
@@ -167,11 +188,12 @@ export default function CookieConsentBanner() {
             {" · "}
             <Link to="/privacy" style={{ color: "var(--accent, #ff8a2a)", textDecoration: "underline" }}>Privacy Policy</Link>.
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+          <div className="aurem-cookie-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
             <button
               type="button"
               onClick={() => setShowPrefs(true)}
               data-testid="cookie-manage-btn"
+              className="aurem-cookie-manage"
               style={btnGhost}
             >
               Manage preferences
