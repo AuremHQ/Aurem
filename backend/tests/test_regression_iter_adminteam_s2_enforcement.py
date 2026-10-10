@@ -190,12 +190,23 @@ def test_d21_team_member_dev_users_row_keeps_is_admin_false(team_member_factory,
 
 # ── D6 — MFA session claim required for team members (not Owner) ────
 
-def test_d6_team_member_without_mfa_claim_is_refused(team_member_factory):
+def test_d6_team_member_without_mfa_claim_is_refused_when_opted_in(team_member_factory, monkeypatch):
+    # Owner decision 2026-10: D6 is now opt-in (ADMIN_TEAM_REQUIRE_MFA=1).
+    monkeypatch.setenv("ADMIN_TEAM_REQUIRE_MFA", "1")
     uid, email = team_member_factory(overrides={"users.all": "manage"})
     token = create_token(uid, email, is_admin=False, mfa_verified=False)
     with TestClient(app) as client:
         resp = _get(client, "/api/aurem-dev/admin/users", token)
-    assert resp.status_code == 403, "D6: a team member token without the mfa claim must be refused"
+    assert resp.status_code == 403, "D6 (opted in): a team member token without the mfa claim must be refused"
+
+
+def test_regression_iter417_team_member_without_mfa_claim_passes_by_default(team_member_factory, monkeypatch):
+    monkeypatch.delenv("ADMIN_TEAM_REQUIRE_MFA", raising=False)
+    uid, email = team_member_factory(overrides={"users.all": "manage"})
+    token = create_token(uid, email, is_admin=False, mfa_verified=False)
+    with TestClient(app) as client:
+        resp = _get(client, "/api/aurem-dev/admin/users", token)
+    assert resp.status_code == 200, "a team member with the right screen override must not need a 2FA session"
 
 
 def test_d6_team_member_with_mfa_claim_and_sufficient_level_passes(team_member_factory):

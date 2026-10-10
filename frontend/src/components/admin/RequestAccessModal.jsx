@@ -33,8 +33,8 @@ export default function RequestAccessModal({ accessibleIds, onClose }) {
     if (!screenKey) { setErr("Pick a screen first"); return; }
     setBusy(true); setErr("");
     try {
-      await api.post("/admin/team/access-requests", { screen_key: screenKey, note: note.trim() });
-      toast("Request sent to the founder");
+      const resp = await api.post("/admin/team/access-requests", { screen_key: screenKey, note: note.trim() });
+      toast(resp.data?.already_pending ? "You already have a pending request for this" : "Request sent to the founder");
       onClose();
     } catch (e2) {
       setErr(e2?.response?.data?.detail || e2.message || "Failed to send request");

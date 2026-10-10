@@ -6,6 +6,27 @@
     <meta name="theme-color" content="#0A0A0A" />
     <meta name="color-scheme" content="dark" />
 
+    <!-- ora-asset-recovery: if the entry bundle (/assets/*.js) fails to load —
+         typically a CDN serving a stale index.html that points at a hash a newer
+         build replaced — the build-time SEO snapshot would stay on screen with no
+         app behind it. Retry ONCE per session with a cache-busting URL. Must stay
+         inline: it has to run even when the bundle never does. -->
+    <script>
+      (function (w) {
+        w.addEventListener('error', function (e) {
+          var t = e && e.target;
+          if (!t || t.tagName !== 'SCRIPT' || !/\/assets\//.test(t.src || '')) return;
+          try {
+            if (w.sessionStorage.getItem('ora_asset_reload')) return;
+            w.sessionStorage.setItem('ora_asset_reload', '1');
+          } catch (_) { return; }
+          var u = new URL(w.location.href);
+          u.searchParams.set('_r', String(Date.now()));
+          w.location.replace(u.toString());
+        }, true);
+      })(window);
+    </script>
+
     <!-- 2026-09 mobile PageSpeed round 2 — shared helper so both Meta
          Pixel and Google Ads gtag (the two biggest JS payloads on the
          page, ~650 KiB combined) fire on the FIRST real user signal
@@ -545,6 +566,31 @@
       </main>
     </noscript>
     <div id="root"></div>
+    <!-- 2026-10-06 — stale-bundle mount watchdog. A founder-reported
+         bug showed the homepage stuck on the static SEO snapshot
+         baked into #root above, with the real app never mounting —
+         most likely a stale index.html referencing a JS asset hash a
+         newer deploy rotated out from under it (plain 404 on the
+         module script tag below; nothing in that failure mode can
+         run JS to recover on its own, since the bundle never
+         executes at all). This plain inline script runs regardless
+         of whether the module script below succeeds, waits a
+         generous 8s for main.jsx to set `window.__auremAppMounted`,
+         and does ONE forced reload if it never does — a reload
+         re-fetches a fresh index.html, which should reference
+         whatever asset hashes are actually live right now. Guarded
+         by sessionStorage so a genuinely broken deploy can't loop. -->
+    <script>
+    (function () {
+      if (sessionStorage.getItem("aurem_stale_reload_attempted")) return;
+      setTimeout(function () {
+        if (!window.__auremAppMounted) {
+          sessionStorage.setItem("aurem_stale_reload_attempted", "1");
+          location.reload();
+        }
+      }, 8000);
+    })();
+    </script>
     <!-- Iter 42 — F12 error capture. Hooks console.error / fetch / XHR so
          the chat panel can attach captured errors as `f12_payload` to the
          next chat request. Pure client-side; no auto-upload. -->

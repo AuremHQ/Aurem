@@ -70,6 +70,7 @@ export const ADMIN_NAV = [
   // unreachable from inside the Admin sidebar (M4).
   { id: "api_keys",        label: "API Keys",             route: "/admin/api-keys",       group: "CONFIG", screenKeys: ["settings.apikeys"] },
   { id: "payments",        label: "Payments & Revenue",   route: "/admin/payments",       group: "BUSINESS", screenKeys: ["money.payments", "money.summary"] },
+  { id: "financials",      label: "Financials",           route: "/admin/financials",     group: "BUSINESS", screenKeys: ["money.summary"] },
   { id: "tokens",          label: "Token P&L",            route: "/admin/token-pnl",      group: "BUSINESS", screenKeys: ["money.pnl"] },
   { id: "dash",            label: "Dashboard",            route: "/admin/dashboard",      group: "SYSTEM", screenKeys: ["home.home"] },
   { id: "projects",        label: "Projects",             route: "/admin/projects",       group: "SYSTEM", screenKeys: ["work.projects"] },
