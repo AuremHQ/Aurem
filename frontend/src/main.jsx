@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { mountApp } from "./lib/mountApp";
 // Iter 388-p1 — Frontend Sentry wiring (Item #20).  NO-OP unless
 // REACT_APP_SENTRY_DSN is set in frontend/.env — safe to import
 // unconditionally.  See src/lib/sentry.js for activation steps.
@@ -22,8 +23,10 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   });
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(
+mountApp(
+  ReactDOM.createRoot,
+  document.getElementById("root"),
   <React.StrictMode>
     <App />
-  </React.StrictMode>
+  </React.StrictMode>,
 );

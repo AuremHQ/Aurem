@@ -132,6 +132,7 @@ async function walkChunkTree(target) {
 
   // 3. BFS-walk chunk references.
   const fetched = new Map(); // path -> text
+  let entryError = null;
   const queue = [mainPath];
   const seen = new Set([mainPath]);
 
@@ -151,7 +152,18 @@ async function walkChunkTree(target) {
       }
     } catch (err) {
       console.error(`[verify] WARN could not fetch ${chunkUrl}: ${err.message}`);
+      if (path === mainPath) entryError = err.message;
     }
+  }
+
+  // A served index.html whose entry bundle 404s leaves visitors on the static
+  // SEO snapshot with no app — report that directly, not as "sentinels missing".
+  if (!fetched.has(mainPath)) {
+    console.error(
+      `[verify] FAIL: entry chunk ${mainPath} did not return 200 (${entryError || "no response"}) — ` +
+      "the page would be stuck on the static SEO snapshot",
+    );
+    process.exit(1);
   }
 
   console.log(`[verify] fetched ${fetched.size} chunks total`);
