@@ -6,6 +6,27 @@
     <meta name="theme-color" content="#0A0A0A" />
     <meta name="color-scheme" content="dark" />
 
+    <!-- ora-asset-recovery: if the entry bundle (/assets/*.js) fails to load —
+         typically a CDN serving a stale index.html that points at a hash a newer
+         build replaced — the build-time SEO snapshot would stay on screen with no
+         app behind it. Retry ONCE per session with a cache-busting URL. Must stay
+         inline: it has to run even when the bundle never does. -->
+    <script>
+      (function (w) {
+        w.addEventListener('error', function (e) {
+          var t = e && e.target;
+          if (!t || t.tagName !== 'SCRIPT' || !/\/assets\//.test(t.src || '')) return;
+          try {
+            if (w.sessionStorage.getItem('ora_asset_reload')) return;
+            w.sessionStorage.setItem('ora_asset_reload', '1');
+          } catch (_) { return; }
+          var u = new URL(w.location.href);
+          u.searchParams.set('_r', String(Date.now()));
+          w.location.replace(u.toString());
+        }, true);
+      })(window);
+    </script>
+
     <!-- 2026-09 mobile PageSpeed round 2 — shared helper so both Meta
          Pixel and Google Ads gtag (the two biggest JS payloads on the
          page, ~650 KiB combined) fire on the FIRST real user signal
