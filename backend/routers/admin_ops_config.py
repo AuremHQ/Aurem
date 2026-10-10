@@ -488,9 +488,12 @@ async def db_health(authorization: Optional[str] = Header(None)):
                 "indexes_ok": False,
                 "error": str(e)[:200],
             }
+    from services.query_indexes import get_query_index_report
+    query_indexes = await get_query_index_report(db)
     last = get_last_bootstrap()
     return {
         "ok": True,
+        "query_indexes": query_indexes,
         "collections_present": len(present),
         "collections_expected": len(required),
         "last_bootstrap":        (last or {}).get("ts"),

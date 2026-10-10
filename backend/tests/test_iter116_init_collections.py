@@ -30,6 +30,10 @@ class _FakeColl:
     async def create_index(self, keys, **opts):
         self.indexes.append((tuple(tuple(k) for k in keys), tuple(sorted(opts.items()))))
         return "ok"
+    def with_options(self, **_opts):
+        # init_prod_collections writes through a best-effort write-concern view
+        # of the collection; for the fake that view is the collection itself.
+        return self
 
 
 class _FakeDB:
