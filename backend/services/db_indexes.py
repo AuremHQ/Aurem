@@ -204,6 +204,12 @@ async def ensure_dedup_indexes(db) -> List[dict]:
               "uniq_user_campaign", unique=True,
               partial={"campaign": {"$exists": True, "$type": "string"}})
 
+    # 12) Non-unique read-path indexes. Chained here because this already runs
+    # in the boot-maintenance background task, so a slow build on a large
+    # collection can't delay startup.
+    from services.query_indexes import ensure_query_indexes
+    results.extend(await ensure_query_indexes(db))
+
     return results
 
 
