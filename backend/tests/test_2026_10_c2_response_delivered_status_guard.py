@@ -11,7 +11,6 @@ here as defense in depth (the LongCat-specific leak itself is already
 prevented earlier, in `_call_longcat`'s GLM fallback)."""
 from __future__ import annotations
 
-import os
 import pathlib
 import sys
 
@@ -21,9 +20,16 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-os.environ["INTERACTION_CONTRACT_V1"] = "1"
-
 from services.interaction_contract import finalize  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _interaction_contract_on(monkeypatch):
+    # Set per test, not at import: a module-level os.environ write stays
+    # on for the whole pytest process and flips behaviour in every test
+    # collected after this file (it broke collection of
+    # test_iter138_acceptance_seven.py, which aborted the live-env job).
+    monkeypatch.setenv("INTERACTION_CONTRACT_V1", "1")
 
 
 def test_leaked_longcat_tag_with_zero_tool_calls_is_never_success():

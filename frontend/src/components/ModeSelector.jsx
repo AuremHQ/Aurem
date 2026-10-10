@@ -13,6 +13,8 @@ import React, { useState, useEffect } from "react";
 import { Zap, Search, Rocket, Lock } from "lucide-react";
 import { api } from "../lib/api";
 import HoverTip from "./HoverTip";
+import ModalCloseButton from "./ModalCloseButton";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const ICONS = { swift: Zap, pro: Search, maxx: Rocket };
 
@@ -108,6 +110,7 @@ export default function ModeSelector({ value, onChange, excludeKeys = [] }) {
 
 export function UpgradePopup({ mode, data, onClose }) {
   const [paying, setPaying] = useState(false);
+  useEscapeKey(onClose);
   const pay = async () => {
     setPaying(true);
     try {
@@ -136,9 +139,11 @@ export function UpgradePopup({ mode, data, onClose }) {
           background: "var(--panel)",
           border: "1px solid var(--border-strong)",
           borderRadius: 12, padding: 28, maxWidth: 380, width: "90%",
+          position: "relative",
           color: "var(--text)",
         }}
       >
+        <ModalCloseButton onClick={onClose} testId="upgrade-popup-close" />
         <div style={{
           fontSize: 18, fontWeight: 600, marginBottom: 8,
           color: "var(--accent-2, #f59e0b)",

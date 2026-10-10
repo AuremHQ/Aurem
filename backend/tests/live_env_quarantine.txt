@@ -60,3 +60,151 @@ tests/test_direct_google_oauth_2026_01.py
 tests/test_daily_series_2026_01.py
 tests/test_cost_alert_and_cookie_batch_2026_01.py
 tests/test_iteration_cto_projects_live.py
+
+# 2026-09-29 · CI-trustworthiness audit — root cause of the "Backend —
+# pytest" job hitting its 15-minute cap (ci.yml `timeout -s INT 15m`).
+# ci.yml's backend-tests job sets no REACT_APP_BACKEND_URL, so
+# _resolve_live_base() (and each of these files' own
+# os.environ.get("REACT_APP_BACKEND_URL", <hardcoded preview URL>)
+# fallback) fell through to the COMMITTED frontend/.env value —
+# https://aurem.onrender.com, a real, live, publicly-reachable
+# deployment. _live_server_reachable()'s health probe returns 200
+# against it, so the live_env skip never fired: these 80 files (found
+# by grepping tests/ for the same REACT_APP_BACKEND_URL + requests.*
+# pattern used by every already-quarantined file above, then
+# diffing against this list) ran FOR REAL against that live
+# deployment on every CI run — using CI's throwaway test account,
+# against a database with completely different seeded state, each
+# request taking real network + real endpoint latency (5-30s) instead
+# of the near-0s a correctly-skipped test costs. ci.yml now also sets
+# REACT_APP_BACKEND_URL to a guaranteed-refused loopback address for
+# this job (see backend-tests job env) so the probe fails fast and
+# uniformly instead of silently reaching a real, unrelated live
+# server; this list is the other half of that fix — without it,
+# these 80 files fail FAST instead of hanging, but still ERROR
+# instead of cleanly SKIPping like every other live_env test.
+tests/test_2026_02_ora_b3_round4_final.py
+tests/test_2026_09_12_openrouter_feature_headers.py
+tests/test_2026_09_12_ship_cancelled_endpoint.py
+tests/test_activation_funnel_drilldown.py
+tests/test_admin_audit_and_installation_active_2026_08.py
+tests/test_admin_context_bridge_2026_09_09.py
+tests/test_admin_llm_settings_e2e.py
+tests/test_admin_split_phase2.py
+tests/test_audit_2026_01_full_stack.py
+tests/test_aurem_backend_audit_2026_01.py
+tests/test_aurem_bugs_a_e_2026_01.py
+tests/test_aurem_rollback.py
+tests/test_avatar_library_malformed_doc_2026_09_10.py
+tests/test_b3_gate_stream.py
+tests/test_before_after_preview_wiring_2026_01_09.py
+tests/test_business_owner_gates_2026_08_31.py
+tests/test_chatux4_history_steps_api.py
+tests/test_confidence_checks_audit_2026_01.py
+tests/test_core_flow_e2e_2026_09_03.py
+tests/test_fal_byok_secrets.py
+tests/test_findings_teaser_bridge_live_http.py
+tests/test_first_scan_ack_2026_08_30.py
+tests/test_fix_pass_2026_01.py
+tests/test_github_bulk_revoke_e2e_2026_01.py
+tests/test_github_stuck_connections_2026_01.py
+tests/test_installation_health.py
+tests/test_intent_gateway_casual_boundary_2026_01.py
+tests/test_intent_gateway_points_4_6_2026_01.py
+tests/test_isolation_exploit.py
+tests/test_issue_b_context_anchor_2026_08_30.py
+tests/test_issue_c_memory_2026_08_30.py
+tests/test_iter2026_08_28_ora_chat_v2_e2e.py
+tests/test_iter2026_09_03_live_verification.py
+tests/test_iter212m163_aggression_chat.py
+tests/test_iter212m210_advisor_tier_split.py
+tests/test_iter212m211_advisor_tool_leak.py
+tests/test_iter212m215_mermaid_diagram.py
+tests/test_iter212m22_ask_advisor_full_response.py
+tests/test_iter212m24_e2e_house_rules.py
+tests/test_iter212m30_pr2_live_http.py
+tests/test_iter212m55_e2e_regression.py
+tests/test_iter340_regression.py
+tests/test_iter356_live_rail_backend.py
+tests/test_iter361_guard21_owasp.py
+tests/test_iter363_phase3b_github_app_dispatch.py
+tests/test_iter364_pro_tier_e2e.py
+tests/test_iter370_sandbox_health_restore.py
+tests/test_iter_ambiguity_and_mode_d_gates.py
+tests/test_iter_customer_raw_error_leak_fix.py
+tests/test_iter_session_switcher_regression_2026_08_23.py
+tests/test_iteration_activation_and_funnel_2026_01.py
+tests/test_journey_watch_phase3.py
+tests/test_live_commit_boundary_e2e_2026_01.py
+tests/test_loop_gate_chat_stream_2026_01.py
+tests/test_loop_gate_killswitch_2026_01b.py
+tests/test_loop_gate_parity_and_mode_d_2026_01.py
+tests/test_maintenance.py
+tests/test_marketing_header_and_first50_removal.py
+tests/test_master_task_2026_09_28_batch2.py
+tests/test_master_task_2026_09_28_parta1_provider_leak.py
+tests/test_master_task_2026_09_28_parta2_partb_referral_admin.py
+tests/test_master_task_partAB_live.py
+tests/test_medium_batch_2026_01.py
+tests/test_ora_chat_limits_2026_09_10.py
+tests/test_p2a_notification_bell.py
+tests/test_phase1_team_rbac_live_http.py
+tests/test_phase3a_duplication_churn.py
+tests/test_phase_a_workcard_first_scan.py
+tests/test_prompt_caching_regression.py
+tests/test_prompt_starter_onboarding.py
+tests/test_quickwins_batch_2026_01.py
+tests/test_r5c_webhook_fence.py
+tests/test_retry_orphan_fix_2026_08_27.py
+tests/test_stage1_2_slo_ambiguity_2026_08.py
+tests/test_team_rbac_audit_2026_01.py
+tests/test_trust_verification_e2e_2026_09.py
+tests/test_ui_batch_6_2026_08_24.py
+tests/test_video_pipeline_2026_09_10.py
+tests/test_visual_bugfix_phase3_4_2026_09_12.py
+tests/test_visual_bugfix_pipeline_2026_01.py
+
+# 2026-09-29 · second pass — found via full-suite run with
+# REACT_APP_BACKEND_URL forced unreachable: still-visible
+# ConnectionRefusedError to port=1 (these use requests.Session()
+# or a differently-named base-url variable, so the first
+# grep pass above missed them).
+tests/live/test_phase_a_intent_grounding_live.py
+tests/test_admin_failure_patterns_selfbugs_live_2026_09_21.py
+tests/test_admin_notify_and_scan.py
+tests/test_admin_surgical_fixes.py
+tests/test_interaction_reliability_contract.py
+tests/test_iter2026_08_27_backend_verification.py
+tests/test_iter212m125_repo_status.py
+tests/test_iter212m235_phase6_track_and_p0.py
+tests/test_iter212m3_activation_funnel.py
+tests/test_iter_2026_01_13_edit_gate_and_github_status.py
+tests/test_iter_vanguard_autofix_and_admin_chat.py
+tests/test_oauth_ora_chat_live_preview.py
+tests/test_phase1_refactor_smoke.py
+tests/test_r6_llm_usd_cap.py
+tests/test_section15_batch_live_2026_09_22.py
+tests/test_task_chain_logging_2026_09_08.py
+tests/test_visibility_kit_v2_2026_08_30.py
+tests/test_w2_step2_mock_short_circuit_chat_stream.py
+
+# 2026-09-30 · files that hardcode http://localhost:8001 (they never read
+# REACT_APP_BACKEND_URL), found from the #197 shard output: `Connection refused`
+# in every shard because no server runs there. Listed here they skip cleanly in
+# the shards and run for real in quality-gate.yml's live-env-tests job, which
+# boots the backend on :8001. test_jwt_revocation.py is not listed: the
+# invariants job already runs it against a booted backend.
+tests/test_activation_part3_guided_first_task.py
+tests/test_iter212m20_admin_2fa_and_tabbar.py
+tests/test_iter270_ssrf_guard.py
+tests/test_mcp_ora_chat_admin.py
+tests/test_oauth_ora_chat.py
+tests/test_overnight_t6_p1a_ora_pin_lockout_live.py
+tests/test_p1_1_ora_per_user_pin_2026.py
+tests/test_r6_second_teammate_ora_pin_2026.py
+tests/test_slice_a_bi_cockpit.py
+
+# 2026-09-30 · OAuth redirect_uri / token-binding regression tests: drive a live
+# /oauth/* server on localhost:8001, so they run in the live-env-tests job.
+tests/test_regression_iter403_oauth_open_redirect_and_token_binding.py
+tests/test_regression_iter404_oauth_redirect_uri_parser_hardening.py

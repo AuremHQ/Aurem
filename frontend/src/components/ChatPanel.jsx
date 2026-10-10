@@ -5759,7 +5759,6 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               {isLastAssistant && lastTaskId && activeProject?.project_id && (
                 <PostTaskScan
                   taskId={lastTaskId}
-                  projectId={activeProject.project_id}
                   onFixRequest={(prompt) => sendSuggestion(prompt)}
                 />
               )}

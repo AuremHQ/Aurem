@@ -12,6 +12,8 @@ initSentry();
 // and unhandledrejection to /admin/errors/report so prod bugs surface
 // in the Admin → Errors tab instead of disappearing into the void.
 import "./utils/errorReporter";
+import { installChunkReload } from "./lib/chunkReload";
+installChunkReload();
 
 // PWA — register the service worker (sw.js) once the page is settled.
 // Stays no-op in dev (Vite serves over HTTP, browsers refuse SW on http://).

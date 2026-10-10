@@ -25,10 +25,13 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import usePageMeta from "../lib/usePageMeta";
+import { pageTitle } from "../lib/siteConfig";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 export default function Both() {
+  usePageMeta({ title: pageTitle("Build with ORA") });
   const [view, setView] = useState("biz");   // "biz" | "dev"
   return (
     <div style={{minHeight:"100vh"}} data-testid="both-page">

@@ -11,11 +11,15 @@ import React from "react";
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import PrMiniGuide from "../PrMiniGuide.jsx";
+import { setPageFlags } from "../../lib/pageFlags";
 
 describe("PrMiniGuide (R6)", () => {
   beforeEach(() => { localStorage.clear(); });
 
   it("shows the 3-step plain-English guide on first render", () => {
+    // PR copy is only truthful when ship_via_pr is on (C4); the
+    // flag-off copy is covered by PrMiniGuide.iter2026_10.c4ShipViaPrCopy.
+    setPageFlags({ ship_via_pr_enabled: true });
     render(<PrMiniGuide />);
     const guide = screen.getByTestId("pr-mini-guide");
     expect(guide.textContent).toContain("We'll open a pull request on your GitHub");

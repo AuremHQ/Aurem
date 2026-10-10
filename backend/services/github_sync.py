@@ -19,6 +19,7 @@ States:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -117,7 +118,7 @@ async def _compute(token: str, repo: str, build_sha: str, built_at: str) -> dict
         return {
             **base,
             "status": "behind",
-            "commits_behind": _local_commits_behind(head_sha),
+            "commits_behind": await asyncio.to_thread(_local_commits_behind, head_sha),
             "gap_hours": gap_hours,
             "critical": bool(gap_hours is not None and gap_hours > CRITICAL_GAP_HOURS),
         }

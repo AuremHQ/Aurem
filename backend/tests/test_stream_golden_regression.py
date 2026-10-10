@@ -49,16 +49,17 @@ Two more INTENTIONAL, verified diffs, both re-recorded:
   byte-identical to the pre-activation golden) — re-captured via
   `python -m tests._capture_stream_golden`.
 
-2026-09-29 · real bug found diagnosing quality-gate.yml's "invariants"
-job: golden was stale again — `services/user_response_sanitizer.py`'s
-`sanitize_provider_for_user`/`sanitize_provenance_for_user` (provider-
-name branding: always show "ORA" to the user, never leak the raw
-provider/model) is an INTENTIONAL, already-shipped feature that
-predates this diagnosis but was never re-recorded. Verified with -vv
-across all 6 scenarios that the ONLY diff anywhere was raw provider
-names ("aurem-cto", "golden-provider", "mode-d-redirect", "openrouter",
-etc.) becoming "ORA" (or being stripped from `llm_provenance`) —
-re-captured via `python -m tests._capture_stream_golden`.
+2026-09-29 · User-facing provider branding re-record. Two more
+INTENTIONAL, verified diffs, both from services/user_response_sanitizer.py
+(the engine/provider is never shown to users):
+  1. `provider` on every `meta`/`done` frame is now the branded "ORA"
+     instead of the raw provider id ("aurem-cto", "golden-provider", ...).
+  2. `llm_provenance` is now `{"is_emergency": bool}` — provider/model
+     are dropped, never forwarded raw.
+  Verified with INTERACTION_CONTRACT_V1=1 that these were the ONLY diffs
+  on all 6 scenarios (soft_timeout/hard_timeout: provider only) —
+  re-captured via `python -m tests._capture_stream_golden`. The test now
+  pins INTERACTION_CONTRACT_V1=1 itself, since the golden assumes it.
 """
 import json
 import os
@@ -76,6 +77,10 @@ with open(GOLDEN_PATH, encoding="utf-8") as _fh:
 
 @pytest.mark.parametrize("scenario_name", sorted(SCENARIOS.keys()))
 def test_stream_matches_golden(scenario_name, monkeypatch):
+    # The golden was captured with the interaction contract active (see
+    # the 2026-09-22 note above); pin it so the result never depends on
+    # which CI job or shell happens to export the flag.
+    monkeypatch.setenv("INTERACTION_CONTRACT_V1", "1")
     runner = SCENARIOS[scenario_name]
     actual_text = runner(monkeypatch)
     actual = normalize_events(parse_events(actual_text))

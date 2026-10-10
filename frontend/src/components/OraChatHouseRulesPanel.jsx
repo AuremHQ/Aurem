@@ -14,11 +14,13 @@
 import React, { useEffect, useState, useRef } from "react";
 import { X, RotateCcw, AlertTriangle, Upload } from "lucide-react";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const MAX_LEN = 4000;
 
 export default function OraChatHouseRulesPanel({ onClose, initialScope = "chat" }) {
   const [scope, setScope] = useState(initialScope); // "chat" | "video"
+  useEscapeKey(onClose);
 
   // Keep the switcher's default in sync if the caller's initialScope
   // changes after this panel has already mounted (e.g. the drawer's

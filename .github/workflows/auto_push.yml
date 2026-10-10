@@ -8,27 +8,19 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    env:
-      # Iter 306 — hoist secret to job-level env so step-level `if:`
-      # can gate on `env.API_KEY != ''` (secrets context is disallowed
-      # inside step-level `if:`).
-      API_KEY: ${{ secrets.AUREM_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # This workflow does NOT deploy anything. It used to POST a
+      # "success" deploy report to auremcto.com on every push to main even
+      # though nothing was deployed, which made the dashboard claim a
+      # deploy that never happened. Real deploy results are reported only
+      # by AUREM Auto-Deploy (after approval, with the real hook result).
       - name: Verify build
         run: |
           echo "Build verified at $(date)"
           echo "Commit: ${{ github.sha }}"
-
-      - name: Deploy notification
-        if: env.API_KEY != ''
-        run: |
-          curl -s -X POST \
-            "https://auremcto.com/api/aurem-dev/github-deploy/report" \
-            -H "Content-Type: application/json" \
-            -d "{\"api_key\":\"$API_KEY\",\"commit\":\"${{ github.sha }}\",\"status\":\"success\",\"repo\":\"${{ github.repository }}\"}" \
-            || echo "notify done"
+          echo "No deploy is performed or reported by this workflow."
