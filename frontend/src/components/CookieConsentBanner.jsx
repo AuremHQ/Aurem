@@ -118,6 +118,38 @@ export default function CookieConsentBanner() {
           on wider screens instead; keep full-width bottom sheet on
           mobile where a corner toast would be too cramped. */}
       <style>{`
+        .aurem-cookie-copy-mobile { display: none; }
+
+        @media (max-width: 639px) {
+          .aurem-cookie-banner {
+            left: 8px !important;
+            right: 8px !important;
+            bottom: max(8px, env(safe-area-inset-bottom)) !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 9px 12px !important;
+            max-height: 30vh !important;
+            overflow-y: auto !important;
+            font-size: 12px !important;
+            line-height: 1.35 !important;
+          }
+          .aurem-cookie-banner > div:first-child {
+            font-size: 13px !important;
+            margin-bottom: 4px !important;
+          }
+          .aurem-cookie-banner .aurem-cookie-description {
+            margin-bottom: 7px !important;
+            line-height: 1.3 !important;
+          }
+          .aurem-cookie-copy-desktop { display: none !important; }
+          .aurem-cookie-copy-mobile { display: inline !important; }
+          .aurem-cookie-banner button {
+            padding: 7px 9px !important;
+            font-size: 12px !important;
+            line-height: 1.3 !important;
+          }
+        }
+
         @media (min-width: 640px) {
           .aurem-cookie-banner {
             left: auto !important;
@@ -159,10 +191,15 @@ export default function CookieConsentBanner() {
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
             We use cookies to improve your experience
           </div>
-          <div style={{ color: "var(--text-dim, #a39d8a)", marginBottom: 14 }}>
-            Strictly-necessary cookies keep you logged in. With your permission,
-            we also use analytics and marketing cookies to measure conversions.
-            Read our{" "}
+          <div className="aurem-cookie-description" style={{ color: "var(--text-dim, #a39d8a)", marginBottom: 14 }}>
+            <span className="aurem-cookie-copy-desktop">
+              Strictly-necessary cookies keep you logged in. With your permission,
+              we also use analytics and marketing cookies to measure conversions.
+            </span>
+            <span className="aurem-cookie-copy-mobile">
+              Essential cookies keep you logged in. Optional cookies help improve ORA.
+            </span>
+            {" Read our "}
             <Link to="/cookie-policy" style={{ color: "var(--accent, #ff8a2a)", textDecoration: "underline" }}>Cookie Policy</Link>
             {" · "}
             <Link to="/privacy" style={{ color: "var(--accent, #ff8a2a)", textDecoration: "underline" }}>Privacy Policy</Link>.
