@@ -1,6 +1,6 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-10-10 (admin page total crash hotfix — see below — then deployment boot-congestion hardening, code review fixes, CI pipeline unblocked, Admin Team AT3). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-10-13 ("Run all scanners" Cloudflare 520 fix — see below — then admin page crash hotfix, deployment boot-congestion hardening, code review fixes, CI pipeline unblocked, Admin Team AT3). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
 
 ## CI pipeline unblocked — 3 gate failures fixed (2026-10-06, DONE)
 
@@ -12,7 +12,14 @@ Founder reported every GitHub Actions job failing (screenshots of `interaction-c
 - Verified all 3 scripts clean locally post-fix, frontend still builds/serves correctly after the yarn resolutions bump (screenshot-confirmed), backend/frontend supervisor status unaffected throughout. Admin Team/registry pytest suites re-run clean. One unrelated, confirmed-pre-existing (stash A/B tested) collection error (`test_iter138_acceptance_seven.py`, depends on the `execute_bash` tool being callable at import time) and one unrelated live-LLM network flake (`test_phase2c_chat_live_smoke.py`) were left untouched — neither is caused by or related to this fix.
 - **Not yet pushed** — founder needs to use "Save to GitHub" to push commits `4b465338` + `0bb42bbd` so the next Actions run picks these up.
 
-## Admin page total crash hotfix (2026-10-10, DONE)
+## "Run all scanners" Cloudflare 520 fix (2026-10-13, DONE)
+
+Founder reported (Hindi/Hinglish): clicking "Run all scanners" (or any Vanguard/Bug Hunt/Docker CIS/HTTP-headers category) from the chat slash-command menu or ROBO failed with Cloudflare's exact 520 error text ("invalid or incomplete response... origin is overloaded or misconfigured").
+- **Root cause**: `routers/codebase_health.py`'s `POST /codebase-health/scan` calls each `SCANNERS[cat]` (Vanguard's 25-pattern regex catalog, Bug Hunt's 50+ rules, Docker CIS checks, etc. — all plain synchronous functions in `services/codebase_health_core.py` / `services/bug_hunt_rules.py` / `services/codebase_health_extra.py`) directly inside the async handler. That's pure CPU-bound regex work over the whole repo's fetched text — running it in the main coroutine blocks the process's single event loop for its entire duration. "Run all scanners" chains all 7 categories back-to-back, which can block long enough that `/health` itself goes unresponsive — the exact failure mode that gets a pod killed mid-request by the platform's own liveness check (an ABRUPT connection death, which is what Cloudflare's 520 specifically signals, vs. a clean 502/504 the app could otherwise return gracefully).
+- **Fix**: wrapped each scanner call in `asyncio.to_thread(...)` so the CPU work runs off the event loop. Proved the effect with a synthetic concurrency test: a direct call blocked a concurrent task for 3.27s before it got to run at all; `asyncio.to_thread` dropped that to 7ms.
+- Re-ran the full `codebase_health` test suite (43 passed, 6 failed — all 6 confirmed pre-existing via git-stash A/B: rate-limit/session-persist mock-seam tests + one live-GitHub-installation-coverage test, unrelated). Committed `c6b42fbc`.
+
+
 
 Founder reported "admin page not opening" (then, in Hindi/Hinglish: "admin sidebar ke bhooot sara pages open nhi ho rha founder account se bhe" — a lot of admin sidebar pages not opening, even from the founder account). Reproduced immediately via screenshot: `/admin` error-boundary'd to "Something went wrong" for BOTH the Owner and a team-member test account.
 
