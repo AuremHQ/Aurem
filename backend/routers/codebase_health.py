@@ -32,6 +32,7 @@ category — just 4× more CPU on the user's static analysis.
 # arch: allow-http — GitHub tree walk (calls _gh_get service) (iter 212m-225)
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -246,7 +247,23 @@ async def scan(
     fixed_map = await get_fixed_map(db, user_id=user_id, project_id=project_id)
     total_fixed = 0
     for cat in categories:
-        raw_findings = SCANNERS[cat](text_cache)
+        # 2026-10-10 fix — root cause of the reported Cloudflare 520
+        # ("invalid or incomplete response") on "Run all scanners":
+        # every SCANNERS[cat] (Vanguard's 25-pattern regex catalog,
+        # Bug Hunt's 50+ rules, the Docker CIS checks, etc.) is a
+        # plain synchronous function doing pure CPU-bound regex work
+        # over the WHOLE repo's text_cache — calling it directly here
+        # blocks this process's single event loop for its entire
+        # runtime. Running all 7 categories back-to-back on a
+        # large repo can block long enough that `/health` itself goes
+        # unresponsive, which is exactly the failure mode that gets a
+        # pod killed mid-request by the platform's own liveness
+        # check — an ABRUPT connection death, not a clean HTTP error,
+        # which is what Cloudflare's 520 (vs. a normal 502/504)
+        # actually means. `asyncio.to_thread` moves each scanner's
+        # CPU work off the event loop so /health and every other
+        # concurrent request stay responsive throughout a scan.
+        raw_findings = await asyncio.to_thread(SCANNERS[cat], text_cache)
         findings, fixed_findings = split_findings(raw_findings, fixed_map)
         total_fixed += len(fixed_findings)
         # Cap to top 100 per category to keep the response tight.
