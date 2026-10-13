@@ -19,7 +19,7 @@ describe("ChatPanel — LiveTaskPopup shows only once per task_id", () => {
   const src = fs.readFileSync(
     path.resolve(__dirname, "../ChatPanel.jsx"),
     "utf-8",
-  );
+  ).replace(/\r\n/g, "\n");
 
   it("persists seen task ids in localStorage (survives refresh/login)", () => {
     expect(src).toContain('_LTP_SEEN_KEY = "ora_ltp_seen_ids"');

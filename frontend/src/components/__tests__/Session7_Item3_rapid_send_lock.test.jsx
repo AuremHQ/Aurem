@@ -33,11 +33,22 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
       "const sendInFlightRef = useRef(false)");
   });
 
-  it("send() checks the ref BEFORE any await point", () => {
-    // The check must come BEFORE the busy-based guard so a stale
-    // closure of `busy=false` still gets blocked.
-    expect(CHAT_PANEL_SRC).toMatch(
-      /async function send\([\s\S]{0,2000}sendInFlightRef\.current[\s\S]{0,500}dropped rapid duplicate/);
+  it("send() checks the ref before the first await point", () => {
+    const sendFnIdx = CHAT_PANEL_SRC.indexOf("async function send(");
+    expect(sendFnIdx).toBeGreaterThan(-1);
+
+    // Check the actual handler rather than assuming a fixed distance
+    // between the handler declaration and its synchronous lock guard.
+    const sendFnBody = CHAT_PANEL_SRC.slice(sendFnIdx, sendFnIdx + 20000);
+    const guardIdx = sendFnBody.indexOf("if (sendInFlightRef.current)");
+    const duplicateLogIdx = sendFnBody.indexOf("dropped rapid duplicate");
+    const firstAwait = sendFnBody.search(/\n\s+await\s/);
+
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(duplicateLogIdx).toBeGreaterThan(guardIdx);
+    expect(duplicateLogIdx - guardIdx).toBeLessThan(500);
+    expect(firstAwait).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(firstAwait);
   });
 
   it("lock is armed AFTER validity guards, not before", () => {

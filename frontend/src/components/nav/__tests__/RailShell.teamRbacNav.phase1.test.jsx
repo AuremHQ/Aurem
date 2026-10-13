@@ -26,6 +26,7 @@ vi.mock("../../../lib/api", () => ({
   getToken: vi.fn(() => "fake-token"),
   logout: vi.fn(),
   newSessionId: vi.fn(() => "sess-1"),
+  fetchMyAdminAccess: vi.fn(() => Promise.resolve({ is_owner: false, role: null, screens: {} })),
 }));
 vi.mock("../../../lib/chipFlag", () => ({ setChipV2Enabled: vi.fn() }));
 
@@ -42,6 +43,7 @@ function mockApiFor({ canManageTeam }) {
       return Promise.resolve({
         data: {
           is_owner: canManageTeam,
+          team_feature_enabled: true,
           permissions: { team_management: canManageTeam ? "read_write" : "none" },
         },
       });
@@ -95,7 +97,7 @@ describe("RailShell — Phase 1 team-management nav visibility", () => {
     renderRail();
     await openSettingsFlyout();
     expect(screen.queryByTestId("nav-team")).toBeNull();
-    resolveTeamMe({ data: { is_owner: true, permissions: { team_management: "read_write" } } });
+    resolveTeamMe({ data: { is_owner: true, team_feature_enabled: true, permissions: { team_management: "read_write" } } });
     expect(await screen.findByTestId("nav-team")).toBeTruthy();
   });
 });

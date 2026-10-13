@@ -26,7 +26,7 @@ afterEach(() => cleanup());
 describe("TeamManagementPanel — owner view", () => {
   beforeEach(() => {
     api.get.mockImplementation((path) => {
-      if (path === "/team/me") return Promise.resolve({ data: { is_owner: true, permissions: { team_management: "read_write" } } });
+      if (path === "/team/me") return Promise.resolve({ data: { is_owner: true, team_feature_enabled: true, permissions: { team_management: "read_write" } } });
       if (path === "/team/resources") return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
       if (path === "/team/members") return Promise.resolve({ data: { members: [
         { member_id: "m1", email: "teammate@example.com", status: "pending", role_label: "viewer",
@@ -69,7 +69,7 @@ describe("TeamManagementPanel — owner view", () => {
 describe("TeamManagementPanel — non-owner/non-admin view", () => {
   it("shows a no-access message instead of the invite form", async () => {
     api.get.mockImplementation((path) => {
-      if (path === "/team/me") return Promise.resolve({ data: { is_owner: false, permissions: { team_management: "read" } } });
+      if (path === "/team/me") return Promise.resolve({ data: { is_owner: false, team_feature_enabled: true, permissions: { team_management: "read" } } });
       if (path === "/team/resources") return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
       if (path === "/team/members") return Promise.reject({ response: { status: 403 } });
       return Promise.resolve({ data: {} });
