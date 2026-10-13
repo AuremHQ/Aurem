@@ -127,3 +127,10 @@ State deployment status via a freshly re-checked `build_hash` (`/api/health`)
 — never assume it's current after a restart (`.build_info` can go stale;
 see ROADMAP F34). State exactly which parts of a multi-part ticket are
 done vs. not; never bundle an unrelated ticket into one report.
+
+## Current Vitest status — 2026-10-13
+
+- Full frontend suite: `cd frontend && yarn vitest run --reporter=dot`
+- Verified result: 166 test files passed, 870 tests passed, 0 failures.
+- Current known failing Vitest tests: none on `fix/vitest-tests-current-behavior`.
+- This verified result supersedes older failing-test snapshots.

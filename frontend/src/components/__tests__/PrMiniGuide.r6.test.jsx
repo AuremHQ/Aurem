@@ -8,19 +8,50 @@
  * points this round explicitly named.
  */
 import React from "react";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { isShipViaPrEnabled } from "../../lib/pageFlags";
+
+vi.mock("../../lib/pageFlags", () => ({
+  isShipViaPrEnabled: vi.fn(() => false),
+}));
 import { render, screen, fireEvent } from "@testing-library/react";
 import PrMiniGuide from "../PrMiniGuide.jsx";
 
 describe("PrMiniGuide (R6)", () => {
-  beforeEach(() => { localStorage.clear(); });
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(isShipViaPrEnabled).mockReturnValue(false);
+  });
 
-  it("shows the 3-step plain-English guide on first render", () => {
+  it("shows pull-request guidance when PR shipping is enabled", () => {
+    vi.mocked(isShipViaPrEnabled).mockReturnValue(true);
     render(<PrMiniGuide />);
     const guide = screen.getByTestId("pr-mini-guide");
     expect(guide.textContent).toContain("We'll open a pull request on your GitHub");
     expect(guide.textContent).toContain("Review it there if you like, or just click Merge");
     expect(guide.textContent).toContain("Done — it's live on your site");
+  });
+
+  it("shows direct-commit guidance when PR shipping is disabled", () => {
+    vi.mocked(isShipViaPrEnabled).mockReturnValue(false);
+    render(<PrMiniGuide />);
+    expect(screen.getByTestId("pr-mini-guide-direct-copy").textContent)
+      .toContain("ORA commits directly to your main branch.");
+    expect(screen.getByTestId("pr-mini-guide-direct-copy").textContent)
+      .toContain("No PR to review first");
+    expect(screen.getByTestId("pr-mini-guide-direct-copy").textContent)
+      .toContain("Changed your mind? You can roll back anytime.");
+  });
+
+  it("shows direct-commit guidance when PR shipping is disabled", () => {
+    vi.mocked(isShipViaPrEnabled).mockReturnValue(false);
+    render(<PrMiniGuide />);
+    expect(screen.getByTestId("pr-mini-guide-direct-copy").textContent)
+      .toContain("ORA commits directly to your main branch.");
+    expect(screen.getByTestId("pr-mini-guide-direct-copy").textContent)
+      .toContain("No PR to review first");
+    expect(screen.getByTestId("pr-mini-guide-direct-copy").textContent)
+      .toContain("Changed your mind? You can roll back anytime.");
   });
 
   it("dismisses and never shows again (localStorage-backed)", () => {
