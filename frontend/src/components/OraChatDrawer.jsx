@@ -73,8 +73,15 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
     };
   }, [open]);
 
-  // ── on first open: fetch recent sessions instead of auto-creating.
-  //    Empty list → auto-create a fresh one. Non-empty → show picker.
+  // ── on open: fetch recent sessions and auto-resume.
+  //    Empty list → auto-create a fresh one. Non-empty → auto-resume
+  //    the most-recently-active session (list is already sorted
+  //    updated_at desc, per-user, by the backend) so the SAME admin
+  //    always lands back in their one continuous chat window instead
+  //    of a "new chat" every time this drawer remounts (page nav /
+  //    reload resets local state, since it isn't a global singleton).
+  //    Manual switching stays available via the history (clock) button
+  //    -> openExistingSession / startNewSession below.
   useEffect(() => {
     if (!open || sessionId) return;
     (async () => {
@@ -85,9 +92,10 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
         if (rows.length === 0) {
           const c = await api.post("/ora-chat/sessions", { title: "Quick chat" });
           setSessionId(c.data.session.session_id);
-        } else {
-          setShowPicker(true);
+          return;
         }
+        const resumed = await openExistingSession(rows[0].session_id);
+        if (!resumed) setShowPicker(true);
       } catch (e) {
         setOpen(false);
       }
@@ -115,7 +123,10 @@ export default function OraChatDrawer({ forceOpen = false, fullscreen = false } 
       setMessages(msgs);
       setSessionId(sid);
       setShowPicker(false);
-    } catch { /* ignore */ }
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   // ── keep budget snapshot fresh whenever drawer is open ─────────
