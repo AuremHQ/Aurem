@@ -911,6 +911,17 @@ Same investigation surfaced a second, related bug in the SAME transcript: the "1
 - **Verified**: 4 new tests (exact reported paths, other common tool dirs, real app files unaffected, dotfile-as-filename exemption) pass. Full related suite unchanged before/after via git stash A/B.
 - **Compounding effect**: this also reduces the blast radius of the earlier findings-dedup bug (same session) — fewer noise findings from vendored dirs means fewer entries that could ever get stuck "open."
 
+## Jev — "is it working?" investigated and fixed (2026-02) — DONE
+
+Founder asked directly whether Jev (TypeSafe decision model) and "Ponytail" (roadmap item F8) were actually working.
+
+- **Ponytail**: confirmed via `memory/ROADMAP.md` — F8 "Bloat audit" is a `v2`/backlog item explicitly gated behind a trigger that hasn't happened. Not built. Founder said leave it for now.
+- **Jev**: WAS already wired in (2026-09-19, `semantic_mode_router.py`/`intent_router.py`), but `services/llm/jev_client.py` called OpenRouter's Decisions API directly with a raw `OPENROUTER_API_KEY` from `.env`. Live-tested that key directly against OpenRouter (`/auth/key`): `401 "User not found"` — the key is dead, not Jev-specific. Every caller silently degraded to its built-in keyword-fallback path, so nothing visibly broke, but real Jev classification never ran.
+- **Fix** (commit `b77862ff`): per the integration playbook, Jev only runs on `EMERGENT_LLM_KEY` through Emergent's own proxy (no raw-OpenRouter-key path exists for it) — and `EMERGENT_LLM_KEY` was already present in `.env` (founder pointed at it directly). Rewrote `jev_client.py` on the `typesafe-sdk` package (`AsyncTypeSafeClient`) against the Emergent proxy, keeping `ask_choice()`/`ask_decisions()`'s public signatures and return shapes unchanged so the 3 real call sites needed zero changes. `DEFAULT_MODEL` `"typesafe/jev-1.13"` → `"jev-latest"` (reports back as `"jev-1.13.0"`).
+- **Verified live** against the real Emergent proxy with the real key: `ask_choice()` on a bug-report message → `label="bug_fix"`, `probabilities={'bug_fix': 0.89, ...}`, real usage tokens; `ask_decisions()` with `score`+`noul` question types both returned correctly-shaped real answers.
+- Added `typesafe-sdk==0.7.1` to `requirements.txt` (pulled in a `pydantic` 2.10.0→2.14.1 bump as its own dependency — verified `main.py` imports cleanly and the backend boots with zero errors, all DB indexes/crons firing normally, under the new version).
+- Rewired the 3 test files that mocked the old OpenRouter/respx transport (`test_jev_intent_classifier_2026_09_19.py`, `test_p0_bug2_mode_router_2026_09.py`, `test_p0_bug2_routing_eval_2026_09.py`) to mock `jev_client._client()` instead — all 29 tests across the 3 files pass. Full directly-affected suite (57 tests) unchanged vs baseline via git stash A/B (same 2 pre-existing unrelated failures).
+
 ## Known open items (not fixed by any round above)
 
 - `input_normalizer.py` silently changes a code-fenced JS string `a—b` into `a--b`.
