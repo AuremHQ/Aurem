@@ -8,7 +8,7 @@
  * job, which shells out to the script against the real diff).
  */
 import { describe, it, expect } from "vitest";
-import { checkFile } from "../../scripts/check-stable-first-paint.mjs";
+import { checkFile } from "../../scripts/check-stable-first-paint-core.mjs";
 
 describe("check-stable-first-paint", () => {
   it("flags a useState initializer that reads localStorage directly", () => {
