@@ -1,9 +1,14 @@
 """
 tests/test_jev_intent_classifier_2026_09_19.py
 
-TypeSafe Jev integration (typesafe/jev-1.13 via OpenRouter's
-Decisions API) — added as an opt-in Layer-2b alternative to
-`classify_intent_llm()` in services/ora_chat/intent_router.py.
+TypeSafe Jev integration — added 2026-09-19 as an opt-in Layer-2b
+alternative to `classify_intent_llm()` in
+services/ora_chat/intent_router.py. 2026-02 — rewired from a direct
+OpenRouter Decisions API call to Emergent's Universal LLM Key proxy
+(the dead OPENROUTER_API_KEY silently degraded every call to the
+keyword-fallback path; see jev_client.py's module docstring). Model
+name is now "jev-latest" / reported as "jev-1.13.0", not
+"typesafe/jev-1.13".
 
 Real, live-verified numbers this shipped with (5 messages that fall
 through the regex layer, same 3-way decision, both paths hitting
@@ -21,28 +26,41 @@ these tests.
 """
 from __future__ import annotations
 
-import httpx
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import respx
 
 from services.llm import jev_client
 from services.ora_chat import intent_router as R
 
 
-DECISIONS_URL = jev_client.DECISIONS_URL
+def _fake_resp(model="jev-1.13.0", answers=None, usage=None):
+    r = MagicMock()
+    r.model = model
+    r.answers = answers or {}
+    r.usage = usage or {}
+    return r
+
+
+def _fake_choice_answer(choice, probabilities):
+    a = MagicMock(spec=["choice", "probabilities"])
+    a.choice = choice
+    a.probabilities = probabilities
+    return a
 
 
 # ─── 1. jev_client — low-level Decisions API wrapper ────────────────
 @pytest.mark.asyncio
-@respx.mock
 async def test_ask_choice_happy_path(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
-    respx.post(DECISIONS_URL).mock(return_value=httpx.Response(200, json={
-        "model": "typesafe/jev-1.13-20260917",
-        "answers": {"answer": {"choice": "CODE_CHANGE",
-                                "probabilities": {"CODE_CHANGE": 0.99, "CASUAL_CHAT": 0.01}}},
-        "usage": {"input_tokens": 441, "output_tokens": 45, "cost": 1.8522e-05},
-    }))
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "sk-emergent-test")
+    jev_client._client.cache_clear()
+    fake_client = MagicMock()
+    fake_client.system_one = AsyncMock(return_value=_fake_resp(
+        answers={"answer": _fake_choice_answer(
+            "CODE_CHANGE", {"CODE_CHANGE": 0.99, "CASUAL_CHAT": 0.01})},
+        usage={"input_tokens": 441, "output_tokens": 45},
+    ))
+    monkeypatch.setattr(jev_client, "_client", lambda: fake_client)
     label, meta = await jev_client.ask_choice(
         state="do it",
         instructions="Classify intent",
@@ -50,21 +68,22 @@ async def test_ask_choice_happy_path(monkeypatch):
     )
     assert label == "CODE_CHANGE"
     assert meta["probabilities"]["CODE_CHANGE"] == 0.99
-    assert meta["usage"]["cost"] == 1.8522e-05
+    assert meta["usage"]["input_tokens"] == 441
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_ask_choice_rejects_label_outside_criteria(monkeypatch):
     """A label the caller didn't offer must never be trusted, even if
     the API somehow returned one — same defensive posture as
     `_sanitize_llm_label()`'s exact-match-only rule for the chat-model
     path."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
-    respx.post(DECISIONS_URL).mock(return_value=httpx.Response(200, json={
-        "answers": {"answer": {"choice": "SOMETHING_NOT_OFFERED", "probabilities": {}}},
-        "usage": {},
-    }))
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "sk-emergent-test")
+    jev_client._client.cache_clear()
+    fake_client = MagicMock()
+    fake_client.system_one = AsyncMock(return_value=_fake_resp(
+        answers={"answer": _fake_choice_answer("SOMETHING_NOT_OFFERED", {})},
+    ))
+    monkeypatch.setattr(jev_client, "_client", lambda: fake_client)
     label, meta = await jev_client.ask_choice(
         state="x", instructions="y", criteria={"A": "a", "B": "b"},
     )
@@ -73,10 +92,15 @@ async def test_ask_choice_rejects_label_outside_criteria(monkeypatch):
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_ask_choice_soft_fails_on_error_status(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
-    respx.post(DECISIONS_URL).mock(return_value=httpx.Response(503, text="unavailable"))
+    from typesafe_sdk import TypeSafeAPIError
+
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "sk-emergent-test")
+    jev_client._client.cache_clear()
+    fake_client = MagicMock()
+    err = TypeSafeAPIError(status=503, body="unavailable", headers={})
+    fake_client.system_one = AsyncMock(side_effect=err)
+    monkeypatch.setattr(jev_client, "_client", lambda: fake_client)
     label, meta = await jev_client.ask_choice(
         state="x", instructions="y", criteria={"A": "a"},
     )
@@ -86,9 +110,11 @@ async def test_ask_choice_soft_fails_on_error_status(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ask_decisions_raises_without_api_key(monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("EMERGENT_LLM_KEY", raising=False)
+    jev_client._client.cache_clear()
     with pytest.raises(jev_client.JevError):
         await jev_client.ask_decisions(state="x", questions={})
+    jev_client._client.cache_clear()
 
 
 # ─── 2. intent_router.classify_intent_jev — Layer 2b ────────────────

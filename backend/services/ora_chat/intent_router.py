@@ -198,8 +198,10 @@ async def classify_intent_llm(
 
 # ── Layer 2b · TypeSafe Jev decision-model classifier ───────────────
 # 2026-09-19 — opt-in alternative to classify_intent_llm() above.
-# Same 3-way decision, but via OpenRouter's Decisions API
-# (typesafe/jev-1.13) instead of a general chat-completion call.
+# Same 3-way decision, but via Jev's Decisions API (model "jev-latest",
+# through Emergent's Universal LLM Key proxy — 2026-02, see
+# services/llm/jev_client.py's module docstring for why) instead of a
+# general chat-completion call.
 # Benchmarked on this codebase's own real traffic pattern (5 messages
 # that fall through the regex layer): ~2.5x faster (302.6ms vs
 # 761.1ms avg), ~6.75x cheaper ($0.0000186 vs $0.0001257 avg/call),
@@ -236,7 +238,7 @@ _JEV_CRITERIA = {
 async def classify_intent_jev(
     text: str,
     *,
-    model: str = "typesafe/jev-1.13",
+    model: str = "jev-latest",
     timeout: float = 5.0,
 ) -> tuple[str, dict]:
     """Layer 2b · same decision as classify_intent_llm(), via Jev's

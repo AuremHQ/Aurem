@@ -29,16 +29,14 @@ tests/test_jev_intent_classifier_2026_09_19.py's convention.
 """
 from __future__ import annotations
 
-import httpx
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import respx
 
 from services import chat_helpers
 from services import semantic_mode_router as R
 from services.llm import jev_client
 
-
-DECISIONS_URL = jev_client.DECISIONS_URL
 
 BRIEF_MSG_1 = (
     "That last message failed to deliver (Cloudflare origin error). "
@@ -55,13 +53,32 @@ REAL_F12_CONSOLE_ERROR = {
 }
 
 
-def _jev_response(label: str, confidence: float, other_labels=("A", "B", "C", "D", "E", "F")):
+def _fake_choice_answer(choice, probabilities):
+    a = MagicMock(spec=["choice", "probabilities"])
+    a.choice = choice
+    a.probabilities = probabilities
+    return a
+
+
+def _jev_resp(label: str, confidence: float, other_labels=("A", "B", "C", "D", "E", "F")):
     probs = {lbl: (confidence if lbl == label else round((1 - confidence) / 5, 4)) for lbl in other_labels}
-    return httpx.Response(200, json={
-        "model": "typesafe/jev-1.13-20260917",
-        "answers": {"answer": {"choice": label, "probabilities": probs}},
-        "usage": {"input_tokens": 400, "output_tokens": 40, "cost": 2e-05},
-    })
+    r = MagicMock()
+    r.model = "jev-1.13.0"
+    r.answers = {"answer": _fake_choice_answer(label, probs)}
+    r.usage = {"input_tokens": 400, "output_tokens": 40}
+    return r
+
+
+def _mock_jev(monkeypatch, *responses):
+    """Mock `jev_client._client()` to return `responses` (one per
+    call, in order) from `system_one()`. Each entry is either a fake
+    response (see `_jev_resp`) or an Exception instance to raise."""
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "sk-emergent-test")
+    jev_client._client.cache_clear()
+    fake_client = MagicMock()
+    fake_client.system_one = AsyncMock(side_effect=list(responses))
+    monkeypatch.setattr(jev_client, "_client", lambda: fake_client)
+    return fake_client
 
 
 # ─── 0. Root-cause confirmation — locks in why this fix exists ─────
@@ -76,10 +93,10 @@ def test_ROOT_CAUSE_keyword_classifier_alone_misroutes_brief_message():
 
 # ─── 1. Flag OFF (default) — byte-identical to today, ZERO network ─
 @pytest.mark.asyncio
-@respx.mock
 async def test_flag_off_is_byte_identical_to_keyword_classifier_and_makes_no_network_call():
-    # No respx route registered — any Jev call would raise, proving
-    # the semantic path is never touched when the flag is off.
+    # `_client` is intentionally left unmocked — the flag-off path must
+    # short-circuit before ever reaching Jev, proving the semantic path
+    # is never touched when the flag is off.
     result = await R.classify_mode_semantic(BRIEF_MSG_1, REAL_F12_CONSOLE_ERROR, "p_test", "sess_1")
     assert result["source"] == "keyword"
     assert result["mode"] == chat_helpers.classify_intent(BRIEF_MSG_1, REAL_F12_CONSOLE_ERROR, "p_test")
@@ -87,13 +104,11 @@ async def test_flag_off_is_byte_identical_to_keyword_classifier_and_makes_no_net
 
 # ─── 2. Brief's exact test: error keyword does not force Mode D ────
 @pytest.mark.asyncio
-@respx.mock
 async def test_error_keyword_does_not_force_debug_mode(monkeypatch):
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "100")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
     R._SESSION_STATE.clear()
-    respx.post(DECISIONS_URL).mock(return_value=_jev_response("E", 0.91))
+    _mock_jev(monkeypatch, _jev_resp("E", 0.91))
 
     result = await R.classify_mode_semantic(BRIEF_MSG_1, REAL_F12_CONSOLE_ERROR, "p_test", "sess_brief_1")
 
@@ -104,20 +119,17 @@ async def test_error_keyword_does_not_force_debug_mode(monkeypatch):
 
 # ─── 3. Confidence threshold — low-confidence signal never switches ─
 @pytest.mark.asyncio
-@respx.mock
 async def test_low_confidence_signal_stays_on_current_mode(monkeypatch):
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "100")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
     R._SESSION_STATE.clear()
+    _mock_jev(monkeypatch, _jev_resp("A", 0.95), _jev_resp("D", 0.55))
 
     # Turn 1 — establish mode A with high confidence.
-    respx.post(DECISIONS_URL).mock(return_value=_jev_response("A", 0.95))
     r1 = await R.classify_mode_semantic("hey what's up", None, "p_test", "sess_thresh")
     assert r1["mode"] == "A"
 
     # Turn 2 — Jev suggests D but BELOW the 0.72 threshold. Must stay A.
-    respx.post(DECISIONS_URL).mock(return_value=_jev_response("D", 0.55))
     r2 = await R.classify_mode_semantic("something about an error somewhere", None, "p_test", "sess_thresh")
     assert r2["mode"] == "A"
     assert r2["switched"] is False
@@ -125,19 +137,16 @@ async def test_low_confidence_signal_stays_on_current_mode(monkeypatch):
 
 # ─── 4. Hysteresis — a single high-confidence signal isn't enough ──
 @pytest.mark.asyncio
-@respx.mock
 async def test_hysteresis_requires_two_consecutive_high_confidence_signals(monkeypatch):
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "100")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
     R._SESSION_STATE.clear()
+    _mock_jev(monkeypatch, _jev_resp("C", 0.9), _jev_resp("D", 0.9), _jev_resp("D", 0.9))
 
-    respx.post(DECISIONS_URL).mock(return_value=_jev_response("C", 0.9))
     r1 = await R.classify_mode_semantic("ship this feature", None, "p_test", "sess_hyst")
     assert r1["mode"] == "C"
 
     # First high-confidence D signal — must NOT switch yet.
-    respx.post(DECISIONS_URL).mock(return_value=_jev_response("D", 0.9))
     r2 = await R.classify_mode_semantic("wait, something broke, debug it", None, "p_test", "sess_hyst")
     assert r2["mode"] == "C"
     assert r2["switched"] is False
@@ -150,13 +159,13 @@ async def test_hysteresis_requires_two_consecutive_high_confidence_signals(monke
 
 # ─── 5. Jev outage degrades to keyword classifier, never blocks ────
 @pytest.mark.asyncio
-@respx.mock
 async def test_jev_outage_falls_back_to_keyword_classifier_without_raising(monkeypatch):
+    from typesafe_sdk import TypeSafeAPIError
+
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "100")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
     R._SESSION_STATE.clear()
-    respx.post(DECISIONS_URL).mock(return_value=httpx.Response(503, text="unavailable"))
+    _mock_jev(monkeypatch, TypeSafeAPIError(status=503, body="unavailable", headers={}))
 
     result = await R.classify_mode_semantic(BRIEF_MSG_2, None, "p_test", "sess_outage")
 
@@ -235,15 +244,13 @@ def test_canary_pct_0_excludes_every_session():
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_canary_pct_0_falls_back_to_keyword_even_with_flag_enabled(monkeypatch):
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "0")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
     R._SESSION_STATE.clear()
-    # No respx route registered — any Jev call would raise. If this
-    # session were (wrongly) sampled into the canary, the call below
-    # would blow up instead of silently degrading to keyword.
+    # `_client` intentionally left unmocked — if this session were
+    # (wrongly) sampled into the canary, the call below would blow up
+    # instead of silently degrading to keyword.
     result = await R.classify_mode_semantic(BRIEF_MSG_1, REAL_F12_CONSOLE_ERROR, "p_test", "sess_no_canary")
     assert result["source"] == "keyword"
     assert result["mode"] == chat_helpers.classify_intent(BRIEF_MSG_1, REAL_F12_CONSOLE_ERROR, "p_test")
@@ -276,7 +283,6 @@ def test_canary_sampling_pct_10_is_a_real_minority_not_everyone_or_nobody(monkey
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_canary_pct_100_session_gets_full_semantic_routing(monkeypatch):
     """Sanity: with the master flag ON and pct=100, a brand-new
     session goes through the real semantic path exactly like the
@@ -284,9 +290,8 @@ async def test_canary_pct_100_session_gets_full_semantic_routing(monkeypatch):
     subtly-different code path."""
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "100")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
     R._SESSION_STATE.clear()
-    respx.post(DECISIONS_URL).mock(return_value=_jev_response("E", 0.91))
+    _mock_jev(monkeypatch, _jev_resp("E", 0.91))
 
     result = await R.classify_mode_semantic(BRIEF_MSG_1, REAL_F12_CONSOLE_ERROR, "p_test", "sess_canary_full")
     assert result["mode"] == "E"

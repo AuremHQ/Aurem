@@ -9,14 +9,31 @@ error message that's actually asking for an audit.
 """
 from __future__ import annotations
 
-import httpx
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import respx
 
 from evals.runner import _routing_misclassification_test
 from services.llm import jev_client
 
-DECISIONS_URL = jev_client.DECISIONS_URL
+
+def _jev_resp(label: str, probs: dict):
+    a = MagicMock(spec=["choice", "probabilities"])
+    a.choice = label
+    a.probabilities = probs
+    r = MagicMock()
+    r.model = "jev-1.13.0"
+    r.answers = {"answer": a}
+    r.usage = {"input_tokens": 400, "output_tokens": 40}
+    return r
+
+
+def _mock_jev(monkeypatch, resp):
+    monkeypatch.setenv("EMERGENT_LLM_KEY", "sk-emergent-test")
+    jev_client._client.cache_clear()
+    fake_client = MagicMock()
+    fake_client.system_one = AsyncMock(return_value=resp)
+    monkeypatch.setattr(jev_client, "_client", lambda: fake_client)
 
 
 @pytest.mark.asyncio
@@ -39,7 +56,6 @@ async def test_flag_off_reports_keyword_baseline_only_and_never_hard_fails():
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_flag_on_adds_hard_semantic_gate_and_forces_full_canary_for_this_call(monkeypatch):
     """Even if the LIVE canary pct is small (10% in .env), this eval
     must exercise the semantic router's real answer, not silently
@@ -47,13 +63,8 @@ async def test_flag_on_adds_hard_semantic_gate_and_forces_full_canary_for_this_c
     the sample."""
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_CANARY_PCT", "1")  # deliberately tiny
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
-    respx.post(DECISIONS_URL).mock(return_value=httpx.Response(200, json={
-        "model": "typesafe/jev-1.13-20260917",
-        "answers": {"answer": {"choice": "E", "probabilities": {
-            "A": 0.02, "B": 0.02, "C": 0.02, "D": 0.03, "E": 0.89, "F": 0.02,
-        }}},
-        "usage": {"input_tokens": 400, "output_tokens": 40, "cost": 2e-05},
+    _mock_jev(monkeypatch, _jev_resp("E", {
+        "A": 0.02, "B": 0.02, "C": 0.02, "D": 0.03, "E": 0.89, "F": 0.02,
     }))
 
     result = await _routing_misclassification_test()
@@ -71,19 +82,13 @@ async def test_flag_on_adds_hard_semantic_gate_and_forces_full_canary_for_this_c
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_flag_on_hard_fails_if_semantic_router_regresses_to_debug_mode(monkeypatch):
     """The actual deploy-blocking assertion: if the semantic router
     ever regresses and answers 'D' for this exact adversarial message,
     the gate must HARD fail, not just log it."""
     monkeypatch.setenv("SEMANTIC_MODE_ROUTER_ENABLED", "1")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-123")
-    respx.post(DECISIONS_URL).mock(return_value=httpx.Response(200, json={
-        "model": "typesafe/jev-1.13-20260917",
-        "answers": {"answer": {"choice": "D", "probabilities": {
-            "A": 0.02, "B": 0.02, "C": 0.02, "D": 0.89, "E": 0.03, "F": 0.02,
-        }}},
-        "usage": {"input_tokens": 400, "output_tokens": 40, "cost": 2e-05},
+    _mock_jev(monkeypatch, _jev_resp("D", {
+        "A": 0.02, "B": 0.02, "C": 0.02, "D": 0.89, "E": 0.03, "F": 0.02,
     }))
 
     result = await _routing_misclassification_test()
