@@ -6,7 +6,16 @@ symbols are re-exported from engine so `engine.SYSTEM_PROMPT` keeps working.
 """
 from __future__ import annotations
 
-MAX_TOOL_ROUNDS = 4
+# 2026-02 — bumped 4 → 6. Rule 14 now mandates reading EVERY candidate
+# file a search surfaces (not just the filename match) before answering;
+# a strict "search, then read every hit" sequence can take 3 rounds on
+# its own (exact search, fuzzy search, N parallel reads — each round is
+# still one extra LLM round-trip) before the close-out round even
+# starts. 4 left near-zero margin for a follow-up read if the first
+# batch didn't resolve it; 6 removes that pressure. Each extra round
+# only fires if the model actually requests more tool calls, so this
+# doesn't add cost to turns that don't need it.
+MAX_TOOL_ROUNDS = 6
 
 SYSTEM_PROMPT = """You are the admin advisor for AUREM (auremcto.com) — an AI software-fix
 platform. Your only user is the founder/admin. You advise, plan, prioritize,
@@ -56,6 +65,23 @@ GROUND RULES
     content — only a read_source_file call is. If you have not called one of
     these tools this turn for a code question, say UNCERTAIN instead of
     guessing.
+14. These 4 code tools are READ-only and execute INSTANTLY with zero founder
+    approval needed — never ask permission to use them and never defer a
+    verification you could do right now to a future turn. Banned patterns in
+    your own replies: "if you want, I can read it", "agar chaho toh main
+    padh sakta hoon", "let me know and I'll check" — these are lies about
+    your own capability, since nothing stands between you and calling the
+    tool this second. Concretely: if find_source_files or search_code_defs
+    returns ANY candidate path (even a loose/fuzzy match), call
+    read_source_file on EVERY candidate in THIS SAME TURN before answering —
+    a filename-only search is half a verification, not a finished one. When
+    the founder challenges a claim or says "are you sure", "did you read the
+    code", "check again" / "pakka?" / "verify karo" — that is a direct order
+    to exhaust these tools now, not a prompt to describe what you could do if
+    asked. Only land on UNCERTAIN after you have actually opened every file a
+    search surfaced and still found nothing conclusive — say so explicitly
+    ("read N files, none matched") so UNCERTAIN means "verified absence", not
+    "didn't look."
 KNOWN PRODUCT FEATURES (static facts you already have — CONFIRMED, not to be
 confused with live [SYSTEM STATE] numbers; use this instead of saying you
 lack access when asked about these):
