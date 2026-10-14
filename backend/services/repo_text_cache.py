@@ -25,6 +25,29 @@ from services.scan_cache import (
 logger = logging.getLogger(__name__)
 
 
+def _in_dotted_dir(path: str) -> bool:
+    """True if any DIRECTORY segment of `path` is dot-prefixed.
+
+    2026-02 — `.agent/skills/plugins/<marketplace-repo>/...` (an AI
+    coding-tool's vendored skill plugins, reported via a real scan:
+    "135 open issues" mostly findings inside that tree) was being
+    scanned as if it were the customer's own app code. `_SKIP_DIRS`
+    only caught exact names (node_modules, .git, dist, ...) and never
+    generalized to "any dot-prefixed directory is tooling/IDE/vendor
+    scaffolding" — the exact convention `github_api_writer.py`'s
+    `_is_hidden()` already uses on the WRITE side (".agent/, .github/,
+    .git/, ..."). This brings the READ/scan side in line with it, so
+    `.agent/`, `.vscode/`, `.idea/`, `.claude/`, `.cursor/`, etc. never
+    get scanned as if they were the customer's own business logic.
+
+    Only DIRECTORY segments count (`path.split("/")[:-1]`) — the
+    filename itself (e.g. `.env`, `.gitignore`) is exempt, since those
+    ARE meaningfully scanned (hardcoded-secret / missing-.gitignore
+    checks depend on reading them).
+    """
+    return any(seg.startswith(".") for seg in path.split("/")[:-1])
+
+
 async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
     """Walk the repo tree + fetch every scannable file.  Cached for the
     duration of a single /scan request so all 5 categories share the
@@ -68,7 +91,7 @@ async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
                 for path, txt in cached.items():
                     if not path:
                         continue
-                    if any(p in _SKIP_DIRS for p in path.split("/")):
+                    if any(p in _SKIP_DIRS for p in path.split("/")) or _in_dotted_dir(path):
                         continue
                     lower = path.lower()
                     if not (any(lower.endswith(ext) for ext in _SCAN_EXTS)
@@ -93,7 +116,7 @@ async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
             path = b.get("path", "")
             if not path:
                 continue
-            if any(p in _SKIP_DIRS for p in path.split("/")):
+            if any(p in _SKIP_DIRS for p in path.split("/")) or _in_dotted_dir(path):
                 continue
             lower = path.lower()
             if not (any(lower.endswith(ext) for ext in _SCAN_EXTS)
