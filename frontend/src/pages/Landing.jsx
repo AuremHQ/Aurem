@@ -528,10 +528,97 @@ const LANDING_CSS = `
   overflow-wrap: anywhere;
 }
 @media (max-width: 720px) {
+  /* Recover vertical space without enlarging the headline. */
+  .ora-landing .hero {
+    padding: 28px 16px 28px;
+  }
+  .ora-landing .hero-badge {
+    margin-bottom: 18px;
+  }
+  .ora-landing .hero-split {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .ora-landing .hero-sub {
+    margin: 12px auto 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .ora-landing .hero-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 8px;
+  }
   .ora-landing .hero-pill {
-    padding: 7px 10px;
-    font-size: 12px;
-    margin-bottom: 24px;
+    order: 1;
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.25;
+    margin: 0 auto 8px;
+    max-width: 100%;
+  }
+  .ora-landing .hero-buttons {
+    order: 2;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .ora-landing .hero-actions > div:nth-of-type(3) {
+    order: 3;
+    margin-top: 6px !important;
+  }
+  .ora-landing .hero-trust-badge {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    gap: 6px !important;
+  }
+}
+/* Mobile hero compaction to keep the offer and CTA clear of the fixed cookie banner. */
+@media (max-width: 720px) {
+  .ora-landing .hero {
+    padding: 20px 16px 28px;
+  }
+  .ora-landing .hero-badge {
+    margin-bottom: 18px;
+  }
+  .ora-landing .hero-split {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .ora-landing .hero-sub {
+    margin: 12px auto 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .ora-landing .hero-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .ora-landing .hero-pill {
+    order: 1;
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.25;
+    margin: 0 auto 8px;
+    max-width: 100%;
+  }
+  .ora-landing .hero-buttons {
+    order: 2;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .ora-landing .hero-actions > div:nth-of-type(3) {
+    order: 3;
+    margin-top: 6px !important;
+  }
+  .ora-landing .hero-stats {
+    order: 4;
   }
   .ora-landing .hero-trust-badge {
     padding: 6px 10px !important;

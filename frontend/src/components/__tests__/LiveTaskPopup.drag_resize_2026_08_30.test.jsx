@@ -104,7 +104,7 @@ describe("2026-08-30 · LiveTaskPopup drag + resize + persisted geometry", () =>
   it("uses the original bottom-left default when no geometry was ever saved", async () => {
     render(<LiveTaskPopup taskId="t3" onClose={() => {}} onDone={() => {}} />);
     const root = await screen.findByTestId("live-task-popup");
-    expect(root.style.left).toBe("24px");
+    expect(root.style.left).toBe("64px"); // 56px rail + 8px gutter
     expect(root.style.bottom).toBe("96px");
   });
 });

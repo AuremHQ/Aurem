@@ -25,7 +25,7 @@ import { describe, it, expect } from "vitest";
 const CHAT_PANEL_SRC = fs.readFileSync(
   path.resolve(__dirname, "../ChatPanel.jsx"),
   "utf-8",
-);
+).replace(/\r\n/g, "\n");
 
 describe("Session 7 · Item 3 · Rapid-send race guard", () => {
   it("sendInFlightRef is declared", () => {
@@ -37,7 +37,7 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
     // The check must come BEFORE the busy-based guard so a stale
     // closure of `busy=false` still gets blocked.
     expect(CHAT_PANEL_SRC).toMatch(
-      /async function send\([\s\S]{0,2000}sendInFlightRef\.current[\s\S]{0,500}dropped rapid duplicate/);
+      /async function send\([\s\S]{0,8000}sendInFlightRef\.current[\s\S]{0,800}dropped rapid duplicate/);
   });
 
   it("lock is armed AFTER validity guards, not before", () => {

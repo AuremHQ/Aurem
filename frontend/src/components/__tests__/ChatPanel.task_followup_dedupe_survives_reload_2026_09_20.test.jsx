@@ -21,7 +21,7 @@ describe("ChatPanel — task-followup dedupe depends on mapHistoryTurn wiring", 
   const src = fs.readFileSync(
     path.resolve(__dirname, "../ChatPanel.jsx"),
     "utf-8",
-  );
+  ).replace(/\r\n/g, "\n");
 
   it("imports mapHistoryTurn from utils/dateDividers", () => {
     expect(src).toMatch(
