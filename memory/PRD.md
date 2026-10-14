@@ -894,6 +894,23 @@ Founder reported (Hinglish): ROBO (chat/Fix List/push strip) shows the same proj
 - **Verified**: new `backend/tests/test_2026_02_findings_id_dedup_and_autoresolve.py` (4/4 passed) — id fix, backward-compat for tagged-scanner shapes, auto-close-on-rescan, category-scope guard. Full related suite unchanged before/after via git stash A/B (same 65/71 passed, same 6 pre-existing unrelated failures — a medium-severity-exclusion bug in the same function and unrelated mock-DB/egress-net tests, neither touched by this fix).
 - **Bonus self-heal**: any OLD `cto_open_findings` rows stuck open under the previous garbled-id format will auto-close on their very next scan too, since the new scan now computes a clean id that never matches the old garbled one — `auto_resolve_stale_findings` treats them as "no longer detected" and closes them.
 
+## ROBO investigation — "FILE NOT FOUND" on a real, successfully-read file (2026-02) — DONE
+
+Founder reported (with a real transcript): asked ORA to check if a flagged finding was real; ORA correctly read the flagged file and quoted its content, but the final answer still said "FILE NOT FOUND: ../../refresh-skills-plugin.js" — looked like ORA fakes/mocks file detection.
+
+- **Root cause (confirmed by code read + reproduction)**: `services/citation_guard.py`'s `_extract_claims()` scans the ENTIRE response text for path-like substrings — including text INSIDE triple-backtick fences quoting a file's own source. The flagged file (`.agent/skills/apps/web-app/src/__tests__/refresh-skills-plugin.security.test.js`) was genuinely read via `read_repo_file` and quoted back; the quoted source contained `import('../../refresh-skills-plugin.js')`. The regex matched that import specifier as a SEPARATE, unverified citation claim (never itself passed to `read_repo_file`), so `enforce()` tried to fetch it literally as a repo-root path, got a miss, and told the LLM to rewrite saying "FILE NOT FOUND: ../../refresh-skills-plugin.js" — turning a fully grounded investigation into something that looked broken.
+- **Fix** (commit `9109c29a`): `_extract_claims()` now strips fenced code blocks before running the path/version/count regexes — quoted file content is never treated as its own citation claim; a real "this path needs checking" claim is always stated in prose around a fence, never inside the quoted source itself.
+- **Verified**: 3 new tests (exact reported scenario, prose-citation-outside-fence still blocks as before, fence-stripping helper) pass. Full citation_guard suite (11 files) unchanged before/after via git stash A/B.
+
+## Codebase Health — vendored tool directories scanned as app code (2026-02) — DONE
+
+Same investigation surfaced a second, related bug in the SAME transcript: the "135 open issues" list was dominated by findings inside `.agent/skills/plugins/antigravity-awesome-skills-claude/...` — a vendored AI coding-tool skill-plugin marketplace clone, not the customer's own app.
+
+- **Root cause**: `services/repo_text_cache.py`'s scan candidate filter only skipped EXACT directory names (`node_modules`, `.git`, `dist`, `build`, `.next`, `venv`, `.venv`, `__pycache__`, `.cache`, `coverage`) and never generalized to "any dot-prefixed directory is tooling/vendor scaffolding" — the exact convention `services/github_api_writer.py`'s `_is_hidden()` already uses on the commit/write side (its own comment explicitly names `.agent/` as an example). The scan/read side never matched it.
+- **Fix** (commit `95b4bb08`): new `_in_dotted_dir()` helper — skips any path with a dot-prefixed DIRECTORY segment (`.agent/`, `.vscode/`, `.idea/`, `.claude/`, `.cursor/`, `.github/`, ...); the filename itself stays exempt so `.env`/`.gitignore` are still scanned as before. Wired into both the Redis cache-hit filter and the fresh-fetch filter in `build_text_cache()`.
+- **Verified**: 4 new tests (exact reported paths, other common tool dirs, real app files unaffected, dotfile-as-filename exemption) pass. Full related suite unchanged before/after via git stash A/B.
+- **Compounding effect**: this also reduces the blast radius of the earlier findings-dedup bug (same session) — fewer noise findings from vendored dirs means fewer entries that could ever get stuck "open."
+
 ## Known open items (not fixed by any round above)
 
 - `input_normalizer.py` silently changes a code-fenced JS string `a—b` into `a--b`.
