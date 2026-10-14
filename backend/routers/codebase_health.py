@@ -311,10 +311,23 @@ async def scan(
     # only, exposure-count capped) so a manual scan's real findings
     # actually reach the real backlog the counter reads from.
     try:
-        from services.loop_full_scan import persist_findings_to_backlog
+        from services.loop_full_scan import (
+            persist_findings_to_backlog, auto_resolve_stale_findings, finding_id_for,
+        )
         await persist_findings_to_backlog(
             db, user_id=user_id, project_id=project_id,
             findings=all_findings, scan_source="codebase_health_manual",
+        )
+        # 2026-02 — self-healing closure. This scan just re-detected
+        # every STILL-open issue across `categories`; any finding that
+        # was "open" in one of those same categories before this run
+        # but isn't among them now is provably fixed (via Aurem's own
+        # fix pipeline, a manual commit, or anything else) — close it
+        # so it stops resurfacing in the Fix List panel / push strip.
+        still_open_ids = {finding_id_for(f) for f in all_findings}
+        await auto_resolve_stale_findings(
+            db, user_id=user_id, project_id=project_id,
+            categories_scanned=list(categories), still_open_ids=still_open_ids,
         )
     except Exception as e:                                 # noqa: BLE001
         logger.debug("open-findings backlog persist failed: %r", e)

@@ -52,6 +52,46 @@ FULL_SCAN_MAX_SECONDS = 30.0
 # Persistence — critical/high findings backlog
 # ══════════════════════════════════════════════════════════════════════
 
+def finding_id_for(f: dict) -> str:
+    """Deterministic, collision-resistant identity for a scan finding.
+
+    2026-02 fix — two incompatible conventions existed across scanner
+    modules and this one function used to assume only the first:
+      - Callers that tag their own `scanner` name on every finding
+        (full_scan_orchestrator.py's Vanguard/Bug-Hunt/HTTP/Docker
+        normalizer, local_tools.py's `ora_chat_audit` save_finding
+        tool) use a SHORT rule id/name — the real uniqueness comes
+        from wrapping it as `<scanner>::<file>:<line>:<rule>`.
+      - codebase_health_core.py / codebase_health_extra.py (the
+        customer-facing 16-category scan behind "Run all scanners",
+        the /codebase-health page, the in-chat Fix List panel and the
+        push-notification strip) never set `scanner` at all — they
+        already emit a COMPLETE, globally-unique `id` themselves
+        (e.g. "sec::auth.py:42:hardcoded_secret"). The old code always
+        wrapped it again as f"{f.get('scanner','unknown')}::...", which
+        for these findings produced a double-encoded id like
+        "unknown::auth.py:42:sec::auth.py:42:hardcoded_secret" — a
+        string that never matched the clean `id` the frontend/fix
+        pipeline round-trip back on resolve. Result: every fix applied
+        from those 16 categories silently failed to close its
+        `cto_open_findings` row, so the SAME already-fixed issue kept
+        resurfacing in the Fix List panel and the weekly push-
+        notification strip forever (the reported "shows the same
+        issue again and again, never removes it after I fix it" bug).
+    """
+    file_ = f.get("file") or ""
+    line_ = int(f.get("line") or 0)
+    raw_id = f.get("id")
+    scanner = f.get("scanner")
+    if scanner:
+        rule = f.get("rule_id") or raw_id or "unknown"
+        return f"{scanner}::{file_}:{line_}:{rule}"
+    if raw_id:
+        return str(raw_id)
+    rule = f.get("rule_id") or "unknown"
+    return f"unknown::{file_}:{line_}:{rule}"
+
+
 async def persist_findings_to_backlog(
     db,
     *,
@@ -97,7 +137,7 @@ async def persist_findings_to_backlog(
         file_ = f.get("file") or ""
         line_ = int(f.get("line") or 0)
         rule  = f.get("rule_id") or f.get("id") or "unknown"
-        finding_id = f"{f.get('scanner', 'unknown')}::{file_}:{line_}:{rule}"
+        finding_id = finding_id_for(f)
 
         try:
             # $setOnInsert covers first-seen fields; $set covers the
@@ -153,6 +193,55 @@ async def persist_findings_to_backlog(
                 "[full-scan] persist failed for %s: %r", finding_id, e,
             )
     return count
+
+
+async def auto_resolve_stale_findings(
+    db,
+    *,
+    user_id: str,
+    project_id: str,
+    categories_scanned: list[str],
+    still_open_ids: set[str],
+) -> int:
+    """Self-healing closure for the `cto_open_findings` backlog.
+
+    2026-02 — companion to the `finding_id_for` fix above. Relying only
+    on a fix-click's write-back to mark a finding resolved is fragile
+    (wrong id format, a fix applied by a different tool/manually on
+    GitHub, a scan re-run that simply stops detecting it) — none of
+    those paths ever flip `status` away from "open", so an already-
+    fixed issue kept resurfacing in the push-notification strip and the
+    in-chat Fix List panel forever even after the real code was clean.
+
+    This runs the OTHER direction: after a scan completes, any
+    previously "open" finding whose `category` WAS actually covered by
+    this scan, but whose `finding_id` is NOT in what this scan just
+    detected, is provably gone — close it. Scoped strictly to
+    `categories_scanned` so a narrow scan (e.g. the chat `/bug-hunt`
+    slash command, one category only) never closes findings in
+    categories it didn't even look at.
+
+    Returns the number of findings auto-closed.
+    """
+    if not categories_scanned:
+        return 0
+    cur = db.cto_open_findings.find(
+        {"user_id": user_id, "project_id": project_id,
+         "status": "open", "category": {"$in": categories_scanned}},
+        projection={"finding_id": 1},
+    )
+    to_close = [row["finding_id"] async for row in cur
+                if row.get("finding_id") not in still_open_ids]
+    if not to_close:
+        return 0
+    r = await db.cto_open_findings.update_many(
+        {"user_id": user_id, "project_id": project_id,
+         "finding_id": {"$in": to_close}},
+        {"$set": {"status": "fixed",
+                   "resolved_at": datetime.now(timezone.utc),
+                   "resolved_reason": "no_longer_detected"}},
+    )
+    return r.modified_count
 
 
 # ══════════════════════════════════════════════════════════════════════
