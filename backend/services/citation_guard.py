@@ -52,6 +52,28 @@ _COUNT = re.compile(
     re.IGNORECASE,
 )
 
+# ─── Fenced code blocks are quoted CONTENT, not citation claims ──────
+# 2026-02 — confirmed incident: a response that legitimately read a
+# file (e.g. `.../refresh-skills-plugin.security.test.js`, a real
+# `read_repo_file` call) quoted that file's own source back to the
+# user, which contained a relative import
+# (`import('../../refresh-skills-plugin.js')`). `_FILE_PATH` happily
+# matched that import specifier as if it were a second, separate
+# citation claim needing its own verification. `enforce()` then tried
+# to fetch "../../refresh-skills-plugin.js" literally as a repo-root
+# path — which obviously isn't one — got a miss, and the rewritten
+# answer dutifully (and correctly, given what it was told) reported
+# "FILE NOT FOUND: ../../refresh-skills-plugin.js", making a fully
+# grounded, successful investigation look broken. A genuine "this path
+# exists / needs checking" claim is always made in PROSE around a
+# fence, never inside the quoted source itself — so claim extraction
+# must run on prose only, with fenced blocks stripped first.
+_CODE_FENCE = re.compile(r"```.*?```", re.DOTALL)
+
+
+def _strip_code_fences(text: str) -> str:
+    return _CODE_FENCE.sub(" ", text or "")
+
 # ─── Part B2 — "verified via X" tool-name claims ─────────────────────
 # Confirmed incident class: a response states a specific TOOL was used
 # to check/verify something ("verified via frontend_audit", "confirmed
@@ -77,12 +99,15 @@ def _extract_tool_claims(text: str) -> list[str]:
 
 
 def _extract_claims(text: str) -> dict[str, list[str]]:
-    """Return distinct file paths / versions / counts mentioned in `text`."""
+    """Return distinct file paths / versions / counts mentioned in `text`,
+    excluding anything inside fenced code blocks (quoted file content,
+    not a citation claim — see `_strip_code_fences`)."""
     if not text:
         return {"paths": [], "versions": [], "counts": []}
-    paths    = sorted(set(_FILE_PATH.findall(text)))
-    versions = sorted(set(_VERSION.findall(text)))
-    counts   = sorted(set(_COUNT.findall(text)))
+    prose    = _strip_code_fences(text)
+    paths    = sorted(set(_FILE_PATH.findall(prose)))
+    versions = sorted(set(_VERSION.findall(prose)))
+    counts   = sorted(set(_COUNT.findall(prose)))
     return {"paths": paths, "versions": versions, "counts": counts}
 
 
