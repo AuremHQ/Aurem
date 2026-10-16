@@ -467,10 +467,25 @@ function DashboardV2Body() {
     raw:    p,
   }));
 
+  // 2026-02 — Issue #1 bug B. Switching the active project must clear
+  // any stale `?session=<id>` left in the URL from a previous
+  // "open from Previous chats" deep link — otherwise Shell's mount
+  // effect (which re-runs on every activeProjectId change) wrongly
+  // re-adopts that OLD project's session under the NEW project's
+  // key. Shared by both project-switch entry points below.
+  const switchActiveProject = useCallback((id) => {
+    setActiveProjectIdGlobal(id);
+    if (searchParams.get("session")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("session");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const handleSelectRepo = useCallback((repo) => {
     if (!repo?.id) return;
-    setActiveProjectIdGlobal(repo.id);
-  }, []);
+    switchActiveProject(repo.id);
+  }, [switchActiveProject]);
 
   const handleAddRepo  = useCallback(() => setShowWizard(true), []);
 
@@ -504,7 +519,17 @@ function DashboardV2Body() {
       // at least keep the pre-fix cosmetic reset firing.
       window.dispatchEvent(new CustomEvent("aurem:chat-session-reset"));
     }
-  }, [setSessionId]);
+    // 2026-02 — Issue #1 bug A. A stale `?session=<old-id>` left over
+    // from an earlier explicit "open from Previous chats" deep link
+    // must be cleared here too, otherwise a refresh right after
+    // "New run" re-adopts the OLD conversation (Shell's mount effect
+    // gives an explicit `?session=` top priority on every reload).
+    if (searchParams.get("session")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("session");
+      setSearchParams(next, { replace: true });
+    }
+  }, [setSessionId, searchParams, setSearchParams]);
   const handleTogglePreview = useCallback(() => {
     // Iter 212m-143 — flip the state instead of hard-setting open:true
     // so consecutive clicks on the topbar Preview tab actually toggle
@@ -680,7 +705,7 @@ function DashboardV2Body() {
               <ProjectSwitcher
                 projects={projects}
                 activeProjectId={activeProject?.project_id}
-                onSelect={setActiveProjectIdGlobal}
+                onSelect={switchActiveProject}
               />
             }
             notificationBellSlot={<UserNotificationBell />}

@@ -49,6 +49,8 @@ const OAUTH_FINISH_SRC = read("pages/OAuthFinish.jsx");
 const MAGIC_LOGIN_SRC = read("pages/MagicLogin.jsx");
 const ACCEPT_INVITE_SRC = read("pages/AcceptInvite.jsx");
 
+const DASHBOARD_SRC = read("pages/Dashboard.jsx");
+
 import { resolveInitialSession } from "../Shell.jsx";
 
 describe("Issue #1 · static source lock — every auth entry point sets the clean-start flag", () => {
@@ -140,7 +142,109 @@ describe("Issue #1 · resolveInitialSession() pure helper — priority truth tab
   });
 });
 
-// ── RUNTIME LIVE-REPRO — mirrors Shell.jsx's actual mount-effect
+describe("Issue #1 · follow-up bugs A/B/C — stale ?session= param after it's been consumed", () => {
+  // Found by an independent testing-agent regression pass on the
+  // first version of this fix: `?session=<id>` was only ever ADDED
+  // to the URL (by openSession, for shareability) but nothing
+  // cleared it afterwards, so Shell's mount effect — which re-reads
+  // the URL on every activeProjectId change, not just true mount —
+  // kept re-adopting a now-stale id.
+
+  it("BUG A FIX — Dashboard's New-run handler clears a stale ?session= from the URL", () => {
+    // Must appear inside handleNewRun's body so a refresh right after
+    // "New run" can't re-read the old deep link and resurrect it.
+    const handleNewRunBody = DASHBOARD_SRC.slice(
+      DASHBOARD_SRC.indexOf("const handleNewRun"),
+      DASHBOARD_SRC.indexOf("const handleTogglePreview")
+    );
+    expect(handleNewRunBody).toMatch(/searchParams\.get\(\s*["']session["']\s*\)/);
+    expect(handleNewRunBody).toContain('next.delete("session")');
+  });
+
+  it("BUG B FIX — switching the active project clears a stale ?session= so it can't leak into the new project's key", () => {
+    expect(DASHBOARD_SRC).toContain("const switchActiveProject = useCallback");
+    const fnBody = DASHBOARD_SRC.slice(
+      DASHBOARD_SRC.indexOf("const switchActiveProject"),
+      DASHBOARD_SRC.indexOf("const handleSelectRepo")
+    );
+    expect(fnBody).toContain("setActiveProjectIdGlobal(id)");
+    expect(fnBody).toMatch(/searchParams\.get\(\s*["']session["']\s*\)/);
+  });
+
+  it("BUG B FIX — both project-switch entry points (repo-select flyout AND the ProjectSwitcher dropdown) go through the shared helper", () => {
+    expect(DASHBOARD_SRC).toMatch(/switchActiveProject\(repo\.id\)/);
+    expect(DASHBOARD_SRC).toMatch(/onSelect=\{switchActiveProject\}/);
+  });
+
+  it("BUG C FIX — Shell.jsx's deep-link branch strips ?session= immediately after consuming it (prevents a LATER activeProjectId change from re-adopting a now-stale param)", () => {
+    const deepLinkBranch = SHELL_SRC.slice(
+      SHELL_SRC.indexOf('decision.source === "deep-link"'),
+      SHELL_SRC.indexOf('decision.source === "sticky"')
+    );
+    expect(deepLinkBranch).toContain('url.searchParams.delete("session")');
+  });
+
+  it("BUG C FIX — deleting the currently-active session also drops ?session=<deleted-id> from the URL", () => {
+    const deleteSessionBody = SHELL_SRC.slice(
+      SHELL_SRC.indexOf("const deleteSession = useCallback"),
+      SHELL_SRC.indexOf("const deleteSession = useCallback") + 1200
+    );
+    expect(deleteSessionBody).toContain('url.searchParams.delete("session")');
+  });
+});
+
+// ── RUNTIME — Bug B's exact reported repro: open a deep link under
+// project A, then switch to project B, and confirm project B's own
+// session pointer is never overwritten with project A's (stale) id.
+function simulateSwitchActiveProject(newProjectId, searchParamsObj) {
+  // Mirrors Dashboard.jsx's switchActiveProject(): flips the active
+  // project AND strips any stale ?session= so Shell's next effect
+  // run (triggered by the activeProjectId change) doesn't see it.
+  localStorage.setItem("aurem_active_project", newProjectId);
+  if (searchParamsObj.get("session")) {
+    searchParamsObj.delete("session");
+    window.history.replaceState({}, "", `/dashboard?${searchParamsObj.toString()}`);
+  }
+}
+
+describe("Issue #1 · Bug B runtime live-repro — project switch never leaks a stale deep-link id", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/dashboard");
+  });
+
+  it("project A's deep-linked session never contaminates project B's own key after switching", () => {
+    // Open a deep link for project A.
+    window.history.replaceState({}, "", "/dashboard?session=marker_a");
+    const keyA = "aurem_session_proj_p_a";
+    const decisionA = resolveInitialSession({
+      freshLogin: false, urlSessionId: "marker_a", stickySession: null, cachedSession: null,
+    });
+    expect(decisionA).toEqual({ source: "deep-link", id: "marker_a" });
+    localStorage.setItem(keyA, decisionA.id);
+    // Simulate Shell stripping the param right after consuming it (Bug C fix).
+    window.history.replaceState({}, "", "/dashboard");
+
+    // Now switch to project B via the fixed helper.
+    simulateSwitchActiveProject("p_b", new URLSearchParams(window.location.search));
+    expect(window.location.search).toBe("");
+
+    // Project B's own key must be untouched — never set to "marker_a".
+    const keyB = "aurem_session_proj_p_b";
+    expect(localStorage.getItem(keyB)).toBeNull();
+
+    // And re-resolving for project B with a clean URL correctly mints
+    // fresh rather than re-adopting project A's stale deep link.
+    const decisionB = resolveInitialSession({
+      freshLogin: false,
+      urlSessionId: new URLSearchParams(window.location.search).get("session"),
+      stickySession: null,
+      cachedSession: null,
+    });
+    expect(decisionB).toEqual({ source: "mint", id: null });
+  });
+});
 // branching (lines ~208-267) using real localStorage/sessionStorage
 // and the real resolveInitialSession() helper, without mounting the
 // full component tree (same strategy as Shell.iter329_b1_race.test).

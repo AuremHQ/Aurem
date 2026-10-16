@@ -1,0 +1,34 @@
+{
+  "summary": "Independent E2E check of the ORA dashboard 'clean chat on login' fix (test@aurem.dev and a fresh signup), plus 5 pytest API tests. PASSED: login opens a clean welcome screen, including when an old session pointer ('x', full of 'Loop cancelled'/'Loop failed' turns) was planted in localStorage before login. 'Previous chats' label, 19 rows newest first with relative times. Opening a row loads that exact conversation. Refresh on ?session=x keeps x. Fresh full-page load of /dashboard?session=x opens x. New run shows a blank welcome screen and x stays in Previous chats with its content. A fresh signup sees no previous chats, a clean welcome and no access to x (UI and API). Projects/Deploy/Settings/Dashboard nav works and the session persists across nav. FOUND 2 NEW BUGS, both caused by the new '?session= always wins' logic (the effect re-reads the URL on every run, and some code paths never clear the param): (A) New run followed by a refresh brings the old conversation back. (B) Switching project while ?session=<id> is in the URL keeps showing the OLD project's conversation under the new project and overwrites the new project's session pointer.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard.jsx handleNewRun (ds2-new-run)", "issue": "Repro: login -> Previous chats -> open row 'x' (URL becomes /dashboard?session=x) -> click New run (blank welcome screen shows, but URL stays /dashboard?session=x) -> F5. Result: old conversation x with Loop cancelled/failed content reappears. Any new chat started after New run also gets replaced by x on refresh. Breaks requirement 6 and brings back the original bug. Cause: handleNewRun calls setSessionId(newId) directly instead of startNewSession(), so the param is never cleared and the deep-link branch wins on reload.", "selector": "[data-testid='ds2-new-run']", "priority": "HIGH"},
+      {"component": "Shell.jsx session-resolution effect (deps [activeProjectId, sessionKeyFor])", "issue": "Repro: open session x from Previous chats while on aurem-demo/frontend (p_demo_a) -> project-switcher-trigger -> choose 'E1 Live Test' (p_145fb30e52). Result: URL is still ?session=x, the chat still shows x's messages under the E1 Live Test scope, and localStorage aurem_session_proj_p_145fb30e52 is overwritten with 'x'. Same with p_demo_b. Messages sent next would go into the other project's session. Cause: the effect re-runs on every activeProjectId change and reads window.location.search each time, so the stale deep link wins. ProjectSwitcher (setActiveProjectId) does not navigate, unlike RailShell, which navigates to /dashboard.", "selector": "[data-testid^='project-switcher-item-']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Delete the currently open session (from code read, not run)", "issue": "deleteSession() mints a new id but does not clear ?session=<deleted_id> from the URL, so a refresh re-adopts the deleted id. Low impact, same root cause.", "affected_selectors": ["[data-testid^='session-switcher-delete-']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_chat_clean_start_isolation.py", "/app/test_reports/pytest/pytest_chat_clean_start.xml"],
+  "action_items": [
+    "Fix A: in Dashboard.jsx handleNewRun, call startNewSession() from useChatSession() (it already navigates to /dashboard), or navigate('/dashboard', {replace:true}) after setSessionId.",
+    "Fix B: honour ?session= only on the initial mount (e.g. a useRef 'deepLinkConsumed' flag), or strip the param when activeProjectId changes or when the URL session isn't in the active project. Better: have ProjectSwitcher/setActiveProjectId navigate to /dashboard like RailShell does.",
+    "Fix C (low): deleteSession should navigate('/dashboard', {replace:true}) when deleting the active session.",
+    "Add vitest cases: New run clears the URL param; a project change with a stale ?session= does not reuse that id."
+  ],
+  "critical_code_review_comments": [
+    "resolveInitialSession() is correct on its own, but the effect that calls it runs on every project change, not only on mount, so 'deep-link wins' applies far more often than intended.",
+    "There are 3 different 'new chat' paths (Shell.startNewSession, Dashboard.handleNewRun, RailShell.newChat) with different URL handling. Use startNewSession everywhere (DRY).",
+    "Shell.jsx is 1232 lines; consider extracting the session-resolution logic into a hook."
+  ],
+  "updated_files": ["/app/backend/tests/test_chat_clean_start_isolation.py"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "80% (8/10 flows; New-run+refresh and project-switch-with-deeplink fail)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026!; throwaway signups test_iso_*@example.com (UI signup with a phone number fails validation, so leave phone blank)",
+  "seed_data_creation": "Throwaway signup users test_iso_*@example.com. One 'TEST_clean_start ...' chat message was sent on p_demo_a; it was not delivered because the demo repo is unreachable.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use session id 'x' on p_demo_a: it has lots of 'Loop cancelled' content, which makes it an easy marker. The Session badge text ('Session: <id>…') shows the active id. The preview ingress sometimes returns 429 on Vite module loads after many reloads, which shows the 'Something went wrong loading this page' error boundary. This is an environment artifact, so wait about 15s between runs. Chat send on demo projects returns 'connection to your website's code isn't available' (repo unreachable, not a regression). The new-user wizard modal (new-user-wizard) blocks clicks for fresh signups.",
+  "rca of the issue": "Both bugs: the ?session= param is added by openSession() but only removed by Shell.startNewSession(). Dashboard's New run and project switching leave it in place, and the mount effect (which also runs on every activeProjectId change) gives the URL param top priority, so the old conversation is re-adopted."
+}

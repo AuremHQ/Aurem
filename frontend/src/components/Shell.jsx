@@ -242,6 +242,17 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
       setSessionIdState(decision.id);
       localStorage.setItem(key, decision.id);
       sessionStorage.setItem(key, decision.id);
+      // 2026-02 — Issue #1 bug B. This effect re-runs on every
+      // activeProjectId change (switching projects), re-reading
+      // window.location.search each time. Strip the param the
+      // instant it's consumed so a LATER project switch doesn't see
+      // a now-stale `?session=<id-from-a-different-project>` and
+      // wrongly re-adopt it under the new project's scope.
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("session");
+        window.history.replaceState(window.history.state, "", url.pathname + url.search);
+      } catch { /* ignore */ }
       return;
     }
     // 2026-08-23 — Session-swap-under-you fix. `localStorage` is
@@ -499,6 +510,14 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
         if (id === sessionId) {
           const next = newSessionId();
           setSessionId(next);
+          // 2026-02 — Issue #1 bug C. Deleting the currently-open
+          // session must also drop any `?session=<deleted-id>` from
+          // the URL, otherwise a refresh re-adopts the now-deleted id.
+          if (new URLSearchParams(window.location.search).get("session") === id) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("session");
+            window.history.replaceState(window.history.state, "", url.pathname + url.search);
+          }
         }
         refreshSessions(true);
       } catch {
