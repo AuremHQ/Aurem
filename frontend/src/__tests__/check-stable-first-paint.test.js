@@ -1,14 +1,14 @@
 /**
  * src/__tests__/check-stable-first-paint.test.js — Master Plan S3.
  * Unit-tests the checker's detection logic directly (importing
- * `checkFile` from the script) rather than shelling out, so it runs
+ * `checkFile` from the pure helper rather than shelling out, so it runs
  * fast inside the existing `yarn test` (vitest) suite alongside
  * everything else — no new CI job needed just to test the gate
  * itself, only to RUN it (see quality-gate.yml `stable-first-paint`
  * job, which shells out to the script against the real diff).
  */
 import { describe, it, expect } from "vitest";
-import { checkFile } from "../../scripts/check-stable-first-paint.mjs";
+import { checkFile } from "../utils/stableFirstPaint.mjs";
 
 describe("check-stable-first-paint", () => {
   it("flags a useState initializer that reads localStorage directly", () => {

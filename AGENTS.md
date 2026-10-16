@@ -88,16 +88,29 @@ port 3000) · MongoDB.
   a 3-line, no-ceremony discipline probe (static-vs-behavioural ratio,
   mock-reality check, environment-ledger staleness). Reference it by
   this exact path so a rename doesn't silently strand the discipline.
-- **CI is not fully green right now.** Fresh run this session:
-  `backend/tests/test_invariants_continuous_quality.py` — 5/5 passing.
-  Frontend `yarn test` — **9 tests failing across 5 files** (`StreamHealthPill.test.jsx`,
-  `LoopLiveFeed.iter329_stale_spinner.test.jsx`, `a11y_components.test.jsx`,
-  `loop_iter309_narration.test.jsx`, `Session7_Item3_rapid_send_lock.test.jsx`)
-  — pre-existing, not caused by the change that produced this file.
-  `visual-regression` (Playwright, `.github/workflows/quality-gate.yml`)
-  cannot be run in this pod — status is whatever the last real CI run reported,
-  not re-verified here. **Auto-QA (`qa_matrix.py`) has never run** — zero
-  `qa_*` collections exist in Mongo. Do not assume a green safety net exists.
+- **Frontend Vitest baseline — not re-verified on the current main archive (2026-10-14).**
+  The previously recorded status (“9 tests failing across 5 files”) is stale and must
+  not be presented as current. A captured run from the earlier 2026-10-11 checkout
+  reported 12 failed tests / 850 passed (862 total) plus a `check-stable-first-paint`
+  suite import error; those figures are historical, not a fresh main baseline.
+  The current source includes the Team-plan `team_feature_enabled` gate in
+  `TeamManagementPanel` and `RailShell`, plus `fetchMyAdminAccess` in the rail mock
+  contract; tests must fixture those behaviors explicitly. Run `cd frontend && yarn test`
+  on a fully installed checkout before recording an exact current count. Do not skip
+  tests or change product behavior merely to satisfy stale assertions.
+- **Owner-confirmed test behavior (2026-10-14):**
+  `LiveTaskPopup.drag_resize_2026_08_30.test.jsx` now expects `left: 64px`; the
+  implementation's 56px rail + 8px gutter is intentional to keep the popup clear
+  of rail icons. `PrMiniGuide.r6.test.jsx` explicitly sets `ship_via_pr_enabled`
+  and covers both modes: flag ON means PR wording; flag OFF means direct-to-main
+  wording. Product behavior is unchanged.
+- **Test environment limitation (2026-10-14):** the source archive was reviewable, but
+  frontend dependencies were not present in the review environment and the package
+  registry was unreachable, so a fresh Vitest run could not be completed here. Keep
+  that distinction explicit in any completion report. `visual-regression` (Playwright,
+  `.github/workflows/quality-gate.yml`) also requires a real CI run to confirm status.
+  **Auto-QA (`qa_matrix.py`) has never run** — zero `qa_*` collections exist in Mongo.
+  Do not assume a green safety net exists.
 
 ## 8. Security and Privacy
 Never echo a user's GitHub token, API key, or password back in a

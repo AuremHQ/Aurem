@@ -510,6 +510,122 @@ const LANDING_CSS = `
   .ora-landing .hero-split { grid-template-columns: 1fr; gap: 24px; text-align: center; }
   .ora-landing .hero-sub { padding-left: 0; border-left: none; max-width: 580px; margin: 24px auto 0; }
 }
+
+/* Keep hero offer and trust badges inside the hero flow and viewport. */
+.ora-landing .hero-pill,
+.ora-landing .hero-trust-badge {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ora-landing .hero-trust-badge { text-align: center; }
+.ora-landing .hero-trust-badge > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  /* Recover vertical space without enlarging the headline. */
+  .ora-landing .hero {
+    padding: 28px 16px 28px;
+  }
+  .ora-landing .hero-badge {
+    margin-bottom: 18px;
+  }
+  .ora-landing .hero-split {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .ora-landing .hero-sub {
+    margin: 12px auto 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .ora-landing .hero-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .ora-landing .hero-pill {
+    order: 1;
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.25;
+    margin: 0 auto 8px;
+    max-width: 100%;
+  }
+  .ora-landing .hero-buttons {
+    order: 2;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .ora-landing .hero-actions > div:nth-of-type(3) {
+    order: 3;
+    margin-top: 6px !important;
+  }
+  .ora-landing .hero-trust-badge {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    gap: 6px !important;
+  }
+}
+/* Mobile hero compaction to keep the offer and CTA clear of the fixed cookie banner. */
+@media (max-width: 720px) {
+  .ora-landing .hero {
+    padding: 20px 16px 28px;
+  }
+  .ora-landing .hero-badge {
+    margin-bottom: 18px;
+  }
+  .ora-landing .hero-split {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .ora-landing .hero-sub {
+    margin: 12px auto 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .ora-landing .hero-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .ora-landing .hero-pill {
+    order: 1;
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.25;
+    margin: 0 auto 8px;
+    max-width: 100%;
+  }
+  .ora-landing .hero-buttons {
+    order: 2;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .ora-landing .hero-actions > div:nth-of-type(3) {
+    order: 3;
+    margin-top: 6px !important;
+  }
+  .ora-landing .hero-stats {
+    order: 4;
+  }
+  .ora-landing .hero-trust-badge {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    gap: 6px !important;
+  }
+}
 `;
 
 // Static data
@@ -781,9 +897,10 @@ export default function Landing() {
             {/* Trust badge — Canadian entity + SOC 2 signal. Links to
                 /security so enterprise buyers can drill in without
                 asking us. */}
-            <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "center", width: "100%", minWidth: 0, boxSizing: "border-box" }}>
               <Link
                 to="/security"
+                className="hero-trust-badge"
                 data-testid="hero-trust-badge"
                 style={{
                   display: "inline-flex",
