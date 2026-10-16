@@ -84,6 +84,10 @@ export default function OAuthFinish() {
         }).catch(() => { /* non-fatal — Dashboard/Shell will refetch */ });
         // Flag for the PWA install popup so the Dashboard can prompt.
         try { localStorage.setItem("aurem_just_logged_in", "1"); } catch {}
+        // 2026-02 — Clean-start fix, same as Login.jsx: a fresh OAuth
+        // login should open a blank chat, not reopen a stale cached
+        // conversation.
+        try { localStorage.setItem("aurem_fresh_login", "1"); } catch {}
         // 2026-08-20 — Attribute ad click captured on landing. Fire in
         // the background too — same reasoning as above.
         try {

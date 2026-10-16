@@ -126,6 +126,7 @@ export default function Signup() {
       // 2026-09 — OpenAI Ads registration_completed conversion.
       openaiRegistrationCompleted(r.data?.user_id);
       try { localStorage.setItem("aurem_just_logged_in", "1"); } catch { /* ignore */ }
+      try { localStorage.setItem("aurem_fresh_login", "1"); } catch { /* ignore */ }
       // Iter 390 — Developer-only rollout. Backend defaults every new
       // signup to track="developer" at insert time, so /choose-track
       // is no longer part of the flow. Land straight in the workspace.

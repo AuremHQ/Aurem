@@ -76,11 +76,11 @@ export default function SessionSwitcher() {
         ref={btnRef}
         onClick={toggle}
         data-testid="session-switcher-btn"
-        title="Recent chats for this project"
+        title="Previous chats for this project"
         className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-[6px] text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/30"
       >
         <History className="size-3 shrink-0" strokeWidth={2} />
-        Chats
+        Previous chats
         {sessions.length > 0 && (
           <span className="text-[10px] text-muted-foreground/70">({sessions.length})</span>
         )}
@@ -95,7 +95,7 @@ export default function SessionSwitcher() {
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-border">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent chats
+              Previous chats
             </span>
             <button
               data-testid="session-switcher-new"
@@ -109,7 +109,7 @@ export default function SessionSwitcher() {
 
           {sessions.length === 0 ? (
             <p data-testid="session-switcher-empty" className="px-3 py-4 text-[12px] text-muted-foreground/70">
-              No saved chats for this project yet.
+              No previous chats for this project yet.
             </p>
           ) : (
             sessions.map((s) => {

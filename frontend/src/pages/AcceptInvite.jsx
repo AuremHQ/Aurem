@@ -37,6 +37,7 @@ export default function AcceptInvite() {
       const r = await api.post("/team/accept-invite", { token, password });
       setToken(r.data.token);
       setUser(r.data.user);
+      try { localStorage.setItem("aurem_fresh_login", "1"); } catch { /* ignore */ }
       navigate("/dashboard", { replace: true });
     } catch (e) {
       setError(e?.response?.data?.detail || "Couldn't accept this invite.");

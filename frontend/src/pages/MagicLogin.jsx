@@ -52,6 +52,7 @@ export default function MagicLogin() {
       tokens_remaining: sessionData.tokens_remaining,
     });
     try { localStorage.setItem("aurem_just_logged_in", "1"); } catch { /* no-op */ }
+    try { localStorage.setItem("aurem_fresh_login", "1"); } catch { /* no-op */ }
     nav(`/dashboard?${landingQueryFor(sessionData.stage)}`, { replace: true });
   }
 

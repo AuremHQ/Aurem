@@ -88,6 +88,11 @@ export default function Login() {
         tokens_remaining: r.data.tokens_remaining,
       });
       try { localStorage.setItem("aurem_just_logged_in", "1"); } catch { /* ignore */ }
+      // 2026-02 — Clean-start fix. Read-and-cleared once by Shell.jsx's
+      // session-init effect so a fresh login always opens a blank chat
+      // instead of silently reopening whatever conversation (possibly
+      // a failed one) was last cached for this browser.
+      try { localStorage.setItem("aurem_fresh_login", "1"); } catch { /* ignore */ }
       // Iter 212m-235 — Track-based routing on LOGIN (there is no
       // signup-time prompt anymore; /choose-track was removed in
       // Iter 390). Fetch the user's persisted track from /auth/me
@@ -132,6 +137,7 @@ export default function Login() {
         tokens_remaining: r.data.tokens_remaining,
       });
       try { localStorage.setItem("aurem_just_logged_in", "1"); } catch { /* ignore */ }
+      try { localStorage.setItem("aurem_fresh_login", "1"); } catch { /* ignore */ }
       // Iter 212m-235 — same track-based routing as the primary
       // login handler above.
       if (next !== "/dashboard") {

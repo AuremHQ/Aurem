@@ -73,6 +73,27 @@ export function shouldDeferSessionMint(activeProjectId, projectsCacheJson) {
   } catch { return false; }
 }
 
+// ── 2026-02 · Old-chat-on-login fix — pure session-resolution predicate ──
+// Exported for tests. Decides which cached pointer (if any) Shell's
+// mount effect should adopt, in strict priority order:
+//   1. An explicit `?session=<id>` deep link always wins — opening a
+//      saved conversation's link is an unambiguous user choice.
+//   2. Otherwise, on a FRESH LOGIN (freshLogin=true), every cached/
+//      sticky pointer is ignored on purpose — "mint" a brand-new
+//      session so login always lands on a clean composer.
+//   3. Otherwise (same-visit refresh/nav), the tab-scoped `sticky`
+//      pointer wins (keeps THIS tab on whatever it was already
+//      showing), falling back to the cross-tab `cached` pointer.
+//   4. If nothing matched, the caller mints a fresh session id.
+export function resolveInitialSession({ freshLogin, urlSessionId, stickySession, cachedSession }) {
+  if (urlSessionId) return { source: "deep-link", id: urlSessionId };
+  if (!freshLogin) {
+    if (stickySession) return { source: "sticky", id: stickySession };
+    if (cachedSession) return { source: "cached", id: cachedSession };
+  }
+  return { source: "mint", id: null };
+}
+
 const SESSION_KEY = "aurem_active_session";
 const COLLAPSED_KEY = "aurem_sidebar_collapsed";
 
@@ -159,39 +180,70 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
 
   // When the active project changes (or on first mount), switch session.
   //
-  // Iter 170 — Cross-device chat sync.
-  // Previously: if localStorage had no sessionId for this project, we
-  // immediately minted a brand-new one. That meant a user logging in
-  // on mobile (empty localStorage) got a blank chat even though their
-  // desktop had a fully-populated session on the server.
-  //
-  // Now: if localStorage is empty, we async-fetch the most-recent
-  // server-side session for this project (scoped to the user via the
-  // auth token) and adopt it. Only mint a fresh id if the server has
-  // none. The localStorage cache stays authoritative for same-device
-  // continuity once it's populated.
-  //
-  // Iter 329 · Chat-history B1-race fix — defer mint on fresh tab.
-  // Previous behaviour: on a fresh tab where `aurem_active_project`
-  // was empty at first render, this effect fired with
-  // activeProjectId=null → sessionKeyFor(null) resolved to
-  // "aurem_session_home" → we minted a phantom home-session UUID
-  // before useActiveProject (TabBar.jsx) had finished its
-  // /cto/projects/list auto-seed. Then the auto-seed dispatched
-  // aurem:project-changed and this effect re-fired with the real
-  // pid — but the ChatPanel had already rendered a WELCOME-only view
-  // for the phantom home session for a visible flash.
-  //
-  // Now: if activeProjectId is null AND the cached projects list
-  // shows the user HAS projects, we skip the mint and wait for the
-  // auto-seed dispatch to re-trigger this effect. Founder-required
-  // safety net: if the auto-seed hasn't resolved within
-  // AUTO_SEED_FALLBACK_MS, fall back to today's mint-anyway
-  // behaviour so a network failure never leaves the chat permanently
-  // blank (worst-case = today's transient flicker, not a permanent
-  // wedge).
+  // 2026-02 — Clean-start fix (replaces the Iter 170 cross-device-adopt
+  // behaviour below). Two separate problems were reported as one bug:
+  // "logging in reopens an old, possibly-failed conversation instead of
+  // a clean chat."
+  //   1. `localStorage`'s per-project session pointer is intentionally
+  //      permanent (for same-tab/same-visit continuity — see the
+  //      "Session-swap-under-you fix" comment further down) — but that
+  //      meant EVERY future login in the same browser kept reopening
+  //      whatever conversation was last cached, failed tasks and all.
+  //      Fix: Login/Signup/OAuthFinish/MagicLogin/AcceptInvite now set
+  //      `aurem_fresh_login=1` right after a successful auth; this
+  //      effect reads-and-clears it ONCE per login, BEFORE the sticky/
+  //      cached checks below ever run, wiping every project's cached
+  //      session pointer so none of them resurrect an old chat. A
+  //      same-visit refresh (this flag is already gone by then) still
+  //      finds its sticky/cached pointer and resumes exactly where it
+  //      was — only a fresh LOGIN forces a clean start.
+  //   2. Iter 170 ALSO auto-adopted the user's most-recent server-side
+  //      session whenever localStorage was empty (for cross-device
+  //      continuity — desktop's latest work should follow you to
+  //      mobile). That's the same "reopens an old chat" problem by a
+  //      different path, and is no longer the desired default: old
+  //      conversations stay one click away in "Previous chats" instead.
+  //      Fix: always mint a brand-new session id when there's nothing
+  //      cached — never fetch-and-adopt the server's most recent one.
   useEffect(() => {
     const key = sessionKeyFor(activeProjectId);
+
+    let freshLogin = false;
+    try {
+      if (localStorage.getItem("aurem_fresh_login") === "1") {
+        freshLogin = true;
+        localStorage.removeItem("aurem_fresh_login");
+        Object.keys(localStorage)
+          .filter((k) => k === "aurem_session_home" || k.startsWith("aurem_session_proj_"))
+          .forEach((k) => {
+            localStorage.removeItem(k);
+            try { sessionStorage.removeItem(k); } catch { /* ignore */ }
+          });
+      }
+    } catch { /* storage unavailable (private mode etc.) — fall through */ }
+
+    // 2026-02 — Explicit deep link. `?session=<id>` on the URL always
+    // wins over BOTH the fresh-login clean-start above AND the
+    // sticky/cached pointer below — "open a saved conversation via
+    // its link" is an explicit choice that pre-empts the default
+    // clean-start behaviour for this one load.
+    let urlSessionId = null;
+    try { urlSessionId = new URLSearchParams(window.location.search).get("session"); } catch { /* ignore */ }
+
+    let stickySession = null;
+    let cachedSession = null;
+    if (!freshLogin) {
+      stickySession = sessionStorage.getItem(key);
+      cachedSession = localStorage.getItem(key);
+    }
+
+    const decision = resolveInitialSession({ freshLogin, urlSessionId, stickySession, cachedSession });
+    if (decision.source === "deep-link") {
+      setSessionIdState(decision.id);
+      localStorage.setItem(key, decision.id);
+      sessionStorage.setItem(key, decision.id);
+      return;
+    }
     // 2026-08-23 — Session-swap-under-you fix. `localStorage` is
     // shared across every tab/window of this browser, so a DIFFERENT
     // tab writing a new session id for the same project (e.g. "New
@@ -202,16 +254,15 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
     // a specific session keeps showing that exact one, no matter what
     // any other tab does to the shared localStorage pointer. Only a
     // genuinely fresh tab (no sessionStorage entry yet) falls through
-    // to the old cross-device/localStorage adopt logic below.
-    const sticky = sessionStorage.getItem(key);
-    if (sticky) {
-      setSessionIdState(sticky);
+    // to the mint logic below. Skipped entirely right after a fresh
+    // login (freshLogin=true) since those pointers were just cleared.
+    if (decision.source === "sticky") {
+      setSessionIdState(decision.id);
       return;
     }
-    const cached = localStorage.getItem(key);
-    if (cached) {
-      setSessionIdState(cached);
-      sessionStorage.setItem(key, cached);
+    if (decision.source === "cached") {
+      setSessionIdState(decision.id);
+      sessionStorage.setItem(key, decision.id);
       return;
     }
     // Iter 329 B1-race — detect "auto-seed will populate a project
@@ -228,19 +279,9 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
                catch { return null; } })(),
     );
 
-    const doAdoptOrMint = async () => {
-      let adopted = null;
-      if (token) {
-        try {
-          const r = await fetchSessionsShared(activeProjectId);
-          const list = r.data?.sessions || [];
-          if (list.length && list[0]?.session_id) {
-            adopted = list[0].session_id;
-          }
-        } catch { /* fall through to fresh id */ }
-      }
+    const mintFresh = () => {
       if (cancelled) return;
-      const next = adopted || newSessionId();
+      const next = newSessionId();
       localStorage.setItem(key, next);
       sessionStorage.setItem(key, next);
       setSessionIdState(next);
@@ -254,17 +295,17 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
       const AUTO_SEED_FALLBACK_MS = 3_000;
       fallbackTimer = setTimeout(() => {
         if (cancelled) return;
-        doAdoptOrMint();
+        mintFresh();
       }, AUTO_SEED_FALLBACK_MS);
     } else {
-      doAdoptOrMint();
+      mintFresh();
     }
 
     return () => {
       cancelled = true;
       if (fallbackTimer) clearTimeout(fallbackTimer);
     };
-  }, [activeProjectId, sessionKeyFor, token]);
+  }, [activeProjectId, sessionKeyFor]);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsedState((c) => {
@@ -439,7 +480,10 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
   const openSession = useCallback(
     (id) => {
       setSessionId(id);
-      navigate("/dashboard");
+      // 2026-02 — keep the session id in the URL so this is a real,
+      // shareable/bookmarkable/refreshable deep link, not just
+      // in-memory state (see the mount effect's `?session=` check).
+      navigate(`/dashboard?session=${encodeURIComponent(id)}`);
     },
     [navigate, setSessionId]
   );
@@ -832,7 +876,7 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
                 }}
               >
                 <span className="eyebrow" style={{ fontSize: 10 }}>
-                  recent chats
+                  previous chats
                 </span>
                 <button
                   data-testid="new-chat-btn"

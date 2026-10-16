@@ -41,7 +41,12 @@ import { shouldDeferSessionMint } from "../Shell.jsx";
 
 describe("Iter 329 · B1-race — static source lock", () => {
   it("Shell.jsx contains the B1-race deferral rationale comment", () => {
-    expect(SRC).toContain("Iter 329 · Chat-history B1-race fix");
+    // 2026-02 — Old-chat-on-login fix (Issue #1) rewrote this effect's
+    // surrounding comments as part of removing the Iter 170 fetch-and-
+    // adopt-most-recent fallback (see Shell.2026_02_cleanStartOnLogin.
+    // test.jsx). The B1-race deferral logic itself — and its rationale
+    // comment — is unchanged, just shorter/un-prefixed with "fix".
+    expect(SRC).toContain("Iter 329 B1-race");
   });
 
   it("Shell.jsx wires the AUTO_SEED_FALLBACK_MS timeout as founder-mandated safety net", () => {
@@ -52,11 +57,15 @@ describe("Iter 329 · B1-race — static source lock", () => {
     expect(SRC).toMatch(/AUTO_SEED_FALLBACK_MS\s*=\s*3[_,]?000/);
   });
 
-  it("Shell.jsx guards against permanent-blank by falling back to doAdoptOrMint on timeout", () => {
-    // The fallback MUST call the same adopt-or-mint path so worst
-    // case matches today's behaviour (transient blank), not a
-    // permanent wedge.
-    expect(SRC).toMatch(/setTimeout\(\s*\(\)\s*=>\s*\{[\s\S]{0,120}doAdoptOrMint\(\)/);
+  it("Shell.jsx guards against permanent-blank by falling back to mintFresh on timeout", () => {
+    // 2026-02 — Issue #1 replaced the old async doAdoptOrMint (which
+    // fetched-and-adopted the server's most-recent session — exactly
+    // the "reopens an old chat" behaviour that issue fixed) with a
+    // synchronous mintFresh() that always generates a brand-new id.
+    // The safety guarantee this test locks is unchanged: the fallback
+    // MUST still resolve to a mint so worst case matches today's
+    // behaviour (transient blank), never a permanent wedge.
+    expect(SRC).toMatch(/setTimeout\(\s*\(\)\s*=>\s*\{[\s\S]{0,120}mintFresh\(\)/);
   });
 });
 
