@@ -1312,12 +1312,13 @@ function AddDialog({ onClose, onAdded, projects = [] }) {
 
 
 function EditDialog({ project, onClose, onSaved }) {
-  const [f, setF] = useState({ github_token: "", branch: project.branch || "main", tech_stack: project.tech_stack || "", preview_url: project.preview_url || "" });
+  const [f, setF] = useState({ github_token: "", branch: project.branch || "main", tech_stack: project.tech_stack || "", preview_url: project.preview_url || "", auto_scan_frequency: project.auto_scan_frequency || "off" });
   const [busy, setBusy] = useState(false);
   const up = (k, v) => setF((p) => ({ ...p, [k]: v }));
   async function submit(e) {
     e.preventDefault();
-    if (!f.github_token.trim() && !f.branch.trim() && !f.tech_stack.trim() && !f.preview_url.trim()) {
+    if (!f.github_token.trim() && !f.branch.trim() && !f.tech_stack.trim() && !f.preview_url.trim()
+        && f.auto_scan_frequency === (project.auto_scan_frequency || "off")) {
       toast({ message: "Nothing to update — fill at least one field.", kind: "warn" });
       return;
     }
@@ -1366,6 +1367,18 @@ function EditDialog({ project, onClose, onSaved }) {
           <input data-testid="proj-edit-preview-url" className="input" value={f.preview_url}
                  onChange={(e) => up("preview_url", e.target.value)}
                  placeholder="https://yoursite.com or http://localhost:3000" />
+        </label>
+        <label>
+          <span className="label-mini">Scheduled auto-scan</span>
+          <select data-testid="proj-edit-auto-scan" className="input" value={f.auto_scan_frequency}
+                  onChange={(e) => up("auto_scan_frequency", e.target.value)}>
+            <option value="off">Off</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+          <span style={{ fontSize: 11, color: "var(--text-dim)", display: "block", marginTop: 4 }}>
+            Scans this repo automatically and emails you a results digest. Off by default.
+          </span>
         </label>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>

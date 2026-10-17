@@ -767,6 +767,10 @@ class UpdateProject(BaseModel):
     tech_stack: Optional[str] = None
     preview_url: Optional[str] = None
     installation_id: Optional[int] = None
+    auto_scan_frequency: Optional[str] = None
+
+
+_AUTO_SCAN_FREQUENCIES = frozenset({"off", "weekly", "monthly"})
 
 
 @router.patch("/projects/{project_id}")
@@ -781,6 +785,12 @@ async def update_project(
     updates = {k: v for k, v in body.model_dump().items() if v is not None and v != ""}
     if not updates:
         raise HTTPException(400, "Nothing to update")
+    # Ticket A (2026-02) — opt-in scheduled auto-scan frequency. Validated
+    # here (not left to the generic filter above) since "off" is itself a
+    # valid, meaningful value that the generic != "" filter would keep —
+    # must still reject anything that isn't one of the 3 real states.
+    if "auto_scan_frequency" in updates and updates["auto_scan_frequency"] not in _AUTO_SCAN_FREQUENCIES:
+        raise HTTPException(400, f"auto_scan_frequency must be one of {sorted(_AUTO_SCAN_FREQUENCIES)}")
     # 2026-06 PAT-removal — PATs are no longer accepted on update either.
     if "github_token" in updates and updates["github_token"]:
         raise HTTPException(400, "PATs are no longer supported. Connect via the AUREM GitHub App instead.")

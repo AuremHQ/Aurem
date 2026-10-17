@@ -135,6 +135,7 @@ from services.slo_alert_cron import schedule_slo_alert_cron
 from services.cost_revenue_alert_cron import schedule_cost_revenue_alert_cron
 from services.leak_alert_cron import schedule_leak_alert_cron
 from services.leak_digest import schedule_leak_digest_cron
+from services.scheduled_project_scan import schedule_project_auto_scan
 # Session F — supervised background-task wrapper. Long-lived crons
 # use `supervise(coro, name=..., db_getter=..., long_lived=True)`
 # instead of `_asyncio.create_task(...)` so silent death opens a
@@ -395,6 +396,14 @@ async def lifespan(app: FastAPI):
     app.state.integration_health_cron_task = _supervise(
         schedule_integration_health_cron(),
         name="integration_health_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # Ticket A (2026-02) — opt-in per-project scheduled auto-scan +
+    # digest email. Same supervised shape as the digest cron above.
+    app.state.project_auto_scan_task = _supervise(
+        schedule_project_auto_scan(),
+        name="project_auto_scan",
         db_getter=lambda: app.state.db,
         long_lived=True,
     )
