@@ -124,6 +124,45 @@ async def check_project_pat(
 
 
 
+class SimplifyRequest(BaseModel):
+    path: str
+
+
+@router.post("/projects/{project_id}/simplify")
+async def simplify_file(
+    project_id: str, body: SimplifyRequest,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Ticket F (2026-02) — simplify/cleanup-only preview. Owner-scoped,
+    same (project_id, user_id) lookup as every other project endpoint
+    in this router. See services/simplify_pipeline.py's module
+    docstring for the full safety-gate contract; this handler is just
+    the thin HTTP wrapper."""
+    me = await _pkg.current_dev(authorization)
+    user_id = me["user_id"]
+    db = _pkg.get_db()
+    proj = await db.cto_projects.find_one(
+        {"project_id": project_id, "user_id": user_id},
+        {"_id": 0, "github_owner": 1, "github_repo": 1, "github_branch": 1,
+         "auth_method": 1, "installation_id": 1, "user_id": 1},
+    )
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    token = await get_repo_token(proj)
+    if not token:
+        raise HTTPException(400, "Project missing GitHub linkage / PAT")
+
+    from services.simplify_pipeline import run_simplify_preview
+    result = await run_simplify_preview(
+        owner=proj.get("github_owner") or "",
+        repo=proj.get("github_repo") or "",
+        branch=proj.get("github_branch") or "main",
+        token=token, path=body.path,
+    )
+    if result.get("refused"):
+        raise HTTPException(422, result)
+    return result
+
 
 # ── Endpoints ────────────────────────────────────────────────────────────
 @router.post("/projects/add")
