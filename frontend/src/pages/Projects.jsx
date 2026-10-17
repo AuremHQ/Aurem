@@ -165,7 +165,7 @@ function Body() {
   }, []);
 
   return (
-    <div style={{
+    <div className="aurem-projects-grid" style={{
       display: "grid",
       gridTemplateColumns: "minmax(0, 320px) minmax(0, 1fr)",
       gap: 24, minHeight: 540,
@@ -1354,7 +1354,7 @@ function ProjectRowSparkline({ projectId }) {
       style={{ width: 46, height: 20, flexShrink: 0 }}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+        <LineChart data={data} margin={{ top: 2, right: 2, left: 2, bottom: 2 }} accessibilityLayer={false}>
           <Line type="monotone" dataKey="score" stroke="#6ee7b7" strokeWidth={1.5} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -1425,6 +1425,11 @@ export function SimplifyFilePanel({ projectId }) {
   const [refusal, setRefusal] = useState(null);
   const [errMsg, setErrMsg] = useState("");
   const [applyResult, setApplyResult] = useState(null);
+  const confirmRef = useRef(null);
+
+  useEffect(() => {
+    if (state === "confirming") confirmRef.current?.focus();
+  }, [state]);
 
   function resetResults() {
     setRefusal(null); setErrMsg(""); setPreview(null); setApplyResult(null);
@@ -1467,7 +1472,9 @@ export function SimplifyFilePanel({ projectId }) {
         setRefusal(e.response.data?.detail || e.response.data);
         setState("refused");
       } else {
-        setErrMsg("Could not apply this cleanup — try again.");
+        const d = e?.response?.data?.detail;
+        const reason = typeof d === "string" ? d : (d && typeof d.reason === "string" ? d.reason : null);
+        setErrMsg(reason || "Could not apply this cleanup — try again.");
         setState("error");
       }
     }
@@ -1483,6 +1490,7 @@ export function SimplifyFilePanel({ projectId }) {
           data-testid="simplify-file-path-input"
           value={path}
           onChange={(e) => setPath(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && path.trim() && state !== "previewing") handlePreview(); }}
           placeholder="e.g. services/utils.py"
           aria-label="File path to simplify"
           style={{ flex: 1, padding: "6px 10px", borderRadius: 6, background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)", color: "#e2e8f0", fontSize: 12 }}
@@ -1557,6 +1565,7 @@ export function SimplifyFilePanel({ projectId }) {
 
           {state === "confirming" && (
             <div data-testid="simplify-apply-confirm" role="alertdialog" aria-label="Confirm apply"
+                 ref={confirmRef} tabIndex={-1}
                  style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.3)" }}>
               <p style={{ fontSize: 11, color: "#e2e8f0", margin: "0 0 8px" }}>
                 This will create a new branch and open a draft PR — it will NOT push directly to your default branch.
@@ -1582,10 +1591,19 @@ export function SimplifyFilePanel({ projectId }) {
 
           {state === "applied" && applyResult && (
             <div data-testid="simplify-applied-success" role="status" style={{ marginTop: 10, fontSize: 12, color: "#86efac" }}>
-              Draft PR created on branch <code>{applyResult.branch}</code> —{" "}
-              <a data-testid="simplify-pr-link" href={applyResult.pr_url} target="_blank" rel="noreferrer" style={{ color: "#7dd3fc" }}>
-                view PR
-              </a>
+              Committed to branch <code>{applyResult.branch}</code>
+              {applyResult.pr_url ? (
+                <>
+                  {" "}— draft PR created —{" "}
+                  <a data-testid="simplify-pr-link" href={applyResult.pr_url} target="_blank" rel="noreferrer" style={{ color: "#7dd3fc" }}>
+                    view PR
+                  </a>
+                </>
+              ) : (
+                <div data-testid="simplify-pr-error" style={{ marginTop: 4, color: "#fbbf24" }}>
+                  Commit succeeded, but opening the PR failed{applyResult.pr_error ? `: ${applyResult.pr_error}` : ""} — open a PR for this branch manually on GitHub.
+                </div>
+              )}
             </div>
           )}
         </>

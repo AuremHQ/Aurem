@@ -103,3 +103,52 @@ def test_update_project_model_accepts_prompt_dismissed_flag():
     from routers.cto_projects.management import UpdateProject
     body = UpdateProject(auto_scan_prompt_dismissed=True)
     assert body.model_dump()["auto_scan_prompt_dismissed"] is True
+
+
+# ── 2026-02 fix: GET /last must ALSO signal the prompt, not only the
+#    POST /scan response — otherwise a reload/different-surface visit
+#    right after the first scan never shows it again. ────────────────
+@pytest.mark.asyncio
+async def test_last_scan_signals_show_auto_scan_prompt_when_not_dismissed():
+    import routers.codebase_health as ch
+    fake_db = MagicMock()
+    fake_db.codebase_health_scans.find_one = AsyncMock(return_value={
+        "score": 70, "label": "Fair", "tone": "amber", "total": 5,
+        "scanned_files": 100, "summary": "s", "categories": ["security"],
+        "breakdown": {"security": []}, "created_at": 123.0,
+    })
+    fake_db.cto_projects.find_one = AsyncMock(return_value={
+        "auto_scan_frequency": "off", "auto_scan_prompt_dismissed": False,
+    })
+
+    async def fake_current_dev(_auth):
+        return {"user_id": "u1", "is_admin": False}
+
+    with patch.object(ch, "get_db", lambda: fake_db), \
+         patch.object(ch, "current_dev", fake_current_dev):
+        res = await ch.last_scan(project_id="p1", authorization="Bearer x")
+    assert res["show_auto_scan_prompt"] is True
+    assert res["auto_scan_frequency"] == "off"
+    assert res["auto_scan_prompt_dismissed"] is False
+
+
+@pytest.mark.asyncio
+async def test_last_scan_never_signals_prompt_once_dismissed():
+    import routers.codebase_health as ch
+    fake_db = MagicMock()
+    fake_db.codebase_health_scans.find_one = AsyncMock(return_value={
+        "score": 70, "label": "Fair", "tone": "amber", "total": 5,
+        "scanned_files": 100, "summary": "s", "categories": ["security"],
+        "breakdown": {"security": []}, "created_at": 123.0,
+    })
+    fake_db.cto_projects.find_one = AsyncMock(return_value={
+        "auto_scan_frequency": "weekly", "auto_scan_prompt_dismissed": True,
+    })
+
+    async def fake_current_dev(_auth):
+        return {"user_id": "u1", "is_admin": False}
+
+    with patch.object(ch, "get_db", lambda: fake_db), \
+         patch.object(ch, "current_dev", fake_current_dev):
+        res = await ch.last_scan(project_id="p1", authorization="Bearer x")
+    assert res["show_auto_scan_prompt"] is False

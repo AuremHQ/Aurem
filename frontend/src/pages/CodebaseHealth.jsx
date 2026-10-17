@@ -223,7 +223,7 @@ export function AutoScanPrompt({ projectId, isFirstScan, initialDismissed, initi
       </div>
       {emailHealthy === false && (
         <div data-testid="auto-scan-prompt-email-warning" role="status" style={{ marginTop: 10, fontSize: 11, color: "#fbbf24" }}>
-          Email delivery isn&apos;t configured yet — results will appear in-app only.
+          Email delivery isn&apos;t configured yet, results will appear in-app only
         </div>
       )}
     </div>
@@ -909,7 +909,7 @@ function CodebaseHealthInner() {
             <DownloadPdfButton projectId={projectId} />
             <AutoScanPrompt
               projectId={projectId}
-              isFirstScan={!!data.is_first_scan}
+              isFirstScan={!!(data.is_first_scan || data.show_auto_scan_prompt)}
               initialDismissed={data.auto_scan_prompt_dismissed}
               initialFrequency={data.auto_scan_frequency}
             />

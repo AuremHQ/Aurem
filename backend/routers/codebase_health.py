@@ -614,6 +614,22 @@ async def last_scan(
     if not doc:
         # Empty state — 200 with `score: null` instead of 404 noise.
         return {"ok": True, "score": None, "workcard_enabled": workcard_enabled}
+    # Ticket A-UI fix (2026-02) — the one-time auto-scan prompt was
+    # only ever signalled from the POST /scan response itself. A user
+    # who navigates away/reloads right after their first scan (or
+    # whose first scan ran from a different surface) never saw it
+    # again even though auto_scan_prompt_dismissed was still false.
+    # /last is polled on every Codebase Health page mount, so this is
+    # the correct second place to surface the same decision.
+    show_auto_scan_prompt = False
+    try:
+        proj_flags = await db.cto_projects.find_one(
+            {"project_id": project_id, "user_id": user_id},
+            {"_id": 0, "auto_scan_frequency": 1, "auto_scan_prompt_dismissed": 1},
+        )
+        show_auto_scan_prompt = bool(proj_flags) and not bool(proj_flags.get("auto_scan_prompt_dismissed"))
+    except Exception as e:
+        logger.debug("auto_scan_prompt flag read failed: %r", e)
     # Iter 212m-147 — Defensive guard: a persisted (score=0, total=0)
     # row is logically impossible from a real scan (0 findings yields
     # score=100), so it can only come from a legacy bad write or a
@@ -638,6 +654,9 @@ async def last_scan(
         "breakdown":     doc.get("breakdown") or {},
         "created_at":    doc.get("created_at"),
         "workcard_enabled": workcard_enabled,
+        "show_auto_scan_prompt": show_auto_scan_prompt,
+        "auto_scan_frequency": (proj_flags or {}).get("auto_scan_frequency") or "off",
+        "auto_scan_prompt_dismissed": bool((proj_flags or {}).get("auto_scan_prompt_dismissed")),
     }
 
 

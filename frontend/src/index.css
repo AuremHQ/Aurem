@@ -1027,6 +1027,18 @@ table { max-width: 100%; }
   .aurem-mobile-backdrop, .aurem-mobile-menu-btn { display: none !important; }
 }
 
+/* Ticket D/C/E/A/F-UI mobile fix (2026-02) — the /projects two-column
+   layout (project list + detail section) had no breakpoint at all,
+   so at 375px the detail column (health trend, Download PDF, Preview
+   cleanup, etc.) was squeezed to a sliver and overflowed the right
+   edge. Collapse to a single stacked column below 820px — list on
+   top, detail below, same as every other two-pane page in this app. */
+@media (max-width: 820px) {
+  .aurem-projects-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* 7. Main content padding — generous on desktop, tight on phone. */
 .aurem-main-padded { padding: 40px 56px; }
 @media (max-width: 900px) {

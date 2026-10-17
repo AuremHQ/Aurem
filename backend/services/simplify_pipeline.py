@@ -221,9 +221,16 @@ async def apply_simplify_edit(*, db, user_id: str, owner: str, repo: str,
               f"for apply.\n\nCommit: `{res.get('sha') or ''}`"),
         token=token,
     )
+    # open_or_reuse_pr's contract: ok=False means "commit succeeded,
+    # PR step soft-failed" (services/loop_safety.py docstring) — the
+    # commit is real and already on `simplify_branch` either way, so
+    # this still reports ok:true, but with pr_url=None + a pr_error
+    # the caller can show honestly instead of a blank "view PR" link.
     return {
         "ok": True, "refused": False,
         "commit_sha": res.get("sha"), "commit_url": res.get("html_url"),
         "branch": simplify_branch,
-        "pr_url": pr.get("pr_url"), "pr_reused": bool(pr.get("reused")),
+        "pr_url": pr.get("pr_url") if pr.get("ok") else None,
+        "pr_reused": bool(pr.get("reused")),
+        "pr_error": None if pr.get("ok") else (pr.get("error") or "could not open a PR for this branch"),
     }

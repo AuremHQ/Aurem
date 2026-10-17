@@ -1,0 +1,56 @@
+{
+  "summary": "Final pass on UI Tickets D, C, E, A, F against the live preview (public URL /api/aurem-dev). Backend: 43/43 of the main agent's regression tests pass, plus a new live HTTP suite (16/16) covering trend, PDF (200/401/404), email-delivery-status (reports healthy=false since Resend is HTTP 400), first-scan signal (true on the first scan, false on the second, PATCH saves), simplify safety gate (422 refusal on preview and on apply), and proof meta/images. Frontend: the 5 new RTL files pass (37/37). Live Playwright checks: D shows all 3 states (real before/after desktop+mobile images, 'Could not verify' on SSRF, empty state). C's Download PDF button sits on /projects inside proj-detail-health-trend, downloads aurem-report-<id>.pdf, sets aria-busy and disables while generating, and shows the right 403/404/500 messages. E: sparklines appear only on projects with 2+ snapshots, the full chart shows in the detail view, and an empty project shows exactly 'No history yet.' A: on a fresh seeded zero-scan project the prompt appeared with Off checked by default, the radiogroup works by keyboard, and Save/Maybe later send the right PATCH. It did not reappear on rescan. F: the test-file refusal (role=alert) shows with no diff and no Apply button. Apply needs an explicit second click (checked with a mocked preview, since the LLM is down). Found 1 real integration issue (Cloudflare replaces the backend's 502), 1 spec-text deviation, 1 mobile overflow, and a few smaller gaps.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/aurem-dev/cto/projects/{id}/simplify (and /simplify/apply)", "issue": "On an LLM failure the backend correctly returns 502 with JSON {detail:{reason:'codegen failed: ... 401 ...'}} (checked on localhost:8001). Through the public URL, Cloudflare swaps any origin 502 for its own error. The UI therefore shows 'The origin web server returned an invalid or incomplete response to Cloudflare. This typically indicates the origin is overloaded or misconfigured.' instead of the real reason. Nothing fake is shown, but the message is misleading and the main agent's 'unwrap {detail}' fix never runs in production. Fix: use a status Cloudflare passes through, e.g. 424 Failed Dependency (or 503), for refused:false/ok:false."},
+      {"endpoint": "GET /api/aurem-dev/fix-pipeline/proof/{job_id}(/meta)", "issue": "The ownership check lets any is_admin user read another user's proof. The spec says owner-only. Fine if intended for admin support; otherwise tighten it."},
+      {"endpoint": "codebase_health first-scan signal", "issue": "is_first_scan is only in the POST /scan response, not in GET /codebase-health/last. If the first scan happens with no prompt on screen (scan via API or another surface, or the user leaves mid-scan), the prompt never shows, even though auto_scan_prompt_dismissed is still false. Reproduced live: seeded project, first scan via API, opened /codebase-health?project_id=... and got no prompt. Suggest also returning show_auto_scan_prompt = (scan_count>=1 && !dismissed) from /last. Also count_documents+insert is not atomic, so two parallel first scans could both return is_first_scan=true (low risk)."},
+      {"endpoint": "services/simplify_pipeline.py apply_simplify_edit", "issue": "If open_or_reuse_pr fails, the result is still ok:true with pr_url None. The UI then shows 'Draft PR created ... view PR' with an empty link."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AutoScanPrompt (CodebaseHealth.jsx ~L226)", "issue": "The required text is exactly 'Email delivery isn't configured yet, results will appear in-app only'. The UI renders 'Email delivery isn't configured yet — results will appear in-app only.' (em dash instead of comma, plus a trailing period).", "selector": "[data-testid='auto-scan-prompt-email-warning']", "priority": "MEDIUM"},
+      {"component": "Projects detail view at 375px", "issue": "Live at a true 375px viewport (innerWidth=375 confirmed), the detail cards (proj-detail-health-trend, simplify-file-panel, task-history, header) span x=56 to x=405, so about 30px is clipped off the right edge. The trend chart's last date label, the Preview cleanup button (right edge 380px), and the Remove/Refresh buttons are cut off. The fix-proof panel in the drawer stacks correctly on mobile.", "selector": "[data-testid='proj-detail-health-trend'], [data-testid='simplify-file-panel']", "priority": "MEDIUM"},
+      {"component": "ProjectRowSparkline", "issue": "The Recharts svg inside the decorative sparkline has tabindex=0. It becomes an empty tab stop and shows a white focus box when the row is clicked. The project row div (onClick) itself has no role or tabindex, so it can't be reached by keyboard (existing issue). Suggest accessibilityLayer={false} or tabIndex=-1.", "selector": "[data-testid^='proj-row-sparkline-'] svg", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Ticket F preview on LLM failure via public URL", "issue": "The UI shows Cloudflare's 'origin overloaded/misconfigured' text instead of the real codegen reason (see backend minor #1). No fake diff and no Apply button, so the honesty requirement holds.", "affected_selectors": ["[data-testid='simplify-file-error']"]}
+    ],
+    "design_issues": [
+      {"screen": "/projects, /codebase-health, FixProgressDrawer", "issues": ["The global 'ORA GUIDE — New here? Scan my site' popup (bottom-right) covers the 'Preview cleanup' button at 1920x1080 and covers the before/after images on mobile. Existing, but it hides the new UI."]},
+      {"screen": "SimplifyFilePanel", "issues": ["Pressing Enter in the path input does nothing (no form/onKeyDown).", "Opening the confirm step (role=alertdialog) doesn't move focus into it (activeElement is the body).", "On apply failure the UI shows a generic message and drops the backend reason, unlike preview."]},
+      {"screen": "FixProofPanel", "issues": ["Desktop and mobile proofs are behind a tab toggle. Before/after are side by side, but desktop and mobile are never shown together. Check this against the spec's 'side-by-side (mobile+desktop)'.", "The tablist has no arrow-key navigation or tabpanel (minor).", "A meta fetch error (500/network) falls back to the 'No live preview configured' text, which isn't accurate for an error. If an image blob fetch fails, the placeholder spinner spins forever."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_live_ui_mission_dceaf.py",
+    "/app/backend/tests/test_regression_iter411_auto_scan_prompt.py",
+    "/app/backend/tests/test_regression_iter410_simplify_cleanup.py",
+    "/app/backend/tests/test_regression_iter408_fix_before_after_proof.py",
+    "/app/test_reports/pytest/pytest_live_dceaf.xml",
+    "/app/test_reports/pytest/pytest_d_c_e_a_f.xml"
+  ],
+  "action_items": [
+    "Ticket F: stop returning HTTP 502 for codegen/apply failures. Cloudflare replaces the body, so the honest reason never reaches the UI. Use 424 (or 503), keep the {detail:{reason}} body, and update the regression test.",
+    "Ticket A: change the warning to the exact spec text 'Email delivery isn't configured yet, results will appear in-app only' (update the RTL assertion).",
+    "Ticket A: also show the prompt when scan_count>=1 && !auto_scan_prompt_dismissed via GET /codebase-health/last.",
+    "Mobile 375px: fix the right-edge overflow on the Projects detail cards (trend/PDF card, Preview cleanup panel).",
+    "Small a11y fixes: move focus into simplify-apply-confirm when it opens, make Enter in the path input run the preview, and take the decorative sparkline svg out of the tab order."
+  ],
+  "critical_code_review_comments": [
+    "Projects.jsx is 2395 lines and CodebaseHealth.jsx is 972. Move SimplifyFilePanel, HealthTrendSection/ProjectRowSparkline, DownloadPdfButton and AutoScanPrompt into components/.",
+    "ProjectRowSparkline fires one GET /codebase-health/trend per project row (about 25+ requests on /projects). Consider batching, or including the last N scores in /cto/projects/list.",
+    "HealthTrendSection and ProjectRowSparkline duplicate the trend fetch and filter logic; extract a useProjectTrend hook.",
+    "The simplify error reason shows raw internals (the OpenRouter URL, an MDN link) to the end user."
+  ],
+  "updated_files": ["/app/backend/tests/test_live_ui_mission_dceaf.py"],
+  "success_rate": {"backend": "100% (59/59 incl. 16 new live HTTP tests); 1 integration issue with 502 behind Cloudflare", "frontend": "~88% (all 5 tickets work end-to-end; 1 spec-text deviation, 1 mobile overflow, minor a11y gaps)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Temporary clones of p_145fb30e52 (p_TEST_autoscan_ui1/2/3 and p_TEST_firstscan_* from pytest) were created for Ticket A first-scan checks. All were deleted afterward with their codebase_health_scans and project_health_snapshots. Existing demo fix jobs demo_proof_55a6b45e77 / demo_proof_ssrf / demo_proof_never were used for Ticket D.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public API prefix is /api/aurem-dev. Ticket D is checked by dispatching window CustomEvent 'aurem:open-fix-progress' {job_id:'demo_proof_55a6b45e77'|'demo_proof_ssrf'|'demo_proof_never', total:1}. Ticket A needs a zero-scan project: clone p_145fb30e52's cto_projects doc with a new project_id, then open /codebase-health?project_id=<id> and click scan-full. The OpenRouter key returns 401, so a real simplify preview fails; apply/confirm was checked with a page.route mock. At 375px, click project rows at position (10,10); the center hits the APP button. The 375px viewport works in browser_automation.",
+  "rca of the issue": "Simplify 502: management.py raises HTTPException(502, result) when ok:false and refused:false. Cloudflare at the preview edge replaces origin 502 responses, so error.response.data.detail is lost. Reproduce with curl on POST {PUBLIC}/api/aurem-dev/cto/projects/p_145fb30e52/simplify {path:'math_utils.py'} (Cloudflare 502 page) vs localhost:8001 (JSON reason). Fix: switch to 424/503."
+}

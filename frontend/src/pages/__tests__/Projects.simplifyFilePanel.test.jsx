@@ -103,6 +103,29 @@ describe("Ticket F-UI · SimplifyFilePanel", () => {
     expect(screen.getByTestId("simplify-pr-link")).toHaveAttribute("href", "https://github.com/o/r/pull/5");
   });
 
+  it("shows an honest fallback when the commit succeeded but opening the PR failed (pr_url null)", async () => {
+    api.post.mockResolvedValueOnce({
+      data: { ok: true, refused: false, unchanged: false, new_content: "x = 1\n", diff: "-y=1\n+x=1\n" },
+    });
+    const user = userEvent.setup();
+    render(<SimplifyFilePanel projectId="p1" />);
+    await user.type(screen.getByTestId("simplify-file-path-input"), "a.py");
+    await user.click(screen.getByTestId("simplify-file-preview-btn"));
+    await waitFor(() => expect(screen.getByTestId("simplify-apply-btn")).toBeInTheDocument());
+    await user.click(screen.getByTestId("simplify-apply-btn"));
+
+    api.post.mockResolvedValueOnce({
+      data: { ok: true, refused: false, pr_url: null, pr_error: "GitHub API error: 403",
+              branch: "aurem/simplify-a-py" },
+    });
+    await user.click(await screen.findByTestId("simplify-apply-confirm-yes"));
+
+    await waitFor(() => expect(screen.getByTestId("simplify-pr-error")).toBeInTheDocument());
+    expect(screen.getByTestId("simplify-pr-error")).toHaveTextContent("GitHub API error: 403");
+    expect(screen.queryByTestId("simplify-pr-link")).toBeNull();
+  });
+
+
   it("Cancel on the confirm step aborts — never calls the apply endpoint", async () => {
     api.post.mockResolvedValueOnce({
       data: { ok: true, refused: false, unchanged: false, new_content: "x=1\n", diff: "-y=1\n+x=1\n" },
@@ -153,5 +176,29 @@ describe("Ticket F-UI · SimplifyFilePanel", () => {
   it("the file path input has an accessible label", () => {
     render(<SimplifyFilePanel projectId="p1" />);
     expect(screen.getByLabelText("File path to simplify")).toBeInTheDocument();
+  });
+
+  it("pressing Enter in the path input runs the preview (a11y: no mouse required)", async () => {
+    api.post.mockResolvedValue({ data: { ok: true, refused: false, unchanged: true } });
+    const user = userEvent.setup();
+    render(<SimplifyFilePanel projectId="p1" />);
+    await user.type(screen.getByTestId("simplify-file-path-input"), "clean.py{Enter}");
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/cto/projects/p1/simplify", { path: "clean.py" },
+    ));
+  });
+
+  it("the confirm step receives keyboard focus when it opens (a11y)", async () => {
+    api.post.mockResolvedValueOnce({
+      data: { ok: true, refused: false, unchanged: false, new_content: "x=1\n", diff: "-y=1\n+x=1\n" },
+    });
+    const user = userEvent.setup();
+    render(<SimplifyFilePanel projectId="p1" />);
+    await user.type(screen.getByTestId("simplify-file-path-input"), "a.py");
+    await user.click(screen.getByTestId("simplify-file-preview-btn"));
+    await waitFor(() => expect(screen.getByTestId("simplify-apply-btn")).toBeInTheDocument());
+    await user.click(screen.getByTestId("simplify-apply-btn"));
+    const confirm = await screen.findByTestId("simplify-apply-confirm");
+    await waitFor(() => expect(confirm).toHaveFocus());
   });
 });

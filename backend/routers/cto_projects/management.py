@@ -162,7 +162,10 @@ async def simplify_file(
     if result.get("refused"):
         raise HTTPException(422, result)
     if not result.get("ok"):
-        raise HTTPException(502, result)
+        # 2026-02 fix: 502 gets its body replaced by the edge/CDN layer
+        # before it reaches the browser (confirmed live) — the honest
+        # `reason` never made it to the UI. 424 passes through intact.
+        raise HTTPException(424, result)
     return result
 
 
@@ -209,7 +212,7 @@ async def simplify_apply(
     if result.get("refused"):
         raise HTTPException(422, result)
     if not result.get("ok"):
-        raise HTTPException(502, result)
+        raise HTTPException(424, result)
     return result
 @router.get("/email-delivery-status")
 async def email_delivery_status(authorization: Optional[str] = Header(None)) -> dict:

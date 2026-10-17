@@ -46,7 +46,7 @@ describe("Ticket A-UI · AutoScanPrompt", () => {
     render(<AutoScanPrompt projectId="p1" isFirstScan={true} initialDismissed={false} initialFrequency="off" />);
     await waitFor(() => expect(screen.getByTestId("auto-scan-prompt-email-warning")).toBeInTheDocument());
     expect(screen.getByTestId("auto-scan-prompt-email-warning")).toHaveTextContent(
-      "Email delivery isn't configured yet — results will appear in-app only.",
+      "Email delivery isn't configured yet, results will appear in-app only",
     );
   });
 

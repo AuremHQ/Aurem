@@ -200,12 +200,15 @@ async def test_endpoint_422_when_pipeline_refuses():
 
 
 @pytest.mark.asyncio
-async def test_endpoint_502_when_codegen_fails_not_422():
+async def test_endpoint_424_when_codegen_fails_not_422():
     """2026-02 bug fix: a non-refused pipeline failure (LLM/codegen
-    error, ok:false but refused:false) must surface as a 502, never
-    silently as a 200 with a failure body — the frontend was
-    previously treating any 200 as "preview succeeded" and would have
-    rendered an Apply button against an empty diff."""
+    error, ok:false but refused:false) must surface with a status
+    code whose body survives the edge/CDN layer in front of this app
+    (confirmed live: a plain 502 gets its body replaced by Cloudflare
+    before it reaches the browser — the honest `reason` never made it
+    through), never silently as a 200 with a failure body either (the
+    frontend was previously treating any 200 as "preview succeeded"
+    and would have rendered an Apply button against an empty diff)."""
     from routers.cto_projects.management import simplify_file, SimplifyRequest
     fake_db = MagicMock()
     fake_db.cto_projects.find_one = AsyncMock(return_value={
@@ -222,7 +225,7 @@ async def test_endpoint_502_when_codegen_fails_not_422():
         with pytest.raises(HTTPException) as exc:
             await simplify_file("p1", SimplifyRequest(path="services/x.py"),
                                  authorization="Bearer x")
-    assert exc.value.status_code == 502
+    assert exc.value.status_code == 424
     assert "codegen failed" in exc.value.detail["reason"]
 #    never commits to the default branch ────────────────────────────
 @pytest.mark.asyncio
@@ -283,6 +286,32 @@ async def test_apply_never_commits_to_the_default_branch_always_a_dedicated_bran
     assert commit_calls["branch"] != "main"
     assert commit_calls["branch"] == result["branch"]
     assert result["pr_url"] == "https://github.com/o/r/pull/1"
+    assert result["pr_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_apply_pr_open_failure_still_reports_the_real_commit_honestly():
+    """2026-02 fix: open_or_reuse_pr's own contract is 'ok=False means
+    commit succeeded, PR step soft-failed' — apply_simplify_edit must
+    NOT silently return pr_url=None with no explanation (the UI would
+    render a blank 'view PR' link); it must still say ok:true (the
+    commit really landed) but carry a pr_error the UI can show."""
+    original = "import os\n\ndef f():\n    unused = 1\n    return os.getcwd()\n"
+    clean = "import os\n\ndef f():\n    return os.getcwd()\n"
+    with patch("services.repo_context._fetch_file", AsyncMock(return_value=original)), \
+         patch("services.loop_safety.create_or_reuse_branch", AsyncMock(return_value=(True, None))), \
+         patch("services.github_api_writer.commit_files",
+               AsyncMock(return_value={"ok": True, "sha": "deadbeef", "html_url": "https://github.com/o/r/commit/deadbeef"})), \
+         patch("services.git_identity.resolve_git_identity", AsyncMock(return_value=("Dev", "dev@x.com"))), \
+         patch("services.loop_safety.open_or_reuse_pr",
+               AsyncMock(return_value={"ok": False, "pr_url": None, "error": "GitHub API error: 403"})):
+        result = await sp.apply_simplify_edit(
+            db=MagicMock(), user_id="u1", owner="o", repo="r", branch="main",
+            token="tok", path="a.py", new_content=clean,
+        )
+    assert result["ok"] is True  # the commit really landed
+    assert result["pr_url"] is None
+    assert result["pr_error"] == "GitHub API error: 403"
 
 
 @pytest.mark.asyncio
