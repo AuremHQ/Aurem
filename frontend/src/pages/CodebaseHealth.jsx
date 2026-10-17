@@ -82,6 +82,67 @@ const SEV_META = {
   other:    { color: "#cbd5e1", bg: "rgba(148,163,184,0.08)",br: "rgba(148,163,184,0.30)",label: "OTHER",    emoji: "⚪" },
 };
 
+// Ticket C-UI (2026-02) — "Download PDF" next to the scan report /
+// health card. Calls the owner-only GET /cto/projects/{id}/report.pdf
+// (Ticket C backend), handled states: idle, generating (disabled +
+// spinner), error (401/403/404/other — named honestly, never silent).
+export function DownloadPdfButton({ projectId }) {
+  const [state, setState] = useState("idle"); // idle | generating | error
+  const [errMsg, setErrMsg] = useState("");
+
+  async function handleDownload() {
+    setState("generating");
+    setErrMsg("");
+    try {
+      const resp = await api.get(`/cto/projects/${projectId}/report.pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `aurem-report-${projectId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setState("idle");
+    } catch (e) {
+      const status = e?.response?.status;
+      let msg = "Could not generate the report — try again.";
+      if (status === 401) msg = "You're not logged in — please sign in again.";
+      else if (status === 403) msg = "You don't have access to this project's report.";
+      else if (status === 404) msg = "Project not found — it may have been removed.";
+      setErrMsg(msg);
+      setState("error");
+    }
+  }
+
+  return (
+    <div data-testid="health-pdf-download-wrap" style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+      <button
+        type="button"
+        data-testid="health-pdf-download-btn"
+        onClick={handleDownload}
+        disabled={state === "generating"}
+        aria-busy={state === "generating"}
+        className="btn-ghost"
+        style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 12,
+          opacity: state === "generating" ? 0.6 : 1,
+          cursor: state === "generating" ? "not-allowed" : "pointer",
+        }}
+      >
+        {state === "generating"
+          ? <><Loader2 size={13} className="anim-spin" aria-hidden="true" /> Generating…</>
+          : <><FileText size={13} aria-hidden="true" /> Download PDF</>}
+      </button>
+      {state === "error" && (
+        <div data-testid="health-pdf-download-error" role="alert" style={{ fontSize: 11, color: "#fca5a5" }}>
+          {errMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HealthBadge({ score, label, tone, breakdown }) {
   const palette = {
     critical: { bg: "linear-gradient(135deg, #4c0a0a 0%, #2a0606 100%)", border: "rgba(239,68,68,0.65)", glow: "rgba(239,68,68,0.45)", emoji: "☠️" },
@@ -758,6 +819,7 @@ function CodebaseHealthInner() {
         {/* Results */}
         {data && !scanning && (
           <>
+            <DownloadPdfButton projectId={projectId} />
             <HealthBadge score={data.score} label={data.label} tone={data.tone} breakdown={data.breakdown} />
             <p style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 22, lineHeight: 1.6 }}>
               Your codebase has <strong>{data.total}</strong> issues that could
