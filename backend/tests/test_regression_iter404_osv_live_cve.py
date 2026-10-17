@@ -445,6 +445,39 @@ def test_unknown_severity_is_not_zero_weighted_like_info():
     assert chc.SEV_WEIGHTS["info"] == 0
 
 
+# ── R3. INFO findings excluded from BOTH the score AND the backlog ──
+def test_info_findings_do_not_lower_the_health_score():
+    info_findings = [chc._dep_unresolved_finding("requirements.txt", 1, "left-pad")
+                      for _ in range(20)]  # even 20 of them
+    assert chc._score_for_findings(info_findings) == 100  # unchanged from 0-findings baseline
+    assert chc._score_for_findings([]) == 100
+
+    # Contrast: a single critical DOES move it, proving the scorer
+    # isn't just broken/no-oping in general.
+    critical_finding = {"severity": "critical"}
+    assert chc._score_for_findings(info_findings + [critical_finding]) < 100
+
+
+@pytest.mark.asyncio
+async def test_info_findings_are_never_written_to_the_backlog():
+    from services.loop_full_scan import persist_findings_to_backlog
+
+    db = AsyncMock()
+    db.cto_open_findings.find_one = AsyncMock(return_value=None)
+    db.cto_open_findings.update_one = AsyncMock(return_value=None)
+
+    findings = [
+        chc._dep_unresolved_finding("requirements.txt", 1, "left-pad"),  # severity "info"
+        {"severity": "critical", "file": "a.py", "line": 1, "id": "crit1",
+         "title": "t", "message": "m"},
+    ]
+    count = await persist_findings_to_backlog(
+        db, user_id="u1", project_id="p1", findings=findings,
+    )
+    assert count == 1  # only the critical one — the info finding never reaches Mongo
+    assert db.cto_open_findings.update_one.await_count == 1
+
+
 # ── R-b. Mongo cold-start restore (write-only persist fixed) ────────
 @pytest.mark.asyncio
 async def test_cold_start_restores_cache_from_mongo(monkeypatch):
