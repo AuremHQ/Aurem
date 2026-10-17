@@ -118,6 +118,7 @@ from . import management        # noqa: E402
 from . import brain              # noqa: E402
 from . import graph              # noqa: E402
 from . import preview            # noqa: E402
+from . import report_pdf         # noqa: E402
 from . import what_changed       # noqa: E402
 from . import worker_api         # noqa: E402
 from . import worker_git         # noqa: E402
