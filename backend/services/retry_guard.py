@@ -23,7 +23,8 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 KNOWN_DEPS = ("openrouter", "deepseek_direct", "groq", "github", "stripe",
-              "tavily", "firecrawl", "vercel", "resend", "supabase")
+              "tavily", "firecrawl", "vercel", "resend", "supabase",
+              "osv")  # Ticket B (2026-02) — live CVE lookup, api.osv.dev
 
 _TRANSITIONS: deque[dict] = deque(maxlen=200)
 

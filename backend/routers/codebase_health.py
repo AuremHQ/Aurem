@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────
 from services.codebase_health_core import (                # noqa: E402
     SCANNERS, _score_for_findings,
-    _category_label,
+    _category_label, resolve_live_cves,
 )
 
 
@@ -246,6 +246,18 @@ async def scan(
     from services.fixed_findings import get_fixed_map, split_findings
     fixed_map = await get_fixed_map(db, user_id=user_id, project_id=project_id)
     total_fixed = 0
+    if "dependencies" in categories:
+        # Ticket B (2026-02) — pre-warm the live OSV.dev CVE cache
+        # before the per-category loop below. Scoped to a try/except
+        # here too (belt-and-suspenders on top of resolve_live_cves's
+        # own internal catch) so a totally unexpected failure in this
+        # pre-warm step can never take down the whole scan endpoint —
+        # `_scan_dependencies` falls back to the static `_CVE_DB`
+        # either way.
+        try:
+            await resolve_live_cves(text_cache)
+        except Exception:
+            logger.warning("[osv] resolve_live_cves pre-warm raised unexpectedly", exc_info=True)
     for cat in categories:
         # 2026-10-10 fix — root cause of the reported Cloudflare 520
         # ("invalid or incomplete response") on "Run all scanners":

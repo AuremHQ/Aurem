@@ -47,10 +47,19 @@ async def run_onboarding_scan(
         # themselves owned by routers/security_scan.py pending a larger,
         # separately-scoped extraction (tracked, not silently patched).
         from services.repo_text_cache import build_text_cache as _build_text_cache
-        from services.codebase_health_core import SCANNERS
+        from services.codebase_health_core import SCANNERS, resolve_live_cves
         text_cache = await _build_text_cache(github_owner, github_repo, github_token)
         if not text_cache:
             return
+
+        # Ticket B (2026-02) — this call site is async but (unlike the
+        # router's /scan endpoint) calls every SCANNERS[cat] directly
+        # on the event loop, not via asyncio.to_thread. Without this,
+        # the live OSV cache is never warmed here and onboarding scans
+        # stay on the static `_CVE_DB` forever. resolve_live_cves never
+        # raises (catches its own OSV failures internally), so no extra
+        # try/except needed beyond this function's existing outer one.
+        await resolve_live_cves(text_cache)
 
         all_findings: list[dict] = []
         for scan_fn in SCANNERS.values():

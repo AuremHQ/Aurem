@@ -15,7 +15,12 @@ the correct direction.
 """
 from __future__ import annotations
 
+import json
+import logging
 import re
+import time
+from datetime import datetime, timezone
+from typing import Optional
 
 from services.vanguard_scanner import scan_text
 from services.bug_hunt_rules import scan_bug_hunt
@@ -25,6 +30,8 @@ from services.full_scan_scanners import (
 from services.scanner_utils import (
     is_scanner_rule_file as _is_scanner_rule_file,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _is_dockerfile(lower_path: str) -> bool:
@@ -279,35 +286,233 @@ _CVE_DB: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
-def _scan_dependencies(text_cache: dict[str, str]) -> list[dict]:
-    out: list[dict] = []
-    # requirements.txt
+# ── Ticket B (2026-02) — live OSV.dev CVE lookup, in-process cache ─────
+# `_scan_dependencies` MUST stay a synchronous, zero-network-I/O pure
+# function — it's called via `asyncio.to_thread()` from
+# `routers/codebase_health.py` (safe for blocking I/O), but called
+# DIRECTLY on the event loop from `services/project_onboarding_scan.py`
+# and `routers/fix_pipeline.py::_guardian_rescan` (a blocking network
+# call there would stall the event loop). So the live lookup happens
+# as a separate async step (`resolve_live_cves`, awaited explicitly by
+# callers that are safely async) that only ever WRITES to this cache;
+# `_scan_dependencies` only ever READS it — a plain dict get/set is
+# safe to share across the to_thread() worker thread and the event
+# loop under the GIL for this simple single-key-at-a-time access
+# pattern.
+_OSV_CACHE: dict[str, dict] = {}
+_OSV_CACHE_TTL_S = 24 * 60 * 60  # 24h — matches the ticket's cache design
+
+
+def _extract_declared_packages(
+    text_cache: dict[str, str],
+) -> tuple[list[dict], list[dict]]:
+    """Pure parsing step, shared by `_scan_dependencies` (static +
+    live-cache read) and `resolve_live_cves` (live-query build list) —
+    one parser, not two, per AGENTS.md "reuse over reinvent".
+
+    Returns (resolved, unresolved):
+      resolved:   [{"path","line","pkg","ver","ecosystem","exact_pin","range_note"}]
+      unresolved: [{"path","line","pkg"}] — a real dependency line with
+                  NO usable version (bare `requests`, npm `"workspace:*"`,
+                  `"latest"`, etc.). Ticket B requires these to surface
+                  as an explicit "skipped, couldn't resolve" finding
+                  instead of silently falling through the regex, the
+                  original behaviour before this ticket.
+    """
+    resolved: list[dict] = []
+    unresolved: list[dict] = []
     for path, text in text_cache.items():
         if path.endswith("requirements.txt") or path.endswith("requirements-dev.txt"):
             for i, line in enumerate((text or "").splitlines(), start=1):
-                m = re.match(r'^\s*([A-Za-z0-9_\-]+)\s*[=<>]+\s*([0-9][0-9A-Za-z.\-]*)', line)
-                if not m:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+                    continue  # blank/comment/-e/-r/--index-url — not a package line
+                m = re.match(
+                    r'^([A-Za-z0-9_\-]+)(\[[A-Za-z0-9_,\-]+\])?\s*([=<>!~]+)\s*([0-9][0-9A-Za-z.\-]*)',
+                    stripped,
+                )
+                if m:
+                    pkg, _extras, op, ver = m.group(1).lower(), m.group(2), m.group(3), m.group(4)
+                    resolved.append({
+                        "path": path, "line": i, "pkg": pkg, "ver": ver,
+                        "ecosystem": "PyPI", "exact_pin": (op == "=="),
+                        "range_note": None,
+                    })
                     continue
-                pkg, ver = m.group(1).lower(), m.group(2)
-                for prefix, cve, sev in _CVE_DB.get(pkg, []):
-                    if ver.startswith(prefix):
-                        out.append(_dep_finding(path, i, pkg, ver, cve, sev))
-                        break
+                m2 = re.match(r'^([A-Za-z0-9_\-]+)(\[[A-Za-z0-9_,\-]+\])?\s*$', stripped)
+                if m2:
+                    unresolved.append({"path": path, "line": i, "pkg": m2.group(1).lower()})
         if path.endswith("package.json"):
             try:
-                import json
                 pkg_json = json.loads(text or "{}")
                 deps = {**(pkg_json.get("dependencies") or {}),
                         **(pkg_json.get("devDependencies") or {})}
                 for pkg, ver_raw in deps.items():
-                    ver = re.sub(r'^[^\d]*', '', str(ver_raw))
-                    for prefix, cve, sev in _CVE_DB.get(pkg.lower(), []):
-                        if ver.startswith(prefix):
-                            out.append(_dep_finding(path, 0, pkg, ver, cve, sev))
-                            break
+                    ver_raw_s = str(ver_raw)
+                    ver = re.sub(r'^[^\d]*', '', ver_raw_s)
+                    if not ver or not ver[0].isdigit():
+                        unresolved.append({"path": path, "line": 0, "pkg": pkg.lower()})
+                        continue
+                    range_note = (
+                        "declared range, base version checked"
+                        if ver != ver_raw_s else None
+                    )
+                    resolved.append({
+                        "path": path, "line": 0, "pkg": pkg.lower(), "ver": ver,
+                        "ecosystem": "npm", "exact_pin": True,
+                        "range_note": range_note,
+                    })
             except Exception:
                 pass
+    return resolved, unresolved
+
+
+async def resolve_live_cves(text_cache: dict[str, str]) -> None:
+    """Async pre-warm step. Call this BEFORE `_scan_dependencies` from
+    any already-async call site (the router's /scan endpoint and
+    onboarding's auto-scan — NOT `_guardian_rescan`'s per-file verify,
+    which must stay fast/network-free per the ticket).
+
+    Only queries OSV for `exact_pin` entries (requirements.txt `==`
+    pins, and every package.json entry since npm ranges are checked at
+    their stripped base version with a disclaimer note — see
+    `_extract_declared_packages`). A requirements.txt range pin
+    (`>=`, `~=`, ...) is intentionally left OUT of the live query; it
+    still gets the static `_CVE_DB` fallback check inside
+    `_scan_dependencies`, exactly as before this ticket.
+
+    Never raises — a total OSV outage (timeout/5xx/breaker-open) is
+    caught and logged; the cache is simply left as it was, so
+    `_scan_dependencies` falls back to the static map for every
+    package that was never successfully warmed. The scan result is
+    never worse than it was before this ticket.
+    """
+    resolved, _unresolved = _extract_declared_packages(text_cache)
+    now = time.time()
+    to_query: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for item in resolved:
+        if not item["exact_pin"]:
+            continue
+        key = f"{item['ecosystem'].lower()}:{item['pkg']}:{item['ver']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        cached = _OSV_CACHE.get(key)
+        if cached is not None and (now - cached["checked_at"]) < _OSV_CACHE_TTL_S:
+            continue
+        to_query.append((item["ecosystem"], item["pkg"], item["ver"]))
+    if not to_query:
+        return
+
+    from services import osv_client  # local import avoids a module-load-time
+                                      # dependency cycle risk; this module is
+                                      # imported very early (router boundary
+                                      # fix, see file docstring).
+    try:
+        results = await osv_client.query_osv_batch(to_query)
+    except Exception as e:
+        logger.warning("[osv] live CVE lookup failed, static map stays authoritative: %s", e)
+        return
+
+    for key, vulns in results.items():
+        _OSV_CACHE[key] = {"vulns": vulns, "checked_at": now}
+    await _persist_cache(results, now)
+
+
+async def _persist_cache(results: dict[str, list[dict]], checked_at: float) -> None:
+    """Best-effort Mongo persist — upsert by deterministic `_id`
+    (`"<ecosystem>:<pkg>:<ver>"`), so re-running this is always
+    idempotent and no new index is needed (ticket's explicit cache
+    design). Never raises: a persist failure must never fail the scan
+    (ticket requirement) — the in-process `_OSV_CACHE` dict already has
+    the data for this run either way."""
+    try:
+        from cto_services.db import get_db
+        db = get_db()
+        checked_iso = datetime.fromtimestamp(checked_at, tz=timezone.utc).isoformat()
+        for key, vulns in results.items():
+            eco, pkg, ver = key.split(":", 2)
+            await db.osv_cve_cache.update_one(
+                {"_id": key},
+                {"$set": {
+                    "ecosystem": eco, "package": pkg, "version": ver,
+                    "vulns": vulns, "checked_at": checked_iso,
+                }},
+                upsert=True,
+            )
+    except Exception as e:
+        logger.warning("[osv] cache persist failed (non-fatal, scan unaffected): %s", e)
+
+
+_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_MAX_VULNS_PER_FINDING = 5
+
+
+def _scan_dependencies(text_cache: dict[str, str]) -> list[dict]:
+    out: list[dict] = []
+    resolved, unresolved = _extract_declared_packages(text_cache)
+
+    for item in unresolved:
+        out.append(_dep_unresolved_finding(item["path"], item["line"], item["pkg"]))
+
+    for item in resolved:
+        path, line, pkg, ver = item["path"], item["line"], item["pkg"], item["ver"]
+        key = f"{item['ecosystem'].lower()}:{pkg}:{ver}"
+        cached = _OSV_CACHE.get(key)
+        if cached is not None and (time.time() - cached["checked_at"]) < _OSV_CACHE_TTL_S:
+            # Live result is authoritative once fresh — including an
+            # empty list, a real "OSV checked this and found nothing"
+            # result, which intentionally does NOT fall through to the
+            # static map (see resolve_live_cves docstring).
+            if cached["vulns"]:
+                out.append(_dep_osv_finding(path, line, pkg, ver, cached["vulns"], item["range_note"]))
+            continue
+        # Never queried yet (not an exact pin, or not warmed this
+        # process) → static fallback, first-match, exactly as before
+        # this ticket.
+        for prefix, cve, sev in _CVE_DB.get(pkg, []):
+            if ver.startswith(prefix):
+                out.append(_dep_finding(path, line, pkg, ver, cve, sev))
+                break
     return out
+
+
+def _dep_unresolved_finding(path: str, line: int, pkg: str) -> dict:
+    return {
+        "id":         f"dep::{path}:{line}:{pkg}:unresolved",
+        "category":   "dependencies",
+        "severity":   _norm_sev("INFO"),
+        "file":       path, "line": line,
+        "title":      f"version not resolvable: {pkg}",
+        "message":    f"{pkg} has no pinned/parseable version — skipped the "
+                       "vulnerability check (no version to compare).",
+        "fix_hint":   f"Pin `{pkg}` to a specific version so it can be checked "
+                       "for known vulnerabilities.",
+        "fix_tokens": 0,
+    }
+
+
+def _dep_osv_finding(path: str, line: int, pkg: str, ver: str,
+                      vulns: list[dict], range_note: Optional[str]) -> dict:
+    ranked = sorted(vulns, key=lambda v: _SEV_RANK.get(_norm_sev(v.get("severity")), 2))
+    top = ranked[:_MAX_VULNS_PER_FINDING]
+    worst_sev = _norm_sev(top[0].get("severity")) if top else "medium"
+    ids = ", ".join(v["id"] for v in top)
+    more = f" (+{len(ranked) - _MAX_VULNS_PER_FINDING} more)" if len(ranked) > _MAX_VULNS_PER_FINDING else ""
+    note = f" [{range_note}]" if range_note else ""
+    return {
+        "id":         f"dep::{path}:{line}:{pkg}:osv",
+        "category":   "dependencies",
+        "severity":   worst_sev,
+        "file":       path, "line": line,
+        "title":      f"vulnerable: {pkg}=={ver} ({len(ranked)} known vuln"
+                       f"{'s' if len(ranked) != 1 else ''})",
+        "message":    f"{pkg}=={ver}{note} → {ids}{more} — upgrade required.",
+        "fix_hint":   f"Bump `{pkg}` past the versions fixed in {ids.split(',')[0].strip()}"
+                       + (" and the other CVEs listed above." if len(top) > 1 else "."),
+        "fix_tokens": 5,
+    }
 
 
 def _dep_finding(path: str, line: int, pkg: str,
