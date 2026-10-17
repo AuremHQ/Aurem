@@ -340,6 +340,30 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
     and close the job with status="failed" so the UI offers Restart.
     """
     user_id = user["user_id"]
+    # Ticket D (2026-02) — per-fix before/after live proof, opt-in
+    # (only when the project has a preview_url configured). Fire-and-
+    # capture BEFORE anything is applied — this does NOT block or slow
+    # the guardian per-file fast path (_guardian_rescan, untouched);
+    # it's a single capture at the START of this already-async bulk
+    # job, same cost class as the GitHub commit calls this job already
+    # makes. Honest states: if the project has no preview_url, or the
+    # capture fails/degrades, before_shot stays None and the proof is
+    # simply skipped at the end — never faked.
+    before_shot_bytes = None
+    proj_doc = await db.cto_projects.find_one({"project_id": project_id}, {"_id": 0, "preview_url": 1})
+    preview_url = (proj_doc or {}).get("preview_url")
+    if preview_url:
+        try:
+            import services.deploy_verify as dv
+            before_result = await dv.capture_single_screenshot(
+                preview_url, db=db, user_id=user_id, project_id=project_id)
+            if before_result.get("ok"):
+                before_shot_bytes = before_result["screenshot"]
+            else:
+                logger.info("[fix-proof] before-capture not ok for job=%s: %s",
+                            job_id, before_result.get("fail_reason"))
+        except Exception as e:
+            logger.warning("[fix-proof] before-capture crashed for job=%s: %r", job_id, e)
     try:
         ordered = _interleave_by_severity(findings)
         batches = [ordered[i : i + _BULK_BATCH_SIZE]
@@ -593,6 +617,39 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
             await fjm.persist_event(db, job_id)
             if batch_no < len(batches):
                 await asyncio.sleep(_INTER_BATCH_BREATHE_S)
+
+        # Ticket D (2026-02) — AFTER capture + diff, only when a
+        # BEFORE shot exists (opt-in, honest: no preview_url or a
+        # failed before-capture means no proof is attempted at all,
+        # never a half proof).
+        if before_shot_bytes:
+            try:
+                after_result = await dv.capture_single_screenshot(
+                    preview_url, db=db, user_id=user_id, project_id=project_id)
+                after_shot_bytes = after_result["screenshot"] if after_result.get("ok") else None
+                diff = dv.diff_screenshots(before_shot_bytes, after_shot_bytes)
+                from services.preview_capture import upload_receipt
+                before_key = await upload_receipt(before_shot_bytes, f"fix-proof/{job_id}-before.jpg")
+                after_key = (await upload_receipt(after_shot_bytes, f"fix-proof/{job_id}-after.jpg")
+                             if after_shot_bytes else None)
+                diff_key = (await upload_receipt(diff["diff_image"], f"fix-proof/{job_id}-diff.jpg")
+                            if diff.get("diff_image") else None)
+                await db.fix_before_after_proof.update_one(
+                    {"_id": job_id},
+                    {"$set": {
+                        "job_id": job_id, "user_id": user_id, "project_id": project_id,
+                        "before_key": before_key, "after_key": after_key, "diff_key": diff_key,
+                        "changed": diff.get("changed"), "diff_percent": diff.get("diff_percent"),
+                        "after_verdict": after_result.get("verdict"),
+                        "after_fail_reason": after_result.get("fail_reason"),
+                        "created_at": time.time(),
+                    }},
+                    upsert=True,
+                )
+                fjm.emit(job_id, "fix-proof-ready", job_id=job_id,
+                         changed=diff.get("changed"), diff_percent=diff.get("diff_percent"))
+            except Exception as e:
+                logger.warning("[fix-proof] after-capture/diff crashed for job=%s: %r", job_id, e)
 
         await fjm.close(
             db, job_id, ok=True,
@@ -849,6 +906,32 @@ async def get_job_summary(job_id: str,
             and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     return {"ok": True, **s}
+
+
+# ─── Ticket D (2026-02) — per-fix before/after live proof ─────────────
+@router.get("/proof/{job_id}")
+async def get_fix_before_after_proof(job_id: str,
+                                      variant: str = "before",
+                                      authorization: Optional[str] = Header(None)):
+    """Streams back one of the 3 receipt images (before/after/diff)
+    captured by _run_bulk_job, same ownership check as /summary.
+    Honest 404 when this job had no preview_url (no proof attempted)
+    or the capture failed/degraded (no key stored for that variant)."""
+    from fastapi import Response as _Response
+    user, effective = await _gate(authorization, "read")
+    db = get_db()
+    doc = await db.fix_before_after_proof.find_one({"_id": job_id}, {"_id": 0})
+    if not doc or doc.get("user_id") != effective["user_id"] and not user.get("is_admin"):
+        raise HTTPException(404, "No before/after proof for this job")
+    key = {"before": doc.get("before_key"), "after": doc.get("after_key"),
+           "diff": doc.get("diff_key")}.get(variant)
+    if not key:
+        raise HTTPException(404, f"No {variant} capture stored for this job")
+    from services.preview_capture import fetch_receipt
+    data = await fetch_receipt(key)
+    if not data:
+        raise HTTPException(404, "Receipt data not found in storage")
+    return _Response(content=data, media_type="image/jpeg")
 
 
 # ─── 2026-08-23 — manual "Check now" retry for inconclusive verify ────

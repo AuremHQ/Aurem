@@ -522,6 +522,145 @@ async def _run_verify_inner(
     return result
 
 
+# ═════════ Ticket D (2026-02) — per-fix before/after proof ═════════
+async def capture_single_screenshot(url: str, *, db=None, user_id: str = "",
+                                     project_id: str = "") -> dict:
+    """A single fenced screenshot capture — the before/after primitive
+    for Ticket D. Deliberately NOT `run_verify` (that runs ~7 checks
+    and is tuned for a POST-deploy verify, not a lightweight twice-
+    per-fix capture) — but reuses every piece of its security fence
+    exactly: `validate_target_url` first (before any navigation),
+    the same `--no-sandbox`-free launch args + stale-executable-path
+    retry, a fresh BrowserContext with downloads off, and the same
+    `_audit_log` trail.
+
+    Returns {ok, verdict: pass|fail|degraded, screenshot: bytes|None,
+    fail_reason, what_happened} — never raises; a failure/degrade is
+    always an honest state in the return value, never a fake "ok".
+    """
+    result = {"ok": False, "verdict": "fail", "screenshot": None,
+              "fail_reason": None, "what_happened": None}
+
+    ok, why = validate_target_url(url)
+    if not ok:
+        result["fail_reason"] = f"blocked_ssrf:{why}"
+        result["what_happened"] = f"Blocked before launch — {why}"
+        await _audit_log(db, user_id=user_id, project_id=project_id, url=url,
+                          result="blocked_ssrf", reason=why, ticket="D_before_after")
+        return result
+
+    allowlist_host = _host_of(url)
+    try:
+        async with asyncio.timeout(30):
+            from playwright.async_api import async_playwright
+            import os as _os
+            async with async_playwright() as pw:
+                launch_kwargs = {"headless": True}
+                _exe = _os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
+                if _exe:
+                    launch_kwargs["executable_path"] = _exe
+                try:
+                    browser = await pw.chromium.launch(**launch_kwargs)
+                except Exception as e:
+                    if launch_kwargs.get("executable_path") and _is_browser_missing_error(e):
+                        try:
+                            browser = await pw.chromium.launch(headless=True)
+                        except Exception as e2:
+                            if _is_browser_missing_error(e2):
+                                result["verdict"] = "degraded"
+                                result["fail_reason"] = "browser_unavailable"
+                                result["what_happened"] = f"Chromium not launchable: {str(e2)[:200]}"
+                                return result
+                            raise
+                    elif _is_browser_missing_error(e):
+                        result["verdict"] = "degraded"
+                        result["fail_reason"] = "browser_unavailable"
+                        result["what_happened"] = f"Chromium not launchable: {str(e)[:200]}"
+                        return result
+                    else:
+                        raise
+                try:
+                    context = await browser.new_context(
+                        viewport=DEVICE_VIEWPORTS["desktop"], accept_downloads=False,
+                    )
+                    page = await context.new_page()
+
+                    async def _route_guard(route, request):
+                        if not _same_allowlisted_domain(request.url, allowlist_host):
+                            await route.abort()
+                            return
+                        await route.continue_()
+                    await page.route("**/*", _route_guard)
+
+                    try:
+                        resp = await page.goto(url, wait_until="load", timeout=20_000)
+                    except Exception as e:
+                        result["fail_reason"] = "unreachable"
+                        result["what_happened"] = f"Navigation failed: {type(e).__name__}"
+                        return result
+                    if not (resp and 200 <= resp.status < 400):
+                        result["fail_reason"] = f"http_{resp.status if resp else 'none'}"
+                        result["what_happened"] = "Page did not load successfully."
+                        return result
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                    await page.wait_for_timeout(300)
+                    result["screenshot"] = await page.screenshot(type="jpeg", quality=80, full_page=True)
+                    result["ok"] = True
+                    result["verdict"] = "pass"
+                    result["what_happened"] = "Captured."
+                finally:
+                    await browser.close()
+    except asyncio.TimeoutError:
+        result["fail_reason"] = "capture_budget_exceeded_30s"
+        result["what_happened"] = "Screenshot capture exceeded its 30s budget."
+    except Exception as e:                                        # noqa: BLE001
+        result["fail_reason"] = f"capture_error:{type(e).__name__}"
+        result["what_happened"] = f"Capture failed: {type(e).__name__}"
+        logger.warning("capture_single_screenshot(%s) error: %r", url, e)
+
+    await _audit_log(db, user_id=user_id, project_id=project_id, url=url,
+                      verdict=result["verdict"], fail_reason=result["fail_reason"],
+                      ticket="D_before_after")
+    return result
+
+
+def diff_screenshots(before: Optional[bytes], after: Optional[bytes]) -> dict:
+    """Pixel-level diff for the before/after receipt. PIL is already a
+    transitive dependency (via reportlab, Ticket C) — no new
+    dependency added for this. Honest states: if either image is
+    missing (a capture failed/degraded), returns changed=None rather
+    than guessing."""
+    if not before or not after:
+        return {"changed": None, "diff_percent": None,
+                "note": "cannot diff — one or both captures are missing"}
+    try:
+        from io import BytesIO
+        from PIL import Image, ImageChops
+        img_before = Image.open(BytesIO(before)).convert("RGB")
+        img_after = Image.open(BytesIO(after)).convert("RGB")
+        # Different page heights (common for a full-page shot after
+        # content changes) — resize the after image to the before
+        # image's size for a comparable pixel diff rather than crash.
+        if img_before.size != img_after.size:
+            img_after = img_after.resize(img_before.size)
+        diff = ImageChops.difference(img_before, img_after)
+        bbox = diff.getbbox()
+        if bbox is None:
+            return {"changed": False, "diff_percent": 0.0, "note": "pixel-identical"}
+        histogram = diff.histogram()
+        total_pixels = img_before.size[0] * img_before.size[1] * 3
+        nonzero = sum(histogram[1:]) if len(histogram) > 1 else 0
+        # Rough magnitude, not a precise SSIM — good enough for an
+        # honest "something visibly changed" receipt signal.
+        diff_percent = round(100.0 * nonzero / max(total_pixels, 1), 2)
+        buf = BytesIO()
+        diff.save(buf, format="JPEG", quality=70)
+        return {"changed": True, "diff_percent": diff_percent, "diff_image": buf.getvalue()}
+    except Exception as e:                                        # noqa: BLE001
+        logger.warning("diff_screenshots failed: %r", e)
+        return {"changed": None, "diff_percent": None, "note": f"diff_error:{type(e).__name__}"}
+
+
 # ═══════════════ V1b — LLM judgment (LEFT PENDING this round) ══════
 async def run_judgment(accessibility_snapshot: str, *, mock_llm: bool) -> dict:
     """V1b — founder-directed: LEFT PENDING this round. The pruned
