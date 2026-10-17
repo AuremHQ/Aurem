@@ -185,7 +185,7 @@ async def test_endpoint_422_when_pipeline_refuses():
     fake_db = MagicMock()
     fake_db.cto_projects.find_one = AsyncMock(return_value={
         "project_id": "p1", "user_id": "u1", "github_owner": "o",
-        "github_repo": "r", "github_branch": "main",
+        "github_repo": "r", "branch": "main",
     })
     with patch("routers.cto_projects.current_dev", AsyncMock(return_value={"user_id": "u1"})), \
          patch("routers.cto_projects.get_db", return_value=fake_db), \
@@ -196,4 +196,157 @@ async def test_endpoint_422_when_pipeline_refuses():
         with pytest.raises(HTTPException) as exc:
             await simplify_file("p1", SimplifyRequest(path="backend/tests/foo.py"),
                                  authorization="Bearer x")
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_endpoint_502_when_codegen_fails_not_422():
+    """2026-02 bug fix: a non-refused pipeline failure (LLM/codegen
+    error, ok:false but refused:false) must surface as a 502, never
+    silently as a 200 with a failure body — the frontend was
+    previously treating any 200 as "preview succeeded" and would have
+    rendered an Apply button against an empty diff."""
+    from routers.cto_projects.management import simplify_file, SimplifyRequest
+    fake_db = MagicMock()
+    fake_db.cto_projects.find_one = AsyncMock(return_value={
+        "project_id": "p1", "user_id": "u1", "github_owner": "o",
+        "github_repo": "r", "branch": "main",
+    })
+    with patch("routers.cto_projects.current_dev", AsyncMock(return_value={"user_id": "u1"})), \
+         patch("routers.cto_projects.get_db", return_value=fake_db), \
+         patch("routers.cto_projects.management.get_repo_token", AsyncMock(return_value="tok")), \
+         patch("services.simplify_pipeline.run_simplify_preview",
+               AsyncMock(return_value={"ok": False, "refused": False,
+                                        "reason": "codegen failed: 401 Unauthorized"})):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await simplify_file("p1", SimplifyRequest(path="services/x.py"),
+                                 authorization="Bearer x")
+    assert exc.value.status_code == 502
+    assert "codegen failed" in exc.value.detail["reason"]
+#    never commits to the default branch ────────────────────────────
+@pytest.mark.asyncio
+async def test_apply_refuses_when_current_file_no_longer_matches_preview():
+    """Defense in depth: even if the client replays an old 'approved'
+    new_content, apply() re-fetches the CURRENT file and re-runs the
+    gate — a real import dropped against the CURRENT content must
+    still be refused, never trusted blindly from the client."""
+    original_now = "import os\nimport sys\n\ndef f():\n    return os.path.join(sys.argv[0])\n"
+    stale_new_content = "import os\n\ndef f():\n    return os.path.join('x')\n"  # drops sys
+    with patch("services.repo_context._fetch_file", AsyncMock(return_value=original_now)):
+        result = await sp.apply_simplify_edit(
+            db=MagicMock(), user_id="u1", owner="o", repo="r", branch="main",
+            token="tok", path="a.py", new_content=stale_new_content,
+        )
+    assert result["ok"] is False
+    assert result["refused"] is True
+    assert any("sys" in v for v in result["violations"])
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_test_file_before_any_github_call():
+    from unittest.mock import AsyncMock as _AM
+    with patch("services.repo_context._fetch_file", _AM()) as fetch_spy:
+        result = await sp.apply_simplify_edit(
+            db=MagicMock(), user_id="u1", owner="o", repo="r", branch="main",
+            token="tok", path="backend/tests/test_x.py", new_content="x = 1\n",
+        )
+    assert result["refused"] is True
+    fetch_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_never_commits_to_the_default_branch_always_a_dedicated_branch():
+    """The single most important safety property of Ticket F-UI's
+    apply flow — asserts the ACTUAL branch name passed to commit_files
+    is NOT 'main' (the project's default branch)."""
+    original = "import os\n\ndef f():\n    unused = 1\n    return os.getcwd()\n"
+    clean = "import os\n\ndef f():\n    return os.getcwd()\n"
+    commit_calls = {}
+
+    async def _fake_commit_files(**kwargs):
+        commit_calls.update(kwargs)
+        return {"ok": True, "sha": "deadbeef", "html_url": "https://github.com/o/r/commit/deadbeef"}
+
+    with patch("services.repo_context._fetch_file", AsyncMock(return_value=original)), \
+         patch("services.loop_safety.create_or_reuse_branch", AsyncMock(return_value=(True, None))), \
+         patch("services.github_api_writer.commit_files", _fake_commit_files), \
+         patch("services.git_identity.resolve_git_identity", AsyncMock(return_value=("Dev", "dev@x.com"))), \
+         patch("services.loop_safety.open_or_reuse_pr",
+               AsyncMock(return_value={"ok": True, "pr_url": "https://github.com/o/r/pull/1",
+                                        "reused": False})):
+        result = await sp.apply_simplify_edit(
+            db=MagicMock(), user_id="u1", owner="o", repo="r", branch="main",
+            token="tok", path="a.py", new_content=clean,
+        )
+    assert result["ok"] is True
+    assert commit_calls["branch"] != "main"
+    assert commit_calls["branch"] == result["branch"]
+    assert result["pr_url"] == "https://github.com/o/r/pull/1"
+
+
+@pytest.mark.asyncio
+async def test_apply_branch_create_failure_is_honest_not_silent():
+    clean_from_original = "import os\n\ndef f():\n    return os.getcwd()\n"
+    with patch("services.repo_context._fetch_file", AsyncMock(return_value="import os\n\ndef f():\n    x=1\n    return os.getcwd()\n")), \
+         patch("services.loop_safety.create_or_reuse_branch",
+               AsyncMock(return_value=(False, "base_ref_status_404"))):
+        result = await sp.apply_simplify_edit(
+            db=MagicMock(), user_id="u1", owner="o", repo="r", branch="main",
+            token="tok", path="a.py", new_content=clean_from_original,
+        )
+    assert result["ok"] is False
+    assert "branch_create_failed" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_apply_unchanged_content_is_a_noop_no_github_calls():
+    same = "import os\n\ndef f():\n    return os.getcwd()\n"
+    with patch("services.repo_context._fetch_file", AsyncMock(return_value=same)), \
+         patch("services.loop_safety.create_or_reuse_branch", AsyncMock()) as branch_spy:
+        result = await sp.apply_simplify_edit(
+            db=MagicMock(), user_id="u1", owner="o", repo="r", branch="main",
+            token="tok", path="a.py", new_content=same,
+        )
+    assert result == {"ok": True, "refused": False, "unchanged": True}
+    branch_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_endpoint_wires_through_and_returns_pr_url():
+    from routers.cto_projects.management import simplify_apply, SimplifyApplyRequest
+    fake_db = MagicMock()
+    fake_db.cto_projects.find_one = AsyncMock(return_value={
+        "project_id": "p1", "user_id": "u1", "github_owner": "o",
+        "github_repo": "r", "branch": "main",
+    })
+    with patch("routers.cto_projects.current_dev", AsyncMock(return_value={"user_id": "u1"})), \
+         patch("routers.cto_projects.get_db", return_value=fake_db), \
+         patch("routers.cto_projects.management.get_repo_token", AsyncMock(return_value="tok")), \
+         patch("services.simplify_pipeline.apply_simplify_edit",
+               AsyncMock(return_value={"ok": True, "refused": False,
+                                        "pr_url": "https://github.com/o/r/pull/9",
+                                        "branch": "aurem/simplify-a-py"})):
+        resp = await simplify_apply("p1", SimplifyApplyRequest(path="a.py", new_content="x=1\n"),
+                                     authorization="Bearer x")
+    assert resp["pr_url"] == "https://github.com/o/r/pull/9"
+
+
+@pytest.mark.asyncio
+async def test_apply_endpoint_422_when_gate_refuses():
+    from routers.cto_projects.management import simplify_apply, SimplifyApplyRequest
+    fake_db = MagicMock()
+    fake_db.cto_projects.find_one = AsyncMock(return_value={
+        "project_id": "p1", "user_id": "u1", "github_owner": "o",
+        "github_repo": "r", "branch": "main",
+    })
+    with patch("routers.cto_projects.current_dev", AsyncMock(return_value={"user_id": "u1"})), \
+         patch("routers.cto_projects.get_db", return_value=fake_db), \
+         patch("routers.cto_projects.management.get_repo_token", AsyncMock(return_value="tok")), \
+         patch("services.simplify_pipeline.apply_simplify_edit",
+               AsyncMock(return_value={"ok": False, "refused": True, "reason": "x"})):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            await simplify_apply("p1", SimplifyApplyRequest(path="a.py", new_content="x=1\n"),
+                                  authorization="Bearer x")
     assert exc.value.status_code == 422

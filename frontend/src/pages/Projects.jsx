@@ -1411,6 +1411,188 @@ function HealthTrendSection({ projectId, bordered = true }) {
   );
 }
 
+// Ticket F-UI (2026-02) — "Preview cleanup" on a file in this project.
+// Two-call flow, explicit confirmation required before any GitHub
+// write: POST /simplify (preview: diff + gate result, no side
+// effects) -> POST /simplify/apply (ONLY after the user clicks
+// "Yes, create draft PR" in the confirmation step) -> always a new
+// branch + draft PR, NEVER a direct commit to the default branch.
+export function SimplifyFilePanel({ projectId }) {
+  const [path, setPath] = useState("");
+  const [state, setState] = useState("idle");
+  const [preview, setPreview] = useState(null);
+  const [refusal, setRefusal] = useState(null);
+  const [errMsg, setErrMsg] = useState("");
+  const [applyResult, setApplyResult] = useState(null);
+
+  function resetResults() {
+    setRefusal(null); setErrMsg(""); setPreview(null); setApplyResult(null);
+  }
+
+  async function handlePreview() {
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    setState("previewing");
+    resetResults();
+    try {
+      const r = await api.post(`/cto/projects/${projectId}/simplify`, { path: trimmed });
+      setPreview(r.data);
+      setState("previewed");
+    } catch (e) {
+      const status = e?.response?.status;
+      if (status === 422) {
+        setRefusal(e.response.data?.detail || e.response.data);
+        setState("refused");
+      } else {
+        const d = e?.response?.data?.detail;
+        const reason = typeof d === "string" ? d : (d && typeof d.reason === "string" ? d.reason : null);
+        setErrMsg(reason || "Could not preview this file — try again.");
+        setState("error");
+      }
+    }
+  }
+
+  async function handleConfirmApply() {
+    setState("applying");
+    try {
+      const r = await api.post(`/cto/projects/${projectId}/simplify/apply`, {
+        path: path.trim(), new_content: preview.new_content,
+      });
+      setApplyResult(r.data);
+      setState("applied");
+    } catch (e) {
+      const status = e?.response?.status;
+      if (status === 422) {
+        setRefusal(e.response.data?.detail || e.response.data);
+        setState("refused");
+      } else {
+        setErrMsg("Could not apply this cleanup — try again.");
+        setState("error");
+      }
+    }
+  }
+
+  const diffLines = preview?.diff ? preview.diff.split("\n") : [];
+
+  return (
+    <div className="card" data-testid="simplify-file-panel">
+      <div className="label-mini" style={{ marginBottom: 8 }}>Preview cleanup</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          data-testid="simplify-file-path-input"
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="e.g. services/utils.py"
+          aria-label="File path to simplify"
+          style={{ flex: 1, padding: "6px 10px", borderRadius: 6, background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)", color: "#e2e8f0", fontSize: 12 }}
+        />
+        <button
+          type="button"
+          data-testid="simplify-file-preview-btn"
+          className="btn-ghost"
+          disabled={!path.trim() || state === "previewing"}
+          onClick={handlePreview}
+          style={{ padding: "6px 14px", fontSize: 12, whiteSpace: "nowrap" }}
+        >
+          {state === "previewing" ? "Checking…" : "Preview cleanup"}
+        </button>
+      </div>
+
+      {state === "error" && (
+        <div data-testid="simplify-file-error" role="alert" style={{ marginTop: 10, fontSize: 12, color: "#fca5a5" }}>
+          {errMsg}
+        </div>
+      )}
+
+      {state === "refused" && refusal && (
+        <div data-testid="simplify-file-refused" role="alert" style={{ marginTop: 10, fontSize: 12, color: "#fbbf24" }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            Refused — AUREM declined to simplify this file:
+          </div>
+          <div>{refusal.reason}</div>
+          {Array.isArray(refusal.violations) && refusal.violations.length > 0 && (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {refusal.violations.map((v, i) => (
+                <li key={i} data-testid={`simplify-violation-${i}`}>{v}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {preview && state !== "error" && (
+        <>
+          {preview.unchanged ? (
+            <div data-testid="simplify-file-unchanged" style={{ marginTop: 10, fontSize: 12, color: "#94a3b8" }}>
+              Nothing safe to simplify — this file is already clean.
+            </div>
+          ) : (
+            <pre data-testid="simplify-file-diff" style={{
+              marginTop: 10, fontSize: 11, maxHeight: 260, overflow: "auto",
+              background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: 10,
+              fontFamily: "'JetBrains Mono', monospace", whiteSpace: "pre-wrap",
+            }}>
+              {diffLines.map((line, i) => (
+                <div key={i} style={{
+                  color: line.startsWith("+") && !line.startsWith("+++") ? "#86efac"
+                    : line.startsWith("-") && !line.startsWith("---") ? "#fca5a5"
+                    : "#64748b",
+                }}>{line}</div>
+              ))}
+            </pre>
+          )}
+
+          {!preview.unchanged && state === "previewed" && (
+            <button
+              type="button"
+              data-testid="simplify-apply-btn"
+              className="btn-primary"
+              onClick={() => setState("confirming")}
+              style={{ marginTop: 10, padding: "6px 14px", fontSize: 12 }}
+            >
+              Apply (creates draft PR)
+            </button>
+          )}
+
+          {state === "confirming" && (
+            <div data-testid="simplify-apply-confirm" role="alertdialog" aria-label="Confirm apply"
+                 style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.3)" }}>
+              <p style={{ fontSize: 11, color: "#e2e8f0", margin: "0 0 8px" }}>
+                This will create a new branch and open a draft PR — it will NOT push directly to your default branch.
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" data-testid="simplify-apply-confirm-yes" className="btn-primary"
+                        onClick={handleConfirmApply} style={{ padding: "5px 12px", fontSize: 11 }}>
+                  Yes, create draft PR
+                </button>
+                <button type="button" data-testid="simplify-apply-confirm-cancel" className="btn-ghost"
+                        onClick={() => setState("previewed")} style={{ padding: "5px 12px", fontSize: 11 }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {state === "applying" && (
+            <div data-testid="simplify-applying" role="status" style={{ marginTop: 10, fontSize: 12, color: "#94a3b8" }}>
+              Creating draft PR…
+            </div>
+          )}
+
+          {state === "applied" && applyResult && (
+            <div data-testid="simplify-applied-success" role="status" style={{ marginTop: 10, fontSize: 12, color: "#86efac" }}>
+              Draft PR created on branch <code>{applyResult.branch}</code> —{" "}
+              <a data-testid="simplify-pr-link" href={applyResult.pr_url} target="_blank" rel="noreferrer" style={{ color: "#7dd3fc" }}>
+                view PR
+              </a>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function EditDialog({ project, onClose, onSaved }) {
   const [f, setF] = useState({ github_token: "", branch: project.branch || "main", tech_stack: project.tech_stack || "", preview_url: project.preview_url || "", auto_scan_frequency: project.auto_scan_frequency || "off" });
   const [busy, setBusy] = useState(false);
@@ -1973,6 +2155,10 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
       <div className="card" data-testid="proj-detail-health-trend">
         <HealthTrendSection projectId={project.project_id} bordered={false} />
       </div>
+
+      {/* Ticket F-UI (2026-02) — preview + explicitly-confirmed apply
+          of a safe, gate-checked cleanup on a single file. */}
+      <SimplifyFilePanel projectId={project.project_id} />
 
       {/* 2026-09-13 — Phase 4, Architect Agent "What I set up" panel.
           Read-only, sourced directly from `project_blueprints`. */}

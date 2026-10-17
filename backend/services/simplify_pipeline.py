@@ -134,3 +134,96 @@ async def run_simplify_preview(*, owner: str, repo: str, branch: str,
     ))
     return {"ok": True, "refused": False, "unchanged": diff == "",
             "new_content": new_content, "diff": diff}
+
+
+async def apply_simplify_edit(*, db, user_id: str, owner: str, repo: str,
+                               branch: str, token: str, path: str,
+                               new_content: str) -> dict:
+    """Ticket F-UI (2026-02) — apply an already-previewed simplify
+    edit, ONLY after the caller's explicit confirmation click (the
+    HTTP layer enforces this is a separate call from the preview).
+
+    Defense in depth: re-fetches the CURRENT file content and re-runs
+    the exact same gate used by the preview before committing anything
+    — never trusts a client-supplied `new_content` blindly, and never
+    replays a stale preview against a file that changed upstream since
+    it was generated.
+
+    Never commits to `branch` (the project's base/default branch) —
+    always a dedicated `aurem/simplify-<path>` branch + a draft PR,
+    reusing the EXACT same branch-per-fix + open_or_reuse_pr machinery
+    every other AUREM commit path already goes through
+    (services/loop_safety.py, services/github_api_writer.py)."""
+    from services.loop_diff_classifier import is_test_or_fixture
+    if is_test_or_fixture(path):
+        return {"ok": False, "refused": True,
+                "reason": f"refusing: `{path}` is a test/fixture file."}
+
+    from services.repo_context import _fetch_file
+    current = await _fetch_file(owner, repo, path, branch, token)
+    if current is None:
+        return {"ok": False, "refused": False,
+                "reason": f"could not read `{path}` from {owner}/{repo}@{branch}"}
+
+    task_msg = build_simplify_task_message(path)
+    violations = check_simplify_edit(
+        path=path, new_content=new_content, original_content=current,
+        task_msg=task_msg,
+    )
+    if violations:
+        return {
+            "ok": False, "refused": True,
+            "reason": "refusing — this edit would change behavior and/or "
+                       "drop existing code the task never asked to remove:",
+            "violations": violations,
+        }
+    if new_content == current:
+        return {"ok": True, "refused": False, "unchanged": True}
+
+    from services.github_api_writer import commit_files
+    from services.loop_safety import aurem_branch_name, create_or_reuse_branch, open_or_reuse_pr
+    from services.git_identity import resolve_git_identity, build_commit_message
+
+    simplify_branch = aurem_branch_name("simplify", path)
+    ok_branch, branch_err = await create_or_reuse_branch(
+        owner=owner, repo=repo, base_branch=branch,
+        new_branch=simplify_branch, token=token,
+    )
+    if not ok_branch:
+        return {"ok": False, "refused": False,
+                "reason": f"branch_create_failed: {branch_err}"}
+
+    author_name, author_email = await resolve_git_identity(db, user_id)
+    commit_message = build_commit_message(
+        task_type="refactor", summary=f"simplify {path}",
+        body="Dead code / duplicate imports / unused local variables "
+             "removed. No behavior change — verified by AUREM's "
+             "import-preservation safety gate before being offered "
+             "for apply.",
+    )
+    try:
+        res = await commit_files(
+            owner=owner, repo=repo, branch=simplify_branch, token=token,
+            files={path: new_content}, commit_message=commit_message,
+            author_name=author_name, author_email=author_email,
+        )
+    except Exception as e:
+        logger.warning("[simplify-apply] commit_files failed for %s: %r", path, e)
+        return {"ok": False, "refused": False, "reason": f"github_push_failed: {e}"}
+
+    pr = await open_or_reuse_pr(
+        owner=owner, repo=repo, head_branch=simplify_branch, base_branch=branch,
+        title=f"refactor: simplify {path}",
+        body=(f"**AUREM simplify-only cleanup** for `{path}`.\n\n"
+              "Dead code / duplicate imports / unused local variables "
+              "removed. No behavior change — this edit passed AUREM's "
+              "import-preservation safety gate before being offered "
+              f"for apply.\n\nCommit: `{res.get('sha') or ''}`"),
+        token=token,
+    )
+    return {
+        "ok": True, "refused": False,
+        "commit_sha": res.get("sha"), "commit_url": res.get("html_url"),
+        "branch": simplify_branch,
+        "pr_url": pr.get("pr_url"), "pr_reused": bool(pr.get("reused")),
+    }

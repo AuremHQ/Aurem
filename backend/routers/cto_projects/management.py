@@ -143,7 +143,7 @@ async def simplify_file(
     db = _pkg.get_db()
     proj = await db.cto_projects.find_one(
         {"project_id": project_id, "user_id": user_id},
-        {"_id": 0, "github_owner": 1, "github_repo": 1, "github_branch": 1,
+        {"_id": 0, "github_owner": 1, "github_repo": 1, "branch": 1,
          "auth_method": 1, "installation_id": 1, "user_id": 1},
     )
     if not proj:
@@ -156,11 +156,60 @@ async def simplify_file(
     result = await run_simplify_preview(
         owner=proj.get("github_owner") or "",
         repo=proj.get("github_repo") or "",
-        branch=proj.get("github_branch") or "main",
+        branch=proj.get("branch") or "main",
         token=token, path=body.path,
     )
     if result.get("refused"):
         raise HTTPException(422, result)
+    if not result.get("ok"):
+        raise HTTPException(502, result)
+    return result
+
+
+class SimplifyApplyRequest(BaseModel):
+    path: str
+    new_content: str
+
+
+@router.post("/projects/{project_id}/simplify/apply")
+async def simplify_apply(
+    project_id: str, body: SimplifyApplyRequest,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Ticket F-UI (2026-02) — applies a simplify edit the caller
+    already previewed via /simplify, ONLY after an explicit
+    confirmation click on the frontend (this is a deliberately SEPARATE
+    HTTP call from the preview — there is no one-click apply). Re-runs
+    the safety gate against the CURRENT file content before committing
+    anything (services/simplify_pipeline.py::apply_simplify_edit).
+    Never commits to the project's default branch — always a dedicated
+    branch + draft PR."""
+    me = await _pkg.current_dev(authorization)
+    user_id = me["user_id"]
+    db = _pkg.get_db()
+    proj = await db.cto_projects.find_one(
+        {"project_id": project_id, "user_id": user_id},
+        {"_id": 0, "github_owner": 1, "github_repo": 1, "branch": 1,
+         "auth_method": 1, "installation_id": 1, "user_id": 1},
+    )
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    token = await get_repo_token(proj)
+    if not token:
+        raise HTTPException(400, "Project missing GitHub linkage / PAT")
+
+    from services.simplify_pipeline import apply_simplify_edit
+    result = await apply_simplify_edit(
+        db=db, user_id=user_id,
+        owner=proj.get("github_owner") or "",
+        repo=proj.get("github_repo") or "",
+        branch=proj.get("branch") or "main",
+        token=token, path=body.path, new_content=body.new_content,
+    )
+    if result.get("refused"):
+        raise HTTPException(422, result)
+    if not result.get("ok"):
+        raise HTTPException(502, result)
     return result
 @router.get("/email-delivery-status")
 async def email_delivery_status(authorization: Optional[str] = Header(None)) -> dict:
