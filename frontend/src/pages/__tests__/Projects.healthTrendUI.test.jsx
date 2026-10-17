@@ -99,3 +99,18 @@ describe("Ticket E-UI · full trend chart in project detail view", () => {
     expect(within(card).queryByTestId("proj-health-trend-chart")).toBeNull();
   });
 });
+
+describe("Ticket C-UI compliance fix · Download PDF lives on the Projects page itself", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows the Download PDF button in the project detail view, not only on /codebase-health", async () => {
+    mockApiGet({ snapshotsByProject: { p_1: [] } });
+    render(<Projects />);
+    const row = await screen.findByTestId("proj-row-p_1");
+    fireEvent.click(row);
+    await waitFor(() => expect(screen.getByTestId("proj-detail-health-trend")).toBeInTheDocument());
+    const card = screen.getByTestId("proj-detail-health-trend");
+    expect(within(card).getByTestId("health-pdf-download-btn")).toBeInTheDocument();
+    expect(within(card).getByTestId("health-pdf-download-btn")).toHaveTextContent("Download PDF");
+  });
+});

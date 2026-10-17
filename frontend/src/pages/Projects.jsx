@@ -25,6 +25,7 @@ import FounderOfferPill from "../components/FounderOfferPill";
 import ConfirmModal from "../components/ConfirmModal";
 import RollbackConfirmModal from "../components/RollbackConfirmModal";
 import ArchitectBlueprintPanel from "../components/ArchitectBlueprintPanel";
+import { DownloadPdfButton } from "./CodebaseHealth";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -2154,6 +2155,14 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
           also in the project detail view (not just inside Edit). */}
       <div className="card" data-testid="proj-detail-health-trend">
         <HealthTrendSection projectId={project.project_id} bordered={false} />
+        {/* Ticket C-UI (2026-02) — "Download PDF" next to the scan/
+            health card on the Projects page (compliance fix: this was
+            previously only reachable from the separate /codebase-health
+            route, never from Projects itself). Same owner-only
+            GET /cto/projects/{id}/report.pdf endpoint, reused as-is. */}
+        <div style={{ marginTop: 14 }}>
+          <DownloadPdfButton projectId={project.project_id} />
+        </div>
       </div>
 
       {/* Ticket F-UI (2026-02) — preview + explicitly-confirmed apply
