@@ -26,7 +26,14 @@ afterEach(() => cleanup());
 describe("TeamManagementPanel — owner view", () => {
   beforeEach(() => {
     api.get.mockImplementation((path) => {
-      if (path === "/team/me") return Promise.resolve({ data: { is_owner: true, permissions: { team_management: "read_write" } } });
+      // CI-REPAIR (product changed, not a regression) — 2026-09-28 MASTER
+      // TASK Batch 2 (c) added an outer `team_feature_enabled` paywall gate
+      // in TeamManagementPanel.jsx (verified against source: `if (!entitled)
+      // return <...team-panel-upgrade-required.../>`) checked BEFORE the
+      // owner/canManage branch this describe block exercises. Without it
+      // every mock here rendered the upgrade card instead. Added here so
+      // the real owner-view behaviour below is actually reached.
+      if (path === "/team/me") return Promise.resolve({ data: { is_owner: true, team_feature_enabled: true, permissions: { team_management: "read_write" } } });
       if (path === "/team/resources") return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
       if (path === "/team/members") return Promise.resolve({ data: { members: [
         { member_id: "m1", email: "teammate@example.com", status: "pending", role_label: "viewer",
@@ -69,7 +76,11 @@ describe("TeamManagementPanel — owner view", () => {
 describe("TeamManagementPanel — non-owner/non-admin view", () => {
   it("shows a no-access message instead of the invite form", async () => {
     api.get.mockImplementation((path) => {
-      if (path === "/team/me") return Promise.resolve({ data: { is_owner: false, permissions: { team_management: "read" } } });
+      // Same entitlement gate as the owner-view block above — must be
+      // true here too, otherwise this ALSO hits the upgrade-required
+      // card (wrong reason for "no access") instead of the real
+      // canManage=false → team-panel-no-access branch this test targets.
+      if (path === "/team/me") return Promise.resolve({ data: { is_owner: false, team_feature_enabled: true, permissions: { team_management: "read" } } });
       if (path === "/team/resources") return Promise.resolve({ data: { resources: RESOURCES, role_presets: PRESETS } });
       if (path === "/team/members") return Promise.reject({ response: { status: 403 } });
       return Promise.resolve({ data: {} });

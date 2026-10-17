@@ -30,8 +30,24 @@ print('PASS Test 2: dangerous command blocked  ->  error=' + repr(result.get('er
 # Test 2b: execute_bash is founder-gated — non-founder ctx must be refused
 result = asyncio.run(invoke_local_tool('execute_bash', {'command': 'echo hi'}, {}))
 assert result['ok'] is False, 'non-founder must be refused'
-assert 'founder' in (result.get('error') or ''), 'refusal should mention founder gating'
-print('PASS Test 2b: non-founder refused')
+# CI-REPAIR (product changed, not a regression) — verified live: under
+# INTERACTION_CONTRACT_V1=1 (set in .env, the real running config),
+# services/tool_executor.py::execute() deliberately neutralizes every
+# tool's `error` field to "Tool X could not complete." before it's
+# LLM-facing (Iter 209/210 — "preventing the model from describing
+# GitHub auth failures itself"). That's a real, documented security
+# feature covering ALL tools, not an execute_bash regression — the
+# actual gate (ok=False, checked above) is unaffected. Assert the real
+# invariant against the layer that still carries it: the underlying
+# execute_bash() tool function's OWN raw message (bypassing the
+# executor's neutralization, exactly what it was designed to hide from
+# the LLM but which must still exist underneath).
+from services.local_tools import execute_bash
+raw = asyncio.run(execute_bash({}, {'command': 'echo hi'}))
+assert raw['ok'] is False, 'underlying execute_bash must itself refuse'
+assert 'founder' in (raw.get('error') or ''), 'underlying refusal reason must mention founder gating'
+print('PASS Test 2b: non-founder refused (ok=False) and the underlying '
+      'gate reason mentions founder-gating; LLM-facing text is neutralized by design')
 
 # Test 3: execute_bash runs safe commands (founder ctx)
 result = asyncio.run(invoke_local_tool('execute_bash', {'command': 'echo hello'}, {'is_founder': True}))

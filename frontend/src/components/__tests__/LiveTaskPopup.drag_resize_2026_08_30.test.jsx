@@ -102,9 +102,15 @@ describe("2026-08-30 · LiveTaskPopup drag + resize + persisted geometry", () =>
   });
 
   it("uses the original bottom-left default when no geometry was ever saved", async () => {
+    // CI-REPAIR (product changed, not a regression) — 2026-10, LiveTaskPopup.jsx's
+    // own comment above its `geom` fallback: `left: 24` used to land UNDER the
+    // rail's 0-56px icon strip whenever the rail was visible (z-index 7500 >
+    // rail's 1200, silently covering the AUTO/logout icons). Default moved to
+    // `left: 64` (56 rail width + 8 gutter) to clear the rail in every state —
+    // verified against the real source, this is the current correct default.
     render(<LiveTaskPopup taskId="t3" onClose={() => {}} onDone={() => {}} />);
     const root = await screen.findByTestId("live-task-popup");
-    expect(root.style.left).toBe("24px");
+    expect(root.style.left).toBe("64px");
     expect(root.style.bottom).toBe("96px");
   });
 });

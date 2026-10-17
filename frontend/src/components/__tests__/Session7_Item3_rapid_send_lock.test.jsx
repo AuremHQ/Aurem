@@ -34,10 +34,20 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
   });
 
   it("send() checks the ref BEFORE any await point", () => {
-    // The check must come BEFORE the busy-based guard so a stale
-    // closure of `busy=false` still gets blocked.
-    expect(CHAT_PANEL_SRC).toMatch(
-      /async function send\([\s\S]{0,2000}sendInFlightRef\.current[\s\S]{0,500}dropped rapid duplicate/);
+    // CI-REPAIR — this used to be a fixed-character-distance regex
+    // (`{0,2000}`) which went stale as more documentation comments were
+    // added to send()'s body over time (verified: the real distance from
+    // "async function send(" to the sendInFlightRef check is now 3130
+    // chars, not a behaviour change, just accumulated comments). Replaced
+    // with the SAME position/indexOf convention the next test in this
+    // file ("lock is armed AFTER validity guards") already uses — real
+    // structural ordering, not a brittle char-budget.
+    const sendFnIdx = CHAT_PANEL_SRC.indexOf("async function send(");
+    expect(sendFnIdx).toBeGreaterThan(-1);
+    const refCheckIdx = CHAT_PANEL_SRC.indexOf("sendInFlightRef.current", sendFnIdx);
+    expect(refCheckIdx).toBeGreaterThan(sendFnIdx);
+    const dupLogIdx = CHAT_PANEL_SRC.indexOf("dropped rapid duplicate", refCheckIdx);
+    expect(dupLogIdx).toBeGreaterThan(refCheckIdx);
   });
 
   it("lock is armed AFTER validity guards, not before", () => {

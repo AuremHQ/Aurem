@@ -11,11 +11,32 @@ import React from "react";
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import PrMiniGuide from "../PrMiniGuide.jsx";
+import { setPageFlags } from "../../lib/pageFlags";
 
 describe("PrMiniGuide (R6)", () => {
-  beforeEach(() => { localStorage.clear(); });
+  beforeEach(() => {
+    localStorage.clear();
+    // CI-REPAIR (product changed, not a regression) — 2026-10 C4 fix in
+    // PrMiniGuide.jsx: the guide now reads the REAL `ship_via_pr_enabled`
+    // flag instead of hard-coding the PR story (verified against source —
+    // production runs with this flag off, so the old hard-coded PR copy
+    // was itself the bug this fix closed). Reset to the documented
+    // default (false) before each test; the two branches below set it
+    // explicitly rather than relying on module-load order.
+    setPageFlags({ ship_via_pr_enabled: false });
+  });
 
-  it("shows the 3-step plain-English guide on first render", () => {
+  it("shows the direct-commit copy when ship_via_pr is OFF (current production default)", () => {
+    setPageFlags({ ship_via_pr_enabled: false });
+    render(<PrMiniGuide />);
+    const guide = screen.getByTestId("pr-mini-guide");
+    expect(guide.textContent).toContain("ORA commits directly to your main branch");
+    expect(guide.textContent).toContain("No PR to review first");
+    expect(guide.textContent).toContain("You can roll back anytime");
+  });
+
+  it("shows the 3-step PR guide when ship_via_pr is ON", () => {
+    setPageFlags({ ship_via_pr_enabled: true });
     render(<PrMiniGuide />);
     const guide = screen.getByTestId("pr-mini-guide");
     expect(guide.textContent).toContain("We'll open a pull request on your GitHub");

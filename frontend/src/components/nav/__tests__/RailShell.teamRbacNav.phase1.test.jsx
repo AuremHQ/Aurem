@@ -26,6 +26,16 @@ vi.mock("../../../lib/api", () => ({
   getToken: vi.fn(() => "fake-token"),
   logout: vi.fn(),
   newSessionId: vi.fn(() => "sess-1"),
+  // CI-REPAIR (product changed, not a regression) — RailShell.jsx now
+  // also calls `fetchMyAdminAccess()` unconditionally on mount (a
+  // separate, unrelated feature gating the "Admin" SECTION, verified
+  // against source: `visibleSections = SECTIONS.filter(s =>
+  // !s.requiresAdminAccess || isFounder || hasAdminTeamAccess)` — not
+  // connected to the "Team" nav item this file actually tests, which
+  // is driven by `/team/me` only). Without this export the mock object
+  // crashes on import, failing every test in this file before any
+  // assertion even runs.
+  fetchMyAdminAccess: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("../../../lib/chipFlag", () => ({ setChipV2Enabled: vi.fn() }));
 
@@ -43,6 +53,14 @@ function mockApiFor({ canManageTeam }) {
         data: {
           is_owner: canManageTeam,
           permissions: { team_management: canManageTeam ? "read_write" : "none" },
+          // CI-REPAIR (product changed, not a regression) — 2026-09-28
+          // MASTER TASK Batch 2 (c) added a SECOND, paid-tier gate here
+          // too (verified against source: `setCanManageTeam(hasRole &&
+          // r.data?.team_feature_enabled === true)`), same entitlement
+          // concept as TeamManagementPanel.jsx's own gate. Only matters
+          // for the true case: `false && anything` is already false,
+          // so the "plain member" test doesn't need this.
+          team_feature_enabled: canManageTeam,
         },
       });
     }
@@ -95,7 +113,7 @@ describe("RailShell — Phase 1 team-management nav visibility", () => {
     renderRail();
     await openSettingsFlyout();
     expect(screen.queryByTestId("nav-team")).toBeNull();
-    resolveTeamMe({ data: { is_owner: true, permissions: { team_management: "read_write" } } });
+    resolveTeamMe({ data: { is_owner: true, permissions: { team_management: "read_write" }, team_feature_enabled: true } });
     expect(await screen.findByTestId("nav-team")).toBeTruthy();
   });
 });
