@@ -130,7 +130,11 @@ async def persist_findings_to_backlog(
         # (GET /backlog above) still hard-filters to critical/high
         # only, unchanged — this widening only feeds the on-demand
         # Fix List, never the push-notification cadence.
-        if sev not in ("critical", "high", "medium"):
+        # Review fix #2 (Ticket B) — "unknown" is a live OSV vuln with
+        # a confirmed real CVE/GHSA id, just an unresolved severity;
+        # it belongs in the backlog alongside critical/high/medium,
+        # unlike a true informational note (severity "info"/"low").
+        if sev not in ("critical", "high", "medium", "unknown"):
             continue
         # Stable, deterministic finding id — same rule on same file+line
         # collapses to one row even across scanner boundaries.

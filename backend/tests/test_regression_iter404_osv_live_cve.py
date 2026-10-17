@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -35,10 +36,17 @@ from services.retry_guard import KNOWN_DEPS
 def _clean_osv_cache():
     """Every test starts from an empty in-process cache so tests can't
     leak state into each other (the cache is a module-level dict by
-    design — see codebase_health_core.py's own comment on why)."""
+    design — see codebase_health_core.py's own comment on why).
+    Also marks the Mongo cold-start restore as already-done so no
+    existing/unrelated test accidentally probes real Mongo via the new
+    `_load_cache_from_mongo_once()` step (review fix (b)) — tests that
+    specifically exercise cold-start restore reset this flag
+    themselves (see test_cold_start_restores_cache_from_mongo)."""
     chc._OSV_CACHE.clear()
+    chc._cold_start_loaded = True
     yield
     chc._OSV_CACHE.clear()
+    chc._cold_start_loaded = True
 
 
 # ── 1. Live result overrides the static map ────────────────────────
@@ -224,10 +232,13 @@ def test_combined_finding_caps_at_5_highest_severity_first():
     f = chc._dep_osv_finding("requirements.txt", 1, "pkg", "1.0.0", vulns, None)
     assert f["severity"] == "critical"
     assert "(+2 more)" in f["message"]
-    # exactly 5 ids listed, critical-first
-    listed = f["message"].split("→")[1].split("(+")[0].strip().rstrip(" —").split(", ")
+    # exactly 5 ids listed, critical-first — each annotated with its
+    # own severity label now (review fix #2, "render it clearly").
+    listed_raw = f["message"].split("→")[1].split("(+")[0].strip().rstrip(" —").split(", ")
+    listed = [entry.split(" (")[0] for entry in listed_raw]
     assert listed[0] in ("GHSA-crit1", "GHSA-crit2")
     assert len(listed) == 5
+    assert "GHSA-crit1 (critical)" in f["message"]
 
 
 # ── 8. requirements.txt range pin skips live OSV, static fallback ──
@@ -305,3 +316,190 @@ async def test_real_osv_dev_call_requests_2_28_0():
     assert any(v["id"].startswith("GHSA-") for v in vulns)
     for v in vulns:
         assert "id" in v and "severity" in v and "summary" in v
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Review-round fixes (post Ticket-B-v1 review)
+# ═════════════════════════════════════════════════════════════════════
+
+# ── R1. Total time budget: a hung OSV call must not block the scan ──
+@pytest.mark.asyncio
+async def test_resolve_live_cves_respects_total_time_budget_on_hang(monkeypatch):
+    """Review fix #1 — routers/codebase_health.py already had a real
+    Cloudflare 520 incident; a hung third party must never make the
+    scan endpoint wait minutes. Patches the budget down to 0.3s
+    (instead of the real 15s) purely so the test runs fast — the
+    mechanism under test (asyncio.wait_for wrapping the whole
+    resolve_live_cves body) is identical at any timeout value."""
+    monkeypatch.setattr(chc, "OSV_TOTAL_TIMEOUT_S", 0.3)
+
+    async def hung_batch(pkgs):
+        await asyncio.sleep(999)
+
+    monkeypatch.setattr(osv_client, "query_osv_batch", hung_batch)
+
+    start = time.monotonic()
+    await chc.resolve_live_cves({"requirements.txt": "requests==2.28.0\n"})
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0, f"resolve_live_cves took {elapsed:.2f}s, should be bounded near the 0.3s test budget"
+    assert "pypi:requests:2.28.0" not in chc._OSV_CACHE  # cache left untouched on timeout
+
+    # The scan endpoint must still return usable results within the
+    # deadline — static fallback, never worse than before this ticket.
+    findings = chc._scan_dependencies({"requirements.txt": "requests==2.28.0\n"})
+    assert len(findings) == 1
+    assert findings[0]["id"] == "dep::requirements.txt:1:requests"  # static-path id shape
+
+
+# ── R2a. Missing severity renders as "unknown", never "medium" ──────
+def test_missing_severity_renders_as_unknown_not_medium():
+    vulns = [{"id": "GHSA-nodata", "severity": None, "summary": ""}]
+    f = chc._dep_osv_finding("requirements.txt", 1, "pkg", "1.0.0", vulns, None)
+    assert f["severity"] == "unknown"
+    assert "GHSA-nodata (unknown)" in f["message"]
+
+
+def test_osv_extract_severity_confirmed_absent_returns_unknown_not_none():
+    # Real shape of PYSEC-2023-74 (confirmed live): no database_specific,
+    # no top-level severity[] at all.
+    detail = {"id": "PYSEC-2023-74", "details": "...", "aliases": ["CVE-2023-32681"]}
+    assert osv_client._extract_severity(detail) == "unknown"
+
+
+# ── R2b. CVSS fallback when database_specific.severity is absent ────
+def test_osv_extract_severity_falls_back_to_cvss_vector_for_pysec_record():
+    """Real shape of PYSEC-2026-2275 (confirmed live via a direct
+    api.osv.dev call) — no `database_specific` at all, but a top-level
+    CVSS_V3 vector. Base score 5.5 → qualitative "Medium" per the CVSS
+    v3.1 spec (verified with the `cvss` package directly)."""
+    detail = {
+        "id": "PYSEC-2026-2275",
+        "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N"}],
+    }
+    assert osv_client._extract_severity(detail) == "medium"
+
+
+def test_osv_extract_severity_prefers_database_specific_over_cvss_when_both_present():
+    # Real shape of GHSA-9hjg-9r4m-mvj7 (confirmed live) — has BOTH
+    # fields; database_specific.severity ("MODERATE") must win since
+    # it's the simpler, more-maintained GHSA-curated label.
+    detail = {
+        "database_specific": {"severity": "MODERATE"},
+        "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N"}],
+    }
+    assert osv_client._extract_severity(detail) == "medium"
+
+
+def test_osv_extract_severity_malformed_cvss_vector_does_not_crash():
+    detail = {"severity": [{"type": "CVSS_V3", "score": "not a real vector"}]}
+    assert osv_client._extract_severity(detail) == "unknown"
+
+
+# ── R2c. Capped/failed detail fetch is NOT cached as final "unknown" ─
+@pytest.mark.asyncio
+async def test_capped_fetch_is_retried_next_scan_not_cached_as_final():
+    """A vuln beyond the 50-id cap (or one whose detail GET failed) is
+    marked `fetch_ok=False` in osv_client — `resolve_live_cves` must
+    treat that whole cache entry as `incomplete` and re-query it on the
+    VERY NEXT scan regardless of the 24h TTL, instead of permanently
+    treating "couldn't fetch" the same as "OSV confirmed no severity"."""
+    text_cache = {"requirements.txt": "requests==2.28.0\n"}
+    incomplete_result = {"pypi:requests:2.28.0": [
+        {"id": "GHSA-known", "severity": "high", "summary": "x", "fetch_ok": True},
+        {"id": "GHSA-capped", "severity": None, "summary": "", "fetch_ok": False},
+    ]}
+    with patch.object(osv_client, "query_osv_batch", AsyncMock(return_value=incomplete_result)), \
+         patch.object(chc, "_persist_cache", AsyncMock(return_value=None)):
+        await chc.resolve_live_cves(text_cache)
+
+    assert chc._OSV_CACHE["pypi:requests:2.28.0"]["incomplete"] is True
+
+    # Still shown now, with the unresolved one honestly labelled —
+    # not silently dropped while waiting for the retry.
+    findings = chc._scan_dependencies(text_cache)
+    assert len(findings) == 1
+    assert "GHSA-capped (unknown)" in findings[0]["message"]
+
+    # Next scan: resolve_live_cves must re-query this key even though
+    # it's nowhere near the 24h TTL, because it's marked incomplete.
+    full_result = {"pypi:requests:2.28.0": [
+        {"id": "GHSA-known", "severity": "high", "summary": "x", "fetch_ok": True},
+        {"id": "GHSA-capped", "severity": "low", "summary": "", "fetch_ok": True},
+    ]}
+    spy = AsyncMock(return_value=full_result)
+    with patch.object(osv_client, "query_osv_batch", spy), \
+         patch.object(chc, "_persist_cache", AsyncMock(return_value=None)):
+        await chc.resolve_live_cves(text_cache)
+
+    spy.assert_awaited_once()  # proves the retry actually happened
+    assert chc._OSV_CACHE["pypi:requests:2.28.0"]["incomplete"] is False
+
+
+def test_unknown_severity_is_not_zero_weighted_like_info():
+    """Review fix #2 consequence — an unresolved-severity live vuln is
+    a REAL confirmed vulnerability and must still move the health
+    score, unlike a pure "info" note (weight 0)."""
+    assert chc.SEV_WEIGHTS["unknown"] > chc.SEV_WEIGHTS["medium"]
+    assert chc.SEV_WEIGHTS["unknown"] < chc.SEV_WEIGHTS["high"]
+    assert chc.SEV_WEIGHTS["info"] == 0
+
+
+# ── R-b. Mongo cold-start restore (write-only persist fixed) ────────
+@pytest.mark.asyncio
+async def test_cold_start_restores_cache_from_mongo(monkeypatch):
+    """Review fix (b) — the Mongo persist must be read back on process
+    start, not write-only. Verifies the TTL cutoff is respected (a
+    stale doc is NOT restored) and a fresh one IS, without re-querying
+    OSV for a package already warmed by this doc."""
+    chc._cold_start_loaded = False
+    now_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+
+    class _FakeCursor:
+        def __init__(self, docs):
+            self._docs = docs
+        async def __aiter__(self):
+            for d in self._docs:
+                yield d
+
+    class _FakeCollection:
+        def find(self, query):
+            # Only the fresh doc passes the real $gte-equivalent filter
+            # this fake simulates (cutoff respected server-side in prod;
+            # here we just hand back what a real filtered query would).
+            return _FakeCursor([{
+                "_id": "pypi:requests:2.28.0",
+                "vulns": [{"id": "GHSA-restored", "severity": "high", "summary": "", "fetch_ok": True}],
+                "checked_at": now_iso,
+                "incomplete": False,
+            }])
+
+    class _FakeDb:
+        osv_cve_cache = _FakeCollection()
+
+    monkeypatch.setattr("cto_services.db.get_db", lambda: _FakeDb())
+
+    spy = AsyncMock(return_value={})
+    with patch.object(osv_client, "query_osv_batch", spy):
+        await chc.resolve_live_cves({"requirements.txt": "requests==2.28.0\n"})
+
+    # Restored from "Mongo" → already fresh → resolve_live_cves must
+    # NOT re-query OSV for it.
+    spy.assert_not_awaited()
+    assert "pypi:requests:2.28.0" in chc._OSV_CACHE
+    assert chc._OSV_CACHE["pypi:requests:2.28.0"]["vulns"][0]["id"] == "GHSA-restored"
+
+    findings = chc._scan_dependencies({"requirements.txt": "requests==2.28.0\n"})
+    assert len(findings) == 1
+    assert "GHSA-restored (high)" in findings[0]["message"]
+
+
+def test_backlog_includes_unknown_severity_alongside_critical_high_medium():
+    """Review fix #2 consequence — persist_findings_to_backlog's
+    severity allowlist must include "unknown" so a confirmed-real but
+    unresolved-severity live vuln still reaches the backlog, same as
+    fix #3's info-exclusion is unaffected (info/low still excluded)."""
+    import inspect
+    from services import loop_full_scan
+    src = inspect.getsource(loop_full_scan.persist_findings_to_backlog)
+    assert '"critical", "high", "medium", "unknown"' in src

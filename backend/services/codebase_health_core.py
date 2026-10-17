@@ -15,6 +15,7 @@ the correct direction.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -301,6 +302,16 @@ _CVE_DB: dict[str, list[tuple[str, str, str]]] = {
 # pattern.
 _OSV_CACHE: dict[str, dict] = {}
 _OSV_CACHE_TTL_S = 24 * 60 * 60  # 24h — matches the ticket's cache design
+OSV_TOTAL_TIMEOUT_S = 15.0  # review fix #1 — hard overall deadline for the
+# ENTIRE resolve_live_cves call (Mongo cold-start read + OSV querybatch +
+# bounded detail fan-out), not just the OSV leg. routers/codebase_health.py
+# already had a real Cloudflare 520 incident; a hung third party must never
+# make the scan endpoint hang with it — on timeout we log and fall back to
+# the static map exactly like any other failure (same existing contract).
+_cold_start_loaded = False  # set True after the first Mongo cache restore
+# attempt per process (success OR failure) — review fix (b): read the
+# persisted cache back on cold start instead of writing to Mongo and never
+# reading it. Guarded so a restart only probes Mongo once, not on every scan.
 
 
 def _extract_declared_packages(
@@ -368,10 +379,33 @@ def _extract_declared_packages(
 
 
 async def resolve_live_cves(text_cache: dict[str, str]) -> None:
-    """Async pre-warm step. Call this BEFORE `_scan_dependencies` from
-    any already-async call site (the router's /scan endpoint and
-    onboarding's auto-scan — NOT `_guardian_rescan`'s per-file verify,
-    which must stay fast/network-free per the ticket).
+    """Public entry point — wraps `_resolve_live_cves_inner` with a hard
+    15s total time budget (review fix #1). On timeout OR any other
+    failure (network error, 5xx, breaker-open) this logs and returns —
+    it NEVER raises, and the cache is simply left as it was, so
+    `_scan_dependencies` falls back to the static `_CVE_DB` for every
+    package that was never successfully warmed. The scan result is
+    never worse than it was before this ticket, and the caller
+    (the /scan endpoint, onboarding's auto-scan) is never blocked
+    beyond `OSV_TOTAL_TIMEOUT_S` regardless of what OSV or Mongo does.
+    """
+    try:
+        await asyncio.wait_for(_resolve_live_cves_inner(text_cache), timeout=OSV_TOTAL_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[osv] resolve_live_cves exceeded the %.0fs total time budget — "
+            "static map stays authoritative for this scan", OSV_TOTAL_TIMEOUT_S,
+        )
+    except Exception as e:
+        logger.warning("[osv] live CVE lookup failed, static map stays authoritative: %s", e)
+
+
+async def _resolve_live_cves_inner(text_cache: dict[str, str]) -> None:
+    """Call this BEFORE `_scan_dependencies` from any already-async call
+    site (the router's /scan endpoint and onboarding's auto-scan — NOT
+    `_guardian_rescan`'s per-file verify, which must stay fast/network-
+    free per the ticket). Never called directly by scan callers — see
+    `resolve_live_cves` above for the timeout/error boundary.
 
     Only queries OSV for `exact_pin` entries (requirements.txt `==`
     pins, and every package.json entry since npm ranges are checked at
@@ -381,12 +415,12 @@ async def resolve_live_cves(text_cache: dict[str, str]) -> None:
     still gets the static `_CVE_DB` fallback check inside
     `_scan_dependencies`, exactly as before this ticket.
 
-    Never raises — a total OSV outage (timeout/5xx/breaker-open) is
-    caught and logged; the cache is simply left as it was, so
-    `_scan_dependencies` falls back to the static map for every
-    package that was never successfully warmed. The scan result is
-    never worse than it was before this ticket.
+    A cache entry marked `incomplete` (review fix #2 — at least one of
+    its vulns had a failed/capped detail fetch) is re-queried here
+    regardless of its TTL age, so the missing severity gets retried on
+    the very next scan rather than being stuck for 24h.
     """
+    await _load_cache_from_mongo_once()
     resolved, _unresolved = _extract_declared_packages(text_cache)
     now = time.time()
     to_query: list[tuple[str, str, str]] = []
@@ -399,7 +433,8 @@ async def resolve_live_cves(text_cache: dict[str, str]) -> None:
             continue
         seen.add(key)
         cached = _OSV_CACHE.get(key)
-        if cached is not None and (now - cached["checked_at"]) < _OSV_CACHE_TTL_S:
+        if (cached is not None and not cached.get("incomplete")
+                and (now - cached["checked_at"]) < _OSV_CACHE_TTL_S):
             continue
         to_query.append((item["ecosystem"], item["pkg"], item["ver"]))
     if not to_query:
@@ -409,15 +444,47 @@ async def resolve_live_cves(text_cache: dict[str, str]) -> None:
                                       # dependency cycle risk; this module is
                                       # imported very early (router boundary
                                       # fix, see file docstring).
-    try:
-        results = await osv_client.query_osv_batch(to_query)
-    except Exception as e:
-        logger.warning("[osv] live CVE lookup failed, static map stays authoritative: %s", e)
-        return
+    results = await osv_client.query_osv_batch(to_query)  # may raise
+    # ExternalCallError — caught by the outer resolve_live_cves's wait_for
+    # boundary along with asyncio.TimeoutError, both treated identically.
 
     for key, vulns in results.items():
-        _OSV_CACHE[key] = {"vulns": vulns, "checked_at": now}
+        incomplete = any(v.get("fetch_ok") is False for v in vulns)
+        _OSV_CACHE[key] = {"vulns": vulns, "checked_at": now, "incomplete": incomplete}
     await _persist_cache(results, now)
+
+
+async def _load_cache_from_mongo_once() -> None:
+    """Restore the in-process OSV cache from Mongo on the first call per
+    process (review fix (b)) — otherwise `_persist_cache`'s write is
+    write-only and every fresh worker/restart re-hits OSV for packages
+    a sibling process (or this one, pre-restart) already checked
+    minutes ago. Runs at most once per process; best-effort, same
+    non-fatal failure contract as `_persist_cache` — a Mongo read
+    failure here must not block the live lookup, it just means this
+    process starts with a cold cache, identical to today's behaviour.
+    Respects the existing TTL (only restores entries still fresh) and
+    the existing upsert-by-`_id` design — no new index, this is a
+    cold-start-only read, not a hot path."""
+    global _cold_start_loaded
+    if _cold_start_loaded:
+        return
+    _cold_start_loaded = True  # set first — never retry-storm Mongo on repeated failures
+    try:
+        from cto_services.db import get_db
+        db = get_db()
+        now = time.time()
+        cutoff_iso = datetime.fromtimestamp(now - _OSV_CACHE_TTL_S, tz=timezone.utc).isoformat()
+        cursor = db.osv_cve_cache.find({"checked_at": {"$gte": cutoff_iso}})
+        async for doc in cursor:
+            checked_dt = datetime.fromisoformat(doc["checked_at"])
+            _OSV_CACHE[doc["_id"]] = {
+                "vulns": doc.get("vulns") or [],
+                "checked_at": checked_dt.timestamp(),
+                "incomplete": bool(doc.get("incomplete")),
+            }
+    except Exception as e:
+        logger.warning("[osv] cold-start cache restore failed (non-fatal, starting cold): %s", e)
 
 
 async def _persist_cache(results: dict[str, list[dict]], checked_at: float) -> None:
@@ -433,11 +500,13 @@ async def _persist_cache(results: dict[str, list[dict]], checked_at: float) -> N
         checked_iso = datetime.fromtimestamp(checked_at, tz=timezone.utc).isoformat()
         for key, vulns in results.items():
             eco, pkg, ver = key.split(":", 2)
+            incomplete = any(v.get("fetch_ok") is False for v in vulns)
             await db.osv_cve_cache.update_one(
                 {"_id": key},
                 {"$set": {
                     "ecosystem": eco, "package": pkg, "version": ver,
                     "vulns": vulns, "checked_at": checked_iso,
+                    "incomplete": incomplete,
                 }},
                 upsert=True,
             )
@@ -445,7 +514,7 @@ async def _persist_cache(results: dict[str, list[dict]], checked_at: float) -> N
         logger.warning("[osv] cache persist failed (non-fatal, scan unaffected): %s", e)
 
 
-_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_SEV_RANK = {"critical": 0, "high": 1, "unknown": 2, "medium": 3, "low": 4, "info": 5}
 _MAX_VULNS_PER_FINDING = 5
 
 
@@ -460,11 +529,16 @@ def _scan_dependencies(text_cache: dict[str, str]) -> list[dict]:
         path, line, pkg, ver = item["path"], item["line"], item["pkg"], item["ver"]
         key = f"{item['ecosystem'].lower()}:{pkg}:{ver}"
         cached = _OSV_CACHE.get(key)
-        if cached is not None and (time.time() - cached["checked_at"]) < _OSV_CACHE_TTL_S:
-            # Live result is authoritative once fresh — including an
-            # empty list, a real "OSV checked this and found nothing"
-            # result, which intentionally does NOT fall through to the
-            # static map (see resolve_live_cves docstring).
+        age_ok = cached is not None and (time.time() - cached["checked_at"]) < _OSV_CACHE_TTL_S
+        if cached is not None and (age_ok or cached.get("incomplete")):
+            # Live result is authoritative whenever we have one at all —
+            # either still fresh, OR "incomplete" (review fix #2: real
+            # OSV ids exist for this package, a few just have no
+            # severity yet because a detail fetch failed/was capped;
+            # `resolve_live_cves` retries those regardless of TTL age
+            # on the next scan). An authoritative empty list ("OSV
+            # checked this and found nothing") intentionally does NOT
+            # fall through to the static map either way.
             if cached["vulns"]:
                 out.append(_dep_osv_finding(path, line, pkg, ver, cached["vulns"], item["range_note"]))
             continue
@@ -493,12 +567,28 @@ def _dep_unresolved_finding(path: str, line: int, pkg: str) -> dict:
     }
 
 
+def _dep_sev_label(raw: Optional[str]) -> str:
+    """Per-vulnerability severity label for live OSV results. Unlike
+    `_norm_sev` (used everywhere else in this file and defaults
+    unrecognized input to "medium"), a missing/unresolved severity here
+    must render as "unknown" rather than be silently promoted to
+    "medium" — review fix #2. `None` (fetch failed/capped, will be
+    retried next scan) and the literal string "unknown" (OSV reached
+    successfully, genuinely has no severity data, e.g. real advisory
+    PYSEC-2023-74) both render identically to the user; only the
+    cache's `incomplete` flag (see `_resolve_live_cves_inner`)
+    distinguishes them internally for retry purposes."""
+    if raw and raw.lower() in {"critical", "high", "medium", "low"}:
+        return raw.lower()
+    return "unknown"
+
+
 def _dep_osv_finding(path: str, line: int, pkg: str, ver: str,
                       vulns: list[dict], range_note: Optional[str]) -> dict:
-    ranked = sorted(vulns, key=lambda v: _SEV_RANK.get(_norm_sev(v.get("severity")), 2))
+    ranked = sorted(vulns, key=lambda v: _SEV_RANK.get(_dep_sev_label(v.get("severity")), 2))
     top = ranked[:_MAX_VULNS_PER_FINDING]
-    worst_sev = _norm_sev(top[0].get("severity")) if top else "medium"
-    ids = ", ".join(v["id"] for v in top)
+    worst_sev = _dep_sev_label(top[0].get("severity")) if top else "unknown"
+    ids = ", ".join(f"{v['id']} ({_dep_sev_label(v.get('severity'))})" for v in top)
     more = f" (+{len(ranked) - _MAX_VULNS_PER_FINDING} more)" if len(ranked) > _MAX_VULNS_PER_FINDING else ""
     note = f" [{range_note}]" if range_note else ""
     return {
@@ -509,7 +599,7 @@ def _dep_osv_finding(path: str, line: int, pkg: str, ver: str,
         "title":      f"vulnerable: {pkg}=={ver} ({len(ranked)} known vuln"
                        f"{'s' if len(ranked) != 1 else ''})",
         "message":    f"{pkg}=={ver}{note} → {ids}{more} — upgrade required.",
-        "fix_hint":   f"Bump `{pkg}` past the versions fixed in {ids.split(',')[0].strip()}"
+        "fix_hint":   f"Bump `{pkg}` past the version fixed in {top[0]['id']}"
                        + (" and the other CVEs listed above." if len(top) > 1 else "."),
         "fix_tokens": 5,
     }
@@ -615,7 +705,17 @@ def _norm_sev(sev: str) -> str:
     return s.lower() if s in {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"} else "medium"
 
 
-SEV_WEIGHTS = {"critical": 25, "high": 8, "medium": 3, "low": 1, "info": 0}
+SEV_WEIGHTS = {
+    "critical": 25, "high": 8,
+    # Review fix #2 — a live OSV vuln with unresolved severity is a
+    # REAL, confirmed vulnerability (a real CVE/GHSA id), just one
+    # whose severity isn't known yet. It must score as a genuine risk,
+    # not vanish like an "info" note (weight 0) — weighted between
+    # high and medium until severity resolves (next scan, once the
+    # retried detail fetch succeeds or OSV itself confirms "no data").
+    "unknown": 5,
+    "medium": 3, "low": 1, "info": 0,
+}
 
 
 def _score_for_findings(findings: list[dict]) -> int:
