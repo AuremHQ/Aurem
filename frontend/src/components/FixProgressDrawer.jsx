@@ -24,6 +24,7 @@ import {
   ChevronDown, ChevronUp, CheckCircle2, AlertCircle,
 } from "lucide-react";
 import { useFixJob } from "./FixJobContext";
+import { FixProofPanel } from "./FixProofPanel";
 
 const PHASE_META = {
   queued:           { Icon: FileSearch,  color: "#94a3b8", label: "Queued" },
@@ -356,6 +357,7 @@ function FinalSummaryCard({ terminal, completed, failed, total, durationStr, job
         marginTop: 8, fontSize: 10, color: "#64748b",
         fontFamily: "'JetBrains Mono', monospace",
       }}>job <code>{jobId?.slice(0, 12)}</code></div>
+      <FixProofPanel jobId={jobId} />
     </div>
   );
 }
@@ -472,6 +474,13 @@ export default function FixProgressDrawer() {
           }
           .anim-spin { animation: spin 1s linear infinite; }
           @keyframes spin { to { transform: rotate(360deg); } }
+          /* Ticket D-UI (2026-02) — before/after images side-by-side
+             on wider widths, stacked on narrow/mobile (375px target). */
+          .fix-proof-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+          @media (max-width: 480px) {
+            .fix-proof-grid { flex-direction: column; }
+            .fix-proof-grid figure { width: 100%; flex-basis: auto; }
+          }
         `}</style>
 
         <header style={{

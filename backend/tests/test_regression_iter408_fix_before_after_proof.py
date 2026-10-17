@@ -116,3 +116,158 @@ class _FakeDbNoProof:
         @staticmethod
         async def find_one(*a, **kw):
             return None
+
+
+# ── Ticket D-UI (2026-02) — mobile viewport + honest always-write +
+#    /meta endpoint ───────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_live_capture_uses_real_mobile_375_viewport():
+    """Real call, no mocking — proves `viewport='mobile_375'` actually
+    launches a real mobile-width context (not a resized desktop shot)."""
+    from services.deploy_verify import DEVICE_VIEWPORTS
+    r = await dv.capture_single_screenshot("https://example.com", viewport="mobile_375")
+    assert r["ok"] is True
+    assert len(r["screenshot"]) > 500
+    # A real 375px-wide capture must differ in byte size from the
+    # desktop capture of the same page (different viewport -> different
+    # rendered image), confirming the viewport kwarg is actually wired
+    # through to new_context(), not silently ignored.
+    r_desktop = await dv.capture_single_screenshot("https://example.com", viewport="desktop")
+    assert DEVICE_VIEWPORTS["mobile_375"]["width"] != DEVICE_VIEWPORTS["desktop"]["width"]
+    assert r["screenshot"] != r_desktop["screenshot"]
+
+
+def test_capture_single_screenshot_viewport_defaults_to_desktop():
+    import inspect as _inspect
+    sig = _inspect.signature(dv.capture_single_screenshot)
+    assert sig.parameters["viewport"].default == "desktop"
+
+
+def test_run_bulk_job_captures_both_devices_independently():
+    from routers import fix_pipeline
+    src = inspect.getsource(fix_pipeline._run_bulk_job)
+    assert '"desktop"' in src and '"mobile"' in src
+    assert "mobile_375" in src
+    # Honest-always-write contract: once attempted, a row is written
+    # even on total failure (the "crashed" flag below proves this).
+    assert "proof_attempted" in src
+    assert '"crashed": True' in src
+
+
+@pytest.mark.asyncio
+async def test_proof_meta_endpoint_never_attempted_state():
+    from unittest.mock import AsyncMock, patch
+    from routers.fix_pipeline import get_fix_before_after_proof_meta
+
+    with patch("routers.fix_pipeline._gate",
+               AsyncMock(return_value=({"user_id": "u1"}, {"user_id": "u1"}))), \
+         patch("routers.fix_pipeline.get_db", lambda: _FakeDbNoProof()):
+        resp = await get_fix_before_after_proof_meta("job_x", authorization="Bearer x")
+    assert resp == {"ok": True, "attempted": False}
+
+
+@pytest.mark.asyncio
+async def test_proof_meta_endpoint_could_not_verify_state():
+    from unittest.mock import AsyncMock, patch
+    from routers.fix_pipeline import get_fix_before_after_proof_meta
+
+    class _FakeDbFailed:
+        class fix_before_after_proof:
+            @staticmethod
+            async def find_one(*a, **kw):
+                return {
+                    "job_id": "job_x", "user_id": "u1", "attempted": True,
+                    "devices": {
+                        "desktop": {"before_ok": False, "before_fail_reason": "blocked_ssrf",
+                                    "after_ok": False},
+                        "mobile": {"before_ok": False, "before_fail_reason": "blocked_ssrf",
+                                   "after_ok": False},
+                    },
+                }
+    with patch("routers.fix_pipeline._gate",
+               AsyncMock(return_value=({"user_id": "u1"}, {"user_id": "u1"}))), \
+         patch("routers.fix_pipeline.get_db", lambda: _FakeDbFailed()):
+        resp = await get_fix_before_after_proof_meta("job_x", authorization="Bearer x")
+    assert resp["attempted"] is True
+    assert resp["devices"]["desktop"]["before_ok"] is False
+    assert resp["devices"]["desktop"]["before_fail_reason"] == "blocked_ssrf"
+    assert resp["devices"]["desktop"]["has_images"] is False
+
+
+@pytest.mark.asyncio
+async def test_proof_meta_endpoint_success_state_both_devices():
+    from unittest.mock import AsyncMock, patch
+    from routers.fix_pipeline import get_fix_before_after_proof_meta
+
+    class _FakeDbSuccess:
+        class fix_before_after_proof:
+            @staticmethod
+            async def find_one(*a, **kw):
+                return {
+                    "job_id": "job_x", "user_id": "u1", "attempted": True,
+                    "devices": {
+                        "desktop": {"before_ok": True, "after_ok": True, "changed": True,
+                                    "diff_percent": 12.5, "before_key": "k1", "after_key": "k2"},
+                        "mobile": {"before_ok": True, "after_ok": True, "changed": False,
+                                   "diff_percent": 0.0, "before_key": "k3", "after_key": "k4"},
+                    },
+                }
+    with patch("routers.fix_pipeline._gate",
+               AsyncMock(return_value=({"user_id": "u1"}, {"user_id": "u1"}))), \
+         patch("routers.fix_pipeline.get_db", lambda: _FakeDbSuccess()):
+        resp = await get_fix_before_after_proof_meta("job_x", authorization="Bearer x")
+    assert resp["devices"]["desktop"]["has_images"] is True
+    assert resp["devices"]["desktop"]["diff_percent"] == 12.5
+    assert resp["devices"]["mobile"]["has_images"] is True
+
+
+@pytest.mark.asyncio
+async def test_proof_endpoint_respects_device_param():
+    from unittest.mock import AsyncMock, patch
+    from routers.fix_pipeline import get_fix_before_after_proof
+
+    class _FakeDbDevice:
+        class fix_before_after_proof:
+            @staticmethod
+            async def find_one(*a, **kw):
+                return {
+                    "job_id": "job_x", "user_id": "u1",
+                    "devices": {
+                        "desktop": {"before_key": "desk_before"},
+                        "mobile": {"before_key": "mob_before"},
+                    },
+                }
+    captured_key = {}
+
+    async def _fake_fetch_receipt(key):
+        captured_key["k"] = key
+        return b"fakejpeg"
+
+    with patch("routers.fix_pipeline._gate",
+               AsyncMock(return_value=({"user_id": "u1"}, {"user_id": "u1"}))), \
+         patch("routers.fix_pipeline.get_db", lambda: _FakeDbDevice()), \
+         patch("services.preview_capture.fetch_receipt", _fake_fetch_receipt):
+        await get_fix_before_after_proof("job_x", variant="before", device="mobile",
+                                          authorization="Bearer x")
+    assert captured_key["k"] == "mob_before"
+
+
+@pytest.mark.asyncio
+async def test_proof_meta_endpoint_owner_isolation():
+    """A different user's job_id must come back as 'never attempted',
+    not leak the real attempted/device state."""
+    from unittest.mock import AsyncMock, patch
+    from routers.fix_pipeline import get_fix_before_after_proof_meta
+
+    class _FakeDbOtherOwner:
+        class fix_before_after_proof:
+            @staticmethod
+            async def find_one(*a, **kw):
+                return {"job_id": "job_x", "user_id": "victim", "attempted": True,
+                        "devices": {"desktop": {"before_ok": True}}}
+    with patch("routers.fix_pipeline._gate",
+               AsyncMock(return_value=({"user_id": "attacker", "is_admin": False},
+                                        {"user_id": "attacker"}))), \
+         patch("routers.fix_pipeline.get_db", lambda: _FakeDbOtherOwner()):
+        resp = await get_fix_before_after_proof_meta("job_x", authorization="Bearer x")
+    assert resp == {"ok": True, "attempted": False}

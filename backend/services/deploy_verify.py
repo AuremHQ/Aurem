@@ -524,7 +524,8 @@ async def _run_verify_inner(
 
 # ═════════ Ticket D (2026-02) — per-fix before/after proof ═════════
 async def capture_single_screenshot(url: str, *, db=None, user_id: str = "",
-                                     project_id: str = "") -> dict:
+                                     project_id: str = "",
+                                     viewport: str = "desktop") -> dict:
     """A single fenced screenshot capture — the before/after primitive
     for Ticket D. Deliberately NOT `run_verify` (that runs ~7 checks
     and is tuned for a POST-deploy verify, not a lightweight twice-
@@ -533,6 +534,11 @@ async def capture_single_screenshot(url: str, *, db=None, user_id: str = "",
     the same `--no-sandbox`-free launch args + stale-executable-path
     retry, a fresh BrowserContext with downloads off, and the same
     `_audit_log` trail.
+
+    `viewport` — Ticket D-UI (2026-02): one of `DEVICE_VIEWPORTS`
+    ("desktop" default, or "mobile_375" — the SAME viewport the rest
+    of this file already uses for its mobile check). Lets the caller
+    request a real mobile capture instead of a resized desktop shot.
 
     Returns {ok, verdict: pass|fail|degraded, screenshot: bytes|None,
     fail_reason, what_happened} — never raises; a failure/degrade is
@@ -581,7 +587,8 @@ async def capture_single_screenshot(url: str, *, db=None, user_id: str = "",
                         raise
                 try:
                     context = await browser.new_context(
-                        viewport=DEVICE_VIEWPORTS["desktop"], accept_downloads=False,
+                        viewport=DEVICE_VIEWPORTS.get(viewport, DEVICE_VIEWPORTS["desktop"]),
+                        accept_downloads=False,
                     )
                     page = await context.new_page()
 
