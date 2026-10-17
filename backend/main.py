@@ -1062,6 +1062,19 @@ async def lifespan(app: FastAPI):
             logger.warning("Trust & Verification indexes failed: %r", e)
     _asyncio.create_task(_ensure_trust_verification_indexes())
 
+    # Ticket E (2026-02) — per-project health-trend snapshot index.
+    async def _ensure_project_health_trend_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(34)
+            from services.project_health_trend import ensure_indexes as _pht_idx
+            await _pht_idx(app.state.db)
+            logger.info("📚 project_health_snapshots index ensured")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("project_health_snapshots index failed: %r", e)
+    _asyncio.create_task(_ensure_project_health_trend_indexes())
+
     # Iter 272 — held-out verification + outcomes indexes.
     async def _ensure_iter272_indexes():
         try:

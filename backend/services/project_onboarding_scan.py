@@ -47,7 +47,7 @@ async def run_onboarding_scan(
         # themselves owned by routers/security_scan.py pending a larger,
         # separately-scoped extraction (tracked, not silently patched).
         from services.repo_text_cache import build_text_cache as _build_text_cache
-        from services.codebase_health_core import SCANNERS, resolve_live_cves
+        from services.codebase_health_core import SCANNERS, resolve_live_cves, _score_for_findings
         text_cache = await _build_text_cache(github_owner, github_repo, github_token)
         if not text_cache:
             return
@@ -72,6 +72,18 @@ async def run_onboarding_scan(
         written = await persist_findings_to_backlog(
             db, user_id=user_id, project_id=project_id,
             findings=all_findings, scan_source=ONBOARDING_SCAN_SOURCE,
+        )
+        # Ticket E (2026-02) — per-project health-trend snapshot. The
+        # onboarding scan never computed an overall score before this
+        # (it only ever wrote critical/high findings to the backlog);
+        # reusing the SAME _score_for_findings every other scan path
+        # uses, not a new formula.
+        from services.project_health_trend import record_health_snapshot
+        onboarding_score = _score_for_findings(all_findings)
+        await record_health_snapshot(
+            db, project_id=project_id, user_id=user_id,
+            score=onboarding_score, findings=all_findings,
+            source="onboarding_scan",
         )
         logger.info(
             "[onboarding-scan] project=%s scanned %d files, wrote %d "

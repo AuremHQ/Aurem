@@ -132,6 +132,14 @@ async def _scan_one_project(db, project: dict) -> dict:
         result["findings_count"] = written
         result["score"] = _score_for_findings(all_findings)
 
+        # Ticket E (2026-02) — per-project health-trend snapshot.
+        from services.project_health_trend import record_health_snapshot
+        await record_health_snapshot(
+            db, project_id=project_id, user_id=user_id,
+            score=result["score"], findings=all_findings,
+            source="scheduled_auto_scan",
+        )
+
         # Email — honest result only. Resend being down/misconfigured
         # must show up as email_sent=False + the real error, never a
         # faked "sent".

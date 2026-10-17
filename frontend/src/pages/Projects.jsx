@@ -25,6 +25,9 @@ import FounderOfferPill from "../components/FounderOfferPill";
 import ConfirmModal from "../components/ConfirmModal";
 import RollbackConfirmModal from "../components/RollbackConfirmModal";
 import ArchitectBlueprintPanel from "../components/ArchitectBlueprintPanel";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
 
 export default function Projects() {
   return (
@@ -1311,6 +1314,62 @@ function AddDialog({ onClose, onAdded, projects = [] }) {
 }
 
 
+// ───────────────────────────────────────────────────────────────────
+// Ticket E (2026-02) — per-project health-score trend. Separate from
+// AUREM's own platform health score (services/health_score.py) — this
+// reads GET /codebase-health/trend, one point per real scan of THIS
+// project (manual + scheduled auto-scan + onboarding scan), newest 90.
+// ───────────────────────────────────────────────────────────────────
+function HealthTrendSection({ projectId }) {
+  const [snapshots, setSnapshots] = useState(null); // null = loading
+  useEffect(() => {
+    let gone = false;
+    (async () => {
+      try {
+        const r = await api.get("/codebase-health/trend", { params: { project_id: projectId } });
+        if (!gone) setSnapshots(r.data?.snapshots || []);
+      } catch {
+        if (!gone) setSnapshots([]);
+      }
+    })();
+    return () => { gone = true; };
+  }, [projectId]);
+
+  const series = (snapshots || [])
+    .filter((s) => s.score !== null && s.score !== undefined)
+    .map((s) => ({
+      date: new Date(s.snapshot_at * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      score: s.score,
+    }));
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
+      <span className="label-mini">Health score trend</span>
+      {snapshots === null ? (
+        <div style={{ padding: 10, fontSize: 12, color: "var(--text-faint)" }}>
+          <Loader2 size={12} className="spin" /> Loading…
+        </div>
+      ) : series.length < 2 ? (
+        <div data-testid="proj-health-trend-empty" style={{ padding: 10, fontSize: 12, color: "var(--text-faint)" }}>
+          No history yet.
+        </div>
+      ) : (
+        <div data-testid="proj-health-trend-chart">
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={series} margin={{ top: 4, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="date" stroke="var(--text-faint)" fontSize={10} />
+              <YAxis stroke="var(--text-faint)" fontSize={10} domain={[0, 100]} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 6 }} />
+              <Line type="monotone" dataKey="score" stroke="#6ee7b7" strokeWidth={2} dot={{ r: 2 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditDialog({ project, onClose, onSaved }) {
   const [f, setF] = useState({ github_token: "", branch: project.branch || "main", tech_stack: project.tech_stack || "", preview_url: project.preview_url || "", auto_scan_frequency: project.auto_scan_frequency || "off" });
   const [busy, setBusy] = useState(false);
@@ -1380,6 +1439,7 @@ function EditDialog({ project, onClose, onSaved }) {
             Scans this repo automatically and emails you a results digest. Off by default.
           </span>
         </label>
+        <HealthTrendSection projectId={project.project_id} />
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
           <button type="submit" data-testid="proj-edit-save" className="btn-primary" disabled={busy}>

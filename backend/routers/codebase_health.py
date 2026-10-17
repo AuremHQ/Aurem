@@ -399,6 +399,16 @@ async def scan(
             # message below can point back at THIS exact document
             # instead of only carrying aggregate prose.
             scan_record_id = str(_ins.inserted_id)
+            # Ticket E (2026-02) — per-project health-trend snapshot.
+            # Same len(text_cache) > 0 guard as the scan record above:
+            # never snapshot a zero-file "scan". Best-effort — see
+            # record_health_snapshot's own docstring.
+            from services.project_health_trend import record_health_snapshot
+            await record_health_snapshot(
+                db, project_id=project_id, user_id=user_id,
+                score=overall_score, findings=all_findings,
+                source="manual_scan",
+            )
     except Exception as e:
         logger.debug("codebase_health_scans persist failed: %r", e)
     # Iter 212m-129 — Learning hook: persist a per-rule histogram of
@@ -617,6 +627,35 @@ async def last_scan(
         "created_at":    doc.get("created_at"),
         "workcard_enabled": workcard_enabled,
     }
+
+
+@router.get("/trend")
+async def health_trend(
+    project_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Ticket E (2026-02) — per-project health-score trend, newest
+    90 snapshots across every scan source (manual/scheduled/onboarding).
+    Same (user_id, project_id) isolation as every other read in this
+    router — scoped twice: once via effective_account_id below, and
+    again inside get_project_health_trend's own query filter."""
+    if not project_id:
+        raise HTTPException(400, "project_id required")
+    user = await current_dev(authorization)
+    ctx = await check_permission(user, "projects", "read", db=get_db())
+    user_id = ctx["effective_account_id"]
+    db = get_db()
+    if db is None:
+        return {"ok": True, "snapshots": []}
+    from services.project_health_trend import get_project_health_trend
+    try:
+        snapshots = await get_project_health_trend(
+            db, project_id=project_id, user_id=user_id,
+        )
+    except Exception as e:
+        logger.debug("project_health_snapshots read failed: %r", e)
+        return {"ok": True, "snapshots": []}
+    return {"ok": True, "snapshots": snapshots}
 
 
 # ──────────────────────────────────────────────────────────────────────
