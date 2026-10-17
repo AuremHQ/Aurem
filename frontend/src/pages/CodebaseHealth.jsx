@@ -143,6 +143,93 @@ export function DownloadPdfButton({ projectId }) {
   );
 }
 
+// Ticket A-UI (2026-02) — one-time "Turn on weekly auto-scan?" prompt,
+// shown after a project's FIRST scan completes. Default Off. Checks
+// Resend health at runtime via GET /cto/email-delivery-status and
+// never claims emails will be sent when they genuinely won't.
+export function AutoScanPrompt({ projectId, isFirstScan, initialDismissed, initialFrequency }) {
+  const [dismissed, setDismissed] = useState(!!initialDismissed);
+  const [freq, setFreq] = useState(initialFrequency || "off");
+  const [busy, setBusy] = useState(false);
+  const [emailHealthy, setEmailHealthy] = useState(null); // null = loading
+
+  useEffect(() => {
+    if (!isFirstScan || dismissed) return;
+    let gone = false;
+    (async () => {
+      try {
+        const r = await api.get("/cto/email-delivery-status");
+        if (!gone) setEmailHealthy(!!r?.data?.healthy);
+      } catch {
+        if (!gone) setEmailHealthy(false);
+      }
+    })();
+    return () => { gone = true; };
+  }, [isFirstScan, dismissed]);
+
+  if (!isFirstScan || dismissed) return null;
+
+  async function save(nextFreq) {
+    setBusy(true);
+    try {
+      const body = { auto_scan_prompt_dismissed: true };
+      if (nextFreq !== undefined) body.auto_scan_frequency = nextFreq;
+      await api.patch(`/cto/projects/${projectId}`, body);
+      setDismissed(true);
+    } catch {
+      // honest no-op on failure — prompt stays open so the user can retry
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div data-testid="auto-scan-prompt" role="dialog" aria-label="Turn on weekly auto-scan?"
+         style={{
+           marginBottom: 18, padding: 16, borderRadius: 10,
+           background: "rgba(125,211,252,0.05)", border: "1px solid rgba(125,211,252,0.25)",
+         }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
+        Turn on weekly auto-scan?
+      </div>
+      <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 10px" }}>
+        AUREM can re-scan this project on a schedule so you don&apos;t have to remember to.
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div role="radiogroup" aria-label="Auto-scan frequency" style={{ display: "flex", gap: 10 }}>
+          {["off", "weekly", "monthly"].map((opt) => (
+            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#cbd5e1", cursor: "pointer" }}>
+              <input
+                type="radio"
+                name="auto-scan-freq-choice"
+                data-testid={`auto-scan-prompt-${opt}`}
+                checked={freq === opt}
+                onChange={() => setFreq(opt)}
+              />
+              {opt === "off" ? "Off" : opt === "weekly" ? "Weekly" : "Monthly"}
+            </label>
+          ))}
+        </div>
+        <button type="button" data-testid="auto-scan-prompt-save" className="btn-primary"
+                disabled={busy} onClick={() => save(freq)}
+                style={{ padding: "6px 14px", fontSize: 12 }}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button type="button" data-testid="auto-scan-prompt-dismiss" className="btn-ghost"
+                disabled={busy} onClick={() => save(undefined)}
+                style={{ padding: "6px 14px", fontSize: 12 }}>
+          Maybe later
+        </button>
+      </div>
+      {emailHealthy === false && (
+        <div data-testid="auto-scan-prompt-email-warning" role="status" style={{ marginTop: 10, fontSize: 11, color: "#fbbf24" }}>
+          Email delivery isn&apos;t configured yet — results will appear in-app only.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HealthBadge({ score, label, tone, breakdown }) {
   const palette = {
     critical: { bg: "linear-gradient(135deg, #4c0a0a 0%, #2a0606 100%)", border: "rgba(239,68,68,0.65)", glow: "rgba(239,68,68,0.45)", emoji: "☠️" },
@@ -820,6 +907,12 @@ function CodebaseHealthInner() {
         {data && !scanning && (
           <>
             <DownloadPdfButton projectId={projectId} />
+            <AutoScanPrompt
+              projectId={projectId}
+              isFirstScan={!!data.is_first_scan}
+              initialDismissed={data.auto_scan_prompt_dismissed}
+              initialFrequency={data.auto_scan_frequency}
+            />
             <HealthBadge score={data.score} label={data.label} tone={data.tone} breakdown={data.breakdown} />
             <p style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 22, lineHeight: 1.6 }}>
               Your codebase has <strong>{data.total}</strong> issues that could

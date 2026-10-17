@@ -162,6 +162,29 @@ async def simplify_file(
     if result.get("refused"):
         raise HTTPException(422, result)
     return result
+@router.get("/email-delivery-status")
+async def email_delivery_status(authorization: Optional[str] = Header(None)) -> dict:
+    """Ticket A-UI (2026-02) — runtime check the auto-scan prompt uses
+    before claiming email delivery will work. Reads the cached
+    integration_health snapshot (services/integration_health.py,
+    refreshed by the daily digest cron + the admin panel's manual
+    probes) rather than calling Resend live on every page load.
+    Conservative default: no cached snapshot yet -> NOT healthy (never
+    claim delivery works when we simply don't know)."""
+    await _pkg.current_dev(authorization)
+    db = _pkg.get_db()
+    healthy, reason = False, "Email delivery status is not yet known."
+    if db is not None:
+        try:
+            doc = await db.integration_health.find_one({"_id": "latest"}, {"_id": 0, "results": 1})
+            for r in (doc or {}).get("results", []):
+                if r.get("id") == "resend":
+                    healthy = r.get("status") == "ok"
+                    reason = None if healthy else (r.get("summary") or "Resend is not configured correctly.")
+                    break
+        except Exception as e:
+            logger.warning("[email-delivery-status] integration_health read failed: %r", e)
+    return {"ok": True, "healthy": healthy, "reason": reason}
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────
@@ -807,6 +830,7 @@ class UpdateProject(BaseModel):
     preview_url: Optional[str] = None
     installation_id: Optional[int] = None
     auto_scan_frequency: Optional[str] = None
+    auto_scan_prompt_dismissed: Optional[bool] = None
 
 
 _AUTO_SCAN_FREQUENCIES = frozenset({"off", "weekly", "monthly"})

@@ -157,7 +157,8 @@ async def scan(
     proj = await db.cto_projects.find_one(
         {"project_id": project_id, "user_id": user_id},
         {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,
-         "github_branch": 1, "auth_method": 1, "installation_id": 1, "user_id": 1},
+         "github_branch": 1, "auth_method": 1, "installation_id": 1, "user_id": 1,
+         "auto_scan_frequency": 1, "auto_scan_prompt_dismissed": 1},
     )
     if not proj:
         raise HTTPException(404, "Project not found")
@@ -376,11 +377,19 @@ async def scan(
     # the full scan cost on every page mount.  Best-effort: a Mongo
     # failure must NEVER block the user-visible scan response.
     scan_record_id: Optional[str] = None
+    is_first_scan = False
     try:
         # Iter 212m-177 — P1-5: a scan that read ZERO files scores 100
         # trivially and later contradicts real scans (PROD showed
         # 100-HEALTHY vs 0-CRITICAL for the same repo). Never persist it.
         if len(text_cache) > 0:
+            # Ticket A-UI (2026-02) — "first scan ever" check, computed
+            # BEFORE this scan's own insert so it isn't counted as a
+            # prior scan of itself. Drives the one-time "Turn on weekly
+            # auto-scan?" prompt on the frontend.
+            prior_scans = await db.codebase_health_scans.count_documents(
+                {"project_id": project_id})
+            is_first_scan = prior_scans == 0
             _ins = await db.codebase_health_scans.insert_one({
                 "user_id":       user_id,
                 "project_id":    project_id,
@@ -411,6 +420,9 @@ async def scan(
             )
     except Exception as e:
         logger.debug("codebase_health_scans persist failed: %r", e)
+    payload["is_first_scan"] = is_first_scan
+    payload["auto_scan_frequency"] = proj.get("auto_scan_frequency") or "off"
+    payload["auto_scan_prompt_dismissed"] = bool(proj.get("auto_scan_prompt_dismissed"))
     # Iter 212m-129 — Learning hook: persist a per-rule histogram of
     # this scan run so analytics can later answer "which rules trigger
     # most often for this user / project / across the platform".
