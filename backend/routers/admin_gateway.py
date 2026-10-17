@@ -13,14 +13,22 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from cto_services.auth import require_admin
+from cto_services.auth import require_admin, require_admin_dep
 import services.admin_gateway_keys as gw_keys
 from routers.oauth import list_ora_chat_oauth_clients, revoke_ora_chat_oauth_client
 
-router = APIRouter(prefix="/admin/gateway", tags=["Admin — ORA Chat MCP/Gateway"])
+# G21-FIX — router-level gate added as defense-in-depth (matches
+# routers/admin.py's own pattern); the existing inline `require_admin`
+# calls below are KEPT as-is, not removed — several of them (create_key,
+# regenerate) use the returned `user` dict for `user["user_id"]`, so
+# they can't just be deleted in favour of the bare dependency.
+router = APIRouter(
+    prefix="/admin/gateway", tags=["Admin — ORA Chat MCP/Gateway"],
+    dependencies=[Depends(require_admin_dep)],
+)
 
 
 class CreateKeyBody(BaseModel):
