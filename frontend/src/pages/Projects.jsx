@@ -265,6 +265,7 @@ function Body() {
                 </div>
               </div>
               {/* Iter 206 — per-row quick actions */}
+              <ProjectRowSparkline projectId={p.project_id} />
               <button
                 type="button"
                 data-testid={`proj-row-pat-${p.project_id}`}
@@ -1320,7 +1321,47 @@ function AddDialog({ onClose, onAdded, projects = [] }) {
 // reads GET /codebase-health/trend, one point per real scan of THIS
 // project (manual + scheduled auto-scan + onboarding scan), newest 90.
 // ───────────────────────────────────────────────────────────────────
-function HealthTrendSection({ projectId }) {
+// Ticket E-UI (2026-02) — tiny decorative sparkline on each project
+// row in the sidebar list. No fake data: renders nothing at all
+// (not a flat placeholder line) until there are >=2 real snapshots.
+function ProjectRowSparkline({ projectId }) {
+  const [points, setPoints] = useState(null); // null = loading/unknown
+  useEffect(() => {
+    let gone = false;
+    (async () => {
+      try {
+        const r = await api.get("/codebase-health/trend", { params: { project_id: projectId } });
+        const scores = (r.data?.snapshots || [])
+          .filter((s) => s.score !== null && s.score !== undefined)
+          .map((s) => s.score);
+        if (!gone) setPoints(scores);
+      } catch {
+        if (!gone) setPoints([]);
+      }
+    })();
+    return () => { gone = true; };
+  }, [projectId]);
+
+  if (!points || points.length < 2) return null;
+  const data = points.map((score, i) => ({ i, score }));
+  const latest = points[points.length - 1];
+  return (
+    <div
+      data-testid={`proj-row-sparkline-${projectId}`}
+      role="img"
+      aria-label={`Health score trend, latest score ${latest}`}
+      style={{ width: 46, height: 20, flexShrink: 0 }}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+          <Line type="monotone" dataKey="score" stroke="#6ee7b7" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function HealthTrendSection({ projectId, bordered = true }) {
   const [snapshots, setSnapshots] = useState(null); // null = loading
   useEffect(() => {
     let gone = false;
@@ -1343,7 +1384,7 @@ function HealthTrendSection({ projectId }) {
     }));
 
   return (
-    <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
+    <div style={bordered ? { borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 } : {}}>
       <span className="label-mini">Health score trend</span>
       {snapshots === null ? (
         <div style={{ padding: 10, fontSize: 12, color: "var(--text-faint)" }}>
@@ -1926,6 +1967,12 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
       {/* Iter 147 — Hosted deploy widget moved to the /deploy page so all
           deploy-related controls live in one window. To manage hosted
           deploys for this project, go to Sidebar → Deploy. */}
+
+      {/* Ticket E-UI (2026-02) — full health-score trend chart, now
+          also in the project detail view (not just inside Edit). */}
+      <div className="card" data-testid="proj-detail-health-trend">
+        <HealthTrendSection projectId={project.project_id} bordered={false} />
+      </div>
 
       {/* 2026-09-13 — Phase 4, Architect Agent "What I set up" panel.
           Read-only, sourced directly from `project_blueprints`. */}
