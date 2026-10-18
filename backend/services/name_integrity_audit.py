@@ -34,7 +34,7 @@ MAX_SCAN = 2000
 RAW_NAME_PREVIEW_LEN = 200
 
 
-def _ran_against() -> dict[str, str]:
+def ran_against_db() -> dict[str, str]:
     """Which DB this process is actually connected to — so a report
     run here can never be mistaken for a production result unless it
     genuinely was one."""
@@ -75,7 +75,7 @@ async def run_dry_run_audit(db) -> dict[str, Any]:
     return {
         "dry_run": True,
         "applied_any_change": False,
-        "ran_against": _ran_against(),
+        "ran_against": ran_against_db(),
         "scanned_count": len(candidates),
         "mismatched_count": len(mismatched),
         "users": mismatched,

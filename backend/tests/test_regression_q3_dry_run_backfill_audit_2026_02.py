@@ -48,6 +48,10 @@ async def test_dry_run_never_writes_anything():
         result = await run_dry_run_audit(db)
     assert result["dry_run"] is True
     assert result["applied_any_grant"] is False
+    # F1 defect 4 (2026-02) — must self-report which DB it ran
+    # against, so a result here is never mistaken for production.
+    assert "ran_against" in result
+    assert result["ran_against"]["db_name"]
     # Confirm no write-capable mongo method was ever invoked on the mock
     for attr_name in ("insert_one", "update_one", "delete_one", "find_one_and_update"):
         for coll in (db.dev_users, db.cto_projects, getattr(db, "cto_token_grants", MagicMock())):

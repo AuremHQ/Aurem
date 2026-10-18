@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from config.quota_limits import EXISTING_USER_TOPUP_USD
+from services.name_integrity_audit import ran_against_db
 from services.usage import get_usage
 
 # Safety cap — this is an admin report, not a hot-path query. Bounds
@@ -86,6 +87,7 @@ async def run_dry_run_audit(db) -> dict[str, Any]:
     return {
         "dry_run": True,
         "applied_any_grant": False,
+        "ran_against": ran_against_db(),
         "scanned_candidates": len(candidates),
         "matched_count": len(matches),
         "grouped_by_severity": grouped,
