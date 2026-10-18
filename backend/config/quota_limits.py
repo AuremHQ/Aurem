@@ -73,3 +73,12 @@ PER_USER_DAILY_SPEND_CAP_USD: float = 0.10
 # — Resend is currently broken/unverified, see Q1). Fires once per
 # UTC day when total real LLM spend across ALL users crosses this.
 PLATFORM_DAILY_SPEND_ALARM_USD: float = 5.00
+
+# ── Q3 (2026-02) — existing-user backfill, DRY-RUN ONLY ──────────────
+# Proposed one-time top-up for an existing free-tier user who is still
+# exhausted even under the NEW (post-Q1) $0.25 lifetime budget, has at
+# least one connected project, and is not dormant. This number is only
+# ever READ by the dry-run report — nothing in this codebase applies
+# it automatically. An admin reviews the dry-run list and grants it
+# manually (existing POST /admin/users/{id}/grant-tokens), per Q3.
+EXISTING_USER_TOPUP_USD: float = 0.25

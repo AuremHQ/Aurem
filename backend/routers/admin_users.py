@@ -611,6 +611,30 @@ async def grant_tokens(
     return {"ok": True, "granted": body.tokens, "usage": usage}
 
 
+@router.get("/quota/exhausted-users-dry-run")
+async def quota_exhausted_users_dry_run(authorization: Optional[str] = Header(None)):
+    """Q3 (2026-02) — DRY-RUN ONLY admin report.
+
+    Lists existing free-tier users who are still exhausted under the
+    new (post-Q1) $0.25 lifetime USD budget AND have at least one
+    connected project AND are not dormant. Performs ZERO writes —
+    does not call grant_tokens, does not touch dev_users. Review the
+    returned list and grant manually via the existing
+    POST /admin/users/{id}/grant-tokens if you choose to act.
+    """
+    admin = await _require_admin(authorization)
+    db = require_db()
+    from services.quota_backfill_audit import run_dry_run_audit
+    result = await run_dry_run_audit(db)
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="quota_backfill_dry_run_viewed", target="-", result="ok",
+        extra={"matched_count": result["matched_count"]},
+    )
+    return result
+
+
 class SuspendBody(BaseModel):
     suspend: bool
 
