@@ -87,7 +87,7 @@ async def test_usage_me_shape():
                     "used", "remaining", "pct_used", "is_exhausted"):
             assert key in body, f"missing {key}"
         assert body["tier"] == "free"
-        assert body["plan_limit"] == 1000          # free tier per PLAN_LIMITS
+        assert body["plan_limit"] == 250_000      # Q1 (2026-02) free tier — see config/quota_limits.py
         assert body["tokens_granted"] == 0
         assert body["is_exhausted"] is False
     finally:
@@ -119,11 +119,13 @@ async def test_submit_not_blocked_by_token_exhaustion_alone():
     try:
         # Burn the entire free token budget via a single fake "done" task
         # (well under the free tier's task-COUNT cap, so this exercises
-        # the token check in isolation).
+        # the token check in isolation). Q1 (2026-02) raised the free
+        # limit to 250_000 — burn amount scaled up to match (was 1500
+        # vs the old 1000 limit).
         fake_id = f"t_test_enforce_{uuid.uuid4().hex[:8]}"
         await db.cto_tasks.insert_one({
             "task_id": fake_id, "user_id": uid, "status": "done",
-            "tokens_used": 1500, "agent_used": "deepseek",
+            "tokens_used": 260_000, "agent_used": "deepseek",
             "created_at": time.time(),
         })
 
@@ -154,7 +156,7 @@ async def test_submit_not_blocked_by_token_exhaustion_alone():
             gr = await c.post(
                 f"{API}/admin/users/{uid}/grant-tokens",
                 headers=admin_h,
-                json={"tokens": 800, "reason": "regression test"},
+                json={"tokens": 15_000, "reason": "regression test"},
             )
             assert gr.status_code == 200, gr.text
             assert gr.json()["usage"]["is_exhausted"] is False

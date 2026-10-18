@@ -320,7 +320,14 @@ async def signup(body: SignupBody, request: Request) -> dict:
     # require a manual DB update.
     is_founder = is_founder_email(email)
     tier = "founder" if is_founder else "free"
-    starting_tokens = 10**9 if is_founder else 1000
+    # Q1 (2026-02) — derived from the single USD source of truth
+    # (config/quota_limits.py), NOT a second independent hardcoded
+    # number. This is the legacy display-only `tokens_remaining`
+    # wallet (services/usage.py's PLAN_LIMITS/get_usage is the real
+    # gate) — kept in sync so a fresh signup's response doesn't show
+    # a stale "1000" while /usage/me already reports 250000.
+    from config.quota_limits import FREE_LIFETIME_TOKEN_DISPLAY
+    starting_tokens = 10**9 if is_founder else FREE_LIFETIME_TOKEN_DISPLAY
     # Iter 212m-222 — `created_at` MUST be a float (epoch seconds).
     # The admin /users window filters do numeric $gte comparisons
     # (`now - 86400`) so a `datetime` here means BSON type-order

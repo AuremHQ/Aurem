@@ -44,8 +44,17 @@ from cto_services.db import require_db
 
 logger = logging.getLogger(__name__)
 
+from services.subscription_tiers import get_limit as _tier_limit
+from config.quota_limits import (
+    FREE_LIFETIME_BUDGET_USD, FREE_LIFETIME_TOKEN_DISPLAY, FIRST_SCAN_EXEMPT,
+)
+
 PLAN_LIMITS = {
-    "free":    1_000,
+    # Q1 (2026-02) — derived from the single USD source of truth in
+    # config/quota_limits.py (was a hardcoded 1_000 — see that module's
+    # docstring for the evidence/justification). Do NOT hardcode a
+    # token number here again; change FREE_LIFETIME_BUDGET_USD instead.
+    "free":    FREE_LIFETIME_TOKEN_DISPLAY,
     "starter": 10_000,
     "pro":     50_000,
     "team":    100_000,
@@ -55,8 +64,6 @@ PLAN_LIMITS = {
     # thing (e.g. UI shows "∞" / huge number).
     "founder": 1_000_000_000,
 }
-
-from services.subscription_tiers import get_limit as _tier_limit
 
 # Monthly task-count limits (the headline pricing model — flat-fee, no
 # token surprises).  Single source of truth lives in
@@ -133,10 +140,18 @@ async def get_usage(user_id: str) -> dict:
     # counted, while the gap that made "Used" read ~0 gets closed.
     real_agg = await db.real_llm_usage.aggregate([
         {"$match": {"user_id": user_id}},
-        {"$group": {"_id": None, "total": {"$sum": "$total_tokens"}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_tokens"},
+                    "cost_usd": {"$sum": "$cost_usd"}}},
     ]).to_list(1)
     real_used = int(real_agg[0]["total"]) if real_agg else 0
     used = legacy_used + real_used
+    # Q1 (2026-02) — the REAL gate for free tier is dollars, not
+    # tokens (a cheap model's 50k tokens and an expensive model's 500
+    # tokens are NOT the same cost — a token-only cap can't tell them
+    # apart). `real_llm_usage.cost_usd` is the actual per-call cost
+    # every LLM transport already logs (services/loop_token_ledger.py)
+    # — summed here as the single source of truth for USD spend.
+    used_usd = round(float(real_agg[0].get("cost_usd") or 0.0), 6) if real_agg else 0.0
 
     # Founders are never exhausted — we still surface a usage number so
     # they can see their own burn, but `is_exhausted` stays False forever.
@@ -144,6 +159,15 @@ async def get_usage(user_id: str) -> dict:
     remaining = max(0, effective - used) if not is_unlimited else 10**12
     pct = round((used / effective) * 100, 1) if (effective > 0 and not is_unlimited) else 0
     is_exhausted = False if is_unlimited else (used >= effective)
+    # Q1 — free-tier lifetime USD cap (see config/quota_limits.py).
+    # Granted bonus tokens convert 1:1 into bonus USD budget via the
+    # same display rate used to derive FREE_LIFETIME_TOKEN_DISPLAY, so
+    # an admin "Grant tokens" action still means something real here.
+    from config.quota_limits import TOKENS_PER_USD_DISPLAY
+    effective_limit_usd = FREE_LIFETIME_BUDGET_USD + (granted / TOKENS_PER_USD_DISPLAY)
+    is_exhausted_usd = (
+        False if is_unlimited or tier != "free" else (used_usd >= effective_limit_usd)
+    )
 
     # ── Monthly task counter (flat-fee meter). Counts every task this
     # user has SUBMITTED + ran since the first of the current UTC month.
@@ -231,7 +255,66 @@ async def get_usage(user_id: str) -> dict:
             (not is_unlimited)
             and (task_cap is not None and tasks_this_month >= task_cap)
         ),
+        # Q1 (2026-02) — free-tier lifetime USD budget (see
+        # config/quota_limits.py). Only meaningful for tier=="free";
+        # other tiers keep their existing token/task-based limits.
+        "used_usd": used_usd,
+        "effective_limit_usd": round(effective_limit_usd, 6),
+        "is_exhausted_usd": is_exhausted_usd,
     }
+
+
+async def assert_scan_budget(user_id: str, *, is_account_first_scan: bool) -> None:
+    """Q1 (2026-02) — the ONLY budget gate a codebase-health scan goes
+    through (PHASE 0 finding: previously there was none at all — see
+    config/quota_limits.py docstring for the full evidence trail).
+
+    Raises HTTP 402 with an honest "you've used your free allowance"
+    message + fires an in-app nudge (once, lifetime-deduped — this is
+    a lifetime budget, not monthly) when a free-tier user's REAL
+    dollar spend has reached FREE_LIFETIME_BUDGET_USD. Never implies
+    the task is still running — the caller must surface this as a
+    terminal state, not a loading state.
+
+    The account's first-ever scan (across ALL projects) is EXEMPT —
+    see config/quota_limits.py::FIRST_SCAN_EXEMPT for the justification.
+    Other tiers (starter/pro/team/founder) are untouched by this gate.
+    """
+    u = await get_usage(user_id)
+    if u.get("is_unlimited") or u.get("tier") != "free":
+        return
+    if is_account_first_scan and FIRST_SCAN_EXEMPT:
+        logger.info(
+            "[Q1] first-ever scan exempted from lifetime budget "
+            "user_id=%s used_usd=%.4f cap_usd=%.2f",
+            user_id, u["used_usd"], u["effective_limit_usd"],
+        )
+        return
+    if not u["is_exhausted_usd"]:
+        return
+    try:
+        db = require_db()
+        from services.notifications import emit_notification
+        dedupe_key = f"free_allowance_exhausted:{user_id}"
+        existing = await db.notif_dedupe.find_one({"_id": dedupe_key})
+        if not existing:
+            await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(timezone.utc)})
+            await emit_notification(
+                db, user_id=user_id, type="free_allowance_exhausted",
+                text="You've used your free allowance. Upgrade to keep scanning and fixing.",
+            )
+    except Exception:                                       # noqa: BLE001
+        pass  # never let a notification bug block the real 402 below
+    raise HTTPException(402, detail={
+        "error": "free_allowance_exhausted",
+        "used_usd": u["used_usd"],
+        "limit_usd": u["effective_limit_usd"],
+        "upgrade_url": "/settings#pricing",
+        "message": (
+            "You've used your free allowance. Upgrade to keep scanning "
+            "and fixing, or contact support if you think this is wrong."
+        ),
+    })
 
 
 async def assert_has_task_budget(user_id: str) -> None:

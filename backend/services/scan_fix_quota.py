@@ -82,6 +82,31 @@ async def assert_can_fix(user: dict, tool: str, count: int = 1) -> dict:
     q = await get_fix_quota(user)
     tier = q["tier"]
     if tool not in q["fix_tools"]:
+        # Q1 (2026-02) — PHASE 0 finding: this 403 fired silently with
+        # zero nudge (unlike the 402 "insufficient_tasks" branch below,
+        # which already notified). A free user could click Fix, get
+        # refused, and see nothing persist if they navigated away
+        # before reading the inline error. Same dedup-once-per-month
+        # pattern as the 402 branch — never spams on every retry.
+        try:
+            db = require_db()
+            from services.notifications import emit_notification
+            dedupe_key = f"fix_not_available:{user['user_id']}:{tool}:{month_bucket()}"
+            existing = await db.notif_dedupe.find_one({"_id": dedupe_key})
+            if not existing:
+                await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(timezone.utc)})
+                await emit_notification(
+                    db, user_id=user["user_id"], type="fix_not_available_on_tier",
+                    text=(
+                        "Fixes aren't available on the Free plan — you can "
+                        "run scans and view findings. Upgrade to fix issues."
+                        if tier == "free" else
+                        f"Fixing {tool.replace('-', ' ')} findings isn't "
+                        f"included in the {tier.title()} plan."
+                    ),
+                )
+        except Exception:                                       # noqa: BLE001
+            pass  # never let a notification bug block the real 403 below
         raise HTTPException(403, {
             "error": "fix_not_available_on_tier",
             "tier": tier, "tool": tool,

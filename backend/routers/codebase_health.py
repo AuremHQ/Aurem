@@ -154,6 +154,18 @@ async def scan(
     else:
         remaining = {c: 999 for c in categories}
 
+    # Q1 (2026-02) — PHASE 0 finding: this scan had NO budget gate at
+    # all before this. Free tier's account-wide first-ever scan is
+    # exempt (config/quota_limits.py::FIRST_SCAN_EXEMPT); any scan
+    # after that is blocked with an honest message once the user's
+    # real lifetime $ spend (any surface, not just this one) reaches
+    # FREE_LIFETIME_BUDGET_USD. Founders/other tiers are no-ops here.
+    if not is_admin:
+        from services.usage import assert_scan_budget
+        _is_account_first_scan = await db.codebase_health_scans.count_documents(
+            {"user_id": user_id}) == 0
+        await assert_scan_budget(user_id, is_account_first_scan=_is_account_first_scan)
+
     proj = await db.cto_projects.find_one(
         {"project_id": project_id, "user_id": user_id},
         {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,

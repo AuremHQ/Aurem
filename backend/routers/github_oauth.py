@@ -432,7 +432,10 @@ async def callback(
             is_founder = is_founder_email(user_mail)
             is_admin   = is_founder
             tier       = "founder" if is_founder else "free"
-            tokens     = 10**9 if is_founder else 1000
+            # Q1 (2026-02) — same single source of truth as the other
+            # two signup paths (routers/auth.py, routers/google_oauth.py).
+            from config.quota_limits import FREE_LIFETIME_TOKEN_DISPLAY
+            tokens     = 10**9 if is_founder else FREE_LIFETIME_TOKEN_DISPLAY
             # Iter 211 — capture github_id (immutable numeric ID).
             # `login` is the username and CAN change; `id` is forever.
             # Stored as the canonical dedupe key for future signups.
