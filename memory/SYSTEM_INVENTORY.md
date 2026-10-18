@@ -1045,3 +1045,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 - `services/scheduled_project_scan.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-17T02:33:46.209861Z] <!-- inv:service:services/scheduled_project_scan.py -->
 - `services/project_health_trend.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-17T03:05:33.743097Z] <!-- inv:service:services/project_health_trend.py -->
+
+### Iter 0 · 2026-10-18
+
+- `services/platform_spend_alarm.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-18T05:12:52.458221Z] <!-- inv:service:services/platform_spend_alarm.py -->
