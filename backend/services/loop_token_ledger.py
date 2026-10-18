@@ -419,3 +419,15 @@ async def log_real_usage(model: str, usage: dict, *,
             "loop_token_ledger.log_real_usage failed (user=%s model=%s): %r",
             user_id, model, e,
         )
+        return
+
+    # Q2 (2026-02) — platform-wide daily spend alarm. Fire-and-forget
+    # (asyncio.create_task, not awaited) so a slow/broken alarm check
+    # can never add latency to — or break — the real LLM call that
+    # just completed. check_and_alert() itself never raises either way.
+    try:
+        import asyncio
+        from services.platform_spend_alarm import check_and_alert
+        asyncio.create_task(check_and_alert(db))
+    except Exception:  # noqa: BLE001
+        pass

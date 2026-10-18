@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 from services.subscription_tiers import get_limit as _tier_limit
 from config.quota_limits import (
     FREE_LIFETIME_BUDGET_USD, FREE_LIFETIME_TOKEN_DISPLAY, FIRST_SCAN_EXEMPT,
+    PER_USER_DAILY_SPEND_CAP_USD,
 )
 
 PLAN_LIMITS = {
@@ -313,6 +314,50 @@ async def assert_scan_budget(user_id: str, *, is_account_first_scan: bool) -> No
         "message": (
             "You've used your free allowance. Upgrade to keep scanning "
             "and fixing, or contact support if you think this is wrong."
+        ),
+    })
+
+
+async def assert_daily_spend_cap(user_id: str) -> None:
+    """Q2 (2026-02) — abuse guard, independent of the lifetime cap
+    above. Protects against a single account (any tier, founders
+    excepted) hammering calls in a burst within one rolling 24h
+    window — the lifetime cap alone wouldn't stop a free user from
+    spending their whole $0.25 in one fast scripted burst; this adds
+    a same-day ceiling on top. Honest 402, never implies still-running.
+    """
+    db = require_db()
+    user = await db.dev_users.find_one(
+        {"user_id": user_id}, {"tier": 1, "is_unlimited": 1}) or {}
+    if user.get("is_unlimited") or user.get("tier") == "founder":
+        return
+    since = datetime.now(timezone.utc).timestamp() - 86400
+    agg = await db.real_llm_usage.aggregate([
+        {"$match": {"user_id": user_id, "created_at": {"$gte": since}}},
+        {"$group": {"_id": None, "cost_usd": {"$sum": "$cost_usd"}}},
+    ]).to_list(1)
+    spent_today = round(float(agg[0].get("cost_usd") or 0.0), 6) if agg else 0.0
+    if spent_today < PER_USER_DAILY_SPEND_CAP_USD:
+        return
+    try:
+        from services.notifications import emit_notification
+        dedupe_key = f"daily_spend_cap_hit:{user_id}:{datetime.now(timezone.utc).date().isoformat()}"
+        existing = await db.notif_dedupe.find_one({"_id": dedupe_key})
+        if not existing:
+            await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(timezone.utc)})
+            await emit_notification(
+                db, user_id=user_id, type="daily_spend_cap_hit",
+                text="You've hit today's usage cap. Try again tomorrow, or upgrade for a higher limit.",
+            )
+    except Exception:                                       # noqa: BLE001
+        pass
+    raise HTTPException(402, detail={
+        "error": "daily_spend_cap_hit",
+        "spent_today_usd": spent_today,
+        "daily_cap_usd": PER_USER_DAILY_SPEND_CAP_USD,
+        "message": (
+            "You've hit today's usage cap. Try again tomorrow, or "
+            "upgrade for a higher limit."
         ),
     })
 

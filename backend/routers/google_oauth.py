@@ -126,7 +126,10 @@ async def callback(
         )
 
     g_email   = (profile.get("email") or "").strip()
-    g_name    = profile.get("name") or ""
+    # Q2 (2026-02) — defense in depth: sanitize even provider-supplied
+    # names (same single write-time fix as email/password signup).
+    from services.signup_guards import sanitize_display_name
+    g_name    = sanitize_display_name(profile.get("name") or "")
     g_picture = profile.get("picture") or ""
     g_sub     = profile.get("sub") or ""
     g_verified = bool(profile.get("email_verified", False))

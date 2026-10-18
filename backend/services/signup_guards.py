@@ -15,6 +15,7 @@ signal is present. Founders / admin emails bypass every guard.
 from __future__ import annotations
 
 import os
+import re
 import time
 import logging
 from typing import Optional
@@ -51,6 +52,9 @@ DISPOSABLE_DOMAINS = frozenset((
     "mytemp.email", "moakt.com", "byespm.com", "emltmp.com",
     "meltmail.com", "yopmail.fr", "yopmail.net", "cool.fr.nf",
     "jetable.fr.nf", "nospam.ze.tc", "nomail.xl.cx", "mega.zik.dj",
+    # 2026-02 (Q2) — seen in production, a real scripted/low-rep
+    # signup vector (herclan.com + similar look-alike throwaway TLDs).
+    "herclan.com",
 ))
 
 
@@ -65,6 +69,32 @@ def _disposable_hit(email: str) -> bool:
     if not d:
         return False
     return d in DISPOSABLE_DOMAINS
+
+
+# Q2 (2026-02) — a real production signup had `name` set to a literal
+# `<img src=...>` tag. `name` is stored and later rendered (verbatim
+# interpolation, not re-escaped) in several HTML email templates —
+# services/welcome_email.py, onboarding_email.py, verification_email.py,
+# winback_campaign.py, payment_recovery_email.py, funnel_nudge_cron.py,
+# gate_stuck_nudge.py — plus admin user tables and ORA's chat greeting.
+# Sanitizing ONCE here, at the only write path (signup), is the single
+# strongest fix: every downstream render site is safe by construction
+# instead of depending on each template remembering to escape.
+_TAG_RE = re.compile(r"<[^>]*>")
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+DISPLAY_NAME_MAX_LEN = 80
+
+
+def sanitize_display_name(raw: Optional[str]) -> str:
+    """Strip HTML tags + control chars, collapse whitespace, cap
+    length. Returns "" if nothing safe is left (callers fall back to
+    the email-local-part default, same as before this existed)."""
+    if not raw or not isinstance(raw, str):
+        return ""
+    cleaned = _TAG_RE.sub("", raw)
+    cleaned = _CTRL_RE.sub("", cleaned)
+    cleaned = " ".join(cleaned.split())  # collapse all whitespace runs
+    return cleaned[:DISPLAY_NAME_MAX_LEN].strip()
 
 
 async def _count_recent_signups_by_ip(db, ip: str) -> int:

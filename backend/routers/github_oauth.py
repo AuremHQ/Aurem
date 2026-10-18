@@ -386,6 +386,12 @@ async def callback(
     # GitHub's `/user` endpoint returns `name` as the user's public
     # profile name (may be null if the user never set one).
     gh_name   = (info or {}).get("name") or ""
+    # Q2 (2026-02) — defense in depth: sanitize even provider-supplied
+    # names (same single write-time fix as email/password signup).
+    # Safe for the git-author-identity use above too — a legit git
+    # author name never needs HTML tags.
+    from services.signup_guards import sanitize_display_name
+    gh_name   = sanitize_display_name(gh_name)
 
     # ── Signup / sign-in flow ─────────────────────────────────────────
     if flow == "signup":

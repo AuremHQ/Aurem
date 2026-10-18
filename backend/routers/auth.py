@@ -295,7 +295,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
     # per-IP rate-limit). Founder emails bypass every guard. Raises
     # HTTPException on any signal — we do NOT insert into dev_users
     # if the request is refused.
-    from services.signup_guards import enforce_signup_guards, emit_funnel_event
+    from services.signup_guards import enforce_signup_guards, emit_funnel_event, sanitize_display_name
     client_ip = client_ip_from_request(request)
     await enforce_signup_guards(
         db,
@@ -340,7 +340,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
     await db.dev_users.insert_one({
         "user_id": user_id,
         "email": email,
-        "name": body.name or email.split("@")[0],
+        "name": sanitize_display_name(body.name) or email.split("@")[0],
         "password": hashed,
         # Optional — None when not provided. Never blocks signup.
         "phone": phone,
@@ -397,7 +397,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
         "token": token,
         "user_id": user_id,
         "email": email,
-        "name": body.name or email.split("@")[0],
+        "name": sanitize_display_name(body.name) or email.split("@")[0],
         "tier": tier,
         "tokens_remaining": starting_tokens,
         "is_admin": is_founder,

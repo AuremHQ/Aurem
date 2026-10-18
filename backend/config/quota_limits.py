@@ -61,3 +61,15 @@ FREE_LIFETIME_TOKEN_DISPLAY: int = round(
 # engineering cost for this ticket. Revisit if real-world first-scan
 # cost ever moves far from the $0.0163 baseline above.
 FIRST_SCAN_EXEMPT: bool = True
+
+# ── Q2 (2026-02) — abuse guards, needed because Q1 raised the limit ──
+# Per-user daily spend cap (USD). Independent of the lifetime cap
+# above — protects against a single compromised/scripted account
+# hammering calls in a burst within one day. Applies to every
+# non-founder tier (this is an abuse guard, not a plan feature).
+PER_USER_DAILY_SPEND_CAP_USD: float = 0.10
+
+# Platform-wide daily spend alarm (admin-visible, NOT email-dependent
+# — Resend is currently broken/unverified, see Q1). Fires once per
+# UTC day when total real LLM spend across ALL users crosses this.
+PLATFORM_DAILY_SPEND_ALARM_USD: float = 5.00
