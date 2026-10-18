@@ -1049,3 +1049,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-10-18
 
 - `services/platform_spend_alarm.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-18T05:12:52.458221Z] <!-- inv:service:services/platform_spend_alarm.py -->
+- `services/name_integrity_audit.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-18T17:54:07.559709Z] <!-- inv:service:services/name_integrity_audit.py -->
