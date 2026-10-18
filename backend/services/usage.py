@@ -320,16 +320,27 @@ async def assert_scan_budget(user_id: str, *, is_account_first_scan: bool) -> No
 
 async def assert_daily_spend_cap(user_id: str) -> None:
     """Q2 (2026-02) — abuse guard, independent of the lifetime cap
-    above. Protects against a single account (any tier, founders
-    excepted) hammering calls in a burst within one rolling 24h
-    window — the lifetime cap alone wouldn't stop a free user from
-    spending their whole $0.25 in one fast scripted burst; this adds
-    a same-day ceiling on top. Honest 402, never implies still-running.
+    above. Protects against a single account hammering calls in a
+    burst within one rolling 24h window — the lifetime cap alone
+    wouldn't stop a free user from spending their whole $0.25 in one
+    fast scripted burst; this adds a same-day ceiling on top. Honest
+    402, never implies still-running.
+
+    F1 defect 2 (2026-02) — this used to apply to EVERY non-founder
+    tier, summing ALL real_llm_usage (chat/ORA included, not just
+    scan). A paying user who chats a lot (a real 3-minute free
+    session already costs $0.016 — easy to clear $0.10/day on
+    legitimate paid usage) could get blocked from running a scan.
+    Free tier only now — paying users aren't bound by this cap (the
+    existing global $5/hr-$10/day breaker + Q2's platform alarm still
+    cover platform-wide abuse regardless of tier).
     """
     db = require_db()
     user = await db.dev_users.find_one(
-        {"user_id": user_id}, {"tier": 1, "is_unlimited": 1}) or {}
-    if user.get("is_unlimited") or user.get("tier") == "founder":
+        {"user_id": user_id}, {"tier": 1, "is_unlimited": 1, "email": 1}) or {}
+    tier = user.get("tier") or "free"
+    if (user.get("is_unlimited") or tier == "founder"
+            or is_founder_email(user.get("email")) or tier != "free"):
         return
     since = datetime.now(timezone.utc).timestamp() - 86400
     agg = await db.real_llm_usage.aggregate([

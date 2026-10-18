@@ -72,11 +72,28 @@ async def test_daily_spend_cap_founder_never_blocked():
 
 
 @pytest.mark.asyncio
-async def test_daily_spend_cap_applies_to_paid_tiers_too():
-    """Abuse guard, not a plan feature — a 'pro' account hammering
-    calls in a burst is still blocked."""
+async def test_daily_spend_cap_free_tier_only_paid_tiers_never_blocked():
+    """F1 defect 2 (2026-02) — corrected behaviour: this cap used to
+    apply to every non-founder tier (including paid), which could
+    block a *paying* user from scanning after unrelated, already
+    -paid-for heavy chat usage. Free tier only now — a 'pro' account
+    spending well over the free cap in a day must NOT be blocked."""
     db = MagicMock()
     db.dev_users.find_one = AsyncMock(return_value={"tier": "pro", "is_unlimited": False})
+    db.real_llm_usage.aggregate = MagicMock(
+        return_value=_Cursor([{"cost_usd": PER_USER_DAILY_SPEND_CAP_USD + 1.0}])
+    )
+    with patch.object(usage_mod, "require_db", return_value=db):
+        await usage_mod.assert_daily_spend_cap("u1")  # no raise — paid tier exempt
+
+
+@pytest.mark.asyncio
+async def test_daily_spend_cap_missing_tier_field_defaults_to_free_and_is_blocked():
+    """A dev_users row with no `tier` field at all must default to
+    free (same convention as get_usage) — and therefore still be
+    subject to the cap, not silently exempted."""
+    db = MagicMock()
+    db.dev_users.find_one = AsyncMock(return_value={"is_unlimited": False})  # no tier key
     db.real_llm_usage.aggregate = MagicMock(
         return_value=_Cursor([{"cost_usd": PER_USER_DAILY_SPEND_CAP_USD + 1.0}])
     )

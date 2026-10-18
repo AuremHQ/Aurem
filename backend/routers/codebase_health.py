@@ -166,7 +166,8 @@ async def scan(
             {"user_id": user_id}) == 0
         await assert_scan_budget(user_id, is_account_first_scan=_is_account_first_scan)
         # Q2 (2026-02) — abuse guard, independent of the lifetime
-        # check above (every tier except founder, not just free).
+        # check above. F1 defect 2 (2026-02): free tier only now —
+        # see services/usage.py::assert_daily_spend_cap docstring.
         await assert_daily_spend_cap(user_id)
 
     proj = await db.cto_projects.find_one(
