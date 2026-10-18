@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from html import escape as html_escape
 from typing import Optional
 
 logger = logging.getLogger("aurem.winback_campaign")
@@ -106,7 +107,7 @@ def render_html(user: dict) -> str:
     return (
         f'<div style="font-family:-apple-system,sans-serif;max-width:560px;'
         f'margin:0 auto;padding:32px 24px;color:#111">'
-        f'<p>Hey {first},</p>'
+        f'<p>Hey {html_escape(first)},</p>'
         f'<p>It\'s been a while since you signed up for ORA and I noticed '
         f'you never got a repo connected. If something got in the way — '
         f'the GitHub step, a question about pricing, anything — reply and '

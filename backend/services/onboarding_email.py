@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from html import escape as html_escape
 from typing import Optional
 from urllib.parse import quote
 
@@ -120,7 +121,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.55;">
                                  border:1px solid rgba(234,179,8,0.18);
                                  border-radius:12px;padding:32px;">
         <tr><td style="color:#e8e8e8;font-size:15px;">
-          Hey {first},<br><br>
+          Hey {html_escape(first)},<br><br>
           You signed up for Aurem but haven't connected a repo yet.<br><br>
           Here's what happens when you do:<br>
           &rarr; Your codebase gets mapped instantly<br>

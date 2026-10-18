@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime
+from html import escape as html_escape
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.55;">
                                  border:1px solid rgba(255,102,8,0.22);
                                  border-radius:12px;padding:32px;">
         <tr><td style="color:#e8e8e8;font-size:15px;">
-          Hey {first},<br><br>
+          Hey {html_escape(first)},<br><br>
           {body_html}<br><br>
           <a href="{cta}"
              style="display:inline-block;padding:12px 22px;background:#ff6608;

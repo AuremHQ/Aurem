@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from html import escape as html_escape
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
@@ -115,7 +116,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.55;">
                                  border:1px solid rgba(234,179,8,0.18);
                                  border-radius:12px;padding:32px;">
         <tr><td style="color:#e8e8e8;font-size:15px;">
-          Hey {first},<br><br>
+          Hey {html_escape(first)},<br><br>
           One quick step to activate your Aurem account: verify your email.<br><br>
           <a href="{link}"
              style="display:inline-block;padding:12px 22px;background:#eab308;

@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from html import escape as html_escape
 from typing import Optional
 from urllib.parse import quote
 
@@ -151,7 +152,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
                                  border-radius:12px;padding:32px;">
         <tr><td style="color:#e8e8e8;font-size:15px;">
           <div style="font-size:20px;font-weight:700;margin-bottom:8px;">
-            Hey {first} — you&rsquo;re in.
+            Hey {html_escape(first)} — you&rsquo;re in.
           </div>
           <div style="color:#c8c8c8;">
             Your email is verified. Aurem is ready to write, verify, and

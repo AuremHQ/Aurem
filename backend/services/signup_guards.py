@@ -75,11 +75,18 @@ def _disposable_hit(email: str) -> bool:
 # `<img src=...>` tag. `name` is stored and later rendered (verbatim
 # interpolation, not re-escaped) in several HTML email templates —
 # services/welcome_email.py, onboarding_email.py, verification_email.py,
-# winback_campaign.py, payment_recovery_email.py, funnel_nudge_cron.py,
-# gate_stuck_nudge.py — plus admin user tables and ORA's chat greeting.
-# Sanitizing ONCE here, at the only write path (signup), is the single
-# strongest fix: every downstream render site is safe by construction
-# instead of depending on each template remembering to escape.
+# winback_campaign.py, payment_recovery_email.py (2 templates),
+# funnel_nudge_cron.py, gate_stuck_nudge.py (9 render sites total) —
+# plus routers/admin_users.py's admin broadcast `{{name}}` substitution.
+# F1 defect 1 (2026-02) — this comment originally claimed write-time
+# sanitization here was "the only write path" and "the single
+# strongest fix" — both wrong. Two more write paths existed unfixed
+# (routers/auth.py's verification-email dispatch payload,
+# routers/team_management.py's accept_invite) and ALL 9 render sites
+# above were still interpolating the raw stored value with zero
+# escaping. The real fix is html.escape() at every render site
+# (done, F1) — this write-time pass is now defense-in-depth only, so
+# a render site that forgets to escape isn't instantly exploitable.
 _TAG_RE = re.compile(r"<[^>]*>")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 DISPLAY_NAME_MAX_LEN = 80
@@ -88,10 +95,19 @@ DISPLAY_NAME_MAX_LEN = 80
 def sanitize_display_name(raw: Optional[str]) -> str:
     """Strip HTML tags + control chars, collapse whitespace, cap
     length. Returns "" if nothing safe is left (callers fall back to
-    the email-local-part default, same as before this existed)."""
+    the email-local-part default, same as before this existed).
+
+    F1 defect 1c (2026-02) — `_TAG_RE` only matches a CLOSED tag
+    (`<[^>]*>`). An UNCLOSED tag like `<img src=x onerror=alert(1)`
+    (no trailing `>`) survived untouched. This is write-time defense
+    -in-depth only now — the real fix is html.escape() at every render
+    site (services/*_email.py, routers/admin_users.py broadcast) — but
+    this must still not let a bare `<` or `>` through either, so any
+    render site that forgets to escape isn't instantly exploitable."""
     if not raw or not isinstance(raw, str):
         return ""
     cleaned = _TAG_RE.sub("", raw)
+    cleaned = cleaned.replace("<", "").replace(">", "")
     cleaned = _CTRL_RE.sub("", cleaned)
     cleaned = " ".join(cleaned.split())  # collapse all whitespace runs
     return cleaned[:DISPLAY_NAME_MAX_LEN].strip()

@@ -635,6 +635,33 @@ async def quota_exhausted_users_dry_run(authorization: Optional[str] = Header(No
     return result
 
 
+@router.get("/data-integrity/unsanitized-names-dry-run")
+async def unsanitized_names_dry_run(authorization: Optional[str] = Header(None)):
+    """F1 defect 1d (2026-02) — DRY-RUN ONLY admin report.
+
+    Lists dev_users rows whose stored `name` differs from
+    `sanitize_display_name(name)` — i.e. would be sanitized if
+    written today. Performs ZERO writes to any user document; the
+    only write this makes is the audit-log row below, same pattern as
+    the Q3 quota dry-run. Safe to run against ANY database this
+    backend is pointed at (its own response says exactly which one) —
+    an admin must deploy/point this at production and approve any
+    apply separately; nothing here does that automatically.
+    """
+    admin = await _require_admin(authorization)
+    db = require_db()
+    from services.name_integrity_audit import run_dry_run_audit
+    result = await run_dry_run_audit(db)
+    from services.admin_audit_log import record_event
+    await record_event(
+        db, actor=admin.get("email") or admin.get("user_id") or "admin",
+        action="unsanitized_names_dry_run_viewed", target="-", result="ok",
+        extra={"mismatched_count": result["mismatched_count"],
+               "ran_against_db": result["ran_against"]["db_name"]},
+    )
+    return result
+
+
 class SuspendBody(BaseModel):
     suspend: bool
 
@@ -1018,11 +1045,12 @@ async def admin_send_user_offer(
     from services.http import ext_client
 
     async def _send_one(target: dict) -> tuple[str, bool, str]:
+        from html import escape as html_escape
         name = (target.get("name") or "").strip() or "there"
         email = target["email"]
         personalized = (body_html
-                        .replace("{{name}}", name)
-                        .replace("{{email}}", email))
+                        .replace("{{name}}", html_escape(name))
+                        .replace("{{email}}", html_escape(email)))
         try:
             async with ext_client("resend", timeout=httpx.Timeout(15.0)) as client:
                 resp = await client.post(

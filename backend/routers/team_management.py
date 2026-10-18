@@ -332,11 +332,12 @@ async def accept_invite(body: AcceptInviteBody) -> dict:
     else:
         user_id = uuid.uuid4().hex
         hashed = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+        from services.signup_guards import sanitize_display_name
         await db.dev_users.insert_one({
             "user_id":  user_id,
             "email":    row["email"],
             "password": hashed,
-            "name":     body.name or row["email"].split("@")[0],
+            "name":     sanitize_display_name(body.name) or row["email"].split("@")[0],
             "is_admin": False,
             "is_founder": False,
             "tier":     "team_member",

@@ -380,7 +380,7 @@ async def signup(body: SignupBody, request: Request) -> dict:
             asyncio.create_task(_safe_send(
                 db,
                 {"user_id": user_id, "email": email,
-                 "name": body.name or email.split("@")[0]},
+                 "name": sanitize_display_name(body.name) or email.split("@")[0]},
             ))
         except Exception as e:                          # noqa: BLE001
             logger.warning("verification email dispatch failed: %r", e)

@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from html import escape as html_escape
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
         <tr><td style="color:#e8e8e8;font-size:15px;">
           <div style="font-size:20px;font-weight:700;margin-bottom:8px;
                        color:#fca5a5;">
-            Hey {first} — your payment didn&rsquo;t go through.
+            Hey {html_escape(first)} — your payment didn&rsquo;t go through.
           </div>
           <div style="color:#c8c8c8;">
             We just tried to charge your card for your AUREM
@@ -277,7 +278,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
         <tr><td style="color:#e8e8e8;font-size:15px;">
           <div style="font-size:20px;font-weight:700;margin-bottom:8px;
                        color:#86efac;">
-            You&rsquo;re all set, {first}.
+            You&rsquo;re all set, {html_escape(first)}.
           </div>
           <div style="color:#c8c8c8;">
             Your card went through and your AUREM <b>{plan}</b> plan
