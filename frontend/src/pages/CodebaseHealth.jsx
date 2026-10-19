@@ -18,7 +18,7 @@
  *   • Token counter top-right; -N animation on every spend
  *   • Empty state (pre-scan) with 5 category buttons + Full Scan CTA
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield, Zap, Code2, Package, Database, RefreshCw, Loader2,
@@ -577,6 +577,8 @@ function CodebaseHealthInner() {
   );
   const [scanning, setScanning] = useState(false);
   const [data, setData] = useState(null);
+  const dataRef = useRef(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
   const [error, setError] = useState(null);
   // UI-fix C4 — a project-less scan used to just drop a generic error
   // string in the error pill with no way forward. This drives a
@@ -584,6 +586,9 @@ function CodebaseHealthInner() {
   // flow NewUserWizard already uses elsewhere (no new flow built).
   const [showConnectCard, setShowConnectCard] = useState(false);
   const [showConnectWizard, setShowConnectWizard] = useState(false);
+  // UI-fix C5 — real before/after score after a free verification re-scan
+  // (see onFixed below), replacing the old made-up "+2" bump.
+  const [rescoreBanner, setRescoreBanner] = useState(null);
   const [expandedCats, setExpandedCats] = useState({});
   const [tokens, setTokens] = useState(parseInt(localStorage.getItem("aurem_tokens") || "0", 10));
   const [busyIds, setBusyIds] = useState(new Set());
@@ -644,41 +649,64 @@ function CodebaseHealthInner() {
   // Iter 212m-128 — Listen for the global `aurem:finding-fixed`
   // event fired by FixProgressDrawer the moment a real GitHub
   // commit lands.  We drop the matching finding from the
-  // breakdown + decrement the total + nudge the health score
-  // upward so the page shows live forward progress without
-  // waiting for a re-scan.  Idempotent — re-firing for the same
+  // breakdown + decrement the total immediately for live forward
+  // progress, then kick off a real re-check (see below) instead of
+  // guessing at a new score.  Idempotent — re-firing for the same
   // finding_id is a no-op because it's already gone.
   useEffect(() => {
-    function onFixed(e) {
+    async function onFixed(e) {
       const fid = e?.detail?.finding_id;
       if (!fid) return;
-      setData((d) => {
-        if (!d) return d;
-        const nb = { ...(d.breakdown || {}) };
-        let dropped = false;
-        for (const cat of Object.keys(nb)) {
-          const before = (nb[cat].findings || []).length;
-          const after = (nb[cat].findings || []).filter((x) => x.id !== fid);
-          if (after.length === before) continue;
-          dropped = true;
-          // Re-derive the per-severity counters so the section
-          // labels (e.g. "🔴 CRITICAL (5)") stay accurate.
-          const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-          for (const f of after) counts[f.severity] = (counts[f.severity] || 0) + 1;
-          nb[cat] = { ...nb[cat],
-            findings: after,
-            total: Math.max(0, after.length),
-            counts };
+      const d = dataRef.current;
+      if (!d) return;
+      const scoreBefore = d.score;
+      const nb = { ...(d.breakdown || {}) };
+      let affectedCat = null;
+      for (const cat of Object.keys(nb)) {
+        const before = (nb[cat].findings || []).length;
+        const after = (nb[cat].findings || []).filter((x) => x.id !== fid);
+        if (after.length === before) continue;
+        affectedCat = cat;
+        // Re-derive the per-severity counters so the section
+        // labels (e.g. "🔴 CRITICAL (5)") stay accurate.
+        const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+        for (const f of after) counts[f.severity] = (counts[f.severity] || 0) + 1;
+        nb[cat] = { ...nb[cat],
+          findings: after,
+          total: Math.max(0, after.length),
+          counts };
+      }
+      if (!affectedCat) return;
+      setData({ ...d, breakdown: nb, total: Math.max(0, (d.total || 0) - 1) });
+      if (!projectId) return;
+      // UI-fix C5 — re-run the real scan to get the repo's actual
+      // current score. Scanning never charges diamonds/tokens (only
+      // the Fix button does — see routers/codebase_health.py module
+      // docstring + services/usage.py::assert_scan_budget), so this
+      // verification is free. Re-scanning every category already on
+      // screen (not just the fixed one) costs the same GitHub-API
+      // budget as one category and lets the backend return one
+      // authoritative overall score instead of us re-deriving its
+      // scoring curve client-side.
+      try {
+        const r = await api.post("/codebase-health/scan",
+          { project_id: projectId, categories: Object.keys(nb) });
+        const fresh = r?.data || r;
+        setData(fresh);
+        if (typeof fresh?.score === "number") {
+          setRescoreBanner({ before: scoreBefore, after: fresh.score });
         }
-        if (!dropped) return d;
-        return { ...d, breakdown: nb,
-          total: Math.max(0, (d.total || 0) - 1),
-          score: Math.min(100, (d.score || 0) + 2) };
-      });
+      } catch { /* best-effort verification — the optimistic removal above still stands */ }
     }
     window.addEventListener("aurem:finding-fixed", onFixed);
     return () => window.removeEventListener("aurem:finding-fixed", onFixed);
-  }, []);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!rescoreBanner) return undefined;
+    const t = setTimeout(() => setRescoreBanner(null), 6000);
+    return () => clearTimeout(t);
+  }, [rescoreBanner]);
 
   async function runScan(categories) {
     if (!projectId) {
@@ -854,6 +882,18 @@ function CodebaseHealthInner() {
             background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.45)",
             color: "#fca5a5", fontSize: 13,
           }}>{error}</div>
+        )}
+
+        {/* UI-fix C5 — real before/after score from the free verification re-scan */}
+        {rescoreBanner && (
+          <div data-testid="health-rescore-banner" style={{
+            padding: "10px 14px", marginBottom: 16, borderRadius: 8,
+            background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.35)",
+            color: "#86efac", fontSize: 13, display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <ShieldCheck size={14} aria-hidden="true" />
+            Score verified: {rescoreBanner.before} → {rescoreBanner.after}
+          </div>
         )}
 
         {/* UI-fix C4 — project-less scan attempt */}
