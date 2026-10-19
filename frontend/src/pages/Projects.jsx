@@ -48,6 +48,8 @@ export default function Projects() {
 
 function Body() {
   const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [showAdd, setShowAdd] = useState(() =>
     new URLSearchParams(window.location.search).get("flow") === "connect-repo"
   );
@@ -67,6 +69,7 @@ function Body() {
     try {
       const r = await api.get("/cto/projects/list");
       const list = r.data?.projects || [];
+      setLoadError(false);
       setProjects(list);
       // Keep `active` in sync with the latest server copy of the selected project
       setActive((cur) =>
@@ -75,8 +78,14 @@ function Body() {
       );
       return list;
     } catch (e) {
+      // UI-fix C3 — a failed fetch used to silently fall through to the
+      // "No projects yet" empty state (projects stayed []), telling the
+      // user to connect a repo they may already have connected.
       toast({ message: "Couldn't load projects", kind: "error" });
+      setLoadError(true);
       return null;
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -200,7 +209,45 @@ function Body() {
             <Plus size={14} /> Add Project
           </button>
         </div>
-        {projects.length === 0 && (
+        {loadError && (
+          <div data-testid="proj-load-error" style={{
+            padding: "18px 14px",
+            background: "rgba(239,68,68,0.05)",
+            border: "1px dashed rgba(239,68,68,0.3)",
+            borderRadius: 8,
+            textAlign: "center",
+            marginTop: 4,
+          }}>
+            <p style={{ fontSize: 12, color: "var(--text-faint)", margin: "0 0 12px",
+                         lineHeight: 1.5 }}>
+              Couldn&apos;t load your projects.
+            </p>
+            <button
+              data-testid="proj-load-error-retry"
+              onClick={() => { setLoading(true); refresh(); }}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                background: "var(--accent, #ff8a2a)",
+                color: "#0a0e1a",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: "0.04em",
+              }}
+            >
+              <RefreshCw size={14} /> Retry
+            </button>
+          </div>
+        )}
+        {!loadError && !loading && projects.length === 0 && (
           <div style={{
             padding: "18px 14px",
             background: "rgba(255,138,42,0.05)",
