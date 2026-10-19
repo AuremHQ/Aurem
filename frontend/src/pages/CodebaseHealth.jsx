@@ -29,6 +29,7 @@ import {
 import { api } from "../lib/api";
 import useFixQuota from "../lib/useFixQuota";
 import BulkFixConfirmModal from "../components/BulkFixConfirmModal";
+import NewUserWizard from "../components/NewUserWizard";
 
 const CATS = [
   { key: "security",     label: "Security",      icon: Shield,    tone: "#ef4444", cost: 5,
@@ -577,6 +578,12 @@ function CodebaseHealthInner() {
   const [scanning, setScanning] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  // UI-fix C4 — a project-less scan used to just drop a generic error
+  // string in the error pill with no way forward. This drives a
+  // dedicated "Connect a repo first" card that opens the same connect
+  // flow NewUserWizard already uses elsewhere (no new flow built).
+  const [showConnectCard, setShowConnectCard] = useState(false);
+  const [showConnectWizard, setShowConnectWizard] = useState(false);
   const [expandedCats, setExpandedCats] = useState({});
   const [tokens, setTokens] = useState(parseInt(localStorage.getItem("aurem_tokens") || "0", 10));
   const [busyIds, setBusyIds] = useState(new Set());
@@ -675,7 +682,7 @@ function CodebaseHealthInner() {
 
   async function runScan(categories) {
     if (!projectId) {
-      setError("Connect a project first from the dashboard.");
+      setShowConnectCard(true);
       return;
     }
     setScanning(true); setError(null);
@@ -847,6 +854,41 @@ function CodebaseHealthInner() {
             background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.45)",
             color: "#fca5a5", fontSize: 13,
           }}>{error}</div>
+        )}
+
+        {/* UI-fix C4 — project-less scan attempt */}
+        {showConnectCard && (
+          <div data-testid="health-connect-first" style={{
+            padding: "18px 20px", marginBottom: 16, borderRadius: 10,
+            background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.35)",
+            color: "#e8ecf3",
+          }}>
+            <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 600 }}>Connect a repo first</p>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: "#94a3b8" }}>
+              You need a connected GitHub repo before ORA can scan your codebase.
+            </p>
+            <button
+              type="button"
+              data-testid="health-connect-first-btn"
+              onClick={() => setShowConnectWizard(true)}
+              style={{
+                padding: "10px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                cursor: "pointer", background: "linear-gradient(135deg, #ea580c, #f59e0b)",
+                color: "#0a0a0a", border: "none",
+              }}
+            >
+              Connect a repo
+            </button>
+          </div>
+        )}
+        {showConnectWizard && (
+          <NewUserWizard
+            onComplete={() => {
+              setShowConnectWizard(false);
+              const connected = localStorage.getItem("aurem_active_project");
+              if (connected) { setShowConnectCard(false); setProjectId(connected); }
+            }}
+          />
         )}
 
         {/* Empty state */}
