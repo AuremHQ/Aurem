@@ -598,7 +598,7 @@ const REVIEWS = [
   { stars: 5, text: "Linux dev. No IDE, no problem. ORA via Claude Code in terminal is the cleanest workflow I've ever had.", name: "Ridhi P.", role: "Platform team lead", initials: "RP", color: "#fb7185" },
 ];
 const COMPARE_ROWS = [
-  ["Direct GitHub commits",                 ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["no","No"]],
+  ["Ships changes to your GitHub repo",     ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["no","No"]],
   ["No IDE required",                       ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["yes","Yes"]],
   ["Mobile-friendly (web + PWA)",           ["yes","Yes"], ["no","No"], ["no","No"], ["no","Limited"], ["no","No"]],
   ["Flat pricing (no token meter)",         ["yes","$9/mo"], ["no","$10/mo"], ["no","$20/mo"], ["no","$500/mo"], ["no","Token-billed"]],

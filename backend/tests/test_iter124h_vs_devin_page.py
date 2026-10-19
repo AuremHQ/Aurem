@@ -29,9 +29,12 @@ def _src(p: Path) -> str:
 # ── Page content ─────────────────────────────────────────────────────
 
 def test_vs_devin_mentions_both_delivery_modes():
+    """UI-fix B1 (2026-10): copy no longer says 'Direct commit'/'Pull
+    Request' literally (it's not always true which mode applies), but
+    must still describe both a fast path and a review-checkpoint path."""
     src = _src(COMPETITORS)
-    assert "Pull Request" in src
-    assert "Direct commit" in src or "direct commit" in src
+    assert "fast path" in src
+    assert "review checkpoint" in src
 
 
 def test_vs_devin_has_current_devin_acu_rate():

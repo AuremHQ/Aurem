@@ -29,7 +29,7 @@ export const PRICING_TIERS = [
     features: [
       "10 tasks per month",
       "Standard mode",
-      "Direct commits to your repo",
+      "Changes delivered to your repo",
       "F12 error debugger",
       "Community support",
     ],
@@ -46,7 +46,7 @@ export const PRICING_TIERS = [
     features: [
       "50 tasks per month",
       "⚡ Swift mode only",
-      "Direct commits + rollback",
+      "Changes delivered to your repo with one-click rollback",
       "Live worker tape",
       "Email support",
     ],
@@ -64,7 +64,7 @@ export const PRICING_TIERS = [
     features: [
       "300 tasks per month",
       "Swift + Pro review modes",
-      "Direct GitHub commit — Beta",
+      "Changes delivered to your repo — Beta",
       "Project Brain memory",
       "Parallel agents",
       "VS Code extension",
@@ -84,7 +84,7 @@ export const PRICING_TIERS = [
       "Everything in Pro",
       "400 tasks per month",
       "🚀 Maxx mode — Claude writes your code",
-      "Direct GitHub commit — Beta",
+      "Changes delivered to your repo — Beta",
       "All 3 modes: Swift, Pro, Maxx",
       "Admin dashboard + roles",
       "Priority queue",

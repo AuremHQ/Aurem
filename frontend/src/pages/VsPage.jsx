@@ -46,8 +46,8 @@ const DIFFERENTIATORS = [
    "A second model (Claude Sonnet) reviews critical changes — wrong " +
    "imports, logic errors and security gaps get caught before commit."],
   [GitCommitHorizontal, "Two delivery modes",
-   "Direct commit via the GitHub REST API when speed matters, " +
-   "or a Pull Request when your team wants eyes on the diff."],
+   "Changes land in your repo on the fast path when speed matters, " +
+   "or with a review checkpoint when your team wants eyes on the diff first."],
   [Brain, "Project Brain",
    "Per-repo permanent memory: your stack, your conventions, " +
    "your past decisions. Say \"we don't use Redux\" once."],

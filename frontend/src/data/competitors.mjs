@@ -20,7 +20,7 @@ export const AUREM = {
   pricing:
     "Flat fee — $0 Free / $9 Starter (50 tasks) / $19 Pro (300 tasks) / $49 Team per month",
   freeTier: "10 tasks/month, no credit card",
-  delivery: "Direct commit to your branch or a Pull Request — your choice",
+  delivery: "Changes land in your branch — fast path or review checkpoint, your choice",
   loop:
     "Loop Mode — Plan → Execute → Verify → Security scan → Ship, with checkpoints and one-click rollback",
   security:
@@ -52,7 +52,7 @@ export const COMPETITORS = {
     pickAurem: [
       "A predictable flat bill — $19/mo Pro, 300 tasks included",
       "A real free tier (10 tasks/month, no card)",
-      "Direct commit to your branch or a PR — your call",
+      "Changes land in your branch — fast path or review checkpoint, your call",
       "A 25+ pattern security scan before anything lands",
       "Maxx mode: a second model reviewing every critical change",
       "To ship from your phone or any browser",
@@ -337,7 +337,7 @@ export const COMPETITORS = {
       "Work on your existing GitHub repos, not a hosted workspace",
       "Flat task pricing — no effort-based variability",
       "A pre-commit security scan + optional second-model review",
-      "Direct commit or PR into your own branch protection flow",
+      "Changes land in your own branch protection flow — fast path or review checkpoint",
       "Checkpoints + one-click rollback per run",
       "Per-repo memory that persists across tasks",
     ],
@@ -533,7 +533,7 @@ COMPETITORS["vibe-coders"] = {
     "Work on your existing GitHub repos, not a locked-in workspace",
     "Flat task pricing — no credit ladders or effort-based billing",
     "A pre-commit security scan (Vanguard 2.0) before anything lands",
-    "Direct commit or a Pull Request into your own branch protection flow",
+    "Changes land in your own branch protection flow — fast path or review checkpoint",
     "Deploy anywhere — Vercel, your CI, your own infra, your call",
     "A free tier that doesn't burn down in one busy afternoon",
   ],
