@@ -195,7 +195,7 @@ const TIERS = [
       {
         n: "06",
         icon: "SCAN",
-        h: "5-Category Codebase Health Scanner",
+        h: "16-Category Codebase Health Scanner",
         p: "Pure regex + AST. Security + perf + code quality + deps + database — all 5 for the price of one GitHub tree walk. LLM pays only when you click Fix.",
         proof: "routers/codebase_health.py",
       },

@@ -579,7 +579,7 @@ const TEAMS = [
     desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically." },
   { icon: "🏥", tag: "NEW · token-based",
     title: "Codebase Health Scanner",
-    desc: "5-category audit: Security, Performance, Code Quality, Dependencies, Database. Health score 0-100. Individual fix buttons. Find 44 issues in minutes, fix them with one click." },
+    desc: "16-category audit: security, performance, code quality, dependencies, database, and more. Health score 0-100. Individual fix buttons. Find 44 issues in minutes, fix them with one click." },
   { icon: "⚡", tag: "UNIQUE · 4-hop chain",
     title: "Never Goes Down",
     desc: "OpenRouter → DeepSeek → OR free chain → Groq emergency. When Cursor and Copilot go down with their providers, ORA keeps shipping. Silent failover, zero downtime for you." },
