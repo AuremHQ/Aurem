@@ -1,0 +1,48 @@
+{
+  "summary": "READ-ONLY UI/workflow documentation audit of AUREM/ORA in PREVIEW, with no code, flag, or data changes. Covered: about 30 routes on desktop 1366 and mobile 375 (admin plus a fresh throwaway signup), 5 flows, a popup inventory on a fresh signup, and the specific confirmations. The full structured write-up is in /app/memory/ui_audit_2026_10/TESTING_AGENT_FINDINGS.md, and 90+ screenshots are in /app/memory/ui_audit_2026_10/. Three environment blockers kept the core promise (find, fix, verify, PR) from being verifiable in preview: (1) OpenRouter LLM key returns 401, so Fix ends in llm_empty_response, chat replies are empty and /build Ship returns 503. (2) The preview Stripe key is LIVE (sk_live_, checkout session cs_live_), so I did no test-card payment. (3) The admin default project's GitHub App token mint returns 404, so the scan endpoint returns 502 and Cloudflare masks the message.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "backend/.env STRIPE_API_KEY", "issue": "PREVIEW uses a LIVE Stripe secret key (sk_live_). POST /api/aurem-dev/payments/checkout creates live checkout sessions (cs_live_). The review request assumed TEST mode. Real cards entered in preview would be charged.", "priority": "CRITICAL"},
+      {"endpoint": "LLM gateway (OpenRouter)", "issue": "Every OpenRouter model returns 401 Unauthorized in preview. Results: /fix-pipeline/bulk ends 0/1 with llm_empty_response, /chat/stream returns an empty 'Root cause:/Fix:' template, and /scaffold/{id}/materialize returns 503 qa_reviewer_unavailable (raw_error http_401 'User not found').", "priority": "HIGH"},
+      {"endpoint": "POST /api/aurem-dev/codebase-health/scan (project p_demo_a)", "issue": "Returns 502 with detail 'GitHub returned HTTP 404 while minting the App installation token…'. Cloudflare replaces the 502 body, so the UI shows the raw Cloudflare text 'The origin web server returned an invalid or incomplete response to Cloudflare…'. A 502 status code hides the app's own error message.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "/integrations", "issue": "In preview, the MCP endpoint shown is https://auremcto.com/api/aurem-dev/mcp, which is the PROD URL."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OraGuideMascot + NewUserWizard", "issue": "Both show at the same time on first dashboard load (mascot z 10001 above wizard z 9000) and give conflicting directions: 'click Connect GitHub above' vs 'Continue with GitHub App below'.", "selector": "[data-testid=ora-guide-mascot-root], [data-testid=new-user-wizard]", "priority": "MEDIUM"},
+      {"component": "OraGuideMascot + StarterChoiceModal", "issue": "After 'Skip for now', the 'Let's get your first win' modal (z 9100) and the mascot bubble show together.", "selector": "[data-testid=starter-choice-modal]", "priority": "MEDIUM"},
+      {"component": "OraGuideMascot", "issue": "The bubble shows on every page: on top of the Fix progress drawer, over the /build input on mobile, and on the light Personal Track theme. For the admin it still says 'New here? Start with a quick scan…' even after scans exist.", "selector": "[data-testid=ora-guide-bubble]", "priority": "MEDIUM"},
+      {"component": "Projects page offline", "issue": "When the network fails, it shows 'No projects yet. Connect a GitHub repo to get started.' (a false empty state) instead of an error.", "selector": "/projects", "priority": "LOW"},
+      {"component": "Sidebar DEV_TOOLS", "issue": "The 'Health Scan'/'Bug Hunt' live items (SidebarBound DEV_TOOLS) are not visible or reachable in the dashboard rail at 1366 or 1920. The rail only has Chat/Ship/Insights/Settings/Admin. Marked NOT VERIFIED after 3 attempts.", "selector": "[data-testid=ds2-devtools-list]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Codebase health Unlock", "issue": "'Unlock MEDIUM — 2 💎' revealed the finding with no network request (admin). Unclear whether any diamonds are charged.", "affected_selectors": ["text=Unlock MEDIUM"]},
+      {"flow": "Fix → score", "issue": "The aurem:finding-fixed handler adds +2 to the score on the client side with no re-scan. No before/after score is shown.", "affected_selectors": ["[data-testid=health-score-number]"]}
+    ],
+    "design_issues": [
+      {"screen": "Copy consistency", "issues": ["Landing and pricing say 'no token meters' and '0 token billing', but /codebase-health shows '💎 250000 tokens' for a free user and diamond costs per category, and Settings→Plans shows 'TOKEN WALLET 250,000' above 'Flat fee. No token surprises.'", "Plans copy says 'Direct commits to your repo' / 'Direct GitHub commit — Beta' while the preview ship_via_pr flag is ON (PR mode)", "'LAUNCH-READY 9/9 categories' shown with 4 issues and only 9 of 16 categories scanned", "/why-ora says '5-Category Codebase Health Scanner' while the page has 16 categories", "/build draft title truncated ('…streak notificati')", "Logged-in admin visiting /wall lands on marketing / with 'Sign in / Start free'", "/bug-hunt CTAs send a logged-in user to /signup"]}
+    ]
+  },
+  "test_report_links": ["/app/memory/ui_audit_2026_10/TESTING_AGENT_FINDINGS.md"],
+  "action_items": [
+    "Decide whether preview should keep a LIVE Stripe key (sk_live_). Swap to a test key if test checkouts are expected.",
+    "Provide a working OpenRouter/LLM key in preview so Fix, chat and /build Ship can actually be audited (diff, verify, PR via ship_via_pr).",
+    "Re-run Flow B once the LLM works, to capture a real PR URL and the before/after.",
+    "Decide whether codebase-health scan errors should use a status Cloudflare won't mask (not 502), so users see the real message.",
+    "Decide popup orchestration: mascot vs NewUserWizard vs StarterChoiceModal stacking, and mascot copy that doesn't match the screen."
+  ],
+  "critical_code_review_comments": [
+    "CodebaseHealth.jsx onFixed handler fakes the score with Math.min(100, score + 2) instead of re-scanning",
+    "RouteErrorBoundary does fire (offline + lazy chunk failure, and preview 429s on unbundled ES modules), but /projects swallows its fetch error and renders an empty state"
+  ],
+  "updated_files": ["/app/memory/ui_audit_2026_10/TESTING_AGENT_FINDINGS.md", "/app/memory/ui_audit_2026_10/*.png (screenshots only)"],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "All pages render. Core fix/PR flow NOT VERIFIABLE in preview (LLM 401)"},
+  "seed_data_creation": "Throwaway signup audit-popup-377207@example.com (password ends '26!x'): free tier, 1 chat message, 1 /build draft 8986be6efa1748a7, 1 unpaid live Stripe checkout session. Admin: health scans run on p_42a22287f7 and p_firstscan_demo_e6ed2d, plus 1 failed fix job fx_f40d8bcc8.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The preview frontend serves unbundled ES modules: avoid many page.goto reloads (they trigger 429s and RouteErrorBoundary). Log in once, then navigate with history.pushState + popstate. The browser tool rewrites page.screenshot(path=...) calls, so pass a precomputed path variable. A scannable admin project with findings is p_42a22287f7 (ora-grounding). p_demo_a scans fail (GitHub App 404).",
+  "rca of the issue": "Fix and PR could not be verified because OpenRouter returns 401 for all models in preview (backend.err.log services.llm.openrouter_client). Paid tiers could not be verified because STRIPE_API_KEY is sk_live_."
+}
