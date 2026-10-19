@@ -391,7 +391,9 @@ export default function BugHunt() {
           <Link className="nav-link" to="/" data-testid="bh-nav-home">Home</Link>
           <Link className="nav-link" to="/pricing" data-testid="bh-nav-pricing">Pricing</Link>
           <Link className="nav-link" to="/login" data-testid="bh-nav-login">Sign in</Link>
-          <Link className="nav-cta" to="/signup" data-testid="bh-nav-signup">Start free</Link>
+          <Link className="nav-cta" to={isAuthed ? "/codebase-health" : "/signup"} data-testid="bh-nav-signup">
+            {isAuthed ? "Scan my repo" : "Start free"}
+          </Link>
         </div>
       </nav>
 
@@ -411,8 +413,8 @@ export default function BugHunt() {
             requests. No risk to your production systems.
           </p>
           <div className="hero-buttons">
-            <Link className="btn-primary" to="/signup" data-testid="bh-hero-cta">
-              Scan my repo — Start free
+            <Link className="btn-primary" to={isAuthed ? "/codebase-health" : "/signup"} data-testid="bh-hero-cta">
+              {isAuthed ? "Scan my repo" : "Scan my repo — Start free"}
             </Link>
             <a className="btn-ghost" href="#patterns" data-testid="bh-hero-secondary">
               See all 50+ patterns ↓
@@ -541,8 +543,8 @@ export default function BugHunt() {
         <section className="cta-section">
           <h2 className="cta-title">Start scanning your codebase today</h2>
           <p className="cta-sub">10 free Bug Hunt scans. No credit card. Connect your GitHub in 30 seconds.</p>
-          <Link className="btn-primary" to="/signup" data-testid="bh-final-cta">
-            Start free — auremcto.com
+          <Link className="btn-primary" to={isAuthed ? "/codebase-health" : "/signup"} data-testid="bh-final-cta">
+            {isAuthed ? "Scan my repo" : "Start free — auremcto.com"}
           </Link>
           <div className="cta-foot">$9/month · flat pricing · 10 free scans, no credit card</div>
         </section>
