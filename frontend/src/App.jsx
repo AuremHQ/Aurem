@@ -19,6 +19,7 @@
  */
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import useAutoClearConsole from "./lib/useAutoClearConsole";
+import { getToken } from "./lib/api";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import { useEffect, useRef, lazy, Suspense } from "react";
 import Toaster, { toast } from "./components/Toast";
@@ -527,8 +528,11 @@ export default function App() {
               real un-opted-in ship counts (stats endpoint had no
               wall_opt_in filter, unlike feed) to any anonymous
               visitor. Behind `public_ship_wall` flag (default OFF);
-              backend /wall/* now 404s while disabled too. */}
-          <Route path="/wall" element={<Navigate to="/" replace />} />
+              backend /wall/* now 404s while disabled too.
+              UI-fix C7 — a logged-in user hitting this flag-off
+              redirect must never land back on the logged-out
+              marketing page; send them to their own dashboard. */}
+          <Route path="/wall" element={<Navigate to={getToken() ? "/dashboard" : "/"} replace />} />
           <Route path="/wrapped" element={<PrivateRoute><Wrapped /></PrivateRoute>} />
           {/* 2026-09-28 MASTER TASK R5/Part1#3 — /automations auto-ran
               a paid LLM task on every GitHub push with no spend
