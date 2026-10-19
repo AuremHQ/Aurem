@@ -230,7 +230,7 @@ export function AutoScanPrompt({ projectId, isFirstScan, initialDismissed, initi
   );
 }
 
-function HealthBadge({ score, label, tone, breakdown }) {
+export function HealthBadge({ score, label, tone, breakdown, criticalHigh = 0 }) {
   const palette = {
     critical: { bg: "linear-gradient(135deg, #4c0a0a 0%, #2a0606 100%)", border: "rgba(239,68,68,0.65)", glow: "rgba(239,68,68,0.45)", emoji: "☠️" },
     warn:     { bg: "linear-gradient(135deg, #4a2a06 0%, #2a1804 100%)", border: "rgba(245,158,11,0.55)", glow: "rgba(245,158,11,0.30)", emoji: "⚠️" },
@@ -244,6 +244,13 @@ function HealthBadge({ score, label, tone, breakdown }) {
   const entries = Object.entries(breakdown || {});
   const readyCount = entries.filter(([, v]) => (v?.total ?? 0) === 0 || (v?.score ?? 0) >= 80).length;
   const totalCats = entries.length;
+  // UI-fix B3 (2026-10) — "LAUNCH-READY" previously compared scanned
+  // categories against themselves (9/9 reads as 100% even when only 9
+  // of the real 16 categories ran). It's only true launch-readiness
+  // once ALL 16 categories were scanned AND nothing critical/high is
+  // open — otherwise show the honest "X of 16 checked" count instead.
+  const fullTotal = CATS.length;
+  const isLaunchReady = totalCats === fullTotal && criticalHigh === 0;
   return (
     <div data-testid="health-score" style={{
       padding: "28px 32px", borderRadius: 18, background: palette.bg,
@@ -277,14 +284,22 @@ function HealthBadge({ score, label, tone, breakdown }) {
           marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)",
           display: "flex", alignItems: "baseline", gap: 10,
         }}>
-          <span style={{ fontSize: 13, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace",
-            letterSpacing: 0.5, textTransform: "uppercase" }}>
-            Launch-ready
-          </span>
-          <span style={{ fontSize: 22, fontWeight: 800, color: readyCount === totalCats ? "#4ade80" : "#fff" }}>
-            {readyCount} / {totalCats}
-          </span>
-          <span style={{ fontSize: 13, color: "#94a3b8" }}>categories</span>
+          {isLaunchReady ? (
+            <>
+              <span style={{ fontSize: 13, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: 0.5, textTransform: "uppercase" }}>
+                Launch-ready
+              </span>
+              <span style={{ fontSize: 22, fontWeight: 800, color: "#4ade80" }}>
+                {readyCount} / {fullTotal}
+              </span>
+              <span style={{ fontSize: 13, color: "#94a3b8" }}>categories</span>
+            </>
+          ) : (
+            <span style={{ fontSize: 15, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace" }}>
+              {totalCats} of {fullTotal} checked
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -913,7 +928,8 @@ function CodebaseHealthInner() {
               initialDismissed={data.auto_scan_prompt_dismissed}
               initialFrequency={data.auto_scan_frequency}
             />
-            <HealthBadge score={data.score} label={data.label} tone={data.tone} breakdown={data.breakdown} />
+            <HealthBadge score={data.score} label={data.label} tone={data.tone} breakdown={data.breakdown}
+              criticalHigh={(data?.counts?.critical || 0) + (data?.counts?.high || 0)} />
             <p style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 22, lineHeight: 1.6 }}>
               Your codebase has <strong>{data.total}</strong> issues that could
               cause production outages, data leaks, and slow response times.
