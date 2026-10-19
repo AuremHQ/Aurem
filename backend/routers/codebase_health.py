@@ -195,8 +195,17 @@ async def scan(
     try:
         pat = await get_repo_token(proj)
     except GithubAppAuthError as e:
-        status = 400 if e.code in ("app_installation_missing", "app_installation_revoked") else 502
-        raise HTTPException(status, e.detail)
+        if e.code in ("app_installation_missing", "app_installation_revoked"):
+            raise HTTPException(400, e.detail)
+        if e.code == "github_rejected":
+            # UI-fix C6 — a 401/403/404 minting the App token is a real,
+            # actionable 4xx (not a 5xx), and must carry a JSON body: a
+            # 502 here gets its body silently replaced by Cloudflare's
+            # own "Bad gateway" HTML on prod, so the frontend never
+            # sees the real message (see the 212m-216 comment above on
+            # _build_text_cache for the same Cloudflare-body issue).
+            raise HTTPException(409, {"code": "github_install_unreachable", "detail": e.detail})
+        raise HTTPException(502, e.detail)
     if not (owner and repo and pat):
         raise HTTPException(400, "Project missing GitHub linkage / PAT")
 

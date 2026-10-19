@@ -580,6 +580,11 @@ function CodebaseHealthInner() {
   const dataRef = useRef(null);
   useEffect(() => { dataRef.current = data; }, [data]);
   const [error, setError] = useState(null);
+  // UI-fix C6 — a 409 github_install_unreachable carries a structured
+  // {code, detail} body (not a plain string), so it needs its own
+  // banner with a "Reconnect GitHub" action instead of the plain
+  // error pill.
+  const [githubUnreachable, setGithubUnreachable] = useState(null);
   // UI-fix C4 — a project-less scan used to just drop a generic error
   // string in the error pill with no way forward. This drives a
   // dedicated "Connect a repo first" card that opens the same connect
@@ -713,7 +718,7 @@ function CodebaseHealthInner() {
       setShowConnectCard(true);
       return;
     }
-    setScanning(true); setError(null);
+    setScanning(true); setError(null); setGithubUnreachable(null);
     try {
       const r = await api.post("/codebase-health/scan",
         { project_id: projectId, categories });
@@ -725,7 +730,12 @@ function CodebaseHealthInner() {
       });
       setExpandedCats(e);
     } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || "Scan failed");
+      const detail = e?.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.code === "github_install_unreachable") {
+        setGithubUnreachable(detail.detail || "ORA couldn't reach GitHub to scan this repo.");
+      } else {
+        setError(typeof detail === "string" ? detail : e?.message || "Scan failed");
+      }
     } finally {
       setScanning(false);
     }
@@ -882,6 +892,30 @@ function CodebaseHealthInner() {
             background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.45)",
             color: "#fca5a5", fontSize: 13,
           }}>{error}</div>
+        )}
+
+        {/* UI-fix C6 — GitHub App token mint rejected (401/403/404) */}
+        {githubUnreachable && (
+          <div data-testid="health-github-unreachable" style={{
+            padding: "14px 18px", marginBottom: 16, borderRadius: 8,
+            background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.45)",
+            color: "#fca5a5", fontSize: 13, display: "flex", alignItems: "center",
+            justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+          }}>
+            <span>{githubUnreachable}</span>
+            <button
+              type="button"
+              data-testid="health-github-reconnect-btn"
+              onClick={() => navigate(`/projects?pat=${encodeURIComponent(projectId)}`)}
+              style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                cursor: "pointer", background: "#fca5a5", color: "#0a0a0a", border: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Reconnect GitHub
+            </button>
+          </div>
         )}
 
         {/* UI-fix C5 — real before/after score from the free verification re-scan */}
