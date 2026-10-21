@@ -964,3 +964,26 @@ User mandated finishing a fixed queue in ONE run, each ticket with its own commi
 - **P2:** `AdminOverview.jsx` file split into per-card components (~2650 lines, over guideline); calibrated router/model benchmarks; proof-details drawer.
 
 See ROADMAP.md for historical backlog; CHANGELOG.md for prior dated work.
+
+## UI-fix queue from UI_AUDIT_2026_10.md — 18 steps strictly sequential B1→D5 (2026-10) — ALL DONE
+
+User mandated fixing every issue in `memory/UI_AUDIT_2026_10.md`, current UI/design untouched, one commit per step, token-conservative (no broad exploration, no per-step screenshots/testing_agent, full vitest+build+lint+relevant pytest only at the end). 18 steps, 16 commits (D5's RTL tests bundled into D1+D2's commit since they verify the same coordinator). Full suite at the end: 977/977 frontend tests, lint clean, `yarn build` clean, all new/touched backend pytest green.
+
+- **B1** (`be1cf61c`) — removed "Direct commit/PR" wording from PricingCards.jsx (shared by /pricing, /settings, Landing), VsPage.jsx, competitors.mjs, Landing's comparison table; mode-neutral copy everywhere. Updated the one backend test that asserted the old wording.
+- **B2** (`032caf25`) — WhyOra.jsx + Landing.jsx "5-category" → "16-category" (CodebaseHealth.jsx's own `CATS` array is 16 long).
+- **B3** (`77602659`) — CodebaseHealth.jsx's "LAUNCH-READY X/X" badge was always 100% of whatever subset was scanned. Now shows "X of 16 checked" unless all 16 scanned AND zero critical/high — only then "LAUNCH-READY".
+- **C1** (`81a908f3`) — ToolsPage.jsx: Bug Hunt/Health Scan now link to the real `/bug-hunt`/`/codebase-health` routes (were fake "Coming soon" buttons); Vanguard/Security Scan show one honest line ("Runs inside ORA chat and CI"), removed their dead repo-picker/notify-form.
+- **C2** (`b0672e9a`) — BugHunt.jsx's 3 CTAs go to `/codebase-health` ("Scan my repo") for authed admin/founder users (the only ones who reach this marketing page), `/signup` for anon.
+- **C3** (`da3e5245`) — Projects.jsx: added a real error+Retry card, separate from "No projects yet" (which used to show on a failed fetch too).
+- **C4** (`807c1b1f`) — CodebaseHealth.jsx: scanning with no connected project now shows a "Connect a repo first" card that opens the existing NewUserWizard (reused, not rebuilt).
+- **C5** (`e1ef4d81`) — the `score + 2` after a fix was fake math. Confirmed scanning is genuinely free (`services/usage.py::assert_scan_budget` only gates, never charges — only `/fix` does); now re-scans the real categories and shows "Score verified: before → after".
+- **C6** (`942634a3`) — backend: a 401/403/404 minting the GitHub App token now returns 409 `{code:"github_install_unreachable"}` JSON instead of 502 (Cloudflare eats 502 bodies in prod). Frontend shows a "Reconnect GitHub" banner for it.
+- **C7** (`29678a12`) — `/wall`'s flag-off redirect now sends logged-in users to `/dashboard` instead of the logged-out landing page.
+- **C8** (`29a3b95c`) — Integrations.jsx: found the existing user-scoped `DELETE /mcp/keys/{tail}` endpoint and wired a real "Revoke / regenerate key" button (was "Admin → API Keys", unreachable by non-admins). Also fixed the endpoint display to use the frontend's own env-aware `API_BASE` instead of the backend's hardcoded-production fallback (no `AUREM_PUBLIC_BASE_URL` set on preview).
+- **C9** (`e555c826`) — investigated the cookie banner "disappearing without a click" between /signup→/dashboard: confirmed INTENTIONAL (avoids a real z-index collision with ORA GUIDE), documented + regression-tested as-is. Flagged for product: no consent record is saved in that exact transition.
+- **C10** (`6eeac667`) — draft title now truncates at a word boundary (was a hard 100-char slice cutting mid-word) + `title` attribute with the full text.
+- **D1+D2** (`0c0cfb86`) — new `hooks/useOverlaySlot.js` coordinator: NewUserWizard > StarterChoiceModal > ORA GUIDE mascot bubble, wired into Dashboard.jsx/StarterChoiceModal.jsx/OraGuideMascot.jsx. Fixed the "above"/"below" wording contradiction between the mascot and the wizard's own GitHub-connect copy. Includes the D5 RTL tests (coordinator priority + skip transition + stage-copy regression).
+- **D3** (`be1f7c33`) — Dashboard's chat-pane banner stack explicitly capped at 2 (RepoCleanupBanner priority 1 blocking, one EngagementNudge priority 2) via a new `onHasBlocking` callback. Could not conclusively locate a distinct "GitHub toast" element beyond RepoCleanupBanner within budget — flagging for a follow-up pass if the audit's 7-item screenshot is still noisy after this.
+- **D4** (`2c7784db`) — found the real bug: NewUserWizard/StarterChoiceModal were hardcoded at z-index 9000/9100, below `Z_ADVISOR_TOGGLE` (10002) in the shared scale — the floating Advisor re-open tab stayed clickable/tabbable on top of these "blocking" modals. Both now use `Z_ACTIVE_MODAL`. Mascot bubble got `role="status"` + Escape-to-close + focus-return (it's not a true modal, so no focus trap needed there).
+
+No deploy, no new dependency, no `.env`/flag/billing/subscription_tiers.py touched. Everything verified via vitest/pytest/one screenshot pass on preview only — nothing claimed "live"/production-verified.
