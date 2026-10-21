@@ -23,6 +23,9 @@ import { Globe, Bug, Sparkles, X, Loader2, ArrowRight, CheckCircle2, AlertTriang
 import { api } from "../lib/api";
 import useModalA11y from "../hooks/useModalA11y";
 import { useOverlaySlot } from "../hooks/useOverlaySlot";
+// UI-fix D4 — must render above Z_ADVISOR_TOGGLE (10002); see the
+// same note in NewUserWizard.jsx.
+import { Z_ACTIVE_MODAL } from "../lib/zIndex";
 
 const SEVERITY_COLOR = { high: "#f87171", medium: "#f59e0b", low: "#64748b" };
 
@@ -40,7 +43,7 @@ function Panel({ children, onClose, testId }) {
       role="dialog" aria-modal="true" aria-labelledby="starter-choice-title"
       tabIndex={-1}
       style={{
-        position: "fixed", inset: 0, zIndex: 9100,
+        position: "fixed", inset: 0, zIndex: Z_ACTIVE_MODAL,
         background: "rgba(8,10,14,0.72)",
         backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
         display: "flex", alignItems: "center", justifyContent: "center",

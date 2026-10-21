@@ -127,6 +127,10 @@ export default function OraGuideMascot() {
   const [autoGroup, setAutoGroup] = useState(null);  // stage-triggered bubble
   const [panelMode, setPanelMode] = useState("stage"); // "stage" | "external" | "first_scan" | "general" | "suggestions" | "escalating" | "escalated"
   const pollRef = useRef(null);
+  // UI-fix D4 — the bubble isn't a true modal (role="status", no
+  // focus trap needed), but Escape should still close it and return
+  // focus to the toggle button that opened it.
+  const avatarRef = useRef(null);
   const activeProject = useActiveProject();
   const effectiveProjectId = activeProject?.project_id || null;
   const [projectSuggestions, setProjectSuggestions] = useState(FALLBACK_SUGGESTIONS);
@@ -415,6 +419,20 @@ export default function OraGuideMascot() {
     if (panelMode === "external" || panelMode === "first_scan") setSecondaryNudge(null);
   }
 
+  // UI-fix D4 — Escape closes the bubble and returns focus to the
+  // toggle button, same contract the two true modals already have.
+  useEffect(() => {
+    if (!open) return undefined;
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        dismiss();
+        avatarRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   // Primary action for the secondary (post_skip / post_scan /
   // first_scan) nudge — same handoffs the removed standalone
   // components used (starter-pick prefill, `/scan` prefill, or the
@@ -504,6 +522,9 @@ export default function OraGuideMascot() {
       {open && (
         <div
           data-testid="ora-guide-bubble"
+          role="status"
+          aria-live="polite"
+          aria-label="ORA Guide tip"
           style={{
             // 2026-10 — was `bottom: 52`; founder-requested proof check found
             // a 6px overlap between the bubble's bottom-left corner and the
@@ -774,6 +795,7 @@ export default function OraGuideMascot() {
 
       <button
         data-testid="ora-guide-mascot-avatar"
+        ref={avatarRef}
         type="button"
         aria-label="ORA Guide"
         onClick={toggleOpen}

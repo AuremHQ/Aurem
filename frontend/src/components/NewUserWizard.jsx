@@ -21,6 +21,10 @@ import { setActiveProjectId } from "./TabBar";
 import RobotGuide, { RobotGuideKeyframes, escapeHtml, oraPulseRingStyle } from "./RobotGuide";
 import useModalA11y from "../hooks/useModalA11y";
 import useGitHubConnectStatus from "../hooks/useGitHubConnectStatus";
+// UI-fix D4 — must render above Z_ADVISOR_TOGGLE (10002); the old
+// hardcoded 9000 let the floating Advisor re-open tab stay clickable/
+// tabbable on top of this "blocking" overlay.
+import { Z_ACTIVE_MODAL } from "../lib/zIndex";
 
 const DISMISS_KEY = "aurem_wizard_dismissed";
 const REPO_RX = /^(https?:\/\/)?(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?$/i;
@@ -629,7 +633,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       role="dialog" aria-modal="true" aria-labelledby="wizard-title"
       tabIndex={-1}
       style={{
-        position: "fixed", inset: 0, zIndex: 9000,
+        position: "fixed", inset: 0, zIndex: Z_ACTIVE_MODAL,
         background: "rgba(8,10,14,0.72)",
         backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
         display: "flex", alignItems: "center", justifyContent: "center",
