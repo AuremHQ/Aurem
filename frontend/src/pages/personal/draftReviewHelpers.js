@@ -38,3 +38,14 @@ export function toggleBtn(active) {
     transition: "background 200ms ease, color 200ms ease",
   };
 }
+
+// UI-fix C10 — the draft title used to hard-slice at exactly 100 chars,
+// which cut mid-word (e.g. "...streak notificati"). Back up to the
+// last space within the limit so the ellipsis always lands on a word
+// boundary.
+export function truncateAtWord(text, limit) {
+  if (!text || text.length <= limit) return text || "";
+  const cut = text.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut) + "…";
+}

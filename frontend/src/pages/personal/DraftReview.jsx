@@ -13,7 +13,7 @@ import { toast } from "../../lib/toastApi";
 import { PersonalShell, PrimaryButton, SecondaryButton } from "./_shell";
 import PreviewPanel from "./PreviewPanel";
 import { api } from "../../lib/api";
-import { bucketFor, BUCKETS, toggleBtn } from "./draftReviewHelpers";
+import { bucketFor, BUCKETS, toggleBtn, truncateAtWord } from "./draftReviewHelpers";
 
 export default function DraftReview() {
   const { draftId } = useParams();
@@ -108,8 +108,8 @@ export default function DraftReview() {
               fontFamily: "'Cabinet Grotesk', 'Manrope', sans-serif",
               fontSize: 32, fontWeight: 500, letterSpacing: "-0.02em",
               margin: 0,
-            }} data-testid="draft-brief-title">
-              {(draft.brief || "").slice(0, 100)}{draft.brief?.length > 100 ? "…" : ""}
+            }} data-testid="draft-brief-title" title={draft.brief || ""}>
+              {truncateAtWord(draft.brief || "", 100)}
             </h1>
           </div>
           {/* Iter 212m-239 — Code / Preview toggle */}
