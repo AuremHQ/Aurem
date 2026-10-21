@@ -22,9 +22,10 @@ from fastapi.testclient import TestClient
 
 
 class _Resp:
-    def __init__(self, status_code=200, body=None):
+    def __init__(self, status_code=200, body=None, headers=None):
         self.status_code = status_code
         self._body = body or {}
+        self.headers = headers or {}
     def json(self): return self._body
 
 

@@ -26,6 +26,7 @@ from typing import Optional
 import httpx
 
 from services.http import ext_client
+from services.loop_safety import github_request_with_retry
 from core.errors import BinaryFileError, UnsupportedEncodingError, PushFailedError
 
 logger = logging.getLogger(__name__)
@@ -268,8 +269,17 @@ async def commit_files(
         await _p(f"📦 Uploading {len(files)} blob(s) in parallel…")
 
         async def _upload(path: str, content: str) -> dict:
-            r = await client.post(
-                f"{GITHUB_API}/repos/{owner}/{repo}/git/blobs",
+            # 2026-10 — bug fix: this POST had ZERO retry, so a bulk
+            # run's 2nd+ fix tripped GitHub's secondary rate limit
+            # (see the pacing comment in fix_pipeline.py's bulk loop)
+            # and failed hard with github_status_403 — the read side
+            # (_fetch_file_content) already retries on Retry-After;
+            # the write side never did. Reusing the SAME rate-limit-
+            # aware wrapper used by the loop preflight (honors
+            # Retry-After / x-ratelimit-reset, capped) instead of a
+            # bare client.post + raise_for_status.
+            r = await github_request_with_retry(
+                "POST", f"{GITHUB_API}/repos/{owner}/{repo}/git/blobs",
                 headers=_headers(token),
                 json={
                     "content": base64.b64encode(
@@ -277,6 +287,7 @@ async def commit_files(
                     ).decode("ascii"),
                     "encoding": "base64",
                 },
+                timeout=60.0,
             )
             r.raise_for_status()
             return {
@@ -294,13 +305,14 @@ async def commit_files(
 
         # 2. Build a new tree based on the previous head's tree
         await _p("🌳 Building tree…")
-        r = await client.post(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/trees",
+        r = await github_request_with_retry(
+            "POST", f"{GITHUB_API}/repos/{owner}/{repo}/git/trees",
             headers=_headers(token),
             json={
                 "base_tree": head["tree_sha"],
                 "tree": blob_specs,
             },
+            timeout=60.0,
         )
         r.raise_for_status()
         new_tree_sha = r.json()["sha"]
@@ -308,8 +320,8 @@ async def commit_files(
 
         # 3. Create the commit object pointing at the new tree
         await _p("🧾 Creating commit…")
-        r = await client.post(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/commits",
+        r = await github_request_with_retry(
+            "POST", f"{GITHUB_API}/repos/{owner}/{repo}/git/commits",
             headers=_headers(token),
             json={
                 "message": commit_message,
@@ -317,6 +329,7 @@ async def commit_files(
                 "parents": [head["sha"]],
                 "author": {"name": author_name, "email": author_email},
             },
+            timeout=60.0,
         )
         r.raise_for_status()
         new_commit_sha = r.json()["sha"]

@@ -88,6 +88,24 @@ async def _check_one(client: httpx.AsyncClient, *, project_id: str,
             return {"project_id": project_id, "status": "connected",
                     "http_code": r.status_code, "checked_at": now,
                     "auth": auth, "owner": owner, "repo": repo}
+        # 2026-10 — bug fix: a GitHub secondary/burst rate limit (e.g.
+        # right after a bulk-fix run that pushed many commits) ALSO
+        # returns 403, and was being misread as a permanent
+        # credential rejection — which fed straight into
+        # /cleanup-summary's "CLEAN UP BROKEN PROJECT" banner and
+        # offered to DELETE a perfectly healthy project just because
+        # it was rate-limited for a minute. A rate limit is detectable
+        # (x-ratelimit-remaining=0, or a Retry-After header on 403)
+        # and must report as the existing `unreachable` status —
+        # same as a network blip — never as disconnected/revoked.
+        if r.status_code == 403 and (
+            r.headers.get("x-ratelimit-remaining") == "0"
+            or r.headers.get("retry-after")
+        ):
+            return {"project_id": project_id, "status": "unreachable",
+                    "http_code": r.status_code, "checked_at": now,
+                    "auth": auth, "owner": owner, "repo": repo,
+                    "error": "github_rate_limited"}
         # 401/403 = bad/expired token or missing Contents:Read scope.
         # 404 = repo doesn't exist for this token (private + no access
         # or deleted). Every non-2xx maps to disconnected + a reason.
