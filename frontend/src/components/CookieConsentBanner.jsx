@@ -42,6 +42,17 @@ export default function CookieConsentBanner() {
   // `aurem_consent` persists the decision, it plainly never re-nags
   // once made. Previously only /admin/* was excluded; that exclusion
   // is now subsumed by the broader logged-in check.
+  // UI-fix C9 (2026-10 audit) — confirmed INTENTIONAL, not a bug: the
+  // audit saw the banner vanish between /signup and /dashboard "without
+  // a click". That's this same loggedIn gate firing the instant
+  // `aurem_token` is written (right after signup), before the user
+  // interacted with the banner. No consent record is saved in that
+  // case, but re-fixing it to wait for a click would reopen exactly
+  // the z-index collision with ORA GUIDE this gate was added to kill
+  // (ORA GUIDE also starts rendering on /dashboard the moment
+  // loggedIn flips true — see OraGuideMascot.jsx `hidden = !loggedIn`).
+  // Trade-off kept as-is; flagging for product to decide if an
+  // explicit-choice guarantee outweighs the collision risk.
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem("aurem_token"));
   useEffect(() => {
     setLoggedIn(!!localStorage.getItem("aurem_token"));
