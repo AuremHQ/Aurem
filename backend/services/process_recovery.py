@@ -86,7 +86,16 @@ def _git_sha() -> str:
         return "unknown"
 
 
-async def _classify_boot_reason(db, sha: str) -> str:
+def _pod_host() -> str:
+    """K8s injects `HOSTNAME` as the pod name by default (every
+    replica gets a distinct value); Emergent's own convention is
+    checked first in case it differs. Stable per-pod, so two sibling
+    replicas never collide here even though they share everything
+    else (sha, image, env)."""
+    return (os.getenv("POD_NAME") or os.getenv("HOSTNAME") or "unknown").strip() or "unknown"
+
+
+async def _classify_boot_reason(db, sha: str, host: str) -> str:
     """2026-08-24 · founder-approved cause attribution. All boots were
     previously one undifferentiated 'supervisor_start' bucket, making
     restart-rate diagnosis impossible. Classification (best-effort):
@@ -96,14 +105,26 @@ async def _classify_boot_reason(db, sha: str) -> str:
       • crash_or_kill     — previous process died without the marker
                             (crash, OOM, SIGKILL, platform pod eviction)
       • first_boot        — no previous boot on record
-    """
+
+    2026-10 — deploy-health bug fix. `prev` used to be looked up with
+    NO host filter, so on a multi-replica deploy a brand-new sibling
+    pod booting a few seconds after another (totally normal — same
+    sha, no deploy in between, and the OTHER pod hasn't shut down so
+    there's no shutdown marker for THIS boot to find) was
+    misclassified as `crash_or_kill`. With 2+ replicas starting
+    together that alone can hit LOOP_THRESHOLD and fire a false
+    "RESTART LOOP DETECTED" critical incident on a perfectly healthy
+    rollout. Scoping `prev`/the shutdown marker to this pod's own
+    `host` means a sibling pod's boot is simply unrelated — only a
+    REPEATED boot of the SAME pod without its own clean-shutdown
+    marker still counts as a crash."""
     try:
-        prev = await db.process_boots.find_one({}, sort=[("ts", -1)])
+        prev = await db.process_boots.find_one({"host": host}, sort=[("ts", -1)])
         if not prev:
             return "first_boot"
         if sha and prev.get("sha") and sha != prev["sha"]:
             return "deploy_new_code"
-        marker = await db.process_shutdown_marker.find_one({"_id": "last_clean_shutdown"})
+        marker = await db.process_shutdown_marker.find_one({"_id": f"last_clean_shutdown::{host}"})
         if marker and float(marker.get("ts") or 0) >= float(prev.get("ts") or 0):
             return "clean_restart"
         return "crash_or_kill"
@@ -113,13 +134,17 @@ async def _classify_boot_reason(db, sha: str) -> str:
 
 async def mark_clean_shutdown(db) -> None:
     """Called from the lifespan shutdown hook — proof the previous
-    process exited gracefully (vs crash/OOM/SIGKILL)."""
+    process exited gracefully (vs crash/OOM/SIGKILL). Keyed per-host
+    (see `_classify_boot_reason`) so each replica's marker is its own
+    — one pod's graceful shutdown must never be read as a sibling
+    pod's."""
     if db is None:
         return
     try:
+        host = _pod_host()
         await db.process_shutdown_marker.update_one(
-            {"_id": "last_clean_shutdown"},
-            {"$set": {"ts": time.time(), "pid": os.getpid(), "sha": _git_sha()}},
+            {"_id": f"last_clean_shutdown::{host}"},
+            {"$set": {"ts": time.time(), "pid": os.getpid(), "sha": _git_sha(), "host": host}},
             upsert=True,
         )
     except Exception:
@@ -136,9 +161,10 @@ async def record_boot(db, *, reason: str = "supervisor_start") -> dict:
         return summary
     try:
         sha = _git_sha()
+        host = _pod_host()
         if reason == "supervisor_start":
             # Caller left the legacy default — attribute the real cause.
-            reason = await _classify_boot_reason(db, sha)
+            reason = await _classify_boot_reason(db, sha, host)
         doc = {
             "boot_id": f"boot_{uuid.uuid4().hex[:10]}",
             "ts": now,
@@ -146,6 +172,7 @@ async def record_boot(db, *, reason: str = "supervisor_start") -> dict:
             "sha": sha,
             "reason": reason,
             "pid": os.getpid(),
+            "host": host,
         }
         await db.process_boots.insert_one(dict(doc))
         summary["recorded"] = True
