@@ -22,6 +22,17 @@ class _FakeCursor:
     def __init__(self, docs):
         self._docs = docs
 
+    def __aiter__(self):
+        self._i = 0
+        return self
+
+    async def __anext__(self):
+        if self._i >= len(self._docs):
+            raise StopAsyncIteration
+        row = self._docs[self._i]
+        self._i += 1
+        return row
+
 
 class FakeCollection:
     def __init__(self):
@@ -40,6 +51,11 @@ class FakeCollection:
             key, direction = sort[0]
             rows.sort(key=lambda d: d.get(key, 0), reverse=direction < 0)
         return rows[0] if rows else None
+
+    def find(self, query, proj=None):
+        # 2026-10 · G19 follow-up — _trip_loop's per-host breakdown
+        # iterates `process_boots.find(...)` same as real Motor.
+        return _FakeCursor([d for d in self.docs if self._match(d, query)])
 
     async def update_one(self, query, update, upsert=False):
         n = 0

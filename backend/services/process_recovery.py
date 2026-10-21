@@ -86,13 +86,41 @@ def _git_sha() -> str:
         return "unknown"
 
 
+_UNKNOWN_HOST_WARNED = False  # 2026-10 · G19 follow-up — warn once/process
+
+
 def _pod_host() -> str:
     """K8s injects `HOSTNAME` as the pod name by default (every
     replica gets a distinct value); Emergent's own convention is
     checked first in case it differs. Stable per-pod, so two sibling
     replicas never collide here even though they share everything
-    else (sha, image, env)."""
-    return (os.getenv("POD_NAME") or os.getenv("HOSTNAME") or "unknown").strip() or "unknown"
+    else (sha, image, env).
+
+    2026-10 · G19 follow-up bug fix — strip-order bug. The previous
+    `(os.getenv("POD_NAME") or os.getenv("HOSTNAME") or "unknown").strip()`
+    picked the first var that was truthy BEFORE stripping, so
+    `POD_NAME=" "` (whitespace-only) was truthy, suppressed the real
+    `HOSTNAME`, and only THEN got stripped down to `""` → `"unknown"`
+    — silently disabling the whole per-pod scoping fix. Each candidate
+    is now stripped first, and the first non-empty one wins."""
+    global _UNKNOWN_HOST_WARNED
+    for candidate in (os.getenv("POD_NAME"), os.getenv("HOSTNAME")):
+        stripped = (candidate or "").strip()
+        if stripped:
+            return stripped
+    if not _UNKNOWN_HOST_WARNED:
+        logger.warning("[G19] _pod_host(): neither POD_NAME nor HOSTNAME is "
+                        "set — per-pod scoping inactive, falling back to "
+                        "'unknown' for this process.")
+        _UNKNOWN_HOST_WARNED = True
+    return "unknown"
+
+
+def _shutdown_marker_id(host: str) -> str:
+    """Single source of truth for the per-host shutdown-marker `_id`
+    — used by both `_classify_boot_reason` (read) and
+    `mark_clean_shutdown` (write) so they can never drift apart."""
+    return f"last_clean_shutdown::{host}"
 
 
 async def _classify_boot_reason(db, sha: str, host: str) -> str:
@@ -124,7 +152,7 @@ async def _classify_boot_reason(db, sha: str, host: str) -> str:
             return "first_boot"
         if sha and prev.get("sha") and sha != prev["sha"]:
             return "deploy_new_code"
-        marker = await db.process_shutdown_marker.find_one({"_id": f"last_clean_shutdown::{host}"})
+        marker = await db.process_shutdown_marker.find_one({"_id": _shutdown_marker_id(host)})
         if marker and float(marker.get("ts") or 0) >= float(prev.get("ts") or 0):
             return "clean_restart"
         return "crash_or_kill"
@@ -143,7 +171,7 @@ async def mark_clean_shutdown(db) -> None:
     try:
         host = _pod_host()
         await db.process_shutdown_marker.update_one(
-            {"_id": f"last_clean_shutdown::{host}"},
+            {"_id": _shutdown_marker_id(host)},
             {"$set": {"ts": time.time(), "pid": os.getpid(), "sha": _git_sha(), "host": host}},
             upsert=True,
         )
@@ -199,16 +227,36 @@ async def record_boot(db, *, reason: str = "supervisor_start") -> dict:
 
         if crash_boots_in_window >= LOOP_THRESHOLD:
             summary["loop_detected"] = True
-            await _trip_loop(db, crash_boots_in_window, doc["sha"])
+            # 2026-10 · G19 follow-up — per-host breakdown so a
+            # postmortem can tell "one pod loop-crashing 3x" apart
+            # from "3 different pods each crashed once" (e.g. a
+            # shared dependency outage hitting the whole fleet).
+            host_counts: dict[str, int] = {}
+            async for d in db.process_boots.find(
+                {"ts": {"$gte": window_start}, "reason": "crash_or_kill"},
+                {"_id": 0, "host": 1},
+            ):
+                h = d.get("host") or "unknown"
+                host_counts[h] = host_counts.get(h, 0) + 1
+            await _trip_loop(db, crash_boots_in_window, doc["sha"], host_counts)
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[G19] record_boot best-effort failure: %r", e)
     return summary
 
 
-async def _trip_loop(db, boots: int, sha: str) -> None:
+async def _trip_loop(db, boots: int, sha: str, host_counts: dict[str, int]) -> None:
     """Log a loop-trip row + raise a CRITICAL alert in the EXISTING
-    topup_alerts banner. Deduped to one active alert at a time."""
+    topup_alerts banner. Deduped to one active alert at a time.
+
+    2026-10 · G19 follow-up — `host_counts` (crash boots per pod in
+    this window) is recorded on the trip row + G20 incident so a
+    postmortem can distinguish one pod stuck in a crash loop from
+    several different pods each crashing once (e.g. a shared
+    dependency outage). Purely additional context — the trip/alert
+    condition itself is unchanged (fleet-wide `boots` count, by
+    design: see record_boot's crash_boots_in_window)."""
     now = time.time()
+    hosts = sorted(host_counts)
     try:
         await db.process_loop_trips.insert_one({
             "trip_id": f"trip_{uuid.uuid4().hex[:10]}",
@@ -217,27 +265,31 @@ async def _trip_loop(db, boots: int, sha: str) -> None:
             "boots_in_window": boots,
             "window_s": LOOP_WINDOW_S,
             "sha": sha,
+            "hosts": hosts,
+            "host_counts": dict(host_counts),
         })
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[G19] loop-trip log failure: %r", e)
 
     logger.error(
-        "[G19] RESTART LOOP DETECTED — %d boots in %ds (sha=%s). "
+        "[G19] RESTART LOOP DETECTED — %d boots in %ds (sha=%s, hosts=%s). "
         "The process keeps dying; supervisor auto-restart is masking a "
         "hard crash. Investigate before it burns the pod.",
-        boots, LOOP_WINDOW_S, sha)
+        boots, LOOP_WINDOW_S, sha, host_counts)
 
     # Iter 363 · Guard 20 — auto-create a postmortem incident (its own
     # dedup). Done BEFORE the banner-alert dedup below so a repeated
     # trip (banner already active) still guarantees the incident exists.
     try:
         from services.incident_log import open_incident
+        host_summary = ", ".join(f"{h}×{c}" for h, c in sorted(host_counts.items()))
         await open_incident(
             db, guard="G19", source_key="process_recovery",
             title=f"Restart loop: {boots} boots in {LOOP_WINDOW_S // 60}min",
             detail=(f"Backend restarted {boots} times inside {LOOP_WINDOW_S}s "
                     f"(sha={sha}). Supervisor keeps restarting a crashing "
-                    f"process — hard boot failure masked."),
+                    f"process — hard boot failure masked. By host: "
+                    f"{host_summary or 'unknown'}."),
             follow_up="Check backend.err.log; fix boot crash; confirm stable.")
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[G20] incident hook (loop) failure: %r", e)
