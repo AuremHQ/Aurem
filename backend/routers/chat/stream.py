@@ -835,48 +835,92 @@ async def chat_stream(
             }) + "\n\n"
         )
 
-        try:
-            async for _chunk in consume_worker_queue(state, worker_t, ticker_t):
-                yield _chunk
-        except (asyncio.CancelledError, GeneratorExit):
-            # INTERACTION_CONTRACT_V1 P1 — client disconnected / task
-            # cancelled WHILE STILL WAITING on the worker/provider,
-            # before any content existed to chunk out yet. The
-            # pre-existing mid-stream-drop handler further below only
-            # covers a disconnect AFTER content exists (inside the
-            # token-chunking loop) — this is the OTHER, often longer,
-            # window. Without this, a disconnect here left the ledger
-            # row stuck at `started` forever (still durable proof the
-            # task was accepted, but never resolved to a
-            # positively-known `cancelled` outcome) — live-verified via
-            # a real killed-client repro during this implementation
-            # before this except clause existed.
-            if _ic_enabled():
+        # 2026-10 — bug fix: a provider timeout with ZERO tool calls
+        # yet (nothing a retry could duplicate) used to go straight to
+        # "Model API was slow..." + a manual Retry button every time.
+        # Bounded to ONE silent auto-retry: attempt 0 asks
+        # consume_worker_queue to SUPPRESS finalization on a
+        # zero-tool-call timeout (so nothing is streamed/persisted),
+        # then this resets the run-scoped state and tries exactly
+        # once more with suppression OFF — a second timeout (or any
+        # timeout with 1+ tool calls, on either attempt) finalizes
+        # normally, unchanged from before.
+        for _attempt in range(2):
+            try:
+                async for _chunk in consume_worker_queue(
+                    state, worker_t, ticker_t,
+                    suppress_zero_tool_timeout=(_attempt == 0),
+                ):
+                    yield _chunk
+            except (asyncio.CancelledError, GeneratorExit):
+                # INTERACTION_CONTRACT_V1 P1 — client disconnected / task
+                # cancelled WHILE STILL WAITING on the worker/provider,
+                # before any content existed to chunk out yet. The
+                # pre-existing mid-stream-drop handler further below only
+                # covers a disconnect AFTER content exists (inside the
+                # token-chunking loop) — this is the OTHER, often longer,
+                # window. Without this, a disconnect here left the ledger
+                # row stuck at `started` forever (still durable proof the
+                # task was accepted, but never resolved to a
+                # positively-known `cancelled` outcome) — live-verified via
+                # a real killed-client repro during this implementation
+                # before this except clause existed.
+                if _ic_enabled():
+                    try:
+                        from services.chat_reliability import record_cancelled
+                        from services.interaction_contract import finalize as _fin
+                        partial_invocations = list(state.activity.get("invocations") or [])
+                        await record_cancelled(
+                            get_db(), request_id=interaction_request_id,
+                            reason="client_disconnect_while_waiting_for_worker",
+                            partial_content="", tool_calls_run=len(partial_invocations),
+                        )
+                        await _persist_turn(
+                            user_id, body.session_id or "", body.prompt, "",
+                            "aurem-cto", project_id=body.project_id,
+                            interrupted=True, stream_state="cancelled",
+                            interaction=_fin(
+                                {"turn_state": "partial" if partial_invocations else "error",
+                                 "failure_mode": "client_disconnect_while_waiting_for_worker"},
+                                "", prompt=body.prompt, session_id=body.session_id or "",
+                                request_id=interaction_request_id,
+                            ),
+                        )
+                    except Exception:
+                        logger.debug("chat_reliability record_cancelled skipped (disconnect while waiting)")
+                worker_t.cancel()
+                ticker_t.cancel()
+                raise
+            if not state.zero_tool_timeout_suppressed:
+                break  # normal outcome, or the final (non-suppressed) attempt
+            # Attempt 0 silently ate a zero-tool-call timeout. watchdog.py
+            # already issued worker_t.cancel()/ticker_t.cancel() — but
+            # .cancel() only SCHEDULES the CancelledError; the task may
+            # not have actually stopped touching `state` yet. MUST wait
+            # for both to fully settle before reusing `state` for a
+            # fresh run, or the still-unwinding attempt-0 worker could
+            # race the brand-new attempt-1 worker and (worst case) still
+            # land a real tool call/side-effect AFTER we decided "0 tool
+            # calls, safe to retry" — exactly the double-apply this
+            # whole guard exists to prevent.
+            for _old_t in (worker_t, ticker_t):
                 try:
-                    from services.chat_reliability import record_cancelled
-                    from services.interaction_contract import finalize as _fin
-                    partial_invocations = list(state.activity.get("invocations") or [])
-                    await record_cancelled(
-                        get_db(), request_id=interaction_request_id,
-                        reason="client_disconnect_while_waiting_for_worker",
-                        partial_content="", tool_calls_run=len(partial_invocations),
-                    )
-                    await _persist_turn(
-                        user_id, body.session_id or "", body.prompt, "",
-                        "aurem-cto", project_id=body.project_id,
-                        interrupted=True, stream_state="cancelled",
-                        interaction=_fin(
-                            {"turn_state": "partial" if partial_invocations else "error",
-                             "failure_mode": "client_disconnect_while_waiting_for_worker"},
-                            "", prompt=body.prompt, session_id=body.session_id or "",
-                            request_id=interaction_request_id,
-                        ),
-                    )
-                except Exception:
-                    logger.debug("chat_reliability record_cancelled skipped (disconnect while waiting)")
-            worker_t.cancel()
-            ticker_t.cancel()
-            raise
+                    await _old_t
+                except (asyncio.CancelledError, Exception):
+                    pass
+            # Now safe to reset the run-scoped fields and go again once.
+            state.timed_out = False
+            state.zero_tool_timeout_suppressed = False
+            state.t_start = _t.monotonic()
+            state.q = asyncio.Queue()
+            state.stop_event = asyncio.Event()
+            state.activity = {"label": "thinking…", "invocations": []}
+            if state.timeout_clocks is not None:
+                from services.timeout_clocks import TimeoutClocks
+                state.timeout_clocks = TimeoutClocks(
+                    t_start=state.t_start, hard_deadline_s=HARD_TIMEOUT_S)
+            ticker_t = asyncio.create_task(_ticker())
+            worker_t = asyncio.create_task(run_worker(state))
         if state.timed_out:
             return
         result = state.result

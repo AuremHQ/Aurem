@@ -35,7 +35,8 @@ def _timeout_interaction(state: StreamState, content: str, partial_invocations: 
     )
 
 
-async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
+async def consume_worker_queue(state: StreamState, worker_t, ticker_t,
+                                suppress_zero_tool_timeout: bool = False):
     """Async generator yielding SSE `data: ...\\n\\n` lines. On a
     clean `result`/`error` event it sets `state.result` /
     `state.collected_steps` and returns normally (caller continues
@@ -43,6 +44,17 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
     stream itself (meta → tokens → persist → done), sets
     `state.timed_out = True`, and returns — caller must check that
     flag and stop immediately without further processing.
+
+    2026-10 — bug fix (provider-timeout auto-retry). When
+    `suppress_zero_tool_timeout` is True AND the timeout fires with
+    ZERO tool calls recorded yet (nothing that a retry could
+    duplicate), this skips the whole message-build/emit/persist
+    block, sets `state.zero_tool_timeout_suppressed = True`, and
+    returns having yielded NOTHING — so the caller (stream.py) can
+    silently reset and retry once instead of the user ever seeing
+    "Model API was slow..." and having to click Retry. Any timeout
+    with 1+ tool calls, or a suppressed attempt that still has 0 tool
+    calls, is UNCHANGED — identical to before this flag existed.
     """
     from services.chat_helpers import _persist_turn
     from services.interaction_contract import enabled as _ic_enabled
@@ -116,6 +128,13 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t):
             # so this decision is directly unit-testable (the old
             # grep-lock test couldn't catch a swapped branch).
             tool_count = len(partial_invocations)
+            # 2026-10 — bug fix: see consume_worker_queue's docstring.
+            # Zero tool calls means nothing happened yet that a retry
+            # could duplicate — safe to retry automatically once.
+            if suppress_zero_tool_timeout and tool_count == 0:
+                state.timed_out = True
+                state.zero_tool_timeout_suppressed = True
+                return
             from services.orchestrator import build_timeout_message
             # 2026-08-23 audit fix — report whichever budget actually
             # fired so the message says "48s" not a misleading "180s"

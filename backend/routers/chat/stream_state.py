@@ -99,6 +99,13 @@ class StreamState:
     result: Any = None
     collected_steps: list = field(default_factory=list)
     timed_out: bool = False
+    # 2026-10 — bug fix (provider-timeout auto-retry). Set by
+    # watchdog.py's consume_worker_queue() when a provider timeout
+    # fires with ZERO tool calls/side effects AND the caller asked it
+    # to suppress finalization (stream.py's gen(), first attempt
+    # only). Means: nothing was streamed/persisted for this attempt —
+    # safe for the caller to reset and retry once automatically.
+    zero_tool_timeout_suppressed: bool = False
 
     # ── retries.py output, read by sse_stream.py after the
     # confidence-mismatch gate runs ──
