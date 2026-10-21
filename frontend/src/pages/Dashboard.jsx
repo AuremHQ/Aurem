@@ -320,6 +320,9 @@ function DashboardV2Body() {
   // on screen, so the mascot's auto-open bubble backs off instead of
   // piling on top of it.
   useOverlaySlot("wizard", showWizard || showGate);
+  // UI-fix D3 — tracks whether RepoCleanupBanner currently has a
+  // blocking repo issue to show; gates the next-action nudges below.
+  const [hasBlockingBanner, setHasBlockingBanner] = useState(false);
 
   // 2026-09-22 — chat_opened funnel-event timing fix. ChatPanel below
   // mounts unconditionally (the gate is an overlay ON TOP of it, not a
@@ -753,11 +756,18 @@ function DashboardV2Body() {
                 right below this comment once a user has explicitly
                 skipped that gate. Two competing always-visible
                 banners was the exact clutter problem being fixed. */}
-            <RepoCleanupBanner />
-            {projectCount === 0 && gateSkipped === true && (
+            <RepoCleanupBanner onHasBlocking={setHasBlockingBanner} />
+            {/* UI-fix D3 — cap the dashboard to 2 competing banners at
+                once: the blocking repo-cleanup banner (priority 1)
+                above, and at most ONE next-action nudge (priority 2)
+                below. The full detail for whichever nudge is
+                deferred stays reachable via the notification bell
+                (repo_revoked / scan_done notification types already
+                cover the same underlying signal). */}
+            {!hasBlockingBanner && projectCount === 0 && gateSkipped === true && (
               <EngagementNudge variant="post_skip" />
             )}
-            {!!activeProject && (
+            {!hasBlockingBanner && !!activeProject && (
               <EngagementNudge variant="post_scan" projectId={activeProject.project_id} />
             )}
             <div data-testid="chat-pane"

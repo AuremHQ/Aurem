@@ -29,7 +29,7 @@ const REASON_LABEL = {
   no_token:        "No token to authenticate",
 };
 
-export default function RepoCleanupBanner() {
+export default function RepoCleanupBanner({ onHasBlocking }) {
   const [broken, setBroken] = useState([]);
   const [open, setOpen]     = useState(false);
   const [busy, setBusy]     = useState(false);
@@ -49,6 +49,11 @@ export default function RepoCleanupBanner() {
       setBroken([]);
     }
   }, []);
+
+  // UI-fix D3 — let Dashboard know whether this (blocking, priority-1)
+  // banner has something to show, so it can defer the next-action
+  // nudge instead of stacking a 2nd card on top of this one.
+  useEffect(() => { onHasBlocking?.(broken.length > 0); }, [broken, onHasBlocking]);
 
   useEffect(() => {
     refresh();
