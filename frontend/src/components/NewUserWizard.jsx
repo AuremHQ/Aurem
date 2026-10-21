@@ -1376,7 +1376,7 @@ function buildRobotMessage({ ghStatus, busy, err, repoUrl }) {
   {
     if (ghStatus === "checking") return `Checking your GitHub connection…`;
     if (ghStatus === "disconnected")
-      return `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — connects in seconds, no password or access key to manage.`;
+      return `<strong>Fastest way:</strong> use the <strong>Continue with GitHub</strong> button <span class="ora-arrow">👇</span> — connects in seconds, no password or access key to manage.`;
     if (ghStatus === "manual")
       return `Paste any <strong>public repo URL</strong> below. For private repos, connect GitHub from Settings later. <span class="ora-arrow">👇</span>`;
     if (ghStatus === "choosing" && !repoUrl)

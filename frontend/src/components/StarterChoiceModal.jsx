@@ -22,6 +22,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Globe, Bug, Sparkles, X, Loader2, ArrowRight, CheckCircle2, AlertTriangle, Github } from "lucide-react";
 import { api } from "../lib/api";
 import useModalA11y from "../hooks/useModalA11y";
+import { useOverlaySlot } from "../hooks/useOverlaySlot";
 
 const SEVERITY_COLOR = { high: "#f87171", medium: "#f59e0b", low: "#64748b" };
 
@@ -141,6 +142,9 @@ export default function StarterChoiceModal() {
   const [scanResult, setScanResult] = useState(null);
   const [demoResult, setDemoResult] = useState(null);
   const [demoError, setDemoError] = useState("");
+  // UI-fix D1 — announce this slot to the overlay coordinator so the
+  // mascot's auto-open bubble doesn't pile on top of it.
+  useOverlaySlot("starter", open);
 
   useEffect(() => {
     const onOpen = () => { setOpen(true); setStep("choices"); };

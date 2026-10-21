@@ -42,6 +42,7 @@ import {
 } from "../components/TabBar";
 import NewUserWizard from "../components/NewUserWizard";
 import StarterChoiceModal from "../components/StarterChoiceModal";
+import { useOverlaySlot } from "../hooks/useOverlaySlot";
 import VisibilityKitPanel from "../components/VisibilityKitPanel";
 import { EngagementNudge } from "../components/EngagementNudge";
 import RepoCleanupBanner from "../components/RepoCleanupBanner";
@@ -314,6 +315,11 @@ function DashboardV2Body() {
       .catch(() => setGateSkipped(true));
   }, []);
   const showGate = projectCount === 0 && gateSkipped === false;
+  // UI-fix D1 — announce to the overlay coordinator whenever either
+  // NewUserWizard flavor (banner-triggered or the mandatory gate) is
+  // on screen, so the mascot's auto-open bubble backs off instead of
+  // piling on top of it.
+  useOverlaySlot("wizard", showWizard || showGate);
 
   // 2026-09-22 — chat_opened funnel-event timing fix. ChatPanel below
   // mounts unconditionally (the gate is an overlay ON TOP of it, not a

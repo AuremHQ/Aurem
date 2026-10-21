@@ -26,6 +26,7 @@ import { useLocation } from "react-router-dom";
 import { Sparkles, Bug, CheckCircle2, Zap, ShieldCheck } from "lucide-react";
 import { api } from "../lib/api";
 import { useGuideSpotlight, GuideSpotlightStyle } from "../hooks/useGuideSpotlight.jsx";
+import { useCanShowOverlay } from "../hooks/useOverlaySlot";
 import { shouldHide } from "./GlobalHelpFAB";
 import { useActiveProject } from "./TabBar";
 import { Z_FLOATING_GUIDE } from "../lib/zIndex";
@@ -47,13 +48,13 @@ const FALLBACK_SUGGESTIONS = [
   { slug: "security-check", icon_hint: "shield", label: "Security check", example: "Check my code for any security problems" },
 ];
 
-const STAGE_COPY = {
+export const STAGE_COPY = {
   // stage1_github_started and stage4_fully_inactive collapse into the
   // same on-screen message — there's nothing different to show a user
   // who never clicked vs one who clicked and didn't finish; same wizard
   // screen either way.
   connect_github: {
-    message: "Connect your repo to get started — click Connect GitHub above.",
+    message: "Connect your repo to get started — use the Continue with GitHub button.",
     target: "connect-github-btn",
   },
   project_pending: {
@@ -66,7 +67,7 @@ const STAGE_COPY = {
   },
 };
 
-function stageToGroup(stage) {
+export function stageToGroup(stage) {
   if (stage === "stage1_github_started" || stage === "stage4_fully_inactive") return "connect_github";
   if (stage === "stage2_project_pending") return "project_pending";
   if (stage === "stage3_no_chat") return "no_chat";
@@ -195,7 +196,12 @@ export default function OraGuideMascot() {
     return () => window.removeEventListener("storage", onStorage);
   }, [pathname]);
 
-  const hidden = !loggedIn || shouldHide(pathname);
+  // UI-fix D1/D2 — the wizard or starter modal takes priority: hide
+  // this mascot entirely (icon + any bubble) while either is open, so
+  // a brand-new user never sees two onboarding overlays competing at
+  // once.
+  const canShowMascot = useCanShowOverlay("mascot");
+  const hidden = !loggedIn || shouldHide(pathname) || !canShowMascot;
 
   // At most one gentle nudge per session: once Fix List has open
   // items for the active project, wait a moment (so it never wins a
