@@ -19,7 +19,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate }             from "react-router-dom";
 import { ArrowLeft }               from "lucide-react";
-import { api, getToken }           from "../lib/api";
+import { api, getToken, API_BASE } from "../lib/api";
 import { toast }                   from "../components/Toast";
 import ConfirmModal                from "../components/ConfirmModal";
 
@@ -48,8 +48,35 @@ export default function Integrations() {
     setLoading(true); setError("");
     try {
       const r = await api.get("/mcp/install-links");
-      setData(r.data);
-      if (r.data?.api_key_new) {
+      // UI-fix C8(b) — the backend's endpoint falls back to the
+      // hardcoded production URL (routers/mcp.py::_public_mcp_endpoint)
+      // when AUREM_PUBLIC_BASE_URL isn't set, which is true on this
+      // preview pod — a preview user would otherwise copy auremcto.com
+      // into their IDE config. Rewrite every embedded occurrence with
+      // the same env-aware base every other page already uses.
+      const raw = r.data;
+      const correctEndpoint = `${API_BASE}/mcp`;
+      const fixed = (raw?.endpoint && raw.endpoint !== correctEndpoint)
+        ? {
+            ...raw,
+            endpoint: correctEndpoint,
+            config_json: raw.config_json?.mcpServers?.ora ? {
+              ...raw.config_json,
+              mcpServers: { ...raw.config_json.mcpServers,
+                ora: { ...raw.config_json.mcpServers.ora, url: correctEndpoint } },
+            } : raw.config_json,
+            vscode_config_json: raw.vscode_config_json?.servers?.ora ? {
+              ...raw.vscode_config_json,
+              servers: { ...raw.vscode_config_json.servers,
+                ora: { ...raw.vscode_config_json.servers.ora, url: correctEndpoint } },
+            } : raw.vscode_config_json,
+            claude_code_cli: raw.claude_code_cli
+              ? raw.claude_code_cli.split(raw.endpoint).join(correctEndpoint)
+              : raw.claude_code_cli,
+          }
+        : raw;
+      setData(fixed);
+      if (raw?.api_key_new) {
         toast({
           message: "A new ORA API key was minted for your account.",
           kind: "success", duration: 4000,
@@ -67,6 +94,16 @@ export default function Integrations() {
   }, [authed]);
 
   useEffect(() => { fetchLinks(); }, [fetchLinks]);
+
+  // UI-fix C8(a) — revoke the current key via the existing user-scoped
+  // DELETE /mcp/keys/{tail} endpoint, then re-fetch so install-links
+  // auto-mints a fresh one (mint_if_missing defaults true).
+  const revokeKey = useCallback(async (apiKey) => {
+    const tail = (apiKey || "").slice(-4);
+    await api.delete(`/mcp/keys/${encodeURIComponent(tail)}`);
+    await fetchLinks();
+    toast({ message: "API key revoked — a new one was generated.", kind: "success", duration: 4000 });
+  }, [fetchLinks]);
 
   const copy = useCallback((text, label) => {
     try {
@@ -166,6 +203,7 @@ export default function Integrations() {
         onCopy={copy}
         onTestConnection={testConnection}
         testResult={testResult}
+        onRevoke={revokeKey}
       />
 
       {/* Tab strip */}
@@ -208,22 +246,46 @@ export default function Integrations() {
 
 /* ─── Sub-components ────────────────────────────────────────────── */
 
-function ApiKeyCard({ apiKey, isNew, endpoint, onCopy, onTestConnection, testResult }) {
+function ApiKeyCard({ apiKey, isNew, endpoint, onCopy, onTestConnection, testResult, onRevoke }) {
   const [reveal, setReveal] = useState(isNew);
   // 2026-10 · redesign — copy button flips to a checkmark for 1.5s.
   const [copied, setCopied] = useState(false);
+  // UI-fix C8(a) — themed confirm before a destructive revoke, same
+  // pattern ConfigBlock/MaskedCommand already use for "Reveal key".
+  const [confirmRevokeOpen, setConfirmRevokeOpen] = useState(false);
+  const [revoking, setRevoking] = useState(false);
   const masked = apiKey ? `${apiKey.slice(0, 14)}…${apiKey.slice(-4)}` : "";
+  async function handleRevoke() {
+    setConfirmRevokeOpen(false);
+    setRevoking(true);
+    try { await onRevoke(apiKey); } finally { setRevoking(false); }
+  }
   return (
     <div data-testid="api-key-card" style={styles.card}>
+      <ConfirmModal
+        open={confirmRevokeOpen}
+        testidPrefix="api-key-revoke-confirm"
+        title="Revoke this API key?"
+        body="Any IDE or tool using this key will stop working immediately. ORA will generate a new key right after."
+        confirmLabel="Revoke & regenerate"
+        onConfirm={handleRevoke}
+        onCancel={() => setConfirmRevokeOpen(false)}
+      />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h3 style={styles.cardH}>Your ORA API Key</h3>
           <p style={styles.cardSub}>
             Used by every IDE integration below. Treat it like a password —
-            you can revoke it any time from Admin → API Keys.
+            you can revoke and regenerate it any time below.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button data-testid="api-key-revoke-btn"
+            onClick={() => setConfirmRevokeOpen(true)}
+            disabled={revoking}
+            style={styles.secondaryBtn}>
+            {revoking ? "Revoking…" : "Revoke / regenerate"}
+          </button>
           <button data-testid="test-connection-btn"
             onClick={onTestConnection}
             style={styles.secondaryBtn}>
