@@ -189,9 +189,20 @@ async def schedule_bot_pr_reaper_cron(db_getter, interval_s: int = 3600) -> None
     with a founder alert if it climbs above
     `BOT_OPEN_PRS_ALERT_THRESHOLD` (report's explicit ask: "so this
     can't silently regrow to 400"). Same `db_getter` scheduler shape
-    as `schedule_github_installation_reconcile`."""
+    as `schedule_github_installation_reconcile`.
+
+    2026-10 — deploy-health fix. This was the one boot-stagger sleep
+    in the codebase left at a flat 300s with NO jitter, landing
+    squarely inside BOTH `integration_health_cron`'s 300-360s window
+    AND the Chromium self-heal probe's 330-390s window (main.py) —
+    the exact "multiple heavy boot tasks land in the same instant"
+    class of bug already root-caused and fixed for those two crons
+    (see their own docstrings), just never backported here. Pushed
+    past both windows (420s) and given the same PID-seeded jitter so
+    a 2-worker pod doesn't run this in lockstep across workers."""
     import asyncio
-    await asyncio.sleep(300)  # let App config + boot settle first
+    from services.integration_health_cron import _startup_jitter_s
+    await asyncio.sleep(420 + _startup_jitter_s())  # after boot + other crons settle
     while True:
         try:
             db = db_getter()

@@ -1467,7 +1467,16 @@ async def lifespan(app: FastAPI):
 
     # Iter 212m-239 — Preview-sandbox sweeper (E2B TTL cleanup).
     # Every 5 min, kill any preview sandbox past its 20-min TTL.
+    # 2026-10 — deploy-health fix: this was the only cron in the
+    # codebase that ran its FIRST pass immediately at T+0 (no boot-
+    # settle delay), firing E2B API calls while the pod is still
+    # finishing startup. A 20-min TTL means nothing is urgently
+    # expired in the first minute anyway, so delay+jitter it like
+    # every other boot cron (see integration_health_cron's
+    # `_startup_jitter_s` docstring) instead of racing the boot burst.
     async def _preview_sweeper_cron():
+        from services.integration_health_cron import _startup_jitter_s
+        await _asyncio.sleep(60 + _startup_jitter_s())
         while True:
             try:
                 from services.preview_sandbox import sweep_expired_previews
