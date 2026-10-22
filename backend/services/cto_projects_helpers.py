@@ -420,7 +420,16 @@ def _looks_truncated(path: str, body: str) -> Optional[str]:
 async def _retry(coro_factory, *, what: str, task_id: str,
                  attempts: int = 3, base_sleep: float = 1.5):
     """Run `coro_factory()` up to `attempts` times with exp backoff
-    (1.5s → 3s → 6s …). Re-raises the LAST exception if every attempt fails."""
+    (1.5s → 3s → 6s …). Re-raises the LAST exception if every attempt fails.
+
+    2026-10 — A3 fix (ref ORA-5ff229). A GitHub 422 (or any other 4xx
+    besides a 403/429 rate limit) is DETERMINISTIC — the exact same
+    bad request 422s again on attempt #2/#3/#4. This wrapper used to
+    retry `attempts` times regardless, which for the fresh-branch
+    tree-path 422 meant 4 full attempts (each re-uploading every
+    blob) before the user saw a failure — pure wasted latency, since
+    attempt #1's outcome was already final. Stop immediately on a
+    non-retryable 4xx instead."""
     last_exc: Optional[Exception] = None
     for i in range(1, attempts + 1):
         try:
@@ -432,12 +441,20 @@ async def _retry(coro_factory, *, what: str, task_id: str,
             # handlers below). A fast, non-LLM classification is
             # enough for a mid-flight retry warning.
             from services.error_classifier import classify_error
-            _safe_msg = classify_error(e)["user_message"]
+            _classified = classify_error(e)
+            _safe_msg = _classified["user_message"]
+            _status = _classified.get("http_status")
+            _non_retryable_4xx = (
+                isinstance(_status, int) and 400 <= _status < 500
+                and _status not in (403, 429)
+            )
             await _log(
                 task_id,
                 f"⏳ {what} failed (attempt {i}/{attempts}): {_safe_msg}",
                 "warning",
             )
+            if _non_retryable_4xx:
+                break
             if i < attempts:
                 await asyncio.sleep(base_sleep * (2 ** (i - 1)))
     assert last_exc is not None

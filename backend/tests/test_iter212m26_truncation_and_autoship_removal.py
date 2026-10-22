@@ -123,17 +123,26 @@ def test_handoff_fence_regex_still_present():
 
 def test_messagebubble_still_has_manual_ship_button():
     """The manual ship path on the frontend is the ONLY ship path now.
-    `shipViaCTO()` + the ShipDialog onClick handler must still exist."""
+
+    2026-10 · Part B ("Save to GitHub" modal) — `shipViaCTO()` was
+    split: `openSaveToGithubModal()` is now the ShipDialog onClick
+    handler (explicit-consent gate — opens the repo/branch picker,
+    writes nothing yet), and `doSubmitShipTarget(shipTarget)` is the
+    real submit, called only from inside that modal's own "Save to
+    GitHub" button (SaveToGitHubModal.jsx). Still the ONLY ship entry
+    point on the frontend — this just updates the two renamed
+    assertions to the new split, same invariant."""
     mb_path = os.path.join(
         ROOT, "..", "frontend", "src", "components", "MessageBubble.jsx",
     )
     src = open(mb_path).read()
-    # The async ship handler.
-    assert "async function shipViaCTO()" in src
     # window.confirm gate — explicit user consent.
     assert "window.confirm(" in src
+    # The manual-open handler + the real submit handler.
+    assert "function openSaveToGithubModal()" in src
+    assert "async function doSubmitShipTarget(shipTarget)" in src
     # Wired to ShipDialog.
-    assert "onShip={shipViaCTO}" in src
+    assert "onShip={openSaveToGithubModal}" in src
 
 
 def test_no_orphan_auto_ship_imports():

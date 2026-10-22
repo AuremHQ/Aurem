@@ -37,6 +37,7 @@ import SystemSignalBanner from "./SystemSignalBanner";
 import UnlockProCTA, { shouldShowUnlockProCTA } from "./UnlockProCTA";
 import StepCards from "./StepCards";   // Iter 212m-19 — live step cards
 import RollbackConfirmModal from "./RollbackConfirmModal";
+import SaveToGitHubModal from "./SaveToGitHubModal";
 import ThinkingLoader from "./ThinkingLoader";
 import { brandProvider } from "../lib/providerLabel";
 import { useFriendlyStatusPhrase } from "../hooks/useFriendlyStatusPhrase";
@@ -782,81 +783,91 @@ export default function MessageBubble({
     }
   }, [shipCtaFallback, shipCtaCheck.hasFence]);
 
-  async function shipViaCTO() {
+  // Part B (2026-10) — "Save to GitHub" modal. Founder-reported
+  // 2026-10-21 incident: "Approve the fix" pushed straight to the
+  // base branch with no choice, no warning. Approve now OPENS this
+  // modal instead of submitting directly — the real
+  // /cto/tasks/submit POST only happens from `doSubmitShipTarget`
+  // below, called by the modal's own "Save to GitHub" button, never
+  // before the user explicitly confirms a repo+branch there.
+  const [showSaveModal, setShowSaveModal] = useState(false);
+
+  function openSaveToGithubModal() {
     if (!canShip || shipState.status === "shipping" || shipState.status === "shipped") return;
-    if (shipInFlightRef.current) return;
-    shipInFlightRef.current = true;
     // Iter 212m-87 — replaced window.confirm() with the v0 Ship via CTO
     // modal. Files + Vanguard status now render inline in a dark overlay.
     const files = extractShipFiles(m.content, handoffBrief);
-    const doSubmit = async () => {
-      setShipState({ status: "shipping", taskId: null, error: null });
-      try {
-        const r = await api.post("/cto/tasks/submit", {
-          project_id: activeProject.project_id,
-          task: handoffBrief,
-          files: [],
-          context: `from chat session ${sessionId}, turn ${idx}`,
-          maxx_mode: !!m.maxxMode,
-        });
-        // 2026-08-25 — ambiguity-gate: backend declined to create a
-        // task because the brief was too vague to act on safely.
-        if (r.data?.needs_clarification) {
-          setShipState({ status: "idle", taskId: null, error: null });
-          toast({ message: r.data.message || "Please be more specific.", kind: "info" });
-          return;
-        }
-        const taskId = r.data?.task_id || null;
-        setShipState({ status: "shipped", taskId, error: null });
-        if (taskId) {
-          try {
-            window.dispatchEvent(new CustomEvent("ora-task-handoff", {
-              detail: {
-                task_id: taskId,
-                project_id: activeProject?.project_id || "",
-                source: "ship_via_cto_click",
-              },
-            }));
-          } catch { /* CustomEvent unsupported */ }
-        }
-        if (taskId && sessionId) {
-          try {
-            await api.post("/chat/turn/shipped", {
-              session_id: sessionId,
-              turn_index: typeof dbTurnIndex === "number" ? dbTurnIndex : idx,
-              task_id: taskId,
-            });
-          } catch { /* non-fatal */ }
-        }
-        toast({
-          message: taskId ? `Task queued — ${taskId}` : "Task queued",
-          kind: "success", duration: 3000,
-        });
-        // Iter 212m-88 — task_id feeds the inline TaskProgressCard/
-        // TaskLiveTape (rendered by ShipDialog once shipState is
-        // "shipped") for post-push polling + rollback affordance.
-        return { task_id: taskId };
-      } catch (e) {
-        const msg = e?.response?.data?.detail || e?.message || "Submit failed";
-        setShipState({ status: "error", taskId: null, error: msg });
-        toast({ message: msg, kind: "error" });
-        throw e;
-      }
-    };
-    // 2026-08-23 — BUG FIX (founder-reported, screen recording): this
-    // dispatched a SECOND confirmation (the dark-overlay
-    // ShipConfirmModal) after the user already clicked "🚀 Ship via
-    // CTO" once — a redundant double-confirm that didn't even
-    // auto-dismiss on its own. ShipDialog already shows the inline
-    // TaskProgressCard/TaskLiveTape once shipped, so the modal's
-    // post-ship UX was redundant too. One click now ships for real;
-    // no second popup.
+    setShowSaveModal(true);
+  }
+
+  async function doSubmitShipTarget(shipTarget) {
+    if (shipInFlightRef.current) {
+      throw new Error("A save is already in progress.");
+    }
+    shipInFlightRef.current = true;
+    setShipState({ status: "shipping", taskId: null, error: null });
     try {
-      await doSubmit().catch(() => { /* doSubmit already surfaced the error via toast + shipState */ });
+      const r = await api.post("/cto/tasks/submit", {
+        project_id: activeProject.project_id,
+        task: handoffBrief,
+        files: [],
+        context: `from chat session ${sessionId}, turn ${idx}`,
+        maxx_mode: !!m.maxxMode,
+        repo: shipTarget.repo,
+        branch: shipTarget.branch,
+        create_branch: shipTarget.create_branch,
+        base_branch: shipTarget.base_branch,
+      });
+      // 2026-08-25 — ambiguity-gate: backend declined to create a
+      // task because the brief was too vague to act on safely. Not a
+      // save failure — resolve normally so the modal closes quietly
+      // instead of showing a red error state for this.
+      if (r.data?.needs_clarification) {
+        setShipState({ status: "idle", taskId: null, error: null });
+        toast({ message: r.data.message || "Please be more specific.", kind: "info" });
+        return { needs_clarification: true };
+      }
+      const taskId = r.data?.task_id || null;
+      setShipState({ status: "shipped", taskId, error: null });
+      if (taskId) {
+        try {
+          window.dispatchEvent(new CustomEvent("ora-task-handoff", {
+            detail: {
+              task_id: taskId,
+              project_id: activeProject?.project_id || "",
+              source: "ship_via_cto_click",
+            },
+          }));
+        } catch { /* CustomEvent unsupported */ }
+      }
+      if (taskId && sessionId) {
+        try {
+          await api.post("/chat/turn/shipped", {
+            session_id: sessionId,
+            turn_index: typeof dbTurnIndex === "number" ? dbTurnIndex : idx,
+            task_id: taskId,
+          });
+        } catch { /* non-fatal */ }
+      }
+      toast({
+        message: taskId ? `Task queued — ${taskId}` : "Task queued",
+        kind: "success", duration: 3000,
+      });
+      // Iter 212m-88 — task_id feeds the inline TaskProgressCard/
+      // TaskLiveTape (rendered by ShipDialog once shipState is
+      // "shipped") for post-push polling + rollback affordance.
+      return { task_id: taskId };
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || "Submit failed";
+      setShipState({ status: "error", taskId: null, error: msg });
+      // Re-throw (with the ORIGINAL error, not just `msg`) so the
+      // modal's own catch can read e?.response?.data?.detail itself —
+      // never a toast-only failure the modal can't see.
+      throw e;
     } finally {
       // Reset so a genuine retry after a real failure isn't blocked
-      // forever — only the double-click WITHIN one in-flight submit
-      // is guarded against.
+      // forever — only a double-click WITHIN one in-flight submit is
+      // guarded against.
       shipInFlightRef.current = false;
     }
   }
@@ -1553,7 +1564,7 @@ export default function MessageBubble({
           shipState={shipState}
           taskInfo={taskInfo}
           activeProject={activeProject}
-          onShip={shipViaCTO}
+          onShip={openSaveToGithubModal}
           onRollback={rollbackShipped}
           onOpenDeployTab={onOpenDeployTab}
           onOpenLivePopup={onOpenLivePopup}
@@ -1685,6 +1696,12 @@ export default function MessageBubble({
         shortLabel={shipState.taskId ? `shipped commit for this fix` : "this shipped commit"}
         onConfirm={confirmRollbackShipped}
         onCancel={() => setRbConfirmOpen(false)}
+      />
+      <SaveToGitHubModal
+        open={showSaveModal}
+        activeProject={activeProject}
+        onCancel={() => setShowSaveModal(false)}
+        onConfirm={doSubmitShipTarget}
       />
     </div>
   );

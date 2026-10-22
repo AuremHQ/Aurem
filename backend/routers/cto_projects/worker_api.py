@@ -1163,29 +1163,27 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         # log lines that THIS worker (not worker_git.py) is the one
         # that actually runs in production (`git` binary absent —
         # see routers/cto_projects/__init__.py's `_GIT_AVAILABLE`).
-        # Same fix as Phase 1's worker_git.py, same existing helpers
-        # (services/loop_safety.py — no new branch/PR logic): commit
-        # to a dedicated branch off `branch`, never `branch` itself.
-        # If branch creation fails, FAIL — no commit is attempted, no
-        # silent fallback to `branch`.
-        from services.loop_safety import (
-            create_or_reuse_branch,
-            open_or_reuse_pr,
-            ship_branch_name,
+        #
+        # Part B — the user can now pick a repo/branch via the "Save
+        # to GitHub" modal (validated at /cto/tasks/submit, stored as
+        # `ship_target` on the task doc). `resolve_ship_target` reads
+        # that, or falls back to today's default (fresh
+        # `auremcto/ship-<task_id>` branch off `branch`) for older
+        # clients that never send it — same `create_or_reuse_branch`
+        # either way, no separate branch-creation code per case. If
+        # branch creation/validation fails, FAIL — no commit is
+        # attempted, no silent fallback to `branch`.
+        from services.loop_safety import open_or_reuse_pr, resolve_ship_target
+        owner, repo, ship_branch, _branch_err = await resolve_ship_target(
+            _db_plan, task_id=task_id, owner=owner, repo=repo,
+            base_branch=branch, token=user_token,
         )
-        ship_branch = ship_branch_name(task_id)
-        branch_ok, branch_err = await create_or_reuse_branch(
-            owner=owner, repo=repo, base_branch=branch,
-            new_branch=ship_branch, token=user_token,
-        )
-        if not branch_ok:
-            err = (f"Couldn't create a ship branch off {branch} "
-                   f"({branch_err}) — nothing was committed, {branch} is untouched.")
-            await _pkg._log(task_id, f"🚫 {err}", "error")
-            await _pkg._set_status(task_id, status="failed", error=err,
+        if _branch_err:
+            await _pkg._log(task_id, f"🚫 {_branch_err}", "error")
+            await _pkg._set_status(task_id, status="failed", error=_branch_err,
                               completed_at=time.time())
             return
-        await _pkg._log(task_id, f"🌿 created branch {ship_branch}", "success")
+        await _pkg._log(task_id, f"🌿 shipping to {owner}/{repo}@{ship_branch}", "success")
 
         # 2026-08-28 · P0 hotfix (root cause of the production
         # "commit_files() missing 2 required positional arguments:

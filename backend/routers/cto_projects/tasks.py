@@ -42,6 +42,16 @@ class TaskBody(BaseModel):
     context: str = ""
     auto_deploy: bool = False
     maxx_mode: bool = False     # iter 40: enable Two-Agent (DeepSeek + Claude review)
+    # Part B (2026-10) — "Save to GitHub" modal. All optional; omitted
+    # entirely (the old client shape) means "today's default behavior"
+    # (services.loop_safety.resolve_ship_target's fallback: a fresh
+    # auremcto/ship-<task_id> branch off the project's own branch).
+    # `repo` is "owner/name"; validated against the caller's writable-
+    # repo list in submit_task before it's ever trusted.
+    repo: str | None = None
+    branch: str | None = None
+    create_branch: bool = True
+    base_branch: str | None = None
 
 
 async def _enqueue_cto_task(
@@ -237,6 +247,56 @@ async def submit_task(
                 ),
             })
 
+    # Part B (2026-10) — "Save to GitHub" modal validation. Omitted
+    # repo/branch -> no `ship_target` stored -> worker_api.py/
+    # worker_git.py's resolve_ship_target() falls back to today's
+    # default unchanged, so older clients never hit this at all.
+    ship_target: dict | None = None
+    if body.repo or body.branch:
+        if not body.branch:
+            raise HTTPException(400, "A branch is required when a repo is specified.")
+        parts = (body.repo or "").split("/", 1) if body.repo else []
+        if body.repo and (len(parts) != 2 or not parts[0] or not parts[1]):
+            raise HTTPException(400, "repo must be in 'owner/name' format.")
+        from services.loop_safety import validate_branch_name
+        _branch_err = validate_branch_name(body.branch)
+        if _branch_err:
+            raise HTTPException(400, _branch_err)
+        if body.base_branch:
+            _base_err = validate_branch_name(body.base_branch)
+            if _base_err:
+                raise HTTPException(400, f"base_branch: {_base_err}")
+        if body.repo:
+            # Must be in the caller's own writable-repo list — the
+            # SAME installation this project's own token comes from,
+            # never another user's repos/token.
+            installation_id = proj.get("installation_id")
+            if not installation_id:
+                raise HTTPException(400, "This project has no GitHub App installation on file.")
+            from services.github_app import list_installation_repos
+            try:
+                _repos = await list_installation_repos(int(installation_id))
+            except Exception as e:                            # noqa: BLE001
+                from services.error_classifier import classify_error
+                logger.warning("[tasks] list_installation_repos failed: %r", e)
+                raise HTTPException(502, classify_error(e)["user_message"])
+            _wanted = body.repo.lower()
+            _ok_repo = any(
+                (r.get("full_name") or "").lower() == _wanted
+                and (r.get("permissions") or {}).get("push")
+                for r in _repos
+            )
+            if not _ok_repo:
+                raise HTTPException(
+                    403, "That repo isn't in your connected GitHub access "
+                         "(or you don't have push rights to it)."
+                )
+        ship_target = {
+            "repo": body.repo, "branch": body.branch,
+            "create_branch": bool(body.create_branch),
+            "base_branch": body.base_branch,
+        }
+
     task_id = (f"t_scope_{body._scope_proposal['id']}" if body._scope_proposal
                else f"t_{uuid.uuid4().hex[:12]}")
     await db.cto_tasks.insert_one({
@@ -249,6 +309,7 @@ async def submit_task(
         "created_at": time.time(),
         **({"scope_proposal_id": body._scope_proposal["id"],
             "session_id": body._scope_proposal["session_id"]} if body._scope_proposal else {}),
+        **({"ship_target": ship_target} if ship_target else {}),
     })
     if proj.get("preview_url"):
         from services.preview_capture import capture_before_snapshot_for_task

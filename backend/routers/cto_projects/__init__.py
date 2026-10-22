@@ -124,6 +124,7 @@ from . import worker_api         # noqa: E402
 from . import worker_git         # noqa: E402
 from . import rollback           # noqa: E402
 from . import tasks              # noqa: E402
+from . import github_browse      # noqa: E402
 
 # ── Compat re-exports — every name that used to live directly on this
 # module. Keeps `from routers.cto_projects import X` and

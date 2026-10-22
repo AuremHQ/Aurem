@@ -619,6 +619,136 @@ async def add_pr_label(
     return False, f"label_status_{r.status_code}"
 
 
+# ─── Part B (2026-10) — user-chosen ship target ("Save to GitHub" modal) ──
+
+def validate_branch_name(name: str) -> str | None:
+    """Git ref-name rules, enforced server-side regardless of what the
+    frontend already checked (never trust client-side validation
+    alone for something that reaches a real GitHub write). Returns a
+    human error string, or None if `name` is a valid branch name.
+
+    Deliberately conservative — rejects a few technically-legal-but-
+    weird ref shapes (leading/trailing dot, double dot, control
+    chars, `~^:?*[\\`, trailing `/`, any `@{`) on top of the ones the
+    task explicitly called out, since a half-valid ref name is a
+    worse failure mode (a confusing GitHub 422) than a clear 400 here.
+    """
+    if not name or not name.strip():
+        return "Branch name can't be empty."
+    n = name.strip()
+    if len(n) > 244:
+        return "Branch name is too long (max 244 characters)."
+    if ".." in n:
+        return "Branch name can't contain '..'."
+    if " " in n:
+        return "Branch name can't contain spaces."
+    if n.startswith("/") or n.endswith("/"):
+        return "Branch name can't start or end with '/'."
+    if n.endswith(".lock"):
+        return "Branch name can't end with '.lock'."
+    if n.startswith(".") or n.endswith("."):
+        return "Branch name can't start or end with '.'."
+    if "@{" in n:
+        return "Branch name can't contain '@{'."
+    if any(c in n for c in "~^:?*[\\") or any(ord(c) < 32 for c in n):
+        return "Branch name contains characters GitHub doesn't allow."
+    if n == "HEAD":
+        return "Branch name can't be 'HEAD'."
+    return None
+
+
+async def list_repo_branches(
+    owner: str, repo: str, token: str, *, max_pages: int = 3, per_page: int = 100,
+) -> tuple[list[dict], bool]:
+    """List branch names for `owner/repo`, capped at `max_pages *
+    per_page` (default 300). Returns (branches, truncated) where each
+    branch is `{"name": ..., "protected": bool}`. Never raises on a
+    paging edge case — a partial list is better than a 500 for a
+    read-only picker."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-branch-list",
+    }
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        r = await github_request_with_retry(
+            "GET", f"https://api.github.com/repos/{owner}/{repo}/branches",
+            headers=headers, params={"per_page": per_page, "page": page},
+        )
+        if r.status_code != 200:
+            break
+        batch = r.json() or []
+        out.extend({"name": b.get("name"), "protected": bool(b.get("protected"))}
+                   for b in batch if b.get("name"))
+        if len(batch) < per_page:
+            return out, False
+    return out, True
+
+
+async def resolve_ship_target(
+    db, *, task_id: str, owner: str, repo: str, base_branch: str, token: str,
+) -> tuple[str, str, str, str | None]:
+    """Resolve the (owner, repo, branch) a task actually commits to.
+
+    Reads the task doc's `ship_target` — set by `/cto/tasks/submit`
+    when the user picked a repo/branch via the "Save to GitHub" modal
+    (repo already checked against the caller's writable-repo list,
+    branch name already passed `validate_branch_name`, both at submit
+    time). Absent `ship_target` (older clients, or the user never
+    opened the modal) falls back to today's default: a fresh
+    `auremcto/ship-<task_id>` branch off `base_branch`, via the SAME
+    `create_or_reuse_branch` either path uses — no separate branch-
+    creation code for the two cases.
+
+    Returns (owner, repo, branch, error). `error` is None on success;
+    on failure the caller must fail the task with it and commit
+    NOTHING — never silently fall back to `base_branch`.
+    """
+    ship_target = None
+    if db is not None:
+        try:
+            row = await db.cto_tasks.find_one(
+                {"task_id": task_id}, {"_id": 0, "ship_target": 1})
+            ship_target = (row or {}).get("ship_target")
+        except Exception:                                   # noqa: BLE001
+            ship_target = None
+
+    if not ship_target or not ship_target.get("branch"):
+        branch = ship_branch_name(task_id)
+        ok, err = await create_or_reuse_branch(
+            owner=owner, repo=repo, base_branch=base_branch,
+            new_branch=branch, token=token,
+        )
+        if not ok:
+            return owner, repo, branch, (
+                f"Couldn't create a ship branch off {base_branch} "
+                f"({err}) — nothing was committed, {base_branch} is untouched."
+            )
+        return owner, repo, branch, None
+
+    st_owner, st_repo = owner, repo
+    if ship_target.get("repo"):
+        parts = ship_target["repo"].split("/", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            return owner, repo, "", f"Invalid repo in ship target: {ship_target.get('repo')!r}"
+        st_owner, st_repo = parts
+
+    branch = ship_target["branch"]
+    if ship_target.get("create_branch", True):
+        st_base = ship_target.get("base_branch") or base_branch
+        ok, err = await create_or_reuse_branch(
+            owner=st_owner, repo=st_repo, base_branch=st_base,
+            new_branch=branch, token=token,
+        )
+        if not ok:
+            return st_owner, st_repo, branch, (
+                f"Couldn't create branch {branch} off {st_base} "
+                f"({err}) — nothing was committed."
+            )
+    return st_owner, st_repo, branch, None
+
+
 async def close_pr(
     *, owner: str, repo: str, pr_number: int, token: str,
 ) -> tuple[bool, Optional[str]]:

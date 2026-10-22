@@ -69,6 +69,7 @@ def classify_error(exc: Exception) -> dict:
 
     exc_name = type(exc).__name__
     status = _extract_status_code(exc)
+    response = getattr(exc, "response", None)
 
     if isinstance(exc, BreakerOpenError):
         return {"category": "quota", "user_message": _TEMPLATES["quota"],
@@ -77,8 +78,42 @@ def classify_error(exc: Exception) -> dict:
         return {"category": "network", "user_message": _TEMPLATES["network"],
                 "http_status": status or 502, "exc_class": exc_name}
 
+    # 2026-10 — A3 fix (ref ORA-5ff229). A real HTTP response (e.g.
+    # `httpx.HTTPStatusError` from `raise_for_status()`) must be
+    # classified by its STATUS CODE, never by exception module name.
+    # The old check below ("httpx" in exc_mod) matched
+    # HTTPStatusError too — its module is also under the `httpx`
+    # package — so EVERY 4xx from a GitHub write (404/409/422, none
+    # of which will ever succeed on retry) was misclassified
+    # "network" ("We couldn't reach an external service"), a false
+    # and misleading message. Checking `response is not None` first
+    # means a real response always wins on status code; only a
+    # response-less httpx exception (genuine timeout/connect failure)
+    # falls through to the module-name check further below.
+    if response is not None and status is not None:
+        if status >= 500:
+            return {"category": "network", "user_message": _TEMPLATES["network"],
+                    "http_status": status, "exc_class": exc_name}
+        if status == 429:
+            return {"category": "quota", "user_message": _TEMPLATES["quota"],
+                    "http_status": 429, "exc_class": exc_name}
+        if status in (401, 403):
+            return {"category": "auth", "user_message": _TEMPLATES["auth"],
+                    "http_status": status, "exc_class": exc_name}
+        if status in (400, 404, 409, 422):
+            host = ""
+            try:
+                host = (getattr(exc, "request", None) and exc.request.url.host) or ""
+            except Exception:                                   # noqa: BLE001
+                host = ""
+            msg = ("GitHub rejected the change." if "github" in host
+                   else _TEMPLATES["input"])
+            return {"category": "input", "user_message": msg,
+                    "http_status": status, "exc_class": exc_name}
+
     exc_mod = type(exc).__module__ or ""
-    if "httpx" in exc_mod or "TimeoutError" in exc_name or "ConnectError" in exc_name:
+    if "TimeoutError" in exc_name or "ConnectError" in exc_name or (
+            "httpx" in exc_mod and response is None):
         return {"category": "network", "user_message": _TEMPLATES["network"],
                 "http_status": status or 502, "exc_class": exc_name}
     if "jwt" in exc_mod or "JWT" in exc_name or exc_name in ("PermissionError",):

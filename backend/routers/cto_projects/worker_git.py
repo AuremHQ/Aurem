@@ -492,31 +492,43 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
         # "Approve the fix" pushed straight to `branch` (project default,
         # typically `main`) with no branch choice, no PR, no warning —
         # the UI promised a pull request and this worker never opened
-        # one. This surface now ALWAYS creates a dedicated branch off
-        # the project's base branch (via the existing, already-used-
-        # elsewhere `create_or_reuse_branch`/`ship_branch_name` helpers
-        # — see loop_engine.py's ship-via-PR path and
-        # finding_fix_applier.py) and pushes there instead. If branch
-        # creation fails, the task FAILS loudly — it never silently
-        # falls back to pushing `branch` directly.
-        from services.loop_safety import (
-            create_or_reuse_branch,
-            open_or_reuse_pr,
-            ship_branch_name,
+        # one.
+        #
+        # Part B — the user can now pick a repo/branch via the "Save
+        # to GitHub" modal (validated at /cto/tasks/submit, stored as
+        # `ship_target` on the task doc). `resolve_ship_target` reads
+        # that, or falls back to today's default (fresh
+        # `auremcto/ship-<task_id>` branch off `branch`) for older
+        # clients that never send it — same `create_or_reuse_branch`
+        # either way. If branch creation/validation fails, the task
+        # FAILS loudly — it never silently falls back to pushing
+        # `branch` directly.
+        from services.loop_safety import open_or_reuse_pr, resolve_ship_target
+        _cloned_owner, _cloned_repo = owner, repo
+        owner, repo, ship_branch, _branch_err = await resolve_ship_target(
+            _guard_db, task_id=task_id, owner=owner, repo=repo,
+            base_branch=branch, token=user_token,
         )
-        ship_branch = ship_branch_name(task_id)
-        branch_ok, branch_err = await create_or_reuse_branch(
-            owner=owner, repo=repo, base_branch=branch,
-            new_branch=ship_branch, token=user_token,
-        )
-        if not branch_ok:
-            err = (f"Couldn't create a ship branch off {branch} "
-                   f"({branch_err}) — nothing was pushed, {branch} is untouched.")
+        if _branch_err:
+            await _pkg._log(task_id, f"🚫 {_branch_err}", "error")
+            await _pkg._set_status(task_id, status="failed", error=_branch_err,
+                              completed_at=time.time())
+            return
+        if (owner, repo) != (_cloned_owner, _cloned_repo):
+            # This worker already `git clone`d {_cloned_owner}/{_cloned_repo}
+            # locally — its `origin` remote can't retarget to a different
+            # repo without a fresh clone. Prod has no git binary (worker_api.py
+            # is the live path there), so a cross-repo ship_target never
+            # reaches this worker in prod; fail closed rather than silently
+            # pushing to the wrong repo on any host that DOES have git.
+            err = (f"Can't ship to {owner}/{repo} — this worker already "
+                   f"cloned {_cloned_owner}/{_cloned_repo} locally. "
+                   "Nothing was pushed.")
             await _pkg._log(task_id, f"🚫 {err}", "error")
             await _pkg._set_status(task_id, status="failed", error=err,
                               completed_at=time.time())
             return
-        await _pkg._log(task_id, f"🌿 created branch {ship_branch}", "success")
+        await _pkg._log(task_id, f"🌿 shipping to {owner}/{repo}@{ship_branch}", "success")
 
         push = await asyncio.to_thread(
             _pkg._sh, ["git", "push", "origin", f"HEAD:refs/heads/{ship_branch}"],

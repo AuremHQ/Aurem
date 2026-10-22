@@ -51,6 +51,52 @@ def _headers(token: str) -> dict:
     return h
 
 
+def _normalize_tree_path(path: str) -> str:
+    """Git Tree API entries (`POST .../git/trees`) must be clean,
+    relative paths — GitHub rejects a leading "/" with a 422 ("Invalid
+    tree entry.../path"). `files` here is built from LLM-generated
+    `FILE: <path>` blocks (services/llm_file_parser.py) and occasionally
+    carries a leading slash (e.g. "FILE: /README.md") that reaches this
+    writer unnormalized — the confirmed shape of the fresh-branch 422
+    this fixes (ref ORA-5ff229, task t_9b2f02148171): "blob /README.md"
+    logged, then the tree POST 422'd.
+
+    Normalizes leading "/"/"./" , backslashes, and doubled slashes;
+    rejects empty or ".." (path-traversal) segments outright rather
+    than silently passing them to GitHub.
+    """
+    if not path or not path.strip():
+        raise ValueError("commit_files: empty file path")
+    p = path.strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    p = p.lstrip("/")
+    while "//" in p:
+        p = p.replace("//", "/")
+    if not p or p == ".":
+        raise ValueError(
+            f"commit_files: path is empty after normalization (input={path!r})"
+        )
+    if any(seg == ".." for seg in p.split("/")):
+        raise ValueError(f"commit_files: path traversal not allowed: {path!r}")
+    return p
+
+
+def _raise_for_status_logged(r: httpx.Response, step: str) -> None:
+    """`r.raise_for_status()`, but first logs the real GitHub response
+    BODY (truncated) so a 4xx isn't a total black box in supervisor
+    logs — `classify_error()`'s caller-side logging deliberately
+    never includes the raw exception/body (services/error_classifier.py's
+    own docstring). Logs the body only — never request/response
+    headers, which carry the Authorization token."""
+    if r.status_code >= 400:
+        logger.warning(
+            "[github_api_writer] %s failed: HTTP %s — %s",
+            step, r.status_code, (r.text or "")[:500],
+        )
+    r.raise_for_status()
+
+
 async def fetch_file(owner: str, repo: str,
                       path: str, ref: str, token: str) -> Optional[str]:
     """Return file text at `ref` or None if missing.
@@ -230,6 +276,12 @@ async def commit_files(
             "use services.git_identity.resolve_git_identity() to fetch them"
         )
 
+    # Normalize every path BEFORE the write-guard check and BEFORE any
+    # network call — see _normalize_tree_path's docstring (ORA-5ff229).
+    # A bad/empty/traversal path now fails fast and cheap instead of
+    # reaching GitHub and 422ing after blobs were already uploaded.
+    files = {_normalize_tree_path(p): c for p, c in files.items()}
+
     # Guardrail #2 (2026-08 audit remediation, Wave 1) — checked HERE,
     # inside the single vetted writer choke point, so every current and
     # future caller of commit_files() inherits the protected-path guard
@@ -289,7 +341,7 @@ async def commit_files(
                 },
                 timeout=60.0,
             )
-            r.raise_for_status()
+            _raise_for_status_logged(r, f"upload blob {path}")
             return {
                 "path": path,
                 "mode": "100644",
@@ -314,7 +366,7 @@ async def commit_files(
             },
             timeout=60.0,
         )
-        r.raise_for_status()
+        _raise_for_status_logged(r, "build tree")
         new_tree_sha = r.json()["sha"]
         await _p(f"   tree → {new_tree_sha[:7]}", "success")
 
@@ -331,7 +383,7 @@ async def commit_files(
             },
             timeout=60.0,
         )
-        r.raise_for_status()
+        _raise_for_status_logged(r, "create commit")
         new_commit_sha = r.json()["sha"]
 
         # 4. Advance the branch ref to the new commit (NOT a force-push;
@@ -478,8 +530,12 @@ async def revert_commit(
 
         # PARALLEL: for every changed file, fetch the parent's version
         # (or mark for deletion if file was added in the reverted commit).
+        # 2026-10 — A2 follow-up: `filename` here is GitHub's OWN
+        # commit-API response, already a clean relative path, so this
+        # is defense-in-depth rather than a fix for an observed bug —
+        # same normalizer as commit_files for consistency.
         changed = [
-            (f.get("filename"), f.get("status"))
+            (_normalize_tree_path(f.get("filename")), f.get("status"))
             for f in (commit.get("files") or [])
             if f.get("filename")
         ]
@@ -518,7 +574,7 @@ async def revert_commit(
                     "encoding": "base64",
                 },
             )
-            r.raise_for_status()
+            _raise_for_status_logged(r, f"revert: upload blob {path}")
             return {"path": path, "mode": "100644",
                     "type": "blob", "sha": r.json()["sha"]}
 
@@ -535,7 +591,7 @@ async def revert_commit(
                 "tree": blob_specs,
             },
         )
-        r.raise_for_status()
+        _raise_for_status_logged(r, "revert: build tree")
         new_tree_sha = r.json()["sha"]
 
         msg = commit_message or (
@@ -553,7 +609,7 @@ async def revert_commit(
                 "author": {"name": author_name, "email": author_email},
             },
         )
-        r.raise_for_status()
+        _raise_for_status_logged(r, "revert: create commit")
         new_commit_sha = r.json()["sha"]
 
         r = await client.patch(
