@@ -1361,6 +1361,13 @@ async def run_worker(state: StreamState) -> None:
     # mark_activity() (real tool-call/output progress).
     if state.timeout_clocks is not None:
         state.timeout_clocks.mark_connected()
+    # 2026-10 — ORA chat/fix reliability incident follow-up: one RSS
+    # snapshot at the start of every agent run (and another at the
+    # end, in the `finally` below) so a future incident has real
+    # before/after memory data per turn instead of "UNKNOWN".
+    # stdlib-only, see services/mem_log.py.
+    from services.mem_log import log_rss
+    log_rss("agent_run_start")
     try:
         # Part B3 (round 4 fix) — hoisted to the TOP, before ANY mode
         # dispatch below. Confirmed live (testing round 3): "Fix this
@@ -1479,5 +1486,6 @@ async def run_worker(state: StreamState) -> None:
         logger.exception("chat_stream orchestrator failed")
         await q.put({"type": "error", "error": str(e)})
     finally:
+        log_rss("agent_run_end")
         state.stop_event.set()
 

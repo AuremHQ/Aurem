@@ -2128,6 +2128,14 @@ async def lifespan(app: FastAPI):
     # Branch B so both sweepers share one tick and one DB health
     # check. Cancel handling is centralized on the merged task.
 
+    # 2026-10 — ORA chat/fix reliability incident follow-up: one RSS
+    # snapshot right before the port binds (yield), so the next
+    # VPA-eviction/OOM-suspect incident has real boot-time memory data
+    # instead of another "UNKNOWN" in the RCA. stdlib-only, see
+    # services/mem_log.py.
+    from services.mem_log import log_rss
+    log_rss("boot_complete")
+
     yield
     if getattr(app.state, "digest_task", None):
         app.state.digest_task.cancel()
