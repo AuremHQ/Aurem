@@ -431,6 +431,11 @@ class TestApiWorkerStillFull:
              patch("services.design_linter.lint_file_blocks", lint_spy), \
              patch("services.git_identity.resolve_git_identity",
                    AsyncMock(return_value=("Jane Dev", "jane@example.com"))), \
+             patch("services.loop_safety.create_or_reuse_branch",
+                   AsyncMock(return_value=(True, None))), \
+             patch("services.loop_safety.open_or_reuse_pr",
+                   AsyncMock(return_value={"ok": False, "pr_url": None, "pr_number": None,
+                                            "reused": False, "error": "not_relevant_to_this_test"})), \
              patch("services.vanguard_verify_agent.verify_patch",
                    AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})) as vg_mock:
             await router_mod._run_task_via_api(

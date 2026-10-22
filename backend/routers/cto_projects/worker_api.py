@@ -1157,6 +1157,36 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                               completed_at=time.time())
             return
 
+        # 2026-10 · Phase 1b fix — founder-reported 2026-10-21 incident
+        # (commit b58fa79, TJSNDHU/Aurem's `main`). Confirmed via the
+        # live "Creating commit… Pushing ref… Verifying… on remote"
+        # log lines that THIS worker (not worker_git.py) is the one
+        # that actually runs in production (`git` binary absent —
+        # see routers/cto_projects/__init__.py's `_GIT_AVAILABLE`).
+        # Same fix as Phase 1's worker_git.py, same existing helpers
+        # (services/loop_safety.py — no new branch/PR logic): commit
+        # to a dedicated branch off `branch`, never `branch` itself.
+        # If branch creation fails, FAIL — no commit is attempted, no
+        # silent fallback to `branch`.
+        from services.loop_safety import (
+            create_or_reuse_branch,
+            open_or_reuse_pr,
+            ship_branch_name,
+        )
+        ship_branch = ship_branch_name(task_id)
+        branch_ok, branch_err = await create_or_reuse_branch(
+            owner=owner, repo=repo, base_branch=branch,
+            new_branch=ship_branch, token=user_token,
+        )
+        if not branch_ok:
+            err = (f"Couldn't create a ship branch off {branch} "
+                   f"({branch_err}) — nothing was committed, {branch} is untouched.")
+            await _pkg._log(task_id, f"🚫 {err}", "error")
+            await _pkg._set_status(task_id, status="failed", error=err,
+                              completed_at=time.time())
+            return
+        await _pkg._log(task_id, f"🌿 created branch {ship_branch}", "success")
+
         # 2026-08-28 · P0 hotfix (root cause of the production
         # "commit_files() missing 2 required positional arguments:
         # 'author_email' and 'author_name'" crash). This is the ONLY
@@ -1184,7 +1214,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
             result = await _retry(
                 lambda: _pkg.gh_api_commit(
-                    owner=owner, repo=repo, branch=branch, token=user_token,
+                    owner=owner, repo=repo, branch=ship_branch, token=user_token,
                     files=edits,
                     commit_message=_commit_msg,
                     author_name=_author_name, author_email=_author_email,
@@ -1267,11 +1297,51 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                               completed_at=time.time())
             return
         await _pkg._log(task_id,
-                   f"✅ Verified {len(edits)} file(s) live on {branch}@{sha}",
+                   f"✅ Verified {len(edits)} file(s) live on {ship_branch}@{sha}",
                    "success")
+
+        # Best-effort draft PR via the EXISTING dedup-aware helper
+        # (services/loop_safety.py::open_or_reuse_pr) — no new PR
+        # logic, same as Phase 1's worker_git.py. Opened only AFTER a
+        # verified-good commit; a PR-open failure must never lose the
+        # commit that already landed (and already passed verify) on
+        # ship_branch.
+        pr_url, pr_opened = None, False
+        try:
+            _pr_result = await open_or_reuse_pr(
+                owner=owner, repo=repo, head_branch=ship_branch,
+                base_branch=branch,
+                title=f"ORA fix: {summary[:180]}",
+                body=f"Opened by ORA (CTO task {task_id}).\n\nCommit: {commit_full_sha}",
+                token=user_token,
+            )
+            pr_url = _pr_result.get("pr_url")
+            pr_opened = bool(_pr_result.get("ok"))
+            if pr_opened:
+                await _pkg._log(
+                    task_id,
+                    f"🔀 {'reused' if _pr_result.get('reused') else 'opened'} PR — {pr_url}",
+                    "success",
+                )
+            else:
+                await _pkg._log(
+                    task_id,
+                    f"⚠️ couldn't open a PR ({_pr_result.get('error')}) — "
+                    f"branch {ship_branch} is pushed and ready for review.",
+                    "warning",
+                )
+        except Exception as _pr_e:                              # noqa: BLE001
+            logger.warning("[cto-task %s] open_or_reuse_pr crashed: %r", task_id, _pr_e)
+            await _pkg._log(
+                task_id,
+                f"⚠️ couldn't open a PR — branch {ship_branch} is pushed and ready for review.",
+                "warning",
+            )
 
         await _pkg._set_status(task_id, status="done", result=summary,
                           commit_sha=sha,
+                          ship_branch=ship_branch, base_branch=branch,
+                          pr_url=pr_url, pr_opened=pr_opened,
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
                           verified=True, commit_full_sha=commit_full_sha,

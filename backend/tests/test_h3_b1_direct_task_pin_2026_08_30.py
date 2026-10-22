@@ -157,7 +157,12 @@ async def test_t_direct_ship_pin_matches_context(fake_db):
          patch("services.git_identity.resolve_git_identity",
                AsyncMock(return_value=("Jane Dev", "jane@example.com"))), \
          patch("services.vanguard_verify_agent.verify_patch",
-               AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})):
+               AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+         patch("services.loop_safety.create_or_reuse_branch",
+               AsyncMock(return_value=(True, None))), \
+         patch("services.loop_safety.open_or_reuse_pr",
+               AsyncMock(return_value={"ok": False, "pr_url": None, "pr_number": None,
+                                        "reused": False, "error": "not_relevant_to_this_test"})):
         await router_mod._run_task_via_api(
             "task_ok", PROJ, "add a comment to README.md",
             ["README.md"], "", "ghp_faketoken789", resume_edits=resume_edits,
@@ -187,7 +192,12 @@ async def test_t_direct_ship_clears_not_connected(fake_db, monkeypatch):
          patch("services.git_identity.resolve_git_identity",
                AsyncMock(return_value=("Jane Dev", "jane@example.com"))), \
          patch("services.vanguard_verify_agent.verify_patch",
-               AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})):
+               AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+         patch("services.loop_safety.create_or_reuse_branch",
+               AsyncMock(return_value=(True, None))), \
+         patch("services.loop_safety.open_or_reuse_pr",
+               AsyncMock(return_value={"ok": False, "pr_url": None, "pr_number": None,
+                                        "reused": False, "error": "not_relevant_to_this_test"})):
         await router_mod._run_task_via_api(
             "task_cache", PROJ, "add a comment to README.md",
             ["README.md"], "", "ghp_faketoken789", resume_edits=resume_edits,

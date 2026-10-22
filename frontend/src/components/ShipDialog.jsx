@@ -92,7 +92,13 @@ export default function ShipDialog({
             onApprove={onShip}
             onRetry={onShip}
             approveLabel="🚀 Approve the fix"
-            approveTitle={`Ship to ${activeProject.github_owner}/${activeProject.github_repo}@${activeProject.branch}`}
+            approveTitle={`Ship to a new branch off ${activeProject.github_owner}/${activeProject.github_repo}@${activeProject.branch}`}
+            // 2026-10 · Phase 1 fix — this is the ONLY render site of
+            // ShipDialog (MessageBubble.jsx), i.e. the Mode D "Approve
+            // the fix" / worker_git.py surface. That backend always
+            // branches + best-effort-PRs, so the pre-approve copy
+            // must say so unconditionally — see PrMiniGuide.jsx.
+            prMiniGuideMode="branch_and_pr"
           />
           {/* 2026-09-17 — Bug 3 fix (live QA report): "Approve the fix"
               used to render next to "plan clean ✓" / a "double-checked"

@@ -488,17 +488,90 @@ async def _run_task_with_git(task_id, proj, task, files, context, user_token, ma
                               verification_level=_iv_result.get("verification_level"),
                               completed_at=time.time())
             return
-        push = await asyncio.to_thread(_pkg._sh, ["git", "push", "origin", branch], repo_path, timeout=90)
+        # 2026-10 · Phase 1 fix — founder-reported 2026-10-21 incident:
+        # "Approve the fix" pushed straight to `branch` (project default,
+        # typically `main`) with no branch choice, no PR, no warning —
+        # the UI promised a pull request and this worker never opened
+        # one. This surface now ALWAYS creates a dedicated branch off
+        # the project's base branch (via the existing, already-used-
+        # elsewhere `create_or_reuse_branch`/`ship_branch_name` helpers
+        # — see loop_engine.py's ship-via-PR path and
+        # finding_fix_applier.py) and pushes there instead. If branch
+        # creation fails, the task FAILS loudly — it never silently
+        # falls back to pushing `branch` directly.
+        from services.loop_safety import (
+            create_or_reuse_branch,
+            open_or_reuse_pr,
+            ship_branch_name,
+        )
+        ship_branch = ship_branch_name(task_id)
+        branch_ok, branch_err = await create_or_reuse_branch(
+            owner=owner, repo=repo, base_branch=branch,
+            new_branch=ship_branch, token=user_token,
+        )
+        if not branch_ok:
+            err = (f"Couldn't create a ship branch off {branch} "
+                   f"({branch_err}) — nothing was pushed, {branch} is untouched.")
+            await _pkg._log(task_id, f"🚫 {err}", "error")
+            await _pkg._set_status(task_id, status="failed", error=err,
+                              completed_at=time.time())
+            return
+        await _pkg._log(task_id, f"🌿 created branch {ship_branch}", "success")
+
+        push = await asyncio.to_thread(
+            _pkg._sh, ["git", "push", "origin", f"HEAD:refs/heads/{ship_branch}"],
+            repo_path, timeout=90)
         if push.returncode != 0:
             raise RuntimeError(f"git push failed: {_scrub(push.stderr)[:300]}")
         sha_r = await asyncio.to_thread(_pkg._sh, ["git", "rev-parse", "--short", "HEAD"], repo_path)
         sha = sha_r.stdout.strip()
         commit_full_sha_r = await asyncio.to_thread(_pkg._sh, ["git", "rev-parse", "HEAD"], repo_path)
         commit_full_sha = commit_full_sha_r.stdout.strip()
-        await _pkg._log(task_id, f"🚀 pushed — {sha}", "success")
+        await _pkg._log(task_id, f"🚀 pushed — {sha} on {ship_branch}", "success")
+
+        # Best-effort draft PR via the EXISTING dedup-aware helper
+        # (services/loop_safety.py::open_or_reuse_pr) — no new PR
+        # logic. A PR-open failure must never lose the commit that
+        # already landed on ship_branch; the status fields below are
+        # the single source of truth the frontend reads, so they must
+        # reflect exactly what happened — never a fabricated "PR open".
+        pr_url, pr_opened = None, False
+        try:
+            _pr_result = await open_or_reuse_pr(
+                owner=owner, repo=repo, head_branch=ship_branch,
+                base_branch=branch,
+                title=f"ORA fix: {summary[:180]}",
+                body=f"Opened by ORA (CTO task {task_id}).\n\nCommit: {commit_full_sha}",
+                token=user_token,
+            )
+            pr_url = _pr_result.get("pr_url")
+            pr_opened = bool(_pr_result.get("ok"))
+            if pr_opened:
+                await _pkg._log(
+                    task_id,
+                    f"🔀 {'reused' if _pr_result.get('reused') else 'opened'} PR — {pr_url}",
+                    "success",
+                )
+            else:
+                await _pkg._log(
+                    task_id,
+                    f"⚠️ couldn't open a PR ({_pr_result.get('error')}) — "
+                    f"branch {ship_branch} is pushed and ready for review.",
+                    "warning",
+                )
+        except Exception as _pr_e:                              # noqa: BLE001
+            logger.warning("[cto-task %s] open_or_reuse_pr crashed: %r", task_id, _pr_e)
+            await _pkg._log(
+                task_id,
+                f"⚠️ couldn't open a PR — branch {ship_branch} is pushed and ready for review.",
+                "warning",
+            )
+
         await _pkg._set_status(task_id, status="done", result=summary,
                           commit_sha=sha,
                           commit_full_sha=commit_full_sha, push_confirmed=True,
+                          ship_branch=ship_branch, base_branch=branch,
+                          pr_url=pr_url, pr_opened=pr_opened,
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
                           verification_status=_iv_result.get("decision"),

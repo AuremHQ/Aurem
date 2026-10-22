@@ -150,6 +150,11 @@ class TestCommitFilesAuthorIdentityFix:
              patch.object(router_mod, "gh_api_commit", _real_shaped_commit_files), \
              patch("services.git_identity.resolve_git_identity",
                   AsyncMock(return_value=("Jane Dev", "jane@example.com"))) as _mock_identity, \
+             patch("services.loop_safety.create_or_reuse_branch",
+                  AsyncMock(return_value=(True, None))), \
+             patch("services.loop_safety.open_or_reuse_pr",
+                  AsyncMock(return_value={"ok": False, "pr_url": None, "pr_number": None,
+                                           "reused": False, "error": "not_relevant_to_this_test"})), \
              patch("services.vanguard_verify_agent.verify_patch",
                   AsyncMock(return_value={"pass": True, "summary": "clean",
                                           "findings": []})):

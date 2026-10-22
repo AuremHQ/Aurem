@@ -32,6 +32,14 @@ export default function ShipApproveCard({
   onRetry,
   approveLabel = "Approve the fix",
   approveTitle,
+  // 2026-10 · Phase 1 fix — only ShipDialog.jsx's "Approve the fix"
+  // (Mode D chat -> shipViaCTO() -> worker_git.py) passes this. That
+  // backend always creates a branch + best-effort PR, independent of
+  // the ship_via_pr flag PrMiniGuide otherwise reads — see
+  // PrMiniGuide.jsx's own 2026-10 comment. Every other caller
+  // (LoopLiveFeed's ShippedRow, ShipConfirmModal) leaves this unset
+  // and keeps the existing flag-driven copy, unchanged.
+  prMiniGuideMode = "auto",
   // P2-D (this round) — LoopLiveFeed's ShippedRow keeps its OWN legacy
   // testids (deeply locked by pre-existing tests) even though it now
   // renders through this shared card. Any key left unset falls back
@@ -46,7 +54,7 @@ export default function ShipApproveCard({
 
   return (
     <div data-testid={testidPrefix} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {ship.canApprove && <PrMiniGuide />}
+      {ship.canApprove && <PrMiniGuide mode={prMiniGuideMode} />}
 
       {diffSummary && (
         <div data-testid={`${testidPrefix}-diff`} style={{

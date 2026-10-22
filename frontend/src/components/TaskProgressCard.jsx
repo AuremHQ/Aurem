@@ -389,6 +389,14 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
   const commitUrl = sha && owner && repo
     ? `https://github.com/${owner}/${repo}/commit/${sha}`
     : null;
+  // 2026-10 · Phase 1 fix — worker_git.py now always pushes to a new
+  // branch (never the base branch) and tries to open a draft PR
+  // there. Show exactly what happened — the real branch name, and
+  // either the real PR link or an honest "no PR" note — never a
+  // fabricated success. See worker_git.py's own 2026-10 comment.
+  const shipBranch = task.ship_branch;
+  const prUrl = task.pr_url;
+  const prOpened = !!task.pr_opened;
 
   const files = (task.steps || [])
     .filter((s) => (s.step || "").startsWith("💾"))
@@ -450,6 +458,27 @@ export default function TaskProgressCard({ taskId, task, project, onRollback, on
 
       {task.result && (
         <div style={{ marginTop: 6, color: "var(--text)" }}>{task.result}</div>
+      )}
+
+      {shipBranch && (
+        <div data-testid={`ship-branch-${taskId}`}
+             style={{ marginTop: 6, fontSize: 11, color: "var(--text-dim)" }}>
+          Branch: <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{shipBranch}</span>
+          {prOpened && prUrl ? (
+            <>
+              {" · "}
+              <a href={prUrl} target="_blank" rel="noreferrer"
+                 data-testid={`ship-pr-link-${taskId}`}
+                 style={{ color: "var(--accent-2)" }}>
+                View PR
+              </a>
+            </>
+          ) : (
+            <span data-testid={`ship-no-pr-${taskId}`} style={{ color: "var(--text-faint)" }}>
+              {" · "}no PR opened — review the branch directly on GitHub
+            </span>
+          )}
+        </div>
       )}
 
       {files.length > 0 && (
