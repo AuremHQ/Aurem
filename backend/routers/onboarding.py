@@ -637,6 +637,15 @@ async def run_demo_project(authorization: Optional[str] = Header(None)):
     if db is None:
         raise HTTPException(503, "DB unavailable")
 
+    # Closing-the-bypass-doors audit (Step 4) — any logged-in user can
+    # hit this repeatedly with no cap at all (no budget/tier check of
+    # any kind). It's a fixed demo file with no real product value in
+    # running it twice, so this is the same platform-wide infra-abuse
+    # breaker used elsewhere (founder_offer.py), not a payment gate —
+    # the whole onboarding demo is meant to be free.
+    from services.llm_cost_breaker import assert_within_cap
+    await assert_within_cap(db)
+
     original = _read_demo_source()
     await emit_funnel_event(db, user_id=user_id, event_type="demo_project_started", metadata={})
 

@@ -154,7 +154,15 @@ async def business_pulse(authorization: Optional[str] = Header(None)):
 
     org_filter = synthetic_mongo_filter()
     gh_filter  = {"github.access_token": {"$exists": True, "$nin": [None, ""]}}
-    paid_tiers = ["basic", "pro", "maxx", "founder"]
+    # Closing-the-bypass-doors audit (Step 5a) — this used to read
+    # ["basic", "pro", "maxx", "founder"], which confuses the chat-MODE
+    # vocabulary ("swift"/"pro"/"maxx" — a UI pill, see
+    # services/subscription_tiers.py's `modes` field) with the actual
+    # dev_users.tier vocabulary (Tier enum: free/starter/pro/team/
+    # founder). "basic" and "maxx" never appear as a real stored tier
+    # value anywhere (confirmed by grep) — the old filter silently
+    # missed every "starter" and "team" user in this paid-count metric.
+    paid_tiers = ["starter", "pro", "team", "founder"]
     paid_raw_filter = {"tier": {"$in": paid_tiers}}
 
     from datetime import datetime, timezone, timedelta

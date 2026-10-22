@@ -132,7 +132,20 @@ async def ask_decisions(
         elif hasattr(ans, "noul"):
             answers[key] = {"type": "noul", "noul": ans.noul}
     usage = dict(getattr(resp, "usage", None) or {})
-    return {"model": getattr(resp, "model", model), "answers": answers, "usage": usage}
+    resolved_model = getattr(resp, "model", model)
+    # Master Prompt Step B5 — this call returns a real `usage` dict
+    # already (see docstring above) but never forwarded it to the
+    # app-wide billing ledger, making every Jev decision call
+    # invisible to token-billing cost tracking. Best-effort, never
+    # raises (log_real_usage's own contract) — a ledger failure must
+    # never break a Jev call that otherwise succeeded.
+    try:
+        from services.loop_token_ledger import log_real_usage
+        await log_real_usage(resolved_model, usage, feature="jev_decisions",
+                              provider="typesafe")
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("jev_client: usage ledger write skipped: %r", e)
+    return {"model": resolved_model, "answers": answers, "usage": usage}
 
 
 async def ask_choice(

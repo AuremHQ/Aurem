@@ -290,6 +290,14 @@ async def start_loop(body: StartBody,
         tier=(user.get("tier") or "free"),
         is_founder=is_founder,
     )
+    # Closing-the-bypass-doors audit — Loop Mode reaches the exact same
+    # paid worker (plan → execute → verify → scan → ship) as the manual
+    # Fix flow, but had no fix_entitlement check at all. Checked here,
+    # synchronously, before the loop lock/engine are created, so an
+    # unentitled caller gets a clean 402 instead of a loop that starts
+    # and then silently fails deep inside the engine.
+    from services.fix_entitlement import assert_fix_entitled
+    await assert_fix_entitled(db, user["user_id"])
     # Iter 212m-115 safety #2 — Concurrent-loop lock. Refuses a 2nd
     # parallel loop on the same project for the same user.
     locked, existing = await acquire_loop_lock(

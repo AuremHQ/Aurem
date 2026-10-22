@@ -407,5 +407,54 @@ class TestResolveShipTarget:
         assert "main" in err  # untouched base branch named in the error
 
 
+class TestSubmitTaskFixEntitlementGate:
+    """Master Prompt Step C2 — /cto/tasks/submit is the HTTP entry
+    point behind MessageBubble.jsx's "Approve the fix" (shipViaCTO).
+    Gated by the SAME TOKEN_BILLING_MODE as services/wallet.py."""
+
+    def test_off_mode_unaffected_default_behavior(self, client, fake_db, monkeypatch):
+        monkeypatch.delenv("TOKEN_BILLING_MODE", raising=False)
+        fake_db.cto_projects.rows.append(dict(PROJ))
+        fake_ctx = type("Ctx", (), {"pat": "tok"})()
+        with patch("routers.cto_projects.assert_has_budget", AsyncMock(return_value=None)), \
+             patch("routers.cto_projects.assert_has_task_budget", AsyncMock(return_value=None)), \
+             patch("services.rate_limiter.check_rate_limit_async", AsyncMock(return_value=True)), \
+             patch("services.ora_context.build_ora_context", AsyncMock(return_value=fake_ctx)), \
+             patch("routers.cto_projects._run_task", AsyncMock(return_value=None)):
+            r = client.post("/api/aurem-dev/cto/tasks/submit", headers=AUTH,
+                             json=_submit_body())
+        assert r.status_code == 200, r.text
+
+    def test_on_mode_402_when_not_entitled(self, client, fake_db, monkeypatch):
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
+        fake_db.cto_projects.rows.append(dict(PROJ))
+        fake_ctx = type("Ctx", (), {"pat": "tok"})()
+        with patch("routers.cto_projects.assert_has_budget", AsyncMock(return_value=None)), \
+             patch("routers.cto_projects.assert_has_task_budget", AsyncMock(return_value=None)), \
+             patch("services.rate_limiter.check_rate_limit_async", AsyncMock(return_value=True)), \
+             patch("services.ora_context.build_ora_context", AsyncMock(return_value=fake_ctx)), \
+             patch("routers.cto_projects._run_task", AsyncMock(return_value=None)):
+            r = client.post("/api/aurem-dev/cto/tasks/submit", headers=AUTH,
+                             json=_submit_body())
+        assert r.status_code == 402, r.text
+        assert r.json()["detail"]["code"] == "payment_required"
+        assert fake_db.cto_tasks.rows == [], "no task row when not entitled in 'on' mode"
+
+    def test_on_mode_200_when_entitled(self, client, fake_db, monkeypatch):
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
+        fake_db.cto_projects.rows.append(dict(PROJ))
+        fake_db.dev_users.rows.append({"user_id": "u1", "fix_entitlement": True})
+        fake_ctx = type("Ctx", (), {"pat": "tok"})()
+        with patch("routers.cto_projects.assert_has_budget", AsyncMock(return_value=None)), \
+             patch("routers.cto_projects.assert_has_task_budget", AsyncMock(return_value=None)), \
+             patch("services.rate_limiter.check_rate_limit_async", AsyncMock(return_value=True)), \
+             patch("services.ora_context.build_ora_context", AsyncMock(return_value=fake_ctx)), \
+             patch("routers.cto_projects._run_task", AsyncMock(return_value=None)), \
+             patch("services.wallet.assert_wallet", AsyncMock(return_value={"mode": "on", "held": True})):
+            r = client.post("/api/aurem-dev/cto/tasks/submit", headers=AUTH,
+                             json=_submit_body())
+        assert r.status_code == 200, r.text
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

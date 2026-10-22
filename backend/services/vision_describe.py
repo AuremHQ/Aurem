@@ -39,6 +39,22 @@ _VISION_PROMPT = (
 )
 
 
+async def _log_vision_usage(model: str, usage: dict, *,
+                            status: str = "ok",
+                            error_reason: str | None = None) -> None:
+    """Closing-the-bypass-doors audit (2026-10) — this raw OpenRouter
+    call had zero usage logging. Never raises; a ledger failure must
+    never break the vision OCR call it's describing."""
+    try:
+        from services.loop_token_ledger import log_real_usage
+        await log_real_usage(
+            model, usage, feature="Vision Describe", provider="openrouter",
+            status=status, error_reason=error_reason,
+        )
+    except Exception as e:                                    # noqa: BLE001
+        logger.debug("vision_describe: usage ledger write skipped: %r", e)
+
+
 async def describe_image_via_vision(raw: bytes, content_type: str,
                                      filename: str) -> str:
     """Send the image (as a base64 data URL) to a vision LLM and return
@@ -86,11 +102,20 @@ async def describe_image_via_vision(raw: bytes, content_type: str,
             if r.status_code != 200:
                 logger.warning("vision call HTTP %s on %s — body: %s",
                                 r.status_code, model, r.text[:300])
+                await _log_vision_usage(model, {}, status="failed",
+                                        error_reason=f"http_{r.status_code}")
                 return ""
             data = r.json()
-            return (data.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content") or "").strip()
+            content = (data.get("choices", [{}])[0]
+                           .get("message", {})
+                           .get("content") or "").strip()
+            u = data.get("usage") or {}
+            await _log_vision_usage(model, {
+                "input_tokens": int(u.get("prompt_tokens", 0) or 0),
+                "output_tokens": int(u.get("completion_tokens", 0) or 0),
+                "cost": u.get("cost"),
+            })
+            return content
 
     # Iter 110 — primary → fallback chain. First model that returns
     # non-empty content wins. The fallback model (gpt-4o-mini) was

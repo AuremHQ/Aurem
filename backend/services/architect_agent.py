@@ -320,7 +320,20 @@ async def invoke_architect(
 ) -> tuple[Optional[dict], Optional[str]]:
     """Top-level entry point: logs invocation, infers, applies the
     deterministic Type-B override, logs one event per FINAL decision,
-    persists. Returns (blueprint_doc_or_None, error_or_None)."""
+    persists. Returns (blueprint_doc_or_None, error_or_None).
+
+    Closing-the-bypass-doors audit (2026-10) — `infer_blueprint` below
+    makes a real `call_llm` call. As of this writing `invoke_architect`
+    has NO caller anywhere in `routers/` or `services/` outside tests
+    (confirmed by grep) — `routers/architect.py` only exposes a
+    read-only blueprint GET. If you are wiring a real HTTP entry point
+    to this function, you MUST call `services.wallet.assert_wallet`
+    (and, if the result should be paid-fix-gated rather than a cheap
+    planning call, `services.fix_entitlement.assert_fix_entitled` too)
+    BEFORE calling this — there is no budget/entitlement check inside
+    this function itself, by design (it has no HTTP context to raise
+    a clean 402 from). Do not wire a caller that skips that.
+    """
     await log_architect_event(
         db, event_type="architect_agent_invoked",
         project_id=project_id, user_id=user_id, idea=idea,

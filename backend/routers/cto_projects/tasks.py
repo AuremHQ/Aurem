@@ -75,6 +75,23 @@ async def _enqueue_cto_task(
     if db is None:
         return {"ok": False, "reason": "no_db"}
 
+    # Closing-the-bypass-doors audit — this is the shared enqueue path
+    # for MCP's `ship_code` tool and both automation triggers (push
+    # webhook + manual run-now), none of which previously went through
+    # assert_fix_entitled at all. Checked here, once, so every current
+    # and future caller of this function is covered without having to
+    # remember to gate each one individually. Returns a dict (never
+    # raises) to match this function's existing contract — the push-
+    # webhook caller loops over multiple rules and must be able to
+    # skip one unentitled rule without 500ing the whole delivery.
+    from services.fix_entitlement import assert_fix_entitled
+    try:
+        await assert_fix_entitled(db, user_id)
+    except HTTPException as _fe:
+        if _fe.status_code == 402:
+            return {"ok": False, "reason": "payment_required"}
+        raise
+
     proj = None
     if project_id and project_id != "home":
         proj = await db.cto_projects.find_one(
@@ -92,6 +109,18 @@ async def _enqueue_cto_task(
         return {"ok": False, "reason": "no_project"}
 
     task_id = f"t_{uuid.uuid4().hex[:12]}"
+
+    # Master Prompt Step 2 — same wallet hold as /tasks/submit, at the
+    # shared choke point so MCP/automations can't skip it either.
+    from services.wallet import assert_wallet
+    try:
+        await assert_wallet(db, user_id=user_id, action="fix",
+                            run_id=task_id, idempotency_key=f"wallet_hold:{task_id}")
+    except HTTPException as _we:
+        if _we.status_code == 402:
+            return {"ok": False, "reason": "tokens_exhausted"}
+        raise
+
     await db.cto_tasks.insert_one({
         "task_id": task_id,
         "project_id": proj["project_id"],
@@ -232,6 +261,14 @@ async def submit_task(
     # services/usage.py. Replaces the iter-45 free-only counter.
     await _pkg.assert_has_task_budget(me["user_id"])
 
+    # Master Prompt Step C2 — this is the "Approve the fix" entry
+    # point (MessageBubble.jsx's shipViaCTO -> here). Fix is locked
+    # behind a paid plan: off=no-op, shadow=log only, on=typed 402
+    # BEFORE any task row is created. fix_entitlement is set ONLY by
+    # the signature-verified Stripe webhook (services/fix_entitlement.py).
+    from services.fix_entitlement import assert_fix_entitled
+    await assert_fix_entitled(db, me["user_id"])
+
     # Tier-based feature gate — Maxx mode requires Pro / Team / Founder.
     if body.maxx_mode:
         from services.subscription_tiers import can_use_feature
@@ -299,6 +336,16 @@ async def submit_task(
 
     task_id = (f"t_scope_{body._scope_proposal['id']}" if body._scope_proposal
                else f"t_{uuid.uuid4().hex[:12]}")
+
+    # Master Prompt Step 2 — reserve tokens BEFORE any task row exists.
+    # off=no-op, shadow=log only, on=hold for real / typed 402 if the
+    # balance can't cover it. Settled (success) or released (failure/
+    # cancel) by _run_task's finally-block once the worker finishes —
+    # see routers/cto_projects/worker_api.py::_run_task.
+    from services.wallet import assert_wallet
+    await assert_wallet(db, user_id=me["user_id"], action="fix",
+                        run_id=task_id, idempotency_key=f"wallet_hold:{task_id}")
+
     await db.cto_tasks.insert_one({
         "task_id": task_id, "project_id": body.project_id,
         "user_id": me["user_id"], "task": body.task,
@@ -414,6 +461,11 @@ async def retry_task(
     await _pkg.assert_has_budget(me["user_id"])
     await _pkg.assert_has_task_budget(me["user_id"])
     db = _pkg.require_db()
+    # Closing-the-bypass-doors audit — retry re-queues a brand-new task
+    # that runs the exact same paid worker as /tasks/submit, but had no
+    # fix_entitlement check of its own.
+    from services.fix_entitlement import assert_fix_entitled
+    await assert_fix_entitled(db, me["user_id"])
     old = await db.cto_tasks.find_one(
         {"task_id": task_id, "user_id": me["user_id"]}
     )
@@ -444,6 +496,14 @@ async def retry_task(
         raise HTTPException(403, f"GitHub App auth failed ({_auth_err}): {_auth_detail}")
 
     new_task_id = "t_" + uuid.uuid4().hex[:12]
+
+    # Master Prompt Step 2 — same wallet hold as /tasks/submit. A retry
+    # is a brand-new run through the same worker, so it costs tokens
+    # the same as the original attempt would have.
+    from services.wallet import assert_wallet
+    await assert_wallet(db, user_id=me["user_id"], action="fix",
+                        run_id=new_task_id, idempotency_key=f"wallet_hold:{new_task_id}")
+
     _maxx = bool(old.get("maxx_mode", False))
     # 2026-08-27 — checkpoint/resume Phase 2: if the failed task already
     # has fresh (TTL-bounded) saved edits from a prior successful

@@ -422,6 +422,95 @@ async def create_checkout(
     return await create_checkout_session(billing_user, plan, origin)
 
 
+# ── Master Prompt Step C3 — one-time top-up pack (min $10) ─────────────
+# `mode="payment"`, NOT a subscription — a separate Stripe Checkout
+# flow from the plan upgrade above. The webhook branch above (kind==
+# "topup") is what actually credits tokens; this endpoint only starts
+# the checkout.
+TOPUP_MIN_USD = 10.0
+
+
+class TopupBody(BaseModel):
+    amount_usd: float
+    origin_url: str | None = None
+
+
+@router.post("/payments/topup-checkout")
+async def create_topup_checkout(
+    body: TopupBody,
+    http_request: Request,
+    authorization: str | None = Header(None),
+) -> dict:
+    user = await current_dev(authorization)
+    db = require_db()
+    ctx = await check_permission(user, "billing", "write", db=db)
+    owner_id = ctx["effective_account_id"]
+    billing_user = user if ctx["is_owner"] else {
+        **user, "user_id": owner_id,
+        "email": (await db.dev_users.find_one(
+            {"user_id": owner_id}, {"_id": 0, "email": 1},
+        ) or {}).get("email", user.get("email")),
+    }
+    amount_usd = float(body.amount_usd or 0)
+    if amount_usd < TOPUP_MIN_USD:
+        raise HTTPException(400, f"Minimum top-up is ${TOPUP_MIN_USD:.0f}")
+    _require_stripe()
+    origin = (body.origin_url or "").rstrip("/") or _frontend_url() or str(http_request.base_url).rstrip("/")
+    success_url = f"{origin}/settings?topup_session_id={{CHECKOUT_SESSION_ID}}&topped_up=1"
+    cancel_url = f"{origin}/settings?cancelled=1#pricing"
+    try:
+        session = await _stripe_call(
+            stripe.checkout.Session.create,
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": round(amount_usd * 100),
+                    "product_data": {"name": "AUREM token top-up"},
+                },
+                "quantity": 1,
+            }],
+            customer_email=billing_user.get("email") or None,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "user_id": billing_user.get("user_id", ""),
+                "email": billing_user.get("email", ""),
+                "kind": "topup",
+                "amount_usd": str(amount_usd),
+            },
+        )
+    except HTTPException:
+        raise
+    except stripe.error.StripeError as e:
+        logger.warning("stripe topup checkout create failed: %r", e)
+        raise HTTPException(502, f"Stripe error: {getattr(e, 'user_message', str(e))}")
+    except Exception:
+        logger.exception("topup checkout create unexpected failure")
+        raise HTTPException(
+            502,
+            "Could not start checkout — payment provider is unavailable. "
+            "Please retry in a moment.",
+        )
+
+    await db.cto_payments.insert_one({
+        "session_id": session.id,
+        "user_id": billing_user.get("user_id"),
+        "user_email": billing_user.get("email"),
+        "plan": None,
+        "kind": "topup",
+        "amount_usd": amount_usd,
+        "status": "initiated",
+        "payment_status": "pending",
+        "created_at": time.time(),
+    })
+    checkout_url = session.url or ""
+    if "/g/pay/" in checkout_url:
+        checkout_url = checkout_url.replace("/g/pay/", "/c/pay/", 1)
+    return {"url": checkout_url, "checkout_url": checkout_url, "session_id": session.id}
+
+
 # ── /payments/status — frontend poll after the redirect ─────────────────
 @router.get("/payments/status/{session_id}")
 async def payment_status(
@@ -460,22 +549,34 @@ async def payment_status(
     }
     if paid and pay.get("payment_status") != "paid":
         update["paid_at"] = time.time()
-        await db.dev_users.update_one(
-            {"user_id": pay["user_id"]},
-            {"$set": {
-                "tier":             pay["plan"],
-                "usage_tier":       pay["plan"],   # keep legacy field in sync
-                "stripe_sub_id":    session.subscription,
-                "tier_updated_at":  datetime.now(timezone.utc).isoformat(),
-            }},
-        )
+        # Master Prompt Step C3 — a top-up pack (`pay["kind"]=="topup"`)
+        # has no `plan` at all; it must NEVER null out the user's
+        # existing tier. Only a real plan-upgrade session reaches here.
+        if pay.get("plan"):
+            await db.dev_users.update_one(
+                {"user_id": pay["user_id"]},
+                {"$set": {
+                    "tier":             pay["plan"],
+                    "usage_tier":       pay["plan"],   # keep legacy field in sync
+                    "stripe_sub_id":    session.subscription,
+                    "tier_updated_at":  datetime.now(timezone.utc).isoformat(),
+                }},
+            )
     await db.cto_payments.update_one({"session_id": session_id}, {"$set": update})
+    # Master Prompt Step C3 — "Confirming payment..." poll target.
+    # READ-ONLY: fix_entitlement is set ONLY by the verified webhook
+    # (services/fix_entitlement.py) — this never writes it, regardless
+    # of what `session.payment_status` says. A forged/stale session_id
+    # here can report stale entitlement, never grant new entitlement.
+    from services.fix_entitlement import is_fix_entitled
+    fix_entitled = await is_fix_entitled(db, pay["user_id"])
     return {
         "session_id":     session_id,
         "payment_status": session.payment_status,
         "status":         session.status,
         "plan":           pay["plan"],
         "tier":           pay["plan"],
+        "fix_entitled":   fix_entitled,
     }
 
 
@@ -574,6 +675,33 @@ async def stripe_webhook(request: Request) -> dict:
             # don't re-raise here. The Sentry tag is enough for
             # on-call to reconcile the ledger manually.
 
+        # Master Prompt Step C3 — one-time top-up pack (mode="payment",
+        # NOT a subscription — see /payments/topup-checkout). Grants
+        # `purchased` tokens (never expire), no tier/fix_entitlement
+        # change — a top-up alone doesn't unlock Fix if the user has
+        # no plan; it only adds spendable balance for when they do.
+        kind = (obj.get("metadata") or {}).get("kind")
+        if user_id and kind == "topup":
+            try:
+                amount_usd = float((obj.get("metadata") or {}).get("amount_usd") or 0)
+                from config.token_pricing import usd_to_tokens
+                from services import wallet
+                tokens = usd_to_tokens(amount_usd)
+                if tokens > 0:
+                    await wallet.grant(
+                        db, user_id=user_id, bucket="purchased", amount=tokens,
+                        idempotency_key=f"stripe_topup_grant:{event.get('id')}",
+                        source="stripe_webhook:topup",
+                    )
+            except Exception as e:
+                logger.exception(
+                    "[webhook] topup token grant FAILED for user=%s "
+                    "session=%s — user paid but tokens not credited.",
+                    user_id, session_id,
+                )
+                _alert_upgrade_failure(e, stage="topup_grant")
+                raise HTTPException(500, "topup_grant_failed")
+
         if user_id and plan:
             try:
                 await db.dev_users.update_one(
@@ -596,6 +724,40 @@ async def stripe_webhook(request: Request) -> dict:
                 # RE-RAISE so Stripe retries this webhook. Idempotent
                 # on session_id — no double-charge risk.
                 raise HTTPException(500, "tier_update_failed")
+
+            # Master Prompt Step C1/C3 — token-billing: grant this
+            # plan's monthly token allotment to the `plan` bucket and
+            # flip fix_entitlement True. This is the ONLY place
+            # fix_entitlement is ever set to True — never from a
+            # redirect/success_url/frontend value (see
+            # services/fix_entitlement.py's module docstring).
+            # Idempotent on the Stripe event id (NOT session_id —
+            # event.id is Stripe's own delivery-dedup key, the correct
+            # thing to key webhook-side idempotency on; `services.wallet.
+            # grant()`'s own `_id`-keyed ledger row makes a duplicate
+            # delivery a guaranteed no-op regardless).
+            try:
+                plan_token_grants = {"starter": 900, "pro": 1900, "team": 4900}
+                tokens = plan_token_grants.get(plan)
+                if tokens:
+                    from services import wallet
+                    from services.fix_entitlement import grant_fix_entitlement
+                    await wallet.grant(
+                        db, user_id=user_id, bucket="plan", amount=tokens,
+                        idempotency_key=f"stripe_plan_grant:{event.get('id')}",
+                        source=f"stripe_webhook:{plan}",
+                    )
+                    await grant_fix_entitlement(db, user_id, source=f"stripe_webhook:{plan}")
+            except Exception as e:
+                logger.exception(
+                    "[webhook] token grant / fix_entitlement FAILED for "
+                    "user=%s plan=%s session=%s — tier already upgraded, "
+                    "but tokens/entitlement are not. Re-raising so Stripe "
+                    "retries (idempotent on event id).",
+                    user_id, plan, session_id,
+                )
+                _alert_upgrade_failure(e, stage="token_grant")
+                raise HTTPException(500, "token_grant_failed")
 
             # Iter 102 — referral reward on paid conversion.
             try:
@@ -770,6 +932,27 @@ async def stripe_webhook(request: Request) -> dict:
                 "tier_updated_at": datetime.now(timezone.utc).isoformat(),
             }},
         )
+        # Closing-the-bypass-doors audit (Step 6) — this branch already
+        # downgraded `tier` to "free" but never touched
+        # `fix_entitlement`, so a cancelled/paused subscriber kept Fix
+        # access forever (the field stays True until something sets it
+        # False — nothing did). Gated on TOKEN_BILLING_MODE != "off" so
+        # an account that was never part of the token-billing rollout
+        # doesn't get a new field written to it at all.
+        if user_row and user_row.get("user_id"):
+            from services.wallet import billing_mode
+            if billing_mode() != "off":
+                from services.fix_entitlement import revoke_fix_entitlement
+                try:
+                    await revoke_fix_entitlement(
+                        db, user_row["user_id"],
+                        reason=f"stripe_webhook:{etype}",
+                    )
+                except Exception as e:                          # noqa: BLE001
+                    logger.warning(
+                        "[webhook] fix_entitlement revoke failed for "
+                        "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
+                    )
         # Iter 212m-240 — Tier 3: paid → free means any dedicated Supabase
         # Postgres projects the user has must enter the downgrade grace
         # window using the configured policy (default = migrate_back,

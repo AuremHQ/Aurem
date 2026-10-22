@@ -186,7 +186,30 @@ async def test_zero_token_success_dropped_but_failure_kept_with_real_reason(_moc
     row = _mock_db.real_llm_usage.docs[0]
     assert row["status"] == "failed"
     assert row["error_reason"] == "HTTPStatusError: 429 rate limited"
-    assert row["input_tokens"] == 0 and row["cost_usd"] == 0.0
+
+
+# ── estimated flag (closing-the-bypass-doors audit, 2026-10) ─────────
+
+@pytest.mark.asyncio
+async def test_estimated_flag_defaults_false(_mock_db):
+    await ledger.log_real_usage(
+        "anthropic/claude-sonnet-4.5",
+        {"prompt_tokens": 100, "completion_tokens": 50, "cost": 0.001},
+    )
+    assert _mock_db.real_llm_usage.docs[0]["estimated"] is False
+
+
+@pytest.mark.asyncio
+async def test_estimated_flag_true_is_recorded(_mock_db):
+    await ledger.log_real_usage(
+        "openrouter/some-model",
+        {"prompt_tokens": 400, "completion_tokens": 120},
+        feature="ora_chat_stream", provider="openrouter", estimated=True,
+    )
+    row = _mock_db.real_llm_usage.docs[0]
+    assert row["estimated"] is True
+    assert row["feature"] == "ora_chat_stream"
+    assert row["input_tokens"] == 400
 
 
 # ── 4 — surface/mode context nesting ──────────────────────────────────

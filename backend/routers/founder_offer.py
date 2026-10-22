@@ -348,6 +348,20 @@ async def claim_offer(
         db, user_id=user_id, type="offer_claimed",
         text="You claimed your free SEO fix spot — we're previewing it now.")
 
+    # Closing-the-bypass-doors audit (Step 4) — this SEO-fix run calls
+    # the real alt-text LLM (services/seo/image_alts.py) via the
+    # `call_llm` shortcut, which — unlike `call_llm_with_meta` — skips
+    # assert_within_cap entirely (see services/llm/__init__.py::
+    # call_llm's own docstring). NOT gated behind payment on purpose —
+    # this is the founder's free giveaway (500 spots, 3-repo cap per
+    # user), and a 402 here would contradict the feature's whole
+    # point. The platform-wide hourly/daily circuit breaker still
+    # applies — that's an infra-abuse guard, not a billing gate.
+    # Deliberately OUTSIDE the try/except below so a real cap trip is
+    # a real 429, not silently folded into "dry_run crashed".
+    from services.llm_cost_breaker import assert_within_cap
+    await assert_within_cap(db)
+
     # ── Dry-run preview ──────────────────────────────────────────
     try:
         from services.seo.orchestrator import run_seo_fixes, SeoOptions
@@ -472,6 +486,13 @@ async def _run_real_fix(
     if db is None:
         return
     try:
+        # Closing-the-bypass-doors audit (Step 4) — same platform-wide
+        # cost-breaker check as the preview path above; a trip here
+        # marks the claim "failed" via the except block below instead
+        # of a raised HTTPException nobody's listening for (this is a
+        # fire-and-forget background runner).
+        from services.llm_cost_breaker import assert_within_cap
+        await assert_within_cap(db)
         from services.seo.orchestrator import run_seo_fixes, SeoOptions
         result = await run_seo_fixes(
             user_id=user_id, project_id=repo_id,

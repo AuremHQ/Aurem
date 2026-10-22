@@ -822,6 +822,11 @@ async def request_fix(
     # Gate BEFORE any work: tool access + 1 task remaining. Raises
     # 403 fix_not_available_on_tier / 402 insufficient_tasks.
     await assert_can_fix(effective_user, "health-scan", count=1)
+    # Closing-the-bypass-doors audit — this single-finding Fix button
+    # calls the exact same apply_finding_fix() worker as /fix-pipeline/
+    # bulk, but had no fix_entitlement check.
+    from services.fix_entitlement import assert_fix_entitled
+    await assert_fix_entitled(db, user_id)
     tokens_cost = 0
     me = await db.dev_users.find_one(
         {"user_id": user_id}, {"_id": 0, "tokens_remaining": 1},

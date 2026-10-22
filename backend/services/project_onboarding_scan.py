@@ -11,13 +11,16 @@ right after connecting a project — exactly when the "what do I even
 type?" onboarding problem happens — had nothing personalized to show
 yet.
 
-Runs the SAME 7-category scanner pipeline codebase_health.py exposes
-manually (security, performance, code_quality, dependencies, database,
-bug_hunt, docker) as a fire-and-forget background task, gated per
-project via (user_id, project_id) exactly like every other
-cto_open_findings writer. No tier/founder restriction here — this is
-an internal system task triggered once on connect, not the founder-
-only manual /scan endpoint (which stays admin-gated, unchanged).
+Runs the SAME scanner pipeline codebase_health.py exposes manually —
+iterates `SCANNERS.values()` directly, which is all 16 categories
+(the original 7 plus the 9 "Launch-ready X / 16" categories merged in
+via `services.codebase_health_extra.EXTRA_SCANNERS` at import time,
+see codebase_health_core.py's own module-level `SCANNERS.update(...)`)
+— as a fire-and-forget background task, gated per project via
+(user_id, project_id) exactly like every other cto_open_findings
+writer. No tier/founder restriction here — this is an internal system
+task triggered once on connect, not the founder-only manual /scan
+endpoint (which stays admin-gated, unchanged).
 """
 from __future__ import annotations
 

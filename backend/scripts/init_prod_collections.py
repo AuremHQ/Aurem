@@ -40,6 +40,20 @@ _BEST_EFFORT_WC = WriteConcern(w=1)
 # keys_spec: list of (field, direction) tuples — same shape Motor expects
 # options: passed verbatim to create_index (e.g. unique=True, expireAfterSeconds)
 _BOOTSTRAP_SPEC: list[tuple[str, list[tuple[list, dict]]]] = [
+    # Master Prompt Step B — token wallet. `_id` IS the user_id (wallets)
+    # / idempotency_key (wallet_ledger) in both collections, so the
+    # default `_id` index already gives the uniqueness services/wallet.py
+    # depends on — these are purely secondary read-path indexes for the
+    # reconcile job (B8) and admin lookups, not dedup constraints (so
+    # they belong here, not services/db_indexes.py::ensure_dedup_indexes).
+    ("wallets", [
+        ([("updated_at", -1)], {}),
+    ]),
+    ("wallet_ledger", [
+        ([("user_id", 1), ("created_at", -1)], {}),
+        ([("kind", 1), ("created_at", -1)],     {}),
+        ([("run_id", 1)],                        {"sparse": True}),
+    ]),
     ("cto_payments", [
         ([("user_id", 1), ("created_at", -1)], {}),
         ([("stripe_session_id", 1)],           {"sparse": True}),

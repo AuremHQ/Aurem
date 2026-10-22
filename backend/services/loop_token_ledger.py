@@ -341,7 +341,8 @@ async def log_real_usage(model: str, usage: dict, *,
                           mode: Optional[str] = None,
                           task_id: Optional[str] = None,
                           project_id: Optional[str] = None,
-                          session_id: Optional[str] = None) -> None:
+                          session_id: Optional[str] = None,
+                          estimated: bool = False) -> None:
     """Called by every LLM transport (`call_openrouter_model`,
     `_call_deepseek`, `_call_deepseek_direct`, `_call_groq`,
     `ora_chat_v2.llm_client.stream_chat`) immediately after a
@@ -351,6 +352,13 @@ async def log_real_usage(model: str, usage: dict, *,
     (or "anonymous" if none is set — e.g. an internal guard/health-
     check call with no end-user attached). Never raises; a ledger
     failure must never break the LLM call it's describing.
+
+    `estimated=True` (closing-the-bypass-doors audit, 2026-10) marks a
+    row whose token counts are a character-length heuristic, not a
+    real provider-reported `usage` object — e.g. a streaming call that
+    ended without OpenRouter sending its trailing usage chunk. Still
+    better than the call being invisible to billing entirely, but
+    cost reports must be able to tell the two apart.
 
     Cost: prefers the provider's own real `usage.cost` (OpenRouter
     returns this inline); falls back to `pricing_table.compute_cost_usd`
@@ -410,6 +418,7 @@ async def log_real_usage(model: str, usage: dict, *,
             "error_reason":       error_reason,
             "generation_id":      generation_id,
             "feature":            feature,
+            "estimated":          bool(estimated),
             "loop_id":            _LOOP_ID_CV.get(),
             "ts":                 time.time(),
             "created_at":         time.time(),

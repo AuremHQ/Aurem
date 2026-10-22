@@ -301,6 +301,14 @@ async def start_bulk_fix(body: dict,
     quota = await assert_can_fix(effective, tool, count=len(findings))
     is_unlim = quota["is_unlimited"]
 
+    # Master Prompt Step C2 — Fix is locked behind a paid plan.
+    # off=no-op (today's behavior, unchanged); shadow=log only;
+    # on=typed 402 BEFORE any job is created. fix_entitlement is set
+    # ONLY by the signature-verified Stripe webhook — never by this
+    # endpoint or any frontend value.
+    from services.fix_entitlement import assert_fix_entitled
+    await assert_fix_entitled(db, user_id)
+
     job_id = await fjm.create_job(
         db=db, user_id=user_id, kind="bulk", total=len(findings),
         project_id=project_id, findings=findings,

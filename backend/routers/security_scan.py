@@ -880,6 +880,11 @@ async def apply_security_fix(
 
     # Gate BEFORE any work: tool access + 1 task remaining.
     await assert_can_fix(effective_me, "vanguard-scan", count=1)
+    # Closing-the-bypass-doors audit — this single-finding Fix button
+    # calls the exact same apply_finding_fix() worker as /fix-pipeline/
+    # bulk, but had no fix_entitlement check.
+    from services.fix_entitlement import assert_fix_entitled
+    await assert_fix_entitled(db, user_id)
 
     user_row = await db.dev_users.find_one(
         {"user_id": user_id}, {"_id": 0, "tokens_remaining": 1},

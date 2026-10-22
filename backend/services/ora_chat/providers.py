@@ -87,6 +87,7 @@ async def stream_call(*,
 
     got_any = False
     usage: dict = {}
+    content_chars = 0
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as c:
             async with c.stream("POST", OPENROUTER_URL,
@@ -118,6 +119,7 @@ async def stream_call(*,
                         content = delta.get("content")
                         if content:
                             got_any = True
+                            content_chars += len(content)
                             yield {"type": "delta", "content": content}
                     # Usage — OpenRouter emits this in a trailing chunk
                     # when `usage.include=true` is set.
@@ -127,19 +129,74 @@ async def stream_call(*,
                             "input_tokens":  int(u.get("prompt_tokens", 0) or 0),
                             "output_tokens": int(u.get("completion_tokens", 0) or 0),
                             "total_tokens":  int(u.get("total_tokens", 0) or 0),
+                            "cost":          u.get("cost"),
                         }
     except httpx.TimeoutException:
+        await _log_usage(model, usage, feature, content_chars, messages,
+                         status="failed", error_reason="timeout")
         yield {"type": "error", "error": "timeout",
                "recoverable": got_any}
         return
     except Exception as e:  # noqa: BLE001
         logger.warning("ora_chat stream_call unexpected: %r", e)
+        await _log_usage(model, usage, feature, content_chars, messages,
+                         status="failed", error_reason=f"{type(e).__name__}: {e}")
         yield {"type": "error", "error": f"{type(e).__name__}",
                "detail": str(e)[:200], "recoverable": got_any}
         return
 
+    await _log_usage(model, usage, feature, content_chars, messages)
     yield {"type": "usage", **usage}
     yield {"type": "done"}
+
+
+_CHARS_PER_TOKEN_ESTIMATE = 4  # rough, provider-agnostic fallback only
+
+
+async def _log_usage(model: str, usage: dict, feature: Optional[str],
+                     content_chars: int, messages: list, *,
+                     status: str = "ok",
+                     error_reason: Optional[str] = None) -> None:
+    """Closing-the-bypass-doors audit (2026-10) — this module used to
+    make its own raw OpenRouter calls with zero usage logging, the
+    biggest single unmetered LLM path in the backend (reused by chat,
+    deep research, the hallucination classifier, and both independent
+    verifiers). Routes through the SAME canonical ledger every other
+    LLM transport uses, exactly like services/llm/jev_client.py.
+
+    When OpenRouter doesn't send a trailing usage chunk (rare, but
+    `stream_call`'s own docstring already anticipated a mid-stream
+    failure), falls back to a character-length estimate — ~4 chars per
+    token is a crude, provider-agnostic rule of thumb, not a real
+    tokenizer (no new dependency added for this) — and marks the row
+    `estimated=True` so cost reports can tell real counts from guesses.
+    Never raises; a ledger failure must never break the chat response
+    it's describing."""
+    try:
+        from services.loop_token_ledger import log_real_usage
+        estimated = False
+        has_real_tokens = bool(usage) and (
+            usage.get("input_tokens") or usage.get("output_tokens")
+        )
+        if has_real_tokens:
+            # Pass "cost" through as-is — log_real_usage prefers the
+            # provider's own real cost over its pricing-table fallback.
+            clean_usage = dict(usage)
+        elif status == "ok" and content_chars > 0:
+            estimated = True
+            prompt_chars = sum(len(str(m.get("content") or "")) for m in (messages or []))
+            clean_usage = {
+                "input_tokens": max(1, prompt_chars // _CHARS_PER_TOKEN_ESTIMATE),
+                "output_tokens": max(1, content_chars // _CHARS_PER_TOKEN_ESTIMATE),
+            }
+        else:
+            clean_usage = {}
+        await log_real_usage(
+            model, clean_usage, feature=feature, provider="openrouter",
+            status=status, error_reason=error_reason, estimated=estimated,
+        )
+    except Exception as e:                                    # noqa: BLE001
+        logger.debug("ora_chat providers: usage ledger write skipped: %r", e)
 
 
 async def one_shot(*,
@@ -165,6 +222,8 @@ async def one_shot(*,
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as c:
             r = await c.post(OPENROUTER_URL, headers=_headers(feature), json=body)
             if r.status_code != 200:
+                await _log_usage(model, {}, feature, 0, messages,
+                                 status="failed", error_reason=f"http_{r.status_code}")
                 return "", {}, f"http_{r.status_code}: {r.text[:200]}"
             j = r.json()
             content = ((j.get("choices") or [{}])[0].get("message") or {}
@@ -174,7 +233,11 @@ async def one_shot(*,
                 "input_tokens":  int(u.get("prompt_tokens", 0) or 0),
                 "output_tokens": int(u.get("completion_tokens", 0) or 0),
                 "total_tokens":  int(u.get("total_tokens", 0) or 0),
+                "cost":          u.get("cost"),
             }
+            await _log_usage(model, usage, feature, len(content), messages)
             return content, usage, None
     except Exception as e:  # noqa: BLE001
+        await _log_usage(model, {}, feature, 0, messages,
+                         status="failed", error_reason=f"{type(e).__name__}: {str(e)[:200]}")
         return "", {}, f"{type(e).__name__}: {str(e)[:200]}"

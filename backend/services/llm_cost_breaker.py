@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
@@ -48,6 +48,13 @@ def _envf(k: str, d: float) -> float:
 LLM_COST_CAP_HOURLY   = _envf("LLM_COST_CAP_HOURLY",   5.00)
 LLM_COST_CAP_DAILY    = _envf("LLM_COST_CAP_DAILY",   10.00)
 LLM_COST_CAP_PER_LOOP = _envf("LLM_COST_CAP_PER_LOOP", 3.00)
+# Master Prompt Step B9 — per-PAID-user monthly LLM cost cap. Separate
+# from the platform-wide hourly/daily caps above (those protect the
+# whole platform from a runaway burst; this protects margin on ONE
+# user who is burning real LLM cost disproportionate to what they
+# paid). Scoped to paid tiers only — a free-tier user is already
+# capped by services/usage.py's lifetime USD budget.
+LLM_COST_CAP_PER_USER_MONTHLY = _envf("LLM_COST_CAP_PER_USER_MONTHLY", 6.50)
 
 
 async def _sum_cost_since(db, since: datetime,
@@ -138,6 +145,45 @@ async def assert_within_cap(
             "message": ("Daily LLM spend cap reached — new requests "
                         "blocked until UTC midnight."),
         })
+
+
+async def assert_within_user_monthly_cap(
+    db, *, user_id: str, est_cost_usd: float = 0.0,
+) -> None:
+    """Master Prompt Step B9. Raise 429 if THIS user's real LLM spend
+    this calendar month (`real_llm_usage.cost_usd`, the same ledger
+    services/usage.py reads) plus the projected cost of this call
+    would exceed `LLM_COST_CAP_PER_USER_MONTHLY`. Scoped to paid tiers
+    only — callers should check tier before calling this (mirrors
+    services/usage.py::assert_daily_spend_cap's free-tier-only scoping
+    in the opposite direction)."""
+    if db is None or not user_id:
+        return
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    try:
+        pipeline = [
+            {"$match": {"user_id": user_id,
+                         "ts": {"$gte": month_start.timestamp()}}},
+            {"$group": {"_id": None, "sum": {"$sum": "$cost_usd"}}},
+        ]
+        spent = 0.0
+        async for row in db.real_llm_usage.aggregate(pipeline):
+            spent = float(row.get("sum") or 0.0)
+    except Exception as e:                                   # noqa: BLE001
+        logger.debug("[G13/B9] user-monthly cost sum failed: %r", e)
+        return
+    cost = float(est_cost_usd or 0.0)
+    if spent + cost <= LLM_COST_CAP_PER_USER_MONTHLY:
+        return
+    raise HTTPException(429, {
+        "error": "llm_cost_cap_hit",
+        "error_code": "COST_CAP_USER_MONTHLY",
+        "cap": "per_user_monthly", "limit": LLM_COST_CAP_PER_USER_MONTHLY,
+        "spent_this_month_usd": round(spent, 4),
+        "message": ("You've reached this month's usage cap for your plan. "
+                     "It resets at the start of next month, or top up now."),
+    })
 
 
 async def record_cost(

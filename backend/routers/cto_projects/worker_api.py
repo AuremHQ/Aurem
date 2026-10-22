@@ -43,14 +43,62 @@ async def _run_task(task_id, proj, task, files, context, user_token,
     else falls back to the pure-API worker. Always via `_pkg.*` so
     tests that patch `routers.cto_projects._run_task_with_git` /
     `_run_task_via_api` correctly intercept the call regardless of
-    which submodule this dispatcher itself lives in."""
-    if _pkg._GIT_AVAILABLE:
-        return await _pkg._run_task_with_git(
+    which submodule this dispatcher itself lives in.
+
+    Master Prompt Step 2 — this is the ONE place every caller of the
+    worker (`/tasks/submit`, `/tasks/{id}/retry`, `_enqueue_cto_task`
+    i.e. MCP + automations) funnels through, so the wallet hold placed
+    before the task was queued is settled/released here exactly once,
+    regardless of which concrete worker ran or how it finished. The
+    `finally` runs even if the delegate raises, so a hold never gets
+    stuck open on an unhandled exception."""
+    try:
+        if _pkg._GIT_AVAILABLE:
+            return await _pkg._run_task_with_git(
+                task_id, proj, task, files, context, user_token, maxx_mode, resume_edits,
+            )
+        return await _pkg._run_task_via_api(
             task_id, proj, task, files, context, user_token, maxx_mode, resume_edits,
         )
-    return await _pkg._run_task_via_api(
-        task_id, proj, task, files, context, user_token, maxx_mode, resume_edits,
-    )
+    finally:
+        await _finalize_wallet_hold(task_id, proj.get("user_id") or "")
+
+
+async def _finalize_wallet_hold(task_id: str, user_id: str) -> None:
+    """Best-effort settle (task succeeded) or release (anything else)
+    of the wallet hold placed at task-creation time. A flat per-fix
+    price (config/token_pricing.py) is both the hold estimate and the
+    settled "actual" — there's no cheaper/more-expensive real cost to
+    true up against, so settling at the held amount is honest, not an
+    approximation. Never raises — a billing bookkeeping failure must
+    never mask the task's real result."""
+    try:
+        from services import wallet
+        # "shadow" mode never calls hold() (assert_wallet only logs
+        # what it WOULD do), so there is no hold to settle/release
+        # either — settle() would raise ValueError("no active hold")
+        # for a real "done" task if we didn't skip here too.
+        if wallet.billing_mode() in ("off", "shadow") or not user_id:
+            return
+        db = _pkg.get_db()
+        if db is None:
+            return
+        doc = await db.cto_tasks.find_one({"task_id": task_id}, {"_id": 0, "status": 1})
+        status = (doc or {}).get("status")
+        if status == "done":
+            await wallet.settle(
+                db, user_id=user_id, run_id=task_id,
+                actual_tokens=wallet.tokens_for("fix"),
+                idempotency_key=f"wallet_settle:{task_id}",
+            )
+        else:
+            await wallet.release(
+                db, user_id=user_id, run_id=task_id,
+                idempotency_key=f"wallet_release:{task_id}",
+                reason=f"task_status:{status}",
+            )
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning("[wallet] finalize hold failed task_id=%s: %r", task_id, e)
 
 
 def _frontend_subset(edits: dict[str, str]) -> dict[str, str]:

@@ -371,16 +371,31 @@ async def try_scan_followup_reply(db, *, user_id: Optional[str],
         else:
             from services.scan_fix_quota import assert_can_fix, record_scan_fixes
             from services.finding_fix_applier import apply_finding_fix
+            from services.fix_entitlement import assert_fix_entitled
             from fastapi import HTTPException
             try:
                 await assert_can_fix({"user_id": user_id}, "health-scan",
                                      count=len(candidates))
+                # Closing-the-bypass-doors audit — chat's "fix it" Mode D
+                # handoff calls the exact same apply_finding_fix() worker
+                # as the HTTP fix buttons, but had no fix_entitlement
+                # check. This is an SSE/chat response, not a plain JSON
+                # endpoint, so the 402 is caught here and turned into a
+                # normal chat reply instead of propagating as a raw
+                # exception into the stream.
+                await assert_fix_entitled(db, user_id)
             except HTTPException as e:
                 detail = e.detail if isinstance(e.detail, dict) else {}
-                reply = (
-                    detail.get("message")
-                    or "Can't fix right now — check your plan's fix quota."
-                )
+                if detail.get("code") == "payment_required":
+                    reply = (
+                        "Fix is locked until you're on a paid plan. "
+                        "Upgrade at auremcto.com/settings to unlock it."
+                    )
+                else:
+                    reply = (
+                        detail.get("message")
+                        or "Can't fix right now — check your plan's fix quota."
+                    )
             else:
                 # Seed the heartbeat with the FULL candidate count up
                 # front (not one-per-iteration): the soft-timeout

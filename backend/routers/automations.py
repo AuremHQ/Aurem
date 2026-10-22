@@ -256,6 +256,11 @@ async def run_automation_now(
         task_text=description,
     )
     if not res.get("ok"):
+        if res.get("reason") == "payment_required":
+            raise HTTPException(402, {
+                "code": "payment_required",
+                "plans_url": "/settings#pricing",
+            })
         raise HTTPException(409, res.get("reason", "could not enqueue"))
 
     task_id = res["task_id"]
