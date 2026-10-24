@@ -34,8 +34,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "openai_key":              "literals `sk-<32+ alphanumerics>` (excluding `sk-test-` / `sk-aurem-`)",
 
     # ── Vanguard dangerous code ──
-    "eval_usage":              "any call to the eval function",
-    "exec_usage":              "any call to `exec(`",
+    "eval_usage":              "any call to `eval(`",
     "subprocess_shell_true":   "`subprocess.*(... shell=True ...)`",
     "os_system":               "any call to `os.system(`",
     "pickle_loads":            "any call to `pickle.load(` or `pickle.loads(`",
@@ -64,8 +63,8 @@ TRIGGER_ONELINE: dict[str, str] = {
 
     # ── Bug Hunt vulnerability patterns ──
     "log4shell_jndi":          "any occurrence of `${jndi:` in a string",
-    "eval_with_request":       "the eval function called with request/input/argv/body/params/query",
-    "exec_with_request":       "`exec(...request/input/argv/body/params/query...)`",
+    "eval_with_request":       "`eval(...request/input/argv/body/params/query...)`",
+    "exec_with_request":       "any call to built-in function with user input",
     "pickle_loads_untrusted":  "`pickle.load` / `pickle.loads` at all (treat as untrusted)",
     "yaml_load_unsafe":        "`yaml.load(` without `Loader=`",
     "subprocess_shell_true_input": "`subprocess.*(shell=True, ...user/input/request/argv...)`",
