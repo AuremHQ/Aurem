@@ -370,6 +370,29 @@ export default function OraGuideMascot() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveProjectId, hasUserMessage]);
 
+  // 2026-10 — regression fix (bug report: an account with ZERO
+  // connected projects crashed the ENTIRE app — /dashboard AND
+  // /admin, both blank — with "Rendered more hooks than during the
+  // previous render"). Root cause: `if (hidden) return null;` used
+  // to sit HERE, before this Escape-key effect, so when the 0-project
+  // repo-connect gate flips `canShowMascot`/`hidden` between renders,
+  // this component called a different NUMBER of hooks render to
+  // render — a Rules-of-Hooks violation React cannot recover from.
+  // Fix: every hook (incl. this one) must run on EVERY render
+  // regardless of `hidden`; the early return now happens strictly
+  // after all hooks, right before the JSX below.
+  useEffect(() => {
+    if (!open) return undefined;
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        dismiss();
+        avatarRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   if (hidden) return null;
 
   function toggleOpen() {
@@ -418,20 +441,6 @@ export default function OraGuideMascot() {
     }
     if (panelMode === "external" || panelMode === "first_scan") setSecondaryNudge(null);
   }
-
-  // UI-fix D4 — Escape closes the bubble and returns focus to the
-  // toggle button, same contract the two true modals already have.
-  useEffect(() => {
-    if (!open) return undefined;
-    function onKeyDown(e) {
-      if (e.key === "Escape") {
-        dismiss();
-        avatarRef.current?.focus();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
 
   // Primary action for the secondary (post_skip / post_scan /
   // first_scan) nudge — same handoffs the removed standalone
