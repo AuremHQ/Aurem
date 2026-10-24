@@ -64,7 +64,20 @@ async def _call_llm(technical_event: dict) -> dict:
     prompt = ("Technical event data (JSON):\n" +
               json.dumps(technical_event, default=str)[:6000] +
               "\n\nRespond with ONLY the JSON object described in your instructions.")
-    raw = await chat.send_message(UserMessage(text=prompt))
+    try:
+        raw = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        from services.loop_token_ledger import log_estimated_usage
+        await log_estimated_usage(
+            "anthropic/claude-sonnet-4-6", feature="Founder Summary", provider="emergent",
+            status="failed", error_reason=f"{type(e).__name__}: {e}",
+        )
+        raise
+    from services.loop_token_ledger import log_estimated_usage
+    await log_estimated_usage(
+        "anthropic/claude-sonnet-4-6", feature="Founder Summary", provider="emergent",
+        input_text=prompt, output_text=raw if isinstance(raw, str) else str(raw),
+    )
     text = raw if isinstance(raw, str) else getattr(raw, "text", str(raw))
     text = text.strip()
     if text.startswith("```"):

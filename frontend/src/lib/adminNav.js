@@ -56,6 +56,12 @@ export const ADMIN_NAV = [
   { id: "payments",        label: "Payments & Revenue",   route: "/admin/payments",       group: "BUSINESS", screenKeys: ["money.payments", "money.summary"] },
   { id: "financials",      label: "Financials",           route: "/admin/financials",     group: "BUSINESS", screenKeys: ["money.summary"] },
   { id: "tokens",          label: "Token P&L",            route: "/admin/token-pnl",      group: "BUSINESS", screenKeys: ["money.pnl"] },
+  // Master Prompt v2 PART 3 — margin editor + fixed costs + dashboard +
+  // billing-flags review. screenKeys: [] on purpose, same as "team"
+  // above: routers/admin_pricing.py has no services/admin_access_registry
+  // entry, so it's owner-only on the backend — this keeps the nav
+  // entry itself invisible to team members too, not just the API gated.
+  { id: "pricing_panel",   label: "Pricing Panel",        route: "/admin/pricing-panel",  group: "BUSINESS", screenKeys: [] },
   { id: "dash",            label: "Dashboard",            route: "/admin/dashboard",      group: "SYSTEM", screenKeys: ["home.home"] },
   { id: "projects",        label: "Projects",             route: "/admin/projects",       group: "SYSTEM", screenKeys: ["work.projects"] },
   { id: "tasks",           label: "Tasks",                route: "/admin/tasks",          group: "SYSTEM", screenKeys: ["work.tasks"] },

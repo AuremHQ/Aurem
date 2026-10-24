@@ -65,38 +65,25 @@ async def _run_task(task_id, proj, task, files, context, user_token,
 
 
 async def _finalize_wallet_hold(task_id: str, user_id: str) -> None:
-    """Best-effort settle (task succeeded) or release (anything else)
-    of the wallet hold placed at task-creation time. A flat per-fix
-    price (config/token_pricing.py) is both the hold estimate and the
-    settled "actual" — there's no cheaper/more-expensive real cost to
-    true up against, so settling at the held amount is honest, not an
-    approximation. Never raises — a billing bookkeeping failure must
-    never mask the task's real result."""
+    """Settle (task succeeded) or release (anything else) the wallet
+    hold placed at task-creation time, via the shared
+    services.wallet.finalize_hold (Master Prompt v2 Part 1.1). Looks
+    up the task's own final status to decide ok/not-ok; the actual
+    settle-or-release + off/shadow-awareness lives in the shared
+    helper now, reused by every other billable path."""
     try:
         from services import wallet
-        # "shadow" mode never calls hold() (assert_wallet only logs
-        # what it WOULD do), so there is no hold to settle/release
-        # either — settle() would raise ValueError("no active hold")
-        # for a real "done" task if we didn't skip here too.
-        if wallet.billing_mode() in ("off", "shadow") or not user_id:
+        if not user_id:
             return
         db = _pkg.get_db()
         if db is None:
             return
         doc = await db.cto_tasks.find_one({"task_id": task_id}, {"_id": 0, "status": 1})
         status = (doc or {}).get("status")
-        if status == "done":
-            await wallet.settle(
-                db, user_id=user_id, run_id=task_id,
-                actual_tokens=wallet.tokens_for("fix"),
-                idempotency_key=f"wallet_settle:{task_id}",
-            )
-        else:
-            await wallet.release(
-                db, user_id=user_id, run_id=task_id,
-                idempotency_key=f"wallet_release:{task_id}",
-                reason=f"task_status:{status}",
-            )
+        await wallet.finalize_hold(
+            db, user_id=user_id, action="fix", run_id=task_id,
+            ok=(status == "done"), reason=f"task_status:{status}",
+        )
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[wallet] finalize hold failed task_id=%s: %r", task_id, e)
 

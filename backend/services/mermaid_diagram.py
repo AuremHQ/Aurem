@@ -89,6 +89,40 @@ def _recent_paths(graph: dict) -> set[str]:
 
 # ── LLM calls ───────────────────────────────────────────────────────
 
+_CHARS_PER_TOKEN_ESTIMATE = 4  # rough, provider-agnostic fallback only
+
+
+async def _log_mermaid_usage(model: str, usage: dict, *,
+                             content_chars: int = 0,
+                             status: str = "ok",
+                             error_reason: Optional[str] = None) -> None:
+    """Closing-the-bypass-doors audit (2026-10, Part 1.2) — this raw
+    OpenRouter call had zero usage logging. Falls back to a character-
+    length estimate when no real `usage` object comes back. Never
+    raises."""
+    try:
+        from services.loop_token_ledger import log_real_usage
+        has_real_tokens = bool(usage) and (
+            usage.get("input_tokens") or usage.get("output_tokens")
+        )
+        estimated = False
+        if has_real_tokens:
+            clean_usage = dict(usage)
+        elif status == "ok" and content_chars > 0:
+            estimated = True
+            clean_usage = {
+                "output_tokens": max(1, content_chars // _CHARS_PER_TOKEN_ESTIMATE),
+            }
+        else:
+            clean_usage = {}
+        await log_real_usage(
+            model, clean_usage, feature="Mermaid Diagram", provider="openrouter",
+            status=status, error_reason=error_reason, estimated=estimated,
+        )
+    except Exception as e:                                    # noqa: BLE001
+        logger.debug("mermaid_diagram: usage ledger write skipped: %r", e)
+
+
 async def _openrouter_call(model: str, system: str, user: str,
                             max_tokens: int = 900) -> Optional[str]:
     key = os.environ.get("OPENROUTER_API_KEY")
@@ -130,14 +164,25 @@ async def _openrouter_call(model: str, system: str, user: str,
             "mermaid_diagram: %s → %s %s",
             model, r.status_code, r.text[:200],
         )
+        await _log_mermaid_usage(model, {}, status="failed",
+                                 error_reason=f"http_{r.status_code}")
         return None
     try:
         j = r.json()
-        return ((j.get("choices") or [{}])[0]
-                .get("message", {}).get("content") or "").strip() or None
+        content = ((j.get("choices") or [{}])[0]
+                   .get("message", {}).get("content") or "").strip() or None
     except Exception as e:
         logger.warning("mermaid_diagram: bad JSON from %s: %r", model, e)
+        await _log_mermaid_usage(model, {}, status="failed",
+                                 error_reason=f"{type(e).__name__}: {e}")
         return None
+    u = j.get("usage") or {}
+    await _log_mermaid_usage(model, {
+        "input_tokens": int(u.get("prompt_tokens", 0) or 0),
+        "output_tokens": int(u.get("completion_tokens", 0) or 0),
+        "cost": u.get("cost"),
+    }, content_chars=len(content or ""))
+    return content
 
 
 async def _call_with_failover(system: str, user: str,

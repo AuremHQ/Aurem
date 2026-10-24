@@ -10,6 +10,8 @@ needs no new fixture infra).
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -145,6 +147,13 @@ class TestFixPipelineBulkEntitlementGate:
 
             monkeypatch.setattr("routers.fix_pipeline.apply_finding_fix", fake_apply)
             monkeypatch.setattr("routers.fix_pipeline._verify_commit_exists", _verify_ok)
+            # Wallet wiring (Master Prompt v2 Part 1.1) — this FakeDB
+            # has no real wallet balance; mock the gate so this test
+            # stays focused on entitlement (wallet has its own
+            # dedicated test coverage in test_regression_iter2026_10y).
+            monkeypatch.setattr("services.wallet.assert_wallet",
+                                AsyncMock(return_value={"mode": "on", "held": True}))
+            monkeypatch.setattr("services.wallet.finalize_hold", AsyncMock(return_value=None))
 
             r = c.post("/api/aurem-dev/fix-pipeline/bulk",
                        json={"project_id": "p1", "findings": _FINDINGS})

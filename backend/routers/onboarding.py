@@ -669,7 +669,22 @@ async def run_demo_project(authorization: Optional[str] = Header(None)):
                 ),
             ).with_model("anthropic", "claude-sonnet-4-6")
         )
-        raw = await chat.send_message(UserMessage(text=original))
+        try:
+            raw = await chat.send_message(UserMessage(text=original))
+        except Exception as _llm_e:
+            from services.loop_token_ledger import log_estimated_usage
+            await log_estimated_usage(
+                "anthropic/claude-sonnet-4-6", feature="Onboarding Demo Fix",
+                provider="emergent", status="failed",
+                error_reason=f"{type(_llm_e).__name__}: {_llm_e}",
+            )
+            raise
+        from services.loop_token_ledger import log_estimated_usage
+        await log_estimated_usage(
+            "anthropic/claude-sonnet-4-6", feature="Onboarding Demo Fix",
+            provider="emergent", input_text=original,
+            output_text=raw if isinstance(raw, str) else str(raw),
+        )
         text = raw if isinstance(raw, str) else getattr(raw, "text", str(raw))
         text = text.strip()
         if text.startswith("```"):

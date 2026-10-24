@@ -313,6 +313,35 @@ async def start_bulk_fix(body: dict,
         db=db, user_id=user_id, kind="bulk", total=len(findings),
         project_id=project_id, findings=findings,
     )
+
+    # Master Prompt v2 Part 1.1 — N findings = N billable units. Hold
+    # ALL of them up front, synchronously, before any work starts
+    # (same "clean 402 before any spend" guarantee as every other fix
+    # surface) — modeled as N independent per-finding holds rather
+    # than one combined batch hold, so each finding settles/releases
+    # through the SAME tested wallet.hold/settle/release primitives
+    # used everywhere else, with no change to their semantics. Keyed
+    # on a stable per-finding id (see _wallet_run_id) so a finding's
+    # hold survives _run_bulk_job's own severity-based reordering.
+    # `job_id` already exists at this point (fjm.create_job generates
+    # it internally) — a request blocked here still closes that job
+    # row as failed rather than leaving it stuck in "running" forever.
+    from services.wallet import assert_wallet, finalize_hold
+    held_run_ids: list[str] = []
+    try:
+        for finding in findings:
+            run_id = _wallet_run_id(job_id, finding)
+            await assert_wallet(db, user_id=user_id, action="fix", run_id=run_id,
+                                idempotency_key=f"wallet_hold:{run_id}")
+            held_run_ids.append(run_id)
+    except HTTPException:
+        for run_id in held_run_ids:
+            await finalize_hold(db, user_id=user_id, action="fix", run_id=run_id,
+                                ok=False, reason="bulk_hold_aborted")
+        await fjm.close(db, job_id, ok=False, status="failed",
+                        message="Insufficient tokens — no findings were attempted.")
+        raise
+
     # Launch the worker — runs in the background, streams events.
     # `user=effective` — apply_finding_fix() reads the GitHub App
     # installation off the PROJECT, which belongs to the account
@@ -487,6 +516,17 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                              backoff_s=backoff, file=path, rule_id=rule_id)
                     await asyncio.sleep(backoff)
                 _fix_duration_ms = int((time.time() - _t_fix_start) * 1000)
+
+                # Master Prompt v2 Part 1.1 — settle this finding's own
+                # hold on success, release it on failure. Each finding
+                # is its own billable unit; one finding's outcome never
+                # affects another's hold.
+                from services.wallet import finalize_hold as _finalize_wallet_hold
+                await _finalize_wallet_hold(
+                    db, user_id=user_id, action="fix",
+                    run_id=_wallet_run_id(job_id, finding),
+                    ok=bool(res.get("ok")), reason=last_err or "",
+                )
 
                 if not res.get("ok"):
                     fjm.emit(job_id, "fix-done",
@@ -720,6 +760,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         # Task was cancelled by the runtime (graceful shutdown).
         # Mark as orphaned so the UI offers restart on next page load.
         logger.warning("bulk job cancelled mid-flight job=%s", job_id)
+        await _release_all_bulk_holds(db, user_id, job_id, findings)
         try:
             fjm.emit(job_id, "job-error", ok=False,
                      reason="cancelled",
@@ -741,6 +782,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         import traceback
         tb = traceback.format_exc(limit=4)
         logger.exception("bulk job crashed job=%s", job_id)
+        await _release_all_bulk_holds(db, user_id, job_id, findings)
         try:
             fjm.emit(job_id, "job-error", ok=False,
                      reason="worker_exception",
@@ -757,6 +799,42 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         await emit_notification(
             db, user_id=user_id, type="ship_failed",
             text="A fix job crashed and needs your attention — click Restart to retry.")
+
+
+def _wallet_run_id(job_id: str, finding: dict) -> str:
+    """Master Prompt v2 Part 1.1 — a stable per-finding wallet hold key
+    that survives `_interleave_by_severity`'s reordering. Must give the
+    SAME value for the same finding whether computed over the original
+    `findings` list (start_bulk_fix, before reordering) or the
+    `ordered` list (_run_bulk_job, after reordering) — so it can't be
+    positional. Falls back to file:line (stable identity within one
+    batch) only when a finding has neither id nor rule_id."""
+    key = finding.get("id") or finding.get("rule_id") or \
+        f"{finding.get('file')}:{finding.get('line')}"
+    return f"{job_id}:{key}"
+
+
+async def _release_all_bulk_holds(db, user_id: str, job_id: str,
+                                  findings: list[dict]) -> None:
+    """Master Prompt v2 Part 1.1 — cleanup for a bulk job that crashed
+    or was cancelled mid-flight: release every finding's hold,
+    regardless of whether it was already settled/released inline
+    (release() on an already-resolved run_id is a documented safe
+    no-op — see services/wallet.py), so no finding the loop never
+    reached (or was mid-attempt on) leaks a stuck hold."""
+    from services.wallet import finalize_hold
+    for finding in findings:
+        try:
+            await finalize_hold(
+                db, user_id=user_id, action="fix",
+                run_id=_wallet_run_id(job_id, finding),
+                ok=False, reason="bulk_job_crashed_or_cancelled",
+            )
+        except Exception as e:                                # noqa: BLE001
+            logger.warning(
+                "[wallet] bulk cleanup release failed job=%s finding=%s: %r",
+                job_id, finding.get("id") or finding.get("rule_id"), e,
+            )
 
 
 def _interleave_by_severity(findings: list[dict]) -> list[dict]:

@@ -18,6 +18,8 @@ the only thing under test is the NEW fix_entitlement gate.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 
@@ -128,6 +130,12 @@ class TestCodebaseHealthFixEntitlementGate:
                     "file": finding["file"], "rule_id": finding["rule_id"],
                     "message": "Fixed"}
         monkeypatch.setattr(ff, "apply_finding_fix", fake_apply)
+        # Wallet wiring (Master Prompt v2 Part 1.1) — this FakeDB has no
+        # real wallet balance; mock the gate so this test stays focused
+        # on entitlement (wallet has its own dedicated test coverage).
+        from services import wallet
+        monkeypatch.setattr(wallet, "assert_wallet", AsyncMock(return_value={"mode": "on", "held": True}))
+        monkeypatch.setattr(wallet, "finalize_hold", AsyncMock(return_value=None))
 
         res = await ch.request_fix(
             body={"project_id": "p1", "finding_id": "f1", "file": "x.py", "line": 1},
@@ -206,6 +214,9 @@ class TestSecurityScanFixEntitlementGate:
                     "file": finding["file"], "rule_id": finding["rule_id"],
                     "message": "Fixed"}
         monkeypatch.setattr(ff, "apply_finding_fix", fake_apply)
+        from services import wallet
+        monkeypatch.setattr(wallet, "assert_wallet", AsyncMock(return_value={"mode": "on", "held": True}))
+        monkeypatch.setattr(wallet, "finalize_hold", AsyncMock(return_value=None))
 
         res = await ss.apply_security_fix(
             body={"project_id": "p1",

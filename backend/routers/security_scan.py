@@ -886,6 +886,15 @@ async def apply_security_fix(
     from services.fix_entitlement import assert_fix_entitled
     await assert_fix_entitled(db, user_id)
 
+    # Master Prompt v2 Part 1.1 — wallet hold BEFORE the real fix runs.
+    # Single-shot endpoint, no natural task id to key the hold on, so
+    # mint one just for this attempt.
+    import uuid as _uuid
+    from services.wallet import assert_wallet, finalize_hold
+    wallet_run_id = f"vgfix_{_uuid.uuid4().hex[:12]}"
+    await assert_wallet(db, user_id=user_id, action="fix", run_id=wallet_run_id,
+                        idempotency_key=f"wallet_hold:{wallet_run_id}")
+
     user_row = await db.dev_users.find_one(
         {"user_id": user_id}, {"_id": 0, "tokens_remaining": 1},
     )
@@ -906,6 +915,8 @@ async def apply_security_fix(
         logger.exception("apply_finding_fix raised")
         res = {"ok": False, "error": f"unhandled: {e}"}
     _dur_ms = int((_t.time() - _t_start) * 1000)
+    await finalize_hold(db, user_id=user_id, action="fix", run_id=wallet_run_id,
+                        ok=bool(res.get("ok")), reason=res.get("error") or "")
 
     # Iter 212m-129 — Learning hook (single-finding security/vanguard fix).
     # Best-effort: never blocks or fails the user-visible response.

@@ -57,15 +57,45 @@ def _new_event(loop_id: str, state, phase: str,
 
 # ─── Persistence helpers ──────────────────────────────────────────────
 
+_TERMINAL_SUCCESS_STATES = frozenset({"completed"})
+_TERMINAL_FAILURE_STATES = frozenset({"failed", "aborted", "expired"})
+
+
 async def _persist_session(db, doc: dict) -> None:
     """Upsert the session doc, bumping `updated_at` so the staleness
-    watchdog can find orphans (G3)."""
+    watchdog can find orphans (G3).
+
+    Master Prompt v2 Part 1.1 — this is the ONE call every state
+    transition in the engine already makes (every `self.state = X`
+    assignment is immediately followed by a persist), so it is the
+    single, low-risk choke point to settle/release the loop's wallet
+    hold — instead of retrofitting ~25 scattered transition sites
+    across loop_engine.py. Idempotent: wallet.settle/release are
+    keyed on the loop_id, so a non-terminal state (most calls) or a
+    repeat call for an already-finalized terminal state is a cheap
+    no-op, never a double settle/release."""
     doc["updated_at"] = _now()
     await db.loop_sessions.update_one(
         {"loop_id": doc["loop_id"]},
         {"$set": doc, "$setOnInsert": {"created_at": _now()}},
         upsert=True,
     )
+    state = doc.get("state")
+    if state in _TERMINAL_SUCCESS_STATES or state in _TERMINAL_FAILURE_STATES:
+        try:
+            from services import wallet
+            user_id = doc.get("user_id")
+            if user_id:
+                await wallet.finalize_hold(
+                    db, user_id=user_id, action="loop_run",
+                    run_id=doc["loop_id"], ok=(state in _TERMINAL_SUCCESS_STATES),
+                    reason=f"loop_state:{state}",
+                )
+        except Exception as e:                                # noqa: BLE001
+            logger.warning(
+                "[wallet] loop finalize_hold failed loop_id=%s state=%s: %r",
+                doc.get("loop_id"), state, e,
+            )
 
 
 async def _log_error(db, loop_id: str, phase: str, error: str,

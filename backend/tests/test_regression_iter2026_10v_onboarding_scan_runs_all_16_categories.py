@@ -56,6 +56,23 @@ async def test_onboarding_scan_invokes_all_16_scanner_categories(monkeypatch):
         "services.project_health_trend.record_health_snapshot",
         AsyncMock(return_value=None),
     )
+    # Master Prompt v2 PART 4.1 — run_onboarding_scan now also calls
+    # services.free_scan_results (the one-per-project start guard +
+    # the full-severity results persist); mocked the same way every
+    # other real-db collaborator above already is, so `db=object()`
+    # below still never needs to be a real Mongo handle.
+    monkeypatch.setattr(
+        "services.free_scan_results.start_free_scan",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "services.free_scan_results.finish_free_scan",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "services.free_scan_results.mark_free_scan_error",
+        AsyncMock(return_value=None),
+    )
 
     await pos.run_onboarding_scan(
         db=object(), user_id="u1", project_id="p1",

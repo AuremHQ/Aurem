@@ -22,6 +22,8 @@ up the real engine.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 
@@ -103,6 +105,12 @@ async def _run_up_to_lock(monkeypatch, *, entitled: bool):
     fake_db = _FakeDB()
     if entitled:
         fake_db.dev_users.rows.append({**_TEAM_USER, "fix_entitlement": True})
+        # Wallet wiring (Master Prompt v2 Part 1.1) — this FakeDB has
+        # no real wallet balance; mock the gate so this test stays
+        # focused on entitlement (wallet has its own dedicated tests).
+        from services import wallet
+        monkeypatch.setattr(wallet, "assert_wallet",
+                            AsyncMock(return_value={"mode": "on", "held": True}))
     else:
         fake_db.dev_users.rows.append(dict(_TEAM_USER))
 

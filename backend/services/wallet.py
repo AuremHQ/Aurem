@@ -4,9 +4,12 @@ settle / release / balance), gated by TOKEN_BILLING_MODE.
 
 Buckets (stored on `wallets.buckets`, one doc per user, `_id = user_id`):
   - promo:     promotional tokens. May carry a per-grant `expires_at`.
-  - plan:      monthly subscription allotment. Expires at the NEXT
-               monthly refill (run_monthly_grant_job replaces it, never
-               accumulates — see B6).
+  - plan:      monthly subscription allotment. Master Prompt v2 Part 2
+               rollover — NEVER expires by default; run_monthly_grant_job
+               ADDS each month's allotment on top of whatever's left
+               (see B6), exactly like `purchased`. Only swept if the
+               operator sets TOKEN_EXPIRY_MONTHS (services.pricing_engine),
+               which defaults to unset/never.
   - purchased: top-up pack tokens. NEVER expire.
 
 Spend order: promo -> plan -> purchased (cheapest-to-the-business
@@ -34,6 +37,24 @@ loser), verified in
 tests/test_regression_iter2026_10h_wallet_hold_settle_release.py with
 real concurrent asyncio.gather() calls against a real Mongo instance
 (a dict-based mock cannot meaningfully prove this guarantee).
+
+Master Prompt v2 Part 2 — FIFO batches. Every `grant()` call also
+appends one entry to `wallets.batches` (`{batch_id, bucket,
+amount_remaining, created_at}`, `batch_id` = the grant's own
+idempotency_key, so a batch is directly addressable by the payment/job
+that created it). `hold()` additionally consumes the OLDEST batch(es)
+within each bucket it drew from (`_consume_batches_fifo`), so a later
+refund/clawback (`claw_back_batch`) can target the EXACT payment's
+batch instead of the bucket in aggregate. This batch-level bookkeeping
+is a best-effort OPTIMISTIC-CONCURRENCY read-modify-write (bounded
+retries on a `batches_version` counter) layered ON TOP of the
+already-atomic bucket spend above — a race here can only misattribute
+which batch loses tokens (floored at 0, never negative), it can never
+make the AGGREGATE balance wrong, because the aggregate is still
+decremented by the fully-atomic pipeline update first. `claw_back_batch`
+itself (the operation that actually gives money back) IS fully atomic —
+it targets one named batch via Mongo's positional `$` update operator
+in a single `update_one` call, no read-modify-write involved.
 
 A run already holding tokens is allowed to FINISH even if the wallet
 balance drops to exactly zero mid-run — `settle()`/`release()` never
@@ -63,6 +84,7 @@ export, login, billing pages.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import UTC, datetime
 
@@ -76,6 +98,45 @@ logger = logging.getLogger("aurem.wallet")
 BUCKETS = ("promo", "plan", "purchased")
 SPEND_ORDER = ("promo", "plan", "purchased")
 _VALID_MODES = ("off", "shadow", "on")
+
+# PRE-STEP (a) self-red-team — a sane ceiling on a single run's real
+# cost (settle()'s actual_cost_usd). No genuine LLM call could ever
+# legitimately approach this; it exists purely to stop a garbage or
+# malicious value (1e18, +inf) from producing a token count that
+# overflows Mongo's 8-byte int64 limit when persisted.
+_MAX_SANE_COST_USD = 1_000_000.0
+
+# PRE-STEP (a) continuation (Master Prompt v2) — ROUNDING LEAK fix.
+# 1 token = 1000 micro-tokens. `wallets.buckets.{bucket}` stays a
+# WHOLE-token integer (every existing grant/hold/flat-settle/release/
+# claw_back flow is untouched, still exact at whole-token resolution —
+# this is why none of those call sites or their tests needed to
+# change). A NEW `wallets.micro_remainder.{bucket}` field (always in
+# [0, 999], default 0) carries the EXACT sub-1-token remainder that
+# only the actual_cost_usd settle() path can produce. The two together
+# (`buckets.{b} * WALLET_MICRO_PER_TOKEN + micro_remainder.{b}`) are
+# the TRUE micro-token balance at all times — `get_balance()`'s legacy
+# integer fields are a ROUNDED display of that; the deduction itself
+# (via `_apply_micro_refund`) is always exact, never rounded.
+WALLET_MICRO_PER_TOKEN = 1000
+
+
+def _require_str(name: str, value) -> None:
+    """PRE-STEP (a) self-red-team hardening — every one of these
+    parameters is used as a literal Mongo `_id`/field-equality value in
+    a QUERY FILTER (e.g. `find_one({"_id": idempotency_key})`), not
+    just in an insert. A dict shaped like a Mongo operator
+    (`{"$ne": "x"}`) passed as one of these is NOT rejected by Mongo on
+    insert (Mongo allows arbitrary BSON as `_id`), but WOULD be
+    structurally interpreted as a live operator the moment it's used
+    as a query filter value — e.g. turning the idempotency dedup check
+    into "find any row whose _id isn't X", matching an unrelated row.
+    No current call site in this codebase passes anything but an
+    f-string-built str here (which can never produce a dict), but this
+    guard makes that an enforced invariant rather than an unenforced
+    convention."""
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a str, got {type(value).__name__}: {value!r}")
 
 
 class InsufficientTokens(Exception):
@@ -113,16 +174,44 @@ def _year_month(dt: datetime | None = None) -> str:
 
 async def get_balance(db, user_id: str) -> dict:
     """Current balance. Never raises — a user with no wallet doc yet
-    simply has zero everywhere."""
+    simply has zero everywhere.
+
+    PRE-STEP (a) continuation — `promo`/`plan`/`purchased`/`spendable`
+    are a ROUNDED DISPLAY of the true balance (exact for every legacy
+    whole-token flow, since those never touch `micro_remainder` at
+    all). `*_micro`/`*_micro_remainder`/`spendable_micro` are the
+    EXACT values, including any sub-1-token remainder from the
+    actual_cost_usd settle() path — use these wherever exactness
+    (not display) matters."""
     w = await db.wallets.find_one({"_id": user_id}) or {}
     buckets = w.get("buckets") or {}
-    promo = int(buckets.get("promo") or 0)
-    plan = int(buckets.get("plan") or 0)
-    purchased = int(buckets.get("purchased") or 0)
+    remainder = w.get("micro_remainder") or {}
+    bucket_promo = int(buckets.get("promo") or 0)
+    bucket_plan = int(buckets.get("plan") or 0)
+    bucket_purchased = int(buckets.get("purchased") or 0)
+    r_promo = int(remainder.get("promo") or 0)
+    r_plan = int(remainder.get("plan") or 0)
+    r_purchased = int(remainder.get("purchased") or 0)
+    promo_micro = bucket_promo * WALLET_MICRO_PER_TOKEN + r_promo
+    plan_micro = bucket_plan * WALLET_MICRO_PER_TOKEN + r_plan
+    purchased_micro = bucket_purchased * WALLET_MICRO_PER_TOKEN + r_purchased
+    # Legacy display fields: round the TRUE (remainder-inclusive) value
+    # to the nearest whole token. Exact (zero rounding error) for every
+    # legacy flow, since remainder is always 0 there — only differs
+    # from the raw bucket integer once a fractional settle has left a
+    # real remainder behind.
+    promo = round(promo_micro / WALLET_MICRO_PER_TOKEN)
+    plan = round(plan_micro / WALLET_MICRO_PER_TOKEN)
+    purchased = round(purchased_micro / WALLET_MICRO_PER_TOKEN)
     return {
         "user_id": user_id,
         "promo": promo, "plan": plan, "purchased": purchased,
         "spendable": promo + plan + purchased,
+        "promo_micro_remainder": r_promo,
+        "plan_micro_remainder": r_plan,
+        "purchased_micro_remainder": r_purchased,
+        "promo_micro": promo_micro, "plan_micro": plan_micro, "purchased_micro": purchased_micro,
+        "spendable_micro": promo_micro + plan_micro + purchased_micro,
         "holds_count": len(w.get("holds") or {}),
         "plan_refill_at": w.get("plan_refill_at"),
         "month_baseline": (w.get("month_baseline") or {}).get("amount"),
@@ -174,11 +263,160 @@ async def _atomic_bucket_spend(db, user_id: str, amount: int) -> dict | None:
     return doc
 
 
+def _version_match(version: int) -> dict:
+    """Match filter for the batches_version optimistic-lock CAS. A
+    wallet doc that has never had a batch mutation yet has NO
+    `batches_version` field at all (not 0) — a plain equality match
+    `{"batches_version": 0}` does NOT match a missing field in Mongo,
+    which would make every first batch-mutation on an old/fresh wallet
+    doc spuriously "lose the race" and exhaust retries. `$in` with
+    `None` matches both an explicit null AND a missing field, so this
+    treats "missing" as version 0 correctly."""
+    if version:
+        return {"batches_version": version}
+    return {"batches_version": {"$in": [0, None]}}
+
+
+async def _consume_batches_fifo(db, user_id: str, bucket: str, amount: int,
+                                 *, max_retries: int = 5) -> dict[str, int]:
+    """Best-effort FIFO batch-level consumption (oldest `created_at`
+    first) within `bucket`, for `amount` tokens already validated and
+    deducted from the AGGREGATE bucket by `_atomic_bucket_spend`. Returns
+    `{batch_id: amount_taken}`. Optimistic-concurrency retry loop on
+    `batches_version` — see module docstring for why this doesn't need
+    to be as strictly atomic as the aggregate spend itself."""
+    if amount <= 0:
+        return {}
+    for _ in range(max_retries):
+        w = await db.wallets.find_one(
+            {"_id": user_id}, {"batches": 1, "batches_version": 1},
+        ) or {}
+        batches = list(w.get("batches") or [])
+        version = w.get("batches_version", 0)
+        this_bucket = sorted(
+            (b for b in batches if b.get("bucket") == bucket),
+            key=lambda b: b.get("created_at") or _now(),
+        )
+        remaining = amount
+        taken: dict[str, int] = {}
+        for b in this_bucket:
+            if remaining <= 0:
+                break
+            avail = max(0, int(b.get("amount_remaining") or 0))
+            take = min(avail, remaining)
+            if take <= 0:
+                continue
+            taken[b["batch_id"]] = take
+            remaining -= take
+        if not taken:
+            return {}
+        new_batches = [
+            {**b, "amount_remaining": max(0, int(b.get("amount_remaining") or 0) - taken[b["batch_id"]])}
+            if b.get("batch_id") in taken else b
+            for b in batches
+        ]
+        res = await db.wallets.update_one(
+            {"_id": user_id, **_version_match(version)},
+            {"$set": {"batches": new_batches}, "$inc": {"batches_version": 1}},
+        )
+        if res.matched_count:
+            return taken
+        # Lost the race against a concurrent batch mutation — retry.
+    logger.warning(
+        "[wallet] _consume_batches_fifo exhausted retries user=%s "
+        "bucket=%s amount=%s — aggregate balance is still correct, "
+        "only per-batch attribution for this spend is lost", user_id, bucket, amount,
+    )
+    return {}
+
+
+async def _restore_batches(db, user_id: str, per_batch: dict[str, int],
+                            *, max_retries: int = 5) -> None:
+    """Give tokens back to the exact batches `_consume_batches_fifo`
+    took them from (release, or settle's partial refund). A batch_id
+    that no longer exists is silently skipped — the aggregate bucket
+    refund (done separately by the caller) is still correct either
+    way, this only restores batch-level attribution precision."""
+    per_batch = {k: v for k, v in per_batch.items() if v}
+    if not per_batch:
+        return
+    for _ in range(max_retries):
+        w = await db.wallets.find_one(
+            {"_id": user_id}, {"batches": 1, "batches_version": 1},
+        ) or {}
+        batches = list(w.get("batches") or [])
+        version = w.get("batches_version", 0)
+        changed = False
+        new_batches = []
+        for b in batches:
+            amt = per_batch.get(b.get("batch_id"))
+            if amt:
+                b = {**b, "amount_remaining": int(b.get("amount_remaining") or 0) + amt}
+                changed = True
+            new_batches.append(b)
+        if not changed:
+            return
+        res = await db.wallets.update_one(
+            {"_id": user_id, **_version_match(version)},
+            {"$set": {"batches": new_batches}, "$inc": {"batches_version": 1}},
+        )
+        if res.matched_count:
+            return
+    logger.warning(
+        "[wallet] _restore_batches exhausted retries user=%s — aggregate "
+        "bucket refund already applied by the caller; only per-batch "
+        "attribution for this restore is lost", user_id,
+    )
+
+
+async def _apply_micro_refund(db, user_id: str, refund_micro: dict[str, int]) -> None:
+    """PRE-STEP (a) continuation — credits an EXACT micro-token refund
+    (1 token = WALLET_MICRO_PER_TOKEN micro-tokens) back into
+    `buckets.{b}` (whole tokens) + `micro_remainder.{b}` (the sub-1000
+    leftover), normalizing any carry (remainder crossing 1000 -> +1
+    whole token) in a SINGLE atomic Mongo pipeline-style update per
+    bucket, so two concurrent fractional settles on the SAME wallet
+    can never race on the carry (each `update_one` call with a
+    pipeline body reads-and-writes the existing field value
+    atomically, the same guarantee `_atomic_bucket_spend` already
+    relies on elsewhere in this module).
+
+    This is the ONLY function that ever writes `micro_remainder` —
+    every other mutation (grant/hold/flat-settle/release/claw_back)
+    moves whole tokens only and never touches it, which is exactly why
+    none of those existing, already-tested code paths needed to
+    change for this fix."""
+    nonzero = {b: v for b, v in refund_micro.items() if v}
+    if not nonzero:
+        return
+    for bucket, micro in nonzero.items():
+        await db.wallets.update_one(
+            {"_id": user_id},
+            [{"$set": {
+                f"micro_remainder.{bucket}": {
+                    "$mod": [{"$add": [{"$ifNull": [f"$micro_remainder.{bucket}", 0]}, micro]}, WALLET_MICRO_PER_TOKEN],
+                },
+                f"buckets.{bucket}": {
+                    "$add": [
+                        {"$ifNull": [f"$buckets.{bucket}", 0]},
+                        {"$floor": {"$divide": [
+                            {"$add": [{"$ifNull": [f"$micro_remainder.{bucket}", 0]}, micro]},
+                            WALLET_MICRO_PER_TOKEN,
+                        ]}},
+                    ],
+                },
+                "updated_at": _now(),
+            }}],
+        )
+
+
 async def grant(
     db, *, user_id: str, bucket: str, amount: int,
     idempotency_key: str, source: str, expires_at: datetime | None = None,
 ) -> dict:
     """Add `amount` tokens to `bucket`. Idempotent on `idempotency_key`."""
+    _require_str("user_id", user_id)
+    _require_str("idempotency_key", idempotency_key)
     if bucket not in BUCKETS:
         raise ValueError(f"unknown bucket {bucket!r} — expected one of {BUCKETS}")
     if amount <= 0:
@@ -188,10 +426,13 @@ async def grant(
         return {"ok": True, "idempotent_replay": True, "ledger": existing}
 
     now = _now()
+    batch = {"batch_id": idempotency_key, "bucket": bucket,
+              "amount_remaining": amount, "created_at": now}
     await db.wallets.update_one(
         {"_id": user_id},
         {
             "$inc": {f"buckets.{bucket}": amount},
+            "$push": {"batches": batch},
             "$setOnInsert": {"holds": {}, "threshold_flags": {}, "created_at": now},
             "$set": {"updated_at": now},
         },
@@ -206,10 +447,12 @@ async def grant(
         await db.wallet_ledger.insert_one(dict(ledger_row))
     except DuplicateKeyError:
         # Another caller already recorded this exact grant — reverse
-        # OUR speculative $inc (the race's loser) and return the
+        # OUR speculative $inc/$push (the race's loser) and return the
         # winner's row so the net effect is "applied exactly once".
         await db.wallets.update_one(
-            {"_id": user_id}, {"$inc": {f"buckets.{bucket}": -amount}},
+            {"_id": user_id},
+            {"$inc": {f"buckets.{bucket}": -amount},
+             "$pull": {"batches": {"batch_id": idempotency_key}}},
         )
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
         return {"ok": True, "idempotent_replay": True, "ledger": existing}
@@ -223,6 +466,9 @@ async def hold(
     InsufficientTokens if the balance can't cover it. Idempotent on
     `idempotency_key` — a retry with the same key returns the
     ORIGINAL hold, never reserves twice."""
+    _require_str("user_id", user_id)
+    _require_str("run_id", run_id)
+    _require_str("idempotency_key", idempotency_key)
     existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
     if existing:
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
@@ -238,11 +484,20 @@ async def hold(
         "promo": doc["_take_promo"], "plan": doc["_take_plan"],
         "purchased": doc["_take_purchased"],
     }
+    # FIFO batch-level attribution (Part 2) — best-effort, see module
+    # docstring. The aggregate spend above is what actually enforces
+    # "never negative"; this only records WHICH batch(es) a refund/
+    # clawback should later target.
+    batch_breakdown: dict[str, int] = {}
+    for b, amt in breakdown.items():
+        if amt > 0:
+            batch_breakdown.update(await _consume_batches_fifo(db, user_id, b, amt))
     now = _now()
     await db.wallets.update_one(
         {"_id": user_id},
         {"$set": {f"holds.{run_id}": {
             "amount": est_tokens, "breakdown": breakdown,
+            "batch_breakdown": batch_breakdown,
             "action": action, "created_at": now,
         }}},
     )
@@ -261,6 +516,7 @@ async def hold(
             {"$inc": {f"buckets.{k}": v for k, v in breakdown.items()},
              "$unset": {f"holds.{run_id}": ""}},
         )
+        await _restore_batches(db, user_id, batch_breakdown)
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "held": existing.get("amount"), "breakdown": existing.get("breakdown")}
@@ -268,106 +524,239 @@ async def hold(
              "held": est_tokens, "breakdown": breakdown}
 
 
-async def _find_hold(db, user_id: str, run_id: str) -> dict | None:
-    w = await db.wallets.find_one({"_id": user_id}, {f"holds.{run_id}": 1}) or {}
-    return (w.get("holds") or {}).get(run_id)
+async def _claim_hold(db, user_id: str, run_id: str) -> dict | None:
+    """Atomically READ-AND-REMOVE the hold in one Mongo operation.
+
+    PRE-STEP (a) self-red-team fix (Master Prompt v2 continuation) — a
+    real, 100%-reproducible double-refund bug: the old two-step
+    "find_one, then later update_one $unset" let settle() and
+    release() each independently read the SAME still-present hold when
+    called concurrently for the same run_id (different idempotency
+    keys, so neither's own dedup caught it), and each applied its own
+    refund on top of the other. `asyncio.gather(settle(...),
+    release(...))` on the same hold reproduced a wallet-inflation bug
+    100/100 trials before this fix (full held amount refunded by
+    release() AND settle()'s own partial refund, both landing). A
+    single atomic `find_one_and_update` with `$unset` means exactly
+    ONE of two concurrent callers ever sees the hold; the other
+    correctly sees `None` (already resolved) and takes its existing
+    safe path (settle() raises, release() no-ops at amount=0) — see
+    tests/test_regression_iter2026_11c_prestep_redteam_and_edge_cases.py.
+    """
+    doc = await db.wallets.find_one_and_update(
+        {"_id": user_id, f"holds.{run_id}": {"$exists": True}},
+        {"$unset": {f"holds.{run_id}": ""}},
+        return_document=ReturnDocument.BEFORE,
+    )
+    if doc is None:
+        return None
+    return (doc.get("holds") or {}).get(run_id)
 
 
 async def settle(
-    db, *, user_id: str, run_id: str, actual_tokens: int, idempotency_key: str,
+    db, *, user_id: str, run_id: str, idempotency_key: str,
+    actual_tokens: int | None = None, actual_cost_usd: float | None = None,
 ) -> dict:
-    """Finalize a hold at its REAL cost. Refunds the difference
-    (pro-rata, into the same buckets the hold drew from) if
-    actual_tokens < the held estimate. `actual_tokens` is capped at
-    the held amount — a run can never end up costing the user MORE
-    than what was reserved at hold()-time; any overage beyond the
-    estimate is absorbed, not passed through. Idempotent on
-    `idempotency_key`."""
+    """Finalize a hold. Refunds the difference (pro-rata, into the
+    same buckets AND the same batches the hold drew from) if the final
+    charge < the held estimate. The held amount is a hard CEILING
+    either way — a run can never end up costing the user MORE than
+    what was reserved at hold()-time; any overage is absorbed, not
+    passed through. Idempotent on `idempotency_key`.
+
+    Master Prompt v2 Part 2 — pass `actual_cost_usd` (the run's real
+    measured LLM cost) instead of `actual_tokens` to charge via the
+    real-cost equation (services.pricing_engine.tokens_for_actual_cost)
+    rather than a flat caller-supplied number — PRICE_TABLE's held
+    estimate becomes a guard rail/ceiling, not the charge itself, but
+    (deliberately, for safety) still the MOST the user is ever charged.
+    A real cost that comes in at >= SPIKE_GUARD_MULTIPLE times the held
+    estimate's dollar-equivalent is flagged via
+    services.llm_cost_breaker.flag_actual_cost_spike for admin review —
+    a pure signal, it does not raise what's charged. Exactly one of
+    `actual_tokens`/`actual_cost_usd` must be given."""
+    _require_str("user_id", user_id)
+    _require_str("run_id", run_id)
+    _require_str("idempotency_key", idempotency_key)
+    if (actual_tokens is None) == (actual_cost_usd is None):
+        raise ValueError("settle() needs exactly one of actual_tokens/actual_cost_usd")
+
     existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
     if existing:
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "charged": existing.get("amount")}
 
-    h = await _find_hold(db, user_id, run_id)
+    h = await _claim_hold(db, user_id, run_id)
     if h is None:
         # Already settled/released by a prior call with a DIFFERENT
         # idempotency_key (shouldn't happen for a well-behaved caller,
-        # but fail loud rather than silently charging nothing).
+        # but fail loud rather than silently charging nothing) — OR a
+        # concurrent release() just atomically claimed it first (see
+        # _claim_hold's docstring).
         raise ValueError(f"no active hold for run_id={run_id!r} (already settled/released?)")
 
     held_amount = int(h["amount"])
+    held_micro = held_amount * WALLET_MICRO_PER_TOKEN
     breakdown = h["breakdown"]
-    actual = max(0, min(int(actual_tokens), held_amount))
-    refund_total = held_amount - actual
+    batch_breakdown = h.get("batch_breakdown") or {}
+    action = h.get("action")
+
+    true_cost_usd: float | None = None
+    computed_tokens_uncapped: int | None = None
+    if actual_cost_usd is not None:
+        from config.token_pricing import tokens_to_usd
+        from services.llm_cost_breaker import flag_actual_cost_spike
+        from services.pricing_engine import (
+            SPIKE_GUARD_MULTIPLE,
+            get_effective_pricing_version,
+            micro_tokens_for_actual_cost,
+            tokens_for_actual_cost,
+        )
+        # PRE-STEP (a) self-red-team fix — an unbounded actual_cost_usd
+        # (garbage/malicious caller, 1e18, +inf) produced a token count
+        # so large that storing it in computed_tokens_uncapped below
+        # overflowed Mongo's 8-byte int64 limit and raised mid-settle.
+        # NaN is treated as "no real cost" (0); anything else is clamped
+        # to a generous-but-sane ceiling — no single real LLM call could
+        # ever legitimately approach $1M.
+        raw_cost = float(actual_cost_usd)
+        true_cost_usd = 0.0 if math.isnan(raw_cost) else max(0.0, min(raw_cost, _MAX_SANE_COST_USD))
+        version = await get_effective_pricing_version(db)
+        margin = version["margin"]
+        # PRE-STEP (a) ROUNDING LEAK fix (Master Prompt v2 continuation)
+        # — the DEDUCTION uses the EXACT micro-token equation output,
+        # never rounded to a whole token first. `tokens_for_actual_cost`
+        # (whole-token rounded) is kept only for `computed_tokens_uncapped`
+        # /the dashboard's ceiling-hit display, which is fine to round —
+        # it's a report, not a charge.
+        actual_micro = micro_tokens_for_actual_cost(true_cost_usd, margin=margin)
+        computed_tokens_uncapped = tokens_for_actual_cost(true_cost_usd, margin=margin)
+        estimated_cost_usd = tokens_to_usd(held_amount)
+        if estimated_cost_usd > 0 and true_cost_usd >= SPIKE_GUARD_MULTIPLE * estimated_cost_usd:
+            await flag_actual_cost_spike(
+                db, user_id=user_id, action=action, run_id=run_id,
+                estimated_cost_usd=estimated_cost_usd, actual_cost_usd=true_cost_usd,
+            )
+    else:
+        # Legacy flat-token path — actual_tokens is WHOLE tokens, so
+        # this is always an exact multiple of WALLET_MICRO_PER_TOKEN;
+        # every existing caller/test of this path sees byte-identical
+        # behavior to before this fix.
+        actual_micro = max(0, int(actual_tokens)) * WALLET_MICRO_PER_TOKEN
+
+    actual_micro = max(0, min(actual_micro, held_micro))
+    refund_total_micro = held_micro - actual_micro
+    actual = actual_micro // WALLET_MICRO_PER_TOKEN  # legacy whole-token field, floored (exact charge is in *_micro)
+    refund_total = refund_total_micro // WALLET_MICRO_PER_TOKEN
     now = _now()
 
-    if refund_total > 0:
-        # Pro-rata refund back into the SAME buckets that were drawn
-        # from — never launders an expiring "plan" spend into a
-        # never-expiring "purchased" refund.
-        remaining = refund_total
-        refund_breakdown = {}
+    refund_breakdown_micro: dict[str, int] = {}
+    batch_refund: dict[str, int] = {}
+    if refund_total_micro > 0:
+        # Pro-rata refund back into the SAME buckets (exact, at micro
+        # resolution via _apply_micro_refund) and, best-effort, the
+        # SAME batches (Part 2, whole-token resolution only — batches
+        # don't track a sub-token remainder, so a fractional settle's
+        # remainder is attributed to the aggregate bucket only, never
+        # to a specific batch; an accepted, documented simplification
+        # consistent with the batch system's existing best-effort
+        # status) — never launders an expiring spend into a never-
+        # expiring refund, and never credits a refund to a payment it
+        # didn't come from.
+        remaining_micro = refund_total_micro
         for i, b in enumerate(SPEND_ORDER):
-            taken = int(breakdown.get(b, 0))
+            taken = int(breakdown.get(b, 0))  # whole tokens this bucket contributed to the hold
             if taken <= 0:
-                refund_breakdown[b] = 0
+                refund_breakdown_micro[b] = 0
                 continue
+            taken_micro = taken * WALLET_MICRO_PER_TOKEN
             if i == len(SPEND_ORDER) - 1:
-                give = remaining
+                give = remaining_micro
             else:
-                give = min(taken, round(refund_total * taken / held_amount)) if held_amount else 0
-                give = min(give, remaining)
-            refund_breakdown[b] = give
-            remaining -= give
-        if remaining > 0:
-            refund_breakdown[SPEND_ORDER[-1]] += remaining
-        await db.wallets.update_one(
-            {"_id": user_id},
-            {"$inc": {f"buckets.{b}": v for b, v in refund_breakdown.items() if v}},
-        )
-    await db.wallets.update_one(
-        {"_id": user_id}, {"$unset": {f"holds.{run_id}": ""}},
-    )
+                give = min(taken_micro, round(refund_total_micro * taken_micro / held_micro)) if held_micro else 0
+                give = min(give, remaining_micro)
+            refund_breakdown_micro[b] = give
+            remaining_micro -= give
+        if remaining_micro > 0:
+            refund_breakdown_micro[SPEND_ORDER[-1]] += remaining_micro
+        await _apply_micro_refund(db, user_id, refund_breakdown_micro)
+
+        if batch_breakdown and held_amount:
+            refund_whole_for_batches = refund_total_micro // WALLET_MICRO_PER_TOKEN
+            if refund_whole_for_batches > 0:
+                remaining_b = refund_whole_for_batches
+                batch_items = list(batch_breakdown.items())
+                for i, (bid, taken) in enumerate(batch_items):
+                    if i == len(batch_items) - 1:
+                        give = remaining_b
+                    else:
+                        give = min(taken, round(refund_whole_for_batches * taken / held_amount))
+                        give = min(give, remaining_b)
+                    if give:
+                        batch_refund[bid] = give
+                    remaining_b -= give
+                await _restore_batches(db, user_id, batch_refund)
+    # Hold already atomically removed by _claim_hold above.
     ledger_row = {
         "_id": idempotency_key, "user_id": user_id, "kind": "settle",
-        "run_id": run_id, "amount": actual, "held_amount": held_amount,
-        "refunded": refund_total, "created_at": now,
+        "action": action, "run_id": run_id, "amount": actual, "held_amount": held_amount,
+        "refunded": refund_total, "amount_micro": actual_micro,
+        "refunded_micro": refund_total_micro, "actual_cost_usd": true_cost_usd,
+        "computed_tokens_uncapped": computed_tokens_uncapped,
+        "created_at": now,
     }
     try:
         await db.wallet_ledger.insert_one(dict(ledger_row))
     except DuplicateKeyError:
         # Compensate: undo the refund we just sped-applied (if any) —
         # the hold entry is already gone either way (idempotent unset).
-        if refund_total > 0:
-            await db.wallets.update_one(
-                {"_id": user_id},
-                {"$inc": {f"buckets.{b}": -v for b, v in refund_breakdown.items() if v}},
+        if refund_total_micro > 0:
+            await _apply_micro_refund(
+                db, user_id, {k: -v for k, v in refund_breakdown_micro.items() if v},
             )
+            if batch_refund:
+                await _restore_batches(db, user_id, {k: -v for k, v in batch_refund.items()})
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
-                 "charged": existing.get("amount")}
+                 "charged": existing.get("amount"), "charged_micro": existing.get("amount_micro")}
     return {"ok": True, "idempotent_replay": False, "run_id": run_id,
-             "charged": actual, "refunded": refund_total}
+             "charged": actual, "refunded": refund_total,
+             "charged_micro": actual_micro, "refunded_micro": refund_total_micro}
 
 
-async def release(db, *, user_id: str, run_id: str, idempotency_key: str, reason: str = "") -> dict:
+async def release(db, *, user_id: str, run_id: str, idempotency_key: str,
+                   reason: str = "", failed_run_cost: float | None = None) -> dict:
     """Full refund of an in-progress hold — the run failed or was
     cancelled before it could settle. Idempotent on `idempotency_key`;
     releasing a hold that's already been settled/released elsewhere is
-    a safe no-op (returns held=0)."""
+    a safe no-op (returns held=0).
+
+    Master Prompt v2 Part 2 — `failed_run_cost` is the REAL USD cost the
+    platform incurred on this run even though it failed (an LLM call
+    that burned real tokens before the run was abandoned). Never charges
+    the user (the hold is still fully refunded either way) — it's
+    recorded on the ledger row purely for margin/break-even reporting
+    (Part 3's admin dashboard) and the rolling-cost job."""
+    _require_str("user_id", user_id)
+    _require_str("run_id", run_id)
+    _require_str("idempotency_key", idempotency_key)
     existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
     if existing:
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "released": existing.get("amount")}
 
-    h = await _find_hold(db, user_id, run_id)
+    h = await _claim_hold(db, user_id, run_id)
     now = _now()
     if h is None:
-        # Nothing to release — record a zero-amount ledger row so a
-        # retry of THIS idempotency_key still replays cleanly, but
-        # don't touch any buckets.
+        # Nothing to release — either already settled/released under a
+        # different idempotency_key, or a concurrent settle() just
+        # atomically claimed it first (see _claim_hold's docstring).
+        # Record a zero-amount ledger row so a retry of THIS
+        # idempotency_key still replays cleanly, but don't touch any
+        # buckets.
         ledger_row = {"_id": idempotency_key, "user_id": user_id, "kind": "release",
                        "run_id": run_id, "amount": 0, "reason": reason,
+                       "failed_run_cost": failed_run_cost,
                        "note": "no_active_hold", "created_at": now}
         try:
             await db.wallet_ledger.insert_one(dict(ledger_row))
@@ -376,15 +765,19 @@ async def release(db, *, user_id: str, run_id: str, idempotency_key: str, reason
         return {"ok": True, "idempotent_replay": False, "run_id": run_id, "released": 0}
 
     breakdown = h["breakdown"]
+    batch_breakdown = h.get("batch_breakdown") or {}
     held_amount = int(h["amount"])
+    # Hold already atomically removed by _claim_hold above.
     await db.wallets.update_one(
         {"_id": user_id},
-        {"$inc": {f"buckets.{b}": v for b, v in breakdown.items() if v},
-         "$unset": {f"holds.{run_id}": ""}},
+        {"$inc": {f"buckets.{b}": v for b, v in breakdown.items() if v}},
     )
+    if batch_breakdown:
+        await _restore_batches(db, user_id, batch_breakdown)
     ledger_row = {
         "_id": idempotency_key, "user_id": user_id, "kind": "release",
-        "run_id": run_id, "amount": held_amount, "reason": reason, "created_at": now,
+        "run_id": run_id, "amount": held_amount, "reason": reason,
+        "failed_run_cost": failed_run_cost, "created_at": now,
     }
     try:
         await db.wallet_ledger.insert_one(dict(ledger_row))
@@ -392,6 +785,8 @@ async def release(db, *, user_id: str, run_id: str, idempotency_key: str, reason
         await db.wallets.update_one(
             {"_id": user_id}, {"$inc": {f"buckets.{b}": -v for b, v in breakdown.items() if v}},
         )
+        if batch_breakdown:
+            await _restore_batches(db, user_id, {k: -v for k, v in batch_breakdown.items()})
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "released": existing.get("amount")}
@@ -443,23 +838,215 @@ async def assert_wallet(db, *, user_id: str, action: str, run_id: str, idempoten
     return {"mode": "on", "held": True, "hold": hold_result, "balance": bal}
 
 
+async def finalize_hold(db, *, user_id: str, action: str, run_id: str,
+                         ok: bool, reason: str = "",
+                         actual_cost_usd: float | None = None) -> None:
+    """Master Prompt v2 Part 1.1 — the ONE settle-or-release call every
+    billable path (bulk fix, single-finding fix, chat fix, loop run,
+    the single-task worker) makes once its run's outcome is known:
+    settle() on success, release() on anything else.
+
+    Master Prompt v2 Part 2 — if the caller has a real measured LLM
+    cost for this run, pass it as `actual_cost_usd` and settle()/
+    release() will charge/record via the real-cost equation instead of
+    the flat PRICE_TABLE[action] guess (release() just records it as
+    `failed_run_cost` — the user is never charged for a failed run
+    either way). Omitted by default: no caller currently has per-run
+    cost attribution plumbed through to this call site yet, so the
+    flat-estimate behavior is unchanged unless a caller opts in.
+
+    Mirrors assert_wallet's own off/shadow/on awareness: "off" and
+    "shadow" never called hold() in the first place (assert_wallet's
+    own no-op/log-only paths), so there is nothing here to settle or
+    release either — attempting it would raise (settle() has no hold
+    to find). Never raises; a billing bookkeeping failure must never
+    mask the real result of the run it's describing."""
+    if billing_mode() in ("off", "shadow") or not user_id:
+        return
+    try:
+        if ok:
+            if actual_cost_usd is not None:
+                await settle(
+                    db, user_id=user_id, run_id=run_id,
+                    actual_cost_usd=actual_cost_usd,
+                    idempotency_key=f"wallet_settle:{run_id}",
+                )
+            else:
+                await settle(
+                    db, user_id=user_id, run_id=run_id,
+                    actual_tokens=tokens_for(action),
+                    idempotency_key=f"wallet_settle:{run_id}",
+                )
+        else:
+            await release(
+                db, user_id=user_id, run_id=run_id,
+                idempotency_key=f"wallet_release:{run_id}", reason=reason,
+                failed_run_cost=actual_cost_usd,
+            )
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning(
+            "[wallet] finalize_hold failed user=%s run_id=%s ok=%s: %r",
+            user_id, run_id, ok, e,
+        )
+
+
+async def claw_back_batch(db, *, user_id: str, batch_id: str, amount: int,
+                          idempotency_key: str, source: str) -> dict:
+    """Master Prompt v2 Part 2 — refund/dispute clawback, precise to
+    the ONE payment that created `batch_id` (the batch's id is the
+    original grant's own idempotency_key — see module docstring).
+    Removes up to `amount` tokens from that SPECIFIC batch, CAPPED at
+    whatever is still remaining in it — never below zero, and never
+    touches any other batch or bucket (a refund of one top-up must
+    never eat into the user's plan tokens, or even a DIFFERENT top-up's
+    batch). If the user already spent some or all of that batch, the
+    shortfall is returned (not silently absorbed) so the caller can
+    flag it for admin review — this function does not decide that, it
+    just reports the gap honestly. Fully atomic — targets the one named
+    batch via Mongo's positional `$` operator in a single `update_one`
+    call (unlike the FIFO consume/restore helpers above, this needs no
+    optimistic-retry loop because it isn't choosing WHICH batch to
+    touch, the caller already supplied the exact one).
+
+    `batch_id` not found (predates Part 2's batch tracking, or was
+    never granted) — the full `amount` is reported as shortfall, no
+    bucket is touched.
+
+    Idempotent on `idempotency_key` via the same ledger-row pattern
+    every other wallet mutation uses."""
+    _require_str("user_id", user_id)
+    _require_str("batch_id", batch_id)
+    _require_str("idempotency_key", idempotency_key)
+    existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
+    if existing:
+        return {"ok": True, "idempotent_replay": True,
+                 "removed": existing.get("amount"), "shortfall": existing.get("shortfall", 0)}
+
+    w = await db.wallets.find_one({"_id": user_id}) or {}
+    batch = next(
+        (b for b in (w.get("batches") or []) if b.get("batch_id") == batch_id), None,
+    )
+    if batch is None:
+        ledger_row = {
+            "_id": idempotency_key, "user_id": user_id, "kind": "refund_clawback",
+            "batch_id": batch_id, "amount": 0, "shortfall": int(amount),
+            "source": source, "created_at": _now(),
+        }
+        try:
+            await db.wallet_ledger.insert_one(dict(ledger_row))
+        except DuplicateKeyError:
+            existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
+            return {"ok": True, "idempotent_replay": True,
+                     "removed": existing.get("amount"), "shortfall": existing.get("shortfall", 0)}
+        return {"ok": True, "idempotent_replay": False, "removed": 0, "shortfall": int(amount)}
+
+    bucket = batch["bucket"]
+    current = int(batch.get("amount_remaining") or 0)
+    to_remove = max(0, min(int(amount), current))
+    shortfall = max(0, int(amount) - to_remove)
+
+    if to_remove > 0:
+        await db.wallets.update_one(
+            {"_id": user_id, "batches.batch_id": batch_id},
+            {"$inc": {f"buckets.{bucket}": -to_remove,
+                       "batches.$.amount_remaining": -to_remove,
+                       "batches_version": 1}},
+        )
+    ledger_row = {
+        "_id": idempotency_key, "user_id": user_id, "kind": "refund_clawback",
+        "batch_id": batch_id, "bucket": bucket, "amount": to_remove,
+        "shortfall": shortfall, "source": source, "created_at": _now(),
+    }
+    try:
+        await db.wallet_ledger.insert_one(dict(ledger_row))
+    except DuplicateKeyError:
+        if to_remove > 0:
+            await db.wallets.update_one(
+                {"_id": user_id, "batches.batch_id": batch_id},
+                {"$inc": {f"buckets.{bucket}": to_remove,
+                           "batches.$.amount_remaining": to_remove,
+                           "batches_version": 1}},
+            )
+        existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
+        return {"ok": True, "idempotent_replay": True,
+                 "removed": existing.get("amount"), "shortfall": existing.get("shortfall", 0)}
+    return {"ok": True, "idempotent_replay": False, "removed": to_remove, "shortfall": shortfall}
+
+
 # ── B6 — monthly plan-token grant job (idempotent per user per month) ──
 
+async def _expire_old_batches(db, user_id: str, months: int) -> int:
+    """Zero out (not delete — keep the audit trail) any batch whose
+    created_at is older than `months` months, mirroring the amount back
+    out of its parent bucket. No-op unless TOKEN_EXPIRY_MONTHS is
+    configured (default: unset, so plan/purchased batches never expire
+    — Part 2's rollover default). Runs from the serialized monthly cron,
+    not under concurrent load, so a plain read-modify-write (no
+    optimistic-lock retry) is fine here — unlike the hot hold()/settle()
+    path."""
+    from datetime import timedelta
+    cutoff = _now() - timedelta(days=months * 30)
+    w = await db.wallets.find_one({"_id": user_id}, {"batches": 1}) or {}
+    batches = list(w.get("batches") or [])
+    by_bucket: dict[str, int] = {}
+    new_batches = []
+    for b in batches:
+        created = b.get("created_at")
+        remaining = int(b.get("amount_remaining") or 0)
+        if remaining > 0 and created and created < cutoff:
+            by_bucket[b["bucket"]] = by_bucket.get(b["bucket"], 0) + remaining
+            b = {**b, "amount_remaining": 0}
+        new_batches.append(b)
+    expired_total = sum(by_bucket.values())
+    if expired_total > 0:
+        await db.wallets.update_one(
+            {"_id": user_id},
+            {"$set": {"batches": new_batches},
+             "$inc": {f"buckets.{b}": -v for b, v in by_bucket.items()}},
+        )
+    return expired_total
+
+
 async def run_monthly_grant_job(db, *, dry_run: bool = False) -> dict:
-    """Refill every paying user's `plan` bucket to their tier's monthly
-    token allotment, and EXPIRE whatever unused `plan` tokens remain
-    from last month (plan tokens don't roll over — `purchased` is
-    untouched either way). Idempotent per (user_id, year-month): a
-    second run in the same month for the same user is a no-op, keyed
-    by `wallet_ledger._id = f"monthly_grant:{user_id}:{ym}"`.
+    """ADD each paying user's tier allotment to their `plan` bucket.
+
+    Master Prompt v2 Part 2 — rollover: plan tokens no longer expire at
+    the next refill. This job now ADDS the new month's allotment ON TOP
+    of whatever's left (via `grant()`, same as any other grant),
+    instead of replacing the bucket — matching `purchased`'s existing
+    never-expire behavior. If `TOKEN_EXPIRY_MONTHS` is configured (env,
+    default unset = never), batches older than that are swept to zero
+    first via `_expire_old_batches`.
+
+    Idempotent per (user_id, year-month): a second run in the same
+    month for the same user is a no-op, keyed by
+    `wallet_ledger._id = f"monthly_grant:{user_id}:{ym}"` — the SAME key
+    `routers/payments.py`'s checkout.session.completed handler uses for
+    a brand-new subscriber's instant first-month grant, so signing up
+    mid-month can never ALSO get double-granted by this cron later that
+    same month (a latent gap this unification closes).
 
     dry_run=True computes and returns what WOULD happen without
     writing anything — used by the Step G migration script and by
     ops to preview before a real run.
+
+    PRE-STEP (b) [sic — see PART 3 pre-step] fix: gated on
+    billing_mode() — "off" and "shadow" must be a COMPLETE no-op here,
+    exactly like assert_wallet()/finalize_hold() elsewhere in this
+    module. Before this fix the job had no mode check at all, so it
+    would unconditionally create/populate a `wallets` document for
+    every paying "starter"/"pro"/"team" user — including a pure
+    task-based legacy user who has never touched token billing —
+    violating "existing users' data untouched" the moment this cron
+    ran with billing off (today's default).
     """
-    from config.token_pricing import (
-        tokens_for as _tf,  # noqa: F401 (kept for future per-tier pricing)
-    )
+    mode = billing_mode()
+    if mode in ("off", "shadow"):
+        return {"year_month": _year_month(), "dry_run": dry_run,
+                 "planned_count": 0, "applied_count": 0,
+                 "planned": [], "applied": [], "skipped_reason": f"billing_mode_{mode}"}
+
+    from services.pricing_engine import TOKEN_EXPIRY_MONTHS
     ym = _year_month()
     db_cursor = db.dev_users.find(
         {"tier": {"$in": ["starter", "pro", "team"]}},
@@ -480,11 +1067,11 @@ async def run_monthly_grant_job(db, *, dry_run: bool = False) -> dict:
                           "already_granted": bool(already)})
         if dry_run or already:
             continue
-        # Expire remainder of last month's plan bucket (replace, don't add).
+        if TOKEN_EXPIRY_MONTHS:
+            await _expire_old_batches(db, user_id, TOKEN_EXPIRY_MONTHS)
         await db.wallets.update_one(
             {"_id": user_id},
-            {"$set": {"buckets.plan": 0, "plan_refill_at": _now(),
-                       "month_baseline": {"ym": ym},
+            {"$set": {"plan_refill_at": _now(),
                        "threshold_flags": {"ym": ym, "warn": False,
                                             "critical": False, "stop": False}},
              "$setOnInsert": {"holds": {}, "created_at": _now()}},
@@ -495,7 +1082,7 @@ async def run_monthly_grant_job(db, *, dry_run: bool = False) -> dict:
         bal = await get_balance(db, user_id)
         await db.wallets.update_one(
             {"_id": user_id},
-            {"$set": {"month_baseline.amount": bal["spendable"]}},
+            {"$set": {"month_baseline": {"ym": ym, "amount": bal["spendable"]}}},
         )
         applied.append({"user_id": user_id, "tier": tier, "amount": amount, "result": res})
     return {"year_month": ym, "dry_run": dry_run,

@@ -283,8 +283,12 @@ class TestConcurrency:
 
 
 class TestPlanVsPurchasedExpiry:
-    async def test_monthly_grant_resets_plan_but_never_touches_purchased(self, db):
+    async def test_monthly_grant_resets_plan_but_never_touches_purchased(self, db, monkeypatch):
         from services import wallet
+        # PRE-STEP (d), Master Prompt v2 continuation — run_monthly_grant_job
+        # is now gated on billing_mode() (off/shadow are a complete
+        # no-op); this test exercises the "on" path explicitly.
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
         u = _uid("planreset")
         await db.dev_users.insert_one({"user_id": u, "tier": "starter"})
         try:

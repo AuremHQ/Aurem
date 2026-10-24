@@ -98,5 +98,100 @@ class TestOnboardingDemoCostBreakerGate:
         assert result.get("ok", True) is not False
 
 
+class TestOnboardingDemoUsageLogging:
+    """Master Prompt v2 Part 1.2 — this LlmChat call had zero usage
+    logging. Uses the shared services.loop_token_ledger.
+    log_estimated_usage helper (LlmChat exposes no real usage object
+    through any public API — see test_regression_iter2026_10z's
+    module docstring for the source-level confirmation)."""
+
+    async def test_success_logs_estimated_usage(self, monkeypatch):
+        from routers import onboarding as ob
+
+        async def fake_current_dev(auth=None):
+            return {"user_id": "u1"}
+        monkeypatch.setattr(ob, "current_dev", fake_current_dev)
+        monkeypatch.setattr(ob, "get_db", lambda: _FakeDB())
+
+        async def fake_emit_funnel_event(*a, **kw):
+            return None
+        monkeypatch.setattr(ob, "emit_funnel_event", fake_emit_funnel_event)
+
+        async def fake_assert_within_cap(db, **kw):
+            return None
+        monkeypatch.setattr(
+            "services.llm_cost_breaker.assert_within_cap", fake_assert_within_cap,
+        )
+
+        calls = []
+        async def fake_log(model, *, feature, **kw):
+            calls.append((model, feature, kw))
+        monkeypatch.setattr(
+            "services.loop_token_ledger.log_estimated_usage", fake_log,
+        )
+
+        reply = '{"explanation": "fixed it", "fixed_source": "def f(): return 1"}'
+        class _FakeLlmChat:
+            def __init__(self, *a, **kw):
+                pass
+            def with_model(self, *a, **kw):
+                return self
+            async def send_message(self, *a, **kw):
+                return reply
+        import emergentintegrations.llm.chat as llmchat_mod
+        monkeypatch.setattr(llmchat_mod, "LlmChat", _FakeLlmChat)
+        monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+
+        await ob.run_demo_project(authorization="Bearer x")
+        assert len(calls) == 1
+        _, feature, kw = calls[0]
+        assert feature == "Onboarding Demo Fix"
+        assert kw["output_text"] == reply
+        assert kw.get("status", "ok") == "ok"
+
+    async def test_llm_failure_logs_failed_status(self, monkeypatch):
+        from routers import onboarding as ob
+
+        async def fake_current_dev(auth=None):
+            return {"user_id": "u1"}
+        monkeypatch.setattr(ob, "current_dev", fake_current_dev)
+        monkeypatch.setattr(ob, "get_db", lambda: _FakeDB())
+
+        async def fake_emit_funnel_event(*a, **kw):
+            return None
+        monkeypatch.setattr(ob, "emit_funnel_event", fake_emit_funnel_event)
+
+        async def fake_assert_within_cap(db, **kw):
+            return None
+        monkeypatch.setattr(
+            "services.llm_cost_breaker.assert_within_cap", fake_assert_within_cap,
+        )
+
+        calls = []
+        async def fake_log(model, *, feature, **kw):
+            calls.append((model, feature, kw))
+        monkeypatch.setattr(
+            "services.loop_token_ledger.log_estimated_usage", fake_log,
+        )
+
+        class _FakeLlmChat:
+            def __init__(self, *a, **kw):
+                pass
+            def with_model(self, *a, **kw):
+                return self
+            async def send_message(self, *a, **kw):
+                raise RuntimeError("down")
+        import emergentintegrations.llm.chat as llmchat_mod
+        monkeypatch.setattr(llmchat_mod, "LlmChat", _FakeLlmChat)
+        monkeypatch.setenv("EMERGENT_LLM_KEY", "test-key")
+
+        # run_demo_project catches the LLM failure and falls back to
+        # the known-good demo fix — must not raise.
+        await ob.run_demo_project(authorization="Bearer x")
+        assert len(calls) == 1
+        _, _, kw = calls[0]
+        assert kw["status"] == "failed"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

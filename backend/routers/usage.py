@@ -47,6 +47,55 @@ async def my_usage(authorization: Optional[str] = Header(None)):
     return await get_usage(ctx["effective_account_id"])
 
 
+@router.get("/me/meter")
+async def my_usage_meter(authorization: str | None = Header(None)):
+    """Master Prompt v2 PART 4.3 — the ONLY balance number the app
+    ever shows a user (see services/wallet_display.py's module
+    docstring for the exact display rules this enforces). Scoped to
+    the caller only — `current_dev` resolves the authenticated
+    identity from the bearer token, never a client-supplied id."""
+    me = await current_dev(authorization)
+    from cto_services.db import require_db
+    from services.wallet_display import get_user_meter
+    db = require_db()
+    return await get_user_meter(db, me["user_id"])
+
+
+@router.get("/me/ledger")
+async def my_usage_ledger(days: int = 90, authorization: str | None = Header(None)):
+    """Master Prompt v2 PART 4.3 — Settings > Billing > "Usage
+    history". The one allowed exception to "never show per-action
+    numbers": a separate, opt-in audit page. Same "Standing rule (R)"
+    projection as /me/history above (never cost/model/provider, at
+    the Mongo level) but grouped by (date, surface) instead of date
+    alone, so each row actually carries an action name."""
+    me = await current_dev(authorization)
+    from cto_services.db import require_db
+    db = require_db()
+    days = max(1, min(int(days), 365))
+    since = time.time() - days * 86400
+    pipe = [
+        {"$match": {"user_id": me["user_id"], "ts": {"$gte": since},
+                     "status": {"$ne": "failed"}}},
+        {"$group": {
+            "_id": {
+                "date": {"$dateToString": {"format": "%Y-%m-%d",
+                         "date": {"$toDate": {"$multiply": ["$ts", 1000]}}}},
+                "action": {"$ifNull": ["$surface", "unknown"]},
+            },
+            "tokens": {"$sum": "$total_tokens"},
+        }},
+        {"$sort": {"_id.date": -1}},
+        {"$project": {"_id": 0, "date": "$_id.date", "action": "$_id.action", "tokens": 1}},
+    ]
+    try:
+        rows = await db.real_llm_usage.aggregate(pipe).to_list(1000)
+    except Exception as e:
+        logger.warning("usage ledger aggregate failed: %r", e)
+        rows = []
+    return {"rows": rows}
+
+
 @router.get("/me/history")
 async def my_usage_history(days: int = 30, authorization: Optional[str] = Header(None)):
     """2026-09-28 MASTER TASK Batch 2 (d) — per-day usage history for

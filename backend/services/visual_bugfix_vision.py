@@ -114,10 +114,21 @@ async def analyze_screenshot(image_bytes: bytes, mime_type: str,
             raw = await chat.send_message(msg)
         except Exception as e:                                # noqa: BLE001
             logger.warning("[visual_bugfix_vision] LLM call failed: %r", e)
+            from services.loop_token_ledger import log_estimated_usage
+            await log_estimated_usage(
+                _VISION_MODEL, feature="Visual Bugfix Vision", provider="emergent",
+                status="failed", error_reason=f"{type(e).__name__}: {e}",
+            )
             return {"ok": False, "error": f"vision call failed: {type(e).__name__}: {e}",
                     "visual_defects": [], "extracted_strings": [],
                     "inferred_dom_elements": [], "suggested_patterns": [],
                     "raw_response": None}
+
+    from services.loop_token_ledger import log_estimated_usage
+    await log_estimated_usage(
+        _VISION_MODEL, feature="Visual Bugfix Vision", provider="emergent",
+        input_text=prompt, output_text=raw,
+    )
 
     parsed = _extract_json_object(raw)
     if parsed is None:

@@ -32,8 +32,19 @@ logger = logging.getLogger("aurem.fix_entitlement")
 
 
 async def is_fix_entitled(db, user_id: str) -> bool:
-    u = await db.dev_users.find_one({"user_id": user_id}, {"_id": 0, "fix_entitlement": 1})
-    return bool((u or {}).get("fix_entitlement"))
+    u = await db.dev_users.find_one(
+        {"user_id": user_id},
+        {"_id": 0, "fix_entitlement": 1, "fix_entitlement_frozen": 1},
+    )
+    u = u or {}
+    # Master Prompt v2 Part 1.3 — a Stripe dispute freezes Fix WITHOUT
+    # destroying the underlying `fix_entitlement` value, so a resolved
+    # (won) dispute can restore exactly what the user had before —
+    # unlike revoke_fix_entitlement, which is a destructive "this
+    # plan is over" write.
+    if u.get("fix_entitlement_frozen"):
+        return False
+    return bool(u.get("fix_entitlement"))
 
 
 async def grant_fix_entitlement(db, user_id: str, *, source: str) -> None:
@@ -76,6 +87,39 @@ async def revoke_fix_entitlement(db, user_id: str, *, reason: str) -> None:
         }},
     )
     logger.info("[fix_entitlement] revoked user=%s reason=%s", user_id, reason)
+
+
+async def freeze_fix_entitlement(db, user_id: str, *, reason: str) -> None:
+    """Master Prompt v2 Part 1.3 — a Stripe `charge.dispute.created`
+    freezes Fix access until a human resolves the dispute. Does NOT
+    touch the underlying `fix_entitlement` bool, so unfreezing
+    restores exactly what the user had — a destructive
+    revoke_fix_entitlement() would lose that. There is no automatic
+    unfreeze webhook wired yet (only charge.dispute.created was asked
+    for, not .closed) — see routers/payments.py's webhook docstring."""
+    await db.dev_users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "fix_entitlement_frozen": True,
+            "fix_entitlement_frozen_reason": reason,
+            "fix_entitlement_frozen_at": datetime.now(UTC).isoformat(),
+        }},
+    )
+    logger.info("[fix_entitlement] FROZEN user=%s reason=%s", user_id, reason)
+
+
+async def unfreeze_fix_entitlement(db, user_id: str, *, reason: str) -> None:
+    """Admin-triggered only today (no automatic dispute-resolution
+    webhook wired) — restores whatever `fix_entitlement` already was."""
+    await db.dev_users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "fix_entitlement_frozen": False,
+            "fix_entitlement_unfrozen_reason": reason,
+            "fix_entitlement_unfrozen_at": datetime.now(UTC).isoformat(),
+        }},
+    )
+    logger.info("[fix_entitlement] unfrozen user=%s reason=%s", user_id, reason)
 
 
 async def assert_fix_entitled(db, user_id: str) -> dict:

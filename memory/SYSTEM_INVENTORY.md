@@ -1050,3 +1050,14 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 - `services/platform_spend_alarm.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-18T05:12:52.458221Z] <!-- inv:service:services/platform_spend_alarm.py -->
 - `services/name_integrity_audit.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-18T17:54:07.559709Z] <!-- inv:service:services/name_integrity_audit.py -->
+
+### Iter 0 · 2026-10-23
+
+- `loop_run_log kind='topup'` — auto-detected in backend/routers/payments.py (verify) [Iter 0, 2026-10-23T03:30:02.678542Z] <!-- inv:loop_run_log_kind:topup -->
+- `services/fix_entitlement.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-23T03:30:02.678589Z] <!-- inv:service:services/fix_entitlement.py -->
+- `services/wallet.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-23T03:30:02.678616Z] <!-- inv:service:services/wallet.py -->
+- `TOKEN_BILLING_MODE` — auto-detected in backend/services/wallet.py (verify) (default: unset) [Iter 0, 2026-10-23T03:30:02.678644Z] <!-- inv:envvar:TOKEN_BILLING_MODE -->
+- `loop_run_log kind='grant'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678665Z] <!-- inv:loop_run_log_kind:grant -->
+- `loop_run_log kind='hold'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678691Z] <!-- inv:loop_run_log_kind:hold -->
+- `loop_run_log kind='settle'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678714Z] <!-- inv:loop_run_log_kind:settle -->
+- `loop_run_log kind='release'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678742Z] <!-- inv:loop_run_log_kind:release -->

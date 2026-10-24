@@ -43,51 +43,89 @@ async def run_onboarding_scan(
     try:
         if not (github_token and github_owner and github_repo):
             return
-        # Iter arch-2a — SCANNERS now lives in services/codebase_health_core.py
-        # (fixed half of this service→router violation). `_build_text_cache`
-        # still comes from the router — it depends on GitHub-tree-walking
-        # primitives (_list_repo_tree_with_sha/_fetch_file) that are
-        # themselves owned by routers/security_scan.py pending a larger,
-        # separately-scoped extraction (tracked, not silently patched).
-        from services.repo_text_cache import build_text_cache as _build_text_cache
-        from services.codebase_health_core import SCANNERS, resolve_live_cves, _score_for_findings
-        text_cache = await _build_text_cache(github_owner, github_repo, github_token)
-        if not text_cache:
+        # Master Prompt v2 PART 4.1 — one free full scan per project
+        # per account. start_free_scan is the atomic guard: a repeat
+        # fire (retry, race) for the SAME project_id is a no-op.
+        from services.free_scan_results import mark_free_scan_error, start_free_scan
+        started = await start_free_scan(db, user_id=user_id, project_id=project_id)
+        if not started:
             return
+        try:
+            # Iter arch-2a — SCANNERS now lives in services/codebase_health_core.py
+            # (fixed half of this service→router violation). `_build_text_cache`
+            # still comes from the router — it depends on GitHub-tree-walking
+            # primitives (_list_repo_tree_with_sha/_fetch_file) that are
+            # themselves owned by routers/security_scan.py pending a larger,
+            # separately-scoped extraction (tracked, not silently patched).
+            from services.codebase_health_core import (
+                SCANNERS,
+                _score_for_findings,
+                resolve_live_cves,
+            )
+            from services.repo_text_cache import build_text_cache as _build_text_cache
+            text_cache = await _build_text_cache(github_owner, github_repo, github_token)
+            if not text_cache:
+                await mark_free_scan_error(db, project_id=project_id)
+                return
 
-        # Ticket B (2026-02) — this call site is async but (unlike the
-        # router's /scan endpoint) calls every SCANNERS[cat] directly
-        # on the event loop, not via asyncio.to_thread. Without this,
-        # the live OSV cache is never warmed here and onboarding scans
-        # stay on the static `_CVE_DB` forever. resolve_live_cves never
-        # raises (catches its own OSV failures internally), so no extra
-        # try/except needed beyond this function's existing outer one.
-        await resolve_live_cves(text_cache)
+            # Ticket B (2026-02) — this call site is async but (unlike the
+            # router's /scan endpoint) calls every SCANNERS[cat] directly
+            # on the event loop, not via asyncio.to_thread. Without this,
+            # the live OSV cache is never warmed here and onboarding scans
+            # stay on the static `_CVE_DB` forever. resolve_live_cves never
+            # raises (catches its own OSV failures internally), so no extra
+            # try/except needed beyond this function's existing outer one.
+            await resolve_live_cves(text_cache)
 
-        all_findings: list[dict] = []
-        for scan_fn in SCANNERS.values():
-            try:
-                all_findings.extend(scan_fn(text_cache))
-            except Exception as e:
-                logger.debug("[onboarding-scan] category failed: %r", e)
+            # Master Prompt v2 PART 4.1 — cost-capped: a (today purely
+            # forward-looking, since all 16 categories are free static
+            # scans) per-category cost estimate scaled by repo size, so a
+            # pathologically huge repo degrades gracefully (remaining
+            # categories marked "not run") instead of ever failing the
+            # whole scan or running away on cost.
+            from config.free_scan import (
+                ESTIMATED_COST_PER_FILE_PER_CATEGORY_USD,
+                FREE_SCAN_COST_CAP_USD,
+            )
+            from services.free_scan_results import (
+                finish_free_scan,
+                run_categories_with_cost_cap,
+            )
+            cost_per_category = len(text_cache) * ESTIMATED_COST_PER_FILE_PER_CATEGORY_USD
+            all_findings, categories_run, categories_not_run, cost_usd = run_categories_with_cost_cap(
+                SCANNERS, text_cache, cap_usd=FREE_SCAN_COST_CAP_USD,
+                cost_per_category_usd=cost_per_category,
+            )
 
-        from services.loop_full_scan import persist_findings_to_backlog
-        written = await persist_findings_to_backlog(
-            db, user_id=user_id, project_id=project_id,
-            findings=all_findings, scan_source=ONBOARDING_SCAN_SOURCE,
-        )
-        # Ticket E (2026-02) — per-project health-trend snapshot. The
-        # onboarding scan never computed an overall score before this
-        # (it only ever wrote critical/high findings to the backlog);
-        # reusing the SAME _score_for_findings every other scan path
-        # uses, not a new formula.
-        from services.project_health_trend import record_health_snapshot
-        onboarding_score = _score_for_findings(all_findings)
-        await record_health_snapshot(
-            db, project_id=project_id, user_id=user_id,
-            score=onboarding_score, findings=all_findings,
-            source="onboarding_scan",
-        )
+            from services.loop_full_scan import persist_findings_to_backlog
+            written = await persist_findings_to_backlog(
+                db, user_id=user_id, project_id=project_id,
+                findings=all_findings, scan_source=ONBOARDING_SCAN_SOURCE,
+            )
+            # Ticket E (2026-02) — per-project health-trend snapshot. The
+            # onboarding scan never computed an overall score before this
+            # (it only ever wrote critical/high findings to the backlog);
+            # reusing the SAME _score_for_findings every other scan path
+            # uses, not a new formula.
+            from services.project_health_trend import record_health_snapshot
+            onboarding_score = _score_for_findings(all_findings)
+            await record_health_snapshot(
+                db, project_id=project_id, user_id=user_id,
+                score=onboarding_score, findings=all_findings,
+                source="onboarding_scan",
+            )
+            # Master Prompt v2 PART 4.1 — the full-severity results doc
+            # the free-scan RESULTS page reads (cto_open_findings above
+            # only keeps critical/high/medium/unknown; this keeps every
+            # severity, plus the cost/alarm/categories-not-run bookkeeping).
+            await finish_free_scan(
+                db, user_id=user_id, project_id=project_id, score=onboarding_score,
+                findings=all_findings, categories_run=categories_run,
+                categories_not_run=categories_not_run, cost_usd=cost_usd,
+            )
+        except Exception:
+            await mark_free_scan_error(db, project_id=project_id)
+            raise
         logger.info(
             "[onboarding-scan] project=%s scanned %d files, wrote %d "
             "critical/high findings",

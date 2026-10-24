@@ -151,9 +151,20 @@ async def generate_patch(*, candidate_files: list[dict], vision_analysis: dict,
         raw = await chat.send_message(UserMessage(text=prompt))
     except Exception as e:                                    # noqa: BLE001
         logger.warning("[visual_bugfix_patch] LLM call failed: %r", e)
+        from services.loop_token_ledger import log_estimated_usage
+        await log_estimated_usage(
+            _PATCH_MODEL, feature="Visual Bugfix Patch", provider="emergent",
+            status="failed", error_reason=f"{type(e).__name__}: {e}",
+        )
         return {"ok": False, "error": f"patch generation failed: {type(e).__name__}: {e}",
                 "summary": "", "commit_message": "", "files": [],
                 "estimated_tokens": _estimate_tokens(prompt)}
+
+    from services.loop_token_ledger import log_estimated_usage
+    await log_estimated_usage(
+        _PATCH_MODEL, feature="Visual Bugfix Patch", provider="emergent",
+        input_text=prompt, output_text=raw,
+    )
 
     parsed = _extract_json_object(raw)
     estimated_tokens = _estimate_tokens(prompt, raw)

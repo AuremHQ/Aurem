@@ -50,6 +50,7 @@ const AdminSettingsPageLazy = React.lazy(() => import("./AdminSettingsPage"));
 const AdminAuditPageLazy = React.lazy(() => import("./AdminAuditPage"));
 const AdminTeamPageLazy = React.lazy(() => import("./AdminTeamPage"));
 const AdminFinancialsLazy = React.lazy(() => import("./AdminFinancials"));
+const AdminPricingPanelLazy = React.lazy(() => import("./AdminPricingPanel"));
 
 // ── Helpers ────────────────────────────────────────────────────────────
 const fmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n ?? 0));
@@ -2529,6 +2530,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "projects":       return <ProjectsPage />;
       case "tasks":          return <TasksPage />;
       case "tokens":         return <TokenPnL />;
+      case "pricing_panel":  return <AdminPricingPanelLazy />;
       case "agent_perf":     return <AgentPerformancePage />;
       case "mcp":            return <McpUsagePage />;
       case "failure_patterns": return <FailurePatternsPage />;

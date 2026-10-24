@@ -84,6 +84,11 @@ async def llm_faithfulness_check(output: str,
     try:
         raw = await chat.send_message(UserMessage(text=prompt))
     except Exception as e:                                    # noqa: BLE001
+        from services.loop_token_ledger import log_estimated_usage
+        await log_estimated_usage(
+            model, feature="Faithfulness Judge", provider="emergent",
+            status="failed", error_reason=repr(e),
+        )
         return {
             "ok": False,
             "verdict": "error",
@@ -91,6 +96,12 @@ async def llm_faithfulness_check(output: str,
             "reasoning": f"judge call failed: {e!r}",
             "raw_response": None,
         }
+
+    from services.loop_token_ledger import log_estimated_usage
+    await log_estimated_usage(
+        model, feature="Faithfulness Judge", provider="emergent",
+        input_text=prompt, output_text=raw,
+    )
 
     # Extract JSON from the raw response (may be wrapped in prose /
     # markdown fences — be permissive).

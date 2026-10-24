@@ -15,6 +15,7 @@ errors fall through to a strict 500-token DeepSeek diagnosis.
 
 from __future__ import annotations
 import re
+import uuid
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.llm import call_llm_with_meta
@@ -410,6 +411,13 @@ async def try_scan_followup_reply(db, *, user_id: Optional[str],
                         on_fix_progress(len(candidates))
                     except Exception:                          # noqa: BLE001
                         pass
+                # Master Prompt v2 Part 1.1 — each finding is its own
+                # billable unit here (up to _MAX_CHAT_TRIGGERED_FIXES
+                # of them). A wallet block on finding N must not undo
+                # findings 1..N-1 that already succeeded — modeled as
+                # a normal failed result so the existing reply-
+                # rendering below needs no special case.
+                from services.wallet import assert_wallet, finalize_hold
                 results = []
                 for f in candidates:
                     finding = {
@@ -422,10 +430,23 @@ async def try_scan_followup_reply(db, *, user_id: Optional[str],
                         "message": f.get("message"),
                         "fix_hint": f.get("fix_hint"),
                     }
-                    r = await apply_finding_fix(
-                        db=db, user={"user_id": user_id},
-                        project_id=project_id, finding=finding,
-                    )
+                    wallet_run_id = f"chatfix_{uuid.uuid4().hex[:12]}"
+                    try:
+                        await assert_wallet(
+                            db, user_id=user_id, action="fix", run_id=wallet_run_id,
+                            idempotency_key=f"wallet_hold:{wallet_run_id}",
+                        )
+                    except HTTPException:
+                        r = {"ok": False, "error": "tokens_exhausted"}
+                    else:
+                        r = await apply_finding_fix(
+                            db=db, user={"user_id": user_id},
+                            project_id=project_id, finding=finding,
+                        )
+                        await finalize_hold(
+                            db, user_id=user_id, action="fix", run_id=wallet_run_id,
+                            ok=bool(r.get("ok")), reason=r.get("error") or "",
+                        )
                     results.append((f, r))
                     if r.get("ok"):
                         try:

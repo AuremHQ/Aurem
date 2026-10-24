@@ -71,6 +71,7 @@ const Settings          = lazy(() => import("./pages/Settings"));
 const Tokens            = lazy(() => import("./pages/Tokens"));
 const Analytics         = lazy(() => import("./pages/Analytics"));
 const Projects          = lazy(() => import("./pages/Projects"));
+const FreeScanResults   = lazy(() => import("./pages/FreeScanResults"));
 const Integrations      = lazy(() => import("./pages/Integrations")); // Iter 212m-174
 const Admin             = lazy(() => import("./pages/Admin"));
 // Feb 2026 · AdminOverview no longer imported here — /admin/overview
@@ -430,6 +431,7 @@ export default function App() {
               before this change. */}
           <Route path="/analytics"       element={<Navigate to="/dashboard" replace />} />
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
+          <Route path="/projects/:projectId/free-scan" element={<PrivateRoute><FreeScanResults /></PrivateRoute>} />
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/dashboard" element={<AdminRoute><Admin initialTab="dash" /></AdminRoute>} />
@@ -450,6 +452,7 @@ export default function App() {
           <Route path="/admin/robot-guide"    element={<AdminRoute><Admin initialTab="robot_guide" /></AdminRoute>} />
           <Route path="/admin/payments"       element={<AdminRoute><Admin initialTab="payments" /></AdminRoute>} />
           <Route path="/admin/token-pnl"      element={<AdminRoute><Admin initialTab="tokens" /></AdminRoute>} />
+          <Route path="/admin/pricing-panel"  element={<AdminRoute><Admin initialTab="pricing_panel" /></AdminRoute>} />
           <Route path="/admin/projects"       element={<AdminRoute><Admin initialTab="projects" /></AdminRoute>} />
           <Route path="/admin/tasks"          element={<AdminRoute><Admin initialTab="tasks" /></AdminRoute>} />
           <Route path="/admin/agent-performance" element={<AdminRoute><Admin initialTab="agent_perf" /></AdminRoute>} />

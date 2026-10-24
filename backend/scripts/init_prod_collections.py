@@ -54,6 +54,45 @@ _BOOTSTRAP_SPEC: list[tuple[str, list[tuple[list, dict]]]] = [
         ([("kind", 1), ("created_at", -1)],     {}),
         ([("run_id", 1)],                        {"sparse": True}),
     ]),
+    # Master Prompt v2 Part 1.3 — refund/dispute flags for the (not yet
+    # built) admin dashboard to surface: a top-up refund clawback that
+    # exceeded the user's remaining balance (shortfall), a partial
+    # subscription-invoice refund (log-only, no state change), or a
+    # dispute freeze. `_id` is the idempotency_key (the Stripe event
+    # id), so the default `_id` index already gives dedup — these are
+    # purely secondary read-path indexes for the admin list view.
+    ("billing_flags", [
+        ([("user_id", 1), ("created_at", -1)], {}),
+        ([("flag_type", 1), ("resolved", 1)],   {}),
+    ]),
+    # Master Prompt v2 Part 2 — pricing engine. `pricing_versions._id` is
+    # a monotonic version id (dedup is the default `_id` index); this
+    # secondary index lets the "which version is effective now" lookup
+    # (services/pricing_engine.py) avoid a full collection scan.
+    # `action_cost_stats._id` is the wallet action key ("fix", "loop_run",
+    # ...), so the default `_id` index already gives the one-row-per-
+    # action uniqueness the daily rolling-average job depends on.
+    ("pricing_versions", [
+        ([("effective_from", -1)], {}),
+    ]),
+    ("action_cost_stats", []),
+    # PART 3 (admin panel) — pricing_seq is a tiny single-doc atomic
+    # counter (one row, _id="pricing_versions"); no secondary index
+    # needed. pricing_audit_log is append-only, read by recency.
+    # pricing_preview_used rows are single-use replay markers for the
+    # margin-editor preview/confirm flow — TTL-expired automatically
+    # well after the token itself would already be expired, so a
+    # restart/migration never needs to sweep it by hand. fixed_costs
+    # is tiny (a handful of rows), read by name; no secondary index.
+    ("pricing_seq", []),
+    ("pricing_audit_log", [
+        ([("created_at", -1)], {}),
+        ([("actor", 1)],        {}),
+    ]),
+    ("pricing_preview_used", [
+        ([("used_at", 1)], {"expireAfterSeconds": 3600}),
+    ]),
+    ("fixed_costs", []),
     ("cto_payments", [
         ([("user_id", 1), ("created_at", -1)], {}),
         ([("stripe_session_id", 1)],           {"sparse": True}),

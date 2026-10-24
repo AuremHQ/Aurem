@@ -34,7 +34,7 @@ export function fetchSessionsShared(projectId, force = false) {
   return promise;
 }
 import { toast } from "./Toast";
-import TokenBell from "./TokenBell";
+import TokenMeter from "./TokenMeter";
 import FloatingORAButton from "./FloatingORAButton";
 import ClearCacheButton from "./ClearCacheButton";
 import ThemeToggle from "./ThemeToggle";
@@ -1022,7 +1022,7 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
 
           <div style={{ marginTop: "auto", display: "grid", gap: 10, paddingTop: 12 }}>
             {token && (
-              <TokenBell tokens={tokensRemaining} unlimited={tokensUnlimited} collapsed={collapsed} />
+              <TokenMeter collapsed={collapsed} />
             )}
 
             {/* Iter 212m-52 — theme toggle. Visible to every logged-in

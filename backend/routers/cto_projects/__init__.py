@@ -161,3 +161,4 @@ from .worker_api import (          # noqa: E402,F401
     _looks_truncated, _AI_SYS,
 )
 from .worker_git import _run_task_with_git   # noqa: E402,F401
+from .free_scan import get_free_scan         # noqa: E402,F401

@@ -100,7 +100,7 @@ import { useGithubConnectionStatus } from "../hooks/useGithubConnectionStatus";
 // ChatPanel.jsx into focused files.  Behaviour is identical; the
 // imports below replace in-file definitions that previously lived
 // at the top + bottom of this file (~700 LOC).
-import TokenBanner       from "./chat/TokenBanner";
+import TokenMeter        from "./TokenMeter";
 import UsageLimitModal, { hasUsageLimitModalBeenDismissed } from "./chat/UsageLimitModal";
 import ToolButton        from "./chat/ToolButton";
 import StreamHealthPill  from "./chat/StreamHealthPill";
@@ -5857,7 +5857,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           on the same row block. Rendered below just before the
           composer form opens.
       */}
-      <div className="chat-inline-card"><TokenBanner usage={usage} /></div>
+      <div className="chat-inline-card"><TokenMeter collapsed={false} /></div>
       <UsageLimitModal
         open={showUsageLimitModal}
         usage={usage}

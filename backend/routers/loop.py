@@ -298,12 +298,28 @@ async def start_loop(body: StartBody,
     # and then silently fails deep inside the engine.
     from services.fix_entitlement import assert_fix_entitled
     await assert_fix_entitled(db, user["user_id"])
+    # Master Prompt v2 Part 1.1 — wallet hold for the whole loop run,
+    # BEFORE the lock/engine are created. Settled/released once the
+    # engine reaches a terminal state — see
+    # services/loop_engine_helpers.py::_persist_session, the one choke
+    # point every state transition already goes through. A run already
+    # in progress finishes even if the balance hits zero afterward —
+    # this is a single hold at start, not a per-phase charge.
+    from services.wallet import assert_wallet
+    await assert_wallet(db, user_id=user["user_id"], action="loop_run",
+                        run_id=loop_id, idempotency_key=f"wallet_hold:{loop_id}")
     # Iter 212m-115 safety #2 — Concurrent-loop lock. Refuses a 2nd
     # parallel loop on the same project for the same user.
     locked, existing = await acquire_loop_lock(
         db, proj_key, user["user_id"], loop_id,
     )
     if not locked:
+        # The wallet hold above already fired for this loop_id — a
+        # rejected start (lock contention) must release it, not leak
+        # a stuck hold for a loop that never actually started.
+        from services.wallet import finalize_hold
+        await finalize_hold(db, user_id=user["user_id"], action="loop_run",
+                            run_id=loop_id, ok=False, reason="loop_already_running")
         raise HTTPException(409, {
             "error":            "loop_already_running",
             "existing_loop_id": (existing or {}).get("loop_id"),

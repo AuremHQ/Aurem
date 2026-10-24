@@ -210,6 +210,43 @@ async def record_cost(
         logger.debug("[G13] record_cost write failed: %r", e)
 
 
+async def flag_actual_cost_spike(
+    db, *, user_id: Optional[str], action: str, run_id: str,
+    estimated_cost_usd: float, actual_cost_usd: float,
+) -> None:
+    """Master Prompt v2 Part 2 — called by services.wallet.settle() when
+    a run's real cost comes in at >= SPIKE_GUARD_MULTIPLE times the held
+    estimate. This is a PLATFORM cost anomaly signal (a single run got
+    unexpectedly expensive — stuck retry loop, runaway tool use, a
+    pricing-table estimate that's badly out of date), not a per-call cap
+    like assert_within_cap above. DB-flag only (services.billing_flags —
+    same no-email admin-review pattern as Part 1.3's refund/dispute
+    flags), never an email; the user's own charge is already capped by
+    wallet.settle() before this is called. Never raises.
+    `idempotency_key` is derived from `run_id`, which is unique per run,
+    so a retried settle() for the same run never double-flags."""
+    try:
+        from services import billing_flags
+        await billing_flags.flag(
+            db, flag_type="cost_spike", user_id=user_id or "unknown",
+            idempotency_key=f"cost_spike:{run_id}",
+            detail={
+                "action": action, "run_id": run_id,
+                "estimated_cost_usd": round(estimated_cost_usd, 6),
+                "actual_cost_usd": round(actual_cost_usd, 6),
+                "multiple": round(actual_cost_usd / max(estimated_cost_usd, 0.0001), 2),
+            },
+        )
+        logger.warning(
+            "[pricing_engine] cost spike: action=%s run_id=%s actual=$%.4f "
+            "estimated=$%.4f (%.1fx) — flagged for admin review",
+            action, run_id, actual_cost_usd, estimated_cost_usd,
+            actual_cost_usd / max(estimated_cost_usd, 0.0001),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[pricing_engine] flag_actual_cost_spike failed: %r", e)
+
+
 async def _fire_cap_alert(db, cap_kind: str, spend: float, cap: float) -> None:
     try:
         from services.founder_alerts import send_founder_alert

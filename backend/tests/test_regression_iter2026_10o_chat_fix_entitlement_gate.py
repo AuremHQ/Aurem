@@ -15,6 +15,7 @@ it propagate as a raw exception into the stream.
 from __future__ import annotations
 
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -117,6 +118,7 @@ class TestChatFixEntitlementGate:
 
     async def test_on_mode_runs_fix_when_entitled(self, monkeypatch):
         from services import finding_fix_applier as ff
+        from services import wallet
         from services.mode_d_debugger import try_scan_followup_reply
         monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
 
@@ -124,6 +126,13 @@ class TestChatFixEntitlementGate:
             return {"ok": True, "commit_sha": "abc1234",
                     "file": kw["finding"]["file"], "rule_id": kw["finding"]["rule_id"]}
         monkeypatch.setattr(ff, "apply_finding_fix", fake_apply)
+        # Wallet wiring (Master Prompt v2 Part 1.1) — this test's FakeDB
+        # has no real wallet balance; mock the gate itself so this test
+        # stays focused on the entitlement path it was written for
+        # (wallet behavior has its own dedicated test coverage).
+        monkeypatch.setattr(wallet, "assert_wallet",
+                            AsyncMock(return_value={"mode": "on", "held": True}))
+        monkeypatch.setattr(wallet, "finalize_hold", AsyncMock(return_value=None))
 
         db = _FakeDB(
             user_doc={"user_id": "u1", "tier": "team", "fix_entitlement": True},
@@ -135,7 +144,11 @@ class TestChatFixEntitlementGate:
             db, user_id="u1", project_id="p1", user_message=_MESSAGE,
         )
         assert result is not None
-        assert "fixed" in result["ora_reply"].lower()
+        assert "fixed 1 of 1" in result["ora_reply"].lower(), (
+            "the fix must actually run and succeed, not just leave the "
+            "word 'fixed' in a 0-of-N failure line"
+        )
+        assert "abc1234" in result["ora_reply"]
 
     async def test_off_mode_unaffected_default_behavior(self, monkeypatch):
         from services import finding_fix_applier as ff
@@ -157,7 +170,8 @@ class TestChatFixEntitlementGate:
             db, user_id="u1", project_id="p1", user_message=_MESSAGE,
         )
         assert result is not None
-        assert "fixed" in result["ora_reply"].lower()
+        assert "fixed 1 of 1" in result["ora_reply"].lower()
+        assert "abc1234" in result["ora_reply"]
 
 
 if __name__ == "__main__":

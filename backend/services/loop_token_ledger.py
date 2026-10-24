@@ -440,3 +440,41 @@ async def log_real_usage(model: str, usage: dict, *,
         asyncio.create_task(check_and_alert(db))
     except Exception:  # noqa: BLE001
         pass
+
+
+_CHARS_PER_TOKEN_ESTIMATE = 4  # rough, provider-agnostic fallback only
+
+
+async def log_estimated_usage(model: str, *, feature: str, provider: str,
+                               input_text: str = "", output_text: str = "",
+                               status: str = "ok",
+                               error_reason: Optional[str] = None) -> None:
+    """Master Prompt v2 Part 1.2 — shared helper for LLM clients that
+    expose NO usage object through their public API at all (confirmed
+    by reading `emergentintegrations.llm.chat.LlmChat.send_message`'s
+    own source: it discards the underlying completion response after
+    extracting just the text, so there is nothing to read here even
+    on success — unlike the raw-OpenRouter paths in services/
+    vision_describe.py / advisor_vision.py / mermaid_diagram.py /
+    ora_chat/providers.py, which DO get a real `usage` object back and
+    only estimate when one happens to be missing).
+
+    Always marks the row `estimated=True` on a successful call (there
+    is no "real" branch to prefer) — a character-length guess is still
+    strictly better than this call being invisible to billing
+    entirely. Never raises; a ledger failure must never break the
+    call it's describing."""
+    try:
+        usage = {}
+        if status == "ok" and (input_text or output_text):
+            usage = {
+                "input_tokens": max(1, len(input_text) // _CHARS_PER_TOKEN_ESTIMATE) if input_text else 0,
+                "output_tokens": max(1, len(output_text) // _CHARS_PER_TOKEN_ESTIMATE) if output_text else 0,
+            }
+        await log_real_usage(
+            model, usage, feature=feature, provider=provider,
+            status=status, error_reason=error_reason,
+            estimated=bool(usage),
+        )
+    except Exception as e:                                    # noqa: BLE001
+        logger.debug("log_estimated_usage: ledger write skipped: %r", e)
