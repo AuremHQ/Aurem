@@ -19,6 +19,28 @@ import CodeBlock from "./CodeBlock";
 
 const TYPE_ICON = { js: FileCode2, css: Braces, html: FileText };
 
+// Light palette — matches pages/OraDirect.jsx's PAL (cream/Claude-style
+// theme). The dark theme below keeps the original app-wide chat colors
+// unchanged (ChatPanel.jsx's usage). CodeBlock itself always stays
+// dark ("vs-dark" Monaco) in both — same convention as every other
+// code block in the app, light page or not.
+const THEMES = {
+  dark: {
+    cardBg: "rgba(15,23,42,0.5)", cardBorder: "1px solid rgba(148,163,184,0.18)",
+    divider: "1px solid rgba(148,163,184,0.18)",
+    text: "var(--text)", textDim: "var(--text-dim)",
+    accent: "#38bdf8", accentBg: "rgba(56,189,248,0.15)",
+    danger: "#f87171",
+  },
+  light: {
+    cardBg: "#FFFFFF", cardBorder: "1px solid #E5E5DF",
+    divider: "1px solid #E5E5DF",
+    text: "#1C1C19", textDim: "#6B6B63",
+    accent: "#D56A4F", accentBg: "rgba(213,106,79,0.10)",
+    danger: "#C94A37",
+  },
+};
+
 function fmtBytes(n) {
   if (!n && n !== 0) return "";
   if (n < 1024) return `${n} B`;
@@ -26,7 +48,8 @@ function fmtBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ReaAnalysisCard({ jobId, url }) {
+export function ReaAnalysisCard({ jobId, url, theme = "dark" }) {
+  const t = THEMES[theme] || THEMES.dark;
   const [job, setJob] = useState(null);
   const [pollError, setPollError] = useState(null);
   const [selected, setSelected] = useState(null); // { sha256, text, path, type }
@@ -68,9 +91,9 @@ export function ReaAnalysisCard({ jobId, url }) {
 
   if (pollError) {
     return (
-      <div data-testid="rea-card-error" style={cardStyle}>
-        <AlertTriangle size={14} color="#f87171" />
-        <span style={{ color: "#f87171", fontSize: 13 }}>{pollError}</span>
+      <div data-testid="rea-card-error" style={{ ...cardStyle, background: t.cardBg, border: t.cardBorder }}>
+        <AlertTriangle size={14} color={t.danger} />
+        <span style={{ color: t.danger, fontSize: 13 }}>{pollError}</span>
       </div>
     );
   }
@@ -78,21 +101,21 @@ export function ReaAnalysisCard({ jobId, url }) {
   const status = job?.status || "running";
 
   return (
-    <div data-testid="rea-analysis-card" style={cardStyle}>
+    <div data-testid="rea-analysis-card" style={{ ...cardStyle, background: t.cardBg, border: t.cardBorder, color: t.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <Globe size={15} color="#38bdf8" />
+        <Globe size={15} color={t.accent} />
         <span style={{ fontWeight: 600, fontSize: 13.5 }}>Reverse-engineering</span>
         <a href={url} target="_blank" rel="noreferrer"
-           style={{ color: "#38bdf8", fontSize: 12.5, textDecoration: "none" }}>
+           style={{ color: t.accent, fontSize: 12.5, textDecoration: "none" }}>
           {url}
         </a>
         {status === "running" && (
-          <span data-testid="rea-card-running" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--text-dim)", fontSize: 12 }}>
+          <span data-testid="rea-card-running" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: t.textDim, fontSize: 12 }}>
             <Loader2 size={12} className="animate-spin" /> analyzing…
           </span>
         )}
         {status === "failed" && (
-          <span data-testid="rea-card-failed" style={{ color: "#f87171", fontSize: 12 }}>
+          <span data-testid="rea-card-failed" style={{ color: t.danger, fontSize: 12 }}>
             failed — {job?.error || "unknown error"}
           </span>
         )}
@@ -102,11 +125,11 @@ export function ReaAnalysisCard({ jobId, url }) {
         <>
           <div style={{ display: "flex", gap: 12, minHeight: 220 }}>
             <div data-testid="rea-file-list" style={{
-              width: 260, flexShrink: 0, borderRight: "1px solid rgba(148,163,184,0.18)",
+              width: 260, flexShrink: 0, borderRight: t.divider,
               paddingRight: 10, maxHeight: 340, overflowY: "auto",
             }}>
               {(job.files || []).length === 0 && (
-                <div style={{ fontSize: 12, color: "var(--text-dim)" }}>No files captured.</div>
+                <div style={{ fontSize: 12, color: t.textDim }}>No files captured.</div>
               )}
               {(job.files || []).map((f, i) => {
                 const Icon = TYPE_ICON[f.type] || FileText;
@@ -120,8 +143,8 @@ export function ReaAnalysisCard({ jobId, url }) {
                       display: "flex", alignItems: "center", gap: 6, width: "100%",
                       textAlign: "left", padding: "6px 8px", marginBottom: 2,
                       borderRadius: 6, border: "none", cursor: "pointer",
-                      background: isActive ? "rgba(56,189,248,0.15)" : "transparent",
-                      color: isActive ? "#38bdf8" : "var(--text)",
+                      background: isActive ? t.accentBg : "transparent",
+                      color: isActive ? t.accent : t.text,
                       fontSize: 12,
                     }}
                   >
@@ -129,7 +152,7 @@ export function ReaAnalysisCard({ jobId, url }) {
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
                       {f.path}
                     </span>
-                    <span style={{ color: "var(--text-dim)", fontSize: 10.5, flexShrink: 0 }}>
+                    <span style={{ color: t.textDim, fontSize: 10.5, flexShrink: 0 }}>
                       {fmtBytes(f.bytes)}
                     </span>
                   </button>
@@ -138,12 +161,12 @@ export function ReaAnalysisCard({ jobId, url }) {
             </div>
             <div style={{ flex: 1, minWidth: 0, minHeight: 320 }}>
               {!selected && (
-                <div data-testid="rea-code-placeholder" style={{ color: "var(--text-dim)", fontSize: 12.5, padding: 10 }}>
+                <div data-testid="rea-code-placeholder" style={{ color: t.textDim, fontSize: 12.5, padding: 10 }}>
                   Click a file on the left to see its real source.
                 </div>
               )}
               {selected && fileLoading && (
-                <div style={{ color: "var(--text-dim)", fontSize: 12.5, padding: 10 }}>Loading…</div>
+                <div style={{ color: t.textDim, fontSize: 12.5, padding: 10 }}>Loading…</div>
               )}
               {selected && !fileLoading && (
                 <CodeBlock
@@ -158,7 +181,7 @@ export function ReaAnalysisCard({ jobId, url }) {
           {job.observed_api_endpoints?.length > 0 && (
             <div data-testid="rea-observed-endpoints" style={{ marginTop: 12, fontSize: 12 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Observed API calls (not source code)</div>
-              <ul style={{ margin: 0, paddingLeft: 18, color: "var(--text-dim)" }}>
+              <ul style={{ margin: 0, paddingLeft: 18, color: t.textDim }}>
                 {job.observed_api_endpoints.map((ep, i) => (
                   <li key={i}>{typeof ep === "string" ? ep : JSON.stringify(ep)}</li>
                 ))}
@@ -167,7 +190,7 @@ export function ReaAnalysisCard({ jobId, url }) {
           )}
 
           {job.backend_note && (
-            <div data-testid="rea-backend-note" style={{ marginTop: 10, fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
+            <div data-testid="rea-backend-note" style={{ marginTop: 10, fontSize: 11, color: t.textDim, fontStyle: "italic" }}>
               {job.backend_note}
             </div>
           )}
@@ -179,7 +202,6 @@ export function ReaAnalysisCard({ jobId, url }) {
 
 const cardStyle = {
   marginTop: 10, padding: 14, borderRadius: 10,
-  background: "rgba(15,23,42,0.5)", border: "1px solid rgba(148,163,184,0.18)",
 };
 
 export default ReaAnalysisCard;

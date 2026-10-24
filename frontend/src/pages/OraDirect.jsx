@@ -28,6 +28,7 @@ import { Streamdown } from "streamdown";
 // security contract (sandbox=allow-scripts only, strict CSP,
 // Vanguard-gated, 300ms debounce, 16MB cap).
 import OraPreviewPanel from "../components/OraPreviewPanel";
+import ReaAnalysisCard from "../components/ReaAnalysisCard";
 
 // Iter 212m-264 · Feb 2026 — Renderable code-fence detector.
 // Returns the FIRST renderable ``` fence found in a markdown string
@@ -642,6 +643,35 @@ function ChatShell({ onLogout }) {
     return () => { delete window.__oraRunImageSlash; };
   }, [_runImageSlashPrompt]);
 
+  // Iter 2026-10-24 — `/reverse-engineer <url>` client-side slash
+  // intercept, same shared pattern + shared backend endpoints as
+  // ChatPanel.jsx's dashboard version (services/rea_service.py +
+  // routers/admin_rea.py). No extra admin check needed here: every
+  // /ora PIN-login session already mints an admin JWT (ora_chat.py's
+  // pin_login only resolves admin/founder accounts) — so anyone who
+  // got past the PIN pad already passes require_admin_dep.
+  const _runReverseEngineerSlash = useCallback(async (rawUrl, userTypedText) => {
+    if (!rawUrl || sending) return;
+    setMessages(m => [...m, { role: "user", content: userTypedText || `/reverse-engineer ${rawUrl}` }]);
+    setSending(true);
+    try {
+      const r = await api.post("/admin/rea/analyze", { url: rawUrl });
+      const { job_id: jobId, url } = r.data;
+      setMessages(m => [...m, {
+        role: "assistant",
+        content: `Reverse-engineering ${url} — frontend files are real, backend is observed API calls only.`,
+        kind: "rea_job", reaJobId: jobId, reaUrl: url,
+      }]);
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail
+        : (detail?.message || "Couldn't start the reverse-engineer job.");
+      setMessages(m => [...m, { role: "assistant", content: msg, isError: true }]);
+    } finally {
+      setSending(false);
+    }
+  }, [sending]);
+
   const send = async () => {
     const text = input.trim();
     // Only "ready" attachments count towards the send.  Uploading /
@@ -665,6 +695,16 @@ function ChatShell({ onLogout }) {
       const prompt = _imageSlash[1].trim();
       setInput("");
       await _runImageSlashPrompt(prompt, /*fromTypedCommand=*/ true, text);
+      return;
+    }
+
+    // Iter 2026-10-24 — `/reverse-engineer <url>` short-circuits the
+    // same way /image does: one URL argument, no attachments, no SSE.
+    const _reaSlash = text.match(/^\/reverse-engineer\s+(\S+)$/i);
+    if (_reaSlash) {
+      const targetUrl = _reaSlash[1].trim();
+      setInput("");
+      await _runReverseEngineerSlash(targetUrl, text);
       return;
     }
 
@@ -1493,6 +1533,15 @@ function Bubble({ m, debug = false, onOpenPreview }) {
             with XSS-safe defaults from Streamdown. */}
         {isUser ? (
           <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
+        ) : m.kind === "rea_job" ? (
+          // Iter 2026-10-24 — same component ChatPanel.jsx uses on
+          // /dashboard, switched to the light theme that matches this
+          // page's cream palette (CodeBlock itself stays dark either
+          // way — same convention as every other code block here).
+          <>
+            <Streamdown>{m.content || ""}</Streamdown>
+            <ReaAnalysisCard jobId={m.reaJobId} url={m.reaUrl} theme="light" />
+          </>
         ) : m.imageGen ? (
           // Iter 212m-267 · Feb 2026 · Phase 5 — image-generation
           // messages carry a `data:image/png;base64,…` URL that
