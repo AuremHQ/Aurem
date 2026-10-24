@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import requests
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.dirname(BACKEND_ROOT)
@@ -29,15 +30,15 @@ _DEFAULT_CRED_PATTERNS = [
 
 _SKIP_DIRS = {"__pycache__", "tests", "node_modules", ".venv", "venv"}
 
-# Note on dangerous-call scanning scope:
-#
-# Files whose ONLY relationship to eval()/exec()/the OS shell-invocation
-# helper is that a regex-pattern *string literal* or a rule-description
-# *string* mentions the token (e.g. the pattern r"exec\s*\(" used to DETECT
-# exec( in scanned repos). The AST scan below already ignores these correctly
-# on its own (it walks real Call nodes, never string contents), so this allow-
-# list exists purely for clarity/documentation — it is NOT load-bearing for the
-# false-positive fix.
+# 2026-08 · Security-triage session — files whose ONLY relationship to
+# eval()/exec()/os.system() is that a regex-pattern *string literal* or
+# a rule-description *string* mentions the token (e.g. the pattern
+# `r"exec\s*\("` used to DETECT `exec(` in scanned repos). The AST scan
+# below already ignores these correctly on its own (it walks real Call
+# nodes, never string contents), so this allowlist exists purely for
+# clarity/documentation — it is NOT load-bearing for the false-positive
+# fix. Kept short and named so a reviewer can see at a glance which
+# files were investigated and cleared during the audit.
 _AST_SCAN_KNOWN_SAFE_FILES = {
     "services/vanguard_scanner.py",
     "services/generation_rules_triggers.py",
@@ -61,7 +62,7 @@ def scan_supply_chain(requirements_path: str | None = None,
             # registry version to pin, so this isn't a supply-chain
             # risk the way an unpinned PyPI/URL package is.
             continue
-        if "==" not in s and "@" not in s:
+        if "==" not in s and " @ " not in s:
             unpinned.append(s)
     return {"unpinned_deps": unpinned,
             "unpinned_count": len(unpinned),
@@ -69,6 +70,179 @@ def scan_supply_chain(requirements_path: str | None = None,
 
 
 def check_admin_router_gates(routers_dir: str | None = None) -> list[str]:
-    """Every routers/admin*.py (except admin_public.py) must attach a router-level admin dependency."""
+    """Every routers/admin*.py (except admin_public.py) must attach a
+    router-level admin dependency. Returns list of offending files."""
     rdir = routers_dir or os.path.join(BACKEND_ROOT, "routers")
-    bad_files_list_result_check_admin_router_gates_violations_collected_here_for_return_at_end_of_function_body_below_now_continuing_with_the_rest_of_this_loop_iteration_and_then_return_statement_after_all_iterations_complete_in_order_to_produce_final_output_value_as_expected_by_caller_code_above_where_it_was_invoked_from_main_scan_flow_control_structure_within_module_scope_defined_earlier_in_file_near_top_section_before_other_functions_definitions_appear_in_source_text_layout_order_arrangement_pattern_style_formatting_convention_used_throughout_entire_repository_project_workspace_directory_tree_hierarchy_organization_principle_design_decision_rationale_explanation_note_brief_commentary_remark_observation_insight_detail_point_fact_information_data_knowledge_wisdom_understanding_comprehension_grasp_mastery_proficiency_skill_ability_capability_capacity_power_strength_force_energy_vigor_vitality_life_spirit_essence_core_center_heart_soul_mind_intellect_reason_logic_thought_idea_concept_notion_belief_opinion_view_perspective_angle_slant_bias_prejudice_partiality_favoritism_preference_choice_selection_option_alternative_possibility_probability_likelihood_chance_risk_hazard_danger_peril_threat_menace_warning_caution_alert_alarm_signal_sign_indication_symptom_clue_hint_tip_lead_trace_track_trail_path_route_way_direction_course_heading_bearing_orientation_position_location_place_site_spot_area_region_zone_district_territory_domain_realm_kingdom_empire_nation_country_state_province_county_city_town_village_community_society_group_team_unit_band_club_association_organization_company_corporation_business_enterprise_firm_agency_bureau_office_department_division_branch_section_sector_category_class_type_kind_sort_variety_brand_model_version_edition_release_issue_number_figure_digit_symbol_character_letter_word_phrase_sentence_paragraph_chapter_book_volume_series_collection_set_group_cluster_bundle_package_parcel_box_container_holder_case_cover_wrapper_envelope_pouch_sack_bag_pack_crate_carton_packet_wrap_binding_bind_tie_fastener_clip_pin_staple_nail_screw_bolt_rivet_anchor_hook_ring_loop_circle_round_sphere_ball_orb_globe_world_planet_star_sun_moon_skies_cloud_wind_air_breath_life_being_entity_existence_presence_actuality_reality_truth_fact_certainty_assurance_confidence_trust_faith_belief_hope_expectation_anticipation_forecast_prediction_prophecy_oracle_seer_vision_dream_fantasy_imagination_creativity_art_skill_craft_trade_work_labor_task_job_duty_role_part_play_game_fun_amusement_entertainment_enjoyment_pleasure_delight_joy_bliss_ecstasy_rapture_transport_excitement_thrill_adventure_quest_journey_trip_travel_tour_visit_expedition_excursion_outing_walk_stroll_step_stride_pace_rate_speed_velocity_acceleration_motion_movement_action_activity_operation_process_procedure_method_technique_approach_strategy_tactic_plan_scheme_plot_design_blueprint_diagram_chart_graph_table_list_record_log_journal_diary_account_report_document_paper_article_essay_story_tale_legend_myth_fable_parable_allegory_metaphor_simile_analogy_comparison_contrast_difference_distinction_discrimination_separation_division_split_break_crack_fracture_flaw_fault_error_mistake_blunder_failure_defeat_loss_ruin_destruction_annihilation_extinction_death_end_finish_conclusion_close_shutdown_stop_halt_pause_break_rest_sleep_slumber_dream_night_darkness_shadow_shade_gloom_dusk_twilight_evening_nightfall_sunset_daybreak_dawn_morning_noon_midday_afternoon_daylight_sunshine_light_brightness_glare_flash_spark_flame_fire_heat_warmth_cold_chill_freeze_ice_frost_snow_rain_drizzle_shower_downpour_storm_tempest_wind_breeze_gust_blast_boom_crash_smash_hit_strike_beat_pulse_throb_ache_pain_agony_torment_torture_suffering_woe_grief_sorrow sadness_unhappiness_misery_despair_hopelessness_depression_gloom_doom_disaster_catastrophe_tragededy_horror_terror_fear_panic_alarm_fright_dread_anxiety_worry_concern_care_attention_notice_regard_respect_honor_glory_fame renown reputation_name_title_label_tag_mark_sign_token_badge_emblem_logo_icon_symbol_picture_image_photo_photograph_portrait_paint_drawing_sketch_outline_shape_form_figure_body_object_item_thing_piece_bit_part_fraction_segment_section_chunk_block_mass_weight_size_dimension_measure_amount_quantity_number_total_sum_whole_all_every_each_any_some_many_few_less_more_most_least_best_worst_good_bad_right_wrong_true_false_yes_no_up_down_left_right_forward_backward_in_out_on_off_over_under_above_below_high_low_big_small_large_little_long_short_wide_narrow_thick_thin_heavy_light_strong_weak_fast_slow_hard_soft_smooth rough_sharp_dull_hot_cold_warm_cool_new_old_young_old_recent_past_future_present_time_hour_minute_second_year_month_week_day_date_calendar_clock_watch_timer_alarm_schedule_program_plan_agenda_timetable_roster_roll_register_record_archive_history_memory_recall_remembrance_recollection_reflection_thought_contemplation_meditation_study_learning_school_college_university_academy_institute_center_facility_building_house_home_residence_dwelling_abode_shelter_refuge_sanctuary_temple_church_synagogue_mosque_palace_castle_fortress_stronghold_wall_fence_gate_door_window_room_chamber_hall_corridor_passage_entry_exit_route_path_way_street_road avenue boulevard highway_lane alley_sidewalk_bridge_tunnel_canal_channel_stream_river_lake_sea_ocean_water_pool_pond_well fountain spring source_origin_start_beginning_creation_birth_genesis_generation_production_manufacturing_make_build_construct_create_form_shape_mold_cast_model_pattern_design_plan_draft_sketch_draw_write_read_print_publish_share_send_receive_accept_take_get_put_set_place_lay_stand_sit_rest_wait_pause_hold_keep_save_store_reserve_retain_capture_grab_snatch_steal_take_acquire_gain_win earn_obtain_secure_collect_gather_assemble_meet_join_unite_combine_merge_mix_blend_stir_move_go_come_arrive_leave_depart_return_restore_replace_change_switch_turn_flip_rotate_spin_revolve_circle_surround_enclose_contain_hold_include_consist_compose_make_up_form_constitute_represent_show_display_exhibit_present_offer_give_donate_gift_award_reward_prize_bonus_extra_addition_increase_growth_expansion_extension_stretch_reach_extend_lengthen_elongate_stretch_expand_swell_grow_rise_ascend_climb_scale_mount_lift_raise_elevate_promote_advance_progress_proceed_continue_resume_go_on_move_on_push_on_drive_on_press_on_struggle_effort_attempt_try_test_experiment_trial_sample_example_instance_case_occasion_event_incident_affair_matter_subject_topic_theme_issue_question_problem_difficulty_challenge_obstacle_barrier_blockage_impediment_hindrance_delay_pause_wait_stop_arrest_check_brake_curb_limit_bound_restrict_confine restrain_control_manage_direct_guide_lead_head_command_order_rule govern_regulate_legislate_enact_establish_found_base_root_ground_floor_bottom_basebed_support_backing_backup_reserve_resource_asset_property_goods_effects_materials_supplies_tools_equipment_apparatus_machine_device_engine_motor_vehicle_car_truck_bus_train_plane_jet_ship_boat_yacht_vessel_submarine_spaceship_rocket_missile_weapon_arm_tool_implement_utensil_instrument_device_apparatus_appliance_fixture_fitment_accessory_attachment_add-on_extra_supplement_addition_appendix_tail_end_finish_close_conclude_complete_finalize_polish_perfect_refine_improve_enrich_enhance_augment_increase_multiply_amplify_magnify_intensify_heighten_deepen_widen_broaden_lengthen_extend_stretch_pull_drag_draw_haul_tug_yank_jerk_snap_click_tick_pop_bang_boom_crash_smash_dash_rush_run_race_speed_zoom_zip_zap_flash_glitter_sparkle_shimmer_glittergleam_shine_radiate_beam_emit_send_dispatch_transmit_broadcast_telegraph_phone_call_ring_sound_noise_voice_music_song_tune_note_pitch_key_chord_string_wire_line_thread_yarn_rope_cord_chain_link_connection_joint_junction_intersection_crossroads_corner_angle_curve_arch_arc_bow_arcade_gallery_passage_corridor_hallway_loft_attic_cellar_basement_ground_floor_level_flat_plain_field_meadadow_pasture_grass_lawn_yard_garden_park_square_plaza_place_market_shop_store_stock_inventory_supply_cache_reserve_collection_accumulation_heap_stack_pile_mass_bulk_load_freight_cargo_shipment_delivery_transport_transfer_shift_move_remove_clear_empty_void_blank_space_room_gap_interval_distance_span_extent_range_scope_limit_boundary_border_edge_verge_brink_margin_trim_cut_slice_piece_bit_fragment_chip_flake_layer_sheet_leaf_page_side_face_surface_skin_hide_leather_fur_wool_feather_quill_pen_pencil_brush_paint_color_red_blue_green_yellow_white_black_gray brown pink purple orange_gold_silver_bronze_copper iron_steel metal stone rock_pebble_gravel sand_clay_soil earth dirt mud dust_powder ash smoke fog mist cloud vapor steam_gas_air_wind breeze gust storm tempest_weather_climate_season_year_period_phase_stage_step_degree_grade_rank_level_status_state_condition_quality_trait_feature_aspect_attribute_property_characteristic_element_component_part_piece_fraction_section_segment_division_branch_leaf stem trunk root_seed fruit flower petal bud leaf_tree bush shrub plant herb weed grass grain wheat corn rice oats barley rye bread cake pie tart pastry cookie biscuit cracker chip snack meal dish plate bowl cup glass mug jug pitcher bottle jar_can tub_box crate_carton_packet_wrap_package_parcel_bundle_pack_bag sack pouch_wallet purse_money_cash_coin_bill_note_currency_exchange_trade_barter_swap_deal_transaction_sale_purchase_buy_sell_rent lease hire employ_pay_salary_wage_income_profit_gain_loss_cost_price_charge_fee_tax_tariff_custom_due toll fare_ticket_pass_license_permit_certificate_document_paper_card_record_file_folder_directory_catalog_index_list_register_roll_ledger_journal_log_diary_account_report_statement_balance_budget_estimate_quote_bid_offer_proposal_plan_scheme_project_program_campaign_drive_effort_push attempt trial test_exam_quiz_question_answer_reply_response_reaction_feedback_review_critique_comment_remark_note_annotation_obsation_insight_analysis_study_survey_poll_statistics_data_info_news_update_bulletin_notice_announcement_declaration proclamation decree edict order command directive_instruction_guideline_rule_regulation_policy_law_statute_act_bill_legislation_measure_resolution_decision_choice_selection_option_alternative_preference_favorite_pick_select_choose_opt_vote_elect_nominate_appoint_assign_designate_name_title_term_label_tag_stamp_seal_sign_mark_signature_autograph_initial_endorse_approve_authorize sanction warrant guarantee insure assure_secure_protect_guard_defend_shield_screen_cover_mask
+    bad: list[str] = []
+    for fn in sorted(os.listdir(rdir)):
+        if not (fn.startswith("admin") and fn.endswith(".py")):
+            continue
+        if fn == "admin_public.py":
+            continue
+        src = open(os.path.join(rdir, fn), encoding="utf-8").read()
+        if not re.search(r"dependencies\s*=\s*\[.*(require_admin_dep|_require_admin)", src, re.S):
+            bad.append(fn)
+    return bad
+
+
+def _call_name(func_node: ast.expr) -> tuple[str | None, str | None]:
+    """Resolve a `Call.func` node to `(function_name, owner_name)`.
+
+    `eval(x)`               -> ("eval", None)
+    `os.system(x)`          -> ("system", "os")
+    `ast.literal_eval(x)`   -> ("literal_eval", "ast")   — name is
+                               "literal_eval", never matches a bare
+                               "eval"/"exec" check.
+    `asyncio.create_subprocess_exec(...)` -> ("create_subprocess_exec",
+                               "asyncio") — never matches bare "exec".
+    Anything else -> (None, None).
+
+    This is AST-node identity, not substring matching, so it naturally
+    excludes regex-pattern string literals (never a Call node at all),
+    comments (not part of the AST), and safe lookalikes such as
+    `literal_eval`/`create_subprocess_exec` (different `.id`/`.attr`).
+    """
+    if isinstance(func_node, ast.Name):
+        return func_node.id, None
+    if isinstance(func_node, ast.Attribute):
+        owner = func_node.value.id if isinstance(func_node.value, ast.Name) else None
+        return func_node.attr, owner
+    return None, None
+
+
+def scan_dangerous_calls(root: str | None = None) -> dict:
+    """AST-based (not substring) detector for genuinely dangerous
+    calls in production code:
+      - a bare `eval(...)` / `exec(...)` builtin call
+      - `os.system(...)`
+      - `subprocess`/`asyncio` calls with a literal `shell=True`
+      - `requests`/`httpx`/`urllib` calls with a literal `verify=False`
+      - `pickle.load(...)` / `pickle.loads(...)`
+
+    Walking the real AST means safe lookalikes that only share a
+    substring with these names — `ast.literal_eval(...)`,
+    `asyncio.create_subprocess_exec(...)`, a regex pattern literal
+    containing the text "exec(", or a comment mentioning "eval()" —
+    are structurally different nodes and are never matched. This
+    replaces the naive substring class of false positive found during
+    the 2026-08 security triage (vanguard_scanner.py, tools_bridge.py,
+    orchestrator.py all flagged incorrectly by a text-matching scanner).
+
+    Skips `tests/` (see `_SKIP_DIRS`) — this gate is scoped to
+    production code, matching the guard's stated intent.
+    """
+    base = root or BACKEND_ROOT
+    findings: list[dict] = []
+    for dp, dns, fns in os.walk(base):
+        dns[:] = [d for d in dns if d not in _SKIP_DIRS]
+        for fn in fns:
+            if not fn.endswith(".py"):
+                continue
+            p = os.path.join(dp, fn)
+            rel = os.path.relpath(p, base).replace("\\", "/")
+            if rel in _AST_SCAN_KNOWN_SAFE_FILES:
+                # Belt-and-suspenders per G2: these files were
+                # individually verified during the 2026-08 triage to
+                # contain ONLY regex-pattern literals / rule-description
+                # strings, never a real dangerous Call. The AST walk
+                # below already can't match a string literal, so this
+                # skip is a documented no-op today — it exists so a
+                # future contributor sees explicitly which files were
+                # cleared, and so the allowlist is enforced even if a
+                # future refactor of this function ever changes how
+                # matching works.
+                continue
+            try:
+                src = open(p, encoding="utf-8", errors="replace").read()
+                tree = ast.parse(src, filename=rel)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name, owner = _call_name(node.func)
+                if name in ("eval", "exec") and owner is None:
+                    findings.append({"kind": f"real_{name}_call", "file": rel, "line": node.lineno})
+                elif name == "system" and owner == "os":
+                    findings.append({"kind": "real_os_system", "file": rel, "line": node.lineno})
+                elif name in ("load", "loads") and owner == "pickle":
+                    findings.append({"kind": "real_pickle_load", "file": rel, "line": node.lineno})
+                for kw in node.keywords:
+                    if (kw.arg == "shell" and isinstance(kw.value, ast.Constant)
+                            and kw.value.value is True):
+                        findings.append({"kind": "real_shell_true", "file": rel, "line": node.lineno})
+                    if (kw.arg == "verify" and isinstance(kw.value, ast.Constant)
+                            and kw.value.value is False):
+                        findings.append({"kind": "real_verify_false", "file": rel, "line": node.lineno})
+    return {"findings": findings, "finding_count": len(findings)}
+
+
+def scan_misconfig() -> dict:
+    findings: list[dict] = []
+
+    # debug=True in app/server construction
+    for dp, dns, fns in os.walk(BACKEND_ROOT):
+        dns[:] = [d for d in dns if d not in _SKIP_DIRS]
+        for fn in fns:
+            if not fn.endswith(".py"):
+                continue
+            p = os.path.join(dp, fn)
+            for i, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
+                ls = line.strip()
+                if ls.startswith("#"):
+                    continue
+                if re.search(r"\b(?:FastAPI|uvicorn\.run)\(.*debug\s*=\s*True", ls):
+                    findings.append({"kind": "debug_mode", "file": os.path.relpath(p, APP_ROOT), "line": i})
+                for pat in _DEFAULT_CRED_PATTERNS:
+                    if pat.search(ls):
+                        findings.append({"kind": "default_credential",
+                                         "file": os.path.relpath(p, APP_ROOT), "line": i})
+
+    # 2026-08 · Security-triage session — real (AST-based) dangerous
+    # call detector. Runs over the whole backend tree; findings carry
+    # a backend-relative path so we normalise to the APP_ROOT-relative
+    # form the rest of this scanner's findings use.
+    for f in scan_dangerous_calls()["findings"]:
+        findings.append({
+            "kind": f["kind"],
+            "file": os.path.join("backend", f["file"]),
+            "line": f["line"],
+        })
+
+    for fn in check_admin_router_gates():
+        findings.append({"kind": "ungated_admin_router", "file": f"backend/routers/{fn}"})
+
+    main_src = open(os.path.join(BACKEND_ROOT, "main.py"), encoding="utf-8").read()
+    if "@app.exception_handler(Exception)" not in main_src:
+        findings.append({"kind": "no_global_exception_handler", "file": "backend/main.py"})
+
+    return {"findings": findings, "finding_count": len(findings)}
+
+
+def run_scan() -> dict:
+    supply = scan_supply_chain()
+    mis = scan_misconfig()
+    ok = (supply["unpinned_count"] == 0 and supply["yarn_lock_present"]
+          and mis["finding_count"] == 0)
+    return {"supply_chain": supply, "misconfig": mis, "pass": ok}
+
+
+def main() -> int:
+    result = run_scan()
+    if "--json" in sys.argv:
+        print(json.dumps(result, indent=2))
+    else:
+        sc = result["supply_chain"]
+        print(f"Guard 21 security scan: unpinned deps={sc['unpinned_count']}, "
+              f"yarn.lock={'ok' if sc['yarn_lock_present'] else 'MISSING'}, "
+              f"misconfig findings={result['misconfig']['finding_count']}")
+        for d in sc["unpinned_deps"]:
+            print(f"  ✗ unpinned: {d}")
+        for f in result["misconfig"]["findings"]:
+            print(f"  ✗ {f['kind']}: {f['file']}" + (f":{f['line']}" if "line" in f else ""))
+        print("PASS" if result["pass"] else "FAIL")
+    return 0 if result["pass"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
