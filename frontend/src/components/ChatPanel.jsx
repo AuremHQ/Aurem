@@ -108,6 +108,16 @@ import RepoHelpDialog    from "./chat/RepoHelpDialog";
 import ScanStatusStrip, { markScanJustCompleted } from "./ScanStatusStrip";        // Iter 212m-190 · Session 3
 import FindingsTeaserStrip from "./FindingsTeaserStrip";                            // 2026-08-23 · Findings-to-fix bridge
 import SlashCommandMenu, { matchSlashCommands, SLASH_COMMANDS } from "./SlashCommandMenu";         // Iter 212m-190 · Session 3
+
+// 2026-10 — admin-only slash commands (today: /reverse-engineer) must
+// never appear in the dropdown or be matchable for a non-admin, even
+// though SLASH_COMMANDS itself has no concept of "current user". This
+// is the one place all three matchSlashCommands(...) call sites below
+// route through, so the gate can't be missed on any of them.
+function matchSlashCommandsForUser(value) {
+  const admin = isAdminOrFounder();
+  return matchSlashCommands(value).filter((c) => !c.adminOnly || admin);
+}
 import CharCounter from "./CharCounter";                                             // Iter 388f — live char counter for 20k cap
 import { sanitizeErrorMessage } from "../lib/sanitizeError";                          // R3 P1-3 — no raw backend error ever reaches a toast
 import {
@@ -2158,6 +2168,22 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         runSlashCommand(exactCmd, "send_exact_match");
         return;
       }
+      // 2026-10 — /reverse-engineer is the one slash command that
+      // TAKES AN ARGUMENT (the target URL), so it can never match the
+      // exact-trigger check above. Same dual-interception contract as
+      // every other command: this one check in send() covers BOTH the
+      // Enter-key path (onKeyDown falls through to send() once
+      // liveMatches is empty, which it always is here since the URL
+      // text follows the trigger) and the Send-button path.
+      const reaMatch = /^\/reverse-engineer\s+(\S+)/i.exec(text.trim());
+      if (reaMatch) {
+        if (!isAdminOrFounder()) {
+          toast({ message: "This command is admin only.", kind: "warn" });
+          return;
+        }
+        runReverseEngineerCommand(reaMatch[1]);
+        return;
+      }
       // Telemetry-only, no behavior change: if something that LOOKS
       // like a bug-hunt trigger reaches this point uncaught (e.g. a
       // future regression reopens the exact class of bug this batch
@@ -3456,7 +3482,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     // CURRENT `input` value at the moment Enter is pressed removes
     // that whole class of race — it can never be stale, because
     // there's nothing to be stale.
-    const liveMatches = matchSlashCommands(input);
+    const liveMatches = matchSlashCommandsForUser(input);
     if (liveMatches.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -3518,6 +3544,41 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     }
     logBugHuntTrigger(trigger, true, null);
     await _executeSlashScan(cmd, projectId);
+  }
+
+  // 2026-10 — admin-only "/reverse-engineer <url>" chat skill
+  // (github.com/morluto/rea). Deliberately bypasses the LLM chat
+  // pipeline entirely, same as every other deterministic slash
+  // command here — this never becomes a prompt the orchestrator sees.
+  // Posts ONE optimistic message with kind:"rea_job" that
+  // ReaAnalysisCard (MessageBubble) polls GET /admin/rea/jobs/{id}
+  // itself — no polling loop needed here.
+  async function runReverseEngineerCommand(rawUrl) {
+    setSlashOpen(false);
+    setInput("");
+    let res;
+    try {
+      res = await api.post("/admin/rea/analyze", { url: rawUrl });
+    } catch (e) {
+      toast({
+        message: e?.response?.data?.detail || "Couldn't start the reverse-engineer job.",
+        kind: "error",
+      });
+      return;
+    }
+    const { job_id: jobId, url } = res.data;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: `/reverse-engineer ${url}`, ts: Date.now() },
+      {
+        role: "assistant",
+        content: `Reverse-engineering ${url} — admin only, frontend files are real, backend is observed API calls only.`,
+        kind: "rea_job",
+        reaJobId: jobId,
+        reaUrl: url,
+        ts: Date.now(),
+      },
+    ]);
   }
 
   // Iter 212m-217 — Rate-limit aware scan executor.
@@ -6423,7 +6484,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             AND the input still starts with a slash pattern. */}
         {slashOpen && (
           <SlashCommandMenu
-            matches={matchSlashCommands(input)}
+            matches={matchSlashCommandsForUser(input)}
             selectedIndex={slashIdx}
             onPick={(cmd) => runSlashCommand(cmd, "menu_click")}
           />
@@ -6445,7 +6506,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             // the popover the moment the user types a leading "/",
             // filters as they keep typing, closes once the prefix is
             // gone or the input contains a newline.
-            const isSlashy = v.startsWith("/") && !v.includes("\n") && matchSlashCommands(v).length > 0;
+            const isSlashy = v.startsWith("/") && !v.includes("\n") && matchSlashCommandsForUser(v).length > 0;
             setSlashOpen(isSlashy);
             if (!isSlashy) setSlashIdx(0);
             // Iter 212m-123 — Per founder spec: TopBar / focus chrome

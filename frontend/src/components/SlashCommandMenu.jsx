@@ -13,7 +13,7 @@
  * spend for what is a deterministic API call.
  */
 import React, { useEffect, useState } from "react";
-import { Search, ShieldCheck, Bug, Activity, Container } from "lucide-react";
+import { Search, ShieldCheck, Bug, Activity, Container, Binary } from "lucide-react";
 
 export const SLASH_COMMANDS = [
   {
@@ -55,6 +55,22 @@ export const SLASH_COMMANDS = [
     description: "Container hardening + compose file checks",
     icon:        Container,
     categories:  ["docker"],
+  },
+  {
+    // 2026-10 — admin-only "reverse engineer this website" chat skill
+    // (github.com/morluto/rea). Unlike every command above, this one
+    // TAKES AN ARGUMENT (the target URL) and does not fire from the
+    // dropdown alone — ChatPanel's exact-trigger-with-argument check
+    // (see runReverseEngineerCommand) handles it on Enter/Send.
+    // `adminOnly` is filtered out of the dropdown for non-admins in
+    // ChatPanel (isAdminOrFounder) before matches ever reach this menu.
+    id:            "reverse-engineer",
+    trigger:       "/reverse-engineer",
+    label:         "Reverse engineer a website",
+    description:   "Admin only — paste a live URL, inspect its real files",
+    icon:          Binary,
+    adminOnly:     true,
+    takesArgument: true,
   },
 ];
 

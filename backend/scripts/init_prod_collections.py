@@ -65,6 +65,16 @@ _BOOTSTRAP_SPEC: list[tuple[str, list[tuple[list, dict]]]] = [
         ([("user_id", 1), ("created_at", -1)], {}),
         ([("flag_type", 1), ("resolved", 1)],   {}),
     ]),
+    # 2026-10 — admin "reverse engineer this website" chat skill. `job_id`
+    # IS the natural dedup key (start_job generates a fresh uuid-based
+    # one per job and only ever upserts by it), so this is a secondary
+    # read-path index for the "block a second concurrent job per admin"
+    # check in routers/admin_rea.py and the chat-history poll-by-job-id
+    # lookup, not a dedup constraint.
+    ("rea_jobs", [
+        ([("job_id", 1)],                          {"unique": True}),
+        ([("requested_by", 1), ("status", 1)],     {}),
+    ]),
     # Master Prompt v2 Part 2 — pricing engine. `pricing_versions._id` is
     # a monotonic version id (dedup is the default `_id` index); this
     # secondary index lets the "which version is effective now" lookup

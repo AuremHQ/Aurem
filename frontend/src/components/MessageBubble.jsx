@@ -38,6 +38,7 @@ import UnlockProCTA, { shouldShowUnlockProCTA } from "./UnlockProCTA";
 import StepCards from "./StepCards";   // Iter 212m-19 — live step cards
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import SaveToGitHubModal from "./SaveToGitHubModal";
+import ReaAnalysisCard from "./ReaAnalysisCard";
 import ThinkingLoader from "./ThinkingLoader";
 import { brandProvider } from "../lib/providerLabel";
 import { useFriendlyStatusPhrase } from "../hooks/useFriendlyStatusPhrase";
@@ -1569,6 +1570,15 @@ export default function MessageBubble({
           onOpenDeployTab={onOpenDeployTab}
           onOpenLivePopup={onOpenLivePopup}
         />
+
+        {/* 2026-10 — admin-only "/reverse-engineer <url>" chat skill
+            (github.com/morluto/rea). Server-side gating already
+            happened before this message existed (ChatPanel only
+            calls /admin/rea/analyze for an admin/founder); this is
+            purely the result card. */}
+        {m.role === "assistant" && m.kind === "rea_job" && m.reaJobId && (
+          <ReaAnalysisCard jobId={m.reaJobId} url={m.reaUrl} />
+        )}
 
         {/* Iter 51 — Auto-handoff (Mode D→C, etc.) progress card.
             When the server fires `task_handoff` with no aurem-handoff
