@@ -1,5 +1,6 @@
 """
-scripts/pricing_copy_lint.py — Iter 364 · Marketing-copy truth gate
+scripts/pricing_copy_lint.py — Iter 364 · Marketing-copy truth gate,
+extended Master Prompt v2 PART 5.1/5.2.
 
 Prevents the "unlimited tasks" drift that landed in production before
 Iter 364. Reads `backend/services/subscription_tiers.py` (source of
@@ -16,14 +17,95 @@ Rules:
      admin tier and are legitimate.
   3. Explicitly-allowed sentences may be listed in
      `scripts/pricing_copy_lint_allowlist.txt`.
+  4. (PART 5.1, ALWAYS ON) Per-action token-cost phrasing ("tokens per
+     fix", "N tokens per task", "costs N tokens") is forbidden in any
+     scanned file, regardless of TOKEN_BILLING_MODE — the Part 4.3
+     "never show a per-action number" display rule applies to COPY,
+     not just to live component state.
+  5. (PART 5.1, MODE-AWARE) When TOKEN_BILLING_MODE is not "off", the
+     OLD task-based plan-wording phrases (see the PART 5.0 inventory:
+     "N tasks/month", "N free tasks", "no token billing"/"no
+     per-token" claims) become forbidden too. While the env stays
+     "off" (this delivery), these phrases are still ALLOWED — they
+     accurately describe today's live product — so this lint stays
+     green now and goes red automatically the moment a real deploy
+     flips the env var, forcing a human to update the static/SEO
+     marketing files this delivery does not rewrite outright (see the
+     PART 5 report's Scope of improvement for the full list).
 
-Wired into CI via `.github/workflows/ci.yml` in a follow-up.
+Wired into CI via `.github/workflows/ci.yml`.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
+
+_VALID_MODES = {"off", "shadow", "on"}
+
+
+def _current_mode() -> str:
+    """Mirrors services.wallet.billing_mode()'s own fail-safe exactly
+    (same env var, same default, same safe-fallback-to-off on an
+    unrecognised value) — duplicated here (not imported) so this
+    script has zero backend-package import dependencies and can run
+    standalone in CI exactly as it does today."""
+    raw = (os.environ.get("TOKEN_BILLING_MODE") or "off").strip().lower()
+    return raw if raw in _VALID_MODES else "off"
+
+
+# Rule 4 — always on, regardless of mode. Deliberately simple
+# substring/regex matches over a short, curated phrase list rather
+# than a general NLP heuristic — false negatives here are expected
+# to be caught by code review; false positives are expensive (break
+# CI), so precision over recall.
+_PER_ACTION_COST_PATTERNS = [
+    re.compile(r"tokens?\s+per\s+(fix|task|chat|turn|message|call)", re.IGNORECASE),
+    re.compile(r"\bcosts?\s+\d+\s+tokens?\b", re.IGNORECASE),
+    re.compile(r"\d+\s+tokens?\s+per\s+(fix|task|chat|turn|message|call)", re.IGNORECASE),
+]
+
+
+def _scan_per_action_cost(text: str) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if any(p.search(line) for p in _PER_ACTION_COST_PATTERNS):
+            hits.append((lineno, line.strip()[:180]))
+    return hits
+
+
+# Rule 5 — mode-aware cutover forcing function. Deliberately NARROW:
+# only phrasing shaped like an actual plan/quota CLAIM ("N tasks/
+# month", "N free tasks", "no token billing") — NOT every occurrence
+# of the word "task" (ticket/iteration numbering like "Iter 73 Task
+# 1", admin-analytics counts like "0 tasks run", and the generic
+# "1 fix = 1 task" UNIT label are all common and would drown out real
+# hits in noise if matched).
+_LEGACY_TASK_WORDING_PATTERNS = [
+    # "N free tasks" / "free ... N tasks" / "N tasks ... free", the
+    # word "free" within ~20 chars of a number+tasks, either order —
+    # catches "10 free tasks", "Claim 10 free tasks", "Start free —
+    # 10 tasks".
+    re.compile(r"\d+\s+free\s+tasks?\b", re.IGNORECASE),
+    re.compile(r"free\b.{0,20}\d+\s+tasks?\b", re.IGNORECASE),
+    re.compile(r"\d+\s+tasks?\b.{0,20}free\b", re.IGNORECASE),
+    re.compile(r"tasks?\s*/\s*month", re.IGNORECASE),
+    re.compile(r"tasks?\s+per\s+month", re.IGNORECASE),
+    re.compile(r"no\s+token\s+(billing|metering)", re.IGNORECASE),
+    re.compile(r"no\s+per-token\s+(pricing|billing)", re.IGNORECASE),
+    re.compile(r"flat,?\s+not\s+per-token", re.IGNORECASE),
+]
+
+
+def _scan_legacy_task_wording(text: str, *, mode: str) -> list[tuple[int, str]]:
+    if mode == "off":
+        return []
+    hits: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if any(p.search(line) for p in _LEGACY_TASK_WORDING_PATTERNS):
+            hits.append((lineno, line.strip()[:180]))
+    return hits
 
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "frontend" / "src"
@@ -45,6 +127,11 @@ SKIP_FILES = {
     "Tokens.jsx",              # "∞ Unlimited" label for founder
     "Settings.jsx",            # founder tasks-remaining label
 }
+
+# Legal documents are reviewed by the founder + lawyer (PART 5.1),
+# never auto-edited or CI-blocked by this script — excluded from
+# BOTH new rules (4 and 5) by directory, not just by filename.
+SKIP_DIRS = {"policies"}
 
 # Whitelisted exact sentences (case-preserved substring match).
 ALLOWLIST_FILE = ROOT / "backend" / "scripts" / "pricing_copy_lint_allowlist.txt"
@@ -94,28 +181,40 @@ def _scan_file(path: Path, allowlist: set[str]) -> list[tuple[int, str]]:
 
 def main() -> int:
     allowlist = _load_allowlist()
-    all_hits: list[tuple[Path, int, str]] = []
+    mode = _current_mode()
+    all_hits: list[tuple[Path, int, str, str]] = []
     for base in SCAN_DIRS:
         if not base.exists():
             continue
         for p in base.rglob("*"):
             if not p.is_file() or p.suffix not in SCAN_EXT:
                 continue
-            if p.name in SKIP_FILES:
+            if any(part in SKIP_DIRS for part in p.relative_to(ROOT).parts):
                 continue
-            for lineno, snippet in _scan_file(p, allowlist):
-                all_hits.append((p.relative_to(ROOT), lineno, snippet))
+            if p.name not in SKIP_FILES:
+                for lineno, snippet in _scan_file(p, allowlist):
+                    all_hits.append((p.relative_to(ROOT), lineno, snippet, "unlimited-near-pricing-keyword"))
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            for lineno, snippet in _scan_per_action_cost(text):
+                if not any(al in snippet for al in allowlist):
+                    all_hits.append((p.relative_to(ROOT), lineno, snippet, "per-action-token-cost"))
+            for lineno, snippet in _scan_legacy_task_wording(text, mode=mode):
+                if not any(al in snippet for al in allowlist):
+                    all_hits.append((p.relative_to(ROOT), lineno, snippet, "legacy-task-wording-cutover"))
 
     if not all_hits:
-        print("[pricing_copy_lint] OK — no drift-prone 'unlimited' copy found.")
+        print(f"[pricing_copy_lint] OK — no drift-prone copy found (TOKEN_BILLING_MODE={mode!r}).")
         return 0
 
     print("[pricing_copy_lint] ❌ FOUND drift-prone marketing copy:")
     print("Backend source of truth: backend/services/subscription_tiers.py:26-83")
     print("  Free=10  Starter=50  Pro=300  Team=400 tasks/month")
     print()
-    for rel, lineno, snippet in all_hits:
-        print(f"  {rel}:{lineno}  {snippet}")
+    for rel, lineno, snippet, rule in all_hits:
+        print(f"  [{rule}] {rel}:{lineno}  {snippet}")
     print()
     print("If a line is a legitimate exception (e.g. describes the")
     print("server-side is_unlimited flag, or founder-tier UI), add it")

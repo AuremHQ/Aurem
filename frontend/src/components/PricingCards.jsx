@@ -17,6 +17,16 @@
 import React, { useState, useEffect } from "react";
 import { Check, Sparkles, ShieldCheck, Users } from "lucide-react";
 import { api, getToken } from "../lib/api";
+import { tierCapacityLine } from "../lib/billingCopy";
+
+// Master Prompt v2 PART 5.1 — the "N tasks per month" bullet for each
+// tier is replaced with its token-mode equivalent (tierCapacityLine)
+// WHEN TOKEN_WORDING_ACTIVE; returns null while legacy, so the
+// original string below keeps rendering unchanged until a real
+// cutover build flips VITE_TOKEN_BILLING_MODE.
+function _capacityFeature(tierId, legacyText) {
+  return tierCapacityLine(tierId) || legacyText;
+}
 
 export const PRICING_TIERS = [
   {
@@ -27,7 +37,7 @@ export const PRICING_TIERS = [
     icon: Sparkles,
     tagline: "Kick the tires",
     features: [
-      "10 tasks per month",
+      _capacityFeature("free", "10 tasks per month"),
       "Standard mode",
       "Changes delivered to your repo",
       "F12 error debugger",
@@ -44,7 +54,7 @@ export const PRICING_TIERS = [
     icon: ShieldCheck,
     tagline: "For weekend builders",
     features: [
-      "50 tasks per month",
+      _capacityFeature("starter", "50 tasks per month"),
       "⚡ Swift mode only",
       "Changes delivered to your repo with one-click rollback",
       "Live worker tape",
@@ -62,7 +72,7 @@ export const PRICING_TIERS = [
     tagline: "Most popular",
     highlight: true,
     features: [
-      "300 tasks per month",
+      _capacityFeature("pro", "300 tasks per month"),
       "Swift + Pro review modes",
       "Changes delivered to your repo — Beta",
       "Project Brain memory",
@@ -82,7 +92,7 @@ export const PRICING_TIERS = [
     tagline: "Ship as a squad",
     features: [
       "Everything in Pro",
-      "400 tasks per month",
+      _capacityFeature("team", "400 tasks per month"),
       "🚀 Maxx mode — Claude writes your code",
       "Changes delivered to your repo — Beta",
       "All 3 modes: Swift, Pro, Maxx",

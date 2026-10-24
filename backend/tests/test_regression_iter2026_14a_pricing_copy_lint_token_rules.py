@@ -93,9 +93,12 @@ class TestModeAwareLegacyWordingForcingFunction:
     @pytest.mark.parametrize("phrase", [
         "Start free — 10 tasks",
         "10 free tasks, no credit card required.",
+        "Claim 10 free tasks",
         "50 tasks per month",
+        "10 tasks/month",
         "no token billing",
         "no per-token pricing",
+        "Pricing is flat, not per-token",
     ])
     def test_legacy_task_wording_allowed_while_mode_off(self, lint_module, phrase):
         hits = _scan_text(lint_module, phrase, mode="off")
@@ -104,13 +107,32 @@ class TestModeAwareLegacyWordingForcingFunction:
     @pytest.mark.parametrize("phrase", [
         "Start free — 10 tasks",
         "10 free tasks, no credit card required.",
+        "Claim 10 free tasks",
         "50 tasks per month",
+        "10 tasks/month",
         "no token billing",
         "no per-token pricing",
+        "Pricing is flat, not per-token",
     ])
     def test_legacy_task_wording_forbidden_once_mode_is_on(self, lint_module, phrase):
         hits = _scan_text(lint_module, phrase, mode="on")
         assert hits, f"legacy wording must be flagged once mode=on (cutover forcing function): {phrase!r}"
+
+    @pytest.mark.parametrize("phrase", [
+        "Iter 73 Task 1 — initial live tape.",
+        "2026-08-28 · NEW P0 Task 1d — the ship-cta-fallback banner",
+        "0 tasks run — candidates for re-engagement",
+        "10/25/50 task auto-prompt -> /wrapped (Iter 77)",
+        "Fix · 1 task",
+        "task-quota gating (1 fix = 1 task, tier-gated)",
+    ])
+    def test_unrelated_task_mentions_are_not_flagged_as_billing_copy(self, lint_module, phrase):
+        """Ticket/iteration numbering, admin-analytics counts, and
+        the generic 1-fix-=-1-task UNIT labels are NOT billing-plan
+        claims — flagging them would be noisy enough that nobody
+        would trust (or fix) real hits once the lint goes live."""
+        hits = _scan_text(lint_module, phrase, mode="on")
+        assert hits == [], f"false positive on a non-billing 'task' mention: {phrase!r}"
 
     def test_legacy_task_wording_forbidden_in_shadow_mode_too(self, lint_module):
         hits = _scan_text(lint_module, "10 free tasks", mode="shadow")

@@ -20,12 +20,16 @@ import { X, Lock } from "lucide-react";
 import useModalA11y from "../../hooks/useModalA11y";
 import { api } from "../../lib/api";
 import { toast } from "../Toast";
+import { tierCapacityLine, TOKEN_WORDING_ACTIVE } from "../../lib/billingCopy";
 
 const DISMISS_KEY = "aurem_usage_limit_modal_dismissed";
 
+// Master Prompt v2 PART 5.1 — same switch PricingCards.jsx uses:
+// tierCapacityLine returns null while legacy, so these literals keep
+// rendering unchanged until a real cutover build.
 const PLANS = [
-  { id: "starter", label: "Starter", price: "$9/mo", tasks: "50 tasks/month" },
-  { id: "pro",     label: "Pro",     price: "$19/mo", tasks: "300 tasks/month", popular: true },
+  { id: "starter", label: "Starter", price: "$9/mo", tasks: tierCapacityLine("starter") || "50 tasks/month" },
+  { id: "pro",     label: "Pro",     price: "$19/mo", tasks: tierCapacityLine("pro") || "300 tasks/month", popular: true },
 ];
 
 export default function UsageLimitModal({ open, onClose, usage }) {
