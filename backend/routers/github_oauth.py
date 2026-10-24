@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -20,12 +21,17 @@ from fastapi.responses import RedirectResponse
 
 from cto_services.auth import create_token, current_dev
 from cto_services.db import get_db
+import services.github_app as _ga
 from services.github_oauth import auth_url, exchange, gh_user, gh_repos, IDENTITY_SCOPES
 from services.usage import is_founder_email
 from routers.github_funnel import track_server_side as _funnel_track  # 2026-08-01
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/github/oauth", tags=["GitHub OAuth"])
+# Iter 2026-10-24 — shared with routers/github_app.py's own state TTL so
+# the `gha:` state we mint below (after the account-switch step) expires
+# on the exact same schedule a normal /github/app/install state would.
+_GHA_STATE_TTL_SECONDS = 15 * 60
 
 
 def _request_origin(req: Request) -> Optional[str]:
@@ -114,6 +120,7 @@ async def connect(
     signup: Optional[str] = Query(None),
     intent: Optional[str] = Query(None),
     force_reauth: Optional[str] = Query(None),
+    app_install: Optional[str] = Query(None),
     fs: Optional[str] = Query(default=None),    # 2026-08-01 funnel session_id
     fsrc: Optional[str] = Query(default=None),  # 2026-08-01 funnel source
 ):
@@ -136,13 +143,32 @@ async def connect(
     instead of silently returning the cached session. Used by the
     "Switch GitHub account" link in the Add-Project modal.
 
+    `?app_install=1` (Iter 2026-10-24) — a lightweight, IDENTITY-ONLY
+    reauth (always `prompt=select_account`, never writes anything to
+    `dev_users.github`) used ONLY to force the browser's github.com
+    session onto whichever account the user just picked BEFORE chaining
+    into the real GitHub App install URL. Root-caused founder report:
+    "Add repository" for a second project kept landing on the FIRST
+    project's already-installed GitHub account's settings page — that is
+    standard, unavoidable GitHub behavior when `/apps/<slug>/
+    installations/new` is hit by an already-authenticated browser.
+    GitHub has no query param to override it. The only lever available
+    is switching the browser's *own* github.com session first, which
+    this does via `prompt=select_account` on the ordinary OAuth
+    authorize page. `useGitHubConnectStatus.js::startConnect()` now
+    always routes through here instead of hitting `/github/app/install`
+    directly, so every "Connect GitHub" click shows the account picker.
+    See the `app_install_switch` branch in `/callback` for what happens
+    after the user picks an account.
+
     `?fs=<session_id>&fsrc=<source>` (2026-08-01) — funnel telemetry
     hooks so the client `cta_click` event and the server-side
     `oauth_redirect`/`callback_received`/`linked` events all share a
     session_id. Both params are stored in `oauth_states` and re-read
     inside `/callback` so the whole flow is stitchable.
     """
-    fr = (force_reauth or "").lower() in ("1", "true", "yes")
+    is_app_install = (app_install or "").lower() in ("1", "true", "yes")
+    fr = is_app_install or (force_reauth or "").lower() in ("1", "true", "yes")
     origin = _request_origin(request)
     db = get_db()
     if signup in ("1", "true", "yes"):
@@ -188,16 +214,17 @@ async def connect(
         authorization = f"Bearer {auth}"
     user = await current_dev(authorization)
     state = f"{user['user_id']}:{uuid.uuid4().hex}"
+    mode = "app_install_switch" if is_app_install else "connect"
     if db is not None:
         await db.oauth_states.insert_one({
             "state":      state,
-            "mode":       "connect",
+            "mode":       mode,
             "user_id":    user["user_id"],
             "ts":         time.time(),
             "origin":     origin,
             "created_at": datetime.now(timezone.utc),
             "funnel_session": fs,
-            "funnel_source":  fsrc or "settings_card",
+            "funnel_source":  fsrc or mode,
         })
     # 2026-08-01 — server-side funnel event.
     # 2026-08-24 — dedupe fix: when `fs` is missing (unstitched popup
@@ -207,12 +234,15 @@ async def connect(
     # Authenticated connects now fall back to a deterministic per-user
     # session id, so the (session_id, stage) dedupe actually dedupes.
     await _funnel_track(
-        "oauth_redirect", source=(fsrc or "settings_card"),
+        "oauth_redirect", source=(fsrc or mode),
         session_id=fs or f"srv:uid:{user['user_id']}",
         user_id=user["user_id"],
-        meta={"mode": "connect"},
+        meta={"mode": mode},
     )
-    return RedirectResponse(url=auth_url(state, force_reauth=fr))
+    return RedirectResponse(url=auth_url(
+        state, force_reauth=fr,
+        scopes=IDENTITY_SCOPES if is_app_install else None,
+    ))
 
 
 @router.get("/callback")
@@ -253,13 +283,32 @@ async def callback(
         # Iter 212m-99 — pull origin out of the state row so the
         # cancel-redirect lands on the same host the user started on.
         cancel_origin = None
+        cancel_mode = None
         try:
             db_tmp = get_db()
             if db_tmp is not None and state:
                 s_tmp = await db_tmp.oauth_states.find_one({"state": state})
                 cancel_origin = (s_tmp or {}).get("origin")
+                cancel_mode = (s_tmp or {}).get("mode")
         except Exception:
             pass
+        # Clean up the dangling state row so it can't be replayed.
+        try:
+            db = get_db()
+            if db is not None and state:
+                await db.oauth_states.delete_one({"state": state})
+        except Exception:
+            pass
+        # Iter 2026-10-24 — the `app_install_switch` round-trip runs
+        # INSIDE the GitHub-App-install popup, not a full /projects tab
+        # — cancelling it here must close that same popup, not navigate
+        # it to the full Projects page. Reuse the App-install flow's own
+        # popup-closing bridge so useGitHubConnectStatus.js's existing
+        # "popup closed = denied" handling applies unchanged.
+        if cancel_mode == "app_install_switch":
+            return RedirectResponse(
+                url="/api/aurem-dev/github/app/installed?status=err&err=account_switch_cancelled"
+            )
         # Decide where to send them based on the state prefix:
         #   "login:..."  → /login    (iter 113 — UX fix)
         #   "signup:..." → /signup
@@ -272,13 +321,6 @@ async def callback(
             target_path = "/signup"
         elif state and state.startswith("login:"):
             target_path = "/login"
-        # Clean up the dangling state row so it can't be replayed.
-        try:
-            db = get_db()
-            if db is not None and state:
-                await db.oauth_states.delete_one({"state": state})
-        except Exception:
-            pass
         reason = error or "missing_code"
         # Keep the redirect URL short — frontend reads ?github=cancelled
         return RedirectResponse(
@@ -527,6 +569,37 @@ async def callback(
                 f"&new={'1' if is_new_account else '0'}"
             )
         )
+
+    # ── Account-switch-then-install flow (Iter 2026-10-24) ────────────
+    # Identity exchange above already did its one job: it forced the
+    # browser's github.com session onto whichever account the user just
+    # picked on the `prompt=select_account` screen. Nothing from this
+    # token/identity is persisted — chain straight into the REAL GitHub
+    # App install URL (same one `/github/app/install` would have built)
+    # so `routers/github_app.py::install_callback` + the existing
+    # `/github/app/installed` popup bridge finish the flow unchanged.
+    if flow == "app_install_switch":
+        user_id = s.get("user_id") or mode_or_user
+        if not user_id:
+            raise HTTPException(400, "Invalid state")
+        gha_state = f"gha:{user_id}:{secrets.token_urlsafe(24)}"
+        await db.oauth_states.insert_one({
+            "state":       gha_state,
+            "kind":        "github_app_install",
+            "mode":        "github_app_install",
+            "user_id":     user_id,
+            "used":        False,
+            "created_at":  datetime.now(timezone.utc),
+            "expires_at":  datetime.now(timezone.utc).timestamp() + _GHA_STATE_TTL_SECONDS,
+            "ts":          time.time(),
+            "funnel_session": funnel_session,
+        })
+        await _funnel_track(
+            "app_install_redirect", source="wizard_account_switch",
+            session_id=funnel_session, user_id=user_id,
+            meta={"state_prefix": "gha", "switched_to_gh_login": gh_login},
+        )
+        return RedirectResponse(url=_ga.install_url(state=gha_state), status_code=302)
 
     # ── Connect-existing-account flow (original behaviour) ────────────
     user_id = s.get("user_id") or mode_or_user

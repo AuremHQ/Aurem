@@ -131,7 +131,18 @@ export default function useGitHubConnectStatus() {
   const startConnect = useCallback(() => {
     const token = getToken();
     if (!token) return { ok: false, reason: "no_session" };
-    const url = `${API_BASE}/github/app/install?auth=${encodeURIComponent(token)}`;
+    // Iter 2026-10-24 — every "Connect GitHub" click now routes through
+    // the account-switch step FIRST (`?app_install=1` forces GitHub's
+    // `prompt=select_account` picker) instead of hitting
+    // `/github/app/install` directly. Root-caused founder report:
+    // returning builders kept landing on whichever GitHub account was
+    // already logged in — standard, unavoidable GitHub behavior once an
+    // App is installed for that account — with no way to reach a fresh
+    // install screen for a DIFFERENT account without first switching the
+    // browser's own github.com session. See routers/github_oauth.py's
+    // `app_install_switch` flow for the chained redirect into the real
+    // install URL this used to open directly.
+    const url = `${API_BASE}/github/oauth/connect?app_install=1&auth=${encodeURIComponent(token)}`;
     const popup = window.open(url, "aurem_github_app_install", "width=720,height=800");
     trackFunnel("connect_repo_click", "wizard", { popup_blocked: !popup });
     if (!popup) return { ok: false, reason: "popup_blocked" };
@@ -242,7 +253,7 @@ export default function useGitHubConnectStatus() {
     return latest;
   }, [fetchStatus, finishGrant]);
   const token = getToken();
-  const installUrl = token ? `${API_BASE}/github/app/install?auth=${encodeURIComponent(token)}` : null;
+  const installUrl = token ? `${API_BASE}/github/oauth/connect?app_install=1&auth=${encodeURIComponent(token)}` : null;
   return {
     status, connecting, syncing, timedOut, denied, pending, connectionError,
     startConnect, retry: startConnect, refresh, installUrl, freshInstallIds,
