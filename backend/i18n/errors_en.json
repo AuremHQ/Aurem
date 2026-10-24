@@ -71,8 +71,8 @@
   },
   "COST_CAP_REACHED": {
     "title": "Monthly budget reached",
-    "what_happened": "You've used up your tasks for this month. Your work is safe.",
-    "what_to_try": ["Upgrade your plan for more tasks this month.", "Or come back next billing cycle — nothing was lost."]
+    "what_happened": "You've used up your monthly budget. Your work is safe.",
+    "what_to_try": ["Upgrade your plan for more capacity this month.", "Or come back next billing cycle — nothing was lost."]
   },
   "INTERNAL_CALL_ERROR": {
     "title": "This one's on us",

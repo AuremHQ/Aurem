@@ -15,11 +15,12 @@ import PasswordInput from "../components/PasswordInput";
 import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
 import CountryCodeSelect from "../components/CountryCodeSelect";
 import { isValidPhoneNumber } from "libphonenumber-js";
+import { signupFreeOfferTitle, signupFreeOfferDescription, freeOfferShortLine } from "../lib/billingCopy";
 
 export default function Signup() {
   usePageMeta({
-    title: "Sign up · Claim 10 free tasks · ORA by Aurem",
-    description: "Create your AUREM account in 30 seconds. 10 free tasks on signup — no credit card required. Bring your own Anthropic, DeepSeek or Gemini key.",
+    title: signupFreeOfferTitle(),
+    description: signupFreeOfferDescription(),
     canonical: (typeof window !== "undefined" ? window.location.origin : "") + "/signup",
   });
   const navigate = useNavigate();
@@ -151,7 +152,7 @@ export default function Signup() {
           <span className="eyebrow">sign up</span>
           <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>Start building, production-ready from day one</h1>
           <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            10 free tasks. No card required.
+            {freeOfferShortLine()}
           </p>
         </div>
 

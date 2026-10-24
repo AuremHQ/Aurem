@@ -30,6 +30,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../lib/api";
 import { pageTitle } from "../lib/siteConfig";
+import { heroFreeOfferCta, TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
 import MarketingNav from "../components/marketing/MarketingNav";
@@ -759,12 +760,12 @@ export default function Landing() {
           </div>
           <div className="hero-actions">
             <div className="hero-buttons">
-              <Link className="btn-primary" to="/signup" data-testid="hero-cta-signup">Start free — 10 tasks</Link>
+              <Link className="btn-primary" to="/signup" data-testid="hero-cta-signup">{heroFreeOfferCta()}</Link>
               <a className="btn-ghost" href="#watch" data-testid="hero-cta-watch">Watch it ship</a>
             </div>
             <div className="hero-pill" data-testid="hero-no-card-pill">
               <span className="live-dot"></span>
-              <span><b>10 free tasks</b> — no credit card required · 30-second signup</span>
+              <span><b>{TOKEN_WORDING_ACTIVE ? "A free full scan" : "10 free tasks"}</b> — no credit card required · 30-second signup</span>
             </div>
             {/* 2026-09-22 · Founder-reported bug — the FounderOfferPill
                 ("X/500 free SEO fixes") used to render right here too,
@@ -1329,9 +1330,9 @@ export default function Landing() {
         {/* ─── CTA ─── */}
         <section className="cta-section">
           <h2 className="cta-title">Ready to ship code<span>without an IDE?</span></h2>
-          <p className="cta-sub">Start free. 10 tasks. No credit card required.</p>
+          <p className="cta-sub">{TOKEN_WORDING_ACTIVE ? "Start free. One full scan. No credit card required." : "Start free. 10 tasks. No credit card required."}</p>
           <div className="hero-buttons">
-            <Link className="btn-primary" to="/signup" data-testid="cta-signup">Start free — 10 tasks</Link>
+            <Link className="btn-primary" to="/signup" data-testid="cta-signup">{heroFreeOfferCta()}</Link>
           </div>
         </section>
 

@@ -15,6 +15,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import MarketingNav from "../components/marketing/MarketingNav";
+import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 
 const CSS = `
 .wo {
@@ -379,7 +380,7 @@ export default function WhyOra() {
       <section className="cta">
         <h2>Now try the thing that built itself.</h2>
         <p>
-          10 free tasks. No credit card. Connect your repo, describe
+          {TOKEN_WORDING_ACTIVE ? "A free full scan. No credit card." : "10 free tasks. No credit card."} Connect your repo, describe
           what you want, watch ORA ship — with all 20 of the above
           running in the background.
         </p>

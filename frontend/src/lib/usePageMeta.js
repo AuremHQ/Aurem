@@ -7,13 +7,13 @@
  */
 import { useEffect } from "react";
 import { pageTitle } from "./siteConfig";
+import { defaultPageMetaDescription } from "./billingCopy";
 
 // 2026-09-17 — Bug 7 fix: this used to hardcode its OWN third
 // variant of the title ("...Your Autonomous CTO. Ships code to
 // GitHub in minutes.") instead of the shared one — see siteConfig.js.
 const DEFAULT_TITLE = pageTitle();
-const DEFAULT_DESC =
-  "AUREM is an autonomous AI engineer that plans, writes, tests and ships features to your GitHub repo. 10 free tasks, no card required.";
+const DEFAULT_DESC = defaultPageMetaDescription();
 
 function setMeta(name, content, attr = "name") {
   let tag = document.querySelector(`meta[${attr}="${name}"]`);

@@ -8,6 +8,7 @@ import GoogleIcon from "../components/GoogleIcon";
 import AuthShell from "../components/AuthShell";
 import usePageMeta from "../lib/usePageMeta";
 import { api, setToken, setUser } from "../lib/api";
+import { loginFreeOfferCta } from "../lib/billingCopy";
 import RobotGuide, { RobotGuideKeyframes, escapeHtml } from "../components/RobotGuide";
 import PasswordInput from "../components/PasswordInput";
 
@@ -550,7 +551,7 @@ export default function Login() {
             textAlign: "center", fontSize: 13, color: "var(--text-dim)",
           }}>
             No account yet?{" "}
-            <Link to="/signup" data-testid="login-to-signup">Claim 10 free tasks →</Link>
+            <Link to="/signup" data-testid="login-to-signup">{loginFreeOfferCta()}</Link>
           </div>
 
           <div

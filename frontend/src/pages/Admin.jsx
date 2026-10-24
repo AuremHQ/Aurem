@@ -11,7 +11,7 @@ import {
   LogOut, ExternalLink, ArrowLeft, Loader2, Brain, Eye, Terminal,
   Mail, Activity, Plug, GitBranch, Zap, ShieldAlert, DollarSign, ShieldCheck,
   Menu, X, Wrench, KeyRound, Sparkles, Bug, Filter, TrendingDown, Bell, UserPlus,
-  Landmark,
+  Landmark, Tag,
 } from "lucide-react";
 import { api, getCachedAdminAccess, fetchMyAdminAccess, isAdminOrFounder } from "../lib/api";
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
@@ -2315,6 +2315,14 @@ const NAV_ICONS = {
   api_keys: KeyRound,
   payments: DollarSign,
   financials: Landmark,
+  // Iter 2026-10-24 — root cause of "admin page/sidebar won't open at
+  // all": adminNav.js registers a `pricing_panel` nav item but this
+  // map never had a matching key, so `buildGroupedAdminNav` resolved
+  // `Icon: undefined` for that row and the sidebar's <button Icon=.../>
+  // crashed the WHOLE Admin page (not just that one tab) with React's
+  // "Element type is invalid" error — same failure class as the
+  // `financials` icon gap fixed in 97e6aa3e.
+  pricing_panel: Tag,
   tokens: Cpu,
   dash: LayoutDashboard,
   projects: Folder,

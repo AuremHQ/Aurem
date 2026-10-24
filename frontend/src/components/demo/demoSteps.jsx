@@ -13,6 +13,7 @@
  *   • No external fetch, no auth.  Pure JSX.
  */
 import React from "react";
+import { freeOfferShortLine, TOKEN_WORDING_ACTIVE } from "../../lib/billingCopy";
 
 // ─── shared token palette ──────────────────────────────────────
 const C = {
@@ -122,7 +123,7 @@ const StepSignup = ({ tick }) => {
           <div style={{ fontFamily: "Georgia, serif", fontSize: 22, fontWeight: 700, color: C.text, letterSpacing: "-0.5px" }}>
             Start building, production-ready from day one
           </div>
-          <div style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>10 free tasks. No card required.</div>
+          <div style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>{freeOfferShortLine()}</div>
         </div>
 
         {/* ORA GUIDE card */}
@@ -772,7 +773,7 @@ const StepShip = ({ tick }) => (
 export const FULL_STEPS = [
   {
     id: "signup",
-    caption: "Sign up in seconds — no credit card, 10 free tasks.",
+    caption: TOKEN_WORDING_ACTIVE ? "Sign up in seconds — no credit card, a free scan." : "Sign up in seconds — no credit card, 10 free tasks.",
     duration: 6000,
     urlPath: "/signup",
     audioSrc: "/demo-audio/step-1.mp3",
@@ -832,7 +833,7 @@ export const FULL_STEPS = [
 // Re-uses the same MP3 files where possible so we don't need extra
 // TTS generation for the compact landing embed.
 export const TEASER_STEPS = [
-  { ...FULL_STEPS[0], duration: 4500,  caption: "Sign up · 10 free tasks." },
+  { ...FULL_STEPS[0], duration: 4500,  caption: TOKEN_WORDING_ACTIVE ? "Sign up · a free scan." : "Sign up · 10 free tasks." },
   { ...FULL_STEPS[2], duration: 6500,  caption: "Add repo — pick from your GitHub, drop a PAT, Continue." },
   { ...FULL_STEPS[5], duration: 8000,  caption: "LOOP mode ships production-ready code." },
   { ...FULL_STEPS[6], duration: 6000,  caption: "Merged in minutes. No hand-holding." },

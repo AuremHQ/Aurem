@@ -29,6 +29,7 @@ import ChangePasswordCard from "../components/ChangePasswordCard";
 import PhoneNumberCard from "../components/PhoneNumberCard";
 import ShipWallOptInCard from "../components/ShipWallOptInCard";
 import TeamManagementPanel from "../components/TeamManagementPanel";
+import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 
 // 2026-08 · Round-2 PR (P0-4, founder ruling D-TRACK) — Personal
 // Track switching is hidden from new users. Component, the
@@ -264,7 +265,7 @@ export default function Settings() {
                   <div>
                     <div className="label-mini" style={{ marginBottom: 2 }}>Your ORA balance</div>
                     <div style={{ fontSize: 15, color: "var(--text)", fontWeight: 600 }}>
-                      Tokens, tasks &amp; plan usage
+                      {TOKEN_WORDING_ACTIVE ? "Token balance & plan usage" : "Tokens, tasks & plan usage"}
                     </div>
                   </div>
                 </div>
@@ -317,20 +318,22 @@ export default function Settings() {
                       : "—"}
                   </div>
                 </div>
-                <div data-testid="key-tasks-this-month" style={{
-                  padding: "12px 14px", borderRadius: 8,
-                  background: "rgba(0,0,0,0.24)", border: "1px solid var(--border-strong, rgba(255,255,255,0.08))",
-                }}>
-                  <div className="label-mini" style={{ marginBottom: 6 }}>tasks this month</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>
-                    {usage?.tasks_this_month ?? 0}
-                    {usage?.monthly_task_cap != null && (
-                      <span style={{ color: "var(--text-faint)", fontSize: 14, fontWeight: 400 }}>
-                        {" / "}{usage.monthly_task_cap}
-                      </span>
-                    )}
+                {!TOKEN_WORDING_ACTIVE && (
+                  <div data-testid="key-tasks-this-month" style={{
+                    padding: "12px 14px", borderRadius: 8,
+                    background: "rgba(0,0,0,0.24)", border: "1px solid var(--border-strong, rgba(255,255,255,0.08))",
+                  }}>
+                    <div className="label-mini" style={{ marginBottom: 6 }}>tasks this month</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>
+                      {usage?.tasks_this_month ?? 0}
+                      {usage?.monthly_task_cap != null && (
+                        <span style={{ color: "var(--text-faint)", fontSize: 14, fontWeight: 400 }}>
+                          {" / "}{usage.monthly_task_cap}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Quota bar for non-unlimited users */}
@@ -380,11 +383,11 @@ export default function Settings() {
               <Row k="user id" v={me?.user_id || "—"} />
               <Row k="tier" v={me?.tier || usage?.tier || "free"} />
               <Row k="track" v={me?.track || "developer"} />
-              {usage && usage.monthly_task_cap != null && (
+              {!TOKEN_WORDING_ACTIVE && usage && usage.monthly_task_cap != null && (
                 <Row k="tasks this month"
                      v={`${usage.tasks_this_month} / ${usage.monthly_task_cap}`} />
               )}
-              {usage && usage.monthly_task_cap == null && (
+              {!TOKEN_WORDING_ACTIVE && usage && usage.monthly_task_cap == null && (
                 <Row k="tasks this month" v={`${usage.tasks_this_month} / unlimited`} />
               )}
             </section>

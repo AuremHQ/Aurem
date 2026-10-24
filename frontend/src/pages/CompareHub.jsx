@@ -8,6 +8,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } from "../data/competitors";
 import MarketingNav from "../components/marketing/MarketingNav";
+import { heroFreeOfferCta } from "../lib/billingCopy";
 
 const S = {
   page:  { minHeight: "100vh", background: "var(--bg)", color: "var(--text)" },
@@ -87,7 +88,7 @@ export default function CompareHub() {
             background: "var(--accent)", color: "#1a0e00", fontWeight: 600,
             borderRadius: 10, padding: "12px 22px", textDecoration: "none",
           }}>
-            Start free — 10 tasks/month <ArrowRight size={18} aria-hidden />
+            {heroFreeOfferCta()} <ArrowRight size={18} aria-hidden />
           </Link>
         </section>
       </div>

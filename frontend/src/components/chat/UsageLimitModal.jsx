@@ -133,13 +133,16 @@ export default function UsageLimitModal({ open, onClose, usage }) {
             className="serif"
             style={{ fontSize: 20, color: "#fff" }}
           >
-            You've used all {taskCap ?? 10} free tasks this month
+            {TOKEN_WORDING_ACTIVE
+              ? "You're out of tokens this month"
+              : `You've used all ${taskCap ?? 10} free tasks this month`}
           </strong>
         </div>
 
         <p style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.6, margin: 0 }}>
-          {tasksThisMonth}/{taskCap ?? 10} tasks used on the Free plan. Upgrade to keep
-          ORA shipping — pick a plan below and you're back to work in one click.
+          {TOKEN_WORDING_ACTIVE
+            ? "Upgrade to keep ORA shipping — pick a plan below and you're back to work in one click."
+            : `${tasksThisMonth}/${taskCap ?? 10} tasks used on the Free plan. Upgrade to keep ORA shipping — pick a plan below and you're back to work in one click.`}
         </p>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { COMPETITORS, LAST_VERIFIED } from "../data/competitors";
 import MarketingNav from "../components/marketing/MarketingNav";
+import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 
 /* ── tiny presentational helpers (unchanged from VsDevin) ─────────── */
 const S = {
@@ -312,7 +313,7 @@ export default function VsPage({ forcedSlug }) {
             Try the comparison yourself
           </h2>
           <p style={{ ...S.dim, maxWidth: 520, margin: "0 auto 26px" }}>
-            10 free tasks every month. No credit card. Connect a repo and ORA
+            {TOKEN_WORDING_ACTIVE ? "A free full scan. No credit card." : "10 free tasks every month. No credit card."} Connect a repo and ORA
             ships its first commit in about two minutes.
           </p>
           <div style={{ display: "flex", gap: 14, justifyContent: "center",
