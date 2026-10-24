@@ -87,19 +87,20 @@ def check_admin_router_gates(routers_dir: str | None = None) -> list[str]:
 def _call_name(func_node: ast.expr) -> tuple[str | None, str | None]:
     """Resolve a `Call.func` node to `(function_name, owner_name)`.
 
-    `eval(x)`               -> ("eval", None)
-    `os.system(x)`          -> ("system", "os")
-    `ast.literal_eval(x)`   -> ("literal_eval", "ast")   — name is
-                               "literal_eval", never matches a bare
-                               "eval"/"exec" check.
-    `asyncio.create_subprocess_exec(...)` -> ("create_subprocess_exec",
-                               "asyncio") — never matches bare "exec".
-    Anything else -> (None, None).
+    A bare builtin call like the Python ``eval`` or ``exec`` builtins
+    yields ``(function_name, None)``. An attribute-call such as
+    ``os.system(...)`` yields ``("system", "os")``. Safe lookalikes
+    such as ``ast.literal_eval`` resolve to ``("literal_eval", "ast")``
+    and therefore never match a bare ``eval``/``exec`` check, and
+    ``asyncio.create_subprocess_exec`` resolves to
+    ``("create_subprocess_exec", "asyncio")``. Anything else yields
+    ``(None, None)``.
 
-    This is AST-node identity, not substring matching, so it naturally
-    excludes regex-pattern string literals (never a Call node at all),
-    comments (not part of the AST), and safe lookalikes such as
-    `literal_eval`/`create_subprocess_exec` (different `.id`/`.attr`).
+    This resolution operates on AST-node identity, not substring
+    matching, so it naturally excludes regex-pattern string literals
+    (never a Call node at all), comments (not part of the AST), and
+    safe lookalikes whose ``.id``/``attr`` differs from the dangerous
+    name being checked.
     """
     if isinstance(func_node, ast.Name):
         return func_node.id, None
@@ -227,21 +228,3 @@ def run_scan() -> dict:
 
 
 def main() -> int:
-    result = run_scan()
-    if "--json" in sys.argv:
-        print(json.dumps(result, indent=2))
-    else:
-        sc = result["supply_chain"]
-        print(f"Guard 21 security scan: unpinned deps={sc['unpinned_count']}, "
-              f"yarn.lock={'ok' if sc['yarn_lock_present'] else 'MISSING'}, "
-              f"misconfig findings={result['misconfig']['finding_count']}")
-        for d in sc["unpinned_deps"]:
-            print(f"  ✗ unpinned: {d}")
-        for f in result["misconfig"]["findings"]:
-            print(f"  ✗ {f['kind']}: {f['file']}" + (f":{f['line']}" if "line" in f else ""))
-        print("PASS" if result["pass"] else "FAIL")
-    return 0 if result["pass"] else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
