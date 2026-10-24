@@ -1061,3 +1061,8 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `loop_run_log kind='hold'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678691Z] <!-- inv:loop_run_log_kind:hold -->
 - `loop_run_log kind='settle'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678714Z] <!-- inv:loop_run_log_kind:settle -->
 - `loop_run_log kind='release'` — auto-detected in backend/services/wallet.py (verify) [Iter 0, 2026-10-23T03:30:02.678742Z] <!-- inv:loop_run_log_kind:release -->
+
+### Iter 0 · 2026-10-24
+
+| `routers/admin_rea.py` | `/admin/rea` | 3 | auto-detected new router (verify) (Iter 0, 2026-10-24T20:25:35.681701Z) | <!-- inv:router:routers/admin_rea.py -->
+- `services/rea_service.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-24T20:25:35.681746Z] <!-- inv:service:services/rea_service.py -->

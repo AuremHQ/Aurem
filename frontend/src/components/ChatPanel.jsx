@@ -3561,22 +3561,25 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       res = await api.post("/admin/rea/analyze", { url: rawUrl });
     } catch (e) {
       toast({
-        message: e?.response?.data?.detail || "Couldn't start the reverse-engineer job.",
+        message: sanitizeErrorMessage(e, "Couldn't start the reverse-engineer job."),
         kind: "error",
       });
       return;
     }
     const { job_id: jobId, url } = res.data;
+    // Every other chat message's `ts` is seconds-since-epoch, not ms —
+    // mixing the two made the date separator render a bogus year.
+    const nowS = Date.now() / 1000;
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: `/reverse-engineer ${url}`, ts: Date.now() },
+      { role: "user", content: `/reverse-engineer ${url}`, ts: nowS },
       {
         role: "assistant",
         content: `Reverse-engineering ${url} — admin only, frontend files are real, backend is observed API calls only.`,
         kind: "rea_job",
         reaJobId: jobId,
         reaUrl: url,
-        ts: Date.now(),
+        ts: nowS,
       },
     ]);
   }

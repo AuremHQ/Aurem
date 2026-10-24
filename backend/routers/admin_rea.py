@@ -19,13 +19,14 @@ none exists for here yet, so today this is founder-only in practice.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db
-from services.rea_service import ReaValidationError, start_job, validate_target_url
+from services.rea_service import JOB_OVERALL_TIMEOUT_S, ReaValidationError, start_job, validate_target_url
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,11 @@ router = APIRouter(
     prefix="/admin/rea", tags=["Admin-REA"],
     dependencies=[Depends(require_admin_dep)],
 )
+
+# A job stuck at status="running" older than this is almost certainly
+# orphaned (e.g. a backend restart killed the asyncio task mid-run) —
+# don't let it 409-lock the admin out forever.
+STALE_JOB_CUTOFF_S = JOB_OVERALL_TIMEOUT_S + 60
 
 
 class AnalyzeBody(BaseModel):
@@ -49,14 +55,25 @@ async def analyze(body: AnalyzeBody, admin=Depends(require_admin_dep)):
 
     existing = await db.rea_jobs.find_one(
         {"requested_by": admin["user_id"], "status": "running"},
-        {"job_id": 1, "url": 1},
+        {"job_id": 1, "url": 1, "created_at": 1},
     )
     if existing:
-        raise HTTPException(
-            409,
-            f"Already reverse-engineering {existing['url']} (job {existing['job_id']}) "
-            "— wait for it to finish before starting another.",
-        )
+        age_s = None
+        try:
+            age_s = (datetime.now(timezone.utc) - datetime.fromisoformat(existing["created_at"])).total_seconds()
+        except Exception:
+            age_s = None
+        if age_s is None or age_s > STALE_JOB_CUTOFF_S:
+            await db.rea_jobs.update_one(
+                {"job_id": existing["job_id"]},
+                {"$set": {"status": "failed", "error": "Job timed out or was interrupted (e.g. a backend restart)."}},
+            )
+        else:
+            raise HTTPException(
+                409,
+                f"Already reverse-engineering {existing['url']} (job {existing['job_id']}) "
+                "— wait for it to finish before starting another.",
+            )
 
     job_id = await start_job(db, url=url, requested_by=admin["user_id"])
     return {"job_id": job_id, "url": url, "status": "running"}

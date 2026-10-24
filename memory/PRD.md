@@ -952,6 +952,10 @@ User mandated finishing a fixed queue in ONE run, each ticket with its own commi
 - `/chat/send` (non-streaming) does not have the retry-ledger/4-clock treatment — `retry_of_request_id` field exists on `ChatBody` but is not wired into `turn.py`'s handler (documented out-of-scope this round; `/chat/stream` is the live production path).
 - Production/external blockers: G10 Resend account/domain config (HTTP 400), G8 GitHub sync 401 (expired `GITHUB_ACTIONS_TOKEN`), G15 ingestion evidence, Visibility Day14 actual citation check, E2B configuration, jscpd/churn runtime tooling.
 
+## Admin-only ORA chat REA ("reverse engineer this website") skill — DONE (2026-10-24)
+
+`/reverse-engineer <live URL>` slash command, admin-only, built on the real `github.com/morluto/rea` CLI (isolated Node 22 runtime, never touches the frontend's Node 20). 2-pane file browser in chat with real recovered frontend source (HTML/CSS/JS), honest `backend_note` that server source is never recoverable (only observed API calls). 1 HIGH SSRF-via-redirect finding from `testing_agent` fixed + live-reverified (both the httpx fetch path and the Chrome-navigation path now re-validate every redirect hop against the existing `_is_safe_host`). 19/19 new backend regression tests passing. Backlog (non-blocking): persist `rea_job` chat messages so the card survives a reload (the underlying `rea_jobs` Mongo doc already does). See CHANGELOG.md for full detail.
+
 ## Next priorities
 
 - **P0 — current bug verification:** complete one live GitHub authorization → selected repo → explicit Add project → selected list entry → reload flow with the correct Aurem/GitHub account. Provider consent is not proven by mocked fixtures. Previously granted repos can be recovered via Add Project → Choose an already-authorized repository.

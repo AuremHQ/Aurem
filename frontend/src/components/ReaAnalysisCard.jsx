@@ -14,6 +14,7 @@
 import React, { useEffect, useState } from "react";
 import { FileCode2, FileText, Braces, AlertTriangle, Loader2, Globe } from "lucide-react";
 import { api } from "../lib/api";
+import { sanitizeErrorMessage } from "../lib/sanitizeError";
 import CodeBlock from "./CodeBlock";
 
 const TYPE_ICON = { js: FileCode2, css: Braces, html: FileText };
@@ -45,7 +46,7 @@ export function ReaAnalysisCard({ jobId, url }) {
           timer = setTimeout(poll, 3000);
         }
       } catch (e) {
-        if (!stopped) setPollError(e?.response?.data?.detail || "Lost track of this job.");
+        if (!stopped) setPollError(sanitizeErrorMessage(e, "Lost track of this job."));
       }
     }
     poll();
@@ -107,13 +108,13 @@ export function ReaAnalysisCard({ jobId, url }) {
               {(job.files || []).length === 0 && (
                 <div style={{ fontSize: 12, color: "var(--text-dim)" }}>No files captured.</div>
               )}
-              {(job.files || []).map((f) => {
+              {(job.files || []).map((f, i) => {
                 const Icon = TYPE_ICON[f.type] || FileText;
                 const isActive = selected?.sha256 === f.sha256;
                 return (
                   <button
-                    key={f.sha256}
-                    data-testid={`rea-file-item-${f.sha256.slice(0, 8)}`}
+                    key={`${f.sha256}-${i}`}
+                    data-testid={`rea-file-item-${f.sha256.slice(0, 8)}-${i}`}
                     onClick={() => openFile(f)}
                     style={{
                       display: "flex", alignItems: "center", gap: 6, width: "100%",
@@ -135,9 +136,9 @@ export function ReaAnalysisCard({ jobId, url }) {
                 );
               })}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, minHeight: 320 }}>
               {!selected && (
-                <div style={{ color: "var(--text-dim)", fontSize: 12.5, padding: 10 }}>
+                <div data-testid="rea-code-placeholder" style={{ color: "var(--text-dim)", fontSize: 12.5, padding: 10 }}>
                   Click a file on the left to see its real source.
                 </div>
               )}
@@ -166,7 +167,7 @@ export function ReaAnalysisCard({ jobId, url }) {
           )}
 
           {job.backend_note && (
-            <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
+            <div data-testid="rea-backend-note" style={{ marginTop: 10, fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
               {job.backend_note}
             </div>
           )}

@@ -1,0 +1,49 @@
+{
+  "summary": "First test pass of the admin-only /reverse-engineer (REA) ORA chat skill. Backend: 18/19 new pytest cases pass (gating 401/403, SSRF 400 on literal private hosts, 409 concurrency, 404s, job doc hides file_text_by_sha256 and _id, live example.com round trip in ~11-13s with real '<title>Example Domain</title>' HTML). Frontend: admin flow fully works on /dashboard (slash autocomplete shows item, Enter + Send button both work, card goes from analyzing to a 2-pane file list ('/' 577 B, '/s.js' 1.5 KB), clicking a file renders real HTML in CodeBlock, backend_note shown, observed-endpoints section correctly omitted, 409 and SSRF toasts show). Non-admin: item hidden for '/' and '/rev', manual send shows 'This command is admin only.' toast, and no /admin/rea request fires. Found 1 HIGH security issue (SSRF via HTTP redirect, confirmed end to end), 1 visible UI bug (date separator reads '26 November 58783'), plus a few minor issues.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/aurem-dev/admin/rea/analyze (services/rea_service.py::_fetch_text_resource + Chromium navigation)", "issue": "SSRF bypass through redirects. validate_target_url only checks the first hostname. ext_client follows redirects by default (follow_redirects=True) and nothing re-checks each hop. Reproduced: analyze url='https://httpbin.org/redirect-to?url=http://127.0.0.1:8001/api/healthz' gives status=done, and the file endpoint returns the INTERNAL backend's /api/healthz JSON body. Headless Chrome also follows the redirect and can load private subresources (cloud metadata at 169.254.169.254, Mongo/Redis HTTP ports and so on). Fix: in _fetch_text_resource, pass follow_redirects=False and follow hops by hand, running _is_safe_host on each Location (cap at about 5 hops). For Chrome, check the final page URL and resource URLs and drop any non-safe host, or block private ranges with --host-resolver-rules / a proxy.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "services/rea_service.py::validate_target_url", "issue": "'ftp://example.com' is not rejected. The scheme regex fails, so the code prepends https:// and gets 'https://ftp://example.com'. The hostname then becomes 'ftp', and _is_safe_host('ftp') returns True. _is_safe_host also returns True for hosts that don't resolve ('nonexistent.invalid'), so it fails open. Reject any input that already contains '://' with a non-http(s) scheme before prepending."},
+      {"endpoint": "POST /admin/rea/analyze (409 guard)", "issue": "A job stuck at status='running' blocks that admin with 409 forever, because nothing ever marks it stale. This happens when the backend restarts or hot-reloads mid-job (asyncio.create_task dies with the process). Add a staleness cutoff, e.g. treat running jobs older than JOB_OVERALL_TIMEOUT_S + 60s as failed, or reap them on startup. The check-then-insert is also non-atomic (two fast POSTs can both pass); a partial unique index on {requested_by, status:'running'} would fix that."},
+      {"endpoint": "services/rea_service.py::run_reverse_engineer_job", "issue": "The terminal doc overwrites created_at with the finish time, so created_at == finished_at in every completed job. Drop created_at from the final $set."},
+      {"endpoint": "services/rea_service.py::start_job", "issue": "The asyncio.create_task result is not stored anywhere, and the event loop only keeps a weak reference, so the task can be garbage-collected. Keep it in a module-level set and discard it in a done callback."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ChatPanel.jsx runReverseEngineerCommand (lines ~3572 and ~3579)", "issue": "Both new messages use ts: Date.now() (milliseconds), but every other chat message uses Date.now()/1000 (seconds). The date separator above the REA messages renders as '26 November 58783'. Fix: ts: Date.now() / 1000 for both messages.", "selector": "chat date separator", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "REA result persistence", "issue": "The rea_job messages exist only in local React state and are never saved to chat history, so the card is gone after a reload or chat switch. db.rea_jobs keeps the result, but the UI has no way to reopen it. Consider persisting the message, or adding a 'recent REA jobs' list.", "affected_selectors": ["[data-testid=rea-analysis-card]"]}
+    ],
+    "design_issues": [
+      {"screen": "ReaAnalysisCard code pane", "issues": ["Minified single-line HTML wraps into a short CodeBlock (about 4 visible lines) while the pane has min-height 220px, leaving a large empty gap below the code. Give the code viewer a fixed or min height (e.g. 320px) inside the card.", "The backend_note and the code placeholder have no data-testid. Suggest adding 'rea-backend-note' and 'rea-code-placeholder' (I could not add them because file edits outside tests were blocked by the harness)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_regression_iter2026_10_rea_admin_skill.py", "/app/test_reports/pytest/pytest_rea.xml"],
+  "action_items": [
+    "HIGH: Close the SSRF-via-redirect hole in rea_service (_fetch_text_resource with follow_redirects=False plus a manual per-hop _is_safe_host check; also guard Chrome's final URL and subresources).",
+    "Fix validate_target_url so it rejects non-http(s) schemes like ftp:// instead of prepending https://.",
+    "Fix ts: Date.now() -> Date.now()/1000 in runReverseEngineerCommand (bogus year 58783 date separator).",
+    "Add a stale-running-job cutoff so a restart mid-job does not 409-lock the admin forever.",
+    "Don't overwrite created_at in the terminal job doc; keep a strong reference to the background task.",
+    "Optional: persist the rea_job chat message, enlarge the code pane, add data-testids rea-backend-note / rea-code-placeholder."
+  ],
+  "critical_code_review_comments": [
+    "Router admin gating via router-level Depends(require_admin_dep) is correct; GET routes are gated too (non-admin gets 403).",
+    "The GET job projection correctly excludes _id and file_text_by_sha256.",
+    "The toast in runReverseEngineerCommand shows e.response.data.detail raw. For a 422, detail is an array, so it bypasses sanitizeErrorMessage and could render an object. Wrap it with sanitizeErrorMessage.",
+    "The React list key is f.sha256. Two captured files with identical content give duplicate keys and duplicate data-testids."
+  ],
+  "updated_files": ["/app/backend/tests/test_regression_iter2026_10_rea_admin_skill.py"],
+  "success_rate": {"backend": "95% (18/19; the 1 failure is a real validator bug: ftp:// accepted)", "frontend": "95% (all requested flows pass; the ts/date bug is cosmetic)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026! (founder). Throwaway non-admin signups test_rea_nonadmin_*@example.com / test_rea_ui_*@example.com.",
+  "seed_data_creation": "A few rea_jobs docs for test_admin_001 (example.com x3, plus the httpbin redirect SSRF repro job rea_dc7c3a03cd4b). Throwaway non-admin dev_users created by pytest and UI tests.",
+  "flaky_tests": ["Once (1 of 3 dashboard loads), the /dashboard reload right after a REA job showed the 'Something went wrong loading this page' error boundary. It did not reproduce on 2 more loads; most likely a transient chunk/network hiccup, not REA-specific."],
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Admin chat lives at /dashboard (ChatPanel). Log in through the API and set localStorage aurem_token + aurem_user (JSON with is_admin/tier). Node22/rea is already installed at /opt/node22; an example.com job takes about 11-13s. The pytest file runs the live round trip and needs no running job for test_admin_001, otherwise it skips. For the SSRF retest use https://httpbin.org/redirect-to?url=http://127.0.0.1:8001/api/healthz: after the fix it must not return the internal healthz JSON.",
+  "rca of the issue": "SSRF: validate_target_url only validates the hostname the user typed. Both fetch paths (httpx through ext_client with follow_redirects=True, and headless Chromium) then follow server-side redirects without re-validating, so a public redirector can reach loopback or private targets. Year 58783: messages are created with millisecond timestamps where the rest of ChatPanel expects seconds, so the separator multiplies by 1000 again."
+}

@@ -51,7 +51,7 @@ import socket
 import tempfile
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -92,6 +92,8 @@ def validate_target_url(raw_url: str) -> str:
     raw_url = (raw_url or "").strip()
     if not raw_url:
         raise ReaValidationError("Give me a URL to analyze, e.g. /reverse-engineer https://example.com")
+    if "://" in raw_url and not re.match(r"^https?://", raw_url, re.I):
+        raise ReaValidationError("Only http:// and https:// URLs are supported.")
     if not re.match(r"^https?://", raw_url, re.I):
         raw_url = f"https://{raw_url}"
     parsed = urlparse(raw_url)
@@ -104,6 +106,18 @@ def validate_target_url(raw_url: str) -> str:
             "That host can't be analyzed (local/private/internal addresses are blocked)."
         )
     return raw_url
+
+
+def _is_safe_url(url: str) -> bool:
+    """Per-hop redirect check — stricter than validate_target_url: a host
+    that fails to resolve is NOT given the benefit of the doubt here,
+    because by the time we're following a redirect the request is
+    already in flight (unlike the initial user-typed URL, where
+    _is_safe_host's fail-open-on-DNS-error is tolerable)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    return _is_safe_host(parsed.hostname)
 
 
 # ── Self-healing install ─────────────────────────────────────────────
@@ -203,18 +217,49 @@ async def _open_tab(endpoint: str, url: str, *, retries: int = 10) -> str | None
     return None
 
 
-async def _fetch_text_resource(url: str, *, max_bytes: int = MAX_FILE_TEXT_BYTES) -> str | None:
+async def _get_target_url(endpoint: str, target_id: str) -> str | None:
+    """Reads back the tab's CURRENT url via CDP — used to catch the
+    case where the live site 30x-redirected the browser itself to a
+    private/internal address (Chrome follows redirects on its own;
+    this is the only way to see where it actually ended up)."""
     try:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https") or not _is_safe_host(parsed.hostname or ""):
-            return None
+        async with ext_client("rea_cdp", timeout=httpx.Timeout(5.0)) as client:
+            r = await client.get(f"{endpoint}/json/list")
+            r.raise_for_status()
+            for target in r.json():
+                if target.get("id") == target_id:
+                    return target.get("url")
+    except Exception:
+        pass
+    return None
+
+
+async def _fetch_text_resource(url: str, *, max_bytes: int = MAX_FILE_TEXT_BYTES,
+                                max_redirects: int = 5) -> str | None:
+    """Fetches with redirects followed BY HAND (never httpx's built-in
+    follow_redirects=True) so every hop — not just the URL the admin
+    typed — is re-validated against _is_safe_host. A public redirector
+    (e.g. a URL-shortener or an open `?redirect_to=` param) pointing at
+    127.0.0.1/169.254.169.254/etc is the classic SSRF bypass this closes."""
+    current = url
+    try:
         async with ext_client(
             "rea_target", timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0),
         ) as client:
-            r = await client.get(url)
-            if r.status_code >= 400:
-                return None
-            return r.text[:max_bytes]
+            for _ in range(max_redirects + 1):
+                if not _is_safe_url(current):
+                    return None
+                r = await client.get(current, follow_redirects=False)
+                if r.status_code in (301, 302, 303, 307, 308):
+                    location = r.headers.get("location")
+                    if not location:
+                        return None
+                    current = urljoin(current, location)
+                    continue
+                if r.status_code >= 400:
+                    return None
+                return r.text[:max_bytes]
+            return None  # too many redirects
     except Exception:
         return None
 
@@ -250,6 +295,17 @@ async def run_reverse_engineer_job(db, *, job_id: str, url: str, requested_by: s
 
             await asyncio.sleep(1.5)  # let the page settle before observing
 
+            # Chrome follows redirects on its own navigation — re-check
+            # where it actually ended up before running any analysis or
+            # trusting anything it captured (closes the same SSRF class
+            # as _fetch_text_resource's manual redirect-following, for
+            # the browser-driven path).
+            final_url = await _get_target_url(endpoint, target_id)
+            if final_url and not _is_safe_url(final_url):
+                raise ReaValidationError(
+                    "This URL redirects to a private/internal address and can't be analyzed."
+                )
+
             inspect = await _run_rea_cli(
                 ["inspect-web-page", endpoint, target_id,
                  "--include-script-sources", "--include-json-body-shapes",
@@ -275,7 +331,7 @@ async def run_reverse_engineer_job(db, *, job_id: str, url: str, requested_by: s
             for item in (inspect_data.get("scripts") or {}).get("items", [])[:MAX_FILES_STORED]:
                 text = ((item.get("source") or {}).get("artifact") or {}).get("text")
                 script_url = item.get("url") or ""
-                if not text:
+                if not text or (script_url and not _is_safe_url(script_url)):
                     continue
                 files.append({
                     "path": urlparse(script_url).path or script_url, "url": script_url, "type": "js",
@@ -284,7 +340,7 @@ async def run_reverse_engineer_job(db, *, job_id: str, url: str, requested_by: s
                 })
 
             for res in (inspect_data.get("resources") or [])[:MAX_FILES_STORED]:
-                if res.get("type") == "Stylesheet" and res.get("url"):
+                if res.get("type") == "Stylesheet" and res.get("url") and _is_safe_url(res["url"]):
                     css_text = await _fetch_text_resource(res["url"])
                     if css_text:
                         files.append({
@@ -301,7 +357,6 @@ async def run_reverse_engineer_job(db, *, job_id: str, url: str, requested_by: s
                 "requested_by": requested_by,
                 "url": url,
                 "status": "done",
-                "created_at": datetime.now(timezone.utc).isoformat(),
                 "finished_at": datetime.now(timezone.utc).isoformat(),
                 "duration_s": round(time.time() - started, 1),
                 "files": [{k: v for k, v in f.items() if k != "text"} for f in files],
@@ -322,7 +377,6 @@ async def run_reverse_engineer_job(db, *, job_id: str, url: str, requested_by: s
         doc = {
             "job_id": job_id, "requested_by": requested_by, "url": url,
             "status": "failed",
-            "created_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "duration_s": round(time.time() - started, 1),
             "files": [], "file_text_by_sha256": {}, "observed_api_endpoints": [],
@@ -345,6 +399,9 @@ async def run_reverse_engineer_job(db, *, job_id: str, url: str, requested_by: s
         logger.exception("[rea_service] failed to persist job %s result", job_id)
 
 
+_background_tasks: set[asyncio.Task] = set()
+
+
 async def start_job(db, *, url: str, requested_by: str) -> str:
     """Creates the job doc and schedules the background task. Caller
     (the router) is responsible for enforcing the single-in-flight-job
@@ -364,5 +421,11 @@ async def start_job(db, *, url: str, requested_by: str) -> str:
         async with _job_semaphore:
             await run_reverse_engineer_job(db, job_id=job_id, url=url, requested_by=requested_by)
 
-    asyncio.create_task(_bounded_job())
+    # The event loop only holds a WEAK reference to a bare create_task()
+    # result — with nothing else referencing it, it can be garbage
+    # collected mid-run. Keep a strong ref in a module-level set and
+    # drop it again once done (success or failure, doesn't matter).
+    task = asyncio.create_task(_bounded_job())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return job_id
