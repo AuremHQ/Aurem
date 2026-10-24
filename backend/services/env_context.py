@@ -27,6 +27,7 @@ def env_name() -> str:
     override = os.environ.get("AUREM_ENV", "").strip().lower()
     if override in ("production", "preview", "dev"):
         return override
+    # TODO: Set env var MONGO_URL; format mongodb://[user:pass@]host[:port][/db]
     mongo = os.environ.get("MONGO_URL", "")
     host = ""
     try:
