@@ -136,6 +136,53 @@ async def test_cancelling_account_switch_closes_popup_not_projects_tab(db):
 
 
 @pytest.mark.asyncio
+async def test_expired_account_switch_state_closes_popup_not_raw_400(db):
+    """testing_agent (iteration_404) — a stale app_install_switch state
+    (user spent >5min on GitHub's login/2FA page) must also close the
+    popup, not surface a raw HTTPException 400 JSON inside it."""
+    from datetime import datetime, timedelta, timezone
+    state = f"{uuid.uuid4().hex}:expirednonce"
+    await db.oauth_states.insert_one({
+        "state": state, "mode": "app_install_switch", "user_id": "some_user",
+        "origin": "https://auremcto.com",
+        "created_at": datetime.now(timezone.utc) - timedelta(minutes=6),
+    })
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get(
+            "/api/aurem-dev/github/oauth/callback",
+            params={"code": "fakecode", "state": state},
+            follow_redirects=False,
+        )
+    assert r.status_code in (302, 307), f"expected a redirect, got {r.status_code}: {r.text}"
+    loc = r.headers.get("location", "")
+    assert "/github/app/installed" in loc and "status=err" in loc
+
+
+@pytest.mark.asyncio
+async def test_account_switch_exchange_failure_closes_popup_not_full_settings_app(db):
+    """testing_agent (iteration_404) — a failed code exchange during the
+    account-switch step must close the popup, not redirect the small
+    popup window to the full /settings app."""
+    state = f"{uuid.uuid4().hex}:exchangefailnonce"
+    await db.oauth_states.insert_one({
+        "state": state, "mode": "app_install_switch", "user_id": "some_user",
+        "origin": "https://auremcto.com",
+    })
+    with patch("routers.github_oauth.exchange", new=AsyncMock(side_effect=RuntimeError("bad code"))):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.get(
+                "/api/aurem-dev/github/oauth/callback",
+                params={"code": "fakecode", "state": state},
+                follow_redirects=False,
+            )
+    loc = r.headers.get("location", "")
+    assert "/github/app/installed" in loc and "status=err" in loc
+    assert "/settings" not in loc
+
+
+@pytest.mark.asyncio
 async def test_successful_account_switch_chains_into_real_install_url_without_touching_dev_users(db):
     from services.github_app_config import ensure_configured_from_db
     await ensure_configured_from_db(db)

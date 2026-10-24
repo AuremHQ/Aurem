@@ -374,6 +374,14 @@ async def callback(
                 session_id=s.get("funnel_session"),
                 meta={"outcome": "error", "reason": "state_expired"},
             )
+            # Iter 2026-10-24 — this round-trip runs inside the small
+            # App-install popup; a raw 400 JSON there just leaves the
+            # user staring at it. Close the popup the same way a plain
+            # cancel already does instead.
+            if s.get("mode") == "app_install_switch":
+                return RedirectResponse(
+                    url="/api/aurem-dev/github/app/installed?status=err&err=account_switch_expired"
+                )
             raise HTTPException(400, "OAuth state expired")
     flow = s.get("mode") or (
         "signup" if mode_or_user in ("signup", "login") else "connect"
@@ -401,6 +409,14 @@ async def callback(
             meta={"outcome": "exchange_error", "reason": str(e)[:200]},
         )
         await db.oauth_states.delete_one({"state": state})
+        # Iter 2026-10-24 — same popup-bridge treatment as the cancel
+        # and expired-state branches above: this flow never shows a
+        # full page, so a failed exchange must close the popup too,
+        # not bounce it to the full Settings app.
+        if flow == "app_install_switch":
+            return RedirectResponse(
+                url="/api/aurem-dev/github/app/installed?status=err&err=account_switch_failed"
+            )
         # Iter 197 — connect-flow exchange errors should land back on
         # /projects (where the user started) rather than /settings, so
         # the inline error banner + auto-revealed PAT fallback are

@@ -1,0 +1,36 @@
+{
+  "summary": "Tested the fix that makes every 'Add repository' show a GitHub account picker before the GitHub App install. Backend: E1's 5 pytest cases pass, and I wrote 6 new live tests against the public preview URL with real Mongo checks (6/6 pass). /github/oauth/connect?app_install=1 redirects to github.com/login/oauth/authorize with prompt=select_account and scope=read:user,user:email only (no repo scope). The oauth_states row has mode=app_install_switch and the correct user_id. Plain connect is unchanged (no prompt, full repo scope, mode=connect). Cancelling the account-switch step goes to the /github/app/installed?status=err popup bridge, which renders the postMessage HTML, and the state row is deleted. Cancelling a plain connect still goes to /projects. No auth gives 401. Frontend (Playwright, logged in as test@aurem.dev): from /projects '+ Add Project', AddProjectWizard's 'Continue with GitHub App' opens a popup that goes to github.com/login with prompt=select_account and identity-only scope, and its fallback link href is /github/oauth/connect?app_install=1&auth=. From the dashboard, hovering rail-icon-chat and clicking rail-add-repo works (hover was enough). That path opens NewUserWizard, not AddProjectWizard. Its wizard-app-install-btn popup makes one request to /github/oauth/connect?app_install=1 and none to /github/app/install, and its fallback link is updated. Closing the popup shows the 'Connection didn't finish — Try again' state. 'Skip for now', the existing-access button, the manual-entry toggle and Cancel all still render and work. The hook's 20 vitest tests pass. We could not complete a real GitHub login; this was out of scope.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/aurem-dev/github/oauth/callback (flow=app_install_switch, code exchange error)", "issue": "When the code exchange fails, err_path becomes '/settings' because flow != 'connect'. The popup then loads the full Settings app (seen live with a fake code: 307 to /settings?github=error&msg=The+code+passed+is+incorrect+or+expired.) instead of the /github/app/installed?status=err bridge that the cancel branch uses. The wizard still ends up 'denied' once the user closes the popup, but the user is left with a full app inside a small popup."},
+      {"endpoint": "GET /api/aurem-dev/github/oauth/callback (flow=app_install_switch, expired or unknown state)", "issue": "The 5-minute state TTL and unknown-state checks raise a raw HTTPException 400 JSON, which shows inside the popup. The account-switch step has a 5-minute TTL while the downstream gha state allows 15 minutes, so users who spend a long time on GitHub's login/2FA page could see this raw error."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_live_app_install_account_switch.py",
+    "/app/backend/tests/test_regression_iter2026_10_app_install_account_switch.py",
+    "/app/test_reports/pytest/pytest_app_install_switch.xml"
+  ],
+  "action_items": [
+    "Optional: in callback()'s exchange-error branch, redirect flow=='app_install_switch' to /api/aurem-dev/github/app/installed?status=err&err=exchange_failed, the same as the cancel branch.",
+    "Optional: in the same flow, send state-expired and unknown-state errors to the popup bridge instead of raw 400 JSON. Consider a longer TTL for app_install_switch states."
+  ],
+  "critical_code_review_comments": [
+    "Preview note: GITHUB_REDIRECT_URI in the preview backend/.env points to https://auremcto.com/api/aurem-dev/github/oauth/callback (seen in the live popup URL). The state row is created in preview Mongo but the callback goes to production, so the full chain can't finish end-to-end from the preview pod. This affects all GitHub OAuth flows and was not introduced by this fix. In production the state and callback are on the same host, so it is fine there.",
+    "The callback deletes the switch state row (line ~422) before the app_install_switch branch runs, so it is single-use. The new gha state row mirrors install_kickoff (kind, used=False, expires_at), so install_callback's find_one_and_update accepts it.",
+    "Behaviour limit: GitHub's prompt=select_account only lets the user choose an account. If they pick the account that already has the App installed, they will still land on its configure page. A short hint in the wizard ('pick or sign into a different GitHub account') could help."
+  ],
+  "updated_files": ["/app/backend/tests/test_live_app_install_account_switch.py"],
+  "success_rate": {"backend": "100% (11/11: 5 from E1 + 6 new live)", "frontend": "100% (popup target URL and fallback href in both wizards, cancel/denied state, no regression in wizard controls)"},
+  "test_credentials": "test@aurem.dev / AuremTest2026!",
+  "seed_data_creation": "None. Test oauth_states rows were deleted by the tests or by the callback.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Fix = github_oauth.py connect(app_install=1), giving mode app_install_switch; callback chains into _ga.install_url(gha state). Live tests are in tests/test_live_app_install_account_switch.py (needs REACT_APP_BACKEND_URL exported). On /dashboard, hovering rail-icon-chat and then clicking rail-add-repo works reliably and opens NewUserWizard (wizard-app-install-btn). /projects '+ Add Project' opens AddProjectWizard (add-wizard-app-install-btn)."
+}
