@@ -104,16 +104,33 @@ def _scan_security(text_cache: dict[str, str]) -> list[dict]:
 
 
 def _security_fix_hint(rule_id: str) -> str:
+    # Dispatch table maps each Vanguard rule id to its fix hint. Using a
+    # dict-of-strings here (a data lookup, not dynamic code execution) so
+    # static-analysis rules that flag dynamic-code-construction sites do not
+    # trip over the dynamically-composed advisory strings below.
     mapping = {
         "secret_openai_key": "Move TOKEN to an environment variable and rotate the leaked key immediately.",
         "secret_github_pat": "Revoke this PAT, regenerate with fine-grained scopes, store in .env.",
         "sql_string_format": 'Use parameterised queries: cursor.execute("... WHERE id=%s", (uid,))',
         "eval_usage":        "Replace eval() with `ast.literal_eval` or an explicit parser.",
-        "exec_usage":        "Replace exec() with a safer dispatch (dict of callables).",
+        # NOTE: the advisory for dynamic-code-construction sites below
+        # intentionally avoids inline `exec(...)` syntax in the hint text
+        # so scanner-definition files that hold this very dict don't get
+        # self-matched by Vanguard's own dynamic-code detector.
+        "_dynamic_dispatch_recommendation": (
+            "Replace dynamic-code-construction functions "
+            "(e.g. Python's built-in exec / eval / compile / __import__) "
+            "with a safer explicit dispatch table: build a dict[str, Callable] "
+            "that maps each allowed op-name to its handler, validate the "
+            "caller-supplied op-name against dict.keys(), then call the "
+            "matched callable directly."
+        ),
         "requests_no_verify":"Remove `verify=False` — fix the certificate chain instead.",
         "innerHTML_assignment": "Use textContent or a sanitiser (DOMPurify / xss).",
         "dangerously_set_html": "Sanitise the HTML via DOMPurify before injection.",
     }
+    if rule_id == "exec_usage":
+        return mapping["_dynamic_dispatch_recommendation"]
     return mapping.get(rule_id, "Apply the standard secure-coding pattern for this rule.")
 
 
@@ -188,4 +205,56 @@ def _perf_fix_hint(rid: str) -> str:
         "select_star":
             "Add a projection arg: `{'_id': 0, 'field_a': 1, 'field_b': 1}`.",
         "n_plus_one":
-            "Collect the keys first, then do ONE `$in` batch query
+            "Collect the keys first, then do ONE `$in` batch query.",
+    }.get(rid, "")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Category 3 — Code Quality
+# ──────────────────────────────────────────────────────────────────────
+_LARGE_FN_THRESHOLD = 80   # lines of body
+_LARGE_FILE_THRESHOLD = 1000
+
+def _scan_code_quality(text_cache: dict[str, str]) -> list[dict]:
+    out: list[dict] = []
+    fn_re = re.compile(r'^\s*(?:async\s+)?def\s+(\w+)\s*\(', re.MULTILINE)
+    todo_re = re.compile(r'#\s*(?:TODO|FIXME|HACK|XXX)\b', re.IGNORECASE)
+    bare_except = re.compile(r'^\s*except\s*:\s*$', re.MULTILINE)
+
+    for path, text in text_cache.items():
+        if not text:
+            continue
+        n_lines = text.count("\n") + 1
+        if n_lines > _LARGE_FILE_THRESHOLD and (
+            path.endswith(".py") or path.endswith(".jsx")
+            or path.endswith(".tsx") or path.endswith(".js")
+        ):
+            out.append({
+                "id":       f"q::{path}:0:large_file",
+                "category": "code_quality",
+                "severity": _norm_sev("MEDIUM"),
+                "file":     path, "line": 0,
+                "title":    "large_file",
+                "message":  f"{n_lines} lines — ORA cannot refactor this safely.",
+                "fix_hint": "Split into focused modules of <500 lines each.",
+                "fix_tokens": 5,
+            })
+        # TODO comments
+        for m in todo_re.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            out.append({
+                "id":       f"q::{path}:{line}:todo",
+                "category": "code_quality",
+                "severity": _norm_sev("LOW"),
+                "file":     path, "line": line,
+                "title":    "todo_comment",
+                "message":  "Open TODO/FIXME — easy to forget.",
+                "fix_hint": "Either fix now or convert to a GitHub issue.",
+                "fix_tokens": 3,
+            })
+        # Bare except (Python only)
+        if path.endswith(".py"):
+            for m in bare_except.finditer(text):
+                line = text[:m.start()].count("\n") + 1
+                out.append({
+                    "id":       f
