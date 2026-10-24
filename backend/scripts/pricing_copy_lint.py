@@ -131,7 +131,12 @@ SKIP_FILES = {
 # Legal documents are reviewed by the founder + lawyer (PART 5.1),
 # never auto-edited or CI-blocked by this script — excluded from
 # BOTH new rules (4 and 5) by directory, not just by filename.
-SKIP_DIRS = {"policies"}
+# "__tests__" is excluded too: test files legitimately reference BOTH
+# legacy and token wording as string literals (to assert a
+# transition) — scanning them as "marketing copy" would flood rules
+# 4/5 with false positives from the test suite itself.
+SKIP_DIRS = {"policies", "__tests__"}
+_TEST_FILE_SUFFIXES = (".test.js", ".test.jsx", ".test.ts", ".test.tsx")
 
 # Whitelisted exact sentences (case-preserved substring match).
 ALLOWLIST_FILE = ROOT / "backend" / "scripts" / "pricing_copy_lint_allowlist.txt"
@@ -190,6 +195,8 @@ def main() -> int:
             if not p.is_file() or p.suffix not in SCAN_EXT:
                 continue
             if any(part in SKIP_DIRS for part in p.relative_to(ROOT).parts):
+                continue
+            if p.name.endswith(_TEST_FILE_SUFFIXES):
                 continue
             if p.name not in SKIP_FILES:
                 for lineno, snippet in _scan_file(p, allowlist):

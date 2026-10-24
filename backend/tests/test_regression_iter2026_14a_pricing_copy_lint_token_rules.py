@@ -149,6 +149,46 @@ class TestModeAwareLegacyWordingForcingFunction:
         assert hits == []
 
 
+class TestTestFilesAreNeverScanned:
+    """Rules 4/5 run against the real repo tree in main(), not just
+    raw strings — test files legitimately reference BOTH legacy and
+    token wording as string literals (to assert a transition), which
+    would otherwise flood the lint with false positives the moment
+    any test (including this very file) exists."""
+
+    def test_dunder_tests_dir_is_excluded_from_main_scan(self, lint_module, tmp_path, monkeypatch):
+        fe = tmp_path / "frontend" / "src" / "__tests__"
+        fe.mkdir(parents=True)
+        (fe / "Foo.test.jsx").write_text('expect(x).toBe("10 free tasks");')
+        pub = tmp_path / "frontend" / "public"
+        pub.mkdir(parents=True)
+
+        monkeypatch.setattr(lint_module, "ROOT", tmp_path)
+        monkeypatch.setattr(lint_module, "FRONTEND", tmp_path / "frontend" / "src")
+        monkeypatch.setattr(lint_module, "PUBLIC", pub)
+        monkeypatch.setattr(lint_module, "SCAN_DIRS", [tmp_path / "frontend" / "src", pub])
+        monkeypatch.setattr(lint_module, "ALLOWLIST_FILE", tmp_path / "allowlist.txt")
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
+
+        exit_code = lint_module.main()
+        assert exit_code == 0
+
+    def test_test_suffixed_file_outside_a_tests_dir_is_also_excluded(self, lint_module, tmp_path, monkeypatch):
+        fe = tmp_path / "frontend" / "src"
+        fe.mkdir(parents=True)
+        (fe / "Foo.test.jsx").write_text('expect(x).toBe("10 free tasks");')
+        pub = tmp_path / "frontend" / "public"
+        pub.mkdir(parents=True)
+
+        monkeypatch.setattr(lint_module, "ROOT", tmp_path)
+        monkeypatch.setattr(lint_module, "SCAN_DIRS", [fe, pub])
+        monkeypatch.setattr(lint_module, "ALLOWLIST_FILE", tmp_path / "allowlist.txt")
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
+
+        exit_code = lint_module.main()
+        assert exit_code == 0
+
+
 class TestEmptyAndEdgeCaseInputs:
     def test_empty_string(self, lint_module):
         assert _scan_text(lint_module, "", mode="on") == []
