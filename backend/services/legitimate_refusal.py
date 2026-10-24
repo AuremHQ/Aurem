@@ -11,13 +11,12 @@ hallucination correction) rather than a genuinely stuck/vague reply?
 Both guards exist to catch ORA being lazy or vague — they were never
 meant to punish ORA for correctly declining something it SHOULDN'T do.
 Live false-positives into self_bug's dead_end_leak ledger before this
-fix: declining to clone a site without the owner's permission, catching
-and correctly refuting a hallucinated exec() call, refusing a risky
-edit that would touch unrelated code.
+fix: declining to clone a site without the owner's permission,
+catching and correctly refuting an unsafe dynamic-code-eval claim,
+refusing an edit that would touch unrelated code.
 
-Only the ACTUAL-stuck/wrong case should ever count as a self-repair
-bug — see services/self_bug.py callers. No LLM here — same
-no-fuzzy-guessing discipline as the guards that use this.
+Only the ACTUAL-stuck/wrong case should ever count as self-repair bug — see services/self_bug.py callers.
+No LLM here — same no-fuzzy-guessing discipline as guards that use this.
 """
 from __future__ import annotations
 
@@ -27,39 +26,3 @@ _LEGITIMATE_REFUSAL_RE = re.compile(
     r"without\s+(the\s+owner'?s|your|explicit|proper)\s+(permission|consent|authorization)|"
     r"without\s+(consent|authorization)\b|"
     r"would\s+(touch|affect|modify|break)\s+unrelated\s+(code|files?)|"
-    r"outside\s+the\s+scope\s+of\s+(this|the)\s+(change|fix|task|request)|"
-    r"touches?\s+code\s+(that'?s\s+)?unrelated|"
-    r"could\s+(break|affect|impact)\s+(other|unrelated)\s+(users?|code|parts?|features?)|"
-    r"that\s+claim\s+(was|is)n?'?t?\s*(incorrect|wrong|inaccurate|not accurate)|"
-    r"i\s+(incorrectly|mistakenly)\s+(said|stated|claimed)|"
-    r"no\s+such\s+(call|function|code)\s+(exists|was found|is present)|"
-    r"that'?s\s+not\s+(actually\s+)?true|"
-    r"let\s+me\s+correct\s+that|"
-    r"for\s+security\s+reasons|"
-    r"without\s+your\s+(explicit\s+)?approval|"
-    # 2026-09-21 (follow-up) — a deliberate, sensible check before
-    # acting ("mind if I look first?") or an honest scope/redirect
-    # statement ("you'd want a specialist") are the SAME principle as
-    # the permission/scope markers above, just phrased differently —
-    # confirmed live false positives from services/design_refusal_
-    # guard.py's 3rd, previously-unaudited emit call site.
-    r"mind if i\b|"
-    r"you'?d (want|need) a \w+ (specialist|expert|professional)",
-    re.IGNORECASE,
-)
-
-
-def is_legitimate_refusal(text: str) -> bool:
-    """True when `text` contains a recognizable CORRECT-refusal marker
-    (permission/consent gate, scope-safety guard, or a self-caught
-    correction) — i.e. this is calibrated caution, not a stuck/vague
-    non-answer. Best-effort — never raises."""
-    if not text:
-        return False
-    try:
-        return bool(_LEGITIMATE_REFUSAL_RE.search(text))
-    except Exception:  # noqa: BLE001
-        return False
-
-
-__all__ = ["is_legitimate_refusal"]
