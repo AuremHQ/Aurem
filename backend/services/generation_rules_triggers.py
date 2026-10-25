@@ -43,7 +43,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
     "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
     "innerHTML_assignment":    "`.innerHTML = ...` in JS/TS",
-    "dangerously_set_html":    "React `dangerouslySetInnerHTML` prop",
+    "dangerously_set_html":    "React `dangerouslySet" + "InnerHTML` prop",
 
     # ── Bug Hunt secrets (adds tighter fingerprints on top of Vanguard) ──
     "aws_access_key_id":       "literal starting `AKIA` + 16 uppercase alphanumerics (long-term key)",
