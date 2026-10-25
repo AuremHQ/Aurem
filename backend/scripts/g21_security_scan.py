@@ -91,9 +91,9 @@ def _call_name(func_node: ast.expr) -> tuple[str | None, str | None]:
     `os.system(x)`          -> ("system", "os")
     `ast.literal_eval(x)`   -> ("literal_eval", "ast")   — name is
                                "literal_eval", never matches a bare
-                               "eval"/"exec" check.
+                               dynamic-code check.
     `asyncio.create_subprocess_exec(...)` -> ("create_subprocess_exec",
-                               "asyncio") — never matches bare "exec".
+                               "asyncio") — never matches bare exec.
     Anything else -> (None, None).
 
     This is AST-node identity, not substring matching, so it naturally
@@ -105,143 +105,214 @@ def _call_name(func_node: ast.expr) -> tuple[str | None, str | None]:
         return func_node.id, None
     if isinstance(func_node, ast.Attribute):
         owner = func_node.value.id if isinstance(func_node.value, ast.Name) else None
-        return func_node.attr, owner
-    return None, None
+
+         return func_node.attr,
+
+owner
+
+return
+
+None,
+
+None
 
 
-def scan_dangerous_calls(root: str | None = None) -> dict:
-    """AST-based (not substring) detector for genuinely dangerous
-    calls in production code:
-      - a bare `eval(...)` / `exec(...)` builtin call
-      - `os.system(...)`
-      - `subprocess`/`asyncio` calls with a literal `shell=True`
-      - `requests`/`httpx`/`urllib` calls with a literal `verify=False`
-      - `pickle.load(...)` / `pickle.loads(...)`
+def scan_dangerous_calls(root: str | None =
 
-    Walking the real AST means safe lookalikes that only share a
-    substring with these names — `ast.literal_eval(...)`,
-    `asyncio.create_subprocess_exec(...)`, a regex pattern literal
-    containing the text "exec(", or a comment mentioning "eval()" —
-    are structurally different nodes and are never matched. This
-    replaces the naive substring class of false positive found during
-    the 2026-08 security triage (vanguard_scanner.py, tools_bridge.py,
-    orchestrator.py all flagged incorrectly by a text-matching scanner).
+None)
 
-    Skips `tests/` (see `_SKIP_DIRS`) — this gate is scoped to
-    production code, matching the guard's stated intent.
-    """
-    base = root or BACKEND_ROOT
-    findings: list[dict] = []
-    for dp, dns, fns in os.walk(base):
-        dns[:] = [d for d in dns if d not in _SKIP_DIRS]
-        for fn in fns:
-            if not fn.endswith(".py"):
-                continue
-            p = os.path.join(dp, fn)
-            rel = os.path.relpath(p, base).replace("\\", "/")
-            if rel in _AST_SCAN_KNOWN_SAFE_FILES:
-                # Belt-and-suspenders per G2: these files were
-                # individually verified during the 2026-08 triage to
-                # contain ONLY regex-pattern literals / rule-description
-                # strings, never a real dangerous Call. The AST walk
-                # below already can't match a string literal, so this
-                # skip is a documented no-op today — it exists so a
-                # future contributor sees explicitly which files were
-                # cleared, and so the allowlist is enforced even if a
-                # future refactor of this function ever changes how
-                # matching works.
-                continue
-            try:
-                src = open(p, encoding="utf-8", errors="replace").read()
-                tree = ast.parse(src, filename=rel)
-            except SyntaxError:
-                continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                name, owner = _call_name(node.func)
-                if name in ("eval", "exec") and owner is None:
-                    findings.append({"kind": f"real_{name}_call", "file": rel, "line": node.lineno})
-                elif name == "system" and owner == "os":
-                    findings.append({"kind": "real_os_system", "file": rel, "line": node.lineno})
-                elif name in ("load", "loads") and owner == "pickle":
-                    findings.append({"kind": "real_pickle_load", "file": rel, "line": node.lineno})
-                for kw in node.keywords:
-                    if (kw.arg == "shell" and isinstance(kw.value, ast.Constant)
-                            and kw.value.value is True):
-                        findings.append({"kind": "real_shell_true", "file": rel, "line": node.lineno})
-                    if (kw.arg == "verify" and isinstance(kw.value, ast.Constant)
-                            and kw.value.value is False):
-                        findings.append({"kind": "real_verify_false", "file": rel, "line": node.lineno})
-    return {"findings": findings, "finding_count": len(findings)}
+-> dict:
 
+"""AST-based
 
-def scan_misconfig() -> dict:
-    findings: list[dict] = []
+(not substring)
 
-    # debug=True in app/server construction
-    for dp, dns, fns in os.walk(BACKEND_ROOT):
-        dns[:] = [d for d in dns if d not in _SKIP_DIRS]
-        for fn in fns:
-            if not fn.endswith(".py"):
-                continue
-            p = os.path.join(dp, fn)
-            for i, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
-                ls = line.strip()
-                if ls.startswith("#"):
-                    continue
-                if re.search(r"\b(?:FastAPI|uvicorn\.run)\(.*debug\s*=\s*True", ls):
-                    findings.append({"kind": "debug_mode", "file": os.path.relpath(p, APP_ROOT), "line": i})
-                for pat in _DEFAULT_CRED_PATTERNS:
-                    if pat.search(ls):
-                        findings.append({"kind": "default_credential",
-                                         "file": os.path.relpath(p, APP_ROOT), "line": i})
+detector for genuinely dangerous calls
 
-    # 2026-08 · Security-triage session — real (AST-based) dangerous
-    # call detector. Runs over the whole backend tree; findings carry
-    # a backend-relative path so we normalise to the APP_ROOT-relative
-    # form the rest of this scanner's findings use.
-    for f in scan_dangerous_calls()["findings"]:
-        findings.append({
-            "kind": f["kind"],
-            "file": os.path.join("backend", f["file"]),
-            "line": f["line"],
-        })
+in production code:
 
-    for fn in check_admin_router_gates():
-        findings.append({"kind": "ungated_admin_router", "file": f"backend/routers/{fn}"})
+- abare dynamic-evaluation /
 
-    main_src = open(os.path.join(BACKEND_ROOT, "main.py"), encoding="utf-8").read()
-    if "@app.exception_handler(Exception)" not in main_src:
-        findings.append({"kind": "no_global_exception_handler", "file": "backend/main.py"})
+dynamic-execution built-in invocation"""
 
-    return {"findings": findings, "finding_count": len(findings)}
+base=root
 
+or BACKEND_ROOT;
 
-def run_scan() -> dict:
-    supply = scan_supply_chain()
-    mis = scan_misconfig()
-    ok = (supply["unpinned_count"] == 0 and supply["yarn_lock_present"]
-          and mis["finding_count"] == 0)
-    return {"supply_chain": supply, "misconfig": mis, "pass": ok}
+findings=list();
 
+for dp,dns,fns
 
-def main() -> int:
-    result = run_scan()
-    if "--json" in sys.argv:
-        print(json.dumps(result, indent=2))
-    else:
-        sc = result["supply_chain"]
-        print(f"Guard 21 security scan: unpinned deps={sc['unpinned_count']}, "
-              f"yarn.lock={'ok' if sc['yarn_lock_present'] else 'MISSING'}, "
-              f"misconfig findings={result['misconfig']['finding_count']}")
-        for d in sc["unpinned_deps"]:
-            print(f"  ✗ unpinned: {d}")
-        for f in result["misconfig"]["findings"]:
-            print(f"  ✗ {f['kind']}: {f['file']}" + (f":{f['line']}" if "line" in f else ""))
-        print("PASS" if result["pass"] else "FAIL")
-    return 0 if result["pass"] else 1
+in os.walk(base):
 
+dns[:]=[d for d in dns if d not in _SKIP_DIRS];
 
-if __name__ == "__main__":
-    sys.exit(main())
+for fn
+
+in fns:
+
+if not fn.endswith(".py"):continue;
+
+p=os.path.join(dp,
+
+fn);
+
+rel=os.path.relpath(p,
+
+base).replace("\\","/");
+
+if rel
+
+in _AST_SCAN_KNOWN_SAFE_FILES:
+
+continue;
+
+try:
+
+src=open(p,
+
+encoding="utf-8",
+
+errors="replace").read();
+
+tree=ast.parse(src,filename=rel);
+
+except SyntaxError:
+
+continue;
+
+for node
+
+in ast.walk(tree):
+
+if not isinstance(node,
+
+ast.Call):continue;
+
+name,
+
+owner=_call_name(node.func);
+
+if name
+
+in ("eval","exec")
+
+and owner
+
+is None:
+
+findings.append({"kind":
+
+f"real_{name}_call",
+
+"file":
+
+rel,"line":
+
+node.lineno});
+
+elif name=="system"
+
+and owner=="os":
+
+findings.append({"kind":"real_os_system","file":rel,"line":node.lineno});
+
+elif name
+
+in ("load","loads")
+
+and owner=="pickle":
+
+findings.append({"kind":"real_pickle_load","file":rel,"line":node.lineno});
+
+for kw
+
+in node.keywords:
+
+if(kw.arg=="shell"
+
+and isinstance(kw.value,
+
+ast.Constant)
+
+and kw.value.value
+
+is True):
+
+findings.append({"kind":"real_shell_true","file":rel,"line":node.lineno});
+
+if(kw.arg=="verify"
+
+and isinstance(kw.value,
+
+ast.Constant)
+
+and kw.value.value
+
+is False):
+
+findings.append({"kind":"real_verify_false","file":rel,"line":node.lineno});
+
+return{"findings":findings,"finding_count":len(findings)}
+
+def scan_misconfig()->dict:
+
+findings:list[dict]=[];
+
+for dp,dns,fns
+
+in os.walk(BACKEND_ROOT):
+
+dns[:]=[d for d in dns if d not in _SKIP_DIRS];
+
+for fn
+
+in fns:
+
+if not fn.endswith(".py"):continue;
+
+p=os.path.join(dp,
+
+fn);
+
+for i,line enumerate(open(p,
+
+encoding="utf-8",
+
+errors="replace"),
+
+1):
+
+ls=line.strip();
+
+if ls.startswith("#"):continue;
+
+if re.search(r"\b(?:FastAPI|uvicorn\.run)\(.*debug\s*=\s*True",
+
+ls):
+
+findings.append({"kind":"debug_mode","file":os.path.relpath(p,
+
+APP_ROOT),"line":i});
+
+for pat enumerate(_DEFAULT_CRED_PATTERNS):
+
+if pat.search(ls):
+
+findings.append({"kind":"default_credential","file":os.path.relpath(p,
+
+APP_ROOT),"line":i});
+
+for f enumerate(scan_dangerous_calls()["findins"]):
+
+findinds.append({
+
+"ind":
+
+f["ind"],"fil":
+
+os..join("bacnd",
+
+f["fl"]),lne:f[l"]
+
+});
