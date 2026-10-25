@@ -1066,3 +1066,8 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 | `routers/admin_rea.py` | `/admin/rea` | 3 | auto-detected new router (verify) (Iter 0, 2026-10-24T20:25:35.681701Z) | <!-- inv:router:routers/admin_rea.py -->
 - `services/rea_service.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-24T20:25:35.681746Z] <!-- inv:service:services/rea_service.py -->
+
+### Iter 0 · 2026-10-25
+
+- `services/plan_transition.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-25T03:14:56.933752Z] <!-- inv:service:services/plan_transition.py -->
+- `services/plan_transition_write_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-25T03:14:56.933780Z] <!-- inv:service:services/plan_transition_write_guard.py -->

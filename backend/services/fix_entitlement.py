@@ -34,7 +34,8 @@ logger = logging.getLogger("aurem.fix_entitlement")
 async def is_fix_entitled(db, user_id: str) -> bool:
     u = await db.dev_users.find_one(
         {"user_id": user_id},
-        {"_id": 0, "fix_entitlement": 1, "fix_entitlement_frozen": 1},
+        {"_id": 0, "fix_entitlement": 1, "fix_entitlement_frozen": 1,
+         "tier": 1, "stripe_sub_id": 1},
     )
     u = u or {}
     # Master Prompt v2 Part 1.3 — a Stripe dispute freezes Fix WITHOUT
@@ -44,7 +45,25 @@ async def is_fix_entitled(db, user_id: str) -> bool:
     # plan is over" write.
     if u.get("fix_entitlement_frozen"):
         return False
-    return bool(u.get("fix_entitlement"))
+    if not u.get("fix_entitlement"):
+        return False
+    # 2026-10-25 (ITEM 1, independent review) — routers/payments.py's
+    # cancellation/pause webhook branch used to skip revoking this flag
+    # at TOKEN_BILLING_MODE="off" (now fixed there too, see that file).
+    # Rows poisoned by that gap before the fix still carry a stale
+    # True. Rather than trust the raw boolean unconditionally, treat
+    # the EXACT shape that webhook branch itself writes — tier is the
+    # literal string "free" (never merely absent/None — many existing
+    # fixtures insert a dev_users row with no tier field at all and
+    # rely on grant/revoke working standalone) AND no truthy
+    # stripe_sub_id — as stale, unless the user still has a positive
+    # purchased/plan wallet balance actually worth spending.
+    if u.get("tier") == "free" and not u.get("stripe_sub_id"):
+        from services.wallet import get_balance
+        bal = await get_balance(db, user_id)
+        if (bal["plan_micro"] + bal["purchased_micro"]) <= 0:
+            return False
+    return True
 
 
 async def grant_fix_entitlement(db, user_id: str, *, source: str) -> None:

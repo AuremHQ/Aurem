@@ -963,23 +963,35 @@ async def stripe_webhook(request: Request) -> dict:
         # downgraded `tier` to "free" but never touched
         # `fix_entitlement`, so a cancelled/paused subscriber kept Fix
         # access forever (the field stays True until something sets it
-        # False — nothing did). Gated on TOKEN_BILLING_MODE != "off" so
-        # an account that was never part of the token-billing rollout
-        # doesn't get a new field written to it at all.
+        # False — nothing did).
+        # 2026-10-25 (ITEM 1, independent review) — this call used to be
+        # gated on `billing_mode() != "off"`, under the theory that an
+        # account outside the token-billing rollout shouldn't get a new
+        # field written at mode "off". That reasoning didn't hold: the
+        # GRANT path (grant_fix_entitlement, ~line 777 above) and the
+        # refund/dispute revoke paths already write fix_entitlement
+        # unconditionally, with no mode check at all — only this one
+        # revoke was asymmetric. The result: a user who cancelled while
+        # mode was "off" kept fix_entitlement=True forever, and if the
+        # founder later flips TOKEN_BILLING_MODE to "shadow"/"on", that
+        # stale True passes the Fix gate for free. Revoke unconditionally
+        # now, matching every other write path. (Rows already poisoned
+        # by the old gated behavior, before this fix, are self-healed by
+        # services/fix_entitlement.py::is_fix_entitled's own narrow
+        # stale-shape check, and listed by the Item 1(c) pre-flight
+        # report for the founder's real-revoke decision.)
         if user_row and user_row.get("user_id"):
-            from services.wallet import billing_mode
-            if billing_mode() != "off":
-                from services.fix_entitlement import revoke_fix_entitlement
-                try:
-                    await revoke_fix_entitlement(
-                        db, user_row["user_id"],
-                        reason=f"stripe_webhook:{etype}",
-                    )
-                except Exception as e:                          # noqa: BLE001
-                    logger.warning(
-                        "[webhook] fix_entitlement revoke failed for "
-                        "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
-                    )
+            from services.fix_entitlement import revoke_fix_entitlement
+            try:
+                await revoke_fix_entitlement(
+                    db, user_row["user_id"],
+                    reason=f"stripe_webhook:{etype}",
+                )
+            except Exception as e:                          # noqa: BLE001
+                logger.warning(
+                    "[webhook] fix_entitlement revoke failed for "
+                    "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
+                )
         # Iter 212m-240 — Tier 3: paid → free means any dedicated Supabase
         # Postgres projects the user has must enter the downgrade grace
         # window using the configured policy (default = migrate_back,
