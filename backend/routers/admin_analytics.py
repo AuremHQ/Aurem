@@ -59,14 +59,12 @@ from routers.admin import _bucket_label, _run_skill, _email_hint  # noqa: E402
 
 
 @router.post("/qa/cleanup-e2e-sessions")
-async def cleanup_e2e_sessions(
-    request: Request,
-    authorization: Optional[str] = Header(None),
-):
-    # Reject oversized request bodies to prevent DoS — this endpoint
-    # needs no body at all, so cap at 1 KB.
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > 1024:
+async def cleanup_e2e_sessions(request: Request,
+                               authorization: Optional[str] = Header(None)):
+    # lpdos_no_body_limit_deep — reject oversized bodies; this endpoint
+    # needs no payload at all.
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > 1024:
         raise HTTPException(413, "Request body too large")
     await _require_admin(authorization)
     db = get_db()
@@ -268,12 +266,4 @@ async def admin_system_stats(
     council_win_pipeline = [
         {"$match": {"event": "aggregate", "status": "success",
                     "council": "A", "ts": {"$gte": cutoff}}},
-        {"$group": {"_id": "$winner", "n": {"$sum": 1}}},
-    ]
-    win_rows = await db.parliament_log.aggregate(council_win_pipeline).to_list(20)
-    council_A_wins: dict[str, int] = {
-        "A1-conservative": 0, "A2-balanced": 0, "A3-creative": 0,
-    }
-    for row in win_rows:
-        key = row.get("_id") or "unknown"
-        if key in council
+        {"
