@@ -11,7 +11,7 @@ Usage:
     GH_PUSH_PROOF_OWNER=your-org \
     GH_PUSH_PROOF_REPO=your-disposable-repo \
     GH_PUSH_PROOF_BRANCH=main \
-    # TODO: set GH_PUSH_PROOF_TOKEN env var before running
+    GH_PUSH_PROOF_TOKEN="$GH_PUSH_PROOF_TOKEN" \
     python scripts/one_time_real_push_proof.py
 
 Prints the real commit SHA + html_url on success (T3 pass), or the
@@ -33,7 +33,8 @@ async def main() -> int:
     owner = os.environ["GH_PUSH_PROOF_OWNER"]
     repo = os.environ["GH_PUSH_PROOF_REPO"]
     branch = os.environ.get("GH_PUSH_PROOF_BRANCH", "main")
-    token = os.environ.get("GH_PUSH_PROOF_TOKEN")  # TODO: set GH_PUSH_PROOF_TOKEN env var
+    # TODO: Set GH_PUSH_PROOF_TOKEN env var with a GitHub PAT (contents:write scope)
+    token = os.environ.get("GH_PUSH_PROOF_TOKEN")
 
     stamp = int(time.time())
     try:
