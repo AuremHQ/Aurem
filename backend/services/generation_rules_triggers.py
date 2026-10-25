@@ -42,8 +42,8 @@ TRIGGER_ONELINE: dict[str, str] = {
     "yaml_unsafe_load":        "`yaml.load(...)` without an explicit `Loader=`",
     "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
     "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
-    "innerHTML_assignment":    "DOM XSS sink — direct write to .innerHTML",
-    "dangerously_set_html":    "React `dangerouslySetInnerHTML` prop",
+    "innerHTML_assignment":    "`.innerHTML = ...` in JS/TS",
+    "dangerously_set_html":    "React `dangerouslySetInnerHTML` prop usage",
 
     # ── Bug Hunt secrets (adds tighter fingerprints on top of Vanguard) ──
     "aws_access_key_id":       "literal starting `AKIA` + 16 uppercase alphanumerics (long-term key)",
@@ -76,12 +76,12 @@ TRIGGER_ONELINE: dict[str, str] = {
     "weak_crypto_md5":         "`hashlib.md5(` or `CryptoJS.MD5`",
     "weak_crypto_sha1":        "`hashlib.sha1(` or `CryptoJS.SHA1`",
     "weak_random_token":       "token/secret/password/nonce/salt = random.random / Math.random",
-    "jwt_alg_none":            "\"alg\": \"none\" literal in code / JSON",
+    "jwt_alg_none":            "`\"alg\": \"none\"` literal in code / JSON",
     "cors_wildcard_with_creds":"`Access-Control-Allow-Origin: *` within 200 chars of `Allow-Credentials: true`",
     "cookie_no_secure_flag":   "`set_cookie(...)` without `secure=True`",
     "cookie_no_httponly_flag": "`set_cookie(...)` without `httponly=True`",
     "ssrf_open_url_fetch":     "`requests/httpx/urlopen/fetch(request./input(/user_input/params[…])`",
-    "inner_html_assign":       "DOM XSS sink — direct write to .innerHTML",
+    "inner_html_assign":       "`.innerHTML =` (XSS sink)",
 
     # ── Bug Hunt exposed endpoints ──
     "debug_route_no_auth":     "`@app/router.get/post('/debug|/console|/repl|/shell')` without auth decorator",
