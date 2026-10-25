@@ -27,7 +27,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "github_token":            "literals matching `gh[pousr]_[36+ chars]`",
     "slack_token":             "literals matching `xox[bpors]-<digits>-<...>`",
     "generic_secret":          "`secret/signing_key/encryption_key='...'` 16+ chars",
-    "db_connection_string":    "`postgres://` / `mongodb://` style URI containing embedded credentials in source",
+    "db_connection_string":    "postgres:// / mongodb:// style URI with embedded credentials in source",
     "stripe_live_key":         "literals `sk_live_ / pk_live_ / rk_live_[20+ chars]`",
     "google_api_key":          "literals `AIza[0-9A-Za-z_-]{35}`",
     "sendgrid_key":            "literals `SG.<22 chars>.<43 chars>`",
