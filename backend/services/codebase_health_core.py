@@ -36,100 +36,257 @@ logger = logging.getLogger(__name__)
 
 
 def _is_dockerfile(lower_path: str) -> bool:
-    """True if `lower_path` looks like a real Dockerfile or Dockerfile.
-    Compose manifest.  Case-insensitive; assumes caller has already lowered.
-    
+    """True if `lower_path` looks like a real Dockerfile or Docker
+    Compose manifest.  Case-insensitive; assumes caller has already
+    lowered the path.
+
     Matches:
         Dockerfile, dockerfile, Dockerfile.prod, dockerfile.dev,
         <anything>/Dockerfile, docker-compose.yml, docker-compose.yaml,
         compose.yml, compose.yaml
-    
     Does NOT match:
-        docs/dockerfile-cheatsheet.md my-dockerfile-notes.txt
-    
+        docs/dockerfile-cheatsheet.md, my-dockerfile-notes.txt
     """
     if not lower_path:
         return False
-    
     base = lower_path.rsplit("/", 1)[-1]
-    
-    if base == "dockerfile":
+    if base == "dockerfile" or base.startswith("dockerfile."):
         return True
-    
-    if base.startswith("dockerfile.") :
-        return True
-    
     if base in {"docker-compose.yml", "docker-compose.yaml",
-                "compose.yml",   "compose.yaml"} :
-        
-            return True
-        
-            return False
+                "compose.yml", "compose.yaml"}:
+        return True
+    return False
 
 
-# ──────────────────────────────────────────────────────────────────────#
-# Category 1 — Security delegates Vanguard scan_text catalog          #
-# ──────────────────────────────────────────────────────────────────────#
-def _scan_security(text_cache : dict[str,str])->list[dict]:
-    
-     out:list[dict]=[]
-     
-     for path,text in text_cache.items():
-         
-          # Iter_212m‑224 skip_self_ref_false_positives          
-          if (_is_scanner_rule_file(path)):              
-               continue          
-          
-          # Iter_212m‑229_skip_env_files_keys_intentional_gitignored_noise_trains_reader_ignore_real_alerts          
-          low=(path.replace("\\","/")).lower()
-          
-          env_check=((low==".env")or(low.endswith("/​env"))
-                     ("/​env."in low)
-                     ((low.split("/")[-1]if"/"in low else low)).startswith(".env.​")))
-          
-          qa_seed=("qa/simulated-user/"in(path.replace("\\","/")).lower())
-          
-          findings_iter=iter(scan_text((textor""),filepath=path))
-          
-          while(True):
-               
-               try:f=next(findings_iter)
-               
-               except StopIteration:break
-                
-                sev=((f.get("severity"))or"").upper()
-                
-                if(qa_seed):                    
-                     if(sev in("CRITICAL","HIGH")):                          
-                          sev="INFO";f["downgraded"]=True;f["downgrade_reason"]="qa harness intentional test creds"
-                
-                out.append({                    
-                     "_id":f"sec::{path}:{f.get('line')}:{f.get('name')}",                    
-                     "_cat":"security",                    
-                     "_sev":_norm_sev(sev),                    
-                     "_fp":path,"_ln":int((f.get('line'))or0),                    
-                     "_ti":((f.get('name'))or"security_issue"),                    
-                     "_ms":((f.get('desc'))or(f.get('snippet'))or"Pre-commit security pattern matched"),                    
-                     "_fh":_security_fix_hint(((f.get('name'))or"")),                    
-                     "_ftk":[5],})
-     
-     return(out)
+# ──────────────────────────────────────────────────────────────────────
+# Category 1 — Security (delegates to Vanguard scan_text catalog)
+# ──────────────────────────────────────────────────────────────────────
+def _scan_security(text_cache: dict[str, str]) -> list[dict]:
+    out: list[dict] = []
+    for path, text in text_cache.items():
+        # Iter 212m-224 — skip scanner-definition files (self-ref false pos).
+        if _is_scanner_rule_file(path):
+            continue
+        # Iter 212m-229 — Skip `.env` and `.env.*` files. Keys living
+        # there are INTENTIONAL by construction (they're in
+        # `.gitignore`) — flagging them creates recurring CRITICAL
+        # noise that trains the reader to ignore real critical alerts.
+        low = path.replace("\\", "/").lower()
+        if (low == ".env" or low.endswith("/.env")
+                or "/.env." in low
+                or (low.split("/")[-1] if "/" in low else low).startswith(".env.")):
+            continue
+        # Iter 212m-229 — QA seed / simulated-user harness path
+        # legitimately contains hard-coded test creds (JWT secret
+        # signing keys used by our own integration bot). Downgrade
+        # to INFO like other demo paths.
+        for f in scan_text(text or "", filepath=path):
+            sev = (f.get("severity") or "").upper()
+            if "qa/simulated-user/" in path.replace("\\", "/").lower():
+                # Same treatment as _is_safe_demo_path — surface for
+                # review but never as CRITICAL/HIGH.
+                if sev in ("CRITICAL", "HIGH"):
+                    sev = "INFO"
+                    f["downgraded"] = True
+                    f["downgrade_reason"] = "qa harness — intentional test creds"
+            out.append({
+                "id":         f"sec::{path}:{f.get('line')}:{f.get('name')}",
+                "category":   "security",
+                "severity":   _norm_sev(sev),
+                "file":       path,
+                "line":       int(f.get("line") or 0),
+                "title":      f.get("name") or "security_issue",
+                "message":    f.get("desc") or f.get("snippet") or "Pre-commit security pattern matched",
+                "fix_hint":   _security_fix_hint(f.get("name") or ""),
+                "fix_tokens": 5,
+            })
+    return out
 
 
-def _security_fix_hint(rule_id:str)->str:mapping={:"secret_openai_key":"Move TOKEN environment variable rotate leaked key immediately.","secret_github_pat":"Revoke PAT regenerate fine-grained scopes store .env.","sql_string_format":"Use parameterised queries cursor.execute(\"WHERE id=%s\",(uid,)","exec_builtin_call":"Avoid calling Python builtin exec(); use safer dispatch dict_of_callables.","requests_no_verify":"Remove verify=False fix certificate chain instead.","innerHTML_assignment":"Use textContent sanitiser DOMPurify/xss.","dangerously_set_html":"Sanitise HTML via DOMPurify before injection.",};return(mapping.get(rule_id,"Apply standard secure-coding pattern."))
+def _security_fix_hint(rule_id: str) -> str:
+    mapping = {
+        "secret_openai_key": "Move TOKEN to an environment variable and rotate the leaked key immediately.",
+        "secret_github_pat": "Revoke this PAT, regenerate with fine-grained scopes, store in .env.",
+        "sql_string_format": 'Use parameterised queries: cursor.execute("... WHERE id=%s", (uid,))',
+        "eval_usage":        "Replace the built-in eval call with `ast.literal_eval` or an explicit parser.",
+        "exec_usage":        "Replace exec() with a safer dispatch (dict of callables).",
+        "requests_no_verify":"Remove `verify=False` — fix the certificate chain instead.",
+        "innerHTML_assignment": "Use textContent or a sanitiser (DOMPurify / xss).",
+        "dangerously_set_html": "Sanitise the HTML via DOMPurify before injection.",
+    }
+    return mapping.get(rule_id, "Apply the standard secure-coding pattern for this rule.")
 
 
-# ─── Cat2 Perf ─── #
-_PERF_RULES=[(re.compile(r'\bfor\s+\w+\s+in\s+(?!.*\b(?:aggregate|to_list|find\s*\().*:'),...)];def_perf_fix_hint(rid):return{}.get(rid,"")
+# ──────────────────────────────────────────────────────────────────────
+# Category 2 — Performance
+# ──────────────────────────────────────────────────────────────────────
+_PERF_RULES: list[tuple[re.Pattern, str, str, str]] = [
+    (re.compile(r'\.to_list\(None\)'),
+     "unbounded_tolist", "HIGH",
+     "Cursor returns ALL documents — will crash as the collection grows."),
+    (re.compile(r'\.to_list\((\d{4,})\)'),
+     "high_cap_tolist",  "MEDIUM",
+     "Hard cap >= 1000 docs in memory.  Add pagination."),
+    (re.compile(r'\.find_one\(\s*\{[^{}]+\}\s*\)'),
+     "select_star",      "LOW",
+     "find_one without projection — fetches every field.  Add `, {'_id': 0, ...}`."),
+    (re.compile(
+        # Iter 212m-228 — Tighter N+1 detection:
+        #   • REQUIRE the loop body to contain an ACTUAL per-item lookup
+        #     (find/find_one/count with a bareword arg — NOT aggregate,
+        #     to_list, or update).  Aggregation cursors and bulk ops are
+        #     not N+1.
+        #   • REQUIRE the db call to be indented (at least 4 spaces) so
+        #     it's genuinely inside the loop body, not a sibling.
+        #   • EXCLUDE `for X in await db.Y.aggregate(...)` / `.find(...).to_list()` —
+        #     those are bulk iterations of an already-fetched batch.
+        # This eliminates the false-positive avalanche where a `for` in
+        # dict-comprehension near an unrelated await was miscounted.
+        r'\bfor\s+\w+\s+in\s+(?!.*\b(?:aggregate|to_list|find\s*\().*:'
+        r'[^\n]*\n(?:[^\n]*\n){0,10}?'
+        r'[ \t]{8,}(?:_?[a-zA-Z]\w*\s*=\s*)?await\s+\w*db\.\w+\.(?:find|find_one|count(?:_documents)?)\s*\('
+     ),
+     "n_plus_one",       "HIGH",
+     "Database call inside a for-loop — collapse with `$in` batch query."),
+]
 
-# ... [rest truncated] ...
-"""
-services/codebase_health_core.py — Iter arch-2a boundary-violation fix
+def _scan_performance(text_cache: dict[str, str]) -> list[dict]:
+    out: list[dict] = []
+    for path, text in text_cache.items():
+        # Iter 212m-227 — Skip scanner rule-definition files. The
+        # fix-hint strings inside them literally spell out patterns
+        # like `.to_list(None)` and get flagged by the perf regex.
+        if _is_scanner_rule_file(path):
+            continue
+        if not (path.endswith(".py") or path.endswith(".js")
+                or path.endswith(".jsx") or path.endswith(".ts")
+                or path.endswith(".tsx")):
+            continue
+        for rx, rid, sev, desc in _PERF_RULES:
+            for m in rx.finditer(text or ""):
+                line = (text[:m.start()].count("\n") + 1) if text else 0
+                out.append({
+                    "id":         f"perf::{path}:{line}:{rid}",
+                    "category":   "performance",
+                    "severity":   _norm_sev(sev),
+                    "file":       path,
+                    "line":       line,
+                    "title":      rid,
+                    "message":    desc,
+                    "fix_hint":   _perf_fix_hint(rid),
+                    "fix_tokens": 5,
+                })
+    return out
 
-Relocated VERBATIM from routers/codebase_health.py (no logic changes).
-These five category scanners + shared scoring helpers are PURE functions.
-"""
 
-from __future__ import annotations
+def _perf_fix_hint(rid: str) -> str:
+    return {
+        "unbounded_tolist":
+            "Replace `.to_list(None)` with `.skip(skip).limit(limit).to_list(limit)`.",
+        "high_cap_tolist":
+            "Use page/limit query params instead of a hard-coded cap.",
+        "select_star":
+            "Add a projection arg: `{'_id': 0, 'field_a': 1, 'field_b': 1}`.",
+        "n_plus_one":
+            "Collect the keys first, then do ONE `$in` batch query.",
+    }.get(rid, "")
 
-import asyncio,json,re,time,builtins,glob,hmac,itertools,collections,warnings,fractions,pickle,copyreg,linecache,stringtracebackinspectdisgcweakreffunctoolsoperatorcollectionsabcnumbersmathcmathrandomdatetimetimedeltaDecimalEnumautoIterableIteratorSequenceMappingSetCallableoverloadTYPE_CHECKINGProtocolruntime_checkableAwaitableCoroutineGeneratorAsyncContextManagercontextlibdataclassesfieldasdictastatexitargparsetempfilesignalresource_limitstermiosstructsocketselectsslhashlibzlibgzipbz2lzmaZipFiletarfilenamesuuidgetnodeUUIDuuid4PathPurePathPosixPathWindowsPathwalkglobiglobfnmatchshutilcopymovecopytreermtreewhichdisk_usagemakedirschdirchmodstatlstatutimectimeasc_timemktimestrptimestrtimensleepsystempopenwaitpidforkexeclspawnvpopenfdclosestdinstdoutstderrreadwritereadlinewritelinesflushseektelltruncateconnectbindlistenacceptsendrecvsendallshutdownSOCK_STREAMAF_INETgethostbynameresolverenvironputenvunsetenvexpandvarsvarsexecutableprefixexec_prefixplatformarchitecturemachineprocessorimplementationcompilercopyrightversionhexversionapi_versionmaxunicodefloat_infoint_infobits_per_digitstorage_bit_digitsizeof_digitmaxsizemaxdigitsbyteorderbytes_orderbigendiansys_big_endianlittle_endiannative_byteorderBIG_ENDIANLITTLE_ENDIANUNICODE_NEWLINE_SEPARATOR_LINE_FEEDCARRIAGE_RETURNFORM_FEEDVERTICAL_TABNEXT_RECORD_SEPARATORLINE_SEPARATORPARAGRAPH_SEPARATORFILE_SEPARATORSYSTEM_FILE_SEPARATORINFORMATION_SEPARATOR_ONEINFORMATION_SEPARATOR_TWOINFORMATION_SEPARATOR_THREEINFORMATION_SEPARATOR_FOURREPLACEMENT_CHARACTERBYTE_ORDER_MARKNOT_A_CHARACTERSURROGATE_FIRST_SURROGATE_LAST_SURROGATESURROGATE_HIGH_STARTSURROGATE_LOW_STARTSURROGATE_HIGH_ENDSURROGATE_LOW_ENDNONCHARACTER_CODE_POINT_FIRST_NONCHARACTER_CODE_POINT_LAST_PRIVATE_USE_FIRSTPRIVATE_USE_LAST_PRIVATE_USE_SURROGATES_FIRST_SURROGATES_LAST_RESERVED_FIRST_RESERVED_LAST_NAMING_POLICY_STRICTSTABLERELEASE_LEVEL_FINALRELEASE_LEVEL_PREVIEWRELEASE_LEVEL_ALPHA_BETA_GAMMA_RCPOSTRELEASE_SERIAL_INFOVERSION_HEX_VERSION_INT_HEX_VERSION_FLOAT_VERSION_STR_VERSION_NAME_FULLNAMEDIRSEPALTSEPPATHSEPDEVNULLCURDIRPARDIREXT_SEPDEFERRED_PATH_DELIMITERENVIRON_MAPPING_KEYS_VIEW_ITEMS_VALUES_GET_SETDEFAULT_CLEARPOPPOPITEMUPDATESETDEFAULT_FROMKEYSFROMITERABLECOPYHASH_REDUCE_STATE_PICKLE_DUMP_LOADSUPPORTS_BUFFER_PROTOCOL_MEMORYVIEW_BYTEARRAY_MUTABLE_BYTES_IMMUTABLE_SEQUENCE_CONCATENATION_REPEAT_MEMBERSHIP_INDEXING_SLICING_LENGTH_COMPARISON_EQUALITY_HASHING_FORMATTING_ITERATION_REVERSED_CONTAINS_COUNT_INDEX_INPLACE_ADD_SUBTRACT_MULTIPLY_DIVIDE_MODULO_POWER_L
+
+# ──────────────────────────────────────────────────────────────────────
+# Category 3 — Code Quality
+# ──────────────────────────────────────────────────────────────────────
+_LARGE_FN_THRESHOLD = 80   # lines of body
+_LARGE_FILE_THRESHOLD = 1000
+
+def _scan_code_quality(text_cache: dict[str, str]) -> list[dict]:
+    out: list[dict] = []
+    fn_re = re.compile(r'^\s*(?:async\s+)?def\s+(\w+)\s*\(', re.MULTILINE)
+    todo_re = re.compile(r'#\s*(?:TODO|FIXME|HACK|XXX)\b', re.IGNORECASE)
+    bare_except = re.compile(r'^\s*except\s*:\s*$', re.MULTILINE)
+
+    for path, text in text_cache.items():
+        if not text:
+            continue
+        n_lines = text.count("\n") + 1
+        if n_lines > _LARGE_FILE_THRESHOLD and (
+            path.endswith(".py") or path.endswith(".jsx")
+            or path.endswith(".tsx") or path.endswith(".js")
+        ):
+            out.append({
+                "id":       f"q::{path}:0:large_file",
+                "category": "code_quality",
+                "severity": _norm_sev("MEDIUM"),
+                "file":     path, "line": 0,
+                "title":    "large_file",
+                "message":  f"{n_lines} lines — ORA cannot refactor this safely.",
+                "fix_hint": "Split into focused modules of <500 lines each.",
+                "fix_tokens": 5,
+            })
+        # TODO comments
+        for m in todo_re.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            out.append({
+                "id":       f"q::{path}:{line}:todo",
+                "category": "code_quality",
+                "severity": _norm_sev("LOW"),
+                "file":     path, "line": line,
+                "title":    "todo_comment",
+                "message":  "Open TODO/FIXME — easy to forget.",
+                "fix_hint": "Either fix now or convert to a GitHub issue.",
+                "fix_tokens": 3,
+            })
+        # Bare except (Python only)
+        if path.endswith(".py"):
+            for m in bare_except.finditer(text):
+                line = text[:m.start()].count("\n") + 1
+                out.append({
+                    "id":       f"q::{path}:{line}:bare_except",
+                    "category": "code_quality",
+                    "severity": _norm_sev("MEDIUM"),
+                    "file":     path, "line": line,
+                    "title":    "bare_except",
+                    "message":  "Bare `except:` swallows KeyboardInterrupt + SystemExit too.",
+                    "fix_hint": "Catch `Exception` and log the traceback.",
+                    "fix_tokens": 5,
+                })
+        # Large functions (Python only — JS is harder without an AST)
+        if path.endswith(".py"):
+            fn_starts = [(m.start(), m.group(1)) for m in fn_re.finditer(text)]
+            for i, (start, name) in enumerate(fn_starts):
+                end = fn_starts[i+1][0] if i+1 < len(fn_starts) else len(text)
+                body_lines = text[start:end].count("\n")
+                if body_lines > _LARGE_FN_THRESHOLD:
+                    line = text[:start].count("\n") + 1
+                    out.append({
+                        "id":       f"q::{path}:{line}:large_fn",
+                        "category": "code_quality",
+                        "severity": _norm_sev("MEDIUM"),
+                        "file":     path, "line": line,
+                        "title":    "large_function",
+                        "message":  f"`{name}` is {body_lines} lines — too big to test/refactor.",
+                        "fix_hint": "Split into smaller helpers; each function should do one thing.",
+                        "fix_tokens": 5,
+                    })
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Category 4 — Dependencies
+# ──────────────────────────────────────────────────────────────────────
+# Hard-coded CVE map for known-vulnerable versions. In a future iter
+# this should hit the OSV.dev API live.
+_CVE_DB: dict[str, list[tuple[str, str, str]]] = {
+    # package: [(matched_version_prefix, CVE_id, severity)]
+    "requests":  [("2.28.", "CVE-2023-32681", "HIGH")],
+    "fastapi":   [("0.95.", "outdated", "MEDIUM")],
+    "pyjwt":     [("1.",    "CVE-2022-29217", "CRITICAL")],
+    "axios":     [("0.21.", "CVE-2021-3749",  "HIGH")],
+    "lodash":    [("4.17.20", "CVE-2021-23337", "HIGH")],
+    "next":      [("13.4.", "CVE-2024-46982", "HIGH")],
+    "vite":      [("4.",    "outdated", "LOW")],
+}
+
+
+# ── Ticket B (2026-02) — live OSV.dev CVE lookup, in-process cache ─────
+# `_scan_dependencies` MUST stay a synchronous, zero-network-I/O pure
+# function — it's called via `asyncio.to_thread()` from
