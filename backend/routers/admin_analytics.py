@@ -253,24 +253,3 @@ async def admin_system_stats(
         {"event": "aggregate", "status": "manual_review",
          "ts": {"$gte": cutoff}}
     )
-    parl_cb_opens_24h = await db.parliament_log.count_documents(
-        {"event": "circuit_open_fallback", "ts": {"$gte": cutoff_24h}}
-    )
-    # Council A member-win distribution.
-    council_win_pipeline = [
-        {"$match": {"event": "aggregate", "status": "success",
-                    "council": "A", "ts": {"$gte": cutoff}}},
-        {"$group": {"_id": "$winner", "n": {"$sum": 1}}},
-    ]
-    win_rows = await db.parliament_log.aggregate(council_win_pipeline).to_list(20)
-    council_A_wins: dict[str, int] = {
-        "A1-conservative": 0, "A2-balanced": 0, "A3-creative": 0,
-    }
-    for row in win_rows:
-        key = row.get("_id") or "unknown"
-        if key in council_A_wins:
-            council_A_wins[key] = row["n"]
-    avg_score_rows = await db.parliament_log.aggregate([
-        {"$match": {"event": "aggregate", "status": "success",
-                    "ts": {"$gte": cutoff}}},
-        {"$project":
