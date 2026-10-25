@@ -35,13 +35,14 @@ TRIGGER_ONELINE: dict[str, str] = {
 
     # ── Vanguard dangerous code ──
     "eval_usage":              "any call to `eval(`",
-    "exec_usage":              "any call to `exec(`",
+    "exec_usage":              "any call to `exec(`,
     "subprocess_shell_true":   "`subprocess.*(... shell=True ...)`",
     "os_system":               "any call to `os.system(`",
     "pickle_loads":            "any call to `pickle.load(` or `pickle.loads(`",
     "yaml_unsafe_load":        "`yaml.load(...)` without an explicit `Loader=`",
     "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
     "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
+    "chain_sql_plus_insecure_http": "compound: ['requests_no_verify', 'sql_string_format'] — SQL injection over unverified HTTPS",
     "innerHTML_assignment":    "`.innerHTML = ...` in JS/TS",
     "dangerously_set_html":    "React `dangerouslySetInnerHTML` prop",
 
@@ -84,15 +85,15 @@ TRIGGER_ONELINE: dict[str, str] = {
     "inner_html_assign":       "`.innerHTML =` (XSS sink)",
 
     # ── Bug Hunt exposed endpoints ──
-    "debug_route_no_auth":     "`@app/router.get/post('/debug|/console|/repl|/shell')` without auth decorator",
+    "debug_route_no_auth":     "`@app/router.get/post('/debug|/console|repl|/shell')` without auth decorator",
     "admin_route_no_auth":     "`@app/router.<verb>('/admin…')` followed by an unguarded `def`",
-    "actuator_endpoint":       "any `/actuator|/jolokia|/env|/heapdump|/threaddump|/trace` path literal",
+    "actuator_endpoint":       "any `/actuator|jolokia|env|heapdump|threaddump|trace` path literal",
     "metrics_endpoint_no_auth":"`@app/router.get('/metrics')` with an unguarded `def`",
     "health_endpoint_leaks":   "`/health` handler that returns `mongo/db/version/commit/env/secret` info",
-    "api_key_in_url":          "URL query string carrying `api_key / token / access_token / secret`",
+    "api_key_in_url":          "URL query string carrying `api_key / token / access_token / secret`,
     "stack_trace_returned":    "returning `traceback.format_exc() / str(e) / repr(e)` to the client",
     "debug_true_production":  "`DEBUG = True` at module scope",
-    "swagger_in_prod":         "`docs_url='/docs'` or `openapi_url='/…'` without prod gate",
+    "swagger_in_prod":         "`docs_url='/docs'` or `openapi_url='/…' without prod gate",
     "cors_allow_all":          "`allow_origins=['*']` in FastAPI/Starlette CORS middleware",
 
     # ── HTTP security headers (repo-level rule) ──
@@ -100,12 +101,12 @@ TRIGGER_ONELINE: dict[str, str] = {
 
     # ── Docker CIS ──
     "docker_cis_4_7_latest_tag":       "Dockerfile `FROM image:latest` or `FROM image` (no explicit tag/digest)",
-    "docker_cis_4_9_add_instead_copy": "Dockerfile uses `ADD` for a local file (should be `COPY`)",
+    "docker_cis_4_9_add_instead_copy": "Dockerfile uses `ADD` for a local file (should be `COPY)",
     "docker_cis_4_10_secret_in_env":   "Dockerfile `ENV/ARG NAME=value` where NAME contains PASSWORD/SECRET/TOKEN/API_KEY",
     "docker_cis_curl_pipe_sh":         "Dockerfile `RUN curl … | sh` / `RUN wget … | bash`",
-    "docker_cis_apt_upgrade":          "Dockerfile `apt-get upgrade` / `apt-get dist-upgrade`",
+    "docker_cis_apt_upgrade":          "Dockerfile `apt-get upgrade` / `apt-get dist-upgrade`,
     "docker_cis_4_1_no_user":          "Dockerfile has no `USER` instruction (runs as root)",
     "docker_cis_4_6_no_healthcheck":   "Dockerfile has no `HEALTHCHECK` instruction",
-    "docker_cis_5_4_privileged":       "compose file `privileged: true`",
-    "docker_cis_5_31_docker_sock":     "compose file mounts `/var/run/docker.sock`",
+    "docker_cis_5_4_privileged":       "compose file `privileged: true`,
+    "docker_cis_5_31_docker_sock":     "compose file mounts `/var/run/docker.sock`,
 }
