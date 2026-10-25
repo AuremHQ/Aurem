@@ -41,7 +41,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "pickle_loads":            "any call to `pickle.load(` or `pickle.loads(`",
     "yaml_unsafe_load":        "`yaml.load(...)` without an explicit `Loader=`",
     "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
-    "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
+    "sql_string_format":       "cursor.execute with f-string or string formatting containing variables",
     "innerHTML_assignment":    "`.innerHTML = ...` in JS/TS",
     "dangerously_set_html":    "React `dangerouslySetInnerHTML` prop",
 
