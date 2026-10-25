@@ -43,7 +43,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
     "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
     "innerHTML_assignment":    "`.innerHTML = ...` in JS/TS",
-    "dangerously_set_html":    "React `dangerouslySet" + "InnerHTML` prop",
+    "dangerously_set_html":    "React dangerouslySetInnerHTML prop",
 
     # ── Bug Hunt secrets (adds tighter fingerprints on top of Vanguard) ──
     "aws_access_key_id":       "literal starting `AKIA` + 16 uppercase alphanumerics (long-term key)",
@@ -76,7 +76,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "weak_crypto_md5":         "`hashlib.md5(` or `CryptoJS.MD5`",
     "weak_crypto_sha1":        "`hashlib.sha1(` or `CryptoJS.SHA1`",
     "weak_random_token":       "token/secret/password/nonce/salt = random.random / Math.random",
-    "jwt_alg_none":            "`\"alg\": \"none\"` literal in code / JSON",
+    "jwt_alg_none":            "\"alg\": \"none\"` literal in code / JSON",
     "cors_wildcard_with_creds":"`Access-Control-Allow-Origin: *` within 200 chars of `Allow-Credentials: true`",
     "cookie_no_secure_flag":   "`set_cookie(...)` without `secure=True`",
     "cookie_no_httponly_flag": "`set_cookie(...)` without `httponly=True`",
@@ -93,19 +93,4 @@ TRIGGER_ONELINE: dict[str, str] = {
     "stack_trace_returned":    "returning `traceback.format_exc() / str(e) / repr(e)` to the client",
     "debug_true_production":  "`DEBUG = True` at module scope",
     "swagger_in_prod":         "`docs_url='/docs'` or `openapi_url='/…'` without prod gate",
-    "cors_allow_all":          "`allow_origins=['*']` in FastAPI/Starlette CORS middleware",
-
-    # ── HTTP security headers (repo-level rule) ──
-    "http_headers_missing":    "web-app entrypoint present (FastAPI/Flask/Express) but NO helmet / secure-headers / HSTS / X-Frame-Options / CSP / X-Content-Type-Options / Referrer-Policy / Permissions-Policy anywhere in the repo",
-
-    # ── Docker CIS ──
-    "docker_cis_4_7_latest_tag":       "Dockerfile `FROM image:latest` or `FROM image` (no explicit tag/digest)",
-    "docker_cis_4_9_add_instead_copy": "Dockerfile uses `ADD` for a local file (should be `COPY`)",
-    "docker_cis_4_10_secret_in_env":   "Dockerfile `ENV/ARG NAME=value` where NAME contains PASSWORD/SECRET/TOKEN/API_KEY",
-    "docker_cis_curl_pipe_sh":         "Dockerfile `RUN curl … | sh` / `RUN wget … | bash`",
-    "docker_cis_apt_upgrade":          "Dockerfile `apt-get upgrade` / `apt-get dist-upgrade`",
-    "docker_cis_4_1_no_user":          "Dockerfile has no `USER` instruction (runs as root)",
-    "docker_cis_4_6_no_healthcheck":   "Dockerfile has no `HEALTHCHECK` instruction",
-    "docker_cis_5_4_privileged":       "compose file `privileged: true`",
-    "docker_cis_5_31_docker_sock":     "compose file mounts `/var/run/docker.sock`",
-}
+    "cors_allow_all":          "`allow_origins=['*']` in FastAPI
