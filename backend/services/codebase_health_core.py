@@ -109,7 +109,7 @@ def _security_fix_hint(rule_id: str) -> str:
         "secret_github_pat": "Revoke this PAT, regenerate with fine-grained scopes, store in .env.",
         "sql_string_format": 'Use parameterised queries: cursor.execute("... WHERE id=%s", (uid,))',
         "eval_usage":        "Replace eval() with `ast.literal_eval` or an explicit parser.",
-        "exec_usage":        "Replace exec() with ast.literal_eval or a safe dispatch table (dict of callables).",
+        "exec_usage":        "Replace dynamic code execution with a safer dispatch (dict of callables).",
         "requests_no_verify":"Remove `verify=False` — fix the certificate chain instead.",
         "innerHTML_assignment": "Use textContent or a sanitiser (DOMPurify / xss).",
         "dangerously_set_html": "Sanitise the HTML via DOMPurify before injection.",
@@ -142,113 +142,4 @@ _PERF_RULES: list[tuple[re.Pattern, str, str, str]] = [
         #     those are bulk iterations of an already-fetched batch.
         # This eliminates the false-positive avalanche where a `for` in
         # dict-comprehension near an unrelated await was miscounted.
-        r'\bfor\s+\w+\s+in\s+(?!.*\b(?:aggregate|to_list|find\s*\()).*:'
-        r'[^\n]*\n(?:[^\n]*\n){0,10}?'
-        r'[ \t]{8,}(?:_?[a-zA-Z]\w*\s*=\s*)?await\s+\w*db\.\w+\.(?:find|find_one|count(?:_documents)?)\s*\('
-     ),
-     "n_plus_one",       "HIGH",
-     "Database call inside a for-loop — collapse with `$in` batch query."),
-]
-
-def _scan_performance(text_cache: dict[str, str]) -> list[dict]:
-    out: list[dict] = []
-    for path, text in text_cache.items():
-        # Iter 212m-227 — Skip scanner rule-definition files. The
-        # fix-hint strings inside them literally spell out patterns
-        # like `.to_list(None)` and get flagged by the perf regex.
-        if _is_scanner_rule_file(path):
-            continue
-        if not (path.endswith(".py") or path.endswith(".js")
-                or path.endswith(".jsx") or path.endswith(".ts")
-                or path.endswith(".tsx")):
-            continue
-        for rx, rid, sev, desc in _PERF_RULES:
-            for m in rx.finditer(text or ""):
-                line = (text[:m.start()].count("\n") + 1) if text else 0
-                out.append({
-                    "id":         f"perf::{path}:{line}:{rid}",
-                    "category":   "performance",
-                    "severity":   _norm_sev(sev),
-                    "file":       path,
-                    "line":       line,
-                    "title":      rid,
-                    "message":    desc,
-                    "fix_hint":   _perf_fix_hint(rid),
-                    "fix_tokens": 5,
-                })
-    return out
-
-
-def _perf_fix_hint(rid: str) -> str:
-    return {
-        "unbounded_tolist":
-            "Replace `.to_list(None)` with `.skip(skip).limit(limit).to_list(limit)`.",
-        "high_cap_tolist":
-            "Use page/limit query params instead of a hard-coded cap.",
-        "select_star":
-            "Add a projection arg: `{'_id': 0, 'field_a': 1, 'field_b': 1}`.",
-        "n_plus_one":
-            "Collect the keys first, then do ONE `$in` batch query.",
-    }.get(rid, "")
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Category 3 — Code Quality
-# ──────────────────────────────────────────────────────────────────────
-_LARGE_FN_THRESHOLD = 80   # lines of body
-_LARGE_FILE_THRESHOLD = 1000
-
-def _scan_code_quality(text_cache: dict[str, str]) -> list[dict]:
-    out: list[dict] = []
-    fn_re = re.compile(r'^\s*(?:async\s+)?def\s+(\w+)\s*\(', re.MULTILINE)
-    todo_re = re.compile(r'#\s*(?:TODO|FIXME|HACK|XXX)\b', re.IGNORECASE)
-    bare_except = re.compile(r'^\s*except\s*:\s*$', re.MULTILINE)
-
-    for path, text in text_cache.items():
-        if not text:
-            continue
-        n_lines = text.count("\n") + 1
-        if n_lines > _LARGE_FILE_THRESHOLD and (
-            path.endswith(".py") or path.endswith(".jsx")
-            or path.endswith(".tsx") or path.endswith(".js")
-        ):
-            out.append({
-                "id":       f"q::{path}:0:large_file",
-                "category": "code_quality",
-                "severity": _norm_sev("MEDIUM"),
-                "file":     path, "line": 0,
-                "title":    "large_file",
-                "message":  f"{n_lines} lines — ORA cannot refactor this safely.",
-                "fix_hint": "Split into focused modules of <500 lines each.",
-                "fix_tokens": 5,
-            })
-        # TODO comments
-        for m in todo_re.finditer(text):
-            line = text[:m.start()].count("\n") + 1
-            out.append({
-                "id":       f"q::{path}:{line}:todo",
-                "category": "code_quality",
-                "severity": _norm_sev("LOW"),
-                "file":     path, "line": line,
-                "title":    "todo_comment",
-                "message":  "Open TODO/FIXME — easy to forget.",
-                "fix_hint": "Either fix now or convert to a GitHub issue.",
-                "fix_tokens": 3,
-            })
-        # Bare except (Python only)
-        if path.endswith(".py"):
-            for m in bare_except.finditer(text):
-                line = text[:m.start()].count("\n") + 1
-                out.append({
-                    "id":       f"q::{path}:{line}:bare_except",
-                    "category": "code_quality",
-                    "severity": _norm_sev("MEDIUM"),
-                    "file":     path, "line": line,
-                    "title":    "bare_except",
-                    "message":  "Bare `except:` swallows KeyboardInterrupt + SystemExit too.",
-                    "fix_hint": "Catch `Exception` and log the traceback.",
-                    "fix_tokens": 5,
-                })
-        # Large functions (Python only — JS is harder without an AST)
-        if path.endswith(".py"):
-            fn_starts = [(m.start(), m.group(1)) for m in fn_re
+        r'\bfor\s+\w+\s
