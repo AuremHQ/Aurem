@@ -11,7 +11,7 @@ Usage:
     GH_PUSH_PROOF_OWNER=your-org \
     GH_PUSH_PROOF_REPO=your-disposable-repo \
     GH_PUSH_PROOF_BRANCH=main \
-    GH_PUSH_PROOF_TOKEN=<redacted> \
+    GH_PUSH_PROOF_TOKEN=$GH_PUSH_PROOF_TOKEN \
     python scripts/one_time_real_push_proof.py
 
 Prints the real commit SHA + html_url on success (T3 pass), or the
