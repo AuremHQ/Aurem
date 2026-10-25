@@ -26,7 +26,7 @@
  */
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../lib/api";
+import { useTokenMeter } from "../hooks/useTokenMeter";
 
 const SEEN_KEY = "aurem_meter_threshold_seen";
 
@@ -49,29 +49,11 @@ function toneFor(threshold) {
 }
 
 export default function TokenMeter({ collapsed }) {
-  const [meter, setMeter] = useState(null);
+  const { meter } = useTokenMeter();
   const [showStopModal, setShowStopModal] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const seenRef = useRef(loadSeen());
   const navigate = useNavigate();
-
-  useEffect(() => {
-    let active = true;
-    async function load() {
-      try {
-        const r = await api.get("/usage/me/meter");
-        if (active) setMeter(r.data);
-      } catch {
-        /* ignore — meter just stays hidden */
-      }
-    }
-    load();
-    const id = setInterval(load, 60000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, []);
 
   useEffect(() => {
     if (!meter || !meter.visible) return;

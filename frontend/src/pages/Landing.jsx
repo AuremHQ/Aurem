@@ -30,7 +30,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../lib/api";
 import { pageTitle } from "../lib/siteConfig";
-import { heroFreeOfferCta, TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
+import { heroFreeOfferCta, TOKEN_WORDING_ACTIVE, heroTokenMetersClaim, landingPricingSectionSub, heroStatTokenBilling } from "../lib/billingCopy";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
 import MarketingNav from "../components/marketing/MarketingNav";
@@ -750,7 +750,7 @@ export default function Landing() {
             <h1 className="hero-title" data-testid="hero-headline">
               The AI engineer<br />
               That actually commits.
-              <span>No IDE, no token meters.</span>
+              {heroTokenMetersClaim() && <span>{heroTokenMetersClaim()}</span>}
             </h1>
             <p className="hero-sub" data-testid="hero-subhead">
               ORA reads your GitHub repo, runs Vanguard security scans,
@@ -821,7 +821,9 @@ export default function Landing() {
             </div>
             <div className="hero-stats">
               <div><div className="stat-num">$9</div><div className="stat-label">flat monthly</div></div>
-              <div><div className="stat-num">0</div><div className="stat-label">token billing</div></div>
+              {heroStatTokenBilling() && (
+                <div><div className="stat-num">{heroStatTokenBilling().num}</div><div className="stat-label">{heroStatTokenBilling().label}</div></div>
+              )}
               <div><div className="stat-num">1</div><div className="stat-label">tap to commit</div></div>
               <div><div className="stat-num">∞</div><div className="stat-label">repos</div></div>
             </div>
@@ -1298,7 +1300,7 @@ export default function Landing() {
         <section className="section" id="pricing">
           <div className="section-label">Pricing</div>
           <h2 className="section-title">Flat pricing. No surprises.</h2>
-          <p className="section-sub">One flat monthly price for your plan's task allotment. No token meters, no per-request billing. Annual plans save 20%.</p>
+          <p className="section-sub">{landingPricingSectionSub()}</p>
           <PricingCards />
         </section>
 

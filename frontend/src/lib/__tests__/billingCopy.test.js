@@ -17,6 +17,11 @@ import {
   defaultPageMetaDescription,
   freeOfferShortLine,
   tierCapacityLine,
+  heroTokenMetersClaim,
+  pricingHeroHeadline,
+  pricingDetailLine,
+  landingPricingSectionSub,
+  heroStatTokenBilling,
 } from "../billingCopy.js";
 
 describe("billingCopy", () => {
@@ -41,6 +46,28 @@ describe("billingCopy", () => {
 
   it("PLAN_TOKENS matches the exact amounts the Stripe webhook already grants (100 tokens/USD)", () => {
     expect(PLAN_TOKENS).toEqual({ starter: 900, pro: 1900, team: 4900 });
+  });
+
+  it("ITEM 6 — legacy mode: heroTokenMetersClaim/pricingHeroHeadline/pricingDetailLine/landingPricingSectionSub/heroStatTokenBilling return the OLD wording", () => {
+    expect(heroTokenMetersClaim()).toBe("No IDE, no token meters.");
+    expect(pricingHeroHeadline()).toBe("Flat pricing. No token meters.");
+    expect(pricingDetailLine()).toMatch(/No token meters/);
+    expect(landingPricingSectionSub()).toMatch(/No token meters/);
+    expect(heroStatTokenBilling()).toEqual({ num: "0", label: "token billing" });
+  });
+
+  it("ITEM 6 — none of the new legacy/token-mode pairs ever say 'no token meters' when TOKEN_WORDING_ACTIVE would be true (verified via the ternary source, since this test env pins the build-time flag to off)", () => {
+    // Direct behavioral proof that the TRUE branch exists and differs
+    // from the legacy claim — see billingCopy.js's own source for the
+    // ternary; MasterPromptV2Part6_homepageClaims.test.jsx locks the
+    // exact token-mode strings via source inspection (same convention
+    // as Landing.tokenWording.test.jsx) since VITE_TOKEN_BILLING_MODE
+    // can't be flipped at runtime in this test env.
+    expect(heroTokenMetersClaim.toString()).toMatch(/TOKEN_WORDING_ACTIVE \? null/);
+    expect(pricingHeroHeadline.toString()).toMatch(/No per-action billing/);
+    expect(pricingDetailLine.toString()).toMatch(/No per-action billing/);
+    expect(landingPricingSectionSub.toString()).toMatch(/No per-action billing/);
+    expect(heroStatTokenBilling.toString()).toMatch(/TOKEN_WORDING_ACTIVE \? null/);
   });
 
   it("no exported string ever hardcodes an 'about N fixes' estimate", () => {

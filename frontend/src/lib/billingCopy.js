@@ -85,3 +85,43 @@ export function tierCapacityLine(tierId) {
   const tokens = PLAN_TOKENS[tierId];
   return tokens ? `${tokens.toLocaleString()} tokens / month` : null;
 }
+
+// ITEM 6 (independent review) — "No IDE, no token meters." (Landing.jsx
+// hero headline) becomes FALSE once token billing is live: the
+// product explicitly has a token meter then (TokenMeter.jsx). No
+// confident, true one-line tagline replacement was clear enough to
+// invent here (see the Item 6 report's MISSING DECISIONS) — returns
+// null in token mode so the caller renders nothing rather than a
+// wrong claim, instead of guessing marketing copy.
+export function heroTokenMetersClaim() {
+  return TOKEN_WORDING_ACTIVE ? null : "No IDE, no token meters.";
+}
+
+// Pricing.jsx h1. Same false-claim problem as above, but this one has
+// a clear, already-established TRUE replacement: Part 4's own rule
+// (enforced by scripts/pricing_copy_lint.py's per-action-cost check)
+// is "never show a per-action number" — so "no per-action billing" is
+// true under the token system, not an invented claim.
+export function pricingHeroHeadline() {
+  return TOKEN_WORDING_ACTIVE ? "Flat pricing. No per-action billing." : "Flat pricing. No token meters.";
+}
+
+export function pricingDetailLine() {
+  return TOKEN_WORDING_ACTIVE
+    ? "One flat monthly price. No per-action billing — pay for your plan's token allotment, not per-request."
+    : "One flat monthly price. No token meters — pay for your plan's task allotment, not per-request.";
+}
+
+export function landingPricingSectionSub() {
+  return TOKEN_WORDING_ACTIVE
+    ? "One flat monthly price for your plan's token allotment. No per-action billing — your balance just tracks total usage. Annual plans save 20%."
+    : "One flat monthly price for your plan's task allotment. No token meters, no per-request billing. Annual plans save 20%.";
+}
+
+// Landing.jsx hero-stats bar's 2nd tile ("0" / "token billing") — the
+// same false-in-token-mode claim as heroTokenMetersClaim, in a
+// different spot. No confident replacement stat was clear enough to
+// invent (see MISSING DECISIONS) — null means "omit this tile."
+export function heroStatTokenBilling() {
+  return TOKEN_WORDING_ACTIVE ? null : { num: "0", label: "token billing" };
+}

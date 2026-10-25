@@ -95,6 +95,12 @@ _LEGACY_TASK_WORDING_PATTERNS = [
     re.compile(r"no\s+token\s+(billing|metering)", re.IGNORECASE),
     re.compile(r"no\s+per-token\s+(pricing|billing)", re.IGNORECASE),
     re.compile(r"flat,?\s+not\s+per-token", re.IGNORECASE),
+    # ITEM 6 (independent review) — "no token meters" was a real,
+    # ungated hit on the homepage ("No IDE, no token meters.") that
+    # none of the three patterns above caught ("meters" != "billing"/
+    # "metering"), because the Part 5.1 sweep that built this list
+    # didn't have this exact phrase in front of it.
+    re.compile(r"no\s+token\s+meters?", re.IGNORECASE),
 ]
 
 

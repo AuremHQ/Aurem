@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import time
 
 import config.plan_transition as _cfg
@@ -140,6 +141,73 @@ _FREE_DORMANT_AFTER_SECONDS = 90 * 86400  # 90 days with no login
 _HUGE_ALLOWANCE_TOKENS_THRESHOLD = 1_000_000
 
 
+def tokens_per_old_task_micro(tier: str) -> tuple[int | None, str]:
+    """ITEM 9 (independent review) — the per-tier default conversion
+    rate: tokens_per_old_task(tier) = price_monthly * USD_TO_TOKENS /
+    tasks_per_month, read from services.subscription_tiers.TIER_LIMITS
+    and config.token_pricing.USD_TO_TOKENS — never hardcoded.
+
+    Returns (rate_in_micro_tokens, reason). `rate_in_micro_tokens` is
+    math.floor'd at services.wallet.WALLET_MICRO_PER_TOKEN granularity
+    (never rounded up — no free tokens). None (with a clear, non-empty
+    `reason`) for any tier with no price (free/founder) or no finite
+    monthly task cap to divide by — never a guessed number."""
+    from config.token_pricing import USD_TO_TOKENS
+    from services.subscription_tiers import TIER_LIMITS, Tier
+    from services.wallet import WALLET_MICRO_PER_TOKEN
+    try:
+        tier_enum = Tier(tier)
+    except ValueError:
+        return None, f"unknown tier {tier!r} — no plan config to derive a rate from"
+    limits = TIER_LIMITS.get(tier_enum) or {}
+    price = limits.get("price_monthly")
+    tasks = limits.get("tasks_per_month")
+    if not price:
+        return None, f"{tier} has price_monthly={price!r} — no paid-plan rate to derive"
+    if not tasks:
+        return None, f"{tier} has no finite tasks_per_month ({tasks!r}) — no rate to derive"
+    rate_tokens = price * USD_TO_TOKENS / tasks
+    return math.floor(rate_tokens * WALLET_MICRO_PER_TOKEN), ""
+
+
+def _apply_proposed_grant(base: dict, *, tier: str, remaining_tasks: int | None, known_former_tier: bool) -> None:
+    """Fills in proposed_token_grant/needs_decision/grant_reason/
+    override_active on `base` in place. See tokens_per_old_task_micro
+    and the module-level ITEM 9 notes for the exact rule."""
+    from services.wallet import WALLET_MICRO_PER_TOKEN
+    remaining = remaining_tasks or 0
+    override = _cfg.LEGACY_TASK_TO_TOKEN_RATE
+    base["override_active"] = override is not None
+
+    if override is not None:
+        micro = math.floor(remaining * override * WALLET_MICRO_PER_TOKEN)
+        base["proposed_token_grant"] = micro / WALLET_MICRO_PER_TOKEN
+        base["needs_decision"] = False
+        return
+
+    if not known_former_tier:
+        base["needs_decision"] = True
+        base["proposed_token_grant"] = None
+        base["grant_reason"] = (
+            "paid_cancelled — the former paid tier cannot be determined "
+            "from any field this codebase stores (tier already reads "
+            "'free', downgraded by the cancellation webhook); set "
+            "LEGACY_TASK_TO_TOKEN_RATE to override, or decide manually"
+        )
+        return
+
+    rate_micro, reason = tokens_per_old_task_micro(tier)
+    if rate_micro is None:
+        base["needs_decision"] = True
+        base["proposed_token_grant"] = None
+        base["grant_reason"] = reason
+        return
+
+    micro = remaining * rate_micro
+    base["proposed_token_grant"] = micro / WALLET_MICRO_PER_TOKEN
+    base["needs_decision"] = False
+
+
 def _is_founder_email(email: str) -> bool:
     try:
         from services.test_accounts import is_founder_email
@@ -175,7 +243,13 @@ async def classify_user(db, user: dict, *, all_emails_lower: dict[str, int] | No
         "excluded": False, "exclude_reason": None,
         "remaining_old_allowance": None, "proposed_token_grant": None,
         "proposed_grace_end": None, "proposed_new_state": None,
-        "needs_decision": False,
+        "needs_decision": False, "override_active": False, "grant_reason": None,
+        # ITEM 9 — read-only flag for the founder's grandfathering
+        # decision: team's `maxx_tasks_per_month` is unlimited under
+        # the old task plan; the token model has no such per-tier
+        # carve-out, so a team user specifically loses that perk on
+        # cutover. Never changes any other field's behavior.
+        "loses_unlimited_maxx": tier == "team",
     }
 
     if user.get("fix_entitlement_frozen"):
@@ -245,19 +319,20 @@ async def classify_user(db, user: dict, *, all_emails_lower: dict[str, int] | No
             # as still "paid_active" rather than guessing further.
             base["segment"] = "paid_active"
         base["proposed_new_state"] = "token_plan_active"
-        if _cfg.LEGACY_TASK_TO_TOKEN_RATE is None:
-            base["needs_decision"] = True
-        else:
-            base["proposed_token_grant"] = round((remaining_tasks or 0) * _cfg.LEGACY_TASK_TO_TOKEN_RATE)
+        # Current tier IS the paid tier here (still subscribed), so
+        # the per-tier rate is directly knowable.
+        _apply_proposed_grant(base, tier=tier, remaining_tasks=remaining_tasks, known_former_tier=True)
         return base
 
     if tier == "free" and user.get("tier_updated_at") and user.get("fix_entitlement"):
         base["segment"] = "paid_cancelled"
         base["proposed_new_state"] = "token_plan_grace_then_free_scan_only"
-        if _cfg.LEGACY_TASK_TO_TOKEN_RATE is None:
-            base["needs_decision"] = True
-        else:
-            base["proposed_token_grant"] = round((remaining_tasks or 0) * _cfg.LEGACY_TASK_TO_TOKEN_RATE)
+        # `tier` already reads "free" (downgraded by the cancellation
+        # webhook) — the former PAID tier this user actually paid for
+        # is not recoverable from any field this codebase stores
+        # anywhere (grepped: no last_paid_tier/previous_tier/
+        # former_tier/tier_before field exists) — never guess it.
+        _apply_proposed_grant(base, tier=tier, remaining_tasks=remaining_tasks, known_former_tier=False)
         base["proposed_grace_end"] = now + _cfg.FREE_PLAN_GRACE_DAYS * 86400
         return base
 
@@ -311,5 +386,9 @@ async def run_dry_run(db, *, user_filter: dict | None = None) -> dict:
             "estimated_liability_usd": estimated_liability_usd,
             "needs_decision_count": sum(1 for r in rows if r["needs_decision"]),
             "excluded_count": sum(1 for r in rows if r["excluded"]),
+            # ITEM 9 — surfaced at the summary level (not just per-row)
+            # so a founder skimming the aggregate report can't miss
+            # that the per-tier default math was bypassed.
+            "override_active": _cfg.LEGACY_TASK_TO_TOKEN_RATE is not None,
         },
     }

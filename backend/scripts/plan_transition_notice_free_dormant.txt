@@ -1,0 +1,38 @@
+DRAFT — NOT SENT. For founder review only.
+Master Prompt v2 PART 6 / ITEM 9 — per-segment notice variant: free_dormant.
+
+Audience: free-tier users who have NOT logged in within the dormancy
+window (90+ days, see _FREE_DORMANT_AFTER_SECONDS) — see
+classify_user's "free_dormant" branch. Same facts as free_active
+(proposed_token_grant is always 0), but flagged as its own segment
+because the founder may reasonably choose to NOT notify dormant
+accounts at all (low open/engagement likelihood, and no urgency since
+they aren't actively relying on the product) — that decision is left
+to the founder, not assumed here.
+
+---
+
+Subject: A change to AUREM's free plan
+
+Hey {{FIRST_NAME}},
+
+It's been a while — in case you come back, here's a heads-up: AUREM's
+pricing is moving from a flat task count to a token balance for paid
+plans.
+
+- Your free full repo scan is still there whenever you want it.
+- Starting {{GRACE_END_DATE}}, fixing issues needs a paid plan —
+  scanning stays free either way.
+
+Questions? Reply to this email or reach us at the usual support
+channel.
+
+— The AUREM team
+
+---
+
+MISSING DECISIONS before this can actually be sent:
+  - Whether dormant accounts should be notified AT ALL vs. silently
+    carried through the cutover with no outreach (a legitimate,
+    lower-effort option the founder may prefer over this draft).
+  - The actual cutover date, which sets {{GRACE_END_DATE}}.

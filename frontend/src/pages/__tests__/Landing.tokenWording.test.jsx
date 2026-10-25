@@ -9,7 +9,15 @@ const SRC = fs.readFileSync(path.resolve(__dirname, "..", "Landing.jsx"), "utf-8
 
 describe("Landing.jsx — Master Prompt v2 PART 5.1 token wording gate", () => {
   it("hero + bottom CTAs read from the shared billingCopy module", () => {
-    expect(SRC).toMatch(/import \{ heroFreeOfferCta, TOKEN_WORDING_ACTIVE \} from "\.\.\/lib\/billingCopy"/);
+    // 2026-10-25 (ITEM 6, independent review) — widened from an exact
+    // two-name match to tolerate the sibling imports ITEM 6 added to
+    // this same line (heroTokenMetersClaim/landingPricingSectionSub/
+    // heroStatTokenBilling) without weakening the actual assertion:
+    // both names must still come from billingCopy, in one import.
+    const importLine = SRC.match(/import \{[^}]*\} from "\.\.\/lib\/billingCopy";/)?.[0];
+    expect(importLine, "no import from ../lib/billingCopy found").toBeTruthy();
+    expect(importLine).toMatch(/\bheroFreeOfferCta\b/);
+    expect(importLine).toMatch(/\bTOKEN_WORDING_ACTIVE\b/);
     expect(SRC).toMatch(/\{heroFreeOfferCta\(\)\}/g);
   });
 
