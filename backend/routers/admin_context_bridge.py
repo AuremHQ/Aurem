@@ -44,6 +44,7 @@ _MAX_TEXT_CHARS = 4000
 _MAX_ERROR_ITEMS = 20
 _MAX_ERROR_CHARS = 600
 _MAX_NETWORK_ITEMS = 15
+_MAX_BODY_BYTES = 512_000  # 512 KB hard cap — rejects oversized payloads early.
 
 # Server-side sanitize pass (2nd layer — the extension already strips
 # these client-side). Order matters: run the most specific patterns
@@ -113,7 +114,11 @@ def _format_snapshot_message(payload: ContextBridgePayload, clean_text: str,
 async def receive_context_bridge(
     payload: ContextBridgePayload,
     authorization: Optional[str] = Header(None),
+    content_length: Optional[int] = Header(None),
 ) -> dict:
+    if content_length is not None and content_length > _MAX_BODY_BYTES:
+        raise HTTPException(413, "Request body too large")
+
     user = await current_dev(authorization)
     db = get_db()
     if db is None:
