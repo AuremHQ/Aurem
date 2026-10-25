@@ -70,10 +70,26 @@ async def list_writable_repos(
             "full_name": r.get("full_name"),
             "private": bool(r.get("private")),
             "default_branch": r.get("default_branch") or "main",
-            "can_push": bool((r.get("permissions") or {}).get("push")),
+            # 2026-10-24 — founder-reported ("Save to GitHub" always
+            # said "No writable repos found" / "not in your connected
+            # GitHub access" for a repo ORA was actively committing to
+            # live). Root cause: GitHub's `permissions.push` on
+            # `/installation/repositories` reflects a legacy
+            # collaborator-style access model that GitHub Apps don't
+            # participate in — confirmed LIVE against a real,
+            # currently-working installation: GitHub returned
+            # `push: False` for a repo this exact App was pushing to
+            # at that moment. Being listed by this endpoint AT ALL
+            # already means the installation (and therefore the App's
+            # own declared `contents: write` permission, which applies
+            # uniformly across every repo any installation grants it)
+            # can push here — there is no finer-grained per-repo signal
+            # to check. `can_push` is kept in the response shape for
+            # the frontend, now simply mirroring that.
+            "can_push": True,
         }
         for r in repos
-        if r.get("full_name") and (r.get("permissions") or {}).get("push")
+        if r.get("full_name")
     ]
     out.sort(key=lambda r: r["full_name"].lower())
     return {
@@ -111,9 +127,12 @@ async def list_repo_branches_endpoint(
         raise HTTPException(502, classify_error(e)["user_message"])
 
     wanted = f"{owner}/{repo}".lower()
+    # Same fix as list_writable_repos above — being listed by
+    # `/installation/repositories` at all already means this
+    # installation can push here; `permissions.push` is not a
+    # meaningful per-repo signal for GitHub Apps (see comment there).
     match = next(
-        (r for r in repos if (r.get("full_name") or "").lower() == wanted
-         and (r.get("permissions") or {}).get("push")),
+        (r for r in repos if (r.get("full_name") or "").lower() == wanted),
         None,
     )
     if not match:

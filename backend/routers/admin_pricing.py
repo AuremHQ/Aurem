@@ -420,3 +420,25 @@ async def get_plan_transition_dry_run(authorization: str | None = Header(None)) 
     from services.plan_transition_write_guard import WriteGuardedDB
     guarded = WriteGuardedDB(db)
     return await run_dry_run(guarded)
+
+
+@router.get("/stale-fix-entitlement-preflight")
+async def get_stale_fix_entitlement_preflight(authorization: str | None = Header(None)) -> dict:
+    """ITEM 1(c) (independent review) — read-only. Lists every user
+    whose `fix_entitlement` is True but has no current active-
+    entitlement signal (cancelled/paused subscription that predates
+    the webhook-revoke fix in routers/payments.py, or any other row
+    that ends up in that shape). Writes NOTHING — real db wrapped in
+    a WriteGuardedDB before it ever reaches
+    services.fix_entitlement.find_stale_entitlements, which itself
+    refuses a raw (unguarded) db outright. Takes no client-supplied
+    filter — always "every user," closing off scope-widening or
+    Mongo-operator-injection avenues. Does NOT revoke anything; see
+    docs/CUTOVER_TOKEN_BILLING.md (or the Item 1 report) for the
+    separate, not-yet-built, admin-confirm-token real-revoke step."""
+    await _require_admin(authorization)
+    db = require_db()
+    from services.fix_entitlement import find_stale_entitlements
+    from services.plan_transition_write_guard import WriteGuardedDB
+    guarded = WriteGuardedDB(db)
+    return await find_stale_entitlements(guarded)

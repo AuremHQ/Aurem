@@ -141,6 +141,56 @@ async def unfreeze_fix_entitlement(db, user_id: str, *, reason: str) -> None:
     logger.info("[fix_entitlement] unfrozen user=%s reason=%s", user_id, reason)
 
 
+async def find_stale_entitlements(db) -> dict:
+    """ITEM 1(c) (independent review) — READ-ONLY pre-flight report.
+
+    Lists every `dev_users` row where `fix_entitlement` is True but no
+    current active-entitlement signal backs it: the exact stale shape
+    `is_fix_entitled()` now self-heals against at request time (see
+    that function's own comment), surfaced here as a list for the
+    founder to review BEFORE any real revoke. Does not revoke, write,
+    or touch anything — requires a WriteGuardedDB (services.
+    plan_transition_write_guard), enforced defensively exactly like
+    services.plan_transition.run_dry_run (refuses a raw db handle
+    outright rather than trusting the caller).
+
+    A frozen (disputed) row is excluded even if it would otherwise
+    look "stale" by tier/sub alone — a dispute freeze is not the
+    cancelled-subscription shape this report targets, and resolves
+    itself through the existing unfreeze path, not a revoke.
+    """
+    from services.plan_transition_write_guard import WriteGuardedDB
+    from services.wallet import get_balance
+    if not isinstance(db, WriteGuardedDB):
+        raise TypeError("find_stale_entitlements requires a WriteGuardedDB — refusing a raw db handle")
+
+    rows = []
+    scanned = 0
+    cursor = db.dev_users.find(
+        {"fix_entitlement": True},
+        {"_id": 0, "user_id": 1, "email": 1, "tier": 1, "stripe_sub_id": 1,
+         "fix_entitlement": 1, "fix_entitlement_frozen": 1,
+         "fix_entitlement_source": 1, "fix_entitlement_at": 1},
+    )
+    async for u in cursor:
+        scanned += 1
+        if u.get("fix_entitlement_frozen"):
+            continue
+        if u.get("tier") == "free" and not u.get("stripe_sub_id"):
+            bal = await get_balance(db, u.get("user_id", ""))
+            if (bal["plan_micro"] + bal["purchased_micro"]) <= 0:
+                rows.append({
+                    "user_id": u.get("user_id"),
+                    "email": u.get("email"),
+                    "tier": u.get("tier"),
+                    "stripe_sub_id": u.get("stripe_sub_id"),
+                    "fix_entitlement_source": u.get("fix_entitlement_source"),
+                    "fix_entitlement_at": u.get("fix_entitlement_at"),
+                    "reason": "tier=free, no active stripe_sub_id, zero purchased/plan balance",
+                })
+    return {"scanned": scanned, "count": len(rows), "rows": rows}
+
+
 async def assert_fix_entitled(db, user_id: str) -> dict:
     """The ONE mode-aware entry point. off -> no-op (never blocks,
     matches today's un-gated behavior). shadow -> computes/logs what

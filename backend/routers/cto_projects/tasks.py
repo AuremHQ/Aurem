@@ -318,9 +318,15 @@ async def submit_task(
                 logger.warning("[tasks] list_installation_repos failed: %r", e)
                 raise HTTPException(502, classify_error(e)["user_message"])
             _wanted = body.repo.lower()
+            # Same fix as routers/cto_projects/github_browse.py — being
+            # listed by `/installation/repositories` at all already
+            # means this installation can push here; `permissions.push`
+            # is not a meaningful per-repo signal for GitHub Apps (it
+            # reflects a legacy collaborator-access model, confirmed
+            # LIVE to read `push: False` for a repo this exact App was
+            # pushing to at that moment).
             _ok_repo = any(
                 (r.get("full_name") or "").lower() == _wanted
-                and (r.get("permissions") or {}).get("push")
                 for r in _repos
             )
             if not _ok_repo:

@@ -12,7 +12,7 @@
  *
  * Iter 62: extracted from ChatPanel.jsx as part of the P1 split.
  */
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { hasVerifiedReview } from "../utils/interactionState";
 import { InteractionStatus } from "./InteractionStatus";
 import {
@@ -820,6 +820,17 @@ export default function MessageBubble({
   // below, called by the modal's own "Save to GitHub" button, never
   // before the user explicitly confirms a repo+branch there.
   const [showSaveModal, setShowSaveModal] = useState(false);
+  // 2026-10-24 — founder report: typing a branch name in this modal
+  // kept losing focus after each word, forcing a re-click. Root cause:
+  // `useModalA11y` (used by SaveToGitHubModal) re-runs its "move focus
+  // into the modal" effect whenever its `onClose` prop changes
+  // identity — and an inline `() => setShowSaveModal(false)` below got
+  // a BRAND NEW function on every MessageBubble re-render (e.g. the
+  // ~5s ship-phase countdown poll in ChatPanel.jsx), re-stealing focus
+  // to the modal's first focusable element every time. `setShowSaveModal`
+  // itself is already stable (React guarantees this for useState
+  // setters), so an empty dep array is correct here.
+  const handleSaveModalCancel = useCallback(() => setShowSaveModal(false), []);
 
   function openSaveToGithubModal() {
     if (!canShip || shipState.status === "shipping" || shipState.status === "shipped") return;
@@ -1738,7 +1749,7 @@ export default function MessageBubble({
       <SaveToGitHubModal
         open={showSaveModal}
         activeProject={activeProject}
-        onCancel={() => setShowSaveModal(false)}
+        onCancel={handleSaveModalCancel}
         onConfirm={doSubmitShipTarget}
       />
     </div>

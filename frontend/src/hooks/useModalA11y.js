@@ -16,7 +16,7 @@
  * child input/button/etc. still gets its normal key handling; we only
  * intervene on Tab / Shift+Tab to keep focus within the trap.
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 // Focusable-element selector — matches the WCAG-standard set of
 // interactive elements that appear in the sequential focus order.
@@ -49,6 +49,21 @@ function _getFocusables(container) {
 }
 
 export function useModalA11y({ ref, isOpen, onClose, initialFocus = null }) {
+  // 2026-10-24 — `onClose` (and occasionally `initialFocus`) are very
+  // commonly passed as inline arrow functions by callers, getting a
+  // brand-new reference on every parent re-render. Including them in
+  // this effect's dependency array meant the "move focus into the
+  // modal" logic below re-ran on EVERY such re-render — not just on
+  // open — forcibly stealing focus back to the first focusable element
+  // away from whatever input the user was actively typing in. Latch
+  // both via a ref, updated by its own effect, so the main effect only
+  // depends on `isOpen`/`ref` (which are stable) and genuinely only
+  // runs on open/close.
+  const latestRef = useRef({ onClose, initialFocus });
+  useEffect(() => {
+    latestRef.current = { onClose, initialFocus };
+  }, [onClose, initialFocus]);
+
   useEffect(() => {
     if (!isOpen) return;
     const container = ref?.current;
@@ -64,7 +79,8 @@ export function useModalA11y({ ref, isOpen, onClose, initialFocus = null }) {
     // first focusable child; otherwise focus the container itself
     // (we set tabIndex=-1 on the container implicitly for this).
     const focusables = _getFocusables(container);
-    const target = initialFocus?.current || focusables[0] || container;
+    const initialFocusNow = latestRef.current.initialFocus;
+    const target = initialFocusNow?.current || focusables[0] || container;
     // Ensure the container is programmatically focusable if we fall
     // back to focusing it directly.
     if (target === container && !container.hasAttribute("tabindex")) {
@@ -80,7 +96,7 @@ export function useModalA11y({ ref, isOpen, onClose, initialFocus = null }) {
         // form controls swallow Escape on keydown before it bubbles;
         // if we still see it, the user genuinely wants to close.
         e.stopPropagation();
-        onClose?.();
+        latestRef.current.onClose?.();
         return;
       }
       // Tab / Shift+Tab → wrap focus inside the modal.
@@ -117,7 +133,10 @@ export function useModalA11y({ ref, isOpen, onClose, initialFocus = null }) {
         }
       } catch { /* noop */ }
     };
-  }, [isOpen, ref, onClose, initialFocus]);
+    // `onClose`/`initialFocus` intentionally excluded — see latestRef
+    // above. Only `isOpen`/`ref` should ever restart this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, ref]);
 }
 
 export default useModalA11y;

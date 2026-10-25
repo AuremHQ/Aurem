@@ -825,16 +825,34 @@ async def assert_wallet(db, *, user_id: str, action: str, run_id: str, idempoten
         return {"mode": "shadow", "held": False, "would_block": would_block, "balance": bal}
 
     # mode == "on"
+    from fastapi import HTTPException
     if would_block:
-        from fastapi import HTTPException
         raise HTTPException(402, detail={
             "code": "tokens_exhausted",
             "balance": bal["spendable"],
             "refill_date": bal.get("plan_refill_at"),
             "recharge_url": "/settings#pricing",
         })
-    hold_result = await hold(db, user_id=user_id, action=action, run_id=run_id,
-                              idempotency_key=idempotency_key)
+    # 2026-10-25 (ITEM 2, independent review) — the `would_block` check
+    # above is a non-atomic, time-of-check snapshot; `hold()` below
+    # does its own atomic compare-and-swap against the REAL current
+    # balance. Under concurrency, another caller's hold can land in
+    # the gap between the two, so `hold()` can still legitimately
+    # raise InsufficientTokens even though this snapshot looked fine.
+    # Every one of this function's 6 call sites is contracted to
+    # expect "either a real hold or a clean HTTPException(402)," never
+    # a raw wallet exception — catch it here, once, instead of at
+    # every caller.
+    try:
+        hold_result = await hold(db, user_id=user_id, action=action, run_id=run_id,
+                                  idempotency_key=idempotency_key)
+    except InsufficientTokens as e:
+        raise HTTPException(402, detail={
+            "code": "tokens_exhausted",
+            "balance": e.balance,
+            "refill_date": bal.get("plan_refill_at"),
+            "recharge_url": "/settings#pricing",
+        }) from e
     return {"mode": "on", "held": True, "hold": hold_result, "balance": bal}
 
 

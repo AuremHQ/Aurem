@@ -960,6 +960,10 @@ User mandated finishing a fixed queue in ONE run, each ticket with its own commi
 
 `/github/oauth/connect?app_install=1` (identity-only, `prompt=select_account`) now runs BEFORE every GitHub App install popup, closing the "always lands on the already-installed account" gap — confirmed as unconditional GitHub-side behavior with no override param on the plain install URL, so the browser's own session had to be switched first instead. One shared hook (`useGitHubConnectStatus.js`) fixes both `AddProjectWizard.jsx` and `NewUserWizard.jsx` at once; the entire downstream GitHub-App-install pipeline was untouched. 3 popup-bridge UX bugs found by `testing_agent` (cancel/expired/exchange-failure leaking the full app into the small popup) fixed + reverified. 7+6 new backend tests, 2 new frontend tests, 112+59 pre-existing all green. Known platform limit: picking an account that already has the App installed still shows that account's own configure page — correct, not a bug. See CHANGELOG.md for full detail.
 
+## "Save to GitHub" modal — 4 bugs fixed — DONE (2026-10-25)
+
+Empty repos/branches, false "not in your connected GitHub access" save error, and typing losing focus after each word — all fixed. Root cause 1-3: `permissions.push` from GitHub's `/installation/repositories` is not a meaningful signal for GitHub Apps (confirmed live: a repo actively being pushed to still reported `push: False`) — removed that filter everywhere it was checked. Root cause 4: `useModalA11y`'s focus-trap effect re-ran (and force-refocused the first element) whenever its `onClose` prop changed identity, and `MessageBubble.jsx` passed an inline arrow function there — stabilized the callback and hardened the hook itself against future unstable callbacks. 19 backend + 56 frontend tests green. See CHANGELOG.md.
+
 ## Next priorities
 
 - **P0 — current bug verification:** complete one live GitHub authorization → selected repo → explicit Add project → selected list entry → reload flow with the correct Aurem/GitHub account. Provider consent is not proven by mocked fixtures. Previously granted repos can be recovered via Add Project → Choose an already-authorized repository.
