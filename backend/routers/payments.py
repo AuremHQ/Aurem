@@ -28,11 +28,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import stripe
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
+from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 from services.subscription_tiers import TIER_LIMITS, _coerce
 from services.team_permissions import check_permission
 
@@ -1328,6 +1329,28 @@ async def stripe_webhook(request: Request) -> dict:
 # through the current margin, falling back to the flat PRICE_TABLE
 # guess when there's no live measurement yet — never raises, never
 # shows a per-action dollar figure (this returns a FIX COUNT only).
+_BILLING_MODE_RATE_PER_MIN = 30
+
+
+@router.get("/payments/billing-mode")
+async def get_billing_mode_public(request: Request, response: Response = None) -> dict:
+    """ITEM 5(a) (independent review) — small, public, read-only.
+    Lets the frontend compare its own BUILD-TIME
+    VITE_TOKEN_BILLING_MODE constant against the backend's live
+    RUNTIME TOKEN_BILLING_MODE and detect drift (a stale build still
+    showing task wording while the backend is actually billing in
+    tokens, or vice versa) — see
+    frontend/src/lib/billingModeCheck.js. No secrets, no auth, rate-
+    limited per IP, response cacheable for a few seconds."""
+    ip = client_ip_from_request(request)
+    if not await check_rate_limit_async(f"billing_mode_public:{ip}", _BILLING_MODE_RATE_PER_MIN):
+        raise HTTPException(429, "Too many requests")
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=10"
+    from services.wallet import billing_mode
+    return {"mode": billing_mode()}
+
+
 @router.get("/payments/fix-estimate")
 async def fix_estimate(price_usd: float) -> dict:
     import math

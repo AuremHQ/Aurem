@@ -125,7 +125,7 @@ _UNIVERSAL_LEAK_PATTERNS = [
 # exact name back. Any OTHER path (one the model surfaces on its own,
 # never mentioned by the user) is still redacted, unchanged.
 _FILE_PATH_PATTERN = (
-    re.compile(r"\b[\w\-]+(?:/[\w\-]+)+\.\w{1,5}\b(?::\d+)?"
+    re.compile(r"\b[\w\-]+/[\w\-]+(?:/[\w\-]+)*\.\w{1,5}\b(?::\d+)?"
                r"|\b[\w\-]+\.(?:py|jsx?|tsx?|md|txt|json|ya?ml|toml|"
                r"cfg|ini|env|lock)\b(?::\d+)?"
                r"|\B\.[a-zA-Z][\w\-]*\b"),
@@ -185,66 +185,4 @@ def strip_machinery_leak(
     user_named_lower = {f.lower() for f in (user_named_files or set())}
 
     def _file_path_sub(m: re.Match) -> str:
-        matched = m.group(0)
-        base = matched.split(":")[0]
-        if base.lower() in user_named_lower:
-            return matched  # user already named this file — keep it real
-        return _FILE_PATH_PATTERN[1]
-
-    if not universal_only:
-        text = _FILE_PATH_PATTERN[0].sub(_file_path_sub, text)
-    patterns = _UNIVERSAL_LEAK_PATTERNS if universal_only else (
-        _MACHINERY_LEAK_PATTERNS + _UNIVERSAL_LEAK_PATTERNS
-    )
-    for pattern, replacement in patterns:
-        text = pattern.sub(replacement, text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    return text, (text != original)
-
-
-async def enforce_length_cap(text: str, *, max_tokens: int = LENGTH_CAP_TOKENS) -> tuple[str, bool]:
-    """If `text` is over the cap, run ONE capped re-summarize pass.
-
-    Lossy-safe: compresses to ~300 words, keeps the closing opt-in
-    "want the technical detail" line if present, never cuts
-    mid-sentence (the model is instructed to finish sentences; this
-    call is capped so it cannot loop or run away).
-    Returns (final_text, was_capped).
-    """
-    approx_tokens = len(text.split()) * 1.33
-    if approx_tokens <= max_tokens:
-        return text, False
-    try:
-        from services.llm._meta import call_llm_with_meta
-        result = await call_llm_with_meta(
-            "Compress the following founder-facing explanation to under "
-            "300 words. Keep it plain-English (no jargon, no file paths, "
-            "no code). Keep the final opt-in line about technical detail "
-            "if one exists. Never cut a sentence off mid-way.",
-            text, max_tokens=450, mode="chat",
-        )
-        compressed = (result.get("content") or "").strip()
-        if compressed:
-            return compressed, True
-    except Exception as e:                                    # noqa: BLE001
-        logger.warning("output_guard: length-cap re-summarize failed: %r", e)
-    return text, False
-
-
-async def apply_output_guard(text: str) -> dict:
-    """Runs both nets. Returns {text, leak_stripped, length_capped, ref_id}."""
-    from core.errors import new_ref_id
-    clean_text, leak_stripped = strip_machinery_leak(text)
-    final_text, length_capped = await enforce_length_cap(clean_text)
-    ref_id = new_ref_id() if (leak_stripped or length_capped) else None
-    if leak_stripped or length_capped:
-        logger.info(
-            "output_guard: leak_stripped=%s length_capped=%s ref_id=%s",
-            leak_stripped, length_capped, ref_id,
-        )
-    return {
-        "text": final_text,
-        "leak_stripped": leak_stripped,
-        "length_capped": length_capped,
-        "ref_id": ref_id,
-    }
+        matched

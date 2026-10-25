@@ -48,6 +48,29 @@ def _csv_safe_cell(value) -> str:
     return text
 
 
+def mask_email(email: str | None) -> str | None:
+    """2026-10-25 (ITEM 3(e), independent review) — `a***@d***.com`
+    shape for a non-founder admin viewing the dry-run report. Keeps
+    the first character of the local part and of the domain's first
+    label, masks the rest, and leaves everything after the first dot
+    in the domain untouched (so `bob@sub.domain.co.uk` stays
+    recognisably "some subdomain of domain.co.uk" without revealing
+    which one). Anything that doesn't look like `local@domain` (no
+    `@`, empty local/domain) is returned unchanged rather than
+    mangled into something misleading."""
+    if not email or "@" not in email:
+        return email
+    local, _, domain = email.partition("@")
+    domain_parts = domain.split(".")
+    if not local or not domain_parts or not domain_parts[0]:
+        return email
+    masked_local = local[0] + "***"
+    masked_domain_head = domain_parts[0][0] + "***"
+    rest = ".".join(domain_parts[1:])
+    masked_domain = f"{masked_domain_head}.{rest}" if rest else masked_domain_head
+    return f"{masked_local}@{masked_domain}"
+
+
 def rows_to_csv(rows: list[dict]) -> str:
     """Never includes a forbidden field (defense in depth — callers
     are expected to only ever pass classify_user()'s own output,
@@ -208,7 +231,7 @@ async def classify_user(db, user: dict, *, all_emails_lower: dict[str, int] | No
         return base
 
     from services.usage import get_usage
-    usage = await get_usage(user_id)
+    usage = await get_usage(user_id, db=db)
     task_cap = usage.get("monthly_task_cap")
     tasks_used = usage.get("tasks_this_month") or 0
     remaining_tasks = None if task_cap is None else max(0, task_cap - tasks_used)

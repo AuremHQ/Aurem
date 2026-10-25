@@ -189,6 +189,25 @@ export function metaPurchase(value, currency, sid = null) {
 // Silent no-op when gtag is unavailable, matching the rest of this
 // file's degrade-safely convention.
 // ================================================================
+// ITEM 5(d) (independent review) — fires once per page load when the
+// frontend's build-time VITE_TOKEN_BILLING_MODE disagrees with the
+// backend's live runtime TOKEN_BILLING_MODE (see
+// lib/billingModeCheck.js). Diagnostic only — never drives UI.
+export function trackBillingModeMismatch({ build_mode, runtime_mode } = {}) {
+  try {
+    if (typeof window === "undefined" || typeof window.gtag !== "function") {
+      return false;
+    }
+    window.gtag("event", "billing_mode_drift", {
+      build_mode: build_mode || "unknown",
+      runtime_mode: runtime_mode || "unknown",
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export function trackShipRenderFailed({ message_id, model, has_fence } = {}) {
   try {
     if (typeof window === "undefined" || typeof window.gtag !== "function") {

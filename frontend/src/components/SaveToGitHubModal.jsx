@@ -48,6 +48,10 @@ export default function SaveToGitHubModal({
 
   const [tab, setTab] = useState("create"); // "create" | "existing"
   const [newBranchName, setNewBranchName] = useState(() => `auremcto/ship-${_shortSlug()}`);
+  // Cosmetic nit noticed in the same pass — computed once so the
+  // (normally-invisible-since-the-input-starts-non-empty) placeholder
+  // doesn't silently change value on every re-render.
+  const [placeholderBranch] = useState(() => `auremcto/ship-${_shortSlug()}`);
 
   const [branches, setBranches] = useState([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
@@ -347,7 +351,7 @@ export default function SaveToGitHubModal({
                     data-testid="save-to-github-new-branch-input"
                     value={newBranchName}
                     onChange={(e) => setNewBranchName(e.target.value)}
-                    placeholder={`auremcto/ship-${_shortSlug()}`}
+                    placeholder={placeholderBranch}
                     style={{
                       flex: 1, padding: "8px 10px", borderRadius: 6,
                       background: "var(--panel-2)", color: "var(--text)",
