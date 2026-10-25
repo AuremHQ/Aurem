@@ -16,7 +16,8 @@ Doc shape stored in Mongo (`admin_settings._id="github_app_config"`):
       "_id":           "github_app_config",
       "app_id":        "123456",
       "app_slug":      "aurem-devops",
-      "private_key":   "-----BEGIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----\\n",
+      # TODO: set GITHUB_APP_PRIVATE_KEY env var so developers can provide it without hardcoding.
+      "private_key":   os.environ.get("GITHUB_APP_PRIVATE_KEY"),
       "webhook_secret": "<opaque>",
       "updated_at":    <epoch>,
       "updated_by":    "<admin email>",
@@ -24,6 +25,7 @@ Doc shape stored in Mongo (`admin_settings._id="github_app_config"`):
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 # In-process cache. Keys mirror the doc fields exactly (minus _id and
@@ -86,25 +88,25 @@ async def ensure_configured_from_db(db) -> bool:
     A request that lands in the first moments after process boot can
     race the lifespan hydration hook and see an empty cache even though
     valid credentials sit in Mongo — observed as a fail-closed 503/499
-    immediately post-restart. When the cache is empty, re-read the
-    config doc once and hydrate. Cheap no-op when already configured.
-    """
-    if _RUNTIME_GITHUB_APP:
-        return True
-    if db is None:
-        return False
-    try:
-        doc = await db.admin_settings.find_one({"_id": "github_app_config"})
-        set_runtime_github_app_config(doc)
-    except Exception:
-        return False
-    return bool(_RUNTIME_GITHUB_APP)
+     immediately post-restart. When the cache is empty, re-read the
+     config doc once and hydrate. Cheap no-op when already configured.
+     """
+     if _RUNTIME_GITHUB_APP:
+         return True
+     if db is None:
+         return False
+     try:
+         doc = await db.admin_settings.find_one({"_id": "github_app_config"})
+         set_runtime_github_app_config(doc)
+     except Exception:
+         return False
+     return bool(_RUNTIME_GITHUB_APP)
 
 
 __all__ = [
-    "REQUIRED_FIELDS",
-    "set_runtime_github_app_config",
-    "get_runtime_github_app_config",
-    "is_configured",
-    "ensure_configured_from_db",
+     "REQUIRED_FIELDS",
+     "set_runtime_github_app_config",
+     "get_runtime_github_app_config",
+     "is_configured",
+     "ensure_configured_from_db",
 ]
