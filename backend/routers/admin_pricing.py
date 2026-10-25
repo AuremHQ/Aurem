@@ -414,12 +414,23 @@ async def get_plan_transition_dry_run(authorization: str | None = Header(None)) 
     user," never a client-scoped subset, closing off any Mongo-
     operator-injection or scope-widening avenue before it could
     exist."""
-    await _require_admin(authorization)
+    admin_user = await _require_admin(authorization)
     db = require_db()
-    from services.plan_transition import run_dry_run
+    from services.plan_transition import mask_email, run_dry_run
     from services.plan_transition_write_guard import WriteGuardedDB
+    from services.usage import is_founder_email
     guarded = WriteGuardedDB(db)
-    return await run_dry_run(guarded)
+    report = await run_dry_run(guarded)
+    # 2026-10-25 (ITEM 3(e), independent review) — per-user rows carry
+    # a plain-text email. Any admin can reach this endpoint (router-
+    # level `require_admin_dep`), but only the founder needs the real
+    # address to act on a row; everyone else sees it masked.
+    is_founder = (admin_user or {}).get("tier") == "founder" or is_founder_email((admin_user or {}).get("email"))
+    if not is_founder:
+        for row in report.get("rows", []):
+            if "email" in row:
+                row["email"] = mask_email(row["email"])
+    return report
 
 
 @router.get("/stale-fix-entitlement-preflight")

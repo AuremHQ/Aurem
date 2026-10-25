@@ -102,7 +102,10 @@ class TestAllowListCoversAllReadMethods:
 class TestAllowListBlocksEveryWriteShapedMethod:
     @pytest.mark.parametrize("method", DENY_LIST_ERA_WRITE_METHODS + NOT_PREVIOUSLY_COVERED_WRITE_SHAPED_METHODS)
     async def test_write_shaped_method_raises(self, db, method):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         fn = getattr(guarded.dev_users, method)
         with pytest.raises(WriteBlockedError):
@@ -112,13 +115,19 @@ class TestAllowListBlocksEveryWriteShapedMethod:
         """Corrected from the old deny-list-era test that asserted
         this delegated to Motor's own lazy-sub-collection TypeError —
         that was exactly the permissiveness this item closes."""
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.this_method_does_not_exist()
 
     async def test_command_on_collection_level_blocked_too(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             await guarded.dev_users.command({"ping": 1})
@@ -126,19 +135,28 @@ class TestAllowListBlocksEveryWriteShapedMethod:
 
 class TestAggregatePipelineScannedAtAnyDepth:
     async def test_top_level_out_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.aggregate([{"$match": {}}, {"$out": "evil_collection"}])
 
     async def test_top_level_merge_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.aggregate([{"$merge": {"into": "evil_collection"}}])
 
     async def test_where_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.aggregate([{"$match": {"$where": "function() { return true; }"}}])
@@ -146,7 +164,10 @@ class TestAggregatePipelineScannedAtAnyDepth:
     async def test_out_nested_inside_facet_subpipeline_blocked(self, db):
         """$facet's value is a dict of named sub-pipelines — a $out
         buried three levels deep must still be caught."""
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         pipeline = [
             {"$facet": {
@@ -159,7 +180,10 @@ class TestAggregatePipelineScannedAtAnyDepth:
 
     async def test_merge_nested_inside_lookup_subpipeline_blocked(self, db):
         """$lookup's `pipeline` key is itself a sub-pipeline list."""
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         pipeline = [
             {"$lookup": {
@@ -172,14 +196,20 @@ class TestAggregatePipelineScannedAtAnyDepth:
             guarded.dev_users.aggregate(pipeline)
 
     async def test_function_operator_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         pipeline = [{"$project": {"x": {"$function": {"body": "function(){}", "args": [], "lang": "js"}}}}]
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.aggregate(pipeline)
 
     async def test_accumulator_operator_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         pipeline = [{"$group": {"_id": "$user_id", "x": {"$accumulator": {"init": "function(){}"}}}}]
         with pytest.raises(WriteBlockedError):
@@ -201,25 +231,37 @@ class TestAggregatePipelineScannedAtAnyDepth:
 
 class TestEscapeHatchesBlocked:
     async def test_real_attribute_blocked_on_db(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded._real  # noqa: B018
 
     async def test_real_attribute_blocked_on_collection(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users._real  # noqa: B018
 
     async def test_database_attribute_blocked_on_collection(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.database  # noqa: B018
 
     async def test_client_attribute_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.client  # noqa: B018
@@ -227,27 +269,39 @@ class TestEscapeHatchesBlocked:
             guarded.dev_users.client  # noqa: B018
 
     async def test_get_collection_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.get_collection("dev_users")
 
     async def test_command_blocked_on_db(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             await guarded.command({"ping": 1})
 
     async def test_getitem_subscript_blocked(self, db):
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
-            guarded["dev_users"]  # noqa: B018
+            guarded["dev_users"]
 
     async def test_no_escape_route_reaches_a_real_write(self, db):
         """Behavioral capstone: try EVERY escape route, then confirm
         directly against the unguarded db that nothing landed."""
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         marker = "wallet_test_escape_proof"
         attempts = []

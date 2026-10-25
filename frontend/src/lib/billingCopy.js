@@ -30,6 +30,14 @@ function _mode() {
 
 export const TOKEN_WORDING_ACTIVE = _mode() !== "off";
 
+// ITEM 5(b) (independent review) — exposes the raw build-time mode
+// string (not just the off/not-off boolean above) so
+// lib/billingModeCheck.js can compare it against the backend's live
+// runtime value and detect drift.
+export function buildTimeBillingMode() {
+  return _mode();
+}
+
 // $9/$19/$49 at 100 tokens/USD (config/token_pricing.py::USD_TO_TOKENS) —
 // matches the amounts the Stripe webhook already grants
 // (routers/payments.py's plan_token_grants).

@@ -117,7 +117,10 @@ class TestWriteGuardEdgeCases:
         through untouched. The guard is now an ALLOW-LIST — an
         unrecognised name is blocked immediately, on the attribute
         access itself, not merely "eventually not callable"."""
-        from services.plan_transition_write_guard import WriteBlockedError, WriteGuardedDB
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
         with pytest.raises(WriteBlockedError):
             guarded.dev_users.this_method_does_not_exist()
