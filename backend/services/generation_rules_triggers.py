@@ -34,7 +34,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "openai_key":              "literals `sk-<32+ alphanumerics>` (excluding `sk-test-` / `sk-aurem-`)",
 
     # ── Vanguard dangerous code ──
-    "eval_usage":              "any call to `eval(`",
+    "eval_usage":              "any call to `eval` followed by `(`",
     "exec_usage":              "any call to `exec(`",
     "subprocess_shell_true":   "`subprocess.*(... shell=True ...)`",
     "os_system":               "any call to `os.system(`",
