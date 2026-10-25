@@ -208,6 +208,14 @@ def main() -> int:
             for lineno, snippet in _scan_per_action_cost(text):
                 if not any(al in snippet for al in allowlist):
                     all_hits.append((p.relative_to(ROOT), lineno, snippet, "per-action-token-cost"))
+            # A file that already imports the shared billingCopy
+            # switch has already done its job — its legacy-wording
+            # branch is the ternary's intentional dead arm while
+            # mode stays off, not drift. (billingCopy.js itself
+            # trivially matches this too, which is correct: it's the
+            # one place BOTH wordings are meant to live.)
+            if "lib/billingCopy" in text:
+                continue
             for lineno, snippet in _scan_legacy_task_wording(text, mode=mode):
                 if not any(al in snippet for al in allowlist):
                     all_hits.append((p.relative_to(ROOT), lineno, snippet, "legacy-task-wording-cutover"))

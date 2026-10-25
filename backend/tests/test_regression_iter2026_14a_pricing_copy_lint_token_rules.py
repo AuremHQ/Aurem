@@ -189,6 +189,49 @@ class TestTestFilesAreNeverScanned:
         assert exit_code == 0
 
 
+class TestFilesThatAlreadyAdoptedTheSwitchAreExempt:
+    """The chosen mechanism bakes BOTH wordings into one ternary
+    (TOKEN_WORDING_ACTIVE ? tokenText : legacyText) so flipping the
+    env var needs no code change — which means the legacy string
+    stays in source FOREVER as the ternary's dead branch. A file
+    that already imports lib/billingCopy has therefore already done
+    its job; rule 5 must not keep flagging its own (now-intentional)
+    legacy branch as drift."""
+
+    def test_legacy_wording_in_a_file_that_imports_billingcopy_is_not_flagged(self, lint_module):
+        text = (
+            'import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";\n'
+            'const x = TOKEN_WORDING_ACTIVE ? "A free scan" : "10 free tasks";\n'
+        )
+        hits = lint_module._scan_legacy_task_wording(text, mode="on")
+        # The raw scanner still finds the phrase — exemption happens
+        # at the main() file-level, not inside the pure scanner — see
+        # the next test for the behavioral (file-level) proof.
+        assert hits
+
+    def test_main_does_not_flag_a_file_that_imports_billingcopy(self, tmp_path, monkeypatch, lint_module, capsys):
+        fe = tmp_path / "frontend" / "src"
+        fe.mkdir(parents=True)
+        (fe / "AlreadyFixed.jsx").write_text(
+            'import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";\n'
+            'const x = TOKEN_WORDING_ACTIVE ? "A free scan" : "10 free tasks";\n'
+        )
+        (fe / "NotFixedYet.jsx").write_text('const x = "10 free tasks";\n')
+        pub = tmp_path / "frontend" / "public"
+        pub.mkdir(parents=True)
+
+        monkeypatch.setattr(lint_module, "ROOT", tmp_path)
+        monkeypatch.setattr(lint_module, "SCAN_DIRS", [fe, pub])
+        monkeypatch.setattr(lint_module, "ALLOWLIST_FILE", tmp_path / "allowlist.txt")
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
+
+        exit_code = lint_module.main()
+        out = capsys.readouterr().out
+        assert exit_code == 1  # NotFixedYet.jsx must still trip it
+        assert "NotFixedYet.jsx" in out
+        assert "AlreadyFixed.jsx" not in out
+
+
 class TestEmptyAndEdgeCaseInputs:
     def test_empty_string(self, lint_module):
         assert _scan_text(lint_module, "", mode="on") == []

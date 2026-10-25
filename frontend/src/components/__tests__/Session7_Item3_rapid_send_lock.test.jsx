@@ -54,19 +54,26 @@ describe("Session 7 · Item 3 · Rapid-send race guard", () => {
     // Otherwise an invalid send (empty text) would arm the lock
     // and starve the next legitimate send. Checked by POSITION
     // within the send() function body (guard must appear before the
-    // lock-arm line) rather than a fixed character-distance regex —
-    // legitimate, unrelated guard logic (e.g. the 20,000-char length
-    // check, the cancel-ship rejection mirror) has been added between
-    // them over time without breaking the actual invariant tested
-    // here. `!sessionId` also appears elsewhere in the file (outside
-    // send()), so this is scoped to the send() function body first.
+    // lock-arm line) — Master Prompt v2 PART 5.3 red-team sweep fix:
+    // this used to slice a fixed `sendFnIdx + 8000`-char window
+    // before searching, the SAME brittle-char-budget pattern the
+    // sibling test above this one already replaced once (see its
+    // own comment). An unrelated one-line import/JSX edit elsewhere
+    // in ChatPanel.jsx pushed the real distance to 8382 chars,
+    // exceeding the window and making BOTH indexOf calls below
+    // return -1 — not a behavior change, just the same stale
+    // char-budget bug recurring in the one place it wasn't fixed
+    // yet. Now scoped the same way the sibling test does: search the
+    // FULL source, just bounded to "found after sendFnIdx" — no
+    // magic window size to go stale again. `!sessionId` also appears
+    // elsewhere in the file (outside send()), so this is scoped to
+    // the send() function body first via that same anchor.
     const sendFnIdx = CHAT_PANEL_SRC.indexOf("async function send(");
     expect(sendFnIdx).toBeGreaterThan(-1);
-    const sendFnBody = CHAT_PANEL_SRC.slice(sendFnIdx, sendFnIdx + 8000);
-    const guardIdx = sendFnBody.indexOf("!sessionId");
-    const lockIdx = sendFnBody.indexOf("sendInFlightRef.current = true");
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(lockIdx).toBeGreaterThan(-1);
+    const guardIdx = CHAT_PANEL_SRC.indexOf("!sessionId", sendFnIdx);
+    const lockIdx = CHAT_PANEL_SRC.indexOf("sendInFlightRef.current = true", sendFnIdx);
+    expect(guardIdx).toBeGreaterThan(sendFnIdx);
+    expect(lockIdx).toBeGreaterThan(sendFnIdx);
     expect(guardIdx).toBeLessThan(lockIdx);
   });
 

@@ -12,6 +12,7 @@ panel (founder/admin-only).
   GET  /admin/pricing/billing-flags     refund/dispute/spike flags, open or resolved
   POST /admin/pricing/billing-flags/{flag_id}/resolve
   GET  /admin/pricing/audit-log
+  GET  /admin/pricing/plan-transition-dry-run   PART 6 — read-only, writes nothing
 
 Router-level `Depends(require_admin_dep)` gates EVERY route here at the
 framework boundary (same pattern as every other admin sub-router — see
@@ -401,3 +402,21 @@ async def get_audit_log(authorization: str | None = Header(None)) -> dict:
     from services.pricing_engine import list_audit_log, verify_audit_chain
     chain = await verify_audit_chain(db)
     return {"audit_log": await list_audit_log(db), "chain_integrity": chain}
+
+
+@router.get("/plan-transition-dry-run")
+async def get_plan_transition_dry_run(authorization: str | None = Header(None)) -> dict:
+    """Master Prompt v2 PART 6 — read-only. Writes NOTHING: the real
+    db handle is wrapped in a WriteGuardedDB before it ever reaches
+    services.plan_transition.run_dry_run, which itself refuses a raw
+    (unguarded) db outright. Deliberately takes NO client-supplied
+    filter/query parameter at all — the report is always "every
+    user," never a client-scoped subset, closing off any Mongo-
+    operator-injection or scope-widening avenue before it could
+    exist."""
+    await _require_admin(authorization)
+    db = require_db()
+    from services.plan_transition import run_dry_run
+    from services.plan_transition_write_guard import WriteGuardedDB
+    guarded = WriteGuardedDB(db)
+    return await run_dry_run(guarded)

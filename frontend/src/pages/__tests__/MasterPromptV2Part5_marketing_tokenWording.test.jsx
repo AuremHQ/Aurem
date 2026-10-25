@@ -48,6 +48,18 @@ describe("Marketing/auth pages import the shared billingCopy module", () => {
     expect(s).toMatch(/from "\.\.\/lib\/billingCopy"/);
     expect(s).toMatch(/\{heroFreeOfferCta\(\)\}/);
   });
+
+  it("Demo.jsx", () => {
+    const s = src("Demo.jsx");
+    expect(s).toMatch(/from "\.\.\/lib\/billingCopy"/);
+    expect(s).toMatch(/TOKEN_WORDING_ACTIVE \? heroFreeOfferCta\(\)\.toUpperCase\(\) : "START FREE — 10 TASKS"/);
+  });
+
+  it("Both.jsx", () => {
+    const s = src("Both.jsx");
+    expect(s).toMatch(/from "\.\.\/lib\/billingCopy"/);
+    expect(s).toMatch(/TOKEN_WORDING_ACTIVE \? "\$19\/mo flat · 1,900 tokens\/mo · free tier" : "\$19\/mo flat · no token billing · free tier"/);
+  });
 });
 
 describe("demoSteps.jsx imports the shared billingCopy module", () => {

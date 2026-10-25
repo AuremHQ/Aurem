@@ -1,0 +1,52 @@
+DRAFT — NOT SENT. For founder review only.
+Master Prompt v2 PART 6 — plan transition notice draft.
+
+No email is sent by any code in this delivery. This file exists so
+the founder can review/edit the wording before anyone sends anything,
+whenever the real transition is scheduled. {{GRACE_END_DATE}} is a
+placeholder — fill in the real date once a cutover date is set.
+
+Per the HARD RULES, no policy not already in code/config is invented
+here: there is no refund-policy line (none exists anywhere in this
+repo, confirmed in the PART 4 and PART 5 inventories), no uptime/
+accuracy claim, no made-up expiry rule. The conversion rate and grace
+period are placeholders too — {{TOKEN_GRANT}} and {{GRACE_END_DATE}}
+must be filled in from real, founder-approved config values
+(LEGACY_TASK_TO_TOKEN_RATE, FREE_PLAN_GRACE_DAYS), never guessed.
+
+---
+
+Subject: Your AUREM plan is moving to tokens
+
+Hey {{FIRST_NAME}},
+
+We're switching AUREM's pricing from a flat task count to a token
+balance — the same work, measured more precisely instead of in whole
+tasks.
+
+What this means for you:
+- Your current plan converts to {{TOKEN_GRANT}} tokens this month.
+- Nothing else about your plan changes — same price, same features.
+- You can see your new balance any time in Settings > Plans & Usage.
+
+If you're on the Free plan:
+- You keep your free full repo scan.
+- Starting {{GRACE_END_DATE}}, fixing issues needs a paid plan — scanning
+  stays free either way.
+
+Questions? Reply to this email or reach us at the usual support
+channel.
+
+— The AUREM team
+
+---
+
+MISSING DECISIONS before this can actually be sent (see the PART 6
+report for the full list):
+  - LEGACY_TASK_TO_TOKEN_RATE is not configured — {{TOKEN_GRANT}} has
+    no real value yet.
+  - The actual cutover date, which sets {{GRACE_END_DATE}}.
+  - Whether this notice goes to ALL segments or needs per-segment
+    variants (e.g. a disputed/refunded/frozen user should almost
+    certainly NOT receive this until their flag is resolved — this
+    draft does not attempt to branch on segment).

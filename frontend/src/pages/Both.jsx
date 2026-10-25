@@ -25,6 +25,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -615,7 +616,7 @@ function DevView() {
             </div>
             <p style={{fontSize:12, color:"#5f6570", marginTop:16,
                         fontFamily:"'JetBrains Mono',monospace"}}>
-              $19/mo flat · no token billing · free tier
+              {TOKEN_WORDING_ACTIVE ? "$19/mo flat · 1,900 tokens/mo · free tier" : "$19/mo flat · no token billing · free tier"}
             </p>
           </div>
           <Terminal />

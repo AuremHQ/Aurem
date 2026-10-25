@@ -13,6 +13,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import WalkthroughPlayer from "../components/demo/WalkthroughPlayer";
 import { FULL_STEPS, TEASER_STEPS } from "../components/demo/demoSteps";
 import MarketingNav from "../components/marketing/MarketingNav";
+import { heroFreeOfferCta, TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 
 export default function Demo() {
   const [sp] = useSearchParams();
@@ -142,7 +143,7 @@ export default function Demo() {
               letterSpacing: "0.04em",
             }}
           >
-            START FREE — 10 TASKS
+            {TOKEN_WORDING_ACTIVE ? heroFreeOfferCta().toUpperCase() : "START FREE — 10 TASKS"}
           </Link>
           <Link
             to="/pricing"
