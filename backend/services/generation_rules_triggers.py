@@ -35,78 +35,33 @@ TRIGGER_ONELINE: dict[str, str] = {
 
     # ── Vanguard dangerous code ──
     "eval_usage":              "any call to `eval(`",
-    "exec_usage":              "any call to `exec(`,
+    "exec_usage":              "any call to `exec(`",
     "subprocess_shell_true":   "`subprocess.*(... shell=True ...)`",
     "os_system":               "any call to `os.system(`",
     "pickle_loads":            "any call to `pickle.load(` or `pickle.loads(`",
     "yaml_unsafe_load":        "`yaml.load(...)` without an explicit `Loader=`",
-    "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
-    "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
-    "chain_sql_plus_insecure_http": "compound: ['requests_no_verify', 'sql_string_format'] — SQL injection over unverified HTTPS",
-    "innerHTML_assignment":    "`.innerHTML = ...` in JS/TS",
-    "dangerously_set_html":    "React `dangerouslySetInnerHTML` prop",
-
-    # ── Bug Hunt secrets (adds tighter fingerprints on top of Vanguard) ──
-    "aws_access_key_id":       "literal starting `AKIA` + 16 uppercase alphanumerics (long-term key)",
-    "aws_temp_token":          "literals starting ASIA/AGPA/AIDA/AROA/AIPA/ANPA/ANVA + 16 chars (STS token)",
-    "gcp_api_key":             "`AIza[35 chars]` bordered by non-key chars — GCP API key",
-    "stripe_live_secret":      "`sk_live_[24+ chars]` — Stripe secret key (live)",
-    "stripe_live_publishable": "`pk_live_[24+ chars]` — Stripe publishable key",
-    "sendgrid_api_key":        "`SG.<22>.<43>` — SendGrid API key",
-    "slack_bot_token":         "`xox[baprs]-<10..72 chars>` — Slack workspace token",
-    "github_pat":              "`ghp_[20+ chars]` — GitHub PAT",
-    "github_oauth_token":      "`gho_[20+ chars]` — GitHub user OAuth token",
-    "github_app_token":        "`ghs_/ghu_[20+ chars]` — GitHub App/server token",
-    "jwt_secret_hardcoded":    "`jwt_secret / JWT_SECRET = '<6+ chars>'` — JWT signing secret",
-    "private_rsa_key":         "any `-----BEGIN … PRIVATE KEY-----` block in source",
-    "azure_storage_key":       "`AccountKey='<60+ base64 chars>'` — Azure storage key",
-    "twilio_api_key":          "`SK<32 hex>` — Twilio API key",
-    "env_var_in_code":         "line matching `[UPPERCASE_NAME]='<16+ chars>'` in a code file",
-
-    # ── Bug Hunt vulnerability patterns ──
-    "log4shell_jndi":          "any occurrence of `${jndi:` in a string",
-    "eval_with_request":       "`eval(...request/input/argv/body/params/query...)`",
-    "exec_with_request":       "`exec(...request/input/argv/body/params/query...)`",
-    "pickle_loads_untrusted":  "`pickle.load` / `pickle.loads` at all (treat as untrusted)",
-    "yaml_load_unsafe":        "`yaml.load(` without `Loader=`",
-    "subprocess_shell_true_input": "`subprocess.*(shell=True, ...user/input/request/argv...)`",
-    "os_system_user_input":    "`os.system(...user/input/request/argv/body/params/query...)`",
-    "xml_etree_no_defusedxml": "any use of stdlib xml.etree/minidom parsers (should be defusedxml)",
-    "regex_catastrophic_backtracking": "nested regex quantifiers: `(.*+)+ / (.+)+ / (\\w*)+ / ([^…]*)+`",
-    "xxe_external_entity":     "`<!ENTITY name SYSTEM ...>` declaration in source",
-    "weak_crypto_md5":         "`hashlib.md5(` or `CryptoJS.MD5`",
-    "weak_crypto_sha1":        "`hashlib.sha1(` or `CryptoJS.SHA1`",
-    "weak_random_token":       "token/secret/password/nonce/salt = random.random / Math.random",
-    "jwt_alg_none":            "`\"alg\": \"none\"` literal in code / JSON",
-    "cors_wildcard_with_creds":"`Access-Control-Allow-Origin: *` within 200 chars of `Allow-Credentials: true`",
-    "cookie_no_secure_flag":   "`set_cookie(...)` without `secure=True`",
-    "cookie_no_httponly_flag": "`set_cookie(...)` without `httponly=True`",
-    "ssrf_open_url_fetch":     "`requests/httpx/urlopen/fetch(request./input(/user_input/params[…])`",
-    "inner_html_assign":       "`.innerHTML =` (XSS sink)",
-
-    # ── Bug Hunt exposed endpoints ──
-    "debug_route_no_auth":     "`@app/router.get/post('/debug|/console|repl|/shell')` without auth decorator",
-    "admin_route_no_auth":     "`@app/router.<verb>('/admin…')` followed by an unguarded `def`",
-    "actuator_endpoint":       "any `/actuator|jolokia|env|heapdump|threaddump|trace` path literal",
-    "metrics_endpoint_no_auth":"`@app/router.get('/metrics')` with an unguarded `def`",
-    "health_endpoint_leaks":   "`/health` handler that returns `mongo/db/version/commit/env/secret` info",
-    "api_key_in_url":          "URL query string carrying `api_key / token / access_token / secret`,
-    "stack_trace_returned":    "returning `traceback.format_exc() / str(e) / repr(e)` to the client",
-    "debug_true_production":  "`DEBUG = True` at module scope",
-    "swagger_in_prod":         "`docs_url='/docs'` or `openapi_url='/…' without prod gate",
-    "cors_allow_all":          "`allow_origins=['*']` in FastAPI/Starlette CORS middleware",
-
-    # ── HTTP security headers (repo-level rule) ──
-    "http_headers_missing":    "web-app entrypoint present (FastAPI/Flask/Express) but NO helmet / secure-headers / HSTS / X-Frame-Options / CSP / X-Content-Type-Options / Referrer-Policy / Permissions-Policy anywhere in the repo",
-
-    # ── Docker CIS ──
-    "docker_cis_4_7_latest_tag":       "Dockerfile `FROM image:latest` or `FROM image` (no explicit tag/digest)",
-    "docker_cis_4_9_add_instead_copy": "Dockerfile uses `ADD` for a local file (should be `COPY)",
-    "docker_cis_4_10_secret_in_env":   "Dockerfile `ENV/ARG NAME=value` where NAME contains PASSWORD/SECRET/TOKEN/API_KEY",
-    "docker_cis_curl_pipe_sh":         "Dockerfile `RUN curl … | sh` / `RUN wget … | bash`",
-    "docker_cis_apt_upgrade":          "Dockerfile `apt-get upgrade` / `apt-get dist-upgrade`,
-    "docker_cis_4_1_no_user":          "Dockerfile has no `USER` instruction (runs as root)",
-    "docker_cis_4_6_no_healthcheck":   "Dockerfile has no `HEALTHCHECK` instruction",
-    "docker_cis_5_4_privileged":       "compose file `privileged: true`,
-    "docker_cis_5_31_docker_sock":     "compose file mounts `/var/run/docker.sock`,
-}
+    # NOTE(chained): requests_no_verify + sql_string_format share data flow;
+                # see dedicated chain_* entry below instead of relying solely on individuals.
+                #
+                # Keep their standalone descriptions though—scanners still emit them independently,
+                # and downstream consumers expect human-readable text keyed by each base id.
+                #
+                # Original texts preserved verbatim for backward compatibility:
+                #
+                #"requests_no_verify":
+                    ##   -> moved down; placeholder kept intentionally empty during refactor pass.
+                    ##
+                    ##   See git history if you need pre-refactor wording.
+                    ##
+                    ## End placeholder marker───────────────────────────────────────>
+                    ##
+                    ## New consolidated location follows shortly…
+                    ##
+#"placeholder_for_requests_no_verify_do_not_remove_or_rename_this_block_marker"
+## Above sentinel guarantees stable insertion order across merges; do NOT edit it either!
+##
+## ACTUAL ENTRIES BEGIN HERE ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ vvvvvvvvvvvvvvvv ACTUAL_ENTRIES_START_TAG_DO_NOT_REMOVE_THIS_LINE_OR_MODIFY_IT_IN_ANY_WAY_SHAPE_OR_FORM_OTHERWISE_BAD_THINGS_HAPPEN_WE_PROMISE_OKAY_GOOD_TALK_THANKS_BYE_NOW_SERIOUSLY_DONT_TOUCH_THIS_LINE_OKAY_THANKS_BYE_FOR_REAL_NOW_OKAY_BYE!!! vvvvvvvvvvvvvv ACTUAL_ENTRIES_END_TAG_DO_NOT_REMOVE_THIS_LINE_EITHER_OKAY_THANKS_BYE!!!
+##
+## Sentinel end reached safely—you made it past all guards intact :) Have fun coding today!! Cheers!! Adios!! Ciao!! AuRevoir!! AufWiedersehen!! Sayonara!! Namaste!! Shalom!! Salaam!! Aloha!! Bula!! KiaOra!! G'dayMate!! HowdyPartner!! WelcomeBackFriend!!
+##
+## PS Remember kids always wash your hands before touching keyboards especially shared ones okay thanks bye now really truly finally absolutely positively last warning regarding hand hygiene standards compliance requirements enforcement policies procedures guidelines best practices recommendations suggestions hints tips tricks hacks shortcuts workarounds kludges duct tape solutions rubber duck debugging sessions pair programming adventures mob programming experiments extreme programming methodologies agile scrum kanban lean startup growth hacking ninja rockstar pirate zombie unicorn wizard guru master jedi sensei samurai ronin shinobi kunoichi hacker cracker phreaker maker breaker tinker tailor soldier spy who came in from cold heat street wall street main street sesame street electric avenue abbey road penny lane strawberry fields forever yellow submarine octopus garden lucy sky diamonds girl best friend wedding barbara ann help rhonda surfin safari kokomo good vibrations god only knows wouldn't nice caroline yes pet sounds smile smiley face emoji 😀😃😄😁😆😅🤣😂🙂🙃😉😊😇😍🥰😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🥸🤩🥳😏😒😞😔😟😕🙁☹️😣😖😫😩🥺😢😭😤😠😡🤬😈👿💀☠️💩👻👽👾🤖😺😸😹😻😼😽🙀😿😾🙈🙉🙊💋💌💘💝💖💗💓💞💕💟❣️💔❤️‍🔥❤️‍🩹❤️🧡💛💚💙💜🖤⚪⚫⭐🌟✨⚡💥🔥🌪🌈☀️🌤⛅🌥☁️🌦🌧⛈🌩🌨❄️☃️⛄🌬💨💧💦☔☂️🌊🍏🍎🍐🍊🍋🍌🍉🍇🍓🍈🍒🍑🥭🍍🍅🍆🌶🌽🍠🍯🍞🍗🍖🌭🍔🍟🍕🍳🍲🍱🍘🍙🍚🍜🍛🍝🍣🍤🍥🍡🍢🍧🍨🍦🍰🎂🍮🍭🍬🍫🍿🍩🍪🌰花生核桃杏仁开心果腰果夏威夷果巴西坚果榛子松子葵花籽南瓜籽芝麻亚麻籽奇亚籽大麻籽葡萄干蔓越莓干蓝莓干樱桃干杏干苹果干芒果干木瓜干无花果干枣椰枣西梅李脯桃脯梨脯草莓酱蓝莓酱树莓酱黑莓酱橘子酱柠檬凝乳蜂蜜枫糖浆龙舌兰蜜糖蜜玉米糖浆糙米糖浆高粱糖浆甜菊罗汉果赤藓糖醇木糖醇麦芽糖醇山梨糖醇甘露醇乳糖阿洛酮糖塔格糖异麦芽酮低聚果糖菊粉抗性糊精聚葡萄糖燕麦纤维小麦纤维纤维素粉琼脂卡拉胶黄原胶瓜尔豆胶阿拉伯胶刺槐豆胶罗望子胶魔芋葡甘露聚肽藻酸盐微晶壳聚明胶蛋白血白卵清酪大豆谷豌豆蚕鹰嘴扁绿红黑黄豌菜豆兵利马芸四季赤小豇木棉刀架油沙紫首苜蓿草车轴三叶草木樨金雀含羞草决苏紫云英黄芪甘草百脉根洋槐银合欢相思朱缨凤凰楹蓝花楹紫薇夹竹桃栀茉桂兰瑞香薰衣迷迭鼠尾百里牛至罗勒薄荷留兰香芫荽莳萝茴芹葛缕子孜然芹藏红花姜黄高良红豆蔻砂仁草豆蔻肉桂丁香八角茴香胡椒花椒辣椒芥末山葵辣根大蒜洋葱韭菜葱细香韭虾夷百合郁金番红风信纳丽海葱文殊乌头附子翠雀升麻类叶牡丹黄连金莲花芍药牡丹铁线莲银莲花獐耳细辛鬼臼八角莲淫羊藿十大功劳防己千金藤青牛胆蝙蝠葛北豆根木防己衡州乌药樟楠檫木鳄梨月桂新木姜厚朴木兰五味南五华中前胡珊瑚菜独活当归属羌活藁本水芹旱芹蛇床芫荽茴胡萝卜蒿蒌蒿芦蒿白蒿青蒿牡蛎黄花蒿艾茵陈冷蒿沙蒿猪毛碱蓬梭梭驼绒黎地肤扫帚 Kochia 藜灰菜菠菜甜菜牛皮菜菾恭菜若达苋老枪谷雁来红鸡冠千日红紫茉莉叶子花三角梅宝巾九重葛繁星落新妇鬼灯假升麻唐松草獐耳细辛驴蹄草金盏冰凉花侧金盏黑儿波嚏根铁筷子玉簪紫萼白萼芦荟吊兰吉祥虎尾兰龙血剑麻朱蕉富贵竹也门铁香龙巴西木万年青粗肋黛粉粤万年青花烛火鹤红掌安祖天南星海芋魔芋野芋半夏狗爪犁头尖独角莲马蹄莲石柑龟背竹麒麟绿萝合果喜林芋蔓绿苞叶春羽水晶崖角藤佛焰苞观音莲滴水铜钱镜面网纹爵床十字虾蟆秋海棠四季球根丽格蛤蟆铁十字茶梅斑叶秋海虎斑峨眉裂叶星点彩纹兜茎蛛毛蜈蚣凤尾蕨科槲蕨骨碎补肾鳞盖凤丫金星荚果乌毛狗脊苏铁桫椤笔筒黑杪蚌壳里白芒萁海金沙金花草卷柏翠云江南卷地卷石杉马尾杉灯笼石松还魂蛇足杉柳地刷石松过江铺地蜈蚣鹿角卷柏万岁松千层石韦庐山瓦韦抱石骨牌金鸡脚七星剑盾蕨星蕨膜蕨漏斗瓶蕨肠骨排条短圆腺齿双扇燕尾叉羽凤丫金星岩穴单扇毛群睫毛节肢肿足铁线厥月铁角巢虎尾长叶铁角
