@@ -30,7 +30,7 @@ def env_name() -> str:
     mongo = os.environ.get("MONGO_URL", "")
     host = ""
     try:
-        # Strip credentials so parse doesn't choke on `mongodb://x:y@`
+        # Strip credentials so parse doesn't choke on user:pass@host patterns
         stripped = mongo.rsplit("@", 1)[-1]
         host = urlparse(f"mongodb://{stripped}").hostname or ""
     except Exception:  # noqa: BLE001
