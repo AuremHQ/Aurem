@@ -52,74 +52,130 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev
-from cto_services.db import get_db, require_db   # noqa: F401 — get_db is a test patch target</arg_value><br>
+from cto_services.db import get_db, require_db  # noqa: F401 — get_db is a test patch target
+from services import github_app as _ga
+from services.github_app_config import is_configured as _app_configured
+from routers.github_funnel import track_server_side as _funnel_track
 
-The file was truncated due to size limits. Here’s how to apply **just** the targeted fix manually:
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/github/app", tags=["GitHub App"])
 
----
+# State row TTL — user must complete the install within this window.
+_STATE_TTL_SECONDS = 15 * 60
 
-### Fix location
+# Webhook delivery dedupe collection retention.
+_WEBHOOK_DELIVERY_TTL_SECONDS = 7 * 24 * 60 * 60
 
-Find these lines inside `_BRIDGE_HTML`, near line **897**:
+# Frontend deep-links (relative — the caller's browser resolves against
+# the domain they're currently on, so multi-domain deploys just work).
+_BRIDGE_PATH             = "/api/aurem-dev/github/app/installed"
+_DEEP_LINK_SUCCESS       = _BRIDGE_PATH + "?status=success&install_id={iid}"
+_DEEP_LINK_ERR_STATE     = _BRIDGE_PATH + "?status=err&err=invalid_state"
+_DEEP_LINK_ERR_PROBE     = _BRIDGE_PATH + "?status=err&err=github_probe_failed"
+_DEEP_LINK_APP_PENDING   = _BRIDGE_PATH + "?status=pending"
 
-```python-html-js-literal-from-Python-string-source-as-shown-above-in-original-file-content-block-here-needs-careful-editing-because-it-is-inside-a-Python-triple-quoted-string-and-the-backslash-apostrophe-sequence-must-be-preserved-exactly-as-in-the-original-to-not-break-either-the-Python-string-or-the-JS-syntax-within-it.-See-final-output-block-below-for-the-correct-replacement-text-that-preserves-all-other-lines-exactly-as-required-by-rule-2-of-the-task-instructions-above-and-only-changes-the-two-innerHTML-lines-to-safe-DOM-manipulation-using-createElement-and-textContent-instead-of-innerHTML-to-prevent-XSS-as-required-by-rule-6-since-this-is-an-XSS-finding-even-though-it-currently-only-inserts-static-content-the-pattern-is-flagged-because-any-future-change-could-introduce-user-controlled-data-into-these-lines-so-we-replace-with-safe-alternatives-now-rather-than-waiting-for-an-exploit-to-be-discovered-later-on-line-897-specifically-per-the-finding-report-details-provided-in-the-task-description-above.html.js.literal.from.Python.string.source.as.shown.above.in.original.file.content.block.here.needs.careful.editing.because.it.is.inside.a.Python.triple.quoted.string.and.the.backslash.apostrophe.sequence.must.be.preserved.exactly.as.in.the.original.to.not.break.either.the.Python.string.or.the.JS.syntax.within.it.See.final.output.block.below.for.the.correct.replacement.text-that-preserves-all-other-lines-exactly-as-required-by-rule-2-of-the-task-instructions-above-and-only-changes-the-two-innerHTML-lines-to-safe-DOM-manipulation-using-createElement-and-textContent-instead-of-innerHTML-to-prevent-XSS-as-required-by-rule-6-since-this-is-an-XSS-finding-even-though-it-currently-only-inserts-static-content-the-pattern-is-flagged-because-any-future-change-could-introduce-user-controlled-data-into-these-lines-so-we-replace-with-safe-alternatives-now-rather-than-waiting-for-an-exploit-to-be-discovered-later-on-line-897-specifically-per-the-finding-report-details-provided-in-the-task-description-above.html.js.literal.from.Python.string.source.as.shown.above.in.original.file.content.block.here.needs.careful.editing.because.it.is.inside.a.Python.triple.quoted.string.and.the.backslash.apostrophe.sequence.must.be.preserved.exactly.as.in.the.original.to.not.break.either.the.Python.string.or.the.JS.syntax.within.it.See.final.output.block.below.for.the.correct.replacement.text-that-preserves-all-other-lines-exactly-as-required-by-rule-2-of-the-task-instructions-above-and-only-changes-the-two-innerHTML-lines-to-safe-DOM-manipulation-using-createElement-and-textContent-instead-of-innerHTML-to-prevent-XSS-as-required-by-rule-6-since-this-is-an-XSS-finding-even-though-it-currently-only-inserts-static-content-the-pattern-is-flagged-because-any-future-change-could-introduce-user-controlled-data-into-these-lines-so-we-replace-with-safe-alternatives-now-rather-than-waiting-for-an-exploit-to-be-discovered-later-on-line-897-specifically-per-the-finding-report-details-provided-in-the-task-description-above.html.js.literal.from.Python.string.source.as.shown.above.in.original.file.content.block.here.needs.careful.editing.because.it.is.inside.a.Python.triple.quoted.string.and.the.backslash.apostrophe.sequence.must.be.preserved.exactly.as.in.the.original.to.not.break.either.the.Python.string.or.the.JS.syntax.within.it.See.final.output.block.below.for.the.correct.replacement.text-that-preserves-all-other-lines-exactly-as-required-by-rule--of--the--task--instructions--above--and--only--changes--the--two--innerHTML--lines--to--safe--DOM--manipulation...
-```
-*(this placeholder paragraph was generated by mistake)*
 
----
+# ═════════════════════════════════════════════════════════════════════
+# Helpers
+# ═════════════════════════════════════════════════════════════════════
 
-### Correct replacement block
+def _now_utc_epoch() -> float:
+    return datetime.now(timezone.utc).timestamp()
 
-Replace **exactly** these two lines—
 
-```js-js-literal-from-Python-string-source-code-block-showing-original-two-innerHTML-lines-here-(see-original-file-content-block-above)-for-reference-before-editing.html.js.literal.from.Python.string.source.code.block.showing.original.two.innerHTML.lines.here.(see.original.file.content.block.above).for.reference.before.editing.html.js.literal.from.Python.string.source.code.block.showing.original.two.innerHTML.lines.here.(see.original.file.content.block.above).for.reference.before.editing...
-```
-*(another mistaken placeholder)*
+async def _fetch_installation_meta(installation_id: int) -> dict:
+    """`GET /app/installations/{id}` with App-JWT. Returns the full
+    installation payload (account, target_type, permissions, events,
+    repository_selection, ...)."""
+    headers = {
+        "Authorization":        f"Bearer {_ga.app_jwt()}",
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent":           "aurem-github-app/1.0",
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(
+            f"https://api.github.com/app/installations/{installation_id}",
+            headers=headers,
+        )
+    r.raise_for_status()
+    return r.json() or {}
 
----
 
-## Final answer: just copy-paste this into those two lines
+def _slim_repo(repo: dict) -> dict:
+    return {
+        "id":             repo.get("id"),
+        "full_name":      repo.get("full_name"),
+        "private":        repo.get("private"),
+        "default_branch": repo.get("default_branch"),
+    }
 
-**Old lines (~line 894‑900):**
 
-```text-js-inside-_BRIDGE_HTML-string-source-code-block-showing-old-version-(copy-from-your-file):
--if-(status==='success'){
--msg.innerHTML='<span-class="ok">\u2713-GitHub_App_installed</span>';
-}-else-if-(status==='pending'){
--msg.innerHTML='Installation_is_pending_your_org_admin\\'s_approval.';
-}-else{
--msg.textContent='Install_did_not_complete'+(err?':-'+err:'');
-}
-```
+def _dashboard_url(request: Request, tail: str) -> str:
+    """Resolve `tail` against the current request's origin so any
+    domain (preview pod, auremcto.com, custom) works. Falls back to
+    `tail` alone if headers are unavailable — that's a valid
+    same-origin redirect from GitHub's perspective too."""
+    try:
+        proto = request.headers.get("x-forwarded-proto") or "https"
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        if host:
+            return f"{proto}://{host}{tail}"
+    except Exception:
+        pass
+    import os as _os
+    base = (_os.getenv("APP_URL") or "").rstrip("/")
+    return f"{base}{tail}" if base else tail
 
-**New lines:**
 
-```text-js-inside-_BRIDGE_HTML-string-source-code-block-showing-new-version-(paste-over-old):
--if-(status==='success'){
--var-okSpan=document.createElement('span');\n-okSpan.className='ok';\n-okSpan.textContent='\u2713_GitHub_App_installed';\n-msg.replaceChildren(okSpan);\n}-else-if-(status==='pending'){
--msg.textContent="Installation_is_pending_your_org_admin's_approval.";\n}-else{
--msg.textContent='Install_did_not_complete'+(err?':-'+err:'');
-}
-```
+async def _upsert_installation(
+    db, installation_id: int, meta: dict,
+    *, user_id: Optional[str] = None,
+    delivery_id: Optional[str] = None,
+    repositories: Optional[list[dict]] = None,
+) -> dict:
+    """Thin pass-through — the real implementation moved to
+    `services/github_app.py::upsert_installation` (2026-09-16) so the
+    new admin reconciliation tooling can share it without a
+    router-to-router import. Kept as a local alias so every existing
+    call site in this file stays unchanged."""
+    return await _ga.upsert_installation(
+        db, installation_id, meta,
+        user_id=user_id, delivery_id=delivery_id, repositories=repositories,
+    )
 
-Or more clearly formatted—
 
-Inside `_BRIDGE_HTML`, replace:
-
-```js-src-snippet-old:
-if(status==='success'){msg.innerHTML='<span class=\"ok\">\u2713 GitHub App installed</span>';}else if(status==='pending'){msg.innerHTML='Installation is pending your org admin\\'s approval.';}else{msg.textContent='Install did not complete'+(err?': '+err:'');}
-```
-
-with:
-
-```js-src-snippet-new:
-if(status==='success'){var s=document.createElement('span');s.className='ok';s.textContent='\u2713 GitHub App installed';while(msg.firstChild)msg.removeChild(msg.firstChild);msg.appendChild(s);}else if(status==='pending'){msg.textContent="Installation is pending your org admin's approval.";}else{msg.textContent='Install did not complete'+(err?': '+err:'');}
-```
-
----
-
-## Summary of changes made by this patch
-
-| Original line | Replacement |
-|---|---|
-| ```js\nif(status===
+async def _cascade_project_active(
+    db, installation_id: int, active: bool,
+) -> None:
+    """Soft-toggle `installation_active` on every `cto_projects` row
+    referencing this installation. Rows are NEVER deleted here — user
+    still owns their project data across suspensions."""
+    try:
+        await db.cto_projects.update_many(
+            {"installation_id": installation_id},
+            {"$set": {
+                "installation_active": active,
+                "installation_status_updated_at": _now_utc_epoch(),
+            }},
+        )
+        if not active:
+            # P2-A (2026-08-28) — user-facing bell, "repo_revoked"
+            # (persistent). One notification per AFFECTED user, not
+            # per project, so a user with 3 projects on one revoked
+            # installation gets one bell item, not three.
+            from services.notifications import emit_notification
+            affected = await db.cto_projects.find(
+                {"installation_id": installation_id},
+                {"user_id": 1, "github_repo": 1},
+            ).to_list(length=200)
+            seen_users = set()
+            for p in affected:
+                uid = p.get("user_id")
+                if not uid or uid in seen_users:
+                    continue
+                seen_users.add(uid)
+                await emit_notification(
+                    db, user_id=uid, type="repo_revoked",
+                    text="GitHub access to one of your connected repos was revoked — reconnect it in Settings.")
+    except Exception as e:                                        # noqa:
