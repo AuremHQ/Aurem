@@ -59,9 +59,19 @@ async def list_writable_repos(
     try:
         repos = await list_installation_repos(int(installation_id))
     except Exception as e:                                  # noqa: BLE001
-        from services.error_classifier import classify_error
+        # 2026-10-27 — was HTTPException(502, ...): Cloudflare (and
+        # most edge/CDN layers) replace a 502/503/504 BODY with their
+        # own HTML/text before it reaches the browser — the honest
+        # message never made it to the user. 424 is a real 4xx, so
+        # the structured detail passes through untouched. See
+        # services/github_errors.py's module docstring for the full
+        # root-cause writeup.
+        from services.github_errors import (
+            GITHUB_FAILURE_HTTP_STATUS,
+            classify_github_failure,
+        )
         logger.warning("[github_browse] list_installation_repos failed: %r", e)
-        raise HTTPException(502, classify_error(e)["user_message"])
+        raise HTTPException(GITHUB_FAILURE_HTTP_STATUS, classify_github_failure(e))
 
     out = [
         {
@@ -122,9 +132,14 @@ async def list_repo_branches_endpoint(
     try:
         repos = await list_installation_repos(int(installation_id))
     except Exception as e:                                  # noqa: BLE001
-        from services.error_classifier import classify_error
+        # 2026-10-27 — see list_writable_repos above for the full
+        # 424-vs-502 root-cause writeup.
+        from services.github_errors import (
+            GITHUB_FAILURE_HTTP_STATUS,
+            classify_github_failure,
+        )
         logger.warning("[github_browse] list_installation_repos failed: %r", e)
-        raise HTTPException(502, classify_error(e)["user_message"])
+        raise HTTPException(GITHUB_FAILURE_HTTP_STATUS, classify_github_failure(e))
 
     wanted = f"{owner}/{repo}".lower()
     # Same fix as list_writable_repos above — being listed by
@@ -144,9 +159,12 @@ async def list_repo_branches_endpoint(
     try:
         branches, truncated = await list_repo_branches(owner, repo, token)
     except Exception as e:                                  # noqa: BLE001
-        from services.error_classifier import classify_error
+        from services.github_errors import (
+            GITHUB_FAILURE_HTTP_STATUS,
+            classify_github_failure,
+        )
         logger.warning("[github_browse] list_repo_branches failed: %r", e)
-        raise HTTPException(502, classify_error(e)["user_message"])
+        raise HTTPException(GITHUB_FAILURE_HTTP_STATUS, classify_github_failure(e))
 
     return {"ok": True, "owner": owner, "repo": repo,
             "branches": branches, "truncated": truncated}

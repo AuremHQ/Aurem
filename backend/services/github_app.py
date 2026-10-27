@@ -53,8 +53,9 @@ callers get a loud, single-point failure rather than silent errors.
 """
 from __future__ import annotations
 
-import hmac
+import asyncio
 import hashlib
+import hmac
 import logging
 import time
 from typing import Optional
@@ -332,25 +333,95 @@ async def list_installations_for_user(user_access_token: str) -> list[dict]:
     return data.get("installations") or []
 
 
-async def list_installation_repos(installation_id: int) -> list[dict]:
-    """Repos accessible to a specific installation (installation-token auth).
+# 2026-10-27 — founder-reported ("Save to GitHub" shows a Cloudflare
+# error page). Root-cause diagnosis found this call had NO retry on a
+# transient network blip (unlike get_installation_token/
+# get_repo_via_installation right above/below it, which both already
+# learned that lesson on 2026-09-12) AND no overall wall-clock
+# deadline — a slow/stalled upstream could keep `submit_task`'s
+# synchronous repo-list check open indefinitely. Three fixes, all in
+# this one function since every caller (github_browse.py's two
+# endpoints + tasks.py's submit-time check) goes through it:
+#   1. In-process TTL cache per installation_id — the modal's own
+#      GET /github/repos already fetched this exact list seconds
+#      earlier; `submit_task` re-listing it is a redundant GitHub
+#      round-trip on every single save. 60s is generous vs. how often
+#      an installation's repo set actually changes, short enough that
+#      a newly-granted repo shows up well within a user's next modal
+#      open. Not keyed by user — GitHub's response for a given
+#      installation_id is identical regardless of which of OUR users
+#      asks; the per-project/per-user IDOR boundary is enforced one
+#      layer up (the project's own `installation_id` ownership check
+#      in github_browse.py/tasks.py), not here.
+#   2. Retry on timeout/network (not on a real HTTP error status) via
+#      the same `call_with_retry` + "github" breaker every other call
+#      in this module already uses.
+#   3. A hard page cap (20 pages = up to 2,000 repos) AND an overall
+#      20s wall-clock deadline across the whole paginated fetch, so a
+#      slow/stalled upstream can't hang this call indefinitely — only
+#      the per-request httpx timeout existed before.
+_REPO_LIST_CACHE_TTL_SECONDS = 60
+_REPO_LIST_CACHE: dict[int, tuple[list[dict], float]] = {}
+_REPO_LIST_MAX_PAGES = 20
+_REPO_LIST_OVERALL_DEADLINE_SECONDS = 20.0
 
-    Handles pagination transparently.
-    """
-    token, _ = await get_installation_token(installation_id)
-    out: list[dict] = []
-    url = f"{GITHUB_API}/installation/repositories?per_page=100"
-    async with ext_client(
-        "github",
-        timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
-    ) as client:
-        while url:
-            r = await client.get(url, headers=_headers_bearer(token))
-            r.raise_for_status()
-            page = r.json() or {}
-            out.extend(page.get("repositories") or [])
-            link = r.headers.get("link", "")
-            url = _next_link(link)
+
+def _repo_list_cache_get(installation_id: int) -> list[dict] | None:
+    hit = _REPO_LIST_CACHE.get(installation_id)
+    if hit is None:
+        return None
+    repos, expires_at = hit
+    if time.time() >= expires_at:
+        _REPO_LIST_CACHE.pop(installation_id, None)
+        return None
+    return repos
+
+
+def reset_repo_list_cache_for_tests() -> None:
+    """Test-only: `_REPO_LIST_CACHE` is a process-wide singleton —
+    without this, one test's cached result can leak into a later
+    test's assertions for the same installation_id (same failure
+    class as `services.retry_guard.reset_breakers_for_tests`)."""
+    _REPO_LIST_CACHE.clear()
+
+
+async def list_installation_repos(installation_id: int) -> list[dict]:
+    """Repos accessible to a specific installation (installation-token
+    auth). Handles pagination transparently; cached for
+    `_REPO_LIST_CACHE_TTL_SECONDS` per installation (see module
+    comment above for why no-cache-on-failure + no user dimension are
+    both deliberate)."""
+    cached = _repo_list_cache_get(installation_id)
+    if cached is not None:
+        return cached
+
+    async def _fetch_all() -> list[dict]:
+        token, _ = await get_installation_token(installation_id)
+        out: list[dict] = []
+        url = f"{GITHUB_API}/installation/repositories?per_page=100"
+        pages = 0
+        async with ext_client(
+            "github",
+            timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
+        ) as client:
+            while url and pages < _REPO_LIST_MAX_PAGES:
+                async def _get(_url=url):
+                    return await client.get(_url, headers=_headers_bearer(token))
+                r = await call_with_retry(
+                    "github", _get,
+                    max_retries=2, base_delay=0.3, max_delay=2.0,
+                    retry_on=(httpx.TimeoutException, httpx.NetworkError),
+                )
+                r.raise_for_status()
+                page = r.json() or {}
+                out.extend(page.get("repositories") or [])
+                link = r.headers.get("link", "")
+                url = _next_link(link)
+                pages += 1
+        return out
+
+    out = await asyncio.wait_for(_fetch_all(), timeout=_REPO_LIST_OVERALL_DEADLINE_SECONDS)
+    _REPO_LIST_CACHE[installation_id] = (out, time.time() + _REPO_LIST_CACHE_TTL_SECONDS)
     return out
 
 
@@ -983,6 +1054,7 @@ __all__ = [
     "list_installations",
     "list_installations_for_user",
     "list_installation_repos",
+    "reset_repo_list_cache_for_tests",
     "get_repo_via_installation",
     "revoke_installation",
     "verify_webhook_signature",

@@ -648,6 +648,8 @@ def validate_branch_name(name: str) -> str | None:
         return "Branch name can't end with '.lock'."
     if n.startswith(".") or n.endswith("."):
         return "Branch name can't start or end with '.'."
+    if n.startswith("-"):
+        return "Branch name can't start with '-'."
     if "@{" in n:
         return "Branch name can't contain '@{'."
     if any(c in n for c in "~^:?*[\\") or any(ord(c) < 32 for c in n):

@@ -21,13 +21,39 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
-  X, Loader2, GitBranch, GitPullRequest, AlertTriangle, ExternalLink, CheckCircle2,
+  X, Loader2, GitBranch, GitPullRequest, AlertTriangle, ExternalLink, CheckCircle2, RotateCcw,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useModalA11y } from "../hooks/useModalA11y";
 
 function _shortSlug() {
   return Math.random().toString(36).slice(2, 8);
+}
+
+// 2026-10-27 — root-cause fix for the "Cloudflare error page in the
+// Save-to-GitHub modal" founder report. Diagnosis found the backend
+// was raising HTTPException(502, ...) on a GitHub failure — Cloudflare
+// (and most edge/CDN layers) REPLACE a 502/503/504 response BODY with
+// their own HTML/text before it reaches the browser, so the backend's
+// own honest message never arrived here; `e.response.data` was either
+// missing entirely or raw infra HTML. The backend fix (services/
+// github_errors.py) now always replies with a real 4xx (424) carrying
+// a structured `{code, message, retryable}` detail, which this reads
+// first. Deliberately NEVER falls back to `e.message`/`e.toString()`
+// (a raw JS/axios error string, e.g. "Network Error") — only the
+// backend's own detail, or one fixed generic sentence.
+function _sanitizeGithubModalError(e, fallback) {
+  const detail = e?.response?.data?.detail;
+  let msg = (detail && typeof detail === "object" && typeof detail.message === "string")
+    ? detail.message
+    : (typeof detail === "string" ? detail : null);
+  if (msg == null) return fallback;
+  const looksLikeInfra =
+    /<\s*(html|!doctype)|cloudflare|could not parse|bad gateway|origin web server/i.test(msg);
+  if (looksLikeInfra || msg.length > 220) {
+    return "The server returned an unreadable response (usually a transient issue). Please retry in a moment.";
+  }
+  return msg;
 }
 
 export default function SaveToGitHubModal({
@@ -42,6 +68,8 @@ export default function SaveToGitHubModal({
   const [repos, setRepos] = useState([]);
   const [reposLoading, setReposLoading] = useState(false);
   const [reposError, setReposError] = useState(null);
+  const [reposErrorStatus, setReposErrorStatus] = useState(null);
+  const [reposRetryTick, setReposRetryTick] = useState(0);
 
   const [selectedOwner, setSelectedOwner] = useState(activeProject?.github_owner || "");
   const [selectedRepo, setSelectedRepo] = useState(activeProject?.github_repo || "");
@@ -56,12 +84,15 @@ export default function SaveToGitHubModal({
   const [branches, setBranches] = useState([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState(null);
+  const [branchesErrorStatus, setBranchesErrorStatus] = useState(null);
+  const [branchesRetryTick, setBranchesRetryTick] = useState(0);
   const [existingBranch, setExistingBranch] = useState("");
   const [branchSearch, setBranchSearch] = useState("");
 
   const [mainConfirmChecked, setMainConfirmChecked] = useState(false);
   const [phase, setPhase] = useState("idle"); // idle | submitting | error | queued
   const [submitError, setSubmitError] = useState(null);
+  const [submitErrorStatus, setSubmitErrorStatus] = useState(null);
   const [queued, setQueued] = useState(null);
 
   // Reset to a clean, safe state every time the modal opens.
@@ -76,15 +107,17 @@ export default function SaveToGitHubModal({
     setMainConfirmChecked(false);
     setPhase("idle");
     setSubmitError(null);
+    setSubmitErrorStatus(null);
     setQueued(null);
   }, [open, activeProject?.project_id]);
 
-  // Fetch the writable-repo list once per open.
+  // Fetch the writable-repo list once per open (or on Retry click).
   useEffect(() => {
     if (!open || !activeProject?.project_id) return;
     let cancelled = false;
     setReposLoading(true);
     setReposError(null);
+    setReposErrorStatus(null);
     api.get(`/cto/projects/${activeProject.project_id}/github/repos`)
       .then((r) => {
         if (cancelled) return;
@@ -92,11 +125,12 @@ export default function SaveToGitHubModal({
       })
       .catch((e) => {
         if (cancelled) return;
-        setReposError(e?.response?.data?.detail || "Couldn't load your connected repos.");
+        setReposError(_sanitizeGithubModalError(e, "Couldn't load your connected repos."));
+        setReposErrorStatus(e?.response?.status || null);
       })
       .finally(() => { if (!cancelled) setReposLoading(false); });
     return () => { cancelled = true; };
-  }, [open, activeProject?.project_id]);
+  }, [open, activeProject?.project_id, reposRetryTick]);
 
   const selectedRepoObj = repos.find(
     (r) => r.owner === selectedOwner && r.repo === selectedRepo,
@@ -109,13 +143,15 @@ export default function SaveToGitHubModal({
     ? (activeProject?.branch || selectedRepoObj?.default_branch || "main")
     : (selectedRepoObj?.default_branch || "main");
 
-  // Fetch branches lazily — only once the "Existing branch" tab is opened.
+  // Fetch branches lazily — only once the "Existing branch" tab is opened
+  // (or on Retry click).
   useEffect(() => {
     if (!open || tab !== "existing" || !activeProject?.project_id
         || !selectedOwner || !selectedRepo) return;
     let cancelled = false;
     setBranchesLoading(true);
     setBranchesError(null);
+    setBranchesErrorStatus(null);
     api.get(`/cto/projects/${activeProject.project_id}/github/branches`, {
       params: { owner: selectedOwner, repo: selectedRepo },
     })
@@ -131,12 +167,13 @@ export default function SaveToGitHubModal({
       })
       .catch((e) => {
         if (cancelled) return;
-        setBranchesError(e?.response?.data?.detail || "Couldn't load branches for this repo.");
+        setBranchesError(_sanitizeGithubModalError(e, "Couldn't load branches for this repo."));
+        setBranchesErrorStatus(e?.response?.status || null);
       })
       .finally(() => { if (!cancelled) setBranchesLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab, activeProject?.project_id, selectedOwner, selectedRepo]);
+  }, [open, tab, activeProject?.project_id, selectedOwner, selectedRepo, branchesRetryTick]);
 
   if (!open) return null;
 
@@ -156,10 +193,18 @@ export default function SaveToGitHubModal({
     if (!canSave) return;
     setPhase("submitting");
     setSubmitError(null);
+    setSubmitErrorStatus(null);
+    // 2026-10-27 — if the chosen "new branch" name is actually the
+    // same as the repo's base/default branch, there is no new branch
+    // to create — commit directly to it (the existing main-branch
+    // confirm checkbox above already gates this). Sending
+    // create_branch:true here would ask the worker to "create" a
+    // branch that already exists, a redundant call that can 422.
+    const createBranch = tab === "create" && chosenBranch !== defaultBaseBranch;
     const shipTarget = {
       repo: `${selectedOwner}/${selectedRepo}`,
       branch: chosenBranch,
-      create_branch: tab === "create",
+      create_branch: createBranch,
       base_branch: tab === "create" ? defaultBaseBranch : null,
     };
     try {
@@ -173,18 +218,17 @@ export default function SaveToGitHubModal({
       }
       setQueued({
         owner: selectedOwner, repo: selectedRepo, branch: chosenBranch,
-        createBranch: tab === "create",
+        createBranch,
       });
       setPhase("queued");
     } catch (e) {
-      // Never surface a raw exception string — the backend already
-      // returns a human `detail` for every rejection (bad branch name,
-      // repo not writable, branch-creation failure); fall back to one
-      // generic sentence, never e.message/e.toString() raw.
-      setSubmitError(
-        e?.response?.data?.detail
-        || "Couldn't save to GitHub — please try again.",
-      );
+      // Never surface a raw exception string (or raw Cloudflare/HTML
+      // infra text) — _sanitizeGithubModalError() reads the backend's
+      // structured {code,message,retryable} detail (or sanitizes an
+      // infra body) into one human sentence, same "never e.message"
+      // contract as before.
+      setSubmitError(_sanitizeGithubModalError(e, "Couldn't save to GitHub — please try again."));
+      setSubmitErrorStatus(e?.response?.status || null);
       setPhase("error");
     }
   }
@@ -281,7 +325,21 @@ export default function SaveToGitHubModal({
                   Loading your connected repos…
                 </div>
               ) : reposError ? (
-                <div data-testid="save-to-github-repos-error" style={{ color: "var(--danger)" }}>{reposError}</div>
+                <div data-testid="save-to-github-repos-error" style={{ color: "var(--danger)" }}>
+                  <div>{reposError}{reposErrorStatus ? ` (HTTP ${reposErrorStatus})` : ""}</div>
+                  <button
+                    type="button"
+                    data-testid="save-to-github-repos-retry"
+                    onClick={() => setReposRetryTick((n) => n + 1)}
+                    style={{
+                      marginTop: 6, display: "inline-flex", alignItems: "center", gap: 4,
+                      background: "none", border: "1px solid var(--border)", borderRadius: 6,
+                      color: "var(--text-dim)", padding: "4px 8px", cursor: "pointer",
+                    }}
+                  >
+                    <RotateCcw size={12} /> Retry
+                  </button>
+                </div>
               ) : repos.length === 0 ? (
                 <div data-testid="save-to-github-repos-empty" style={{ color: "var(--text-faint)" }}>
                   No writable repos found for your GitHub connection.
@@ -378,7 +436,21 @@ export default function SaveToGitHubModal({
                       Loading branches…
                     </div>
                   ) : branchesError ? (
-                    <div data-testid="save-to-github-branches-error" style={{ color: "var(--danger)" }}>{branchesError}</div>
+                    <div data-testid="save-to-github-branches-error" style={{ color: "var(--danger)" }}>
+                      <div>{branchesError}{branchesErrorStatus ? ` (HTTP ${branchesErrorStatus})` : ""}</div>
+                      <button
+                        type="button"
+                        data-testid="save-to-github-branches-retry"
+                        onClick={() => setBranchesRetryTick((n) => n + 1)}
+                        style={{
+                          marginTop: 6, display: "inline-flex", alignItems: "center", gap: 4,
+                          background: "none", border: "1px solid var(--border)", borderRadius: 6,
+                          color: "var(--text-dim)", padding: "4px 8px", cursor: "pointer",
+                        }}
+                      >
+                        <RotateCcw size={12} /> Retry
+                      </button>
+                    </div>
                   ) : filteredBranches.length === 0 ? (
                     <div data-testid="save-to-github-branches-empty" style={{ color: "var(--text-faint)" }}>
                       No branches match.
@@ -442,7 +514,12 @@ export default function SaveToGitHubModal({
                   color: "var(--danger)",
                 }}
               >
-                {submitError}
+                <div>{submitError}</div>
+                {submitErrorStatus && (
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 2 }}>
+                    HTTP {submitErrorStatus}
+                  </div>
+                )}
               </div>
             )}
 
