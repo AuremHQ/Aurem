@@ -1,0 +1,52 @@
+{
+  "summary": "Save-to-GitHub 424/no-502 fix (iter 19c). Backend pytest 70/70 pass (19c + 10g suites) and vitest 18/18 pass. Live API checks against the real connected project p_145fb30e52 (polarisbuiltinc-wq/aurem-e1-livetest, installation 152797252): /github/repos 200, /github/branches 200 (3 branches), 403/404/401 paths return readable JSON, submit rejects '-evil' / 'a..b' / base_branch '-x' / bad repo format / non-installed repo with 400/403 before any task is queued. Live browser E2E (real repos/branches, chat history and /cto/tasks/submit mocked via page.route so nothing was written to GitHub): modal opens, repo picker shows the right repo, Existing-branch tab loads branches without auto-selecting main, typing 'main' in Create-new shows the warning and keeps Save disabled until the checkbox is ticked and then sends create_branch:false, a unique new branch sends create_branch:true, repos 424 and branches 502-HTML errors both show readable text plus a Retry button that re-fetches, Cancel/X/'Okay, got it' close the modal and submit nothing, and a 502 HTML or 403 string submit error shows a readable modal error and a later Save works. CRITICAL REGRESSION: when /cto/tasks/submit returns the new 424 structured detail, the WHOLE PAGE CRASHES ('Something went wrong loading this page'), because MessageBubble puts the detail object into shipState.error and ShipApproveCard renders it as a React child. Smoke: login and dashboard load fine. Chat round-trips, but the reply is the empty-model fallback, which looks like the LLM-config issue already noted in the credentials file (not caused by this change).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/aurem-dev/cto/tasks/submit", "issue": "If services.wallet.release() raises inside the new except block (tasks.py ~381-388), its error replaces the original insert error. Wrap the release in its own try/except and log it."},
+      {"endpoint": "GET /api/aurem-dev/cto/projects/{id}/github/repos", "issue": "Not verified live: forcing a 424 needs a real token-mint success followed by a list failure, which can't be triggered from outside. The 424 shape is covered only by pytest plus frontend mocks."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MessageBubble.jsx doSubmitShipTarget (line ~901) + ShipApproveCard.jsx (line ~155)", "issue": "CRITICAL page crash. When submit returns 424 {detail:{code,message,retryable}}, `const msg = e?.response?.data?.detail || e?.message` sets shipState.error to the OBJECT. ShipApproveCard then renders {error} as a React child, which throws 'Objects are not valid as a React child (found: object with keys {code, message, retryable})'. The page error boundary replaces the entire chat page, so the user loses the modal and the chat. Reproduced live in the browser. The modal-only vitest misses it because onConfirm is mocked.", "selector": "[data-testid='ship-cto-{idx}-status']", "priority": "CRITICAL"},
+      {"component": "ShipApproveCard behind the modal (MessageBubble.jsx ~901)", "issue": "On a submit failure with no JSON detail (for example a Cloudflare 502 HTML body), the card behind the modal shows the raw axios string 'Request failed with status code 502' plus Retry. This breaks the 'never show e.message' rule the modal follows.", "selector": "[data-testid='ship-cto-1-status']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Save to GitHub when submit fails with 424", "issue": "The backend now returns structured detail, and the shared ship-state consumer in MessageBubble was not updated for it, so the page crashes.", "affected_selectors": ["[data-testid='save-to-github-error']", "[data-testid='ship-cto-1-status']"]}
+    ],
+    "design_issues": [
+      {"screen": "Approve-the-fix PrMiniGuide card", "issues": ["The text 'ORA commits to a new branch — never straight to main' and 'Nothing lands on your main branch until you merge' conflicts with the modal, which now lets the user commit straight to main (with confirmation)."]},
+      {"screen": "Chat fallback reply", "issues": ["Missing period: '...no tools were needed Please rephrase...'."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_regression_iter2026_19c_save_to_github_no_502.py",
+    "/app/backend/tests/test_regression_iter2026_10g_save_to_github_modal_backend.py",
+    "/app/frontend/src/components/__tests__/SaveToGitHubModal.iter2026_19c.test.jsx",
+    "/app/frontend/src/components/__tests__/SaveToGitHubModal.iter2026_10g.test.jsx",
+    "/app/test_reports/pytest/pytest_results_19c.xml"
+  ],
+  "action_items": [
+    "CRITICAL: In MessageBubble.jsx doSubmitShipTarget's catch, turn the detail into a string before setShipState. Reuse the same sanitizer as the modal (export _sanitizeGithubModalError or move it to lib/): string detail -> as-is, object with .message -> .message, otherwise a fixed generic sentence. Never use e.message.",
+    "Make ShipApproveCard handle a non-string error safely (typeof error === 'string' ? error : shipStatusLabel(...)) as a second line of defence.",
+    "Add an integration vitest that renders MessageBubble plus the real modal with api.post rejecting {response:{status:424,data:{detail:{code,message,retryable}}}}, and check that nothing throws and the card text is readable.",
+    "Check other places that render e.response.data.detail as a toast or child for possible object details (Projects.jsx:2132 toast). Not reachable for 424 today because Projects doesn't send repo, but tier and permission 403s can already be dicts.",
+    "Minor: in tasks.py, wrap the wallet release in its own try/except so the original exception isn't masked.",
+    "Minor: update the PrMiniGuide copy so it no longer says 'never straight to main' now that commit-to-main is a choice in the modal."
+  ],
+  "critical_code_review_comments": [
+    "SaveToGitHubModal: if the project's own github_repo is NOT in the installation list (seen live: p_r10_testbed_e2e defaults to aurem-rollback-testbed, but the list only has aurem-e1-livetest), the <select> value matches no option. The browser shows the first option while the state keeps the old repo, so Save sends a repo the user didn't see and gets 403. Snap the selection to a listed repo once repos load.",
+    "SaveToGitHubModal: the open-reset effect doesn't clear branches/branchesError from a previous open. Minor, because the effect re-fetches.",
+    "Using 424 for every GitHub failure (including 401/403 'auth rejected' and 404) is fine for getting through Cloudflare. The frontend shows the HTTP status as text, so users will see 'HTTP 424', which is a bit cryptic but acceptable.",
+    "Backend: classify_github_failure is clean, doesn't leak tokens or URLs, and is well covered by pytest."
+  ],
+  "updated_files": ["/app/tests/e2e_save_to_github_common.py"],
+  "success_rate": {"backend": "100% (70/70 pytest + 12/12 live API checks)", "frontend": "~85% (16/18 E2E checks pass; the 424-submit page crash and the raw e.message in the background card fail)"},
+  "seed_data_creation": "None. No real tasks were queued: /cto/tasks/submit, /chat/history GET and /chat/turn/shipped were mocked with page.route in the browser.",
+  "test_credentials": "test@aurem.dev / AuremTest2026! (from /app/memory/test_credentials.md). Works.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Connected live project: p_145fb30e52 (polarisbuiltinc-wq/aurem-e1-livetest, branches: main, auremcto/ship-p_145fb30e52, aurem/fix-git---gitignore-0-missing--gitignore). To open the modal: log in, set localStorage aurem_active_project=p_145fb30e52, reload, and page.route GET **/api/aurem-dev/chat/history** to return an assistant turn whose content has a ```aurem-handoff fence (for example 'Update README.md to add ...'). Then click [data-testid$='-approve-btn']. Mock **/cto/tasks/submit so nothing ships for real. To reproduce the crash, have submit return 424 with {detail:{code,message,retryable}} and watch for the pageerror 'Objects are not valid as a React child'.",
+  "rca of the issue": "The backend now returns the 424 detail as a dict. The modal handles it, but its caller MessageBubble.doSubmitShipTarget still does `e?.response?.data?.detail || e?.message` and stores the result in shipState.error. ShipApproveCard renders `{error || label}` inside a <span>. A dict is not a valid React child, so the render throws, the route error boundary catches it, and the whole page is replaced with 'Something went wrong loading this page'. Repro: the browser steps above. Fix: turn it into a string in MessageBubble's catch, plus a typeof guard in ShipApproveCard."
+}

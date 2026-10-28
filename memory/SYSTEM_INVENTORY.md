@@ -1071,3 +1071,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 - `services/plan_transition.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-25T03:14:56.933752Z] <!-- inv:service:services/plan_transition.py -->
 - `services/plan_transition_write_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-25T03:14:56.933780Z] <!-- inv:service:services/plan_transition_write_guard.py -->
+
+### Iter 0 · 2026-10-27
+
+- `services/github_errors.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-27T15:51:02.194254Z] <!-- inv:service:services/github_errors.py -->
