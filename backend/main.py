@@ -123,6 +123,8 @@ from routers.admin_connect_diagnostic import router as admin_connect_diagnostic_
 from routers.admin_onboarding_funnel import router as admin_onboarding_funnel_router  # Onboarding Funnel dashboard (2026-09-08)
 from routers.version       import router as version_router          # Iter 212m-205 build info + system health
 from routers.advisor_context import router as advisor_ctx_router     # Iter 212m-209 advisor read layer
+from routers.project_memory import router as project_memory_router   # ORA Brain Part 2 — view/wipe own project memory
+from routers.brain_admin import router as brain_admin_router         # ORA Brain Part 3 — scoreboard, export, delete-own-data
 from routers.qa_probe      import router as qa_probe_router         # Iter 212m-190 QA-only chat-probe
 from routers.loop          import router as loop_router             # Iter 212m-60 Loop Mode engine
 from routers.diagram       import router as diagram_router          # Iter 212m-61 /diagram
@@ -1076,6 +1078,37 @@ async def lifespan(app: FastAPI):
         except Exception as e:                                # noqa: BLE001
             logger.warning("project_health_snapshots index failed: %r", e)
     _asyncio.create_task(_ensure_project_health_trend_indexes())
+
+    # ORA Brain Part 2 — per-user project_memory unique index.
+    async def _ensure_project_memory_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(36)
+            from services.project_memory import ensure_indexes as _pm_idx
+            await _pm_idx(app.state.db)
+            logger.info("📚 project_memory index ensured")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("project_memory index failed: %r", e)
+    _asyncio.create_task(_ensure_project_memory_indexes())
+
+    # ORA Brain Part 3 — brain_calls indexes + the bounded-queue drain
+    # worker (services/brain_gateway.py). The worker is started here,
+    # once, rather than implicitly on first record_call — see that
+    # module's start_worker() docstring.
+    async def _ensure_brain_gateway_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(38)
+            from services.brain_gateway import ensure_indexes as _bg_idx
+            from services.brain_gateway import start_worker as _bg_start
+            await _bg_idx(app.state.db)
+            _bg_start()
+            logger.info("📚 brain_calls index ensured + drain worker started")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("brain_gateway indexes/worker failed: %r", e)
+    _asyncio.create_task(_ensure_brain_gateway_indexes())
 
     # Iter 272 — held-out verification + outcomes indexes.
     async def _ensure_iter272_indexes():
@@ -4075,6 +4108,8 @@ app.include_router(admin_connect_diagnostic_router, prefix="/api/aurem-dev")  # 
 app.include_router(admin_onboarding_funnel_router, prefix="/api/aurem-dev")  # Onboarding Funnel dashboard (2026-09-08)
 app.include_router(version_router)                                  # Iter 212m-205 (already prefixed inside)
 app.include_router(advisor_ctx_router)                              # Iter 212m-209 (already prefixed inside)
+app.include_router(project_memory_router)                           # ORA Brain Part 2 (already prefixed inside)
+app.include_router(brain_admin_router)                              # ORA Brain Part 3 (already prefixed inside)
 app.include_router(qa_probe_router,        prefix="/api/aurem-dev")  # Iter 212m-190 QA-only probe
 # Iter 212m-158 — /tools page "Notify me" capture endpoint.
 from routers.notify_interest import router as notify_interest_router

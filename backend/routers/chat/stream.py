@@ -616,6 +616,22 @@ async def chat_stream(
                                  + ("\n\n" + extra_sys if extra_sys else ""))
         except Exception as _cre:
             logger.debug("council retrieval skipped (chat/stream): %r", _cre)
+
+        # ORA Brain Part 1, Phase D — ONE shared context builder (off
+        # by default; see
+        # services/knowledge_injector.py::build_answer_context for the
+        # full off/shadow/on contract). Same "byte-identical prompt at
+        # off/shadow" guarantee as the council block above.
+        try:
+            from services.knowledge_injector import build_answer_context
+            _knowledge_block, _knowledge_files = await build_answer_context(
+                user.get("user_id"), body.project_id, body.prompt or "",
+            )
+            if _knowledge_block:
+                extra_sys = (_knowledge_block
+                             + ("\n\n" + extra_sys if extra_sys else ""))
+        except Exception as _kce:
+            logger.debug("knowledge context skipped (chat/stream): %r", _kce)
     logger.info(
         "R10_TIMING intent_and_council dur=%.2fs recall_mode=%s recalled=%d",
         time.monotonic() - _r10_council_t0, _recall_mode, _council_recalled,

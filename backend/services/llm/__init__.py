@@ -304,7 +304,28 @@ async def call_llm(messages: list, system: str = "",
     never showed up on the token meter."""
     from services.loop_token_ledger import llm_user_context
     async with llm_user_context(user_id):
-        return await _call_deepseek(messages, system, max_tokens, temperature)
+        # ORA Brain Part 3, Phase E — record-only gateway. This shortcut
+        # never calls call_llm_with_meta, so it always owns its own record
+        # (no nesting with the other two main entry points).
+        from services.brain_gateway import claim_recording, record_call
+        import time as _time
+        async with claim_recording() as _already_claimed:
+            _t0 = _time.monotonic()
+            content = await _call_deepseek(messages, system, max_tokens, temperature)
+            if not _already_claimed:
+                try:
+                    _user_preview = "\n".join(
+                        m.get("content", "") for m in messages if isinstance(m, dict)
+                    )
+                    await record_call(
+                        user_id=user_id, project_id=None, task_type="chat",
+                        model="deepseek",
+                        latency_ms=round((_time.monotonic() - _t0) * 1000, 1),
+                        system=system, user=_user_preview, surface="shortcut",
+                    )
+                except Exception as _bge:                        # noqa: BLE001
+                    logger.debug("brain_gateway record skipped: %r", _bge)
+            return content
 
 
 # ─── Session D · D-part-2 — call_llm_with_meta + inner moved to _meta.py ──
