@@ -2,7 +2,7 @@
 status: draft
 approved_by: null
 approved_on: null
-inject_on: [security checklist, vanguard skills, what security checks]
+inject_on: [security checklist, vanguard skills, what security checks, security checks, vanguard's security, vanguard security]
 max_chars: 500
 ---
 

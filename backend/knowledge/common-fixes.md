@@ -2,7 +2,7 @@
 status: draft
 approved_by: null
 approved_on: null
-inject_on: [fix, bug, error, null, undefined, crash, exception, broken, not working]
+inject_on: [fix, bug, error, null, undefined, crash, exception, broken, not working, xss, sql injection, injection, sanitiz, mitigation, security pattern, auth guard]
 max_chars: 1800
 ---
 

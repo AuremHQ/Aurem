@@ -3,7 +3,7 @@
 scripts/ora_brain_offline_eval.py — ORA Brain Part 3, Phase F.
 
 Offline eval harness. NO live LLM call, NO production traffic, no
-writes. Runs 10 representative task strings through
+writes. Runs 16 representative task strings through
 services.knowledge_injector's selection + build_answer_context logic
 at off vs on, and checks:
   - off is always byte-empty ("", [])
@@ -41,14 +41,28 @@ SAMPLE_TASKS: list[tuple[str, str | None]] = [
     ("Does ORA ship a direct push to my branch?", "product.md"),
     ("How do I upgrade my subscription tier?", "pricing.md"),
     ("What's a totally unrelated question about the weather today?", None),
+    # F6 — 6 additional phrasings added to close the original 3 gaps
+    # and broaden coverage past the first 10's keyword shapes.
+    ("What are ORA's product features and capabilities overall?", "product.md"),
+    ("Will ORA ever push directly to my live branch without a PR?", "product.md"),
+    ("What's included in Maxx mode pricing and the monthly cost?", "pricing.md"),
+    ("The app crashed with an undefined variable, what's the fix?", "common-fixes.md"),
+    ("How do you sanitize untrusted repo-derived strings against injection?", "common-fixes.md"),
+    ("Where do Vanguard's security checks live in the codebase?", "security-checks.md"),
 ]
 
 
 def _force_all_approved_in_memory() -> None:
     """Wraps _load_file so every returned front-matter dict reports
     status=approved, without ever writing to the real .md files on
-    disk."""
-    real_load = ki._load_file
+    disk. Idempotent — safe to call more than once in the same
+    process (e.g. once per test in a pytest session that imports
+    this script repeatedly): wraps the ORIGINAL lru_cache'd
+    `_load_file` exactly once, never re-wraps an already-wrapped
+    version (which would otherwise accumulate nested closures and
+    break `.cache_clear()` on the second call)."""
+    real_load = getattr(ki, "_real_load_file_for_eval", None) or ki._load_file
+    ki._real_load_file_for_eval = real_load
 
     def _approved_load(filename: str):
         meta, body = real_load(filename)
@@ -56,7 +70,8 @@ def _force_all_approved_in_memory() -> None:
             meta = {**meta, "status": "approved"}
         return meta, body
 
-    ki._load_file.cache_clear()
+    if hasattr(ki._load_file, "cache_clear"):
+        ki._load_file.cache_clear()
     ki._load_file = _approved_load  # type: ignore[assignment]
 
 

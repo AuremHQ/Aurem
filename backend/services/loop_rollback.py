@@ -359,6 +359,23 @@ async def run_rollback(
         )
         await _prog(f"reverted → {(rb_sha or '')[:7]}", "success")
         await _ledger_final("success", restored_commit_sha=rb_sha)
+        # ORA Brain Part 4, F2 — objective outcome signal: a completed
+        # rollback is the strongest possible negative signal and MUST
+        # override any earlier positive outcome (pr_merged,
+        # tests_passed, …) already attached to this loop's brain_calls
+        # rows — see attach_outcome_for_task's precedence rule. loop_id
+        # is the same identifier current_surface_context() falls back
+        # to as task_id, so this reaches the rows from the ORIGINAL
+        # fix/ship, in a completely separate request/background task.
+        try:
+            from services.brain_gateway import attach_outcome_for_task
+            await attach_outcome_for_task(
+                db, task_id=loop_id, outcome="rolled_back",
+                user_id=project.get("user_id"),
+            )
+        except Exception as e:                              # noqa: BLE001
+            logger.debug("[loop-rollback %s] brain outcome attach "
+                         "skipped: %r", loop_id, e)
         # Iter 330 · terminal SSE emit — carries state="completed"
         # which the frontend consumer uses to close its OperationHistory
         # live-op card and add it to the collapsed history stack. Also

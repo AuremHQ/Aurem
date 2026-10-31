@@ -52,8 +52,13 @@ async def _llm_call_protected(*, system: str, user: str, max_tokens: int,
         )
         if not _already_claimed:
             try:
+                from services.loop_token_ledger import current_surface_context
+                _ctx = current_surface_context()
                 await record_call(
-                    user_id=user_id, project_id=None, task_type=mode,
+                    user_id=user_id,
+                    project_id=_ctx.get("project_id"),
+                    task_id=_ctx.get("task_id"),
+                    task_type=mode,
                     model=_meta_sink.get("model") or _meta_sink.get("provider"),
                     latency_ms=latency_ms, tokens=_meta_sink.get("total_tokens"),
                     system=system, user=user, surface="parliament",

@@ -75,9 +75,14 @@ async def call_llm_with_meta(system: str, user: str,
             )
             if not _already_claimed:
                 try:
+                    from services.loop_token_ledger import current_surface_context
+                    _ctx = current_surface_context()
                     _meta = result if isinstance(result, dict) else {}
                     await record_call(
-                        user_id=user_id, project_id=None, task_type=mode,
+                        user_id=user_id,
+                        project_id=_ctx.get("project_id"),
+                        task_id=_ctx.get("task_id"),
+                        task_type=mode,
                         model=_meta.get("model") or _meta.get("provider"),
                         latency_ms=round((_time.monotonic() - _t0) * 1000, 1),
                         tokens=_meta.get("total_tokens"),

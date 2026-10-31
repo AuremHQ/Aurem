@@ -124,7 +124,8 @@ from routers.admin_onboarding_funnel import router as admin_onboarding_funnel_ro
 from routers.version       import router as version_router          # Iter 212m-205 build info + system health
 from routers.advisor_context import router as advisor_ctx_router     # Iter 212m-209 advisor read layer
 from routers.project_memory import router as project_memory_router   # ORA Brain Part 2 — view/wipe own project memory
-from routers.brain_admin import router as brain_admin_router         # ORA Brain Part 3 — scoreboard, export, delete-own-data
+from routers.brain_admin import admin_router as brain_admin_router   # ORA Brain Part 3/4 — scoreboard, export, health, delete-own-data (admin)
+from routers.brain_admin import user_router as brain_user_router     # ORA Brain Part 4, F3 — DELETE /api/brain/my-data (canonical path)
 from routers.qa_probe      import router as qa_probe_router         # Iter 212m-190 QA-only chat-probe
 from routers.loop          import router as loop_router             # Iter 212m-60 Loop Mode engine
 from routers.diagram       import router as diagram_router          # Iter 212m-61 /diagram
@@ -4110,6 +4111,7 @@ app.include_router(version_router)                                  # Iter 212m-
 app.include_router(advisor_ctx_router)                              # Iter 212m-209 (already prefixed inside)
 app.include_router(project_memory_router)                           # ORA Brain Part 2 (already prefixed inside)
 app.include_router(brain_admin_router)                              # ORA Brain Part 3 (already prefixed inside)
+app.include_router(brain_user_router)                               # ORA Brain Part 4, F3 (already prefixed inside)
 app.include_router(qa_probe_router,        prefix="/api/aurem-dev")  # Iter 212m-190 QA-only probe
 # Iter 212m-158 — /tools page "Notify me" capture endpoint.
 from routers.notify_interest import router as notify_interest_router

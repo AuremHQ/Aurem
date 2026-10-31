@@ -22,6 +22,7 @@ import asyncio
 import logging
 import re
 import time
+import weakref
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,22 @@ _FIELDS = _SCALAR_FIELDS + _LIST_FIELDS
 # (asyncio.gather from the same backend instance) can never interleave
 # an upsert into two separate documents. The Mongo unique index below
 # is the cross-instance backstop; this lock is the same-instance one.
-_write_locks: dict[tuple[str, str], asyncio.Lock] = {}
+#
+# Part 4, F4 — a plain dict here grows forever: every (user_id,
+# project_id) pair EVER touched leaves a permanent entry for the
+# life of the process, even long after that project is never written
+# to again. A WeakValueDictionary self-prunes instead: CPython drops
+# an entry the moment nothing holds a strong reference to its Lock
+# anymore (in practice, right after the `async with _lock_for(...)`
+# block that was using it exits) — so the dict's real size tracks
+# "locks currently in use," not "locks ever created." A fixed-size
+# LRU was considered and rejected: evicting a key while its lock is
+# STILL HELD would let a second writer acquire a brand-new Lock
+# object for the same key, silently defeating mutual exclusion
+# exactly in the overflow case this is meant to prevent.
+_write_locks: weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
 
 
 def _lock_for(user_id: str, project_id: str) -> asyncio.Lock:
@@ -143,6 +159,30 @@ async def upsert_project_memory(db, user_id: str, project_id: str, fields: dict)
             return False
 
 
+async def remove_fixes_that_worked_note(db, user_id: str, project_id: str, note: str) -> bool:
+    """Part 4, F2 — demotion path: a `fixes_that_worked` note that
+    was added by brain_gateway.promote_to_candidate must come back
+    OUT if that call's outcome is later revoked (e.g. a merged PR
+    that then gets rolled back). Scoped identically to
+    upsert_project_memory — ownership-checked, same per-key lock, and
+    idempotent (removing a note that's already gone, or from a
+    project with no memory row at all, is a safe no-op)."""
+    if db is None or not note:
+        return False
+    if not await _owns_project(db, user_id, project_id):
+        return False
+    async with _lock_for(user_id, project_id):
+        try:
+            await db[_COLLECTION].update_one(
+                {"user_id": user_id, "project_id": project_id},
+                {"$pull": {"fixes_that_worked": note}},
+            )
+            return True
+        except Exception as e:                                 # noqa: BLE001
+            logger.warning("remove_fixes_that_worked_note failed: %r", e)
+            return False
+
+
 async def delete_project_memory(db, user_id: str, project_id: str) -> bool:
     """Deletes only the caller's own (user_id, project_id) row.
     Idempotent — a second delete (row already gone) still returns
@@ -158,6 +198,22 @@ async def delete_project_memory(db, user_id: str, project_id: str) -> bool:
         except Exception as e:                                 # noqa: BLE001
             logger.warning("delete_project_memory failed: %r", e)
             return False
+
+
+async def delete_all_project_memory_for_user(db, user_id: str) -> bool:
+    """Part 4, F3 — wipes EVERY project_memory row the caller owns,
+    not just one project. Filtered purely by the caller's own
+    user_id (no cto_projects ownership re-check needed: a row's
+    user_id IS the ownership fact here, there's no cross-project
+    trust boundary to cross). Idempotent."""
+    if db is None or not user_id:
+        return False
+    try:
+        await db[_COLLECTION].delete_many({"user_id": user_id})
+        return True
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("delete_all_project_memory_for_user failed: %r", e)
+        return False
 
 
 _MARKER_RE = re.compile(r"\[\s*(end\s+)?project\s+notes", re.IGNORECASE)

@@ -103,6 +103,7 @@ async def _browser_free_snapshot_fallback(url: str, exc: Exception) -> dict:
     needed to tell "still pointed at a stale env override" apart from
     "the new default path itself is wrong"."""
     import httpx
+
     import services.deploy_verify as dv
 
     out: dict = {"snapshot": "", "screenshot_meta": None, "error": None,
@@ -127,6 +128,7 @@ async def _fetch_snapshot_and_screenshot_meta(url: str, allowlist_host: str) -> 
     navigated URL (V1c rule 2 reused) — the fence holds even for the
     admin's own request."""
     from playwright.async_api import async_playwright
+
     import services.deploy_verify as dv
 
     out: dict = {"snapshot": "", "screenshot_meta": None, "error": None,
@@ -273,7 +275,7 @@ async def run_web_inspect(url: str, question: str, *, db=None, user_id: str = ""
     est_input_tokens = max(1, (len(_SYSTEM_PROMPT) + len(user_msg)) // 4)
 
     if db is not None and user_id:
-        from services.llm_usd_cap import assert_within_usd_cap, LLMUsdCapExceeded
+        from services.llm_usd_cap import LLMUsdCapExceeded, assert_within_usd_cap
         est_cost = compute_cost_usd(WEB_INSPECT_MODEL, est_input_tokens, _ADVISORY_MAX_TOKENS)
         try:
             await assert_within_usd_cap(db, user_id=user_id, est_cost_usd=est_cost)
@@ -283,10 +285,16 @@ async def run_web_inspect(url: str, question: str, *, db=None, user_id: str = ""
                                  result="blocked_cost_cap", reason=e.cap_kind)
             return out
 
+    # ORA Brain Part 4, F5 — record-only; no routing change.
+    from services.brain_gateway import record_wrap
     from services.llm.openrouter_client import call_openrouter_model
-    answer = await call_openrouter_model(
-        WEB_INSPECT_MODEL, _SYSTEM_PROMPT, user_msg,
-        max_tokens=_ADVISORY_MAX_TOKENS, temperature=0.2,
+    answer = await record_wrap(
+        call_openrouter_model(
+            WEB_INSPECT_MODEL, _SYSTEM_PROMPT, user_msg,
+            max_tokens=_ADVISORY_MAX_TOKENS, temperature=0.2,
+        ),
+        user_id=user_id or None, task_type="web_inspect",
+        model=WEB_INSPECT_MODEL, surface="web_inspect",
     )
     tokens_in = est_input_tokens
     tokens_out = max(1, len(answer or "") // 4)

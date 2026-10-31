@@ -72,6 +72,12 @@ class _FakeBrainCalls:
     def find(self, filt, proj=None):
         return _FakeCursor([r for r in self.rows if self._row_matches(r, filt)])
 
+    async def find_one(self, filt, proj=None):
+        for r in self.rows:
+            if self._row_matches(r, filt):
+                return r
+        return None
+
     def aggregate(self, pipeline):
         match = pipeline[0]["$match"]
         rows = [r for r in self.rows if r.get("outcome") != match["outcome"].get("$ne")]
@@ -129,11 +135,25 @@ class _FakeDB:
 
 
 @pytest.fixture(autouse=True)
-def _reset_gateway_state(monkeypatch):
+async def _reset_gateway_state(monkeypatch):
     monkeypatch.setattr(bg, "_write_queue", None)
     monkeypatch.setattr(bg, "_worker_task", None)
+    monkeypatch.setattr(bg, "_dropped_count", 0)
     monkeypatch.delenv("ORA_BRAIN_HMAC_SECRET", raising=False)
     yield
+    # Part 4, F1 — record_call() now self-heals a dead worker, so ANY
+    # test that calls record_call (directly, or indirectly through a
+    # real entry point) can spawn a detached, infinite `while True`
+    # background task. Cancel it here so it never outlives this
+    # test's event loop (see test_regression_iter2026_28's identical
+    # teardown for why an orphaned one can wedge the whole process).
+    task = bg._worker_task
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 # ───────────────────────── HMAC prompt digest ────────────────────────────
@@ -278,14 +298,20 @@ class TestOutcomeAttach:
         assert db.brain_calls.rows[0]["outcome"] is None
 
     async def test_concurrent_attach_race_only_one_wins(self):
+        """Two outcomes of the SAME polarity (both positive) racing
+        for the same call_id — exactly one wins, matching the plain
+        atomic `outcome: None` filter's race guarantee. (A positive-
+        vs-negative race has its own, asymmetric precedence rule —
+        see test_negative_outcome_always_wins_regardless_of_race_order
+        in the Part 4 F2 wiring test file.)"""
         db = _FakeDB()
-        db.brain_calls.rows.append({"call_id": "bc_1", "outcome": None})
+        db.brain_calls.rows.append({"call_id": "bc_1", "outcome": None, "user_id": "u1"})
         results = await asyncio.gather(
             bg.attach_outcome(db, "bc_1", "tests_passed"),
-            bg.attach_outcome(db, "bc_1", "tests_failed"),
+            bg.attach_outcome(db, "bc_1", "user_approved"),
         )
         assert sorted(results) == [False, True]
-        assert db.brain_calls.rows[0]["outcome"] in ("tests_passed", "tests_failed")
+        assert db.brain_calls.rows[0]["outcome"] in ("tests_passed", "user_approved")
 
 
 # ───────────────────── promotion tier 2 — candidate ──────────────────────

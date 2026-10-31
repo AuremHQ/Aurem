@@ -8,12 +8,16 @@ ORA Brain Part 3, Phase F — guard test + architectural invariants.
 2. Source-level allow-list: which files call a provider-transport
    function (`_call_claude`/`_call_deepseek`/`_call_glm`/
    `_call_longcat`/`call_openrouter_model`) directly. The 3 main
-   entry points (expected — they ARE the transport layer) plus the
-   7 side-door files Part 3's own spec names are allowed. Anything
-   ELSE triggers the guard — including the files this audit found
-   that the task's own VERIFY FIRST section did NOT name (see
-   `_PRE_EXISTING_UNLISTED_CALLERS`, reported as a known gap, not
-   silently absorbed into the allow-list as if it were fine).
+   entry points (expected — they ARE the transport layer), the 7
+   side-door files Part 3's own spec names (log-only, intentionally
+   NOT wrapped), and — as of Part 4, F5 — the 7 files this audit
+   found calling a provider directly WITHOUT going through the
+   gateway at all (`_RECORD_WRAPPED_CALLERS`). Those 7 are no
+   longer an unwrapped gap: each one now routes its call through
+   `services.brain_gateway.record_wrap` (verified below, not just
+   allow-listed) for record-only visibility, with zero routing
+   change. Anything else matching the pattern — i.e. truly
+   unwrapped — fails the guard.
 3. services/ora_client.py (founder-only aurem.live client) is
    untouched by this change and still states its founder-only
    contract.
@@ -22,6 +26,7 @@ ORA Brain Part 3, Phase F — guard test + architectural invariants.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -74,15 +79,17 @@ _NAMED_SIDE_DOORS = {
     "routers/admin_bin.py",
 }
 
-# Files this audit found ALSO call a provider-transport function
-# directly, which Part 3's VERIFY FIRST section did not name. They
-# are allow-listed here so the guard doesn't spuriously fail on
-# pre-existing, unrelated code — but they are explicitly reported
-# in Part 3's final report as a known gap, not silently treated as
-# "fine" or "already covered by the gateway." Wrapping them is a
-# separate, future-phase decision (bigger blast radius than Step 1's
-# "record only" mandate).
-_PRE_EXISTING_UNLISTED_CALLERS = {
+# Part 4, F5 — these 7 files were found calling a provider-transport
+# function directly, bypassing the gateway entirely (Part 3's VERIFY
+# FIRST section didn't name them). They are no longer an "unwrapped"
+# gap: each now routes its call through
+# services.brain_gateway.record_wrap (record-only, no routing change,
+# fail-open — see that function's docstring). Allow-listed here
+# because they still textually match `_PROVIDER_CALL_RE` (the actual
+# call is now an argument to record_wrap, not a bypass of it) AND
+# positively verified below to actually call record_wrap, not just
+# assumed.
+_RECORD_WRAPPED_CALLERS = {
     "routers/chat/misc.py",
     "routers/chat/worker.py",
     "services/agents.py",
@@ -92,8 +99,16 @@ _PRE_EXISTING_UNLISTED_CALLERS = {
     "services/web_inspect.py",
 }
 
+# The "truly unwrapped, no gateway involvement at all" bucket — empty
+# as of Part 4, F5. Keep this named and asserted-empty (rather than
+# deleting it) so a future regression that adds a NEW unwrapped
+# caller is forced to explain itself here, not silently re-grow this
+# set.
+_UNWRAPPED_CALLERS: set[str] = set()
+
 _ALLOWED_CALLERS = (
-    _MAIN_ENTRY_POINT_FILES | _NAMED_SIDE_DOORS | _PRE_EXISTING_UNLISTED_CALLERS
+    _MAIN_ENTRY_POINT_FILES | _NAMED_SIDE_DOORS
+    | _RECORD_WRAPPED_CALLERS | _UNWRAPPED_CALLERS
 )
 
 _NEW_OR_MODIFIED_BRAIN_FILES = (
@@ -132,11 +147,27 @@ class TestNoUnlistedProviderBypass:
             f"the gateway: {sorted(unlisted)}"
         )
 
+    def test_unwrapped_callers_bucket_is_empty(self):
+        """Part 4, F5's explicit DONE criterion: the allow-list for
+        truly-unwrapped (no gateway involvement at all) callers is
+        EMPTY. If this ever fails, a new caller was added to
+        _UNWRAPPED_CALLERS without wrapping it — don't just grow the
+        set, wrap the call with record_wrap or write a reason here."""
+        assert _UNWRAPPED_CALLERS == set()
+
+    def test_every_record_wrapped_caller_actually_calls_record_wrap(self):
+        """Not just allow-listed — positively verified each of the 7
+        files found bypassing the gateway now routes its call
+        through the shared helper."""
+        for rel in _RECORD_WRAPPED_CALLERS:
+            text = (_BACKEND / rel).read_text(encoding="utf-8")
+            assert "record_wrap" in text, f"{rel} is allow-listed as record-wrapped but never calls record_wrap"
+
     def test_allow_list_entries_still_actually_exist(self):
         """The allow-list itself must stay honest — if a side-door
         file is deleted/renamed, its entry should be removed too,
         not linger as dead documentation."""
-        for rel in _NAMED_SIDE_DOORS | _PRE_EXISTING_UNLISTED_CALLERS:
+        for rel in _NAMED_SIDE_DOORS | _RECORD_WRAPPED_CALLERS:
             assert (_BACKEND / rel).exists(), f"allow-listed file missing: {rel}"
 
 
@@ -165,6 +196,21 @@ class TestNoLocalOrTrainedModelRouting:
 
 # ──────────────────── behavioral dedup proof (not grep) ──────────────────
 class TestRecordedOnceAcrossNestedEntryPoints:
+    @pytest.fixture(autouse=True)
+    async def _cancel_worker_after(self):
+        # Part 4, F1 — record_call() self-heals a dead worker, so
+        # every test below (all drive a REAL entry point) spawns a
+        # detached background task. Cancel it so it never outlives
+        # this test's event loop.
+        yield
+        task = bg._worker_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
     async def test_parliament_call_produces_exactly_one_brain_calls_row(self, monkeypatch):
         """_llm_call_protected calls services.llm.call_llm_with_meta
         internally. Without claim_recording, that would be 2 rows for

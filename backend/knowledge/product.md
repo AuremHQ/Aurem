@@ -2,7 +2,7 @@
 status: draft
 approved_by: null
 approved_on: null
-inject_on: [what is ora, product, features, modes, loop mode, vanguard, how does ora work, capabilities]
+inject_on: [what is ora, product, features, modes, loop mode, vanguard, how does ora work, capabilities, swift mode, swift, pro mode, maxx mode, maxx, direct push, push to my branch, push to branch, push directly]
 max_chars: 1500
 ---
 

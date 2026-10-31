@@ -314,11 +314,16 @@ async def call_llm(messages: list, system: str = "",
             content = await _call_deepseek(messages, system, max_tokens, temperature)
             if not _already_claimed:
                 try:
+                    from services.loop_token_ledger import current_surface_context
+                    _ctx = current_surface_context()
                     _user_preview = "\n".join(
                         m.get("content", "") for m in messages if isinstance(m, dict)
                     )
                     await record_call(
-                        user_id=user_id, project_id=None, task_type="chat",
+                        user_id=user_id,
+                        project_id=_ctx.get("project_id"),
+                        task_id=_ctx.get("task_id"),
+                        task_type="chat",
                         model="deepseek",
                         latency_ms=round((_time.monotonic() - _t0) * 1000, 1),
                         system=system, user=_user_preview, surface="shortcut",

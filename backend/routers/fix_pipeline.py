@@ -60,15 +60,18 @@ from sse_starlette.sse import EventSourceResponse
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.team_permissions import check_permission
 from services import fix_job_manager as fjm
-from services.finding_fix_applier import apply_finding_fix
 from services import ora_fix_learning
+from services.finding_fix_applier import apply_finding_fix
+from services.fixed_findings import record_fixed
 from services.notifications import emit_notification
 from services.scan_fix_quota import (
-    ALL_FIX_TOOLS, assert_can_fix, get_fix_quota, record_scan_fixes,
+    ALL_FIX_TOOLS,
+    assert_can_fix,
+    get_fix_quota,
+    record_scan_fixes,
 )
-from services.fixed_findings import record_fixed
+from services.team_permissions import check_permission
 
 logger = logging.getLogger("aurem-dev.fix_pipeline")
 router = APIRouter(prefix="/fix-pipeline", tags=["Fix Pipeline"])
@@ -488,33 +491,48 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 last_err = None
                 attempts_used = 0
                 _t_fix_start = time.time()
-                for attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
-                    attempts_used = attempt
-                    try:
-                        res = await apply_finding_fix(
-                            db=db, user=user, project_id=project_id, finding=finding,
-                        )
-                    except Exception as e:                            # noqa: BLE001
-                        logger.exception("bulk fix raised for finding=%s "
-                                         "attempt=%d", finding_id, attempt)
-                        res = {"ok": False, "error": f"unhandled: {e}"}
-                    if res.get("ok"):
-                        break
-                    last_err = res.get("error") or "unknown"
-                    if last_err in _TERMINAL_ERROR_CODES:
-                        # No point retrying — surface the real reason.
-                        break
-                    if attempt >= _MAX_FIX_ATTEMPTS:
-                        break
-                    # Emit a retry event so the UI shows "Retry 2/3 …"
-                    # and the user has visible proof the system is still
-                    # working (instead of silently hanging on a fail).
-                    backoff = _RETRY_BACKOFFS_S[min(attempt - 1, len(_RETRY_BACKOFFS_S) - 1)]
-                    fjm.emit(job_id, "retrying",
-                             finding_id=finding_id, attempt=attempt + 1,
-                             of=_MAX_FIX_ATTEMPTS, last_error=last_err,
-                             backoff_s=backoff, file=path, rule_id=rule_id)
-                    await asyncio.sleep(backoff)
+                # ORA Brain Part 4, F2 — tag this finding's own fix
+                # attempt so the LLM call inside apply_finding_fix
+                # stamps project_id + a per-finding task_id onto its
+                # brain_calls row (services/brain_gateway.py), letting
+                # the outcome hook below find it via
+                # attach_outcome_for_task. Uses llm_surface_context
+                # (properly scoped + reset), NOT tag_request_surface's
+                # set-and-forget — this is a sequential per-finding
+                # loop sharing ONE request Task across many findings,
+                # exactly the case tag_request_surface's own docstring
+                # says not to use it for.
+                from services.loop_token_ledger import llm_surface_context
+                async with llm_surface_context(
+                    project_id=project_id, task_id=f"fix:{finding_id}",
+                ):
+                    for attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                        attempts_used = attempt
+                        try:
+                            res = await apply_finding_fix(
+                                db=db, user=user, project_id=project_id, finding=finding,
+                            )
+                        except Exception as e:                        # noqa: BLE001
+                            logger.exception("bulk fix raised for finding=%s "
+                                             "attempt=%d", finding_id, attempt)
+                            res = {"ok": False, "error": f"unhandled: {e}"}
+                        if res.get("ok"):
+                            break
+                        last_err = res.get("error") or "unknown"
+                        if last_err in _TERMINAL_ERROR_CODES:
+                            # No point retrying — surface the real reason.
+                            break
+                        if attempt >= _MAX_FIX_ATTEMPTS:
+                            break
+                        # Emit a retry event so the UI shows "Retry 2/3 …"
+                        # and the user has visible proof the system is
+                        # still working (instead of silently hanging).
+                        backoff = _RETRY_BACKOFFS_S[min(attempt - 1, len(_RETRY_BACKOFFS_S) - 1)]
+                        fjm.emit(job_id, "retrying",
+                                 finding_id=finding_id, attempt=attempt + 1,
+                                 of=_MAX_FIX_ATTEMPTS, last_error=last_err,
+                                 backoff_s=backoff, file=path, rule_id=rule_id)
+                        await asyncio.sleep(backoff)
                 _fix_duration_ms = int((time.time() - _t_fix_start) * 1000)
 
                 # Master Prompt v2 Part 1.1 — settle this finding's own
@@ -556,6 +574,17 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                         tokens_charged=0,   # never deducted (task-quota model)
                         scanner=finding.get("scanner"),
                     )
+                    # ORA Brain Part 4, F2 — objective outcome signal.
+                    # Best-effort: never blocks or fails the user-
+                    # visible response.
+                    try:
+                        from services.brain_gateway import attach_outcome_for_task
+                        await attach_outcome_for_task(
+                            db, task_id=f"fix:{finding_id}",
+                            outcome="tests_failed", user_id=user_id,
+                        )
+                    except Exception as _bge:                        # noqa: BLE001
+                        logger.debug("brain outcome attach skipped: %r", _bge)
                     continue
 
                 # Iter 212m-147 — Emit the diff BEFORE the GitHub
@@ -646,6 +675,20 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     tokens_charged=0,
                     scanner=finding.get("scanner"),
                 )
+                # ORA Brain Part 4, F2 — objective outcome signal. Only
+                # the real GitHub-commit-verified case counts as a
+                # strong positive signal; "ok but not (yet) verified"
+                # deliberately attaches nothing rather than inventing
+                # a confidence level record_fix_outcome doesn't claim.
+                if verified:
+                    try:
+                        from services.brain_gateway import attach_outcome_for_task
+                        await attach_outcome_for_task(
+                            db, task_id=f"fix:{finding_id}",
+                            outcome="verification_passed", user_id=user_id,
+                        )
+                    except Exception as _bge:                        # noqa: BLE001
+                        logger.debug("brain outcome attach skipped: %r", _bge)
                 total_ok += 1
                 # Iter 212m-193 — persist the fixed state so a rescan
                 # doesn't resurrect this finding (fix lives on a draft
@@ -943,6 +986,7 @@ async def _verify_commit_exists(*, db, user: dict, project_id: str,
         if not (owner and repo and token):
             return None
         import httpx
+
         from services.http import ext_client
         async with ext_client("github", timeout=httpx.Timeout(10.0)) as cx:
             r = await cx.get(

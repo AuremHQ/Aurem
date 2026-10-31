@@ -939,6 +939,28 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                     {"$set": {"merged_sha": real_merge_sha,
                               "merged_at": time.time()}},
                 )
+            # ORA Brain Part 4, F2 — objective outcome signal: a
+            # merged ship PR is a strong positive. loop_id (the same
+            # identifier current_surface_context() falls back to as
+            # task_id when a Loop run never set an explicit task_id)
+            # is how the ORIGINAL brain_calls rows from this ship get
+            # found again here, in a completely separate request.
+            # user_id comes from loop_outcomes itself, never from the
+            # (unauthenticated, GitHub-controlled) webhook payload —
+            # cross-user isolation is enforced by attach_outcome_for_
+            # task's own user_id filter.
+            try:
+                outcome_row = await db.loop_outcomes.find_one({"ship_branch": head_ref})
+                loop_id = (outcome_row or {}).get("loop_id")
+                owner_user_id = (outcome_row or {}).get("user_id")
+                if loop_id and owner_user_id:
+                    from services.brain_gateway import attach_outcome_for_task
+                    await attach_outcome_for_task(
+                        db, task_id=loop_id, outcome="pr_merged",
+                        user_id=owner_user_id,
+                    )
+            except Exception as e:                            # noqa: BLE001
+                logger.debug("brain outcome attach (pr_merged) skipped: %r", e)
         elif new_status == "closed":
             # R10 (d) — cancelled PR: nothing landed on the base branch, so
             # there is nothing to revert; just remove the throwaway branch.
