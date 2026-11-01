@@ -923,8 +923,13 @@ async def apply_security_fix(
         logger.exception("apply_finding_fix raised")
         res = {"ok": False, "error": f"unhandled: {e}"}
     _dur_ms = int((_t.time() - _t_start) * 1000)
-    await finalize_hold(db, user_id=user_id, action="fix", run_id=wallet_run_id,
-                        ok=bool(res.get("ok")), reason=res.get("error") or "")
+    # FIX_one_branch_for_all_fixes, design item 12 — an idempotent
+    # re-run that found nothing new to commit is NOT charged.
+    await finalize_hold(
+        db, user_id=user_id, action="fix", run_id=wallet_run_id,
+        ok=bool(res.get("ok")) and not res.get("skipped_no_change"),
+        reason=res.get("error") or "",
+    )
 
     # Iter 212m-129 — Learning hook (single-finding security/vanguard fix).
     # Best-effort: never blocks or fails the user-visible response.
@@ -953,7 +958,10 @@ async def apply_security_fix(
             logger.debug("brain outcome attach skipped: %r", _bge)
 
     # Iter 212m-190 — deduct exactly 1 task ONLY on success.
-    if res.get("ok") and not is_unlimited_user:
+    # FIX_one_branch_for_all_fixes, design item 12 — skipped_no_change
+    # is a real "already fixed" outcome but not a NEW commit, so it's
+    # not charged (same rule as the wallet hold above).
+    if res.get("ok") and not res.get("skipped_no_change") and not is_unlimited_user:
         try:
             await record_scan_fixes(user_id, "vanguard-scan", 1)
         except Exception as _e:

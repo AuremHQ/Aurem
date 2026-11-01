@@ -751,6 +751,28 @@ async def resolve_ship_target(
     return st_owner, st_repo, branch, None
 
 
+async def update_pr_body(
+    *, owner: str, repo: str, pr_number: int, body: str, token: str,
+) -> tuple[bool, Optional[str]]:
+    """PATCH a PR's body in place (used by the shared-fix-batch flow
+    to refresh the running fix table after each successful commit,
+    instead of posting a new comment per fix). Returns (ok, error).
+    Best-effort — a body-update failure must never block or undo a
+    commit that already landed."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-pr-helper",
+    }
+    r = await github_request_with_retry(
+        "PATCH", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+        headers=headers, json={"body": body[:65000]},
+    )
+    if r.status_code == 200:
+        return True, None
+    return False, f"update_pr_body_status_{r.status_code}"
+
+
 async def close_pr(
     *, owner: str, repo: str, pr_number: int, token: str,
 ) -> tuple[bool, Optional[str]]:
@@ -896,7 +918,13 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
     """
     pr = payload.get("pull_request") or {}
     labels = [(l.get("name") or "") for l in (pr.get("labels") or [])]
-    head_ref = ((pr.get("head") or {}).get("ref")) or ""
+    _raw_head_ref = ((pr.get("head") or {}).get("ref")) or ""
+    # A webhook payload's `head.ref` is attacker-shaped JSON (even once
+    # signature-verified) — every branch below feeds it straight into a
+    # Mongo equality filter. A non-string value (e.g. a crafted
+    # `{"$ne": "x"}` object some JSON clients would accept) must never
+    # reach that query, or it becomes a NoSQL operator-injection vector.
+    head_ref = _raw_head_ref if isinstance(_raw_head_ref, str) else ""
     merged = bool(pr.get("merged"))
     pr_number = pr.get("number")
     is_ship_label = "aura:ship" in labels
@@ -1003,6 +1031,58 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
             upsert=True,
         )
         return {"routed": "kit", "labels": kit_labels}
+
+    # FIX_one_branch_for_all_fixes — shared fix-batch PRs. Deliberately
+    # a SEPARATE branch from `aura:ship` above: a batch PR is never a
+    # loop_outcomes row, and closing/merging one must never touch any
+    # OTHER fix on the same batch (H3) — only the batch's own status
+    # and its OWN finding_fixes rows.
+    is_batch_label = "aura:fix-batch" in labels
+    if is_batch_label and head_ref:
+        new_status = (
+            "merged" if (action == "closed" and merged)
+            else "closed" if action == "closed"
+            else "open"
+        )
+        batch = await db.fix_batches.find_one({"branch": head_ref})
+        if batch:
+            await db.fix_batches.update_one(
+                {"batch_id": batch["batch_id"]},
+                {"$set": {"status": new_status, "updated_at": time.time()}},
+            )
+            await db.finding_fixes.update_many(
+                {"batch_id": batch["batch_id"]},
+                {"$set": {"merged": new_status == "merged",
+                          "batch_pr_status": new_status}},
+            )
+            # ORA Brain Part 4 — objective outcome signal, same
+            # fail-open try/except pattern as the aura:ship branch
+            # above. Skipped silently (and noted here, not faked) if
+            # brain_gateway's outcome helpers aren't present.
+            if new_status in ("merged", "closed"):
+                try:
+                    from services.brain_gateway import attach_outcome_for_task
+                    outcome = "pr_merged" if new_status == "merged" else "rolled_back"
+                    await attach_outcome_for_task(
+                        db, task_id=batch["batch_id"], outcome=outcome,
+                        user_id=batch.get("user_id"),
+                    )
+                except ImportError:
+                    logger.debug(
+                        "brain_gateway outcome helpers not present — "
+                        "skipping outcome attach for batch %s",
+                        batch.get("batch_id"),
+                    )
+                except Exception as e:                        # noqa: BLE001
+                    logger.debug("brain outcome attach (batch) skipped: %r", e)
+        else:
+            logger.info(
+                "dispatch_pull_request_webhook: aura:fix-batch PR with "
+                "no matching fix_batches row (branch=%s) — log only",
+                head_ref,
+            )
+        return {"routed": "fix_batch", "status": new_status, "head_ref": head_ref,
+                "batch_id": (batch or {}).get("batch_id")}
 
     logger.info("dispatch_pull_request_webhook: no matching label (labels=%s) "
                 "— log-only, no state write", labels)

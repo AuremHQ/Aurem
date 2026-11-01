@@ -204,6 +204,49 @@ async def ensure_dedup_indexes(db) -> List[dict]:
               "uniq_user_campaign", unique=True,
               partial={"campaign": {"$exists": True, "$type": "string"}})
 
+    # 12) FIX_one_branch_for_all_fixes (2026) — exactly ONE open fix
+    # batch (shared branch + PR) per (user_id, project_id).
+    # services/fix_batches.py::get_or_create_open_batch is the only
+    # writer; this index is the cross-instance backstop behind its
+    # in-process per-(user,project) lock — two workers racing to
+    # create a batch for the same project get a duplicate-key error
+    # on the loser, which re-reads the winner's row instead of
+    # minting a second open batch.
+    await _mk("fix_batches", [("user_id", ASCENDING), ("project_id", ASCENDING)],
+              "uniq_open_fix_batch", unique=True,
+              partial={"status": "open"})
+
+    # 13) Robot Fix List (BE6) — one row per (user_id, project_id,
+    # finding_id). Dedup FIRST (best-effort, never blocks the index
+    # attempt below): group by the triple, keep the most-recently-
+    # seen row per group, delete the rest. Real duplicates are
+    # expected pre-fix (BE4 — chat-audit findings keyed off a free-
+    # text title slug collapsed inconsistently before this change).
+    try:
+        cursor = db.cto_open_findings.aggregate([
+            {"$group": {
+                "_id": {"user_id": "$user_id", "project_id": "$project_id",
+                         "finding_id": "$finding_id"},
+                "ids": {"$push": "$_id"},
+                "count": {"$sum": 1},
+            }},
+            {"$match": {"count": {"$gt": 1}}},
+        ])
+        async for grp in cursor:
+            doc_ids = grp.get("ids") or []
+            if len(doc_ids) > 1:
+                # Keep the LAST _id (ObjectId is roughly insertion-
+                # ordered — newest row survives), delete the rest.
+                await db.cto_open_findings.delete_many(
+                    {"_id": {"$in": doc_ids[:-1]}},
+                )
+    except Exception as e:                                 # noqa: BLE001
+        logger.warning("[G6] cto_open_findings pre-dedup failed: %r", e)
+    await _mk("cto_open_findings",
+              [("user_id", ASCENDING), ("project_id", ASCENDING),
+               ("finding_id", ASCENDING)],
+              "uniq_user_project_finding", unique=True)
+
     return results
 
 
@@ -230,6 +273,8 @@ async def get_dedup_index_report(db) -> dict:
         "onboarding_emails": ["uniq_user_campaign_stage"],
         "magic_login_tokens": ["uniq_token"],
         "winback_campaign_state": ["uniq_user_campaign"],
+        "fix_batches": ["uniq_open_fix_batch"],
+        "cto_open_findings": ["uniq_user_project_finding"],
     }
     present: dict[str, bool] = {}
     dup_counts: dict[str, int] = {}

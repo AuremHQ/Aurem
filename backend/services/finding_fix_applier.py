@@ -30,6 +30,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
+import uuid
 from typing import Optional
 
 import httpx
@@ -41,23 +43,100 @@ logger = logging.getLogger("aurem-dev.finding_fix_applier")
 
 async def _mark_finding_resolved_if_tracked(
     db, *, user_id: str, project_id: str, finding_id: str,
+    file: str = "", rule_id: str = "", line=None,
+    patched_content: Optional[str] = None,
 ) -> None:
     """2026-08-23 — staleness write-back. If this finding also exists
     in the real findings backlog (cto_open_findings — e.g. it came
     from a conversational `save_finding` audit), mark it resolved so
     any teaser/reminder built on that backlog stops counting it. A
     plain no-op (matches zero docs) for findings that never entered
-    that collection at all (automated-scanner-only findings)."""
-    if not finding_id:
-        return
+    that collection at all (automated-scanner-only findings).
+
+    Robot Fix List B6 — id formats differ between scanners and the
+    chat audit, so the primary (user_id, project_id, finding_id)
+    match alone left some genuinely-fixed findings stuck "open"
+    forever. A fallback match on (user_id, project_id, file, rule_id,
+    line) closes those too. When `patched_content` is given, also
+    cheaply re-run the static scanner on it and close any OTHER
+    scanner-origin finding for this same file whose rule no longer
+    fires — never touches chat-audit rows (their categories aren't
+    necessarily scanner-coverable) and never a DIFFERENT file."""
+    import time as _time
+    now = _time.time()
+    resolved_ids: list[str] = []
     try:
-        import time as _time
-        await db.cto_open_findings.update_one(
-            {"user_id": user_id, "project_id": project_id, "finding_id": finding_id},
-            {"$set": {"status": "fixed", "resolved_at": _time.time()}},
-        )
+        if finding_id:
+            res = await db.cto_open_findings.update_one(
+                {"user_id": user_id, "project_id": project_id, "finding_id": finding_id},
+                {"$set": {"status": "fixed", "resolved_at": now}},
+            )
+            if getattr(res, "matched_count", 0):
+                resolved_ids.append(finding_id)
     except Exception as e:                                  # noqa: BLE001
         logger.warning("finding backlog write-back failed (non-fatal): %r", e)
+
+    if file and rule_id:
+        try:
+            fallback_filter = {
+                "user_id": user_id, "project_id": project_id,
+                "file": file, "rule_id": rule_id, "status": "open",
+            }
+            if line is not None:
+                fallback_filter["line"] = line
+            rows = await db.cto_open_findings.find(
+                fallback_filter, {"_id": 0, "finding_id": 1},
+            ).to_list(50)
+            if rows:
+                await db.cto_open_findings.update_many(
+                    fallback_filter,
+                    {"$set": {"status": "fixed", "resolved_at": now,
+                              "resolved_via": "fallback_match"}},
+                )
+                resolved_ids.extend(
+                    r.get("finding_id") for r in rows if r.get("finding_id")
+                )
+        except Exception as e:                              # noqa: BLE001
+            logger.warning("finding fallback write-back failed (non-fatal): %r", e)
+
+    if file and patched_content is not None:
+        try:
+            from services.vanguard_scanner import scan_text
+            remaining_rules = {
+                (h.get("name") or h.get("rule") or "").lower()
+                for h in (scan_text(patched_content, file) or [])
+            }
+            open_rows = await db.cto_open_findings.find(
+                {"user_id": user_id, "project_id": project_id, "file": file,
+                 "status": "open", "scanner": {"$ne": "ora_chat_audit"}},
+                {"_id": 0, "finding_id": 1, "rule_id": 1},
+            ).to_list(200)
+            now_clean_ids = [
+                r["finding_id"] for r in open_rows
+                if r.get("finding_id")
+                and (r.get("rule_id") or "").lower() not in remaining_rules
+            ]
+            if now_clean_ids:
+                await db.cto_open_findings.update_many(
+                    {"user_id": user_id, "project_id": project_id,
+                     "finding_id": {"$in": now_clean_ids}},
+                    {"$set": {"status": "fixed", "resolved_at": now,
+                              "resolved_via": "rescan_clean"}},
+                )
+                resolved_ids.extend(now_clean_ids)
+        except Exception as e:                              # noqa: BLE001
+            logger.warning("finding rescan-close failed (non-fatal): %r", e)
+
+    if resolved_ids:
+        # Server-side record of what got closed — no backend pub/sub
+        # bus exists to broadcast this further; the client-visible
+        # signal is fjm.emit(..., "fix-done", project_id=...) in
+        # routers/fix_pipeline.py, which the frontend turns into the
+        # `aurem:finding-fixed` window event (B6/F2).
+        logger.info(
+            "findings resolved — user=%s project=%s file=%s ids=%s",
+            user_id, project_id, file, resolved_ids[:20],
+        )
 
 
 # ─── 1. Fetch current file from GitHub ────────────────────────────────
@@ -290,277 +369,284 @@ async def apply_finding_fix(
                 "error": _auth_err or "github_credentials_missing",
                 "detail": _auth_detail or ""}
 
-    # Step 1: fetch current file content
-    content, fetch_err = await _fetch_file_content(owner, repo, branch, path, token)
-    # 2026-10 — a handful of the new "Launch-ready" scorecard rules
-    # (services/codebase_health_extra.py: git_hygiene, documentation,
-    # seo_basics) ARE the absence of a file — `.gitignore`/`README.md`/
-    # `.env.example`/`robots.txt`/`sitemap.xml` missing entirely is the
-    # finding itself, not damage to an existing file. A 404 there means
-    # "create this file", not a real error — narrowly scoped to those
-    # three rule-id prefixes so every other category's 404 (a file that
-    # vanished unexpectedly) still correctly hard-fails below.
-    rule_id = finding.get("rule_id") or finding.get("id") or ""
-    is_missing_file_rule = (
-        fetch_err == "file_not_found"
-        and rule_id.split("::", 1)[0] in ("git", "docs", "seo")
-        and ":missing" in rule_id
+    # FIX_one_branch_for_all_fixes — resolve (or create) the ONE open
+    # fix batch for this (user, project) FIRST, and hold its lock for
+    # the entire read→patch→validate→commit sequence below (H4): two
+    # fixes for this project — bulk + a single-fix click, or two
+    # findings in the same file — can never interleave their commits.
+    from services.fix_batches import (
+        _get_or_create_open_batch_locked,
+        _lock_for,
+        record_fix_in_batch,
     )
-    if is_missing_file_rule:
-        content, fetch_err = "", None
-    if fetch_err:
-        return {"ok": False, "error": fetch_err, "file": path}
-    if not content and not is_missing_file_rule:
-        return {"ok": False, "error": "file_empty_or_missing", "file": path}
+    async with _lock_for(user_id, project_id):
+        batch_result = await _get_or_create_open_batch_locked(
+            db, user_id=user_id, project_id=project_id,
+            owner=owner, repo=repo, base_branch=branch, token=token,
+        )
+        if not batch_result.get("ok"):
+            # H2 — no direct-to-base fallback, anywhere. A batch that
+            # cannot be resolved is a hard, clean failure; nothing is
+            # ever committed to `branch` (the project's base branch).
+            return {"ok": False, "error": batch_result.get("error") or "batch_unavailable"}
+        batch = batch_result["batch"]
+        commit_target = batch["branch"]
 
-    # Step 2: LLM patch (with Phase-2 recall — past successful fixes
-    # for this rule are injected as precedent if `db` is available).
-    patched, llm_err = await _generate_patched_content(
-        path=path, current_content=content, finding=finding, user_id=user_id,
-        db=db,
-    )
-    if llm_err:
-        return {"ok": False, "error": llm_err, "file": path}
+        # Step 1: fetch current file content — FROM THE BATCH BRANCH
+        # (H1). A same-batch, same-file 2nd fix must see the 1st
+        # fix's already-landed patch, not the stale base-branch copy.
+        content, fetch_err = await _fetch_file_content(owner, repo, commit_target, path, token)
+        # 2026-10 — a handful of the new "Launch-ready" scorecard rules
+        # (services/codebase_health_extra.py: git_hygiene, documentation,
+        # seo_basics) ARE the absence of a file — `.gitignore`/`README.md`/
+        # `.env.example`/`robots.txt`/`sitemap.xml` missing entirely is the
+        # finding itself, not damage to an existing file. A 404 there means
+        # "create this file", not a real error — narrowly scoped to those
+        # three rule-id prefixes so every other category's 404 (a file that
+        # vanished unexpectedly) still correctly hard-fails below.
+        rule_id = finding.get("rule_id") or finding.get("id") or ""
+        is_missing_file_rule = (
+            fetch_err == "file_not_found"
+            and rule_id.split("::", 1)[0] in ("git", "docs", "seo")
+            and ":missing" in rule_id
+        )
+        if fetch_err == "file_not_found" and not is_missing_file_rule:
+            # Design item 3 — a file that doesn't exist YET on the
+            # batch branch might just not have been touched by any
+            # earlier fix in this batch; fall back to base only for
+            # that specific case (not a general direct-to-base
+            # fallback — this is a READ, never a write/fallback-commit).
+            content, fetch_err = await _fetch_file_content(owner, repo, branch, path, token)
+        if is_missing_file_rule:
+            content, fetch_err = "", None
+        if fetch_err:
+            return {"ok": False, "error": fetch_err, "file": path}
+        if not content and not is_missing_file_rule:
+            return {"ok": False, "error": "file_empty_or_missing", "file": path}
 
-    # Step 3: re-validate — the original rule_id must NOT be triggered
-    # by the patched content.
-    if _finding_still_present(patched, path, finding):
-        logger.warning(
-            "fix REJECTED — finding still present after patch: "
-            "rule=%s file=%s", finding.get("rule_id"), path,
+        # Step 2: LLM patch (with Phase-2 recall — past successful fixes
+        # for this rule are injected as precedent if `db` is available).
+        patched, llm_err = await _generate_patched_content(
+            path=path, current_content=content, finding=finding, user_id=user_id,
+            db=db,
+        )
+        if llm_err == "llm_no_change":
+            # Idempotent re-run: the batch branch's file already
+            # reflects this exact fix (e.g. a retried bulk job, or
+            # the same finding re-submitted). Not charged — the
+            # caller's wallet logic checks `skipped_no_change`.
+            return {
+                "ok": True, "skipped_no_change": True, "file": path,
+                "rule_id": rule_id, "branch": commit_target,
+                "pr_url": batch.get("pr_url"), "batch_id": batch["batch_id"],
+                "message": f"{path} already has this fix on the shared branch — nothing to commit.",
+            }
+        if llm_err:
+            return {"ok": False, "error": llm_err, "file": path}
+
+        # Step 3: re-validate — the original rule_id must NOT be triggered
+        # by the patched content.
+        if _finding_still_present(patched, path, finding):
+            logger.warning(
+                "fix REJECTED — finding still present after patch: "
+                "rule=%s file=%s", finding.get("rule_id"), path,
+            )
+            return {
+                "ok":    False,
+                "error": "patch_did_not_resolve_finding",
+                "file":  path,
+            }
+
+        # Step 4: commit onto the BATCH branch via the same Git Data
+        # API path Loop Mode uses. H2 — no fallback to `branch` (the
+        # base) exists anywhere in this path anymore; a commit
+        # failure here is a clean, reported error.
+        from services.github_api_writer import commit_files
+        title = finding.get("title") or finding.get("message") or rule_id or "fix"
+
+        commit_message = (
+            f"fix({rule_id}): {title} @ {path}\n\n"
+            f"Resolved by AUREM auto-fix. Re-validated locally — the "
+            f"{rule_id} finding no longer triggers on this file.\n"
+        )
+        from services.git_identity import (
+            build_commit_message,
+            resolve_git_identity,
+        )
+        subject_line = commit_message.split("\n", 1)[0]
+        body_text = commit_message.split("\n", 1)[1].strip() if "\n" in commit_message else ""
+        m_type_summary = re.match(
+            r"^\s*(feat|fix|refactor|chore|docs|test|perf|style|ci|build)"
+            r"(?:\(([^)]+)\))?\s*:\s*(.*)$",
+            subject_line, re.IGNORECASE,
+        )
+        if m_type_summary:
+            _t, _scope, _summary = m_type_summary.group(1).lower(), m_type_summary.group(2), m_type_summary.group(3)
+            _summary_full = f"({_scope}) {_summary}" if _scope else _summary
+            commit_message = build_commit_message(
+                task_type=_t, summary=_summary_full, body=body_text,
+            )
+        else:
+            commit_message = build_commit_message(
+                user_message=subject_line, body=body_text,
+            )
+        author_name, author_email = await resolve_git_identity(db, user_id)
+
+        async def _do_commit():
+            return await commit_files(
+                owner=owner, repo=repo, branch=commit_target, token=token,
+                files={path: patched}, commit_message=commit_message,
+                author_name=author_name, author_email=author_email,
+                progress=None,
+            )
+
+        from core.errors import PushFailedError
+        try:
+            res = await _do_commit()
+        except PushFailedError as e:
+            # H4 cross-instance backstop — our own in-process lock
+            # already makes this impossible from THIS pod; a 2nd pod
+            # racing us is the only realistic trigger. Retry exactly
+            # once, re-reading the ref (commit_files always re-reads
+            # the branch head fresh on every call).
+            logger.warning(
+                "commit_files non-fast-forward for %s on %s — retrying "
+                "once: %s", path, commit_target, e.reason,
+            )
+            try:
+                res = await _do_commit()
+            except Exception as e2:                       # noqa: BLE001
+                logger.exception("commit_files retry failed for %s", path)
+                return {"ok": False, "error": f"github_push_failed: {e2}", "file": path}
+        except Exception as e:                            # noqa: BLE001
+            logger.exception("commit_files failed for %s", path)
+            return {"ok": False, "error": f"github_push_failed: {e}", "file": path}
+
+        short_sha = res.get("sha") or (res.get("full_sha") or "")[:7]
+        full_sha  = res.get("full_sha") or res.get("sha") or ""
+        html_url  = res.get("html_url") or (
+            f"https://github.com/{owner}/{repo}/commit/{full_sha}"
+            if full_sha else ""
+        )
+
+        # 2026-09-17 (bug 6 round 2) — post-commit graph refresh.
+        # Deliberately refreshes against `branch` (the project's real
+        # base branch the Graph tab displays) — a batch-branch commit
+        # hasn't landed on `branch` yet, so this just keeps the
+        # existing no-op-until-merge semantics.
+        try:
+            from services.graph_builder import refresh_graph_after_commit
+            asyncio.create_task(refresh_graph_after_commit(
+                db=db, project_id=project_id, user_id=user_id,
+                gh_token=token, gh_owner=owner, gh_repo=repo,
+                branch=branch,
+            ))
+        except Exception as e:                           # noqa: BLE001
+            logger.warning("post-fix graph refresh scheduling failed: %r", e)
+
+        # Record this fix on the batch — bumps fix_count, appends to
+        # the running table, PATCHes the ONE PR body (no new comment
+        # per fix — design item 4).
+        await record_fix_in_batch(
+            db, batch_id=batch["batch_id"], rule_id=rule_id, file=path,
+            line=finding.get("line"), severity=finding.get("severity"),
+            commit_sha=full_sha, status="fixed",
+            owner=owner, repo=repo, token=token,
+        )
+
+        # Persist a fix-history record so the UI can dim resolved
+        # findings. H3 — a single-fix revert on a shared batch must
+        # restore THIS file's pre-fix content without touching any
+        # other fix, so (unlike the old per-branch-per-fix scheme,
+        # where reverting just meant "close this fix's own PR") we
+        # now keep the before/after snapshot here. Cap defensively —
+        # a multi-MB file isn't realistic fix-applier input and this
+        # guards against an unbounded Mongo document.
+        try:
+            await db.finding_fixes.insert_one({
+                "fix_id":     f"fx_{uuid.uuid4().hex[:10]}",
+                "user_id":    user_id,
+                "project_id": project_id,
+                "batch_id":   batch["batch_id"],
+                "file":       path,
+                "rule_id":    rule_id,
+                "line":       finding.get("line"),
+                "severity":   finding.get("severity"),
+                "title":      title,
+                "commit_sha": full_sha,
+                "html_url":   html_url,
+                "pr_url":     batch.get("pr_url"),
+                "branch":     commit_target,
+                "applied_at": time.time(),
+                "original_content": content[:2_000_000],
+                "patched_content":  patched[:2_000_000],
+            })
+        except Exception as e:                            # noqa: BLE001
+            logger.warning("fix history persist failed: %r", e)
+
+        # 2026-08-23 — staleness write-back (approved decision #2). Uses
+        # `finding.get("id")` — callers that source findings from
+        # `save_finding` (chat) pass the real `cto_open_findings.finding_id`
+        # here; automated-scanner findings pass their own rule id, which
+        # simply won't match any doc (safe no-op).
+        await _mark_finding_resolved_if_tracked(
+            db, user_id=user_id, project_id=project_id,
+            finding_id=finding.get("id") or "",
+            file=path, rule_id=rule_id, line=finding.get("line"),
+            patched_content=patched,
+        )
+
+        logger.info(
+            "FIX APPLIED — user=%s project=%s rule=%s file=%s sha=%s "
+            "batch=%s branch=%s pr=%s",
+            user_id, project_id, rule_id, path, short_sha,
+            batch["batch_id"], commit_target, batch.get("pr_url") or "-",
         )
         return {
-            "ok":    False,
-            "error": "patch_did_not_resolve_finding",
-            "file":  path,
-        }
-
-    # Step 4: commit via the same Git Data API path Loop Mode uses.
-    # Iter 212m-115 safety #5 — Branch-per-fix mode. Instead of pushing
-    # straight to `base_branch` (typically main), we create a dedicated
-    # `aurem/fix-<rule>-<ts>` branch off main + commit the patch to it
-    # + open a DRAFT PR. The founder sees the change in a previewable
-    # PR before merging. Founders / admins can still opt back into
-    # direct-to-main via project setting `direct_ship: true` (not
-    # exposed yet — defaults to safe branch mode for everyone).
-    from services.github_api_writer import commit_files
-    from services.loop_safety import (
-        aurem_branch_name, create_or_reuse_branch, open_or_reuse_pr,
-    )
-    rule_id  = finding.get("rule_id") or finding.get("rule") or "fix"
-    title    = finding.get("title")   or finding.get("message") or rule_id
-    # 2026-09-17 fix (Bug 1 — 389 duplicate PRs on one connected repo).
-    # Fold `path` into the branch identity, not just `rule_id` — two
-    # different files tripping the SAME rule must NOT collide onto
-    # one branch (that would silently overwrite one fix with
-    # another's patch). Combined with `aurem_branch_name` no longer
-    # appending a timestamp, the SAME (rule_id, path) now always maps
-    # to the SAME branch — re-running this fix updates the existing
-    # PR instead of forking a new one.
-    fix_branch = aurem_branch_name("fix", f"{rule_id}-{path}")
-    ok_branch, branch_err = await create_or_reuse_branch(
-        owner=owner, repo=repo, base_branch=branch,
-        new_branch=fix_branch, token=token,
-    )
-    if not ok_branch:
-        logger.warning(
-            "branch-per-fix create failed (%s) — falling back to base "
-            "branch %s/%s@%s", branch_err, owner, repo, branch,
-        )
-        commit_target = branch
-        opened_pr_url: Optional[str] = None
-    else:
-        commit_target = fix_branch
-        opened_pr_url = None  # filled in after commit succeeds
-
-    commit_message = (
-        f"fix({rule_id}): {title} @ {path}\n\n"
-        f"Resolved by AUREM auto-fix. Re-validated locally — the "
-        f"{rule_id} finding no longer triggers on this file.\n"
-    )
-    # Iter 212m-218 — Normalise via git_identity so this commit lands
-    # with the real developer as author + ORA as co-author + the
-    # `[via ORA by Aurem]` transparency marker.  We already have a well-formed
-    # `fix(rule):` subject so we pass it through as-is; the builder
-    # only appends the marker and the Co-authored-by trailer.
-    from services.git_identity import (
-        resolve_git_identity, build_commit_message,
-    )
-    subject_line = commit_message.split("\n", 1)[0]
-    body_text = commit_message.split("\n", 1)[1].strip() if "\n" in commit_message else ""
-    # Trim subject_line's "fix(rule):" prefix so build_commit_message
-    # can re-emit with the marker in the right place.
-    m_type_summary = re.match(
-        r"^\s*(feat|fix|refactor|chore|docs|test|perf|style|ci|build)"
-        r"(?:\(([^)]+)\))?\s*:\s*(.*)$",
-        subject_line, re.I,
-    )
-    if m_type_summary:
-        _t, _scope, _summary = m_type_summary.group(1).lower(), m_type_summary.group(2), m_type_summary.group(3)
-        _summary_full = f"({_scope}) {_summary}" if _scope else _summary
-        commit_message = build_commit_message(
-            task_type=_t, summary=_summary_full, body=body_text,
-        )
-    else:
-        commit_message = build_commit_message(
-            user_message=subject_line, body=body_text,
-        )
-    author_name, author_email = await resolve_git_identity(db, user_id)
-    try:
-        res = await commit_files(
-            owner=owner, repo=repo, branch=commit_target, token=token,
-            files={path: patched}, commit_message=commit_message,
-            author_name=author_name, author_email=author_email,
-            progress=None,
-        )
-    except Exception as e:                                # noqa: BLE001
-        logger.exception("commit_files failed for %s", path)
-        return {"ok": False, "error": f"github_push_failed: {e}", "file": path}
-
-    short_sha = res.get("sha") or (res.get("full_sha") or "")[:7]
-    full_sha  = res.get("full_sha") or res.get("sha") or ""
-    html_url  = res.get("html_url") or (
-        f"https://github.com/{owner}/{repo}/commit/{full_sha}"
-        if full_sha else ""
-    )
-
-    # 2026-09-17 (bug 6 round 2) — This is a THIRD real-commit path
-    # (auto-fix from a scan finding), separate from the one-shot
-    # workers (`_run_task_with_git` / `_run_task_via_api`) that already
-    # got the post-commit graph refresh. Founder-reported repro used
-    # this exact "fix the critical issues" flow right before checking
-    # graph staleness — this path never scheduled a refresh at all.
-    # Deliberately refresh against `branch` (the project's actual base
-    # branch the Graph tab displays), NOT `commit_target` — a
-    # branch-per-fix commit hasn't landed on `branch` yet, so
-    # refreshing there would just re-confirm no visible change; only
-    # refresh `commit_target` state once/if this lands on `branch`
-    # (covered by the `commit_target == branch` fallback case below).
-    try:
-        from services.graph_builder import refresh_graph_after_commit
-        import asyncio
-        asyncio.create_task(refresh_graph_after_commit(
-            db=db, project_id=project_id, user_id=user_id,
-            gh_token=token, gh_owner=owner, gh_repo=repo,
-            branch=branch,
-        ))
-    except Exception as e:                                # noqa: BLE001
-        logger.warning("post-fix graph refresh scheduling failed: %r", e)
-
-    # Open a draft PR if we committed to a branch.
-    # 2026-09-17 fix (Bug 1) — "look before you create": a second run
-    # targeting the SAME (rule_id, path) now reuses the SAME branch
-    # (see above). 2026-09-18 (Bug 1 round 2) — the reuse-or-create
-    # PR logic itself is now centralized in `open_or_reuse_pr()` so
-    # this call site can't silently drift out of sync with the other
-    # 3 PR-opening call sites the way it did before (see loop_safety.py).
-    if commit_target != branch:
-        try:
-            result = await open_or_reuse_pr(
-                owner=owner, repo=repo,
-                head_branch=commit_target, base_branch=branch,
-                title=f"fix({rule_id}): {title}",
-                body=(
-                    f"**AUREM auto-fix** for finding `{rule_id}` in "
-                    f"`{path}:{finding.get('line', '?')}`.\n\n"
-                    f"**Title:** {title}\n"
-                    f"**Severity:** {finding.get('severity', 'n/a')}\n\n"
-                    f"**Re-validation:** ✅ scanner no longer detects this "
-                    f"`{rule_id}` on the patched file.\n\n"
-                    f"Commit: `{short_sha}`\n\n"
-                    f"_Generated by AUREM — review the diff before "
-                    f"merging._"
-                ),
-                token=token,
-                update_comment=(
-                    f"**AUREM auto-fix — updated.** New commit "
-                    f"`{short_sha}` re-applies the `{rule_id}` fix "
-                    f"to `{path}` (re-validated — the finding no "
-                    f"longer triggers).\n\n"
-                    f"_Reusing this PR instead of opening a "
-                    f"duplicate — same rule, same file._"
-                ),
-            )
-            opened_pr_url = result.get("pr_url")
-            if not result.get("ok"):
-                logger.warning("open_or_reuse_pr soft-failed: %s", result.get("error"))
-        except Exception as e:                            # noqa: BLE001
-            logger.warning("PR reuse/open unexpected err: %r", e)
-
-    # Persist a fix-history record so the UI can dim resolved findings.
-    try:
-        import time
-        import uuid
-        await db.finding_fixes.insert_one({
-            "fix_id":     f"fx_{uuid.uuid4().hex[:10]}",
-            "user_id":    user_id,
-            "project_id": project_id,
+            "ok":         True,
+            "commit_sha": short_sha,
+            "full_sha":   full_sha,
+            "html_url":   html_url,
+            "pr_url":     batch.get("pr_url"),
+            "branch":     commit_target,
+            "batch_id":   batch["batch_id"],
             "file":       path,
             "rule_id":    rule_id,
-            "line":       finding.get("line"),
-            "severity":   finding.get("severity"),
-            "title":      title,
-            "commit_sha": full_sha,
-            "html_url":   html_url,
-            "pr_url":     opened_pr_url,
-            "branch":     commit_target,
-            "applied_at": time.time(),
-        })
-    except Exception as e:                                # noqa: BLE001
-        logger.warning("fix history persist failed: %r", e)
-
-    # 2026-08-23 — staleness write-back (approved decision #2). Uses
-    # `finding.get("id")` — callers that source findings from
-    # `save_finding` (chat) pass the real `cto_open_findings.finding_id`
-    # here; automated-scanner findings pass their own rule id, which
-    # simply won't match any doc (safe no-op).
-    await _mark_finding_resolved_if_tracked(
-        db, user_id=user_id, project_id=project_id,
-        finding_id=finding.get("id") or "",
-    )
-
-    logger.info(
-        "FIX APPLIED — user=%s project=%s rule=%s file=%s sha=%s "
-        "branch=%s pr=%s",
-        user_id, project_id, rule_id, path, short_sha,
-        commit_target, opened_pr_url or "-",
-    )
-    return {
-        "ok":         True,
-        "commit_sha": short_sha,
-        "full_sha":   full_sha,
-        "html_url":   html_url,
-        "pr_url":     opened_pr_url,
-        "branch":     commit_target,
-        "file":       path,
-        "rule_id":    rule_id,
-        # Iter 212m-147 — Expose the before/after file contents so the
-        # bulk fix worker can compute a unified diff for the SSE
-        # `diff` event the drawer renders.  These are LARGE strings —
-        # callers MUST drop them before persisting to Mongo (already
-        # the case in fix_pipeline.py which only persists summary
-        # fields via fjm.persist_event).
-        "original_content": content,
-        "patched_content":  patched,
-        "message":    (
-            f"Fixed {rule_id} in {path} — commit {short_sha}"
-            + (f" on branch {commit_target}" if commit_target != branch else "")
-        ),
-    }
+            # Iter 212m-147 — Expose the before/after file contents so the
+            # bulk fix worker can compute a unified diff for the SSE
+            # `diff` event the drawer renders.  These are LARGE strings —
+            # callers MUST drop them before persisting to Mongo (already
+            # the case in fix_pipeline.py which only persists summary
+            # fields via fjm.persist_event).
+            "original_content": content,
+            "patched_content":  patched,
+            "message":    f"Fixed {rule_id} in {path} — commit {short_sha} on the shared fix branch",
+        }
 
 
-# ─── Overnight T7 — revert, via the shared close_and_retract() ─────
-# finding_fix_applier had NO revert mechanism before this. Reuses the
-# same helper the ship-via-PR path uses (services.loop_safety), so
-# there is exactly one audited close+delete implementation, not two.
-# Branch deletion only actually happens for `auremcto/`-namespaced
-# branches (delete_ship_branch's hard guard) — a legacy `aurem/fix-*`
-# branch from THIS function gets its PR closed but the branch itself
-# is left alone (safer default; matches why the guard exists).
+# ─── Overnight T7 / FIX_one_branch_for_all_fixes (H3) — revert ────────
+# Two DISTINCT, explicit operations now:
+#   revert_finding_fix(fix_id)  — undoes ONE fix. For a batch fix
+#       (batch_id present) this commits a restore of just that file,
+#       on the batch branch, and NEVER touches the PR or any other
+#       fix. Legacy rows (no batch_id, from the old one-branch-per-fix
+#       scheme) keep the exact old close_and_retract behavior.
+#   revert_batch(batch_id)      — the OLD "close + retract" behavior,
+#       explicit and separate: closes the whole shared PR and marks
+#       every fix in the batch reverted. Never triggered implicitly
+#       by a single-fix revert call.
 async def revert_finding_fix(db, *, fix_id: str, token: str) -> dict:
     fix = await db.finding_fixes.find_one({"fix_id": fix_id})
     if not fix:
         return {"ok": False, "error": "fix_not_found"}
+    if fix.get("reverted"):
+        return {"ok": True, "already_reverted": True}
+
+    if fix.get("batch_id"):
+        return await _revert_single_fix_on_batch(db, fix=fix, token=token)
+
+    # Legacy per-fix row (no batch_id) — old close_and_retract
+    # behavior, unchanged.
     pr_url = fix.get("pr_url")
     branch = fix.get("branch")
     pr_number = None
@@ -582,5 +668,99 @@ async def revert_finding_fix(db, *, fix_id: str, token: str) -> dict:
     await db.finding_fixes.update_one(
         {"fix_id": fix_id},
         {"$set": {"reverted": True, "revert_result": result}},
+    )
+    return {"ok": True, **result}
+
+
+async def _revert_single_fix_on_batch(db, *, fix: dict, token: str) -> dict:
+    """H3 — reverting ONE fix on a shared batch restores that file to
+    its pre-fix content via a NEW commit on the SAME batch branch;
+    the PR stays open, every other fix on the batch is untouched.
+    Refuses (rather than clobbers) if the file has been changed again
+    since this fix landed — detected by comparing the branch's
+    CURRENT content to the content we recorded immediately after this
+    fix committed."""
+    proj = await db.cto_projects.find_one({"project_id": fix.get("project_id")})
+    if not proj:
+        return {"ok": False, "error": "project_not_found"}
+    owner, repo = proj.get("github_owner"), proj.get("github_repo")
+    branch = fix.get("branch")
+    path = fix.get("file")
+    original_content = fix.get("original_content")
+    expected_post_fix_content = fix.get("patched_content")
+    if original_content is None or expected_post_fix_content is None:
+        return {"ok": False, "error": "revert_not_supported_missing_snapshot"}
+
+    current, fetch_err = await _fetch_file_content(owner, repo, branch, path, token)
+    if fetch_err:
+        return {"ok": False, "error": fetch_err}
+    if current != expected_post_fix_content:
+        return {
+            "ok": False,
+            "error": "file_changed_since_fix",
+            "detail": (
+                f"{path} was modified by a later fix or edit since this "
+                f"one landed — refusing to overwrite that newer change."
+            ),
+        }
+
+    from services.git_identity import build_commit_message, resolve_git_identity
+    from services.github_api_writer import commit_files
+    author_name, author_email = await resolve_git_identity(db, fix.get("user_id"))
+    commit_message = build_commit_message(
+        user_message=f"revert: undo fix({fix.get('rule_id')}) @ {path}",
+        body=(
+            "Reverted one fix from the shared AUREM fix batch — the "
+            "rest of the batch is untouched."
+        ),
+    )
+    try:
+        res = await commit_files(
+            owner=owner, repo=repo, branch=branch, token=token,
+            files={path: original_content}, commit_message=commit_message,
+            author_name=author_name, author_email=author_email, progress=None,
+        )
+    except Exception as e:                                 # noqa: BLE001
+        logger.exception("revert commit_files failed for %s", path)
+        return {"ok": False, "error": f"github_push_failed: {e}"}
+
+    await db.finding_fixes.update_one(
+        {"fix_id": fix["fix_id"]},
+        {"$set": {"reverted": True, "revert_commit_sha": res.get("full_sha"),
+                  "reverted_at": time.time()}},
+    )
+    return {
+        "ok": True, "reverted": True,
+        "commit_sha": res.get("sha"), "full_sha": res.get("full_sha"),
+        "html_url": res.get("html_url"),
+    }
+
+
+async def revert_batch(db, *, batch_id: str, user_id: str, project_id: str, token: str) -> dict:
+    """H3, explicit and separate — closes AND retracts the WHOLE
+    batch's shared PR (the pre-existing finding_fix_applier close_
+    and_retract behavior), only ever reachable through this named
+    function, never as a side effect of reverting a single fix.
+    Ownership-scoped: `batch_id` alone is never sufficient."""
+    from services.fix_batches import get_batch_by_id
+    batch = await get_batch_by_id(db, batch_id=batch_id, user_id=user_id, project_id=project_id)
+    if not batch:
+        return {"ok": False, "error": "batch_not_found"}
+    proj = await db.cto_projects.find_one({"project_id": project_id, "user_id": user_id})
+    if not proj:
+        return {"ok": False, "error": "project_not_found"}
+    from services.loop_safety import close_and_retract
+    result = await close_and_retract(
+        owner=proj.get("github_owner"), repo=proj.get("github_repo"),
+        pr_number=batch.get("pr_number"), branch=batch.get("branch"), token=token,
+    )
+    await db.fix_batches.update_one(
+        {"batch_id": batch_id},
+        {"$set": {"status": "closed", "updated_at": time.time(),
+                  "close_reason": "manual_revert_batch"}},
+    )
+    await db.finding_fixes.update_many(
+        {"batch_id": batch_id},
+        {"$set": {"reverted": True, "revert_reason": "batch_reverted"}},
     )
     return {"ok": True, **result}

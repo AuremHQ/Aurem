@@ -22,10 +22,19 @@ import pytest
 from unittest.mock import AsyncMock
 
 
+@pytest.fixture(autouse=True)
+def _reset_batch_locks():
+    import services.fix_batches as fb
+    fb._batch_locks.clear()
+    yield
+    fb._batch_locks.clear()
+
+
 def _base_db():
     class _Proj:
         async def find_one(self, q, proj=None):
             return {
+                "project_id": "p1",
                 "github_owner": "polarisbuiltinc",
                 "github_repo": "auremdev",
                 "github_branch": "main",
@@ -36,11 +45,72 @@ def _base_db():
         async def insert_one(self, doc):
             pass
 
+    # FIX_one_branch_for_all_fixes (2026) — apply_finding_fix now
+    # always resolves/creates a shared fix_batches row before
+    # touching the repo. Same minimal fake shape as
+    # tests/test_regression_iter2026_34_single_fix_branch_apply_fix.
+    # py's _FakeFixBatches (dict-backed, no real Mongo needed).
+    class _FixBatches:
+        def __init__(self):
+            self.docs = []
+
+        async def find_one(self, filt, proj=None):
+            for d in self.docs:
+                if all(d.get(k) == v for k, v in filt.items()):
+                    return dict(d)
+            return None
+
+        async def insert_one(self, row):
+            self.docs.append(dict(row))
+
+        async def find_one_and_update(self, filt, update, return_document=False):
+            for d in self.docs:
+                if all(d.get(k) == v for k, v in filt.items()):
+                    for k, v in update.get("$inc", {}).items():
+                        d[k] = d.get(k, 0) + v
+                    for k, v in update.get("$push", {}).items():
+                        d.setdefault(k, []).append(v)
+                    for k, v in update.get("$set", {}).items():
+                        d[k] = v
+                    return dict(d)
+            return None
+
     class _DB:
-        cto_projects = _Proj()
-        finding_fixes = _Fixes()
+        def __init__(self):
+            self.cto_projects = _Proj()
+            self.finding_fixes = _Fixes()
+            self.fix_batches = _FixBatches()
+
+        def __getitem__(self, name):
+            return getattr(self, name)
 
     return _DB()
+
+
+def _mock_batch_github(monkeypatch, ls):
+    """Same batch-creation GitHub surface Phase-1's apply_finding_fix
+    now always goes through, mocked the same way test file 34 does."""
+    async def _create_branch(**kw):
+        return True, None
+
+    async def _open_pr(**kw):
+        return {"ok": True, "pr_url": "https://github.com/x/y/pull/1",
+                "pr_number": 1, "reused": False, "error": None}
+
+    async def _add_label(**kw):
+        return True, None
+
+    async def _update_body(**kw):
+        return True, None
+
+    async def _get_status(**kw):
+        return {"ok": True, "merged": False, "state": "open", "merge_commit_sha": None}
+
+    monkeypatch.setattr(ls, "create_or_reuse_branch", _create_branch)
+    monkeypatch.setattr(ls, "open_or_reuse_pr", _open_pr)
+    monkeypatch.setattr(ls, "add_pr_label", _add_label)
+    monkeypatch.setattr(ls, "update_pr_body", _update_body)
+    monkeypatch.setattr(ls, "get_pr_status", _get_status)
 
 
 @pytest.mark.asyncio
@@ -62,12 +132,9 @@ async def test_apply_finding_fix_schedules_graph_refresh_on_success(monkeypatch)
     }))
 
     import services.loop_safety as ls
-    # Simulate branch-per-fix creation succeeding onto a NEW branch —
+    # Simulate the shared batch branch succeeding onto a NEW branch —
     # the refresh must still target `branch` (main), not this branch.
-    monkeypatch.setattr(ls, "create_or_reuse_branch",
-                         AsyncMock(return_value=(True, None)))
-    monkeypatch.setattr(ls, "open_draft_pr",
-                         AsyncMock(return_value=("https://github.com/x/y/pull/1", None)))
+    _mock_batch_github(monkeypatch, ls)
 
     scheduled = {}
     real_create_task = asyncio.create_task
@@ -115,8 +182,7 @@ async def test_apply_finding_fix_no_refresh_on_commit_failure(monkeypatch):
     monkeypatch.setattr(gw, "commit_files",
                          AsyncMock(side_effect=RuntimeError("push failed")))
     import services.loop_safety as ls
-    monkeypatch.setattr(ls, "create_or_reuse_branch",
-                         AsyncMock(return_value=(True, None)))
+    _mock_batch_github(monkeypatch, ls)
 
     refresh_mock = AsyncMock(return_value=None)
     import services.graph_builder as gb

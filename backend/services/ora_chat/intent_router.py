@@ -248,6 +248,7 @@ async def classify_intent_jev(
     without changing their own error handling."""
     if not text or not text.strip():
         return INTENT_UNKNOWN, {"reason": "empty_text"}
+    from services.jev_observability import record_jev_call
     from services.llm.jev_client import ask_choice
     label, meta = await ask_choice(
         state=f"ORA chat message from the founder: {text[:4000]!r}",
@@ -258,7 +259,9 @@ async def classify_intent_jev(
     )
     if label is None:
         logger.warning("intent_router: Jev classify failed (%r)", meta.get("error"))
+        record_jev_call(ok=False, error=meta.get("error") or "no_label")
         return INTENT_UNKNOWN, meta
+    record_jev_call(ok=True, model=meta.get("model"))
     return label, meta
 
 

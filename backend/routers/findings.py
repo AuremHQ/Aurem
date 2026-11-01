@@ -128,6 +128,7 @@ async def backlog_list(
     # Base query — findings that qualify to eventually surface. We
     # apply the cadence + dismiss check AFTER fetching so the strip
     # payload can explain why it did or didn't show up.
+    from services.finding_scope import verified_only_filter
     cursor = db.cto_open_findings.find({
         "user_id":         user_id,
         "project_id":      project_id,
@@ -139,6 +140,7 @@ async def backlog_list(
             {"snoozed_until": None},
             {"snoozed_until": {"$lt": now}},
         ],
+        **verified_only_filter(),
     }).sort([("severity", 1), ("last_seen_at", -1)]).limit(500)
 
     findings_all = await cursor.to_list(500)
@@ -271,47 +273,96 @@ async def backlog_list(
 # this returns the CURRENT real list on demand, every severity, no
 # cadence gate — the user explicitly asked to see it.
 # ══════════════════════════════════════════════════════════════════════
+_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+# Robot Fix List — hard cap on how many OPEN rows a single fix-list
+# request will ever pull from Mongo before grouping/sorting in
+# Python. BE1's bug was exactly this: sorting the STRING field
+# `severity` in the Mongo query, then `.limit()`-ing BEFORE the real
+# (python, rank-based) severity sort ran — with >20 open findings,
+# alphabetical "low" < "medium" meant mediums got cut instead of
+# lows. Fetch everything up to this cap, THEN rank-sort, THEN apply
+# the caller's own (much smaller) display limit.
+_FIX_LIST_FETCH_CAP = 500
+
+
 @router.get("/fix-list")
 async def fix_list(
     project_id: str,
     limit: int = 20,
     authorization: Optional[str] = Header(None),
 ):
+    """Robot Fix List B3 — now also returns `files` (grouped by file,
+    sorted by max severity then issue_count) + `total_files`/
+    `total_issues`/`list_version`, alongside the original flat
+    `items`/`total_open` kept for backward compatibility with any
+    existing caller. B2 — unverified chat-audit findings are excluded
+    everywhere via the one shared `verified_only_filter()`."""
     user = await current_dev(authorization)
     db = get_db()
-    ctx = await check_permission(user, "projects", "read", db=db)
-    user_id = ctx["effective_account_id"]
-    await _assert_owns_project(db, user_id, project_id)
+    from services.finding_scope import resolve_findings_scope, verified_only_filter
+    scope = await resolve_findings_scope(
+        db, caller_user_id=user["user_id"], project_id=project_id, level="read",
+    )
+    user_id = scope["user_id"]
 
-    cursor = db.cto_open_findings.find({
-        "user_id":    user_id,
-        "project_id": project_id,
-        "status":     "open",
-    }).sort([("severity", 1), ("last_seen_at", -1)]).limit(max(1, min(limit, 100)))
-    rows = await cursor.to_list(max(1, min(limit, 100)))
-    sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    items = []
+    base_filter = {
+        "user_id": user_id, "project_id": project_id, "status": "open",
+        **verified_only_filter(),
+    }
+    # BE1 fix — fetch ALL open (verified) rows up to the hard cap,
+    # THEN rank-sort in Python, THEN limit. No limit() in the Mongo
+    # query itself.
+    cursor = db.cto_open_findings.find(base_filter).sort([("last_seen_at", -1)])
+    rows = await cursor.to_list(_FIX_LIST_FETCH_CAP)
+
+    all_items = []
+    max_updated = 0.0
     for f in rows:
-        items.append({
+        all_items.append({
             "finding_id": f.get("finding_id"),
             "rule_id":    f.get("rule_id"),
             "category":   f.get("category") or "",
-            "severity":   f.get("severity") or "medium",
+            "severity":   (f.get("severity") or "medium").lower(),
             "file":       f.get("file") or "",
             "line":       f.get("line") or 0,
             "title":      f.get("title") or "",
             "message":    f.get("message") or "",
             "fix_hint":   f.get("fix_hint") or "",
         })
-    items.sort(key=lambda f: sev_rank.get(f["severity"], 9))
-    total_open = await db.cto_open_findings.count_documents({
-        "user_id": user_id, "project_id": project_id, "status": "open",
-    })
+        ts = f.get("last_seen_at")
+        try:
+            max_updated = max(max_updated, ts.timestamp() if hasattr(ts, "timestamp") else float(ts or 0))
+        except (TypeError, ValueError):
+            pass
+    all_items.sort(key=lambda it: _SEV_RANK.get(it["severity"], 9))
+    total_open = len(all_items)
+    items = all_items[: max(1, min(limit, 100))]
+
+    # B3 — group by file.
+    by_file: dict[str, list[dict]] = {}
+    for it in all_items:
+        by_file.setdefault(it["file"] or "(unknown file)", []).append(it)
+    files = []
+    for file_, issues in by_file.items():
+        issues_sorted = sorted(issues, key=lambda it: _SEV_RANK.get(it["severity"], 9))
+        max_sev = min(issues_sorted, key=lambda it: _SEV_RANK.get(it["severity"], 9))["severity"]
+        files.append({
+            "file": file_, "issue_count": len(issues_sorted),
+            "max_severity": max_sev, "issues": issues_sorted,
+        })
+    files.sort(key=lambda fl: (_SEV_RANK.get(fl["max_severity"], 9), -fl["issue_count"]))
+    files = files[: max(1, min(limit, 100))]
+
     return {
-        "ok":         True,
-        "project_id": project_id,
-        "items":      items,
-        "total_open": total_open,
+        "ok":          True,
+        "project_id":  project_id,
+        "items":       items,
+        "total_open":  total_open,
+        "files":       files,
+        "total_files": len(by_file),
+        "total_issues": total_open,
+        "list_version": f"{max_updated:.0f}:{total_open}",
     }
 
 
@@ -368,9 +419,10 @@ async def starter_suggestions(
 
     limit = max(5, min(int(limit or 12), 30))
 
+    from services.finding_scope import verified_only_filter
     cursor = db.cto_open_findings.find(
         {"user_id": user_id, "project_id": project_id, "status": "open",
-         "severity": {"$in": ["critical", "high"]}},
+         "severity": {"$in": ["critical", "high"]}, **verified_only_filter()},
         {"_id": 0, "finding_id": 1, "severity": 1, "file": 1, "title": 1},
     ).sort([("severity", 1), ("last_seen_at", -1)]).limit(limit)
 

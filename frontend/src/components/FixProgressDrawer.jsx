@@ -371,6 +371,7 @@ export default function FixProgressDrawer() {
     startedAt, endedAt, lastEventAt, eventCount,
     hydrated, canRestart, restarting,
     panelVisible, hidePanel, restart,
+    batchInfo,
   } = useFixJob();
 
   // 1-second tick for the running clock (only while drawer visible
@@ -634,6 +635,27 @@ export default function FixProgressDrawer() {
               }} />
               Waiting for first event…
             </div>
+          )}
+
+          {batchInfo?.pr_url && (
+            <a
+              data-testid="fix-batch-link"
+              href={batchInfo.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                fontSize: 11, color: "#7dd3fc", textDecoration: "none",
+                marginTop: terminal ? 0 : 14, marginBottom: 8,
+                padding: "6px 8px", borderRadius: 6,
+                background: "rgba(125,211,252,0.08)",
+                border: "1px solid rgba(125,211,252,0.18)",
+              }}
+            >
+              <GitPullRequest size={12} />
+              All fixes are on one branch{batchInfo.branch ? `: ${batchInfo.branch}` : ""} — 1 pull request
+              <ExternalLink size={10} />
+            </a>
           )}
 
           {completedRows.length > 0 && (

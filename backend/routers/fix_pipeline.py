@@ -275,6 +275,18 @@ async def start_bulk_fix(body: dict,
         raise HTTPException(400, "project_id required")
     if not findings:
         raise HTTPException(400, "findings is empty")
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+    # Robot Fix List B2 — real-only gate applies to bulk-fix input
+    # too, even when the caller POSTs findings directly instead of
+    # going through the (already-filtered) fix-list endpoint.
+    from services.finding_scope import drop_unverified_findings
+    findings = await drop_unverified_findings(
+        db, user_id=user_id, project_id=project_id, findings=findings,
+    )
+    if not findings:
+        raise HTTPException(400, "findings is empty")
     if len(findings) > _BULK_MAX_FINDINGS:
         # Iter 212m-179 — HARD cap (was 500).  GitHub's secondary rate
         # limits 403 the pipeline mid-job past this point; failing fast
@@ -287,9 +299,6 @@ async def start_bulk_fix(body: dict,
                           "GitHub secondary rate-limit protection. Run the "
                           "rest as the next batch."),
         })
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "DB not connected")
 
     # Iter 212m-190 — task-quota gate: tool access by tier, bulk (count
     # > 1) is Team-only, and N fixes need N remaining tasks. Raises
@@ -435,6 +444,12 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         total_ok = 0
         total_failed = 0
         total_skipped = 0
+        # FIX_one_branch_for_all_fixes — every successful fix in this
+        # job now shares the SAME branch/PR (services/fix_batches.py).
+        # Captured from the first successful `res` so the final
+        # summary can surface ONE link instead of the old N separate
+        # per-fix PR links.
+        shared_fix_branch_info: dict = {}
         # Iter 212m-147 — Final-summary roll-up.  Collected per-fix so
         # the `all-done` event can replay the whole journey for the
         # drawer's terminal summary card.
@@ -540,10 +555,15 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # is its own billable unit; one finding's outcome never
                 # affects another's hold.
                 from services.wallet import finalize_hold as _finalize_wallet_hold
+                # FIX_one_branch_for_all_fixes, design item 12 — an
+                # idempotent skip (file already has this exact fix on
+                # the shared branch) is not charged, same rule as a
+                # real failure.
                 await _finalize_wallet_hold(
                     db, user_id=user_id, action="fix",
                     run_id=_wallet_run_id(job_id, finding),
-                    ok=bool(res.get("ok")), reason=last_err or "",
+                    ok=bool(res.get("ok")) and not res.get("skipped_no_change"),
+                    reason=last_err or "",
                 )
 
                 if not res.get("ok"):
@@ -632,6 +652,12 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 )
                 fjm.emit(job_id, "fix-done",
                          ok=True, finding_id=finding_id,
+                         # Robot Fix List B6/F2 — the frontend's
+                         # `aurem:finding-fixed` window event is built
+                         # straight from this payload; it needs
+                         # project_id so a listener can ignore a fix
+                         # that belongs to a DIFFERENT project (F3).
+                         project_id=project_id,
                          commit_sha=res.get("commit_sha"),
                          full_sha=res.get("full_sha"),
                          html_url=res.get("html_url"),
@@ -689,6 +715,11 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                         )
                     except Exception as _bge:                        # noqa: BLE001
                         logger.debug("brain outcome attach skipped: %r", _bge)
+                if res.get("pr_url") and not shared_fix_branch_info:
+                    shared_fix_branch_info = {
+                        "pr_url": res.get("pr_url"), "branch": res.get("branch"),
+                        "batch_id": res.get("batch_id"),
+                    }
                 total_ok += 1
                 # Iter 212m-193 — persist the fixed state so a rescan
                 # doesn't resurrect this finding (fix lives on a draft
@@ -706,7 +737,9 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # Iter 212m-190 — deduct exactly 1 task PER successful
                 # fix (atomic $inc). Failed fixes above never reach
                 # this line, so a 12-selected / 2-failed run deducts 10.
-                if not is_unlim:
+                # FIX_one_branch_for_all_fixes, design item 12 — an
+                # idempotent skipped_no_change re-run is also excluded.
+                if not is_unlim and not res.get("skipped_no_change"):
                     try:
                         await record_scan_fixes(user_id, tool, 1)
                         total_charged += 1
@@ -789,6 +822,12 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 except Exception:
                     pass
 
+        if shared_fix_branch_info:
+            # FIX_one_branch_for_all_fixes, design item 5 — ONE link
+            # for the whole job, not N per-fix links.
+            fjm.emit(job_id, "batch-info", **shared_fix_branch_info,
+                     fix_count=total_ok)
+            await fjm.persist_event(db, job_id)
         await fjm.close(
             db, job_id, ok=True,
             message=f"Fixed {total_ok}/{len(ordered)} "
