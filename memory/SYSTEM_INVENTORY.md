@@ -1075,3 +1075,9 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-10-27
 
 - `services/github_errors.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-10-27T15:51:02.194254Z] <!-- inv:service:services/github_errors.py -->
+
+### Iter 0 · 2026-11-01
+
+- `services/finding_scope.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-01T03:12:29.891189Z] <!-- inv:service:services/finding_scope.py -->
+- `services/fix_batches.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-01T03:12:29.891220Z] <!-- inv:service:services/fix_batches.py -->
+- `services/jev_observability.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-01T03:12:29.891249Z] <!-- inv:service:services/jev_observability.py -->
