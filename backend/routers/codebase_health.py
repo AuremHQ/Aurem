@@ -884,7 +884,8 @@ async def request_fix(
     # already on the shared branch).
     await finalize_hold(
         db, user_id=user_id, action="fix", run_id=wallet_run_id,
-        ok=bool(res.get("ok")) and not res.get("skipped_no_change"),
+        ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+           and not res.get("skipped_not_present"),
         reason=res.get("error") or "",
     )
 
@@ -917,12 +918,15 @@ async def request_fix(
         except Exception as _bge:                                # noqa: BLE001
             logger.debug("brain outcome attach skipped: %r", _bge)
 
-    if res.get("skipped_no_change"):
+    if res.get("skipped_no_change") or res.get("skipped_not_present"):
         # FIX_one_branch_for_all_fixes, design item 12 — the file
         # already carries this exact fix on the shared branch
         # (idempotent re-run). Not a failure, but not a NEW commit
         # either — refund the same way a failure would, and say so
         # plainly rather than claiming a fix just happened.
+        # Part 2b R1 — skipped_not_present (the scanner confirmed the
+        # finding was already gone BEFORE the LLM ever ran) gets the
+        # exact same refund treatment.
         if not is_unlimited_user and tokens_cost:
             try:
                 await db.dev_users.update_one(
@@ -931,9 +935,11 @@ async def request_fix(
                 )
                 new_balance += tokens_cost
             except Exception as e:                                 # noqa: BLE001
-                logger.warning("health refund failed (skipped_no_change): %r", e)
+                logger.warning("health refund failed (skipped_no_change/not_present): %r", e)
         return {
-            "ok": True, "skipped_no_change": True,
+            "ok": True,
+            "skipped_no_change": bool(res.get("skipped_no_change")),
+            "skipped_not_present": bool(res.get("skipped_not_present")),
             "message": res.get("message") or "This file already has this fix — nothing new to commit.",
             "tokens_refunded": True, "new_balance": new_balance,
         }

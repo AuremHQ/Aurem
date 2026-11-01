@@ -210,16 +210,23 @@ def test_preview_insufficient_shortfall(client_paying):
 def test_bulk_start_returns_job_id(client_founder, monkeypatch):
     c, _ = client_founder
 
-    async def fake_apply(**kw):
-        return {"ok": True, "commit_sha": "abc1234",
+    # Part 2b F2 — the bulk job resolves per FILE now; config.py and
+    # db.py are different files, so each gets its own apply_file_fixes
+    # call, both resolving their one finding successfully.
+    async def fake_apply_file(**kw):
+        findings = kw["findings"]
+        file = kw["file"]
+        return {"ok": True, "file": file, "commit_sha": "abc1234",
                 "full_sha": "abc1234" + "0" * 33,
                 "html_url": "https://github.com/x/y/commit/abc1234",
-                "file": kw["finding"].get("file"),
-                "rule_id": kw["finding"].get("rule_id"),
-                "message": "stub"}
+                "pr_url": "https://github.com/x/y/pull/1",
+                "branch": "aurem/fixes-x", "batch_id": "fb_1",
+                "results": [{"finding_id": f.get("id"), "rule_id": f.get("rule_id"),
+                             "file": file, "status": "resolved"}
+                            for f in findings]}
 
     monkeypatch.setattr(
-        "routers.fix_pipeline.apply_finding_fix", fake_apply,
+        "routers.fix_pipeline.apply_file_fixes", fake_apply_file,
     )
     # Skip the live GitHub verification call.
     monkeypatch.setattr(

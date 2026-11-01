@@ -53,14 +53,40 @@ _TERMINAL_STATUSES = ("merged", "closed")
 # re-read ITS row instead of erroring.
 _batch_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
+# Part 2b R4 — _batch_locks previously grew by one entry per
+# (user_id, project_id) pair EVER seen, for the life of the process —
+# a slow memory leak on a long-running pod. Bounded with best-effort
+# LRU eviction: only a currently-UNLOCKED entry is ever evicted,
+# never one an in-flight fix is holding.
+_MAX_BATCH_LOCKS = 2000
+
 
 def _lock_for(user_id: str, project_id: str) -> asyncio.Lock:
     key = (user_id, project_id)
     lock = _batch_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
+    if lock is not None:
+        # Move to the end (most-recently-used) for LRU eviction order.
+        _batch_locks.pop(key)
         _batch_locks[key] = lock
+        return lock
+    lock = asyncio.Lock()
+    _batch_locks[key] = lock
+    if len(_batch_locks) > _MAX_BATCH_LOCKS:
+        _evict_oldest_unlocked()
     return lock
+
+
+def _evict_oldest_unlocked() -> None:
+    """Best-effort — scans from the oldest (dict insertion order)
+    entry forward and removes the first one that isn't currently
+    held, so the map shrinks back toward _MAX_BATCH_LOCKS without
+    ever pulling a lock out from under an in-flight fix. A pathological
+    case where EVERY entry is locked at once simply skips eviction
+    this round (bounded further next call, never raises)."""
+    for key, lock in list(_batch_locks.items()):
+        if not lock.locked():
+            del _batch_locks[key]
+            return
 
 
 def generate_batch_branch() -> str:
@@ -312,6 +338,44 @@ async def record_fix_in_batch(
         await update_pr_body(
             owner=owner, repo=repo, pr_number=pr_number,
             body=build_pr_body(rows), token=token,
+        )
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("batch PR body update failed (non-fatal): %r", e)
+
+
+async def record_fixes_in_batch(
+    db, *, batch_id: str, rows: list[dict], owner: str, repo: str, token: str,
+) -> None:
+    """Part 2b F2 — multi-row variant of `record_fix_in_batch`, for
+    `apply_file_fixes`'s one-commit-resolves-several-findings case.
+    Each row in `rows` is {rule_id, file, line, severity, commit_sha,
+    status}. Pushes all of them in ONE update + ONE PR-body PATCH,
+    instead of N round-trips for N findings resolved by the same
+    commit."""
+    if not rows:
+        return
+    now = time.time()
+    stamped = [{**r, "at": now} for r in rows]
+    batch = await db[_COLLECTION].find_one_and_update(
+        {"batch_id": batch_id},
+        {
+            "$inc": {"fix_count": len(stamped)},
+            "$push": {"rows": {"$each": stamped}},
+            "$set": {"updated_at": now},
+        },
+        return_document=True,
+    )
+    if not batch:
+        return
+    pr_number = batch.get("pr_number")
+    if not pr_number:
+        return
+    try:
+        from services.loop_safety import update_pr_body
+        all_rows = batch.get("rows") or []
+        await update_pr_body(
+            owner=owner, repo=repo, pr_number=pr_number,
+            body=build_pr_body(all_rows), token=token,
         )
     except Exception as e:                                       # noqa: BLE001
         logger.warning("batch PR body update failed (non-fatal): %r", e)

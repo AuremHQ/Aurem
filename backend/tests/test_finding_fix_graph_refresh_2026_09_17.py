@@ -123,7 +123,16 @@ async def test_apply_finding_fix_schedules_graph_refresh_on_success(monkeypatch)
                          AsyncMock(return_value=("secret = '123'\n", None)))
     monkeypatch.setattr(ff, "_generate_patched_content",
                          AsyncMock(return_value=("secret = os.environ['S']\n", None)))
-    monkeypatch.setattr(ff, "_finding_still_present", lambda *a, **k: False)
+    # Part 2b R1 — _finding_still_present is now ALSO called as a
+    # pre-check on the UNPATCHED content, before the LLM runs. First
+    # call (pre-check) must say "present"; later calls (post-patch
+    # validation) say "resolved" — a blanket False would wrongly
+    # skip this fix as already-absent before the LLM ever ran.
+    _present_calls = {"n": 0}
+    def _still_present(*a, **k):
+        _present_calls["n"] += 1
+        return _present_calls["n"] == 1
+    monkeypatch.setattr(ff, "_finding_still_present", _still_present)
 
     import services.github_api_writer as gw
     monkeypatch.setattr(gw, "commit_files", AsyncMock(return_value={
@@ -176,7 +185,16 @@ async def test_apply_finding_fix_no_refresh_on_commit_failure(monkeypatch):
                          AsyncMock(return_value=("secret = '123'\n", None)))
     monkeypatch.setattr(ff, "_generate_patched_content",
                          AsyncMock(return_value=("secret = os.environ['S']\n", None)))
-    monkeypatch.setattr(ff, "_finding_still_present", lambda *a, **k: False)
+    # Part 2b R1 — _finding_still_present is now ALSO called as a
+    # pre-check on the UNPATCHED content, before the LLM runs. First
+    # call (pre-check) must say "present"; later calls (post-patch
+    # validation) say "resolved" — a blanket False would wrongly
+    # skip this fix as already-absent before the LLM ever ran.
+    _present_calls = {"n": 0}
+    def _still_present(*a, **k):
+        _present_calls["n"] += 1
+        return _present_calls["n"] == 1
+    monkeypatch.setattr(ff, "_finding_still_present", _still_present)
 
     import services.github_api_writer as gw
     monkeypatch.setattr(gw, "commit_files",

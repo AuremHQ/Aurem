@@ -160,6 +160,7 @@ export default function OraGuideMascot() {
   const [fixListTotal, setFixListTotal] = useState(0);
   const [fixListIndex, setFixListIndex] = useState(0);
   const [expandedFile, setExpandedFile] = useState(null);
+  const [fixFileBusy, setFixFileBusy] = useState(null); // file path currently starting a fix job, or null
   // FE2 — explicit error state so a failed fetch after a project
   // switch shows "couldn't load — retry", never the PREVIOUS
   // project's stale list.
@@ -502,18 +503,36 @@ export default function OraGuideMascot() {
     window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt } }));
     dismiss();
   }
-  // F3 — "Fix this file" primary action: one click fixes every open
-  // issue in that file in one go. Same composer-prefill mechanism as
-  // a single-issue fix (never a direct /fix-pipeline call from this
-  // component) — the prompt lists every issue so the normal
-  // scan -> propose -> ship-approval pipeline picks up all of them.
-  function fixFile(fileGroup) {
-    if (!fileGroup || !fileGroup.issues?.length) return;
-    const list = fileGroup.issues.map((it) => it.title || it.rule_id).join("; ");
-    const n = fileGroup.issues.length;
-    const prompt = `Fix these ${n} issue${n === 1 ? "" : "s"} in ${fileGroup.file}: ${list}`;
-    window.dispatchEvent(new CustomEvent("aurem:starter-pick", { detail: { prompt } }));
-    dismiss();
+  // Part 2b R2/F2 — "Fix this file" calls the REAL shared-batch bulk
+  // API (finding_ids of this file), not the chat composer. The old
+  // composer-prefill path shipped via `auremcto/ship-<slug>` branches
+  // (loop_engine.py's own ship flow) — a completely different branch
+  // than the shared fix_batches one, and cost one LLM call PER
+  // finding instead of one per file. FixJobContext owns the SSE
+  // stream once opened; this just starts the job and opens the
+  // drawer, exactly like FixProgressDrawer's other "open" callers.
+  async function fixFile(fileGroup) {
+    if (!fileGroup || !fileGroup.issues?.length || !effectiveProjectId) return;
+    setFixFileBusy(fileGroup.file);
+    try {
+      const r = await api.post("/fix-pipeline/bulk", {
+        project_id: effectiveProjectId,
+        finding_ids: fileGroup.issues.map((it) => it.finding_id).filter(Boolean),
+      });
+      const d = r?.data || r;
+      if (d?.job_id) {
+        window.dispatchEvent(new CustomEvent("aurem:open-fix-progress", {
+          detail: { job_id: d.job_id, total: fileGroup.issues.length },
+        }));
+        dismiss();
+      } else {
+        toast("Couldn't start the fix — try again.");
+      }
+    } catch {
+      toast("Couldn't start the fix — try again.");
+    } finally {
+      setFixFileBusy(null);
+    }
   }
   function fixCurrentItem() { fixItem(fixListItems[fixListIndex]); }
   function nextFixItem() {
@@ -886,8 +905,10 @@ export default function OraGuideMascot() {
                           </div>
                         </button>
                         <button data-testid={`ora-guide-fixlist-file-fix-${fg.file}`} type="button"
-                                onClick={() => fixFile(fg)} style={{ ...menuBtnStyle, padding: "4px 10px", fontSize: 11 }}>
-                          Fix this file
+                                disabled={fixFileBusy === fg.file}
+                                onClick={() => fixFile(fg)} style={{ ...menuBtnStyle, padding: "4px 10px", fontSize: 11,
+                                  opacity: fixFileBusy === fg.file ? 0.6 : 1 }}>
+                          {fixFileBusy === fg.file ? "Starting…" : "Fix this file"}
                         </button>
                       </div>
                       {isOpen && (

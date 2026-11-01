@@ -52,6 +52,18 @@ class _FakeColl:
             if all(d.get(k) == v for k, v in filt.items()):
                 d.update(update.get("$set", {}))
 
+    def find(self, filt, proj=None):
+        matched = [dict(d) for d in self.docs if all(d.get(k) == v for k, v in (filt or {}).items())]
+        class _Cur:
+            def __init__(self, items):
+                self.items = items
+            async def to_list(self, length=None):
+                return list(self.items)[: (length if length is not None else len(self.items))]
+        return _Cur(matched)
+
+    async def delete_many(self, filt):
+        self.docs = [d for d in self.docs if not all(d.get(k) == v for k, v in (filt or {}).items())]
+
 
 class _FakeFixBatches(_FakeColl):
     async def find_one_and_update(self, filt, update, return_document=False):
@@ -76,6 +88,8 @@ class _FakeDB:
         }])
         self.finding_fixes = _FakeColl()
         self.fix_batches = _FakeFixBatches()
+        self.cto_open_findings = _FakeColl()
+        self.fixed_findings = _FakeColl()
 
     def __getitem__(self, name):
         return getattr(self, name)
@@ -148,7 +162,16 @@ class TestH1SameFileSequentialReads:
 
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
         monkeypatch.setattr(ffa, "_generate_patched_content", _llm)
-        monkeypatch.setattr(ffa, "_finding_still_present", lambda *a, **k: False)
+
+        # Part 2b R1 — _finding_still_present is now ALSO called as a
+        # pre-check on the UNPATCHED content (before the LLM runs), so
+        # a blanket `False` would wrongly short-circuit fix #1 as
+        # "already not present". Content-aware: the marker for THIS
+        # rule is present until the LLM actually replaces it.
+        def _still_present(patched_content, path, finding):
+            marker = "BAD_A" if finding["rule_id"] == "rule_a" else "BAD_B"
+            return marker in patched_content
+        monkeypatch.setattr(ffa, "_finding_still_present", _still_present)
 
         commits = []
 
@@ -211,6 +234,12 @@ class TestH2NoDirectToBaseFallback:
 
 class TestSkipNoChange:
     async def test_idempotent_rerun_skips_commit_and_is_marked_not_charged(self, monkeypatch):
+        """Part 2b R1 — a scanner-checkable finding now gets caught by
+        the presence pre-check (test file 40's `skipped_not_present`
+        covers that). The ONLY remaining legitimate `skipped_no_change`
+        case is a finding with NO rule_id to check against the scanner
+        at all (e.g. a chat-audit style finding) — that's what this
+        test now exercises."""
         _mock_pat(monkeypatch)
         _mock_batch_github(monkeypatch)
         db = _FakeDB()
@@ -230,8 +259,10 @@ class TestSkipNoChange:
             return {"sha": "x", "full_sha": "x" * 40, "html_url": ""}
         monkeypatch.setattr("services.github_api_writer.commit_files", _commit)
 
+        no_rule_finding = {"file": "a.py", "line": 1, "severity": "high",
+                            "title": "t", "message": "m"}  # no rule_id/rule key
         res = await ffa.apply_finding_fix(
-            db=db, user={"user_id": "u1"}, project_id="p1", finding=_finding(),
+            db=db, user={"user_id": "u1"}, project_id="p1", finding=no_rule_finding,
         )
         assert res["ok"] is True
         assert res["skipped_no_change"] is True
@@ -248,17 +279,29 @@ class TestH3RevertIsolation:
             "fix_id": "fx_1", "user_id": "u1", "project_id": "p1",
             "batch_id": "fb_1", "file": "a.py", "rule_id": "rule_a",
             "branch": "aurem/fixes-aaaaaaaa",
-            "original_content": "BEFORE", "patched_content": "AFTER",
+            "parent_commit_sha": "parent_a", "commit_sha": "after_a",
         })
         db.finding_fixes.docs.append({
             "fix_id": "fx_2", "user_id": "u1", "project_id": "p1",
             "batch_id": "fb_1", "file": "b.py", "rule_id": "rule_b",
             "branch": "aurem/fixes-aaaaaaaa",
-            "original_content": "B_BEFORE", "patched_content": "B_AFTER",
+            "parent_commit_sha": "parent_b", "commit_sha": "after_b",
         })
 
-        async def _fetch(owner, repo, branch, path, token):
-            return {"a.py": "AFTER", "b.py": "B_AFTER"}[path], None
+        # Part 2b R3 — revert re-fetches BOTH the pre-fix content (at
+        # parent_commit_sha) and the post-fix content (at commit_sha)
+        # from GitHub, plus the branch's CURRENT content, instead of
+        # reading a Mongo-stored snapshot.
+        _by_ref = {
+            "parent_a": "BEFORE", "after_a": "AFTER",
+            "parent_b": "B_BEFORE", "after_b": "B_AFTER",
+            "aurem/fixes-aaaaaaaa": None,  # set per-test below
+        }
+        _branch_content = {"a.py": "AFTER", "b.py": "B_AFTER"}
+        async def _fetch(owner, repo, ref, path, token):
+            if ref == "aurem/fixes-aaaaaaaa":
+                return _branch_content[path], None
+            return _by_ref[ref], None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
         close_calls = []
@@ -292,11 +335,15 @@ class TestH3RevertIsolation:
             "fix_id": "fx_1", "user_id": "u1", "project_id": "p1",
             "batch_id": "fb_1", "file": "a.py", "rule_id": "rule_a",
             "branch": "aurem/fixes-aaaaaaaa",
-            "original_content": "BEFORE", "patched_content": "AFTER",
+            "parent_commit_sha": "parent_a", "commit_sha": "after_a",
         })
 
-        async def _fetch(owner, repo, branch, path, token):
-            return "SOMEONE_ELSE_CHANGED_THIS", None
+        async def _fetch(owner, repo, ref, path, token):
+            if ref == "parent_a":
+                return "BEFORE", None
+            if ref == "after_a":
+                return "AFTER", None
+            return "SOMEONE_ELSE_CHANGED_THIS", None  # current branch content diverged
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
         commits = []

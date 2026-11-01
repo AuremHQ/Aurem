@@ -62,7 +62,13 @@ from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services import fix_job_manager as fjm
 from services import ora_fix_learning
-from services.finding_fix_applier import apply_finding_fix
+from services.finding_fix_applier import (
+    apply_file_fixes,
+    apply_finding_fix,
+    revert_batch,
+    revert_finding_fix,
+)
+from services.rate_limiter import check_rate_limit_async
 from services.fixed_findings import record_fixed
 from services.notifications import emit_notification
 from services.scan_fix_quota import (
@@ -90,6 +96,10 @@ _MAX_DIFF_LINES = 80
 
 
 def _compute_diff_lines(before: str, after: str) -> list[dict]:
+    # Part 2b R3 — this diff streams directly over SSE to the
+    # browser (the "fix-diff" event). A fix for a hardcoded secret
+    # would otherwise show the raw secret value in the "remove" line.
+    from services.secret_masking import redact_secrets_in_text
     if before == after:
         return []
     before_lines = before.splitlines(keepends=False)
@@ -107,15 +117,15 @@ def _compute_diff_lines(before: str, after: str) -> list[dict]:
             out.append({"type": "hunk", "line": line})
             continue
         if line.startswith("-"):
-            out.append({"type": "remove", "line": line[1:]})
+            out.append({"type": "remove", "line": redact_secrets_in_text(line[1:])})
         elif line.startswith("+"):
-            out.append({"type": "add", "line": line[1:]})
+            out.append({"type": "add", "line": redact_secrets_in_text(line[1:])})
         else:
             # Context line (no prefix marker after the unified_diff
             # strip).  Useful so the drawer can show a few lines of
             # surrounding code for orientation.
-            out.append({"type": "context",
-                        "line": line[1:] if line.startswith(" ") else line})
+            stripped = line[1:] if line.startswith(" ") else line
+            out.append({"type": "context", "line": redact_secrets_in_text(stripped)})
         if len(out) >= _MAX_DIFF_LINES:
             out.append({"type": "context",
                         "line": f"... diff truncated at {_MAX_DIFF_LINES} lines"})
@@ -270,18 +280,39 @@ async def start_bulk_fix(body: dict,
     _, effective = await _gate(authorization, "write")
     user_id   = effective["user_id"]
     project_id = (body or {}).get("project_id")
+    finding_ids = (body or {}).get("finding_ids") or []
     findings   = body.get("findings") or []
     if not project_id:
         raise HTTPException(400, "project_id required")
-    if not findings:
+    if not finding_ids and not findings:
         raise HTTPException(400, "findings is empty")
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB not connected")
+    from services.finding_scope import (
+        drop_unverified_findings,
+        reconcile_findings_against_stored_rows,
+        resolve_findings_by_ids,
+    )
+    if finding_ids:
+        # Part 2b F7 — the authoritative path: server loads the real
+        # rows itself (effective account + project + verified + open)
+        # instead of trusting whatever the client POSTed. Any id with
+        # no matching row (foreign, unverified, already closed,
+        # tampered) is silently dropped here, never fabricated.
+        findings = await resolve_findings_by_ids(
+            db, user_id=user_id, project_id=project_id, finding_ids=finding_ids,
+        )
+    else:
+        # Legacy path — never trust client-supplied severity/title/
+        # fix_hint for billing or LLM prompts; overwrite from the
+        # stored row wherever one matches.
+        findings = await reconcile_findings_against_stored_rows(
+            db, user_id=user_id, project_id=project_id, findings=findings,
+        )
     # Robot Fix List B2 — real-only gate applies to bulk-fix input
     # too, even when the caller POSTs findings directly instead of
     # going through the (already-filtered) fix-list endpoint.
-    from services.finding_scope import drop_unverified_findings
     findings = await drop_unverified_findings(
         db, user_id=user_id, project_id=project_id, findings=findings,
     )
@@ -454,6 +485,112 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         # the `all-done` event can replay the whole journey for the
         # drawer's terminal summary card.
         fixes_summary: list[dict] = []
+
+        # Part 2b F2 — real per-file fix. A whole-file pre-pass
+        # resolves EVERY file exactly once via apply_file_fixes (one
+        # LLM call + one commit per file, with its own retry loop at
+        # FILE granularity), building a finding_id -> result lookup.
+        # The existing per-finding loop below is UNCHANGED from this
+        # point on — it now reads from this lookup instead of calling
+        # apply_finding_fix, so every downstream behavior (SSE shape,
+        # learning hooks, brain outcomes, wallet hold/settle, task-
+        # quota) keeps working exactly as before, just fed from a
+        # real per-FILE commit instead of N per-finding ones.
+        file_groups: dict[str, list[dict]] = {}
+        file_order: list[str] = []
+        for f in ordered:
+            fpath = f.get("file") or f.get("path") or ""
+            if fpath not in file_groups:
+                file_groups[fpath] = []
+                file_order.append(fpath)
+            file_groups[fpath].append(f)
+
+        def _finding_lookup_key(f: dict) -> str:
+            return f.get("id") or f.get("finding_id") or f.get("rule_id") or f.get("rule") or ""
+
+        def _file_result_to_legacy_shape(file_res: dict, finding: dict) -> dict:
+            """Reshape one entry of apply_file_fixes's `results` list
+            (plus the whole-file result it came from) into the exact
+            dict shape apply_finding_fix used to return, so every
+            caller below this point needs zero changes."""
+            rid = finding.get("rule_id") or finding.get("rule") or ""
+            path = finding.get("file") or finding.get("path") or ""
+            key = _finding_lookup_key(finding)
+            match = None
+            for r in (file_res.get("results") or []):
+                if r.get("finding_id") == key or (rid and r.get("rule_id") == rid):
+                    match = r
+                    break
+            if match is None:
+                # The whole-file call itself never got far enough to
+                # produce per-finding results (batch_unavailable,
+                # github_push_failed, missing_required_args, ...) —
+                # every finding in the group shares that ONE reason.
+                return {"ok": False, "error": file_res.get("error") or "unknown",
+                        "file": path, "rule_id": rid}
+            status = match.get("status")
+            if status == "resolved":
+                return {
+                    "ok": True, "file": path, "rule_id": rid,
+                    "commit_sha": file_res.get("commit_sha"),
+                    "full_sha": file_res.get("full_sha"),
+                    "html_url": file_res.get("html_url"),
+                    "pr_url": file_res.get("pr_url"),
+                    "branch": file_res.get("branch"),
+                    "batch_id": file_res.get("batch_id"),
+                    "original_content": file_res.get("original_content"),
+                    "patched_content": file_res.get("patched_content"),
+                    # Part 2b R6 — needed by the frontend's "Undo this
+                    # fix" button.
+                    "fix_id": match.get("fix_id"),
+                }
+            if status == "skipped_not_present":
+                return {
+                    "ok": True, "skipped_not_present": True,
+                    "file": path, "rule_id": rid,
+                    "branch": file_res.get("branch"), "pr_url": file_res.get("pr_url"),
+                    "batch_id": file_res.get("batch_id"),
+                }
+            if status == "remaining":
+                return {"ok": False, "error": "patch_did_not_resolve_finding",
+                        "file": path, "rule_id": rid}
+            # status == "error"
+            err = match.get("error") or "unknown"
+            return {"ok": False,
+                    "error": "llm_made_no_change" if err == "llm_made_no_change" else err,
+                    "file": path, "rule_id": rid,
+                    "retryable": err == "llm_made_no_change"}
+
+        _file_fixes_cache: dict[str, dict] = {}
+
+        async def _resolve_file_once(fpath: str) -> dict:
+            if fpath in _file_fixes_cache:
+                return _file_fixes_cache[fpath]
+            group = file_groups[fpath]
+            last_err = None
+            file_res: dict = {"ok": False, "error": "unknown", "results": []}
+            for attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                try:
+                    file_res = await apply_file_fixes(
+                        db=db, user=user, project_id=project_id,
+                        file=fpath, findings=group,
+                    )
+                except Exception as e:                           # noqa: BLE001
+                    logger.exception("apply_file_fixes raised for file=%s attempt=%d",
+                                     fpath, attempt)
+                    file_res = {"ok": False, "error": f"unhandled: {e}", "results": []}
+                if file_res.get("ok"):
+                    break
+                last_err = file_res.get("error") or "unknown"
+                if last_err in _TERMINAL_ERROR_CODES or attempt >= _MAX_FIX_ATTEMPTS:
+                    break
+                backoff = _RETRY_BACKOFFS_S[min(attempt - 1, len(_RETRY_BACKOFFS_S) - 1)]
+                fjm.emit(job_id, "retrying", file=fpath, attempt=attempt + 1,
+                         of=_MAX_FIX_ATTEMPTS, last_error=last_err, backoff_s=backoff)
+                await asyncio.sleep(backoff)
+            _file_fixes_cache[fpath] = file_res
+            return file_res
+
         global_idx = 0
         for batch_no, batch in enumerate(batches, start=1):
             fjm.emit(job_id, "batch-start",
@@ -521,33 +658,23 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 async with llm_surface_context(
                     project_id=project_id, task_id=f"fix:{finding_id}",
                 ):
-                    for attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
-                        attempts_used = attempt
-                        try:
-                            res = await apply_finding_fix(
-                                db=db, user=user, project_id=project_id, finding=finding,
-                            )
-                        except Exception as e:                        # noqa: BLE001
-                            logger.exception("bulk fix raised for finding=%s "
-                                             "attempt=%d", finding_id, attempt)
-                            res = {"ok": False, "error": f"unhandled: {e}"}
-                        if res.get("ok"):
-                            break
-                        last_err = res.get("error") or "unknown"
-                        if last_err in _TERMINAL_ERROR_CODES:
-                            # No point retrying — surface the real reason.
-                            break
-                        if attempt >= _MAX_FIX_ATTEMPTS:
-                            break
-                        # Emit a retry event so the UI shows "Retry 2/3 …"
-                        # and the user has visible proof the system is
-                        # still working (instead of silently hanging).
-                        backoff = _RETRY_BACKOFFS_S[min(attempt - 1, len(_RETRY_BACKOFFS_S) - 1)]
-                        fjm.emit(job_id, "retrying",
-                                 finding_id=finding_id, attempt=attempt + 1,
-                                 of=_MAX_FIX_ATTEMPTS, last_error=last_err,
-                                 backoff_s=backoff, file=path, rule_id=rule_id)
-                        await asyncio.sleep(backoff)
+                    # Part 2b F2 — the real per-file fix: resolve this
+                    # finding's FILE exactly once (cached across every
+                    # other finding in the same file-group — one LLM
+                    # call, one commit, retried at FILE granularity
+                    # inside _resolve_file_once), then reshape that
+                    # file-level result into this finding's own `res`,
+                    # so every line below is unchanged.
+                    try:
+                        file_res = await _resolve_file_once(path)
+                        attempts_used = 1
+                    except Exception as e:                            # noqa: BLE001
+                        logger.exception("apply_file_fixes raised for finding=%s "
+                                         "file=%s", finding_id, path)
+                        file_res = {"ok": False, "error": f"unhandled: {e}", "results": []}
+                        attempts_used = 1
+                    res = _file_result_to_legacy_shape(file_res, finding)
+                    last_err = res.get("error") if not res.get("ok") else None
                 _fix_duration_ms = int((time.time() - _t_fix_start) * 1000)
 
                 # Master Prompt v2 Part 1.1 — settle this finding's own
@@ -562,7 +689,8 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 await _finalize_wallet_hold(
                     db, user_id=user_id, action="fix",
                     run_id=_wallet_run_id(job_id, finding),
-                    ok=bool(res.get("ok")) and not res.get("skipped_no_change"),
+                    ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+                       and not res.get("skipped_not_present"),
                     reason=last_err or "",
                 )
 
@@ -605,6 +733,29 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                         )
                     except Exception as _bge:                        # noqa: BLE001
                         logger.debug("brain outcome attach skipped: %r", _bge)
+                    continue
+
+                if res.get("skipped_no_change") or res.get("skipped_not_present"):
+                    # Part 2b R1 — a skip is neither a real fix nor a
+                    # failure; count it separately so the bulk summary
+                    # never claims N findings were "fixed" when some
+                    # were only skipped (already-fixed / no-longer-
+                    # present). No commit happened, so no diff/verify.
+                    fjm.emit(job_id, "fix-done",
+                             ok=True, finding_id=finding_id,
+                             project_id=project_id,
+                             skipped_no_change=bool(res.get("skipped_no_change")),
+                             skipped_not_present=bool(res.get("skipped_not_present")),
+                             file=path, rule_id=rule_id,
+                             fix_index=global_idx, fix_total=len(ordered))
+                    await fjm.persist_event(db, job_id)
+                    total_skipped += 1
+                    fixes_summary.append({
+                        "index": global_idx, "file": path, "rule": rule_id,
+                        "status": "skipped_not_present" if res.get("skipped_not_present")
+                                  else "skipped_no_change",
+                        "commit_sha": None, "github_url": None,
+                    })
                     continue
 
                 # Iter 212m-147 — Emit the diff BEFORE the GitHub
@@ -666,6 +817,9 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                          branch=res.get("branch"),
                          file=res.get("file"),
                          rule_id=res.get("rule_id"),
+                         # Part 2b R6 — needed by the frontend's
+                         # "Undo this fix" button.
+                         fix_id=res.get("fix_id"),
                          fix_index=global_idx,
                          fix_total=len(ordered),
                          # 2026-08-23 — tri-state, not a bool: True=
@@ -687,6 +841,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     "github_url": res.get("html_url"),
                     "pr_url":     res.get("pr_url"),
                     "verified":   verified,
+                    "fix_id":     res.get("fix_id"),
                 })
                 # Iter 212m-129 — Learning hook (success path).  The
                 # `verified` field carries the real GitHub-commit-
@@ -739,7 +894,10 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # this line, so a 12-selected / 2-failed run deducts 10.
                 # FIX_one_branch_for_all_fixes, design item 12 — an
                 # idempotent skipped_no_change re-run is also excluded.
-                if not is_unlim and not res.get("skipped_no_change"):
+                # Part 2b R1 — skipped_not_present (finding already
+                # gone before the LLM ever ran) is excluded the same way.
+                if not is_unlim and not res.get("skipped_no_change") \
+                        and not res.get("skipped_not_present"):
                     try:
                         await record_scan_fixes(user_id, tool, 1)
                         total_charged += 1
@@ -831,7 +989,8 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         await fjm.close(
             db, job_id, ok=True,
             message=f"Fixed {total_ok}/{len(ordered)} "
-                    f"({total_charged} tasks used · "
+                    + (f" · {total_skipped} already resolved" if total_skipped else "")
+                    + f" ({total_charged} tasks used · "
                     f"{len(batches)} batches of {_BULK_BATCH_SIZE})",
         )
         # P2-A (2026-08-28) — user-facing bell, "ship_done".
@@ -1092,7 +1251,9 @@ async def stream_fix(job_id: str,
         # Owner check — in-memory job must belong to the caller's
         # (team-resolved) account.
         job = fjm._JOBS.get(job_id) or {}                 # noqa: SLF001
-        if job.get("user_id") and job["user_id"] != effective["user_id"] \
+        # Part 2b R5 — fail CLOSED: a job with no recorded owner is
+        # denied to everyone, never implicitly granted.
+        if job.get("user_id") != effective["user_id"] \
                 and not user.get("is_admin"):
             raise HTTPException(404, "Job not found")
 
@@ -1118,7 +1279,8 @@ async def get_job_summary(job_id: str,
             raise HTTPException(404, "Job not found")
         return {"ok": True, "from_mongo": True, **persisted}
     job = fjm._JOBS.get(job_id) or {}                         # noqa: SLF001
-    if job.get("user_id") and job["user_id"] != effective["user_id"] \
+    # Part 2b R5 — fail CLOSED (see the identical note above).
+    if job.get("user_id") != effective["user_id"] \
             and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     return {"ok": True, **s}
@@ -1198,7 +1360,8 @@ async def retry_verify_commit(job_id: str, finding_id: str,
     s = fjm.get_summary(job_id) or await fjm.get_persisted(db, job_id, effective["user_id"])
     if not s:
         raise HTTPException(404, "Job not found")
-    if s.get("user_id") and s["user_id"] != effective["user_id"] and not user.get("is_admin"):
+    # Part 2b R5 — fail CLOSED (see the identical note above).
+    if s.get("user_id") != effective["user_id"] and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     project_id = s.get("project_id")
     row = next((r for r in (s.get("results") or [])
@@ -1320,3 +1483,103 @@ async def restart_job(job_id: str,
         "skipped_terminal": len(fail_terminal),
         "stream":         f"/api/aurem-dev/fix-pipeline/stream/{new_job_id}",
     }
+
+
+# ─── Part 2b R6 — revert endpoints ───────────────────────────────────
+_REVERT_RATE_PER_MIN = 20
+
+
+@router.post("/fixes/{fix_id}/revert")
+async def revert_one_fix(
+    fix_id: str, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Undo ONE fix — restores that file to its pre-fix content via a
+    new commit on the shared batch branch; never touches the PR or
+    any other fix in the batch (H3). Idempotent — reverting an
+    already-reverted fix is a no-op success, not an error."""
+    _, effective = await _gate(authorization, "write")
+    user_id = effective["user_id"]
+    if not await check_rate_limit_async(f"fix-revert:{user_id}", _REVERT_RATE_PER_MIN):
+        raise HTTPException(429, "Too many revert requests — slow down.")
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+
+    # Resolve the fix's own project so we can fetch a real GitHub
+    # token for it — NEVER from the request (R6's explicit ask).
+    fix = await db.finding_fixes.find_one(
+        {"fix_id": fix_id, "user_id": user_id}, {"_id": 0, "project_id": 1},
+    )
+    if not fix:
+        raise HTTPException(404, "fix_not_found")
+    proj = await db.cto_projects.find_one(
+        {"project_id": fix["project_id"], "user_id": user_id},
+    )
+    if not proj:
+        raise HTTPException(404, "fix_not_found")
+    from services.pat_vault import get_repo_token_or_error
+    token, auth_err, auth_detail = await get_repo_token_or_error(proj)
+    if not token:
+        raise HTTPException(400, {"error": auth_err or "github_credentials_missing",
+                                   "detail": auth_detail or ""})
+
+    result = await revert_finding_fix(
+        db, fix_id=fix_id, token=token,
+        user_id=user_id, project_id=fix["project_id"],
+    )
+    if not result.get("ok"):
+        status = 404 if result.get("error") == "fix_not_found" else 400
+        raise HTTPException(status, result.get("error") or "revert_failed")
+    return result
+
+
+@router.post("/batches/{batch_id}/revert")
+async def revert_one_batch(
+    batch_id: str, body: Optional[dict] = None,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Undo an ENTIRE batch — closes the shared PR and reopens every
+    finding it resolved. Explicit, separate from a single-fix revert;
+    requires `{"confirm": true}` in the body (destructive — closes a
+    PR that may carry other, unrelated-looking fixes)."""
+    body = body or {}
+    if body.get("confirm") is not True:
+        raise HTTPException(400, {"error": "confirm_required",
+                                   "message": "Pass {\"confirm\": true} to revert the whole batch."})
+    _, effective = await _gate(authorization, "write")
+    user_id = effective["user_id"]
+    if not await check_rate_limit_async(f"batch-revert:{user_id}", _REVERT_RATE_PER_MIN):
+        raise HTTPException(429, "Too many revert requests — slow down.")
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+
+    from services.fix_batches import get_batch_by_id
+    project_id = (body or {}).get("project_id") or ""
+    if not project_id:
+        # The batch row itself carries project_id — look it up
+        # without trusting a client-supplied one for the FIRST read,
+        # but get_batch_by_id below still re-validates ownership.
+        any_batch = await db.fix_batches.find_one(
+            {"batch_id": batch_id, "user_id": user_id}, {"_id": 0, "project_id": 1},
+        )
+        project_id = (any_batch or {}).get("project_id") or ""
+    batch = await get_batch_by_id(db, batch_id=batch_id, user_id=user_id, project_id=project_id)
+    if not batch:
+        raise HTTPException(404, "batch_not_found")
+    proj = await db.cto_projects.find_one({"project_id": project_id, "user_id": user_id})
+    if not proj:
+        raise HTTPException(404, "batch_not_found")
+    from services.pat_vault import get_repo_token_or_error
+    token, auth_err, auth_detail = await get_repo_token_or_error(proj)
+    if not token:
+        raise HTTPException(400, {"error": auth_err or "github_credentials_missing",
+                                   "detail": auth_detail or ""})
+
+    result = await revert_batch(
+        db, batch_id=batch_id, user_id=user_id, project_id=project_id, token=token,
+    )
+    if not result.get("ok"):
+        status = 404 if result.get("error") == "batch_not_found" else 400
+        raise HTTPException(status, result.get("error") or "revert_failed")
+    return result

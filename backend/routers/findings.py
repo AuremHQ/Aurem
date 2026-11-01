@@ -74,7 +74,10 @@ async def _assert_owns_project(db, user_id: str, project_id: str) -> None:
     p = await db.cto_projects.find_one({"project_id": project_id})
     if not p:
         raise HTTPException(404, "project_not_found")
-    if p.get("user_id") and p.get("user_id") != user_id:
+    # Part 2b R5 — fail CLOSED, same fix as services/finding_scope.py
+    # ::resolve_findings_scope. A doc with no verifiable owner denies
+    # everyone rather than being silently treated as unowned/public.
+    if p.get("user_id") != user_id:
         raise HTTPException(403, "not_your_project")
 
 

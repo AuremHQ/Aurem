@@ -56,7 +56,11 @@ async def resolve_findings_scope(
     )
     if not proj:
         raise HTTPException(404, "project_not_found")
-    if proj.get("user_id") and proj.get("user_id") != user_id:
+    # Part 2b R5 — fail CLOSED. A project doc with no verifiable
+    # owner (missing/empty user_id — shouldn't happen, but a corrupt
+    # or legacy row must never be treated as "unowned, anyone's") is
+    # denied to EVERYONE, not silently granted to whoever asked.
+    if proj.get("user_id") != user_id:
         raise HTTPException(403, "not_your_project")
     return {"user_id": user_id, "project_id": project_id}
 
@@ -109,3 +113,80 @@ async def drop_unverified_findings(
         f for f in findings
         if (f.get("id") or f.get("finding_id")) not in blocked
     ]
+
+
+_FINDING_SHAPE_PROJECTION = {
+    "_id": 0, "finding_id": 1, "rule_id": 1, "file": 1, "line": 1,
+    "severity": 1, "title": 1, "message": 1, "fix_hint": 1, "category": 1,
+}
+
+
+def _row_to_finding(row: dict) -> dict:
+    return {
+        "id": row.get("finding_id"), "finding_id": row.get("finding_id"),
+        "rule_id": row.get("rule_id"), "file": row.get("file"),
+        "line": row.get("line"), "severity": row.get("severity"),
+        "title": row.get("title"), "message": row.get("message"),
+        "fix_hint": row.get("fix_hint"), "category": row.get("category"),
+    }
+
+
+async def resolve_findings_by_ids(
+    db, *, user_id: str, project_id: str, finding_ids: list[str],
+) -> list[dict]:
+    """Part 2b F7 — authoritative server-side resolution. Loads the
+    REAL rows from cto_open_findings (effective account + project +
+    verified + status=open), never trusting a client-supplied
+    severity/title/fix_hint. Silently drops any id that doesn't match
+    a real, verified, open, owned row — never raises on a bad id."""
+    if not finding_ids:
+        return []
+    rows = await db.cto_open_findings.find(
+        {"user_id": user_id, "project_id": project_id, "status": "open",
+         "finding_id": {"$in": finding_ids}, **verified_only_filter()},
+        _FINDING_SHAPE_PROJECTION,
+    ).to_list(len(finding_ids))
+    return [_row_to_finding(r) for r in rows]
+
+
+async def reconcile_findings_against_stored_rows(
+    db, *, user_id: str, project_id: str, findings: list[dict],
+) -> list[dict]:
+    """Part 2b F7 — for the LEGACY `findings` array input path: never
+    trust severity/title/message/fix_hint from the client for billing
+    or LLM prompts. Any item that matches a stored, verified, open
+    row by id gets those fields OVERWRITTEN from the stored row. An
+    item with no matching row is passed through UNCHANGED — R1's
+    presence pre-check (the static scanner re-detecting it on the
+    current file content, before any LLM call) is what decides
+    whether an untracked item is real, not this function."""
+    if not findings:
+        return findings
+    ids = [f.get("id") or f.get("finding_id") for f in findings if (f.get("id") or f.get("finding_id"))]
+    if not ids:
+        return findings
+    try:
+        rows = await db.cto_open_findings.find(
+            {"user_id": user_id, "project_id": project_id, "status": "open",
+             "finding_id": {"$in": ids}, **verified_only_filter()},
+            _FINDING_SHAPE_PROJECTION,
+        ).to_list(len(ids))
+    except Exception as e:                                   # noqa: BLE001
+        # Fail OPEN — same contract as drop_unverified_findings: this
+        # is a reconciliation step, not the security gate itself
+        # (drop_unverified_findings, called right after this, is).
+        import logging
+        logging.getLogger("aurem.finding_scope").warning(
+            "reconcile_findings_against_stored_rows query failed (passing through unreconciled): %r", e,
+        )
+        return findings
+    by_id = {r["finding_id"]: r for r in rows if r.get("finding_id")}
+    reconciled = []
+    for f in findings:
+        fid = f.get("id") or f.get("finding_id")
+        stored = by_id.get(fid)
+        if stored:
+            reconciled.append({**f, **_row_to_finding(stored)})
+        else:
+            reconciled.append(f)
+    return reconciled

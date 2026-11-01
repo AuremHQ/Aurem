@@ -216,8 +216,28 @@ def _mock_llm_boundary(monkeypatch, branch_content: dict):
             return "", "llm_no_change"
         return current_content + f"\n{marker}\n", None
 
+    async def _llm_multi(*, path, current_content, findings, user_id, db):
+        # Part 2b F2 — apply_file_fixes's one-call-per-file path.
+        # Appends the SAME marker convention for every finding passed
+        # in this one call, so _not_present's content-aware check
+        # (shared by both apply_finding_fix and apply_file_fixes)
+        # works identically either way.
+        out = current_content
+        for f in findings:
+            marker = f"FIXED[{f.get('rule_id')}]"
+            if marker not in out:
+                out += f"\n{marker}\n"
+        if out == current_content:
+            return "", "llm_no_change"
+        return out, None
+
     def _not_present(patched_content, path, finding):
-        return False
+        # Part 2b R1 — this is now called BOTH as a pre-check (on the
+        # unpatched content, before the LLM runs) and as the original
+        # post-patch validation. Content-aware: "still present" means
+        # the fix marker this fake LLM adds isn't there yet.
+        marker = f"FIXED[{finding.get('rule_id')}]"
+        return marker not in patched_content
 
     commits = []
 
@@ -231,6 +251,7 @@ def _mock_llm_boundary(monkeypatch, branch_content: dict):
 
     monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
     monkeypatch.setattr(ffa, "_generate_patched_content", _llm)
+    monkeypatch.setattr(ffa, "_generate_patched_content_multi", _llm_multi)
     monkeypatch.setattr(ffa, "_finding_still_present", _not_present)
     monkeypatch.setattr("services.github_api_writer.commit_files", _commit)
     return commits
@@ -329,8 +350,13 @@ class TestBulkIntegrationThroughApiLayer:
         assert "FIXED[rule_a1]" in final_a and "FIXED[rule_a2]" in final_a
         final_c = branch_content[batch_branch]["c.py"]
         assert "FIXED[rule_c1]" in final_c and "FIXED[rule_c2]" in final_c
-        # Exactly one commit per finding, all on the same branch.
-        assert len(commits) == 5
+        # Part 2b F2 — ONE commit per FILE now (not per finding): 3
+        # files (a.py x2 findings, b.py x1, c.py x2 findings) = 3
+        # commits total, all on the same shared branch. This is the
+        # actual R2 fix — a.py's 2 findings and c.py's 2 findings
+        # each got ONE LLM call + ONE commit covering both.
+        assert len(commits) == 3
+        assert {c["branch"] for c in commits} == {batch_branch}
         assert {cm["branch"] for cm in commits} == {batch_branch}
 
 

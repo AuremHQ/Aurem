@@ -927,7 +927,8 @@ async def apply_security_fix(
     # re-run that found nothing new to commit is NOT charged.
     await finalize_hold(
         db, user_id=user_id, action="fix", run_id=wallet_run_id,
-        ok=bool(res.get("ok")) and not res.get("skipped_no_change"),
+        ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+           and not res.get("skipped_not_present"),
         reason=res.get("error") or "",
     )
 
@@ -961,7 +962,8 @@ async def apply_security_fix(
     # FIX_one_branch_for_all_fixes, design item 12 — skipped_no_change
     # is a real "already fixed" outcome but not a NEW commit, so it's
     # not charged (same rule as the wallet hold above).
-    if res.get("ok") and not res.get("skipped_no_change") and not is_unlimited_user:
+    if res.get("ok") and not res.get("skipped_no_change") \
+            and not res.get("skipped_not_present") and not is_unlimited_user:
         try:
             await record_scan_fixes(user_id, "vanguard-scan", 1)
         except Exception as _e:

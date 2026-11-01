@@ -448,11 +448,13 @@ async def try_scan_followup_reply(db, *, user_id: Optional[str],
                         # branch) is not charged.
                         await finalize_hold(
                             db, user_id=user_id, action="fix", run_id=wallet_run_id,
-                            ok=bool(r.get("ok")) and not r.get("skipped_no_change"),
+                            ok=bool(r.get("ok")) and not r.get("skipped_no_change")
+                               and not r.get("skipped_not_present"),
                             reason=r.get("error") or "",
                         )
                     results.append((f, r))
-                    if r.get("ok") and not r.get("skipped_no_change"):
+                    if r.get("ok") and not r.get("skipped_no_change") \
+                            and not r.get("skipped_not_present"):
                         try:
                             await record_scan_fixes(user_id, "health-scan", 1)
                         except Exception:                      # noqa: BLE001

@@ -25,6 +25,9 @@ import {
 } from "lucide-react";
 import { useFixJob } from "./FixJobContext";
 import { FixProofPanel } from "./FixProofPanel";
+import { api } from "../lib/api";
+import { toast } from "./Toast";
+import { Undo2 } from "lucide-react";
 
 const PHASE_META = {
   queued:           { Icon: FileSearch,  color: "#94a3b8", label: "Queued" },
@@ -205,7 +208,21 @@ function ActiveFixCard({ row, fixIndex, fixTotal }) {
 /* ── Completed fix row ──────────────────────────────────────────────── */
 function CompletedRow({ row }) {
   const [expanded, setExpanded] = useState(false);
+  // Part 2b R6 — "Undo this fix": confirm -> loading -> success/error.
+  const [undoState, setUndoState] = useState("idle"); // idle | confirm | loading | done | error
   const isFailed = row.ok === false;
+
+  async function doUndo() {
+    setUndoState("loading");
+    try {
+      await api.post(`/fix-pipeline/fixes/${row.fix_id}/revert`);
+      setUndoState("done");
+    } catch (e) {
+      setUndoState("error");
+      toast(e?.response?.data?.detail || e?.message || "Couldn't undo this fix — try again.");
+    }
+  }
+
   return (
     <div
       data-testid={`fix-row-${row.finding_id}`}
@@ -294,6 +311,56 @@ function CompletedRow({ row }) {
                 : `Guardian re-scan: ${row.guardian_rescan.remaining_in_file} other issue(s) remain`}
             </span>
           )}
+          {row.fix_id && undoState === "idle" && (
+            <button type="button" data-testid={`fix-row-undo-${row.finding_id}`}
+                    onClick={() => setUndoState("confirm")}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "2px 6px", borderRadius: 999, cursor: "pointer",
+                      background: "rgba(148,163,184,0.08)",
+                      border: "1px solid rgba(148,163,184,0.25)",
+                      color: "#94a3b8",
+                    }}>
+              <Undo2 size={10} /> Undo
+            </button>
+          )}
+          {row.fix_id && undoState === "confirm" && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ color: "#fca5a5" }}>Undo this fix?</span>
+              <button type="button" data-testid={`fix-row-undo-confirm-${row.finding_id}`}
+                      onClick={doUndo}
+                      style={{ padding: "2px 6px", borderRadius: 999, cursor: "pointer",
+                               background: "rgba(239,68,68,0.15)",
+                               border: "1px solid rgba(239,68,68,0.4)", color: "#fca5a5" }}>
+                Yes, undo
+              </button>
+              <button type="button" onClick={() => setUndoState("idle")}
+                      style={{ padding: "2px 6px", borderRadius: 999, cursor: "pointer",
+                               background: "transparent", border: "1px solid rgba(148,163,184,0.25)",
+                               color: "#94a3b8" }}>
+                Cancel
+              </button>
+            </span>
+          )}
+          {undoState === "loading" && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#94a3b8" }}>
+              <Loader2 size={10} className="animate-spin" /> Undoing…
+            </span>
+          )}
+          {undoState === "done" && (
+            <span data-testid={`fix-row-undone-${row.finding_id}`} style={{
+              padding: "2px 6px", borderRadius: 999,
+              background: "rgba(148,163,184,0.10)",
+              border: "1px solid rgba(148,163,184,0.30)", color: "#cbd5e1",
+            }}>Reverted — back in the open list</span>
+          )}
+          {undoState === "error" && (
+            <button type="button" onClick={() => setUndoState("idle")}
+                    style={{ color: "#fca5a5", background: "transparent", border: "1px solid rgba(239,68,68,0.3)",
+                             borderRadius: 999, padding: "2px 6px", cursor: "pointer" }}>
+              Undo failed — retry
+            </button>
+          )}
         </div>
       )}
       {isFailed && row.error && (
@@ -358,6 +425,81 @@ function FinalSummaryCard({ terminal, completed, failed, total, durationStr, job
         fontFamily: "'JetBrains Mono', monospace",
       }}>job <code>{jobId?.slice(0, 12)}</code></div>
       <FixProofPanel jobId={jobId} />
+    </div>
+  );
+}
+
+// Part 2b R6 — "Undo all" closes the whole shared batch PR and
+// reopens every finding it resolved. Destructive + explicit —
+// requires its own confirm step, separate from a single-fix undo.
+function UndoAllButton({ batchId }) {
+  const [state, setState] = useState("idle"); // idle | confirm | loading | done | error
+
+  async function doUndoAll() {
+    setState("loading");
+    try {
+      await api.post(`/fix-pipeline/batches/${batchId}/revert`, { confirm: true });
+      setState("done");
+    } catch (e) {
+      setState("error");
+      toast(e?.response?.data?.detail || e?.message || "Couldn't undo the batch — try again.");
+    }
+  }
+
+  if (state === "done") {
+    return (
+      <div data-testid="fix-batch-undone" style={{
+        fontSize: 11, color: "#cbd5e1", marginBottom: 8,
+        padding: "6px 8px", borderRadius: 6,
+        background: "rgba(148,163,184,0.08)",
+        border: "1px solid rgba(148,163,184,0.25)",
+      }}>Batch reverted — the PR is closed and every fix reopened.</div>
+    );
+  }
+  return (
+    <div style={{ marginBottom: 8, fontSize: 11 }}>
+      {state === "idle" && (
+        <button type="button" data-testid="fix-batch-undo-all"
+                onClick={() => setState("confirm")}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                         padding: "4px 8px", borderRadius: 6, cursor: "pointer",
+                         background: "rgba(148,163,184,0.08)",
+                         border: "1px solid rgba(148,163,184,0.25)", color: "#94a3b8" }}>
+          <Undo2 size={11} /> Undo all (closes the PR)
+        </button>
+      )}
+      {state === "confirm" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ color: "#fca5a5" }}>
+            This closes the shared PR and reopens every fix in it. Undo all?
+          </span>
+          <button type="button" data-testid="fix-batch-undo-all-confirm"
+                  onClick={doUndoAll}
+                  style={{ padding: "4px 8px", borderRadius: 6, cursor: "pointer",
+                           background: "rgba(239,68,68,0.15)",
+                           border: "1px solid rgba(239,68,68,0.4)", color: "#fca5a5" }}>
+            Yes, undo all
+          </button>
+          <button type="button" onClick={() => setState("idle")}
+                  style={{ padding: "4px 8px", borderRadius: 6, cursor: "pointer",
+                           background: "transparent", border: "1px solid rgba(148,163,184,0.25)",
+                           color: "#94a3b8" }}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {state === "loading" && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#94a3b8" }}>
+          <Loader2 size={11} className="animate-spin" /> Reverting batch…
+        </span>
+      )}
+      {state === "error" && (
+        <button type="button" onClick={() => setState("idle")}
+                style={{ color: "#fca5a5", background: "transparent", border: "1px solid rgba(239,68,68,0.3)",
+                         borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
+          Undo all failed — retry
+        </button>
+      )}
     </div>
   );
 }
@@ -656,6 +798,10 @@ export default function FixProgressDrawer() {
               All fixes are on one branch{batchInfo.branch ? `: ${batchInfo.branch}` : ""} — 1 pull request
               <ExternalLink size={10} />
             </a>
+          )}
+
+          {terminal && batchInfo?.batch_id && (
+            <UndoAllButton batchId={batchInfo.batch_id} />
           )}
 
           {completedRows.length > 0 && (

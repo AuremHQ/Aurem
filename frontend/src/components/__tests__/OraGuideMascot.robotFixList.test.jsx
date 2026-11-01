@@ -19,7 +19,10 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom";
 
 const apiGetMock = vi.fn();
-vi.mock("../../lib/api", () => ({ api: { get: (...args) => apiGetMock(...args) } }));
+const apiPostMock = vi.fn();
+vi.mock("../../lib/api", () => ({
+  api: { get: (...args) => apiGetMock(...args), post: (...args) => apiPostMock(...args) },
+}));
 vi.mock("../GlobalHelpFAB", () => ({ shouldHide: () => false }));
 vi.mock("../Toast", () => ({ toast: vi.fn() }));
 vi.mock("../../hooks/useGuideSpotlight.jsx", () => ({
@@ -195,7 +198,7 @@ describe("Robot Fix List — FE1/FE2/FE3/F3", () => {
     await waitFor(() => expect(screen.getByTestId("ora-guide-fixlist-title")).toHaveTextContent("A issue"));
   });
 
-  it("F3 — 'See all' groups issues by file and 'Fix this file' prefills one prompt for the whole file", async () => {
+  it("F3 — 'See all' groups issues by file", async () => {
     apiGetMock.mockImplementation((url, opts) => {
       if (opts?.params?.project_id === "proj-A") {
         const issues = [
@@ -218,12 +221,45 @@ describe("Robot Fix List — FE1/FE2/FE3/F3", () => {
 
     await waitFor(() => expect(screen.getByTestId("ora-guide-fixlist-file-auth.py")).toBeTruthy());
     expect(screen.getByText(/2 issues, worst: critical/)).toBeTruthy();
+  });
 
-    let captured = null;
-    window.addEventListener("aurem:starter-pick", (e) => { captured = e.detail.prompt; });
+  it("Part 2b R2/F2 — 'Fix this file' calls the bulk API with finding_ids, not the chat composer", async () => {
+    const issues = [
+      { finding_id: "a1", severity: "critical", title: "Hardcoded secret", file: "auth.py", line: 10 },
+      { finding_id: "a2", severity: "medium", title: "Weak hash", file: "auth.py", line: 20 },
+    ];
+    apiGetMock.mockImplementation((url, opts) => {
+      if (opts?.params?.project_id === "proj-A") {
+        return Promise.resolve({
+          data: {
+            items: issues, total_open: 2,
+            files: [{ file: "auth.py", issue_count: 2, max_severity: "critical", issues }],
+          },
+        });
+      }
+      return Promise.resolve({ data: { items: [], total_open: 0, files: [] } });
+    });
+    apiPostMock.mockImplementation(() => Promise.resolve({ data: { job_id: "fx_abc123" } }));
+
+    render(<Harness />);
+    fireEvent.click(await screen.findByTestId("ora-guide-mascot-avatar"));
+    await waitFor(() => screen.getByTestId("ora-guide-fixlist-seeall"));
+    fireEvent.click(screen.getByTestId("ora-guide-fixlist-seeall"));
+    await waitFor(() => expect(screen.getByTestId("ora-guide-fixlist-file-auth.py")).toBeTruthy());
+
+    let composerPromptFired = false;
+    window.addEventListener("aurem:starter-pick", () => { composerPromptFired = true; });
+    let openedJob = null;
+    window.addEventListener("aurem:open-fix-progress", (e) => { openedJob = e.detail; });
+
     fireEvent.click(screen.getByTestId("ora-guide-fixlist-file-fix-auth.py"));
-    expect(captured).toContain("auth.py");
-    expect(captured).toContain("2 issues");
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled());
+
+    expect(apiPostMock).toHaveBeenCalledWith("/fix-pipeline/bulk", {
+      project_id: "proj-A", finding_ids: ["a1", "a2"],
+    });
+    expect(composerPromptFired).toBe(false);
+    await waitFor(() => expect(openedJob).toEqual({ job_id: "fx_abc123", total: 2 }));
   });
 
   it("F3 — legacy flat items still render (backward compat)", async () => {
