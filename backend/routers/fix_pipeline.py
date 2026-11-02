@@ -53,7 +53,6 @@ import difflib
 import json
 import logging
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from sse_starlette.sse import EventSourceResponse
@@ -64,13 +63,12 @@ from services import fix_job_manager as fjm
 from services import ora_fix_learning
 from services.finding_fix_applier import (
     apply_file_fixes,
-    apply_finding_fix,
     revert_batch,
     revert_finding_fix,
 )
-from services.rate_limiter import check_rate_limit_async
 from services.fixed_findings import record_fixed
 from services.notifications import emit_notification
+from services.rate_limiter import check_rate_limit_async
 from services.scan_fix_quota import (
     ALL_FIX_TOOLS,
     assert_can_fix,
@@ -124,7 +122,7 @@ def _compute_diff_lines(before: str, after: str) -> list[dict]:
             # Context line (no prefix marker after the unified_diff
             # strip).  Useful so the drawer can show a few lines of
             # surrounding code for orientation.
-            stripped = line[1:] if line.startswith(" ") else line
+            stripped = line.removeprefix(" ")
             out.append({"type": "context", "line": redact_secrets_in_text(stripped)})
         if len(out) >= _MAX_DIFF_LINES:
             out.append({"type": "context",
@@ -190,7 +188,7 @@ _TERMINAL_ERROR_CODES     = frozenset({
 # `get_fix_quota()`/`assert_can_fix()` then resolve tier/is_unlimited
 # off THAT id, so a team member's fix draws from the shared account's
 # quota, not their own (usually free-tier) personal login.
-async def _gate(authorization: Optional[str], level: str, db=None) -> tuple[dict, dict]:
+async def _gate(authorization: str | None, level: str, db=None) -> tuple[dict, dict]:
     caller = await current_dev(authorization)
     ctx = await check_permission(caller, "loop", level, db=db)
     effective_user = {**caller, "user_id": ctx["effective_account_id"]}
@@ -200,7 +198,7 @@ async def _gate(authorization: Optional[str], level: str, db=None) -> tuple[dict
 # ─── Preview endpoint ──────────────────────────────────────────────────
 @router.post("/preview")
 async def preview_cost(body: dict,
-                       authorization: Optional[str] = Header(None)) -> dict:
+                       authorization: str | None = Header(None)) -> dict:
     """Cheap, no-side-effect cost preview for the bulk-fix confirm
     modal.  Returns total tokens + estimated USD + the caller's
     current balance + an `is_unlimited` flag the UI uses to swap the
@@ -261,7 +259,7 @@ async def preview_cost(body: dict,
 
 
 @router.get("/quota")
-async def fix_quota(authorization: Optional[str] = Header(None)) -> dict:
+async def fix_quota(authorization: str | None = Header(None)) -> dict:
     """Iter 212m-190 — task-quota snapshot for the fix UI. The frontend
     uses `fix_tools` to show/hide per-finding Fix buttons and
     `bulk_fix` to show/hide the bulk button (Team tier only)."""
@@ -273,7 +271,7 @@ async def fix_quota(authorization: Optional[str] = Header(None)) -> dict:
 # ─── Bulk fix kick-off ─────────────────────────────────────────────────
 @router.post("/bulk")
 async def start_bulk_fix(body: dict,
-                         authorization: Optional[str] = Header(None)) -> dict:
+                         authorization: str | None = Header(None)) -> dict:
     """Kick off a sequential bulk fix.  The HTTP response returns
     immediately with `{job_id}`; the client opens an SSE connection
     to `/fix-pipeline/stream/{job_id}` to watch progress."""
@@ -294,28 +292,46 @@ async def start_bulk_fix(body: dict,
         reconcile_findings_against_stored_rows,
         resolve_findings_by_ids,
     )
-    if finding_ids:
-        # Part 2b F7 — the authoritative path: server loads the real
-        # rows itself (effective account + project + verified + open)
-        # instead of trusting whatever the client POSTed. Any id with
-        # no matching row (foreign, unverified, already closed,
-        # tampered) is silently dropped here, never fabricated.
-        findings = await resolve_findings_by_ids(
-            db, user_id=user_id, project_id=project_id, finding_ids=finding_ids,
-        )
-    else:
-        # Legacy path — never trust client-supplied severity/title/
-        # fix_hint for billing or LLM prompts; overwrite from the
-        # stored row wherever one matches.
-        findings = await reconcile_findings_against_stored_rows(
+    # Part 2c C4(a) — a Mongo outage during either reconciliation
+    # step must stop the request HERE, before any wallet hold, task-
+    # quota debit, or LLM work starts — never silently proceed with
+    # un-reconciled/unverified findings. Both helpers' OWN default
+    # (fail-open) contract is unchanged for every other caller; this
+    # is the one caller that opts into strict (re-raising) mode.
+    try:
+        if finding_ids:
+            # Part 2b F7 — the authoritative path: server loads the
+            # real rows itself (effective account + project +
+            # verified + open) instead of trusting whatever the
+            # client POSTed. Any id with no matching row (foreign,
+            # unverified, already closed, tampered) is silently
+            # dropped here, never fabricated.
+            findings = await resolve_findings_by_ids(
+                db, user_id=user_id, project_id=project_id, finding_ids=finding_ids,
+            )
+        else:
+            # Legacy path — never trust client-supplied severity/title/
+            # fix_hint for billing or LLM prompts; overwrite from the
+            # stored row wherever one matches.
+            findings = await reconcile_findings_against_stored_rows(
+                db, user_id=user_id, project_id=project_id, findings=findings,
+                strict=True,
+            )
+        # Robot Fix List B2 — real-only gate applies to bulk-fix input
+        # too, even when the caller POSTs findings directly instead of
+        # going through the (already-filtered) fix-list endpoint.
+        findings = await drop_unverified_findings(
             db, user_id=user_id, project_id=project_id, findings=findings,
+            strict=True,
         )
-    # Robot Fix List B2 — real-only gate applies to bulk-fix input
-    # too, even when the caller POSTs findings directly instead of
-    # going through the (already-filtered) fix-list endpoint.
-    findings = await drop_unverified_findings(
-        db, user_id=user_id, project_id=project_id, findings=findings,
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("bulk-fix input verification unavailable (failing closed): %r", e)
+        raise HTTPException(503, {
+            "error": "verification_unavailable", "retryable": True,
+            "message": "Could not verify these findings right now — no charge, no work started. Try again shortly.",
+        }) from e
     if not findings:
         raise HTTPException(400, "findings is empty")
     if len(findings) > _BULK_MAX_FINDINGS:
@@ -437,8 +453,8 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
     # independently (one device's capture failing never blocks the
     # other's).
     proof_attempted = False
-    before_shots: dict[str, Optional[bytes]] = {"desktop": None, "mobile": None}
-    before_fail: dict[str, Optional[str]] = {"desktop": None, "mobile": None}
+    before_shots: dict[str, bytes | None] = {"desktop": None, "mobile": None}
+    before_fail: dict[str, str | None] = {"desktop": None, "mobile": None}
     proj_doc = await db.cto_projects.find_one({"project_id": project_id}, {"_id": 0, "preview_url": 1})
     preview_url = (proj_doc or {}).get("preview_url")
     if preview_url:
@@ -543,6 +559,10 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     # Part 2b R6 — needed by the frontend's "Undo this
                     # fix" button.
                     "fix_id": match.get("fix_id"),
+                    # Part 2c C1 — drives "Undo all N fixes in this
+                    # file" instead of a plain "Undo" when this
+                    # commit resolved more than one finding.
+                    "sibling_count": match.get("sibling_count"),
                 }
             if status == "skipped_not_present":
                 return {
@@ -575,7 +595,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                         db=db, user=user, project_id=project_id,
                         file=fpath, findings=group,
                     )
-                except Exception as e:                           # noqa: BLE001
+                except Exception as e:
                     logger.exception("apply_file_fixes raised for file=%s attempt=%d",
                                      fpath, attempt)
                     file_res = {"ok": False, "error": f"unhandled: {e}", "results": []}
@@ -668,7 +688,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     try:
                         file_res = await _resolve_file_once(path)
                         attempts_used = 1
-                    except Exception as e:                            # noqa: BLE001
+                    except Exception as e:
                         logger.exception("apply_file_fixes raised for finding=%s "
                                          "file=%s", finding_id, path)
                         file_res = {"ok": False, "error": f"unhandled: {e}", "results": []}
@@ -820,6 +840,9 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                          # Part 2b R6 — needed by the frontend's
                          # "Undo this fix" button.
                          fix_id=res.get("fix_id"),
+                         # Part 2c C1 — "Undo all N fixes in this
+                         # file" vs plain "Undo".
+                         sibling_count=res.get("sibling_count"),
                          fix_index=global_idx,
                          fix_total=len(ordered),
                          # 2026-08-23 — tri-state, not a bool: True=
@@ -1013,7 +1036,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
             message="Worker cancelled mid-flight. Click Restart to resume.",
         )
         raise
-    except Exception as e:                                  # noqa: BLE001
+    except Exception as e:
         # Top-level catch: a Mongo glitch, an upstream GitHub 5xx that
         # escaped the per-finding block, a programming bug — instead
         # of silently dying and leaving "running" forever, we emit a
@@ -1108,7 +1131,7 @@ def _interleave_by_severity(findings: list[dict]) -> list[dict]:
     return out
 
 
-def _guardian_rescan(category: str, path: str, patched_content: str) -> Optional[dict]:
+def _guardian_rescan(category: str, path: str, patched_content: str) -> dict | None:
     """2026-10 — "Guardian re-scan" (founder spec, roadmap.sh "safe fix
     loop" criterion: verify the fix actually worked, not just that the
     LLM said so). `apply_finding_fix()` already re-validates the ONE
@@ -1152,7 +1175,7 @@ def _guardian_rescan(category: str, path: str, patched_content: str) -> Optional
 
 
 async def _verify_commit_exists(*, db, user: dict, project_id: str,
-                                full_sha: Optional[str]) -> Optional[bool]:
+                                full_sha: str | None) -> bool | None:
     """Hit GET /repos/{owner}/{repo}/commits/{sha} to confirm the
     commit landed on GitHub.  No `True` shortcut without a real
     HTTP 200 + non-empty parents list — the user explicitly asked
@@ -1208,8 +1231,8 @@ async def _verify_commit_exists(*, db, user: dict, project_id: str,
 # ─── SSE stream ────────────────────────────────────────────────────────
 @router.get("/stream/{job_id}")
 async def stream_fix(job_id: str,
-                     token: Optional[str] = None,
-                     authorization: Optional[str] = Header(None)):
+                     token: str | None = None,
+                     authorization: str | None = Header(None)):
     """Server-Sent Events.  Re-auth via the standard JWT; rejects
     cross-tenant subscriptions so one user can't tail another's
     fix job.
@@ -1250,7 +1273,7 @@ async def stream_fix(job_id: str,
     else:
         # Owner check — in-memory job must belong to the caller's
         # (team-resolved) account.
-        job = fjm._JOBS.get(job_id) or {}                 # noqa: SLF001
+        job = fjm._JOBS.get(job_id) or {}
         # Part 2b R5 — fail CLOSED: a job with no recorded owner is
         # denied to everyone, never implicitly granted.
         if job.get("user_id") != effective["user_id"] \
@@ -1267,7 +1290,7 @@ async def stream_fix(job_id: str,
 # ─── Polling fallback ──────────────────────────────────────────────────
 @router.get("/summary/{job_id}")
 async def get_job_summary(job_id: str,
-                           authorization: Optional[str] = Header(None)) -> dict:
+                           authorization: str | None = Header(None)) -> dict:
     user, effective = await _gate(authorization, "read")
     db = get_db()
     s = fjm.get_summary(job_id)
@@ -1278,7 +1301,7 @@ async def get_job_summary(job_id: str,
         if not persisted:
             raise HTTPException(404, "Job not found")
         return {"ok": True, "from_mongo": True, **persisted}
-    job = fjm._JOBS.get(job_id) or {}                         # noqa: SLF001
+    job = fjm._JOBS.get(job_id) or {}
     # Part 2b R5 — fail CLOSED (see the identical note above).
     if job.get("user_id") != effective["user_id"] \
             and not user.get("is_admin"):
@@ -1289,7 +1312,7 @@ async def get_job_summary(job_id: str,
 # ─── Ticket D (2026-02) — per-fix before/after live proof ─────────────
 @router.get("/proof/{job_id}/meta")
 async def get_fix_before_after_proof_meta(job_id: str,
-                                           authorization: Optional[str] = Header(None)) -> dict:
+                                           authorization: str | None = Header(None)) -> dict:
     """Ticket D-UI (2026-02) — a single cheap JSON call the drawer uses
     to decide which state to render (loading/empty/could-not-verify/
     success) BEFORE fetching any image bytes. Honest states:
@@ -1325,7 +1348,7 @@ async def get_fix_before_after_proof_meta(job_id: str,
 async def get_fix_before_after_proof(job_id: str,
                                       variant: str = "before",
                                       device: str = "desktop",
-                                      authorization: Optional[str] = Header(None)):
+                                      authorization: str | None = Header(None)):
     """Streams back one of the 3 receipt images (before/after/diff) for
     one device (desktop/mobile), same ownership check as /summary.
     Honest 404 when this job had no preview_url (no proof attempted)
@@ -1351,7 +1374,7 @@ async def get_fix_before_after_proof(job_id: str,
 # ─── 2026-08-23 — manual "Check now" retry for inconclusive verify ────
 @router.get("/verify-commit")
 async def retry_verify_commit(job_id: str, finding_id: str,
-                               authorization: Optional[str] = Header(None)) -> dict:
+                               authorization: str | None = Header(None)) -> dict:
     """The commit-exists check can itself fail (rate limit, network)
     independent of whether the fix succeeded. This lets the UI ask
     "check again" without re-running the whole fix."""
@@ -1378,9 +1401,9 @@ async def retry_verify_commit(job_id: str, finding_id: str,
 # ─── Iter 212m-128 — List user's recent jobs ──────────────────────────
 @router.get("/list")
 async def list_user_jobs(
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 20,
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
 ) -> dict:
     """Returns the account's recent fix jobs (newest first) — shared
     across every team member with "loop" access, not just whoever
@@ -1399,7 +1422,7 @@ async def list_user_jobs(
 # ─── Iter 212m-128 — Restart an orphaned / failed job ─────────────────
 @router.post("/restart/{job_id}")
 async def restart_job(job_id: str,
-                      authorization: Optional[str] = Header(None)) -> dict:
+                      authorization: str | None = Header(None)) -> dict:
     """Spin a fresh worker on the findings that were NOT yet
     completed by the original job.  Returns a NEW job_id (with a
     clean event stream) — the old row stays in Mongo as historical
@@ -1491,7 +1514,7 @@ _REVERT_RATE_PER_MIN = 20
 
 @router.post("/fixes/{fix_id}/revert")
 async def revert_one_fix(
-    fix_id: str, authorization: Optional[str] = Header(None),
+    fix_id: str, authorization: str | None = Header(None),
 ) -> dict:
     """Undo ONE fix — restores that file to its pre-fix content via a
     new commit on the shared batch branch; never touches the PR or
@@ -1535,8 +1558,8 @@ async def revert_one_fix(
 
 @router.post("/batches/{batch_id}/revert")
 async def revert_one_batch(
-    batch_id: str, body: Optional[dict] = None,
-    authorization: Optional[str] = Header(None),
+    batch_id: str, body: dict | None = None,
+    authorization: str | None = Header(None),
 ) -> dict:
     """Undo an ENTIRE batch — closes the shared PR and reopens every
     finding it resolved. Explicit, separate from a single-fix revert;

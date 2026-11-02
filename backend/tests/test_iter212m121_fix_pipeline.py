@@ -81,6 +81,26 @@ class _FakeColl:
         # Same intent as aggregate — no prior data.
         return 0
 
+    # Part 2c C4 — reconcile_findings_against_stored_rows/
+    # drop_unverified_findings (now called in strict=True mode by
+    # start_bulk_fix) query cto_open_findings.find(...).to_list(...).
+    # Same "empty is the correct signal" philosophy as aggregate()
+    # above — these tests start from a clean cto_open_findings slate,
+    # so every item is legitimately "no matching stored row".
+    def find(self, query, projection=None):
+        rows = [
+            dict(r) for r in self.rows
+            if all(r.get(k) == v for k, v in (query or {}).items() if not isinstance(v, dict))
+        ]
+
+        class _Cur:
+            def __init__(self, items):
+                self.items = items
+
+            async def to_list(self, length=None):
+                return list(self.items)[: (length if length is not None else len(self.items))]
+        return _Cur(rows)
+
 
 class _FakeDB:
     def __init__(self, user_doc=None, projects=None):

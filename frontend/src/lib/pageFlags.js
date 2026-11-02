@@ -11,6 +11,7 @@ let _flags = {
   analytics: false,
   wall: false,
   shipViaPr: false,
+  projectVersions: false,
 };
 
 export function setPageFlags(meResponseData) {
@@ -19,6 +20,8 @@ export function setPageFlags(meResponseData) {
     analytics: meResponseData?.analytics_page_enabled === true,
     wall: meResponseData?.ship_wall_enabled === true,
     shipViaPr: meResponseData?.ship_via_pr_enabled === true,
+    // Part 2c B4 — Project Versions "Changes" page. Default OFF.
+    projectVersions: meResponseData?.project_versions_enabled === true,
   };
 }
 
@@ -42,4 +45,8 @@ export function isShipWallEnabled() {
 // actually happen.
 export function isShipViaPrEnabled() {
   return _flags.shipViaPr;
+}
+
+export function isProjectVersionsEnabled() {
+  return _flags.projectVersions;
 }

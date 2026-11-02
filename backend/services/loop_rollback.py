@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from services.bg_safe import safe_bg
+from services.project_versions import mark_rolled_back
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +358,13 @@ async def run_rollback(
             rollback_html_url=rb_html_url,
             rollback_completed_at=time.time(),
         )
+        # Part 2c B2 — Project Versions. This is the ONE existing
+        # function that reverts a merged ship (shared by the G12
+        # admin path and the R10 user one-click path) — mark the
+        # corresponding version row rolled_back HERE, at the single
+        # point a revert is actually CONFIRMED landed, rather than
+        # building any new rollback logic. Best-effort, never raises.
+        await mark_rolled_back(db, loop_id=loop_id)
         await _prog(f"reverted → {(rb_sha or '')[:7]}", "success")
         await _ledger_final("success", restored_commit_sha=rb_sha)
         # ORA Brain Part 4, F2 — objective outcome signal: a completed

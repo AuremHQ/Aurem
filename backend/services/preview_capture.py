@@ -42,11 +42,38 @@ RECEIPT_RETENTION_DAYS = 30
 CAPTURE_TIMEOUT_MS = 20000
 
 
+async def _route_guard(route) -> None:
+    """Part 2c C8 — re-checked on EVERY request Playwright makes for
+    this page (initial nav, every redirect, every sub-resource), not
+    just the URL we were handed. This is what catches a server-side
+    redirect from an initially-safe URL to a private IP, and a DNS
+    answer that changed between our own pre-check and the actual
+    request — neither of which a one-time check before `page.goto`
+    could ever see."""
+    from services.url_guard import is_safe_public_http_url
+    req_url = route.request.url() if callable(route.request.url) else route.request.url
+    if is_safe_public_http_url(req_url):
+        await route.continue_()
+    else:
+        logger.warning("capture_screenshot route guard blocked %s", req_url)
+        await route.abort()
+
+
 async def capture_screenshot(url: str, device: str = "phone") -> Optional[bytes]:
     """Navigate to `url` at the given device viewport, return JPEG
-    bytes (q80). None on ANY failure — fail-open; callers must render
-    an honest "capture unavailable" state, never fabricate an image."""
-    if not url:
+    bytes (q80). None on ANY failure (including an unsafe URL) —
+    fail-closed on safety, fail-open on everything else; callers must
+    render an honest "capture unavailable" state, never fabricate an
+    image.
+
+    Part 2c C8 — SSRF guard, defense in depth at two points: (1) the
+    URL itself is checked here, before any browser launch, so an
+    obviously-unsafe URL never even starts Playwright; (2) a route
+    interceptor is registered on the page for EVERY request it makes,
+    so a redirect or sub-resource load that targets a private IP is
+    aborted mid-navigation even when the original URL looked safe."""
+    from services.url_guard import is_safe_public_http_url
+    if not url or not is_safe_public_http_url(url):
         return None
     viewport = DEVICE_VIEWPORTS.get(device, DEVICE_VIEWPORTS["phone"])
     try:
@@ -60,6 +87,7 @@ async def capture_screenshot(url: str, device: str = "phone") -> Optional[bytes]
                 try:
                     context = await browser.new_context(viewport=viewport)
                     page = await context.new_page()
+                    await page.route("**/*", _route_guard)
                     await page.goto(url, wait_until="load", timeout=CAPTURE_TIMEOUT_MS)
                     await page.wait_for_timeout(400)
                     return await page.screenshot(type="jpeg", quality=80)

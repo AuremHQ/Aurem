@@ -247,6 +247,20 @@ async def ensure_dedup_indexes(db) -> List[dict]:
                ("finding_id", ASCENDING)],
               "uniq_user_project_finding", unique=True)
 
+    # 14) Project Versions (Part 2c B1) — permanent per-project change
+    # history. Two independent unique constraints:
+    #   * (project_id, merged_sha) — a webhook REDELIVERY of the same
+    #     merge event must insert nothing a second time.
+    #   * (project_id, n)          — the version NUMBER is never
+    #     reused or double-allocated, even under a concurrent-merge
+    #     race (services/project_versions.py allocates `n` via an
+    #     atomic $inc on the project doc; this index is the belt-and-
+    #     suspenders backstop if two allocations ever raced anyway).
+    await _mk("project_versions", [("project_id", ASCENDING), ("merged_sha", ASCENDING)],
+              "uniq_project_merged_sha", unique=True)
+    await _mk("project_versions", [("project_id", ASCENDING), ("n", ASCENDING)],
+              "uniq_project_version_n", unique=True)
+
     return results
 
 
@@ -275,6 +289,7 @@ async def get_dedup_index_report(db) -> dict:
         "winback_campaign_state": ["uniq_user_campaign"],
         "fix_batches": ["uniq_open_fix_batch"],
         "cto_open_findings": ["uniq_user_project_finding"],
+        "project_versions": ["uniq_project_merged_sha", "uniq_project_version_n"],
     }
     present: dict[str, bool] = {}
     dup_counts: dict[str, int] = {}

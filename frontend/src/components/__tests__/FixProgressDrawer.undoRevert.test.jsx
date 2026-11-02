@@ -120,6 +120,45 @@ describe("FixProgressDrawer — Part 2b R6 undo/revert", () => {
     await waitFor(() => expect(screen.getByTestId("fix-batch-undone")).toBeTruthy());
   });
 
+  it("Part 2c C1 — shows 'Undo all N fixes in this file' when sibling_count > 1", async () => {
+    render(<FixJobProvider><Harness /></FixJobProvider>);
+    act(() => { window.__startJob({ job_id: "job-undo-4", total: 1 }); });
+    const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+
+    act(() => {
+      es.emit("phase", {
+        phase: "fix-done", ok: true, finding_id: "f1",
+        commit_sha: "abc1234", html_url: "https://x",
+        file: "a.py", rule_id: "rule_a", fix_id: "fx_1",
+        sibling_count: 3,
+        fix_index: 1, fix_total: 1,
+      });
+    });
+
+    const undoBtn = screen.getByTestId("fix-row-undo-f1");
+    expect(undoBtn.textContent).toContain("Undo all 3 fixes in this file");
+    fireEvent.click(undoBtn);
+    expect(screen.getByText("Undo all 3 fixes in this file?")).toBeTruthy();
+  });
+
+  it("shows plain 'Undo' when sibling_count is absent or 1 (single-finding fix)", async () => {
+    render(<FixJobProvider><Harness /></FixJobProvider>);
+    act(() => { window.__startJob({ job_id: "job-undo-5", total: 1 }); });
+    const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+
+    act(() => {
+      es.emit("phase", {
+        phase: "fix-done", ok: true, finding_id: "f1",
+        commit_sha: "abc1234", html_url: "https://x",
+        file: "a.py", rule_id: "rule_a", fix_id: "fx_1",
+        fix_index: 1, fix_total: 1,
+      });
+    });
+
+    const undoBtn = screen.getByTestId("fix-row-undo-f1");
+    expect(undoBtn.textContent.trim()).toBe("Undo");
+  });
+
   it("shows a toast and a retry affordance when the revert call fails", async () => {
     render(<FixJobProvider><Harness /></FixJobProvider>);
     act(() => { window.__startJob({ job_id: "job-undo-3", total: 1 }); });

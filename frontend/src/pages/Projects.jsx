@@ -8,12 +8,14 @@
  *   4. Live step log + commit SHA + task history
  */
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Link } from "react-router-dom";
 import {
   Plus, FolderGit2, Github, Send, Trash2, Loader2,
   CheckCircle2, AlertCircle, RefreshCw, ExternalLink,
   Pencil, Info, Undo2, Copy as CopyIcon,
-  Check, Lock, Key, ArrowRight,
+  Check, Lock, Key, ArrowRight, History,
 } from "lucide-react";
+import { isProjectVersionsEnabled } from "../lib/pageFlags";
 import Shell, { PageHeader } from "../components/Shell";
 import RailShell from "../components/nav/RailShell";
 import { api, getToken, API_BASE } from "../lib/api";
@@ -335,6 +337,19 @@ function Body() {
               >
                 <Pencil size={12} />
               </button>
+              {/* Part 2c B4 — Project Versions "Changes" page link.
+                  Flag-gated; hidden entirely when off (default). */}
+              {isProjectVersionsEnabled() && (
+                <Link
+                  to={`/projects/${p.project_id}/changes`}
+                  data-testid={`proj-row-changes-${p.project_id}`}
+                  title="View change history"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ ...rowActionBtn("var(--text-faint)"), textDecoration: "none" }}
+                >
+                  <History size={12} />
+                </Link>
+              )}
             </div>
           );
         })}

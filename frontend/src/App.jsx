@@ -72,6 +72,7 @@ const Tokens            = lazy(() => import("./pages/Tokens"));
 const Analytics         = lazy(() => import("./pages/Analytics"));
 const Projects          = lazy(() => import("./pages/Projects"));
 const FreeScanResults   = lazy(() => import("./pages/FreeScanResults"));
+const ProjectChanges    = lazy(() => import("./pages/ProjectChanges"));  // Part 2c B4 — Project Versions
 const Integrations      = lazy(() => import("./pages/Integrations")); // Iter 212m-174
 const Admin             = lazy(() => import("./pages/Admin"));
 // Feb 2026 · AdminOverview no longer imported here — /admin/overview
@@ -432,6 +433,7 @@ export default function App() {
           <Route path="/analytics"       element={<Navigate to="/dashboard" replace />} />
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
           <Route path="/projects/:projectId/free-scan" element={<PrivateRoute><FreeScanResults /></PrivateRoute>} />
+          <Route path="/projects/:projectId/changes"   element={<PrivateRoute><ProjectChanges /></PrivateRoute>} />  {/* Part 2c B4 — Project Versions */}
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/dashboard" element={<AdminRoute><Admin initialTab="dash" /></AdminRoute>} />

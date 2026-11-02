@@ -31,6 +31,8 @@ from typing import Optional
 
 import httpx
 
+from services.project_versions import record_version_on_merge
+
 logger = logging.getLogger("aurem-dev.loop_safety")
 
 
@@ -981,6 +983,18 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                 outcome_row = await db.loop_outcomes.find_one({"ship_branch": head_ref})
                 loop_id = (outcome_row or {}).get("loop_id")
                 owner_user_id = (outcome_row or {}).get("user_id")
+                owner_project_id = (outcome_row or {}).get("project_id")
+                # Part 2c B2 — Project Versions. user_id/project_id
+                # come ONLY from this already-trusted loop_outcomes
+                # row (never from the webhook payload itself).
+                # Best-effort: record_version_on_merge never raises.
+                if loop_id and owner_user_id and owner_project_id and real_merge_sha:
+                    await record_version_on_merge(
+                        db, user_id=owner_user_id, project_id=owner_project_id,
+                        merged_sha=real_merge_sha, pr_url=pr.get("html_url") or "",
+                        pr_number=pr_number, branch=head_ref, source="ship_pr",
+                        summary=pr.get("title") or "", loop_id=loop_id,
+                    )
                 if loop_id and owner_user_id:
                     from services.brain_gateway import attach_outcome_for_task
                     await attach_outcome_for_task(
@@ -1055,6 +1069,21 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                 {"$set": {"merged": new_status == "merged",
                           "batch_pr_status": new_status}},
             )
+            # Part 2c B2 — Project Versions, the fix-batch door.
+            # user_id/project_id come ONLY from this already-trusted
+            # fix_batches row (never from the webhook payload).
+            # Best-effort: record_version_on_merge never raises.
+            if new_status == "merged":
+                real_merge_sha = pr.get("merge_commit_sha")
+                batch_user_id = batch.get("user_id")
+                batch_project_id = batch.get("project_id")
+                if batch_user_id and batch_project_id and real_merge_sha:
+                    await record_version_on_merge(
+                        db, user_id=batch_user_id, project_id=batch_project_id,
+                        merged_sha=real_merge_sha, pr_url=pr.get("html_url") or "",
+                        pr_number=pr_number, branch=head_ref, source="fix_batch",
+                        summary=pr.get("title") or "", batch_id=batch["batch_id"],
+                    )
             # ORA Brain Part 4 — objective outcome signal, same
             # fail-open try/except pattern as the aura:ship branch
             # above. Skipped silently (and noted here, not faked) if

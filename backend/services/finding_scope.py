@@ -27,9 +27,51 @@ legacy rows written before this change are not silently hidden).
 """
 from __future__ import annotations
 
+import re
+
 from fastapi import HTTPException
 
 from services.team_permissions import check_permission
+
+# Part 2c C4(b) — the canonical severity enum, reused verbatim from
+# services/fix_batches.py::_SEVERITY_ORDER / services/
+# full_scan_orchestrator.py — never invent a new set of names here.
+_KNOWN_SEVERITIES = frozenset({"critical", "high", "medium", "low", "info"})
+_DEFAULT_SEVERITY = "medium"
+_MAX_FREE_TEXT_LEN = 2000
+# C0 control characters (0x00-0x1F) and DEL (0x7F) — excludes the
+# ordinary whitespace (\t \n \r) a real title/message can legitimately
+# contain.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_free_text(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    return _CONTROL_CHAR_RE.sub("", value)[:_MAX_FREE_TEXT_LEN]
+
+
+def _sanitize_severity(value) -> str:
+    if isinstance(value, str) and value.lower() in _KNOWN_SEVERITIES:
+        return value.lower()
+    return _DEFAULT_SEVERITY
+
+
+def _sanitize_untrusted_finding(f: dict) -> dict:
+    """Part 2c C4(b) — a legacy findings[] item with NO matching
+    stored row is still passed through (R1's presence pre-check, not
+    this function, decides if it's real) — but its client-supplied
+    free text is capped + control-char-stripped, and `severity` is
+    restricted to the known enum, before it can reach billing
+    (category cost lookup) or an LLM prompt (already fenced as
+    untrusted — that defense is unchanged, this is a second layer)."""
+    out = dict(f)
+    for field in ("title", "message", "fix_hint"):
+        if field in out:
+            out[field] = _sanitize_free_text(out.get(field))
+    if "severity" in out:
+        out["severity"] = _sanitize_severity(out.get("severity"))
+    return out
 
 
 async def resolve_findings_scope(
@@ -75,7 +117,7 @@ def verified_only_filter() -> dict:
 
 
 async def drop_unverified_findings(
-    db, *, user_id: str, project_id: str, findings: list[dict],
+    db, *, user_id: str, project_id: str, findings: list[dict], strict: bool = False,
 ) -> list[dict]:
     """B2 — "bulk-fix input" must also exclude unverified findings,
     even when the caller POSTs a findings array directly rather than
@@ -83,7 +125,17 @@ async def drop_unverified_findings(
     with NO matching `cto_open_findings` row (e.g. a fresh scanner
     result never persisted) is passed through unchanged — this can
     only ever DROP a finding explicitly marked `verified=False`,
-    never block one we have no tracking data for."""
+    never block one we have no tracking data for.
+
+    Part 2c C4(a) — `strict=False` (default) is the ORIGINAL,
+    still-tested contract: fail OPEN on a query error, since for most
+    callers this is a best-effort reconciliation step, not the
+    security gate itself. `strict=True` is for the ONE caller
+    (routers/fix_pipeline.py::start_bulk_fix) that must fail CLOSED
+    instead — a Mongo outage there must stop the request before any
+    billing/LLM work starts, not silently proceed unfiltered. Opt-in
+    re-raise, so every other (future) caller keeps the original
+    fail-open default unless it explicitly asks otherwise."""
     if not findings:
         return findings
     ids = [f.get("id") or f.get("finding_id") for f in findings if (f.get("id") or f.get("finding_id"))]
@@ -95,7 +147,9 @@ async def drop_unverified_findings(
              "finding_id": {"$in": ids}, "verified": False},
             {"_id": 0, "finding_id": 1},
         ).to_list(len(ids))
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e:
+        if strict:
+            raise
         # Fail OPEN, not closed — same contract as "no matching row":
         # if we can't positively identify an unverified finding, we
         # never block it. A real Mongo failure here is surfaced by
@@ -150,7 +204,7 @@ async def resolve_findings_by_ids(
 
 
 async def reconcile_findings_against_stored_rows(
-    db, *, user_id: str, project_id: str, findings: list[dict],
+    db, *, user_id: str, project_id: str, findings: list[dict], strict: bool = False,
 ) -> list[dict]:
     """Part 2b F7 — for the LEGACY `findings` array input path: never
     trust severity/title/message/fix_hint from the client for billing
@@ -159,7 +213,13 @@ async def reconcile_findings_against_stored_rows(
     item with no matching row is passed through UNCHANGED — R1's
     presence pre-check (the static scanner re-detecting it on the
     current file content, before any LLM call) is what decides
-    whether an untracked item is real, not this function."""
+    whether an untracked item is real, not this function.
+
+    Part 2c C4(a) — `strict=False` (default) is the ORIGINAL,
+    still-tested fail-open contract. `strict=True` re-raises instead,
+    for the ONE caller (start_bulk_fix) that must fail CLOSED on a
+    Mongo outage rather than silently proceed un-reconciled into
+    billing/LLM work."""
     if not findings:
         return findings
     ids = [f.get("id") or f.get("finding_id") for f in findings if (f.get("id") or f.get("finding_id"))]
@@ -171,7 +231,9 @@ async def reconcile_findings_against_stored_rows(
              "finding_id": {"$in": ids}, **verified_only_filter()},
             _FINDING_SHAPE_PROJECTION,
         ).to_list(len(ids))
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e:
+        if strict:
+            raise
         # Fail OPEN — same contract as drop_unverified_findings: this
         # is a reconciliation step, not the security gate itself
         # (drop_unverified_findings, called right after this, is).
@@ -188,5 +250,5 @@ async def reconcile_findings_against_stored_rows(
         if stored:
             reconciled.append({**f, **_row_to_finding(stored)})
         else:
-            reconciled.append(f)
+            reconciled.append(_sanitize_untrusted_finding(f))
     return reconciled

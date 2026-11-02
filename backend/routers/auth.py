@@ -837,12 +837,17 @@ async def me(authorization: Optional[str] = Header(None)) -> dict:
     # (routers/loop.py), so the copy can never drift from reality
     # again without this value drifting with it.
     ship_via_pr_enabled = await is_enabled("ship_via_pr", user_id=payload["user_id"])
+    # Part 2c B4 — Project Versions "Changes" page. Default OFF, same
+    # pattern as every other page flag above; this task never turns
+    # it on.
+    project_versions_enabled = await is_enabled("project_versions", user_id=payload["user_id"])
     return {"ok": True, "user": user or payload, "token": fresh_token,
             "workcard_chip_v2_enabled": chip_v2_enabled,
             "automations_page_enabled": automations_page_enabled,
             "analytics_page_enabled": analytics_page_enabled,
             "ship_wall_enabled": ship_wall_enabled,
-            "ship_via_pr_enabled": ship_via_pr_enabled}
+            "ship_via_pr_enabled": ship_via_pr_enabled,
+            "project_versions_enabled": project_versions_enabled}
 
 
 @router.get("/tokens")

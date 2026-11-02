@@ -37,6 +37,7 @@ from typing import Optional
 import httpx
 
 from services.http import ext_client
+from services.project_versions import mark_rolled_back
 
 logger = logging.getLogger("aurem-dev.finding_fix_applier")
 
@@ -1127,6 +1128,13 @@ async def apply_file_fixes(
                     # Part 2b R3 — see apply_finding_fix's identical
                     # note: git holds both contents already.
                     "parent_commit_sha": parent_commit_sha,
+                    # Part 2c C1 — every row sharing this commit_sha
+                    # is a REVERT SIBLING: undoing the commit undoes
+                    # all of them at once (see revert_finding_fix's
+                    # sibling-aware revert). Recorded so the UI can
+                    # show "Undo all N fixes in this file" up front,
+                    # without a second query.
+                    "sibling_count": len(resolved),
                 })
             except Exception as e:                               # noqa: BLE001
                 logger.warning("fix history persist failed for %s: %r", rid, e)
@@ -1139,7 +1147,10 @@ async def apply_file_fixes(
                              "status": "resolved", "commit_sha": short_sha,
                              # Part 2b R6 — needed by the frontend's
                              # "Undo this fix" button.
-                             "fix_id": per_finding_fix_id})
+                             "fix_id": per_finding_fix_id,
+                             # Part 2c C1 — drives the "Undo all N
+                             # fixes in this file" button copy.
+                             "sibling_count": len(resolved)})
         for f in remaining:
             rid = (f.get("rule_id") or f.get("rule") or "").strip()
             results.append({"finding_id": _fid(f), "rule_id": rid, "file": file,
@@ -1199,7 +1210,16 @@ async def revert_finding_fix(
     if fix.get("batch_id"):
         result = await _revert_single_fix_on_batch(db, fix=fix, token=token)
         if result.get("ok"):
-            await _reopen_finding_after_revert(db, fix=fix)
+            # Part 2c C1 — apply_file_fixes writes ONE finding_fixes
+            # row PER FINDING, but siblings resolved by the SAME
+            # commit share commit_sha/parent_commit_sha.
+            # _revert_single_fix_on_batch undoes the WHOLE commit (the
+            # whole file's content), so EVERY sibling's protection is
+            # gone the instant ANY one of them is reverted — every
+            # sibling must be marked reverted and reopened in this
+            # same operation, never just the one the caller named.
+            for sibling in result.get("siblings_reverted") or [fix]:
+                await _reopen_finding_after_revert(db, fix=sibling)
         return result
 
     # Legacy per-fix row (no batch_id) — old close_and_retract
@@ -1295,46 +1315,86 @@ async def _revert_single_fix_on_batch(db, *, fix: dict, token: str) -> dict:
     if after_err:
         return {"ok": False, "error": after_err}
 
-    current, fetch_err = await _fetch_file_content(owner, repo, branch, path, token)
-    if fetch_err:
-        return {"ok": False, "error": fetch_err}
-    if current != expected_post_fix_content:
-        return {
-            "ok": False,
-            "error": "file_changed_since_fix",
-            "detail": (
-                f"{path} was modified by a later fix or edit since this "
-                f"one landed — refusing to overwrite that newer change."
-            ),
-        }
-
     from services.git_identity import build_commit_message, resolve_git_identity
     from services.github_api_writer import commit_files
-    author_name, author_email = await resolve_git_identity(db, fix.get("user_id"))
-    commit_message = build_commit_message(
-        user_message=f"revert: undo fix({fix.get('rule_id')}) @ {path}",
-        body=(
-            "Reverted one fix from the shared AUREM fix batch — the "
-            "rest of the batch is untouched."
-        ),
-    )
-    try:
-        res = await commit_files(
-            owner=owner, repo=repo, branch=branch, token=token,
-            files={path: original_content}, commit_message=commit_message,
-            author_name=author_name, author_email=author_email, progress=None,
-        )
-    except Exception as e:                                 # noqa: BLE001
-        logger.exception("revert commit_files failed for %s", path)
-        return {"ok": False, "error": f"github_push_failed: {e}"}
+    from services.fix_batches import _lock_for
 
-    await db.finding_fixes.update_one(
-        {"fix_id": fix["fix_id"]},
-        {"$set": {"reverted": True, "revert_commit_sha": res.get("full_sha"),
-                  "reverted_at": time.time()}},
-    )
+    # Part 2c C2 — the fetch-current -> compare -> commit sequence
+    # below is a classic TOCTOU: without a lock, a concurrent fix on
+    # this SAME file can land in the gap between the compare and the
+    # write, and this revert would silently overwrite it with no
+    # error. Take the SAME per-(user, project) lock
+    # apply_finding_fix/apply_file_fixes take around their own
+    # commit phase — short critical section, no LLM call inside, so
+    # it never blocks on anything slow.
+    async with _lock_for(fix.get("user_id"), fix.get("project_id")):
+        # Part 2c C1 — re-resolve siblings INSIDE the lock too: a
+        # concurrent revert of a DIFFERENT sibling of this same
+        # commit could have completed while we were waiting for the
+        # lock, and that path already stamped every sibling —
+        # re-checking here (rather than trusting a pre-lock snapshot)
+        # is what makes a second sibling's revert call idempotent
+        # instead of a double-commit.
+        siblings = await db.finding_fixes.find(
+            {"project_id": fix.get("project_id"), "commit_sha": after_sha},
+        ).to_list(200)
+        if not siblings:
+            siblings = [fix]
+        already_reverted = [s for s in siblings if s.get("reverted")]
+        pending = [s for s in siblings if not s.get("reverted")]
+        if not pending:
+            return {"ok": True, "already_reverted": True,
+                    "siblings_reverted": already_reverted}
+
+        current, fetch_err = await _fetch_file_content(owner, repo, branch, path, token)
+        if fetch_err:
+            return {"ok": False, "error": fetch_err}
+        if current != expected_post_fix_content:
+            return {
+                "ok": False,
+                "error": "file_changed_since_fix",
+                "detail": (
+                    f"{path} was modified by a later fix or edit since this "
+                    f"one landed — refusing to overwrite that newer change."
+                ),
+            }
+
+        author_name, author_email = await resolve_git_identity(db, fix.get("user_id"))
+        commit_message = build_commit_message(
+            user_message=f"revert: undo fix({fix.get('rule_id')}) @ {path}",
+            body=(
+                "Reverted one fix from the shared AUREM fix batch — the "
+                "rest of the batch is untouched."
+            ),
+        )
+        try:
+            res = await commit_files(
+                owner=owner, repo=repo, branch=branch, token=token,
+                files={path: original_content}, commit_message=commit_message,
+                author_name=author_name, author_email=author_email, progress=None,
+            )
+        except Exception as e:                             # noqa: BLE001
+            logger.exception("revert commit_files failed for %s", path)
+            return {"ok": False, "error": f"github_push_failed: {e}"}
+
+        revert_stamp = {"reverted": True, "revert_commit_sha": res.get("full_sha"),
+                         "reverted_at": time.time()}
+        # Part 2c C1 — stamp EVERY pending sibling, not just the one
+        # the caller named, in the SAME operation the file-restoring
+        # commit just happened in (never a partial state where the
+        # commit landed but only some rows reflect it) — and still
+        # inside the SAME lock as the commit itself (C2), so no
+        # concurrent revert can observe a half-stamped state.
+        await db.finding_fixes.update_many(
+            {"project_id": fix.get("project_id"), "commit_sha": after_sha},
+            {"$set": revert_stamp},
+        )
+        reverted_siblings = [{**s, **revert_stamp} for s in pending]
+
     return {
         "ok": True, "reverted": True,
+        "siblings_reverted": reverted_siblings,
+        "sibling_count": len(siblings),
         "commit_sha": res.get("sha"), "full_sha": res.get("full_sha"),
         "html_url": res.get("html_url"),
     }
@@ -1354,24 +1414,39 @@ async def revert_batch(db, *, batch_id: str, user_id: str, project_id: str, toke
     if not proj:
         return {"ok": False, "error": "project_not_found"}
     from services.loop_safety import close_and_retract
-    result = await close_and_retract(
-        owner=proj.get("github_owner"), repo=proj.get("github_repo"),
-        pr_number=batch.get("pr_number"), branch=batch.get("branch"), token=token,
-    )
-    await db.fix_batches.update_one(
-        {"batch_id": batch_id},
-        {"$set": {"status": "closed", "updated_at": time.time(),
-                  "close_reason": "manual_revert_batch"}},
-    )
-    await db.finding_fixes.update_many(
-        {"batch_id": batch_id},
-        {"$set": {"reverted": True, "revert_reason": "batch_reverted"}},
-    )
-    # Part 2b R6 — every finding resolved by this batch comes back,
-    # the same way a single-fix revert reopens one.
-    batch_fixes = await db.finding_fixes.find(
-        {"batch_id": batch_id}, {"_id": 0},
-    ).to_list(1000)
+    from services.fix_batches import _lock_for
+
+    # Part 2c C2 — a concurrent apply_finding_fix/apply_file_fixes
+    # call may be mid-flight, about to commit a NEW fix to this SAME
+    # batch branch, or deciding (via _get_or_create_open_batch_locked)
+    # whether this batch is still "open" — take the SAME per-(user,
+    # project) lock so this close+mark-reverted sequence can never
+    # interleave with either.
+    async with _lock_for(user_id, project_id):
+        result = await close_and_retract(
+            owner=proj.get("github_owner"), repo=proj.get("github_repo"),
+            pr_number=batch.get("pr_number"), branch=batch.get("branch"), token=token,
+        )
+        await db.fix_batches.update_one(
+            {"batch_id": batch_id},
+            {"$set": {"status": "closed", "updated_at": time.time(),
+                      "close_reason": "manual_revert_batch"}},
+        )
+        await db.finding_fixes.update_many(
+            {"batch_id": batch_id},
+            {"$set": {"reverted": True, "revert_reason": "batch_reverted"}},
+        )
+        # Part 2c B2 — Project Versions, fix-batch equivalent of the
+        # ship-rollback hook in services/loop_rollback.py::
+        # run_rollback. No new rollback logic — just marking the
+        # version row at this existing, already-successful close
+        # point. Best-effort, never raises.
+        await mark_rolled_back(db, batch_id=batch_id)
+        # Part 2b R6 — every finding resolved by this batch comes
+        # back, the same way a single-fix revert reopens one.
+        batch_fixes = await db.finding_fixes.find(
+            {"batch_id": batch_id}, {"_id": 0},
+        ).to_list(1000)
     for fix in batch_fixes:
         await _reopen_finding_after_revert(db, fix=fix)
     return {"ok": True, **result}

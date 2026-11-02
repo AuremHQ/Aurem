@@ -211,6 +211,14 @@ function CompletedRow({ row }) {
   // Part 2b R6 — "Undo this fix": confirm -> loading -> success/error.
   const [undoState, setUndoState] = useState("idle"); // idle | confirm | loading | done | error
   const isFailed = row.ok === false;
+  // Part 2c C1 — this commit may have resolved several findings in
+  // the SAME file at once (apply_file_fixes); undoing ANY of them
+  // undoes the whole commit, so the button must say so up front
+  // rather than imply only this one row's fix will be touched.
+  const siblingCount = row.sibling_count || 1;
+  const undoLabel = siblingCount > 1
+    ? `Undo all ${siblingCount} fixes in this file`
+    : "Undo";
 
   async function doUndo() {
     setUndoState("loading");
@@ -321,12 +329,16 @@ function CompletedRow({ row }) {
                       border: "1px solid rgba(148,163,184,0.25)",
                       color: "#94a3b8",
                     }}>
-              <Undo2 size={10} /> Undo
+              <Undo2 size={10} /> {undoLabel}
             </button>
           )}
           {row.fix_id && undoState === "confirm" && (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: "#fca5a5" }}>Undo this fix?</span>
+              <span style={{ color: "#fca5a5" }}>
+                {siblingCount > 1
+                  ? `Undo all ${siblingCount} fixes in this file?`
+                  : "Undo this fix?"}
+              </span>
               <button type="button" data-testid={`fix-row-undo-confirm-${row.finding_id}`}
                       onClick={doUndo}
                       style={{ padding: "2px 6px", borderRadius: 999, cursor: "pointer",
