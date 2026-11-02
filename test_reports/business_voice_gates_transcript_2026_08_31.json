@@ -1,7 +1,93 @@
 {
   "base_url": "https://bin-context-pat.preview.emergentagent.com",
-  "gate1": [],
-  "gate2": [],
+  "gate1": [
+    {
+      "turn": 1,
+      "prompt": "hi, what can you do for my website?",
+      "reply": "",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": false,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "casual",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 2,
+      "prompt": "please put our opening hours at the top of our main page",
+      "reply": "",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": false,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "clarify",
+      "bail_reason": null,
+      "ship_suppressed": false
+    },
+    {
+      "turn": 3,
+      "prompt": "9am to 5pm every day",
+      "reply": "",
+      "checks": {
+        "no_jargon": true,
+        "jargon_hits": [],
+        "no_dead_end": true,
+        "dead_end_hits": [],
+        "ends_with_terminal_punct": false,
+        "no_dangling": true,
+        "has_handoff_fence": false
+      },
+      "provider": "ORA",
+      "tier": "clarify",
+      "bail_reason": null,
+      "ship_suppressed": false
+    }
+  ],
+  "gate2": [
+    {
+      "prompt": "can you redesign our brand identity?",
+      "reply": "",
+      "checks": {
+        "no_refusal": true,
+        "no_session_jargon": true,
+        "has_can_do_now": false,
+        "has_concrete_directions": false,
+        "at_most_one_question": true,
+        "has_scope_line": false,
+        "question_count": 0
+      },
+      "provider": "ORA",
+      "tier": "casual"
+    },
+    {
+      "prompt": "our site looks dated — can you modernize it?",
+      "reply": "",
+      "checks": {
+        "no_refusal": true,
+        "no_session_jargon": true,
+        "has_can_do_now": false,
+        "has_concrete_directions": false,
+        "at_most_one_question": true,
+        "has_scope_line": false,
+        "question_count": 0
+      },
+      "provider": "ORA",
+      "tier": "casual"
+    }
+  ],
   "gate3": [
     {
       "prompt": "the approve button isn't showing",
@@ -30,5 +116,12 @@
       "fallback_chain": null
     }
   ],
-  "regression": []
+  "regression": [
+    {
+      "prompt": "hello!",
+      "reply": "",
+      "provider": "ORA",
+      "tier": "casual"
+    }
+  ]
 }

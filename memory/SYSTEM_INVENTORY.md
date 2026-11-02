@@ -1082,3 +1082,9 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 - `services/fix_batches.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-01T03:12:29.891220Z] <!-- inv:service:services/fix_batches.py -->
 - `services/jev_observability.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-01T03:12:29.891249Z] <!-- inv:service:services/jev_observability.py -->
 - `loop_run_log kind='bulk'` — auto-detected in backend/tests/test_regression_iter2026_45_part2b_r5_fail_closed_ownership.py (verify) [Iter 0, 2026-11-01T19:29:12.803440Z] <!-- inv:loop_run_log_kind:bulk -->
+
+### Iter 0 · 2026-11-02
+
+| `routers/project_versions.py` | `/projects` | 1 | auto-detected new router (verify) (Iter 0, 2026-11-02T00:31:21.188163Z) | <!-- inv:router:routers/project_versions.py -->
+- `services/project_versions.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-02T00:31:21.188213Z] <!-- inv:service:services/project_versions.py -->
+- `services/url_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-02T00:31:21.188250Z] <!-- inv:service:services/url_guard.py -->
