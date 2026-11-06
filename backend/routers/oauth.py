@@ -77,13 +77,71 @@ DCR_RATE_LIMIT_PER_MIN = 10
 MCP_ORA_CHAT_RESOURCE_PATH = "/api/aurem-dev/mcp/ora-chat"
 
 
-def _valid_redirect_uri(uri: str) -> bool:
-    if not isinstance(uri, str) or not uri:
+# Legacy / hand-configured clients (the "Claude Directory" connector) never
+# register through /oauth/register, so they have no redirect_uris on file.
+# Their callback must instead be an EXACT member of this allowlist. Default:
+# the Anthropic-owned Claude connector callback (memory/PRD.md). The env var
+# REPLACES the default (comma-separated, exact match, https or localhost only).
+_LEGACY_REDIRECT_DEFAULT = ("https://claude.ai/api/mcp/auth_callback",)
+_MAX_REDIRECT_URI_LEN = 2048
+_MAX_CLIENT_ID_LEN = 256
+_LOCAL_HOSTS = ("localhost", "127.0.0.1")
+
+
+def _redirect_uri_parts(uri) -> Optional[tuple]:
+    """(scheme, hostname) for a redirect URI that is structurally safe,
+    else None. Parses with urlsplit instead of string prefixes:
+    `http://localhost:1@evil.example/` starts with "http://localhost:" but
+    its real host (the part after the userinfo) is evil.example. Rejects
+    userinfo, fragments, whitespace/control/non-ASCII characters and
+    malformed ports."""
+    if not isinstance(uri, str) or not uri or len(uri) > _MAX_REDIRECT_URI_LEN:
+        return None
+    if not uri.isascii() or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in uri):
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(uri)
+        _ = parsed.port  # raises ValueError on a malformed port
+    except ValueError:
+        return None
+    if parsed.fragment or "#" in uri or "@" in parsed.netloc or not parsed.hostname:
+        return None
+    return parsed.scheme, parsed.hostname
+
+
+def _valid_redirect_uri(uri) -> bool:
+    parts = _redirect_uri_parts(uri)
+    if parts is None:
         return False
-    if uri.startswith("https://"):
-        return True
-    return uri.startswith("http://localhost:") or uri.startswith("http://127.0.0.1:") \
-        or uri.startswith("http://localhost/") or uri.startswith("http://127.0.0.1/")
+    scheme, host = parts
+    return scheme == "https" or (scheme == "http" and host in _LOCAL_HOSTS)
+
+
+def _legacy_redirect_allowlist() -> list:
+    raw = os.getenv("OAUTH_LEGACY_REDIRECT_ALLOWLIST")
+    entries = list(_LEGACY_REDIRECT_DEFAULT) if raw is None else [e.strip() for e in raw.split(",")]
+    return [e for e in entries if e and _valid_redirect_uri(e)]
+
+
+async def _validate_redirect_for_client(client_id, redirect_uri) -> Optional[dict]:
+    """Single gate for every endpoint that sends the browser to redirect_uri.
+    A DCR client may only use a URI it registered; any other client_id
+    (legacy / unknown) may only use an allowlisted URI. Comparison is exact.
+    Returns the DCR client doc (or {} for an allowed legacy client), or None
+    when the pair is NOT allowed. Callers must answer None with a local 400,
+    never a redirect: we do not yet know the URI is safe to send a browser to."""
+    if not _valid_redirect_uri(redirect_uri):
+        return None
+    dcr_client = await _get_dcr_client(client_id)
+    if dcr_client:
+        registered = [r for r in (dcr_client.get("redirect_uris") or []) if isinstance(r, str)]
+        return dcr_client if any(secrets.compare_digest(redirect_uri, r) for r in registered) else None
+    if any(secrets.compare_digest(redirect_uri, a) for a in _legacy_redirect_allowlist()):
+        return {}
+    return None
+
+
+_REDIRECT_REJECTED = "invalid_request: redirect_uri is not allowed for this client"
 
 
 def _resource_path(resource: str) -> str:
@@ -224,7 +282,9 @@ async def oauth_register(request: Request):
 
 async def _get_dcr_client(client_id: str) -> Optional[dict]:
     db = get_db()
-    if db is None or not client_id:
+    # Only a plain string may reach the query: a dict here would be a Mongo
+    # operator ({"$ne": ...}) smuggled in as the client_id.
+    if db is None or not isinstance(client_id, str) or not client_id or len(client_id) > _MAX_CLIENT_ID_LEN:
         return None
     return await db.oauth_dcr_clients.find_one({"client_id": client_id}, {"_id": 0})
 
@@ -327,6 +387,9 @@ async def oauth_authorize_page(
         raise HTTPException(400, "missing redirect_uri")
     if not code_challenge:
         raise HTTPException(400, "missing code_challenge (PKCE required)")
+    # Never render the login form for a redirect_uri this client may not use.
+    if await _validate_redirect_for_client(client_id, redirect_uri) is None:
+        raise HTTPException(400, _REDIRECT_REJECTED)
 
     params = urllib.parse.urlencode({
         "response_type":         response_type,
@@ -529,14 +592,11 @@ async def oauth_authorize_submit(
     if db is None:
         raise HTTPException(503, "Database not connected")
 
-    # If this client_id went through Dynamic Client Registration,
-    # its redirect_uri must be one it actually registered. Legacy/
-    # manually-configured client_ids (never DCR'd — e.g. the original
-    # hand-set-up "Claude Directory" connector) have no registration
-    # on file, so they're left exactly as-is (pre-existing behavior).
-    dcr_client = await _get_dcr_client(client_id)
-    if dcr_client and redirect_uri not in dcr_client.get("redirect_uris", []):
-        raise HTTPException(400, "invalid redirect_uri for this registered client")
+    # Re-checked here (not only on GET) because a POST can be sent directly.
+    # Applies to registered and legacy clients alike; see
+    # _validate_redirect_for_client.
+    if await _validate_redirect_for_client(client_id, redirect_uri) is None:
+        raise HTTPException(400, _REDIRECT_REJECTED)
 
     def _reshow(error_code: str) -> RedirectResponse:
         qs = urllib.parse.urlencode({
@@ -601,12 +661,17 @@ async def oauth_authorize_submit(
 
 @router.post("/oauth/authorize/deny")
 async def oauth_deny(
+    client_id: str = "",
     redirect_uri: str = "",
     state: str = "",
 ):
-    """User clicked Cancel — bounce back with access_denied per RFC 6749 §4.1.2.1."""
-    if not redirect_uri:
-        raise HTTPException(400, "missing redirect_uri")
+    """User clicked Cancel — bounce back with access_denied per RFC 6749 §4.1.2.1.
+    client_id is required and the pair is validated like /oauth/authorize,
+    otherwise this endpoint is an open redirect."""
+    if not redirect_uri or not client_id:
+        raise HTTPException(400, "missing client_id or redirect_uri")
+    if await _validate_redirect_for_client(client_id, redirect_uri) is None:
+        raise HTTPException(400, _REDIRECT_REJECTED)
     sep = "&" if "?" in redirect_uri else "?"
     err = f"{redirect_uri}{sep}error=access_denied"
     if state:

@@ -73,7 +73,7 @@ def test_2_consent_page_renders(client):
         params={
             "response_type":         "code",
             "client_id":             "claude-desktop",
-            "redirect_uri":          "https://claude.ai/cb",
+            "redirect_uri":          "https://claude.ai/api/mcp/auth_callback",
             "scope":                 "mcp",
             "state":                 "abc",
             "code_challenge":        challenge,
@@ -94,7 +94,7 @@ def test_3_consent_page_rejects_missing_pkce(client):
         f"{BASE}/oauth/authorize",
         params={
             "response_type": "code",
-            "redirect_uri":  "https://claude.ai/cb",
+            "redirect_uri":  "https://claude.ai/api/mcp/auth_callback",
             # no code_challenge
         },
     )
@@ -108,7 +108,7 @@ def test_4_consent_page_rejects_plain_pkce_method(client):
         f"{BASE}/oauth/authorize",
         params={
             "response_type":         "code",
-            "redirect_uri":          "https://claude.ai/cb",
+            "redirect_uri":          "https://claude.ai/api/mcp/auth_callback",
             "code_challenge":        challenge,
             "code_challenge_method": "plain",
         },
@@ -132,7 +132,7 @@ def test_5_full_flow_happy_path(client):
     qs = {
         "response_type":         "code",
         "client_id":             "claude-desktop",
-        "redirect_uri":          "https://claude.ai/cb",
+        "redirect_uri":          "https://claude.ai/api/mcp/auth_callback",
         "scope":                 "mcp",
         "state":                 "STATE-xyz",
         "code_challenge":        challenge,
@@ -160,7 +160,7 @@ def test_5_full_flow_happy_path(client):
         data={
             "grant_type":    "authorization_code",
             "code":          code,
-            "redirect_uri":  "https://claude.ai/cb",
+            "redirect_uri":  "https://claude.ai/api/mcp/auth_callback",
             "client_id":     "claude-desktop",
             "code_verifier": verifier,
         },
@@ -198,7 +198,7 @@ def test_5_full_flow_happy_path(client):
         data={
             "grant_type":    "authorization_code",
             "code":          code,
-            "redirect_uri":  "https://claude.ai/cb",
+            "redirect_uri":  "https://claude.ai/api/mcp/auth_callback",
             "client_id":     "claude-desktop",
             "code_verifier": verifier,
         },
@@ -214,7 +214,7 @@ def test_6_pkce_failure_wrong_verifier(client):
     qs = {
         "response_type":         "code",
         "client_id":             "claude-desktop",
-        "redirect_uri":          "https://claude.ai/cb",
+        "redirect_uri":          "https://claude.ai/api/mcp/auth_callback",
         "scope":                 "mcp",
         "code_challenge":        challenge,
         "code_challenge_method": "S256",
@@ -238,7 +238,7 @@ def test_6_pkce_failure_wrong_verifier(client):
         data={
             "grant_type":    "authorization_code",
             "code":          code,
-            "redirect_uri":  "https://claude.ai/cb",
+            "redirect_uri":  "https://claude.ai/api/mcp/auth_callback",
             "client_id":     "claude-desktop",
             "code_verifier": bad_verifier,
         },
@@ -252,7 +252,7 @@ def test_7_invalid_credentials_redirect_back_to_form(client):
     qs = {
         "response_type":         "code",
         "client_id":             "claude-desktop",
-        "redirect_uri":          "https://claude.ai/cb",
+        "redirect_uri":          "https://claude.ai/api/mcp/auth_callback",
         "scope":                 "mcp",
         "code_challenge":        challenge,
         "code_challenge_method": "S256",
@@ -281,7 +281,8 @@ def test_8_deny_returns_access_denied(client):
     r = client.post(
         f"{BASE}/oauth/authorize/deny",
         params={
-            "redirect_uri": "https://claude.ai/cb",
+            "client_id":    "claude-desktop",
+            "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
             "state":        "STATE-xyz",
         },
     )
