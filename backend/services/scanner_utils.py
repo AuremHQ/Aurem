@@ -31,6 +31,8 @@ from __future__ import annotations
 _SCANNER_RULE_FILES: tuple[str, ...] = (
     # ── rule-definition files (original list) ──
     "services/bug_hunt_rules.py",
+    "services/security_extra_rules.py",
+    "services/slop_squat_check.py",
     "services/vanguard_scanner.py",
     "services/vanguard_verify_agent.py",
     "services/generation_rules.py",

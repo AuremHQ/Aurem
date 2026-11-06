@@ -89,6 +89,19 @@ def _scan_http_headers(text_cache: dict[str, str]) -> list[dict]:
     return _scan_http_headers_service(text_cache)
 
 
+# Phase 3 rules need file types the shared _SCAN_EXTS does not carry (it is
+# shared with repo_text_cache / loop_engine, so it is widened here only):
+# HTML (SRI), Terraform (public buckets) and requirements*.txt (slop squat).
+_EXTRA_RULE_EXTS = (".html", ".htm", ".tf")
+
+
+def _is_extra_rule_target(lower_path: str) -> bool:
+    if lower_path.endswith(_EXTRA_RULE_EXTS):
+        return True
+    base = lower_path.rsplit("/", 1)[-1]
+    return base.startswith("requirements") and base.endswith(".txt")
+
+
 @router.post("/run")
 async def run_security_scan(
     body: dict, authorization: Optional[str] = Header(None),
@@ -184,7 +197,8 @@ async def run_security_scan(
             if path.startswith(".vanguard/"):
                 continue
             lower = path.lower()
-            if not any(lower.endswith(ext) for ext in _SCAN_EXTS):
+            if not (any(lower.endswith(ext) for ext in _SCAN_EXTS)
+                    or _is_extra_rule_target(lower)):
                 continue
             if b.get("size", 0) > _MAX_BYTES_PER_FILE:
                 continue
@@ -257,6 +271,20 @@ async def run_security_scan(
         except Exception as e:                       # never block the scan
             logger.warning("two_round scan failed: %r", e)
             two_round_block = {"error": f"two_round_failed: {e!r}"}
+
+    # 3b-bis — slop squatting (deep scan only): dependency names in
+    # package.json / requirements*.txt that do not exist on npm / PyPI.
+    # Network-bound, so it is bounded (<=50 names, 5 concurrent, 3 s each,
+    # 15 s total, 24 h cache) and fail-open: it can only ADD findings.
+    if two_round and text_cache:
+        try:
+            from services.slop_squat_check import scan_manifests
+            for f in await scan_manifests(text_cache):
+                key = (f["file"], f["line"], f["rule_id"])
+                if not any((x.get("file"), int(x.get("line") or 0), x.get("rule_id")) == key for x in findings):
+                    findings.append(f)
+        except Exception as e:                       # never block the scan
+            logger.warning("slop-squat check failed: %r", e)
 
     # Iter 212m-193 — split out findings already fixed (draft-PR
     # commits) so a re-run doesn't resurrect them.

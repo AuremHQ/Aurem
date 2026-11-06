@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import re
 
+from services.security_extra_rules import scan_extra_rules
+
 # ─── Static rule library — each rule is a (id, severity, pattern) ───
 # Severity: critical / high / medium / low — purely advisory; the UI
 # colour-codes by this. Patterns are kept tight (anchors, word
@@ -117,4 +119,5 @@ def _scan_text(path: str, text: str) -> list[dict]:
                 "desc":     rule["desc"],
             })
             break
+    findings.extend(scan_extra_rules(path, text))
     return findings

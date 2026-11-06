@@ -48,6 +48,7 @@ from typing import Iterable
 from services import bug_hunt_rules as _bh
 from services import vanguard_scanner as _van
 from services.generation_rules_triggers import TRIGGER_ONELINE as _TRIGGER_ONELINE
+from services.security_extra_rules import EXTRA_RULE_META as _EXTRA_META
 
 MANIFEST_VERSION = "1.0.0"
 
@@ -92,6 +93,7 @@ def get_rule_index() -> dict:
         "bug_hunt_cves":      [],
         "docker_cis":         [],
         "http_headers":       [],
+        "security_extra":     [],
     }
 
     for rid, _rx, sev in _van._SECRET_PATTERN_DEFS:
@@ -149,6 +151,12 @@ def get_rule_index() -> dict:
         idx["docker_cis"].append({
             "id": rid, "severity": sev,
             "trigger": _TRIGGER_ONELINE.get(rid, ""),
+        })
+
+    for rid, meta in _EXTRA_META.items():
+        idx["security_extra"].append({
+            "id": rid, "severity": meta["severity"].upper(),
+            "trigger": meta["trigger"],
         })
 
     return idx

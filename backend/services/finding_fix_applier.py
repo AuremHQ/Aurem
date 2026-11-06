@@ -387,6 +387,14 @@ def _finding_still_present(
     target_rule = (finding.get("rule_id") or finding.get("rule") or "").lower()
     if not target_rule:
         return False  # nothing to compare; trust the LLM
+    # Phase 3 rules are not known to vanguard's scan_text: re-check them with
+    # their own detectors, otherwise they would always read as "already fixed".
+    from services.security_extra_rules import EXTRA_RULE_META, scan_extra_rules
+    if target_rule == "slop_squat_unknown_package":
+        name = (finding.get("snippet") or "").strip()
+        return bool(name) and name in patched_content   # needs the network to re-verify: keep while the name remains
+    if target_rule in EXTRA_RULE_META:
+        return any(f["rule_id"] == target_rule for f in scan_extra_rules(path, patched_content))
     for f in new_findings:
         # Part 2b — scan_text's most common hit shapes (secrets regex
         # matches, dangerous-pattern matches) set ONLY "name", never

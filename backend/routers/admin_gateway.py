@@ -11,6 +11,7 @@ at creation/regeneration time, and never again.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -19,6 +20,8 @@ from pydantic import BaseModel, Field
 from cto_services.auth import require_admin, require_admin_dep
 import services.admin_gateway_keys as gw_keys
 from routers.oauth import list_ora_chat_oauth_clients, revoke_ora_chat_oauth_client
+
+logger = logging.getLogger(__name__)
 
 # G21-FIX — router-level gate added as defense-in-depth (matches
 # routers/admin.py's own pattern); the existing inline `require_admin`
@@ -68,10 +71,11 @@ async def get_keys(scope: str, authorization: Optional[str] = Header(None), requ
 
 @router.post("/keys/{key_id}/revoke")
 async def revoke(key_id: str, scope: str, authorization: Optional[str] = Header(None), request: Request = None):
-    await require_admin(authorization, request=request)
+    admin = await require_admin(authorization, request=request)
     ok = await gw_keys.revoke_key(key_id, scope)
     if not ok:
         raise HTTPException(404, "Key not found")
+    logger.info("audit gateway_key_revoked key_id=%s scope=%s actor=%s", key_id, scope, (admin or {}).get("user_id"))
     return {"ok": True}
 
 
@@ -144,8 +148,9 @@ async def revoke_oauth_client(client_id: str, authorization: Optional[str] = Hea
     client and deletes its DCR registration — forces a fresh
     /oauth/authorize + admin consent next time that connector tries
     to reconnect."""
-    await require_admin(authorization, request=request)
+    admin = await require_admin(authorization, request=request)
     ok = await revoke_ora_chat_oauth_client(client_id)
     if not ok:
         raise HTTPException(404, "Client not found")
+    logger.info("audit oauth_client_revoked client_id=%s actor=%s", client_id, (admin or {}).get("user_id"))
     return {"ok": True}

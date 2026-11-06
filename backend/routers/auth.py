@@ -620,6 +620,7 @@ async def reset_password(body: ResetPasswordBody) -> dict:
     await db.password_reset_tokens.update_one(
         {"_id": row["_id"]}, {"$set": {"used": True}},
     )
+    logger.info("audit password_reset_completed user_id=%s", row["user_id"])
     return {"ok": True}
 
 
@@ -643,10 +644,13 @@ async def magic_login_exchange(body: MagicLoginExchangeBody) -> dict:
         raise HTTPException(503, "Database not connected")
     row = await db.magic_login_tokens.find_one({"token": body.token})
     if not row:
+        logger.warning("audit magic_login_exchange_rejected reason=invalid_link")
         raise HTTPException(404, "invalid_link")
     if row.get("used"):
+        logger.warning("audit magic_login_exchange_rejected reason=already_used")
         raise HTTPException(410, "already_used")
     if row.get("expires_at", 0) < time.time():
+        logger.warning("audit magic_login_exchange_rejected reason=expired")
         raise HTTPException(410, "expired")
     return await _consume_magic_token(db, row)
 
@@ -664,8 +668,10 @@ async def magic_login_refresh(body: MagicLoginExchangeBody) -> dict:
         raise HTTPException(503, "Database not connected")
     old_row = await db.magic_login_tokens.find_one({"token": body.token})
     if not old_row:
+        logger.warning("audit magic_login_refresh_rejected reason=invalid_link")
         raise HTTPException(404, "invalid_link")
     if old_row.get("used"):
+        logger.warning("audit magic_login_refresh_rejected reason=already_used")
         raise HTTPException(410, "already_used")
     # Permanently retire the stale token, then mint + consume a fresh one.
     await db.magic_login_tokens.update_one({"_id": old_row["_id"]}, {"$set": {"used": True}})
@@ -732,6 +738,7 @@ async def change_password(
     await db.dev_users.update_one(
         {"user_id": payload["user_id"]}, {"$set": {"password": hashed}},
     )
+    logger.info("audit password_changed user_id=%s", payload["user_id"])
     return {"ok": True}
 
 
@@ -1011,6 +1018,10 @@ async def revoke_all_sessions(
     modified = await revoke_all_for_user(
         db, user_id=target,
         reason=(body.reason or ("self" if is_self else "admin_nuke")),
+    )
+    logger.info(
+        "audit sessions_revoked target=%s actor=%s count=%s",
+        target, caller.get("user_id"), modified,
     )
     return {"ok": True, "user_id": target,
             "sessions_nuked": modified,

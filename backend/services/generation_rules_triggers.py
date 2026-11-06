@@ -108,4 +108,10 @@ TRIGGER_ONELINE: dict[str, str] = {
     "docker_cis_4_6_no_healthcheck":   "Dockerfile has no `HEALTHCHECK` instruction",
     "docker_cis_5_4_privileged":       "compose file `privileged: true`",
     "docker_cis_5_31_docker_sock":     "compose file mounts `/var/run/docker.sock`",
+
 }
+
+# Phase 3 security_extra rules: one-liners live next to their detectors.
+from services.security_extra_rules import EXTRA_RULE_META as _EXTRA_META
+
+TRIGGER_ONELINE.update({rid: meta["trigger"] for rid, meta in _EXTRA_META.items()})
