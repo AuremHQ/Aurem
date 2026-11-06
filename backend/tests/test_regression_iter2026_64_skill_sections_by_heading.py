@@ -131,7 +131,7 @@ def test_extract_cap_cuts_at_a_line_boundary():
     text = "## H\n" + "\n".join(f"line {i} " + "x" * 40 for i in range(100))
     out = sci._extract_section(text, "## H", 300)
     assert 0 < len(out) <= 300
-    assert out.endswith("x" * 40) or out.endswith("…(truncated)")
+    assert out.endswith(("x" * 40, "…(truncated)"))
     assert "line 99" not in out
 
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import re
 from functools import lru_cache
-from typing import List, Optional
+from typing import List
 
 _SKILLS_DIR = os.path.join(os.path.dirname(__file__), "..", "vanguard_skills")
 
@@ -126,7 +126,7 @@ def _section_label(filename: str, heading: str) -> str:
     return f"{filename.replace('.md', '').upper()}: {heading.lstrip('#').strip()}"
 
 
-def _extract_section(text: Optional[str], heading: Optional[str], cap: int) -> str:
+def _extract_section(text: str | None, heading: str | None, cap: int) -> str:
     """Slice `heading` .. next heading of the same or higher level.
     Headings inside ``` code fences are ignored (a `# comment` in a code block
     is not a heading). Returns "" when the heading is missing. The result,
@@ -177,7 +177,7 @@ def _load_section(filename: str, heading: str, cap: int) -> str:
         return ""
 
 
-def select_security_sections(task_description: Optional[str], already_injected: tuple = ()) -> List[tuple[str, str]]:
+def select_security_sections(task_description: str | None, already_injected: tuple = ()) -> list[tuple[str, str]]:
     """(label, body) for each heading-sliced section whose trigger matches the
     task. Empty for non-security tasks. Filenames and headings come from
     _SECTION_RULES only; the task text is only ever matched against keywords."""

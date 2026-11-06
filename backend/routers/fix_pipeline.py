@@ -1036,7 +1036,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
             message="Worker cancelled mid-flight. Click Restart to resume.",
         )
         raise
-    except Exception as e:
+    except Exception:
         # Top-level catch: a Mongo glitch, an upstream GitHub 5xx that
         # escaped the per-finding block, a programming bug — instead
         # of silently dying and leaving "running" forever, we emit a

@@ -20,11 +20,11 @@ os.environ.setdefault("JWT_SECRET", "ci-test-secret-32-chars-minimum!!")
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "aurem_test")
 
-import pytest  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-import main  # noqa: E402
+import main
 
 NEW_OPS = ["$ne", "$gt", "$regex"]
 OLD_OPS = ["$where", "$expr", "$function", "$accumulator", "$lookup"]
