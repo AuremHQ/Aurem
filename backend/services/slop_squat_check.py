@@ -106,6 +106,23 @@ def _json_line(lines: list[str], start: int, key: str) -> int:
     return start + 1
 
 
+def _npm_spec_is_registry(spec: object) -> bool:
+    """A semver/tag range that npm resolves, not a path, URL, git or alias spec."""
+    if not isinstance(spec, str):
+        return False
+    s = spec.strip()
+    return not (s.lower().startswith(_NON_REGISTRY_PREFIXES) or _GITHUB_SHORTHAND.match(s))
+
+
+def _npm_section_entries(data: dict, lines: list[str], section: str, own: str | None) -> list[tuple[str, str, int]]:
+    deps = data.get(section)
+    if not isinstance(deps, dict):
+        return []
+    start = next((i for i, ln in enumerate(lines) if re.search(r'"' + section + r'"\s*:', ln)), 0)
+    return [("npm", name, _json_line(lines, start, name)) for name, spec in deps.items()
+            if name != own and _valid_name("npm", name) and _npm_spec_is_registry(spec)]
+
+
 def _extract_npm(text: str) -> list[tuple[str, str, int]]:
     try:
         data = json.loads(text)
@@ -115,20 +132,7 @@ def _extract_npm(text: str) -> list[tuple[str, str, int]]:
         return []
     own = data.get("name") if isinstance(data.get("name"), str) else None
     lines = text.splitlines()
-    out: list[tuple[str, str, int]] = []
-    for section in _NPM_SECTIONS:
-        deps = data.get(section)
-        if not isinstance(deps, dict):
-            continue
-        start = next((i for i, ln in enumerate(lines) if re.search(r'"' + section + r'"\s*:', ln)), 0)
-        for name, spec in deps.items():
-            if not isinstance(spec, str) or name == own or not _valid_name("npm", name):
-                continue
-            s = spec.strip()
-            if s.lower().startswith(_NON_REGISTRY_PREFIXES) or _GITHUB_SHORTHAND.match(s):
-                continue
-            out.append(("npm", name, _json_line(lines, start, name)))
-    return out
+    return [e for section in _NPM_SECTIONS for e in _npm_section_entries(data, lines, section, own)]
 
 
 def _extract_requirements(text: str) -> list[tuple[str, str, int]]:
@@ -210,37 +214,45 @@ def _finding(file: str, line: int, registry: str, name: str) -> dict:
     }
 
 
-async def _check(entries: list[tuple[str, str, str, int]],
-                 client_factory: Callable[[], httpx.AsyncClient] | None) -> list[dict]:
-    """entries: (file, registry, name, line). Bounded + fail-open."""
+def _plan(entries: list[tuple[str, str, str, int]]) -> list[tuple[str, str, str, int]]:
+    """Valid, de-duplicated lookups, capped at MAX_PACKAGES."""
     seen: set[tuple[str, str]] = set()
     todo: list[tuple[str, str, str, int]] = []
     for file, registry, name, line in entries:
-        if not _valid_name(registry, name):
-            continue
         key = (registry, _canonical(registry, name))
-        if key in seen:
+        if not _valid_name(registry, name) or key in seen:
             continue
         seen.add(key)
         todo.append((file, registry, key[1], line))
         if len(todo) >= MAX_PACKAGES:
             break
+    return todo
+
+
+async def _lookup_all(todo: list[tuple[str, str, str, int]],
+                      client_factory: Optional[Callable[[], httpx.AsyncClient]]) -> list[dict]:
+    sem = asyncio.Semaphore(CONCURRENCY)
+    async with _open_client(client_factory) as client:
+        tasks = [asyncio.create_task(_status(client, sem, reg, name)) for _, reg, name, _ in todo]
+        done, pending = await asyncio.wait(tasks, timeout=TOTAL_BUDGET_SECONDS)
+        for t in pending:
+            t.cancel()
+    return [_finding(file, line, reg, name)
+            for (file, reg, name, line), task in zip(todo, tasks)
+            if task in done and not task.cancelled() and task.exception() is None and task.result() == 404]
+
+
+async def _check(entries: list[tuple[str, str, str, int]],
+                 client_factory: Optional[Callable[[], httpx.AsyncClient]]) -> list[dict]:
+    """entries: (file, registry, name, line). Bounded + fail-open."""
+    todo = _plan(entries)
     if not todo:
         return []
-    sem = asyncio.Semaphore(CONCURRENCY)
-    findings: list[dict] = []
     try:
-        async with _open_client(client_factory) as client:
-            tasks = [asyncio.create_task(_status(client, sem, reg, name)) for _, reg, name, _ in todo]
-            done, pending = await asyncio.wait(tasks, timeout=TOTAL_BUDGET_SECONDS)
-            for t in pending:
-                t.cancel()
-            for (file, reg, name, line), task in zip(todo, tasks):
-                if task in done and not task.cancelled() and task.exception() is None and task.result() == 404:
-                    findings.append(_finding(file, line, reg, name))
+        return await _lookup_all(todo, client_factory)
     except Exception as exc:  # noqa: BLE001 - the scan must never fail because of this check
         logger.warning("slop-squat check aborted: %r", exc)
-    return findings
+        return []
 
 
 async def check_packages(pkgs: list[tuple[str, str, int]], *, file: str,
@@ -248,24 +260,28 @@ async def check_packages(pkgs: list[tuple[str, str, int]], *, file: str,
     return await _check([(file, r, n, ln) for r, n, ln in (pkgs or [])], client_factory)
 
 
-async def scan_manifests(text_cache: dict | None,
-                         client_factory: Callable[[], httpx.AsyncClient] | None = None) -> list[dict]:
+def _own_npm_names(text_cache: dict) -> set[str]:
+    names: set[str] = set()
+    for path, text in text_cache.items():
+        if _manifest_kind(path) != "npm" or not isinstance(text, str):
+            continue
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("name"), str):
+            names.add(data["name"])
+    return names
+
+
+async def scan_manifests(text_cache: Optional[dict],
+                         client_factory: Optional[Callable[[], httpx.AsyncClient]] = None) -> list[dict]:
     """Findings for every manifest in a {path: text} repo cache."""
     if not isinstance(text_cache, dict) or not text_cache:
         return []
-    own_names: set[str] = set()
-    for path, text in text_cache.items():
-        if _manifest_kind(path) == "npm" and isinstance(text, str):
-            try:
-                data = json.loads(text)
-            except ValueError:
-                continue
-            if isinstance(data, dict) and isinstance(data.get("name"), str):
-                own_names.add(data["name"])
-    entries: list[tuple[str, str, str, int]] = []
-    for path in sorted(text_cache):
-        for registry, name, line in extract_packages(path, text_cache[path]):
-            if registry == "npm" and name in own_names:
-                continue
-            entries.append((path, registry, name, line))
+    own = _own_npm_names(text_cache)
+    entries = [(path, registry, name, line)
+               for path in sorted(text_cache)
+               for registry, name, line in extract_packages(path, text_cache[path])
+               if not (registry == "npm" and name in own)]
     return await _check(entries, client_factory)

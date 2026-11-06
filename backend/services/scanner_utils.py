@@ -32,6 +32,9 @@ _SCANNER_RULE_FILES: tuple[str, ...] = (
     # ── rule-definition files (original list) ──
     "services/bug_hunt_rules.py",
     "services/security_extra_rules.py",
+    "services/security_extra_common.py",
+    "services/security_extra_detect_input.py",
+    "services/security_extra_detect_routes.py",
     "services/slop_squat_check.py",
     "services/vanguard_scanner.py",
     "services/vanguard_verify_agent.py",
