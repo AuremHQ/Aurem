@@ -27,7 +27,7 @@ _PROD_BASENAME = re.compile(
 _SKIP_PARTS = ("/templates/", "/tests/", "/test/", "/node_modules/", "/fixtures/", "/examples/")
 _SKIP_MARKERS = (".example", ".sample", ".local", ".development", ".dev", ".test", ".staging")
 _DEBUG = re.compile(
-    r"""(?<![A-Za-z0-9_])(?:APP_|FASTAPI_|FLASK_|DJANGO_|VITE_|REACT_APP_)?DEBUG["']?\s*(?:[:=]|:-|\s)\s*["']?(?:true|1|yes|on)["']?\s*,?\s*$""",
+    r"""(?<![A-Za-z0-9_])(?:APP_|FASTAPI_|FLASK_|DJANGO_|VITE_|REACT_APP_)?DEBUG["']?\s*(?:[:=]|:-|\s)\s*["']?(?:true|1|yes|on)(?![\w.])""",
     re.IGNORECASE,
 )
 

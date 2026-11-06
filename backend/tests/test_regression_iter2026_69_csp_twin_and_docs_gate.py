@@ -49,7 +49,7 @@ def test_cached_twin_sets_the_same_csp_as_the_main_middleware():
 
 def test_live_response_carries_the_same_constant():
     client = TestClient(main.app, raise_server_exceptions=False)
-    r = client.get("/api/health")
+    r = client.get("/api/__no_such_route__")   # a 404 still passes through the middleware; needs no DB
     assert r.headers.get("Content-Security-Policy") == main._CONTENT_SECURITY_POLICY
 
 
@@ -129,7 +129,7 @@ def test_flag_on_non_admin_gets_403_and_admin_gets_docs(client, monkeypatch, pat
 
 def test_flag_on_does_not_gate_other_api_routes(client, monkeypatch):
     monkeypatch.setenv("API_DOCS_REQUIRE_ADMIN", "1")
-    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/__no_such_route__").status_code == 404   # not 401/403: the gate only covers the docs paths
 
 
 @pytest.mark.parametrize("path", ["/api/docs/", "/api/DOCS", "/api/docs/../docs", "/api/openapi.json/", "//api/docs",
