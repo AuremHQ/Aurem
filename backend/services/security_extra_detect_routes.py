@@ -24,16 +24,16 @@ from services.security_extra_common import (
 # ── RLS / ownership ───────────────────────────────────────────────────
 _SQL_CREATE = re.compile(
     r"^\s*create\s+(?!temp|temporary|unlogged\s+table\s+temp)(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?"
-    r"(?:\"?(\w+)\"?\.)?\"?(\w+)\"?", re.I)
+    r"(?:\"?(\w+)\"?\.)?\"?(\w+)\"?", re.IGNORECASE)
 _SQL_RLS_ENABLED = re.compile(
     r"alter\s+table\s+(?:only\s+)?(?:if\s+exists\s+)?(?:\"?\w+\"?\.)?\"?(\w+)\"?\s+(?:force|enable)\s+row\s+level\s+security",
-    re.I)
+    re.IGNORECASE)
 _SQL_INTERNAL = {"auth", "storage", "pg_catalog", "information_schema", "extensions", "realtime", "vault",
                  "cron", "graphql", "graphql_public", "net", "pgsodium", "supabase_functions", "supabase_migrations",
                  "pgbouncer", "_realtime", "_analytics"}
 _OWNER_SIGNAL = re.compile(
     r"user|owner|tenant|account|org_?id|workspace|auth|admin|session|token|depends|permission|role|scope|jwt|"
-    r"login|api_key|secret|signature|webhook|public|require|verify|guard|allowed|csrf|current", re.I)
+    r"login|api_key|secret|signature|webhook|public|require|verify|guard|allowed|csrf|current", re.IGNORECASE)
 _PY_ROUTE_ID = re.compile(r"""^\s*@\w+\.(?:get|put|patch|delete)\(\s*f?["']([^"']*)["']""")
 _PY_LOOKUP = re.compile(r"\b(?:find_one|find_one_and_\w+|update_one|delete_one|get_by_id|find_by_id)\s*\(")
 _JS_LOOKUP = re.compile(r"\b(?:findById\w*|findByPk|findUnique|findOne\w*|updateOne|deleteOne)\s*\(")
@@ -72,7 +72,7 @@ def _py_route_finding(lines: list[str], i: int) -> int | None:
     a, b = py_block(lines, i)
     if _OWNER_SIGNAL.search("\n".join(lines[a:b])):
         return None
-    uses = lambda ln: any(re.search(rf"\b{re.escape(p)}\b", ln) for p in params)  # noqa: E731
+    uses = lambda ln: any(re.search(rf"\b{re.escape(p)}\b", ln) for p in params)
     return _first_unowned_lookup(lines, a, b, _PY_LOOKUP, uses)
 
 
@@ -106,12 +106,12 @@ _REDIRECT_VARS = {"next", "redirect", "redirect_uri", "redirect_url", "return_to
 _PY_REDIRECT = re.compile(r"""RedirectResponse\(\s*(?:url\s*=\s*)?([A-Za-z_][\w]*)\s*[,)]""")
 _REDIRECT_OK = re.compile(
     r"startswith\(|urlparse|urlsplit|_validate_redirect|validate_redirect|is_safe|safe_url|safe_redirect|allowlist|"
-    r"allowed|ALLOWED|netloc|same_origin|url_has_allowed_host|\bin\s*[\(\[\{]|\.origin\b|new URL\(", re.I)
+    r"allowed|ALLOWED|netloc|same_origin|url_has_allowed_host|\bin\s*[\(\[\{]|\.origin\b|new URL\(", re.IGNORECASE)
 _EXPRESS_REDIRECT = re.compile(r"""\bres\.redirect\(\s*(?:\d+\s*,\s*)?req\.(?:query|body|params)\b""")
 _JS_LOC_ASSIGN = re.compile(r"""^\s*(?:window\.)?location(?:\.href)?\s*=\s*([A-Za-z_]\w*)\s*;?\s*$|"""
                             r"""\b(?:window\.)?location\.(?:replace|assign)\(\s*([A-Za-z_]\w*)\s*\)""")
 _JS_FROM_QUERY = r"(?:URLSearchParams|searchParams\.get|query\.get|params\.get|location\.search|req\.query)"
-_JS_SAFE = re.compile(r"startsWith\(|new URL\(|\.origin\b|allow|includes\(|safe", re.I)
+_JS_SAFE = re.compile(r"startsWith\(|new URL\(|\.origin\b|allow|includes\(|safe", re.IGNORECASE)
 _FROM_REQUEST = r"=.*(?:query_params|\.args\b|GET\.get|params\.get)"
 
 
@@ -165,11 +165,11 @@ def detect_open_redirect(path: str, lines: list[str], text: str) -> Iterator[tup
 
 # ── audit logging ─────────────────────────────────────────────────────
 _SENSITIVE_PATH = re.compile(
-    r"login|signin|sign-in|logout|register|signup|sign-up|password|reset|role|permission|grant|revoke|impersonat", re.I)
+    r"login|signin|sign-in|logout|register|signup|sign-up|password|reset|role|permission|grant|revoke|impersonat", re.IGNORECASE)
 _PY_ROUTE_WRITE = re.compile(r"""^\s*@\w+\.(?:post|put|patch|delete)\(\s*f?["']([^"']*)["']""")
 _LOG_SIGNAL = re.compile(
     r"logger|logging|\blog(?:_\w+)?\(|audit|record_|track_|print\(|emit|activity|security_event|journal|console\.|"
-    r"winston|pino|AuditLog", re.I)
+    r"winston|pino|AuditLog", re.IGNORECASE)
 
 
 def _py_audit_hit(lines: list[str], i: int) -> bool:

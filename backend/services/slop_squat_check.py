@@ -230,7 +230,7 @@ def _plan(entries: list[tuple[str, str, str, int]]) -> list[tuple[str, str, str,
 
 
 async def _lookup_all(todo: list[tuple[str, str, str, int]],
-                      client_factory: Optional[Callable[[], httpx.AsyncClient]]) -> list[dict]:
+                      client_factory: Callable[[], httpx.AsyncClient] | None) -> list[dict]:
     sem = asyncio.Semaphore(CONCURRENCY)
     async with _open_client(client_factory) as client:
         tasks = [asyncio.create_task(_status(client, sem, reg, name)) for _, reg, name, _ in todo]
@@ -243,7 +243,7 @@ async def _lookup_all(todo: list[tuple[str, str, str, int]],
 
 
 async def _check(entries: list[tuple[str, str, str, int]],
-                 client_factory: Optional[Callable[[], httpx.AsyncClient]]) -> list[dict]:
+                 client_factory: Callable[[], httpx.AsyncClient] | None) -> list[dict]:
     """entries: (file, registry, name, line). Bounded + fail-open."""
     todo = _plan(entries)
     if not todo:
@@ -274,8 +274,8 @@ def _own_npm_names(text_cache: dict) -> set[str]:
     return names
 
 
-async def scan_manifests(text_cache: Optional[dict],
-                         client_factory: Optional[Callable[[], httpx.AsyncClient]] = None) -> list[dict]:
+async def scan_manifests(text_cache: dict | None,
+                         client_factory: Callable[[], httpx.AsyncClient] | None = None) -> list[dict]:
     """Findings for every manifest in a {path: text} repo cache."""
     if not isinstance(text_cache, dict) or not text_cache:
         return []

@@ -20,13 +20,13 @@ _LLM_CALL = re.compile(
 )
 _USER_PY = (r"(?:body|payload|req_body|request_body|user_input|user_message|user_text|"
             r"request\.json\(\)|request\.query_params)(?:\.\w+|\[[^\]]+\]|\.get\([^)]*\))")
-_PROMPT_TARGET = re.compile(r"""(?:prompt|instruction|message|content|query|question|system)\w*["']?\s*[:=]""", re.I)
+_PROMPT_TARGET = re.compile(r"""(?:prompt|instruction|message|content|query|question|system)\w*["']?\s*[:=]""", re.IGNORECASE)
 _PY_FSTR_USER = re.compile(r"""\bf(?:\"\"\"|'''|"|')[^\n]*\{\s*""" + _USER_PY)
 _PY_FMT_USER = re.compile(r"""["']\s*\+\s*""" + _USER_PY + r"|\.format\([^)]*" + _USER_PY)
 _JS_TPL_USER = re.compile(r"""`[^`\n]*\$\{\s*(?:req\.(?:body|query|params)|body|userInput|user_input)\b[^}]*\}""")
 _PI_SAFE = re.compile(
     r"<\w+>[^<\n]*\{[^}\n]*\}[^<\n]*</\w+>|<\w+>[^<\n]*\$\{[^}\n]*\}[^<\n]*</\w+>|```|json\.dumps|JSON\.stringify|"
-    r"sanitiz|escape|neutraliz|delimit|truncate", re.I)
+    r"sanitiz|escape|neutraliz|delimit|truncate", re.IGNORECASE)
 _EXEC_LLM = re.compile(
     r"\b(?:eval|exec)\s*\(|os\.system\s*\(|subprocess\.\w+\s*\(|new\s+Function\s*\(|child_process")
 _LLM_OUTPUT = re.compile(
@@ -104,9 +104,9 @@ def detect_mass_assignment(path: str, lines: list[str], text: str) -> Iterator[t
 
 
 # ── SRI ───────────────────────────────────────────────────────────────
-_TAG = re.compile(r"<(script|link)\b([^<>]*)>", re.I | re.S)
-_INTEGRITY = re.compile(r"\bintegrity\s*=", re.I)
-_EXTERNAL = re.compile(r"^(?:https?:)?//([^/:?#\s]+)", re.I)
+_TAG = re.compile(r"<(script|link)\b([^<>]*)>", re.IGNORECASE | re.DOTALL)
+_INTEGRITY = re.compile(r"\bintegrity\s*=", re.IGNORECASE)
+_EXTERNAL = re.compile(r"^(?:https?:)?//([^/:?#\s]+)", re.IGNORECASE)
 _EXEMPT_HOSTS = {
     "fonts.googleapis.com", "fonts.gstatic.com", "use.typekit.net", "p.typekit.net", "www.googletagmanager.com",
     "googletagmanager.com", "www.google-analytics.com", "analytics.google.com", "js.stripe.com", "m.stripe.network",
@@ -118,7 +118,7 @@ _EXEMPT_SUFFIXES = (".posthog.com", ".emergent.sh", ".stripe.com", ".googleapis.
 
 
 def _attr(attrs: str, name: str) -> str | None:
-    m = re.search(rf"""\b{name}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", attrs, re.I)
+    m = re.search(rf"""\b{name}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", attrs, re.IGNORECASE)
     return (m.group(1) or m.group(2) or m.group(3)) if m else None
 
 
@@ -153,9 +153,9 @@ def detect_sri(path: str, lines: list[str], text: str) -> Iterator[tuple[int, st
 
 # ── public bucket ─────────────────────────────────────────────────────
 _PB_LINE = [
-    re.compile(r"""\bacl["']?\s*[:=]\s*["']public-read(?:-write)?["']""", re.I),
-    re.compile(r"\b(?:block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)\s*=\s*false\b", re.I),
-    re.compile(r"""["'](?:BlockPublicAcls|BlockPublicPolicy|IgnorePublicAcls|RestrictPublicBuckets)["']\s*:\s*false""", re.I),
+    re.compile(r"""\bacl["']?\s*[:=]\s*["']public-read(?:-write)?["']""", re.IGNORECASE),
+    re.compile(r"\b(?:block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)\s*=\s*false\b", re.IGNORECASE),
+    re.compile(r"""["'](?:BlockPublicAcls|BlockPublicPolicy|IgnorePublicAcls|RestrictPublicBuckets)["']\s*:\s*false""", re.IGNORECASE),
     re.compile(r"""["']Principal["']\s*:\s*(?:["']\*["']|\{\s*["']AWS["']\s*:\s*["']\*["']\s*\})"""),
     re.compile(r"""\bidentifiers\s*=\s*\[\s*["']\*["']\s*\]"""),
     re.compile(r"""createBucket\([^)\n]*\bpublic\s*:\s*true"""),
@@ -164,8 +164,8 @@ _PB_LINE = [
     re.compile(r"""\ballow\s+[\w\s,]+:\s*if\s+true\s*;"""),
 ]
 _PB_GCS_MEMBER = re.compile(r"""\b(?:member|members|principal)\b[^\n]*["']all(?:Authenticated)?Users["']""")
-_PB_GCS_CONTEXT = re.compile(r"storage|bucket|objectViewer|objectAdmin", re.I)
-_PB_PREFILTER = re.compile(r"acl|public|Principal|identifiers|allUsers|allAuthenticatedUsers|if\s+true|container_access", re.I)
+_PB_GCS_CONTEXT = re.compile(r"storage|bucket|objectViewer|objectAdmin", re.IGNORECASE)
+_PB_PREFILTER = re.compile(r"acl|public|Principal|identifiers|allUsers|allAuthenticatedUsers|if\s+true|container_access", re.IGNORECASE)
 
 
 def _public_bucket_line(lines: list[str], idx: int) -> bool:
