@@ -2,9 +2,10 @@
 # intentionally fake secrets (tests, fixtures, docs).  One regex per
 # line; matches relative file paths.
 #
-# IMPORTANT: This file controls UNVERIFIED-noise filtering only.  A
-# VERIFIED secret in any of these paths will still fail CI — verified
-# = trufflehog confirmed the credential works against the live API.
+# IMPORTANT: --exclude-paths makes the main scan SKIP these files entirely
+# (it does not merely filter unverified noise). A separate CI step,
+# "Fail on verified secrets in excluded paths", re-scans exactly these paths
+# with --only-verified and fails the job on any verified hit.
 ^backend/tests/
 ^frontend/src/__tests__/
 ^frontend/__tests__/

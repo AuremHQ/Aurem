@@ -32,6 +32,16 @@ def _assert_clean(blob: str) -> None:
 
 
 # ── fix_pipeline SSE ──────────────────────────────────────────────────
+class _ProjCol:
+    @staticmethod
+    async def find_one(*a, **k):
+        return None   # no preview_url -> no before/after capture
+
+
+class _BulkDb:
+    cto_projects = _ProjCol()
+
+
 async def test_bulk_job_crash_emits_a_generic_job_error(monkeypatch, caplog):
     from routers import fix_pipeline as fp
     from services import fix_job_manager as fjm
@@ -55,7 +65,7 @@ async def test_bulk_job_crash_emits_a_generic_job_error(monkeypatch, caplog):
     monkeypatch.setattr(fjm, "close", _close)
 
     with caplog.at_level(logging.ERROR):
-        await fp._run_bulk_job(job_id="j1", db=object(), user={"user_id": "u1"}, project_id="p1",
+        await fp._run_bulk_job(job_id="j1", db=_BulkDb(), user={"user_id": "u1"}, project_id="p1",
                                findings=[{"id": "f1", "rule_id": "x", "file": "a.py"}], is_unlim=False)
 
     errors = [kw for ev, kw in emitted if ev == "job-error"]

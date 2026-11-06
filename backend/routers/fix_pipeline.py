@@ -432,8 +432,8 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
     exception inside the worker (Mongo glitch, GitHub 5xx outside
     the per-finding block, programming bug) used to silently kill
     the asyncio task and leave the UI hanging in "running" forever.
-    Now we catch, emit a `job-error` event with the full traceback,
-    and close the job with status="failed" so the UI offers Restart.
+    Now we catch, log the full traceback server-side only, emit a
+    generic `job-error` event, and close the job with status="failed" so the UI offers Restart.
     """
     user_id = user["user_id"]
     # Ticket D (2026-02) — per-fix before/after live proof, opt-in
@@ -1043,21 +1043,21 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         # final `job-error` SSE event and close the job as `failed`
         # so the drawer can show a real error message + a Restart
         # button driving POST /restart/{job_id}.
-        import traceback
-        tb = traceback.format_exc(limit=4)
+        # Security audit 4.7 — full trace stays in the server log only; the
+        # SSE event and the stored job row carry a generic error (no file
+        # paths, no exception text).
         logger.exception("bulk job crashed job=%s", job_id)
         await _release_all_bulk_holds(db, user_id, job_id, findings)
         try:
             fjm.emit(job_id, "job-error", ok=False,
                      reason="worker_exception",
-                     error=f"{type(e).__name__}: {e}",
-                     traceback=tb,
+                     error="worker_crashed",
                      message="Worker crashed — click Restart to retry the remaining findings.")
         except Exception:
             pass
         await fjm.close(
             db, job_id, ok=False, status="failed",
-            message=f"Worker crashed: {type(e).__name__}: {str(e)[:200]}",
+            message="Worker crashed — see server logs. Click Restart to retry.",
         )
         # P2-A (2026-08-28) — user-facing bell, "ship_failed" (persistent).
         await emit_notification(

@@ -690,6 +690,53 @@ jobs:
           echo "Download the 'trufflehog-jsonl' artifact for details, or visit the AUREM dashboard."
           exit 1
 
+      # Security audit 4.6 — `--exclude-paths` above skips those files ENTIRELY,
+      # so a live secret committed under tests/, docs/ etc. was never checked.
+      # Second pass: scan ONLY the excluded paths, report only VERIFIED hits
+      # (so fake fixture secrets stay quiet) and fail the job on any. Prints
+      # detector + file only, never the matched value.
+      - name: Fail on verified secrets in excluded paths
+        if: always()
+        run: |
+          set +e
+          grep -vE '^\s*(#|$)' .trufflehog-exclude > /tmp/exclude.re
+          git ls-files | grep -E -f /tmp/exclude.re > /tmp/excluded-files.txt
+          echo "Excluded-path files to re-scan: $(wc -l < /tmp/excluded-files.txt)"
+          : > /tmp/excluded.jsonl
+          split -l 200 /tmp/excluded-files.txt /tmp/exb_
+          for batch in /tmp/exb_*; do
+            [ -e "$batch" ] || continue
+            mapfile -t files < "$batch"
+            trufflehog filesystem "${files[@]}" --only-verified --json --no-update \
+              >> /tmp/excluded.jsonl 2>>/tmp/excluded.err
+            rc=$?
+            if [ "$rc" != "0" ] && [ "$rc" != "183" ]; then
+              echo "::warning::trufflehog (excluded paths) exit=$rc — see stderr"
+              tail -n 20 /tmp/excluded.err || true
+            fi
+          done
+          python3 <<'PY'
+          import json, sys
+          hits = []
+          for line in open("/tmp/excluded.jsonl"):
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  row = json.loads(line)
+              except Exception:
+                  continue
+              if row.get("Verified"):
+                  fs = ((row.get("SourceMetadata") or {}).get("Data") or {}).get("Filesystem") or {}
+                  hits.append((row.get("DetectorName", "?"), fs.get("file", "?")))
+          print(f"Excluded-path scan: verified={len(hits)}")
+          for det, f in hits:
+              print(f"  VERIFIED {det} in {f}")
+          if hits:
+              print("::error::Trufflehog found VERIFIED secrets in excluded paths — blocking merge.")
+              sys.exit(1)
+          PY
+
 
   absolute-claim-lint:
     # Trust & Verification round, Enhancement 6 — static scan of
@@ -716,9 +763,23 @@ jobs:
         run: python3 backend/scripts/lint_absolute_claims.py
 
 
+  debug-flag-guard:
+    # Security audit 4.5 — guardrail only: fails if a tracked production
+    # config (.env, Dockerfile, compose, fly/render/vercel...) sets DEBUG
+    # to a truthy value. No runtime behaviour change.
+    name: Security — No DEBUG in production config
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check production configs for DEBUG=true
+        run: python3 backend/scripts/ci_check_no_debug_true.py
+
   deploy-gate:
     name: Deploy gate — all checks passed
-    needs: [frontend-build, backend-tests, simulated-user-qa, security-scan, secret-scan, absolute-claim-lint]
+    needs: [frontend-build, backend-tests, simulated-user-qa, security-scan, secret-scan, absolute-claim-lint, debug-flag-guard]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     env:

@@ -2541,9 +2541,18 @@ _NOSQL_DENY_KEYS = {
     "$where", "$expr", "$function", "$accumulator",
     "$lookup",  # rare but lets attacker traverse to other collections
 }
+# Security audit Phase 4.1 — classic filter/login-bypass operators
+# ({"password": {"$ne": null}}). $gte/$lt/$nin/$in are deliberately NOT here.
+_NOSQL_EXTRA_DENY_KEYS = {"$ne", "$gt", "$regex"}
+# The managed-DB product (routers/managed_db.py) forwards a client-supplied
+# Mongo-style filter by design, scoped server-side to app_id+user_id. It is the
+# only route measured to need these three operators, so it is exempt from them
+# (the original five stay blocked there). Trailing slash = exact prefix match.
+_NOSQL_EXTRA_EXEMPT_PREFIXES = ("/api/aurem-dev/managed-db/", "/api/managed-db/")
+_NOSQL_ALL_DENY_KEYS = _NOSQL_DENY_KEYS | _NOSQL_EXTRA_DENY_KEYS
 
 
-def _contains_nosql_op(obj, depth: int = 0) -> str | None:
+def _contains_nosql_op(obj, depth: int = 0, deny=_NOSQL_ALL_DENY_KEYS) -> str | None:
     """Recursively walk dict/list and return the first banned key
     found, or None when clean. Capped at depth=12 so a deeply-nested
     payload can't pin the CPU."""
@@ -2551,14 +2560,14 @@ def _contains_nosql_op(obj, depth: int = 0) -> str | None:
         return None
     if isinstance(obj, dict):
         for k in obj.keys():
-            if isinstance(k, str) and k in _NOSQL_DENY_KEYS:
+            if isinstance(k, str) and k in deny:
                 return k
-            hit = _contains_nosql_op(obj[k], depth + 1)
+            hit = _contains_nosql_op(obj[k], depth + 1, deny)
             if hit:
                 return hit
     elif isinstance(obj, list):
         for item in obj:
-            hit = _contains_nosql_op(item, depth + 1)
+            hit = _contains_nosql_op(item, depth + 1, deny)
             if hit:
                 return hit
     return None
@@ -2619,7 +2628,9 @@ class NoSQLOpASGIGuard:
             except _json.JSONDecodeError:
                 parsed = None
             if parsed is not None:
-                hit = _contains_nosql_op(parsed)
+                deny = (_NOSQL_DENY_KEYS if path.startswith(_NOSQL_EXTRA_EXEMPT_PREFIXES)
+                        else _NOSQL_ALL_DENY_KEYS)
+                hit = _contains_nosql_op(parsed, 0, deny)
                 if hit:
                     client = scope.get("client") or ("?", 0)
                     logger.warning(
@@ -2651,6 +2662,24 @@ app.add_middleware(NoSQLOpASGIGuard)
 
 # ── Iter 44 — Security headers (Vanguard hardening) ──
 # Drop these on every response. Cheap, zero functional impact.
+_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://auremcto.com https://bzrcdn.openai.com; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https:; "
+    "connect-src 'self' https://auremcto.com wss://auremcto.com "
+    "https://openrouter.ai https://api.github.com "
+    "https://bzrcdn.openai.com https://bzr.openai.com; "
+    "frame-src 'self' blob:; "
+    "font-src 'self' data:; "
+    # Phase 4.2: both are additions only. frame-ancestors matches the
+    # X-Frame-Options: DENY already sent. 'unsafe-inline' is NOT removed here
+    # (inline loaders in frontend/index.html need nonces/hashes first).
+    "object-src 'none'; "
+    "frame-ancestors 'none'"
+)
+
+
 @app.middleware("http")
 async def _security_headers(request, call_next):
     # Iter 48 — slow-request capture. Anything > SLOW_API_MS (default 5s)
@@ -2703,17 +2732,7 @@ async def _security_headers(request, call_next):
     # 'unsafe-inline' kept for style+script because lucide-react and our
     # markdown renderer inject inline CSS; we'll tighten with nonces in a
     # later iteration once the chat preview pane is on its own iframe.
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://auremcto.com https://bzrcdn.openai.com; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https:; "
-        "connect-src 'self' https://auremcto.com wss://auremcto.com "
-        "https://openrouter.ai https://api.github.com "
-        "https://bzrcdn.openai.com https://bzr.openai.com; "
-        "frame-src 'self' blob:; "
-        "font-src 'self' data:;"
-    )
+    response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
     response.headers["X-AUREM-Version"] = "1.0.0"
     response.headers["X-Response-Time-Ms"] = f"{_dur_ms:.0f}"
     if SENTRY_ACTIVE:
@@ -2756,6 +2775,45 @@ def _apply_security_headers(resp):
     # audit checks for; Accept-Encoding is genuinely true (gzip vs not).
     resp.headers["Vary"] = "Accept, Accept-Encoding"
     resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # Same constant as the main middleware: cache hits used to go out with no CSP.
+    resp.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
+
+
+# ── Phase 4.4 — optional admin gate on the API docs ──────────────────
+# /api/docs, /api/redoc and /api/openapi.json are deliberately public (listed
+# for AI agents). API_DOCS_REQUIRE_ADMIN (default OFF) puts them behind the
+# existing admin bearer check. A browser page load cannot send that header, so
+# with the flag on the docs UI needs a header-injecting client.
+_DOCS_PATHS = {"/api/docs", "/api/redoc", "/api/openapi.json", "/api/docs/oauth2-redirect"}
+
+
+def _docs_gate_enabled() -> bool:
+    return os.environ.get("API_DOCS_REQUIRE_ADMIN", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+async def _docs_require_admin(authorization, request=None):
+    from routers._admin_common import _require_admin
+    return await _require_admin(authorization, request)
+
+
+@app.middleware("http")
+async def _docs_admin_gate(request, call_next):
+    if _docs_gate_enabled():
+        norm = "/" + "/".join(p for p in request.url.path.lower().split("/") if p)
+        if norm in _DOCS_PATHS:
+            from fastapi import HTTPException as _DocsHTTPExc
+            try:
+                await _docs_require_admin(request.headers.get("authorization"), request)
+            except _DocsHTTPExc as exc:
+                resp = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+                _apply_security_headers(resp)
+                return resp
+            except Exception:
+                logger.exception("docs admin gate failed")
+                resp = JSONResponse({"detail": "Service temporarily unavailable"}, status_code=503)
+                _apply_security_headers(resp)
+                return resp
+    return await call_next(request)
 
 
 async def _safe_call_next(request, call_next):

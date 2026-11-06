@@ -256,9 +256,9 @@ async def run_backup(db) -> dict:
         }
     except Exception as e:
         duration_ms = int((time.monotonic() - started) * 1000)
-        import traceback
-        tb = traceback.format_exc()
-        error_str = f"{type(e).__name__}: {e!r}\n{tb}"[:1800]
+        # Security audit 4.7 — the full trace goes to the server log (and
+        # Sentry) only; the returned value and the stored history row are generic.
+        error_str = f"{type(e).__name__}: backup failed — see server logs"
         logger.exception("backup failed")
         _capture_sentry(e, {"stage": "run_backup", "r2_key": r2_key})
         await _write_history(
