@@ -38,6 +38,7 @@ import UnlockProCTA, { shouldShowUnlockProCTA } from "./UnlockProCTA";
 import StepCards from "./StepCards";   // Iter 212m-19 — live step cards
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import SaveToGitHubModal from "./SaveToGitHubModal";
+import { sanitizeApiErrorDetail } from "../lib/cleanErr";
 import ReaAnalysisCard from "./ReaAnalysisCard";
 import ThinkingLoader from "./ThinkingLoader";
 import { brandProvider } from "../lib/providerLabel";
@@ -898,7 +899,19 @@ export default function MessageBubble({
       // "shipped") for post-push polling + rollback affordance.
       return { task_id: taskId };
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || "Submit failed";
+      // 2026-10-27 — CRITICAL fix (live-reproduced page crash). The
+      // backend's GitHub-failure detail is now a structured
+      // `{code,message,retryable}` OBJECT (services/github_errors.py),
+      // not always a string. `e?.response?.data?.detail || e?.message`
+      // put that raw object straight into shipState.error, and
+      // ShipApproveCard renders `{error || label}` directly as a React
+      // child — "Objects are not valid as a React child" threw and the
+      // route error boundary replaced the ENTIRE chat page. Also never
+      // fall back to `e?.message` (e.g. axios's own "Request failed
+      // with status code 502") — same infra-leak class the modal's own
+      // sanitizer already guards against; reuse it here so both
+      // surfaces agree.
+      const msg = sanitizeApiErrorDetail(e, "Submit failed");
       setShipState({ status: "error", taskId: null, error: msg });
       // Re-throw (with the ORIGINAL error, not just `msg`) so the
       // modal's own catch can read e?.response?.data?.detail itself —

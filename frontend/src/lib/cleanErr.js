@@ -18,3 +18,29 @@ export function cleanErr(e, fallback = "Request failed") {
   }
   return msg;
 }
+
+// 2026-10-27 — shared by MessageBubble.jsx's doSubmitShipTarget AND
+// SaveToGitHubModal.jsx's repos/branches/submit error states. Reads
+// the backend's structured GitHub-failure detail (services/
+// github_errors.py::classify_github_failure returns
+// `{code, message, retryable}`) or a plain-string legacy `detail`,
+// and sanitizes raw Cloudflare/HTML infra text the same way cleanErr()
+// does above. Deliberately NEVER falls back to `e.message`/
+// `e.toString()` — a raw JS/axios error string (e.g. "Request failed
+// with status code 502") is exactly the infra leak this exists to
+// prevent; only the backend's own detail, or one fixed generic
+// sentence, is ever returned. A plain object (not a string) must
+// never reach a React child — this guarantees that.
+export function sanitizeApiErrorDetail(e, fallback) {
+  const detail = e?.response?.data?.detail;
+  let msg = (detail && typeof detail === "object" && typeof detail.message === "string")
+    ? detail.message
+    : (typeof detail === "string" ? detail : null);
+  if (msg == null) return fallback;
+  const looksLikeInfra =
+    /<\s*(html|!doctype)|cloudflare|could not parse|bad gateway|origin web server/i.test(msg);
+  if (looksLikeInfra || msg.length > 220) {
+    return "The server returned an unreadable response (usually a transient issue). Please retry in a moment.";
+  }
+  return msg;
+}

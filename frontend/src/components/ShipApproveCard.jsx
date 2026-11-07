@@ -151,8 +151,16 @@ export default function ShipApproveCard({
 
         {ship.isFailed && (
           <>
+            {/* 2026-10-27 — defense-in-depth. `error` must always be a
+                string by the time it reaches this component (callers
+                sanitize it — see MessageBubble.jsx's doSubmitShipTarget),
+                but a non-string value here crashed the WHOLE page
+                ("Objects are not valid as a React child") the one time
+                a caller slipped and passed a raw backend detail object
+                straight through. Never let that happen again, even if
+                a future caller makes the same mistake. */}
             <span data-testid={statusTestid} style={{ fontSize: 13, color: "#EF4444" }}>
-              {error || shipStatusLabel(ship.canonical)}
+              {typeof error === "string" && error ? error : shipStatusLabel(ship.canonical)}
             </span>
             {onRetry && (
               <button data-testid={retryTestid} onClick={onRetry}
