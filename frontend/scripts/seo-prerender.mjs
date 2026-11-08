@@ -35,10 +35,8 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEnv } from "vite";
 import { marked } from "marked";
-import { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } from "../src/data/competitors.mjs";
-import { ABOUT, CONTACT } from "../src/data/companyInfo.mjs";
-import { DEVELOPERS } from "../src/data/developerInfo.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
@@ -47,10 +45,47 @@ const DIST = join(ROOT, "dist");
 // VITE_TOKEN_BILLING_MODE flag src/lib/billingCopy.js reads via
 // `import.meta.env` in the browser bundle; this Node build script
 // reads it from `process.env` instead since it runs outside Vite's
-// module transform). Only the homepage (`/`) snapshot is gated here —
-// /vs/*, /compare, /about, /contact, /privacy, /developers keep their
-// existing copy unchanged (none of those make a token-count claim).
+// module transform).
+//
+// 2026-11-09 — bugfix: this script runs as a SEPARATE `node` process
+// after `vite build` in the same `&&`-chained `yarn build` command.
+// `vite build` has its own internal env-file loader and correctly
+// reads VITE_TOKEN_BILLING_MODE out of .env.production, but that is
+// NOT an OS-level environment variable — it only exists as parsed
+// file content inside Vite's own process. A second `node` command in
+// the same shell chain does NOT inherit it via `process.env` unless
+// something ALSO exported it at the shell level before `yarn build`
+// ran. Call Vite's own `loadEnv` here so this script independently
+// reads the exact same `.env`/`.env.production` files `vite build`
+// just used, regardless of how the outer shell invoked the build.
+// `process.env` still wins first (keeps the existing
+// `VITE_TOKEN_BILLING_MODE=on node scripts/seo-prerender.mjs` manual
+// test/debug workflow working unchanged).
+const _loadedEnv = loadEnv("production", ROOT, "VITE_");
+// Resolve ONE canonical value and propagate it onto process.env itself
+// (not just a local const) so the dynamically-imported data modules
+// below read the exact same resolved value this script computed from,
+// regardless of which source (shell env vs .env.production) it came from.
+process.env.VITE_TOKEN_BILLING_MODE =
+  process.env.VITE_TOKEN_BILLING_MODE ?? _loadedEnv.VITE_TOKEN_BILLING_MODE ?? "off";
 const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
+
+// 2026-11-09 — bugfix (same root cause as above, one level deeper):
+// src/data/competitors.mjs and src/data/companyInfo.mjs compute their
+// OWN `TOKEN_WORDING_ACTIVE` by reading `process.env.VITE_TOKEN_BILLING_MODE`
+// directly (same dual-environment pattern, see those files). A static
+// `import {...} from "../src/data/competitors.mjs"` at the top of this
+// file is hoisted and evaluates BEFORE any of this file's own top-level
+// code runs — including the `loadEnv` call above — so by the time that
+// import ran, `process.env.VITE_TOKEN_BILLING_MODE` was still unset and
+// those modules' own flags silently latched to `false`, no matter what
+// TOKEN_MODE above correctly computed. Fix: actually SET the OS-level
+// env var (above) before dynamically importing the data modules (not
+// hoisted — runs exactly where it's written) so they see the exact
+// same resolved value this script just computed.
+const { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } = await import("../src/data/competitors.mjs");
+const { ABOUT, CONTACT } = await import("../src/data/companyInfo.mjs");
+const { DEVELOPERS } = await import("../src/data/developerInfo.mjs");
 
 // 2026-11-09 — bugfix: the comment above ("only the homepage snapshot
 // is gated") was wrong once /vs/*, /compare and /about started
