@@ -534,7 +534,7 @@ const TAGLINES = [
   "Health Scanner",
   "ORA Council",
   "4-hop fallback",
-  "Flat $9/mo · no token meter",
+  TOKEN_WORDING_ACTIVE ? "Flat $9/mo · 900 tokens" : "Flat $9/mo · no token meter",
 ];
 const MODES = [
   {
