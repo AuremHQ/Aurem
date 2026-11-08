@@ -30,6 +30,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from cto_services.db import require_db
+from services.feature_flags import is_enabled
 from services.harness_auth import verify_harness_identity
 from services.rate_limiter import check_rate_limit_async
 
@@ -38,6 +39,30 @@ logger = logging.getLogger("aurem-dev.harness")
 router = APIRouter()
 
 _VERIFY_RATE_LIMIT_PER_MINUTE = 10
+
+
+class HarnessPageStatusResponse(BaseModel):
+    harness_page_enabled: bool
+
+
+# 2026-11-09 — public (no-auth) flag read, so the homepage's "Aurem
+# Loop" promo section and the /harness page itself can both work for
+# anonymous/signed-out visitors. Previously the ONLY place
+# `harness_page_enabled` was exposed was the authenticated /auth/me
+# response (routers/auth.py) — a signed-out visitor never calls that
+# successfully, so pageFlags.js's `isHarnessPageEnabled()` silently
+# stayed at its hardcoded default (false) for them regardless of the
+# real admin-set flag value ("the pre-login flag gap"). This reads
+# the SAME services.feature_flags "harness_page" doc `/auth/me` does
+# — single source of truth, no second flag system to drift out of
+# sync. `is_enabled()` with no user_id is already safe/correct for an
+# anonymous caller (see services/feature_flags.py's own anonymous-
+# canary-bucket handling) and has its own 60s process-local cache, so
+# this adds no extra Mongo load under traffic.
+@router.get("/harness/page-status", response_model=HarnessPageStatusResponse)
+async def harness_page_status() -> HarnessPageStatusResponse:
+    enabled = await is_enabled("harness_page")
+    return HarnessPageStatusResponse(harness_page_enabled=enabled)
 
 
 class HarnessVerifyRequest(BaseModel):

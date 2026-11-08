@@ -23,6 +23,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../lib/api", () => ({
   api: { get: vi.fn(() => Promise.resolve({ data: {} })) },
+  healthApi: { get: vi.fn(() => Promise.resolve({ data: {} })) },
 }));
 vi.mock("../../components/PricingCards", () => ({ default: () => <div data-testid="pricing-cards-stub" /> }));
 vi.mock("../../components/LazyVideo", () => ({ default: () => <div data-testid="lazy-video-stub" /> }));

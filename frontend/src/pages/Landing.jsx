@@ -28,7 +28,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, healthApi } from "../lib/api";
 import { pageTitle } from "../lib/siteConfig";
 import {
   heroFreeOfferCta, TOKEN_WORDING_ACTIVE, heroTokenMetersClaim, landingPricingSectionSub,
@@ -260,6 +260,16 @@ const LANDING_CSS = `
 .ora-landing .section-label { font-family: var(--font-mono); font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; }
 .ora-landing .section-title { font-family: var(--font-mono); font-weight: 700; font-size: clamp(28px, 4vw, 44px); margin: 10px 0 8px; letter-spacing: -1px; }
 .ora-landing .section-sub { color: var(--muted-1); font-size: 16px; margin-bottom: 48px; }
+/* 2026-11-09 — "Aurem Loop" homepage promo (draft, flag-gated). A
+   compact, centered secondary callout — distinct from the main
+   pricing/CTA sections so it reads as "also check this out", not a
+   second competing primary offer. */
+.ora-landing .harness-promo {
+  padding: 56px 32px; text-align: center; max-width: 640px;
+  margin: 0 auto; border-top: 1px solid var(--line);
+}
+.ora-landing .harness-promo .section-title { font-size: clamp(22px, 3vw, 30px); }
+.ora-landing .harness-promo .section-sub { margin-bottom: 28px; }
 
 /* Video cards */
 .ora-landing .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
@@ -662,6 +672,23 @@ export default function Landing() {
   useEffect(() => {
     api.get("/usage/public/stats")
       .then((r) => { if (r.data?.available) setProof(r.data); })
+      .catch(() => {});
+  }, []);
+
+  // 2026-11-09 — "Aurem Loop" homepage promo section (draft, flag
+  // default OFF). Reads the SAME `harness_page` flag the authenticated
+  // /auth/me response exposes, via the new public (no-auth)
+  // GET /api/harness/page-status — deliberately NOT pageFlags.js's
+  // isHarnessPageEnabled() (that mirror only ever populates from
+  // /auth/me, so it silently stays false for any signed-out visitor
+  // regardless of the real flag — "the pre-login flag gap"). Same
+  // fail-closed-on-any-error pattern as the `proof` fetch above: a
+  // network failure just keeps the section hidden, never shows it by
+  // mistake.
+  const [harnessPageEnabled, setHarnessPageEnabled] = useState(false);
+  useEffect(() => {
+    healthApi.get("/harness/page-status")
+      .then((r) => { if (r.data?.harness_page_enabled === true) setHarnessPageEnabled(true); })
       .catch(() => {});
   }, []);
 
@@ -1341,6 +1368,15 @@ export default function Landing() {
             <Link className="btn-primary" to="/signup" data-testid="cta-signup">{heroFreeOfferCta()}</Link>
           </div>
         </section>
+
+        {/* ─── Aurem Loop promo (draft, flag-gated, default hidden) ─── */}
+        {harnessPageEnabled && (
+          <section className="section harness-promo" data-testid="aurem-loop-promo-section">
+            <h2 className="section-title" data-testid="aurem-loop-promo-heading">Aurem Loop</h2>
+            <p className="section-sub" data-testid="aurem-loop-promo-line">A local coding harness that checks its own work. Free — signup only.</p>
+            <Link className="btn-ghost" to="/harness" data-testid="aurem-loop-promo-cta">Get Aurem Loop →</Link>
+          </section>
+        )}
 
       </div>
 

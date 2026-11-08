@@ -61,7 +61,7 @@ const DIST = join(ROOT, "dist");
 // `process.env` still wins first (keeps the existing
 // `VITE_TOKEN_BILLING_MODE=on node scripts/seo-prerender.mjs` manual
 // test/debug workflow working unchanged).
-const _loadedEnv = loadEnv("production", ROOT, "VITE_");
+const _loadedEnv = loadEnv("production", ROOT, "");
 // Resolve ONE canonical value and propagate it onto process.env itself
 // (not just a local const) so the dynamically-imported data modules
 // below read the exact same resolved value this script computed from,
@@ -86,6 +86,37 @@ const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
 const { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } = await import("../src/data/competitors.mjs");
 const { ABOUT, CONTACT } = await import("../src/data/companyInfo.mjs");
 const { DEVELOPERS } = await import("../src/data/developerInfo.mjs");
+
+// 2026-11-09 — "Aurem Loop" homepage promo section (draft, flag
+// default OFF — do not flip without separate founder approval).
+// Reads the SAME `harness_page` feature flag the authenticated
+// /auth/me response exposes, via the new public (no-auth)
+// GET /api/harness/page-status — single source of truth, so this
+// static snapshot and the authenticated /harness page itself can
+// never disagree about whether the feature is live. A network
+// failure (backend not yet reachable at build time, timeout, etc.)
+// fails closed to `false` — the same safe default as the flag simply
+// not existing yet in Mongo.
+async function resolveHarnessPageMode() {
+  const backendUrl =
+    process.env.VITE_API_URL ||
+    _loadedEnv.VITE_API_URL ||
+    process.env.REACT_APP_BACKEND_URL ||
+    _loadedEnv.REACT_APP_BACKEND_URL;
+  if (!backendUrl) return false;
+  try {
+    const resp = await fetch(`${backendUrl}/api/harness/page-status`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return false;
+    const body = await resp.json();
+    return body?.harness_page_enabled === true;
+  } catch (e) {
+    console.warn(`[seo-prerender] harness/page-status fetch failed (${e.message}) — defaulting homepage promo section to hidden`);
+    return false;
+  }
+}
+const HARNESS_PAGE_MODE = await resolveHarnessPageMode();
 
 // 2026-11-09 — bugfix: the comment above ("only the homepage snapshot
 // is gated") was wrong once /vs/*, /compare and /about started
@@ -326,7 +357,10 @@ function homeBody() {
 <p>${TOKEN_MODE
     ? "One free full scan, no credit card. Starter: $9/month flat for 900 tokens \u2014 no per-action billing, unused tokens carry forward."
     : "Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing."}</p>
-<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
+${HARNESS_PAGE_MODE ? `<h2>Aurem Loop</h2>
+<p>A local coding harness that checks its own work. Free \u2014 signup only.</p>
+<p><a href="/harness">Get Aurem Loop \u2192</a></p>
+` : ""}<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }
 
