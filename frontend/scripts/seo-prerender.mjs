@@ -43,6 +43,15 @@ import { DEVELOPERS } from "../src/data/developerInfo.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
 
+// 2026-10-27 — homepage copy-only token-billing cutover (gated, same
+// VITE_TOKEN_BILLING_MODE flag src/lib/billingCopy.js reads via
+// `import.meta.env` in the browser bundle; this Node build script
+// reads it from `process.env` instead since it runs outside Vite's
+// module transform). Only the homepage (`/`) snapshot is gated here —
+// /vs/*, /compare, /about, /contact, /privacy, /developers keep their
+// existing copy unchanged (none of those make a token-count claim).
+const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
+
 const esc = (s) =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -230,7 +239,9 @@ function homeBody() {
 <li><strong>Ship</strong> \u2014 nothing commits until you click Ship.</li>
 </ul>
 <h2>Pricing</h2>
-<p>Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing.</p>
+<p>${TOKEN_MODE
+    ? "One free full scan, no credit card. Starter: $9/month flat for 900 tokens \u2014 no per-action billing, unused tokens carry forward."
+    : "Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing."}</p>
 <p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }
@@ -287,13 +298,60 @@ ${sections}
 {
   let html = swapHead(base, {
     title: "ORA by AUREM \u2014 the AI engineer that actually commits",
-    description:
-      "ORA connects to your GitHub repo, writes code, runs a security " +
-      "scan, and commits on your approval. Free tier: 10 tasks/month, " +
-      "no card. Starter: $9/month flat.",
+    description: TOKEN_MODE
+      ? "ORA connects to your GitHub repo, writes code, runs a security " +
+        "scan, and commits on your approval. One free full scan, no " +
+        "card. Starter: $9/month flat for 900 tokens."
+      : "ORA connects to your GitHub repo, writes code, runs a security " +
+        "scan, and commits on your approval. Free tier: 10 tasks/month, " +
+        "no card. Starter: $9/month flat.",
     canonical: "https://auremcto.com/",
   });
   html = injectRoot(html, homeBody());
+  if (TOKEN_MODE) {
+    // 2026-10-27 — homepage-only token-mode cutover for the parts of
+    // the shared `base` template `swapHead`/`injectRoot` don't reach:
+    // the WebSite/SoftwareApplication/FAQPage JSON-LD (<head>, outside
+    // #root) and the <noscript> non-JS-crawler fallback (outside
+    // #root, before it). Scoped to literal string replacements of the
+    // exact known stale phrases so a future, unrelated edit to any of
+    // these blocks can't silently go un-gated — each `.replace()`
+    // below is a no-op (not an error) if its target text has already
+    // changed, same tolerance swapHead's own regexes have.
+    html = html
+      .replace(
+        "The AI engineer that actually commits — $9/month, no IDE, no token billing.",
+        "The AI engineer that actually commits — $9/month, no IDE, no per-action billing.",
+      )
+      .replace(
+        "Flat monthly pricing starting at $9/month with 10 tasks free.",
+        "Flat monthly pricing starting at $9/month with one free full scan, no card required.",
+      )
+      .replace(
+        '"description": "10 tasks free per month. No credit card required."',
+        '"description": "One free full repo scan per month. No credit card required."',
+      )
+      .replace(
+        '"description": "$9/month flat — no token metering, no per-seat pricing, unlimited repositories. Limited to the first 500 users."',
+        '"description": "$9/month flat for 900 tokens — no per-seat pricing, unlimited repositories, unused tokens carry forward. Limited to the first 500 users."',
+      )
+      .replace(
+        '"Flat monthly pricing with no token metering",',
+        '"Flat monthly pricing, no per-action billing — unused tokens carry forward",',
+      )
+      .replace(
+        'there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500.',
+        'you get one free full repo scan with no credit card. The $9 plan grants 900 tokens/month, no per-seat pricing — unused tokens carry forward to the next month.',
+      )
+      .replace(
+        "No IDE required, no token billing.",
+        "No IDE required, no per-action billing.",
+      )
+      .replace(
+        "10 free tasks on signup. No credit card required. 498 of 500",
+        "One free full scan on signup. No credit card required. 498 of 500",
+      );
+  }
   writeFileSync(join(DIST, "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote / (root index.html, homepage content)");

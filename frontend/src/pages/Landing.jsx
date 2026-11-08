@@ -30,7 +30,11 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../lib/api";
 import { pageTitle } from "../lib/siteConfig";
-import { heroFreeOfferCta, TOKEN_WORDING_ACTIVE, heroTokenMetersClaim, landingPricingSectionSub, heroStatTokenBilling } from "../lib/billingCopy";
+import {
+  heroFreeOfferCta, TOKEN_WORDING_ACTIVE, heroTokenMetersClaim, landingPricingSectionSub,
+  heroStatTokenBilling, comparisonSectionSub, comparisonFlatPricingRowLabel,
+  pricingFeatureCardDesc, howMuchFaqAnswer,
+} from "../lib/billingCopy";
 import PricingCards from "../components/PricingCards";
 import LazyVideo from "../components/LazyVideo"; // Iter 391 · viewport-lazy demo video
 import MarketingNav from "../components/marketing/MarketingNav";
@@ -589,7 +593,7 @@ const TEAMS = [
     desc: "ORA Council tracks every interaction across 5 modes (chat, advice, code, debug, audit) and fine-tunes ORA on your specific patterns. The more you use ORA, the better it gets at your codebase." },
   { icon: "💎", tag: "founder price · $9/month flat",
     title: "$9/Month. No Surprises.",
-    desc: "No IDE to install. No token meters to watch. No per-seat pricing. Flat pricing: 10/50/300/400 tasks per month across Free/Starter/Pro/Team — 55% cheaper than Copilot. 98% cheaper than Devin." },
+    desc: pricingFeatureCardDesc() },
 ];
 const REVIEWS = [
   { stars: 5, text: "I shipped a Stripe integration in a Slack thread while waiting for a flight. ORA read the repo, wrote the code, ran the tests, committed. Mind blown.", name: "James R.", role: "Founder, Devstream", initials: "JR" },
@@ -602,7 +606,7 @@ const COMPARE_ROWS = [
   ["Ships changes to your GitHub repo",     ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["no","No"]],
   ["No IDE required",                       ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["yes","Yes"]],
   ["Mobile-friendly (web + PWA)",           ["yes","Yes"], ["no","No"], ["no","No"], ["no","Limited"], ["no","No"]],
-  ["Flat pricing (no token meter)",         ["yes","$9/mo"], ["no","$10/mo"], ["no","$20/mo"], ["no","$500/mo"], ["no","Token-billed"]],
+  [comparisonFlatPricingRowLabel(),         ["yes","$9/mo"], ["no","$10/mo"], ["no","$20/mo"], ["no","$500/mo"], ["no","Token-billed"]],
   ["MCP server (Claude / Cursor / VS Code)",["yes","All"], ["no","No"], ["no","Partial"], ["no","No"], ["yes","Yes"]],
   ["VS Code extension",                     ["yes","Marketplace"], ["yes","Yes"], ["yes","Yes"], ["no","No"], ["no","No"]],
   ["Codebase memory (warm-start)",          ["yes","Built-in"], ["no","Limited"], ["no","Limited"], ["yes","Yes"], ["no","Partial"]],
@@ -625,7 +629,7 @@ const FAQS = [
     a: "You approve first. ORA runs a 5-phase Loop — Plan → Execute → Verify → Scan → Ship — and Ship requires your manual click. Nothing lands in your repo until you press Ship, and every ship generates a real commit (not a force-push) that can be rolled back in one click." },
 
   { q: "How much does ORA cost?",
-    a: "ORA starts at $9/month flat, and there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500 per month." },
+    a: howMuchFaqAnswer() },
 
   { q: "What happens if ORA can't verify a change?",
     a: "ORA self-heals up to 2 times, then fails cleanly — no infinite loop. When the verify step (ruff / eslint / type checks) fails, ORA re-writes the file with the actual lint errors as context; if 2 attempts still fail, the loop terminates and shows you the exact ruff/eslint errors and which files failed so you can either fix manually or send a more specific follow-up prompt." },
@@ -1236,7 +1240,7 @@ export default function Landing() {
         <section className="section">
           <div className="section-label">Comparison</div>
           <h2 className="section-title">Why developers choose ORA</h2>
-          <p className="section-sub">No IDE. No token meters. No guessing. No vendor lock.</p>
+          <p className="section-sub">{comparisonSectionSub()}</p>
           <div style={{ overflowX: "auto" }}>
             <table className="compare-table">
               <thead>

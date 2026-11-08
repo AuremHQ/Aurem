@@ -88,13 +88,45 @@ export function tierCapacityLine(tierId) {
 
 // ITEM 6 (independent review) — "No IDE, no token meters." (Landing.jsx
 // hero headline) becomes FALSE once token billing is live: the
-// product explicitly has a token meter then (TokenMeter.jsx). No
-// confident, true one-line tagline replacement was clear enough to
-// invent here (see the Item 6 report's MISSING DECISIONS) — returns
-// null in token mode so the caller renders nothing rather than a
-// wrong claim, instead of guessing marketing copy.
+// product explicitly has a token meter then (TokenMeter.jsx).
+// 2026-10-27 — founder decision (replaces the earlier "render
+// nothing" placeholder): token mode now shows an honest design-goal
+// claim instead ("lowest token usage"), not a stat/percentage that
+// would need re-derivation.
 export function heroTokenMetersClaim() {
-  return TOKEN_WORDING_ACTIVE ? null : "No IDE, no token meters.";
+  return TOKEN_WORDING_ACTIVE ? "Engineered for the lowest token usage." : "No IDE, no token meters.";
+}
+
+// Landing.jsx's comparison-section sub-head + its "Flat pricing (no
+// token meter)" compare-table row share the SAME false-in-token-mode
+// claim as heroTokenMetersClaim above, but in a secondary (not hero)
+// spot — reuses the already-established "no per-action billing"
+// replacement convention (pricingHeroHeadline/pricingDetailLine
+// above), not the hero's own "lowest token usage" line, so the same
+// claim isn't repeated three times on one page.
+export function comparisonSectionSub() {
+  return TOKEN_WORDING_ACTIVE
+    ? "No IDE. No per-action billing. No guessing. No vendor lock."
+    : "No IDE. No token meters. No guessing. No vendor lock.";
+}
+
+export function comparisonFlatPricingRowLabel() {
+  return TOKEN_WORDING_ACTIVE ? "Flat pricing (no per-action billing)" : "Flat pricing (no token meter)";
+}
+
+// Landing.jsx's "$9/Month. No Surprises." feature card + its "How much
+// does ORA cost?" FAQ answer — both state task-count/token-metering
+// claims that are only true in legacy mode.
+export function pricingFeatureCardDesc() {
+  return TOKEN_WORDING_ACTIVE
+    ? "No IDE to install. No per-action billing. No per-seat pricing. One flat monthly price per plan — $9, $19 or $49 — for that plan's token allotment. Unused tokens carry forward."
+    : "No IDE to install. No token meters to watch. No per-seat pricing. Flat pricing: 10/50/300/400 tasks per month across Free/Starter/Pro/Team.";
+}
+
+export function howMuchFaqAnswer() {
+  return TOKEN_WORDING_ACTIVE
+    ? "ORA starts at $9/month flat, and you get one free full repo scan with no credit card. The $9 plan grants 900 tokens/month (900 to the dollar) — no per-seat pricing, and unused tokens carry forward to the next month."
+    : "ORA starts at $9/month flat, and there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500 per month.";
 }
 
 // Pricing.jsx h1. Same false-claim problem as above, but this one has
