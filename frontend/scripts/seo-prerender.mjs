@@ -75,7 +75,7 @@ function patchStaleTokenPhrases(html) {
     )
     .replace(
       '"description": "10 tasks free per month. No credit card required."',
-      '"description": "One free full repo scan per month. No credit card required."',
+      '"description": "One free full repo scan. No credit card required."',
     )
     .replace(
       '"description": "$9/month flat — no token metering, no per-seat pricing, unlimited repositories. Limited to the first 500 users."',

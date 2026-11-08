@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only testing of the token-billing wording update on /vs/* (devin, cursor, github-copilot, replit-agent, windsurf, vibe-coders), /compare and /about on preview (VITE_TOKEN_BILLING_MODE=on). Checked visible body text with all FAQ <details> expanded, the feature-matrix rows, CTAs, meta description and JSON-LD. Tested navigation through /compare cards and 'More comparisons' links (all 6 slugs plus the hub), and did a quick homepage check. Ran a separate production build with VITE_TOKEN_BILLING_MODE=on plus seo-prerender.mjs in /tmp, not touching /app/frontend/dist, and grepped the static snapshots. Ran the 2 new Vitest files (6/6 pass). Almost everything passes: the Pricing model and Free tier rows are token-based on all 6 pages, the FAQ answers use token wording, the /compare CTA reads 'Start free — get your score', the /about paragraph is correct, there are no console errors and routing works. Found 2 leftover ungated strings in competitors.mjs that still say 'flat tasks'. They show on the live page and in the built SEO HTML.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "competitors.mjs › github-copilot.intro", "issue": "This string isn't gated: 'The real comparison is metered requests vs flat tasks, and assistance vs delegation.' It shows in token mode on /vs/github-copilot (visible intro and the dist/vs/github-copilot/index.html snapshot). It implies per-task billing, which contradicts the token model.", "selector": "[data-testid='vs-github-copilot-root']", "priority": "MEDIUM"},
+      {"component": "competitors.mjs › replit-agent FAQ question (~line 464)", "issue": "The FAQ question is 'How does effort-based billing compare to AUREM's flat tasks?'. Only the answer is gated, not the question. It shows in the visible <summary>, in the FAQPage JSON-LD, and twice in dist/vs/replit-agent/index.html.", "selector": "[data-testid='vs-replit-agent-root'] details summary", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Gate the github-copilot intro in competitors.mjs: in token mode, replace 'metered requests vs flat tasks' with e.g. 'metered requests vs a flat monthly price'.",
+    "Gate the replit-agent FAQ question 'compare to AUREM's flat tasks?'. In token mode use e.g. 'compare to AUREM's flat monthly pricing?'.",
+    "Add both strings ('flat tasks', 'task outcomes') to the forbidden-phrase list in competitors.tokenWording.test.js so this can't come back."
+  ],
+  "critical_code_review_comments": [
+    "Dev-server-only, FYI: on preview the site-wide JSON-LD and og/twitter meta in index.html still say '10 tasks free', 'no token metering', 'no token billing' and 'No token meters' on every route. patchStaleTokenPhrases only runs in the build/prerender step. The production build output was clean except for the 2 'flat tasks' strings above. Preview crawlers/link-unfurlers get the legacy JSON-LD, but production won't.",
+    "patchStaleTokenPhrases uses exact-string .replace(). If anyone edits the index.html wording even slightly, the patch silently stops matching. Consider having the prerender fail the build if a forbidden phrase is still present after patching.",
+    "Wording mismatch: patchStaleTokenPhrases says 'One free full repo scan per month', while everywhere else the free tier is a single scan ('one full scan', 'Free (1 scan)', 'A free full scan'). Confirm whether the free scan really recurs monthly.",
+    "competitors.mjs is 779 lines, over the 700-line guideline. It also repeats the same TOKEN_WORDING_ACTIVE IIFE as companyInfo.mjs; consider one shared .mjs helper."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "~93% (all 8 routes render, navigation passes, matrix/FAQ/CTA/about pass; 2 of 6 /vs pages have one leftover 'flat tasks' phrase)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Token mode is ON on preview via frontend/.env.development. To check the SEO artifacts without touching /app/frontend/dist: build to /tmp/fe/dist with VITE_TOKEN_BILLING_MODE=on (copy scripts, src, public and package.json, symlink node_modules), run node scripts/seo-prerender.mjs, then grep for forbidden phrases. The site-wide JSON-LD in dev-served index.html is unpatched by design, so ignore it when testing on preview."
+}

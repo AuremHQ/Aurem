@@ -45,6 +45,7 @@ describe("competitors.mjs — token wording gate", () => {
     const forbidden = [
       "50 tasks", "300 tasks", "10 tasks/month", "10 tasks per month",
       "not for tokens", "no token metering", "no token billing",
+      "flat tasks", "task outcomes",
     ];
     forbidden.forEach((phrase) => expect(blob).not.toContain(phrase));
   });

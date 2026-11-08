@@ -299,7 +299,10 @@ export const COMPETITORS = {
       "Copilot is the default AI assistant inside your IDE and GitHub — " +
       "completions, chat, and a coding agent that opens PRs from issues. ORA " +
       "is a standalone autonomous engineer with its own verify-and-ship " +
-      "pipeline. The real comparison is metered requests vs flat tasks, and " +
+      "pipeline. The real comparison is " +
+      (TOKEN_WORDING_ACTIVE
+        ? "metered requests vs a flat monthly price, and "
+        : "metered requests vs flat tasks, and ") +
       "assistance vs delegation.",
     pickAurem: [
       "Whole tasks delegated and shipped, not autocomplete",
@@ -461,7 +464,9 @@ export const COMPETITORS = {
            "and ships a commit or PR to your branch.",
       },
       {
-        q: "How does effort-based billing compare to AUREM's flat tasks?",
+        q: TOKEN_WORDING_ACTIVE
+          ? "How does effort-based billing compare to AUREM's flat monthly pricing?"
+          : "How does effort-based billing compare to AUREM's flat tasks?",
         a: "Replit bills Agent work by effort — complex tasks consume more and " +
            "cost more, which is flexible but hard to budget. " +
            (TOKEN_WORDING_ACTIVE
