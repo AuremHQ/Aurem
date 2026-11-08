@@ -15,11 +15,41 @@
 
 export const LAST_VERIFIED = "June 30, 2026";
 
+// 2026-11-08 — homepage token-billing cutover, extended to /vs + /compare.
+// This file is imported by BOTH the Vite-bundled React pages (VsPage.jsx,
+// CompareHub.jsx — reads `import.meta.env`) AND the plain-Node
+// scripts/seo-prerender.mjs (reads `process.env`) — a bare
+// `import.meta.env` reference would throw when loaded by plain Node,
+// so this checks both, same fail-safe-to-legacy convention as
+// lib/billingCopy.js's own `_mode()`. Kept local (not imported from
+// billingCopy.js) because billingCopy.js is a CommonJS-ambiguous
+// `.js` file without `"type":"module"` in package.json — Node can't
+// load it as ESM the way it loads this file's own `.mjs` extension.
+export const TOKEN_WORDING_ACTIVE = (() => {
+  const _VALID = new Set(["off", "shadow", "on"]);
+  const _pick = (raw) => {
+    const v = String(raw).trim().toLowerCase();
+    return _VALID.has(v) ? v !== "off" : false;
+  };
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_TOKEN_BILLING_MODE) {
+      return _pick(import.meta.env.VITE_TOKEN_BILLING_MODE);
+    }
+  } catch { /* import.meta access guarded for plain-Node callers */ }
+  if (typeof process !== "undefined" && process.env && process.env.VITE_TOKEN_BILLING_MODE) {
+    return _pick(process.env.VITE_TOKEN_BILLING_MODE);
+  }
+  return false;
+})();
+
 /* ── AUREM-side row values (current shipped feature set) ─────────── */
 export const AUREM = {
-  pricing:
-    "Flat fee — $0 Free / $9 Starter (50 tasks) / $19 Pro (300 tasks) / $49 Team per month",
-  freeTier: "10 tasks/month, no credit card",
+  pricing: TOKEN_WORDING_ACTIVE
+    ? "Flat fee — $0 Free (1 scan) / $9 Starter (900 tokens) / $19 Pro (1,900 tokens) / $49 Team (4,900 tokens) per month"
+    : "Flat fee — $0 Free / $9 Starter (50 tasks) / $19 Pro (300 tasks) / $49 Team per month",
+  freeTier: TOKEN_WORDING_ACTIVE
+    ? "One free full repo scan, no credit card"
+    : "10 tasks/month, no credit card",
   delivery: "Changes land in your branch — fast path or review checkpoint, your choice",
   loop:
     "Loop Mode — Plan → Execute → Verify → Security scan → Ship, with checkpoints and one-click rollback",
@@ -50,8 +80,12 @@ export const COMPETITORS = {
       "how the work is priced, how it lands in your repo, and what checks run " +
       "before it gets there.",
     pickAurem: [
-      "A predictable flat bill — $19/mo Pro, 300 tasks included",
-      "A real free tier (10 tasks/month, no card)",
+      TOKEN_WORDING_ACTIVE
+        ? "A predictable flat bill — $19/mo Pro, 1,900 tokens included"
+        : "A predictable flat bill — $19/mo Pro, 300 tasks included",
+      TOKEN_WORDING_ACTIVE
+        ? "A real free tier (one full scan, no card)"
+        : "A real free tier (10 tasks/month, no card)",
       "Changes land in your branch — fast path or review checkpoint, your call",
       "A 25+ pattern security scan before anything lands",
       "Maxx mode: a second model reviewing every critical change",
@@ -69,9 +103,15 @@ export const COMPETITORS = {
       "$2.25 per ACU on top of the subscription, and an ACU covers roughly 15 " +
       "minutes of active agent work — third-party estimates put moderate Core " +
       "usage at about $70–220 per month all-in. The $500/month Team plan includes " +
-      "250 ACUs, then $2.00 per additional ACU. AUREM is a flat fee: Free is " +
-      "10 tasks/month, Starter is $9 for 50 tasks, Pro is $19 for 300 tasks, Team " +
-      "is $49 per user. Your invoice never depends on how hard a task turned out to be.",
+      "250 ACUs, then $2.00 per additional ACU. " +
+      (TOKEN_WORDING_ACTIVE
+        ? "AUREM is a flat fee: Free comes with one full scan, Starter is $9/month " +
+          "for 900 tokens, Pro is $19/month for 1,900 tokens, Team is $49 per " +
+          "user for 4,900 tokens. Your monthly price never changes — only your " +
+          "token balance moves, and unused tokens carry forward to next month."
+        : "AUREM is a flat fee: Free is " +
+          "10 tasks/month, Starter is $9 for 50 tasks, Pro is $19 for 300 tasks, Team " +
+          "is $49 per user. Your invoice never depends on how hard a task turned out to be."),
     ],
     pricingFootnote:
       "Devin figures last verified June 2026 from devin.ai/pricing and independent " +
@@ -94,8 +134,13 @@ export const COMPETITORS = {
       {
         q: "Is AUREM a good Devin alternative?",
         a: "Yes, if you want predictable cost and shipped commits. AUREM is " +
-           "an autonomous AI engineer with flat pricing ($0 free tier, $9 Starter " +
-           "with 50 tasks, $19 Pro with 300 tasks, $49 Team) instead of Devin's " +
+           "an autonomous AI engineer with flat pricing " +
+           (TOKEN_WORDING_ACTIVE
+             ? "($0 free scan, $9 Starter for 900 tokens, $19 Pro for 1,900 " +
+               "tokens, $49 Team for 4,900 tokens) "
+             : "($0 free tier, $9 Starter " +
+               "with 50 tasks, $19 Pro with 300 tasks, $49 Team) ") +
+           "instead of Devin's " +
            "$20/month plus $2.25 per Agent Compute Unit metering. AUREM also runs " +
            "a 25+ pattern security scan and an optional second-model code review " +
            "(Maxx mode) before anything reaches your repository.",
@@ -105,8 +150,12 @@ export const COMPETITORS = {
         a: "Devin bills by Agent Compute Units: the $20/month Core plan charges " +
            "$2.25 per ACU on top, and the $500/month Team plan includes 250 ACUs. " +
            "Moderate Core usage typically lands around $70–220/month in total. " +
-           "AUREM is a flat fee with generous task caps — Pro is $19/month " +
-           "for 300 tasks. A hard task costs the same as an easy one.",
+           (TOKEN_WORDING_ACTIVE
+             ? "AUREM is a flat fee with a generous token allowance — Pro is " +
+               "$19/month for 1,900 tokens, and unused tokens carry forward. A " +
+               "hard task costs the same monthly price as an easy one."
+             : "AUREM is a flat fee with generous task caps — Pro is $19/month " +
+               "for 300 tasks. A hard task costs the same as an easy one."),
       },
       {
         q: "Does AUREM commit directly to GitHub like Devin opens PRs?",
@@ -170,9 +219,13 @@ export const COMPETITORS = {
       "Cursor's 2026 line-up is Hobby (free, limited), Pro $20/month, Pro+ " +
       "$60/month and Ultra $200/month, plus Teams at $40 per user — each tier " +
       "carries usage quotas, and heavy agent use can push you up the ladder. " +
-      "AUREM is a flat fee: Free is 10 tasks/month, Starter is $9 for 50 " +
-      "tasks, Pro is $19 for 300 tasks, Team is $49 per user. You are billed for " +
-      "outcomes (tasks), not for tokens or compute minutes.",
+      (TOKEN_WORDING_ACTIVE
+        ? "AUREM is a flat fee: Free comes with one full scan, Starter is $9 for " +
+          "900 tokens, Pro is $19 for 1,900 tokens, Team is $49 per user for " +
+          "4,900 tokens. You see your token balance, never a per-task bill."
+        : "AUREM is a flat fee: Free is 10 tasks/month, Starter is $9 for 50 " +
+          "tasks, Pro is $19 for 300 tasks, Team is $49 per user. You are billed for " +
+          "outcomes (tasks), not for tokens or compute minutes."),
       "They also compose: AUREM ships an MCP server, so you can call ORA from " +
       "inside Cursor and keep the IDE you love while delegating whole tasks.",
     ],
@@ -205,9 +258,15 @@ export const COMPETITORS = {
       {
         q: "How does AUREM's pricing compare to Cursor's?",
         a: "Cursor runs $20 (Pro) to $200 (Ultra) per month with usage quotas per " +
-           "tier; Teams is $40 per user. AUREM is flat: $0 free tier, $9 " +
-           "Starter with 50 tasks, $19 Pro with 300 tasks, $49 Team. AUREM bills " +
-           "per task outcome, so a complex task doesn't cost more than a simple one.",
+           "tier; Teams is $40 per user. " +
+           (TOKEN_WORDING_ACTIVE
+             ? "AUREM is flat: $0 free scan, $9 Starter for 900 tokens, $19 Pro " +
+               "for 1,900 tokens, $49 Team. AUREM bills a flat monthly price, " +
+               "so a complex task draws down your token balance but never " +
+               "changes what you owe that month."
+             : "AUREM is flat: $0 free tier, $9 " +
+               "Starter with 50 tasks, $19 Pro with 300 tasks, $49 Team. AUREM bills " +
+               "per task outcome, so a complex task doesn't cost more than a simple one."),
       },
       {
         q: "Can I use AUREM together with Cursor?",
@@ -245,7 +304,9 @@ export const COMPETITORS = {
     pickAurem: [
       "Whole tasks delegated and shipped, not autocomplete",
       "A verify pipeline: syntax gates, security scan, optional second-model review",
-      "Flat task pricing — no premium-request metering",
+      TOKEN_WORDING_ACTIVE
+        ? "Flat monthly pricing — no premium-request metering"
+        : "Flat task pricing — no premium-request metering",
       "Ship from any browser or phone, no IDE required",
       "Checkpoints + rollback on every autonomous run",
       "Per-repo Project Brain memory + your standing correction rules",
@@ -262,9 +323,13 @@ export const COMPETITORS = {
       "Pro+ $39/month with 1,500 premium requests included then $0.04 per extra " +
       "request, Business $19/user and Enterprise $39/user. Agent-mode work " +
       "consumes premium requests, so heavy agent use is effectively metered. " +
-      "AUREM is a flat fee per month — Free 10 tasks, Starter $9/50 tasks, " +
-      "Pro $19/300 tasks, Team $49 — regardless of how many model calls a task " +
-      "takes under the hood.",
+      (TOKEN_WORDING_ACTIVE
+        ? "AUREM is a flat fee per month — Free one scan, Starter $9/900 tokens, " +
+          "Pro $19/1,900 tokens, Team $49/4,900 tokens — regardless of how many " +
+          "model calls a task takes under the hood."
+        : "AUREM is a flat fee per month — Free 10 tasks, Starter $9/50 tasks, " +
+          "Pro $19/300 tasks, Team $49 — regardless of how many model calls a task " +
+          "takes under the hood."),
     ],
     pricingFootnote:
       "Copilot figures last verified June 2026 from github.com/features/copilot/plans. " +
@@ -295,9 +360,14 @@ export const COMPETITORS = {
         q: "How does AUREM's pricing compare to Copilot's?",
         a: "Copilot Pro is $10/month and Pro+ is $39/month with 1,500 premium " +
            "requests included, then $0.04 per extra request — agent work draws " +
-           "from that meter. AUREM charges flat per month for task outcomes: " +
-           "$0 free, $9 Starter (50 tasks), $19 Pro (300 tasks), $49 Team. No " +
-           "per-request metering.",
+           "from that meter. " +
+           (TOKEN_WORDING_ACTIVE
+             ? "AUREM charges a flat monthly price with a token balance: $0 " +
+               "free scan, $9 Starter (900 tokens), $19 Pro (1,900 tokens), " +
+               "$49 Team. No per-request metering."
+             : "AUREM charges flat per month for task outcomes: " +
+               "$0 free, $9 Starter (50 tasks), $19 Pro (300 tasks), $49 Team. No " +
+               "per-request metering."),
       },
       {
         q: "Does Copilot run a security scan like Vanguard?",
@@ -335,7 +405,9 @@ export const COMPETITORS = {
       "pipeline. Where your code lives is the real fork in this road.",
     pickAurem: [
       "Work on your existing GitHub repos, not a hosted workspace",
-      "Flat task pricing — no effort-based variability",
+      TOKEN_WORDING_ACTIVE
+        ? "Flat monthly pricing — no effort-based variability"
+        : "Flat task pricing — no effort-based variability",
       "A pre-commit security scan + optional second-model review",
       "Changes land in your own branch protection flow — fast path or review checkpoint",
       "Checkpoints + one-click rollback per run",
@@ -353,9 +425,14 @@ export const COMPETITORS = {
       "credits; Agent work is billed effort-based — the cost of a task scales " +
       "with how much compute and complexity it needed (rollout completed for " +
       "existing subscribers from July 1, 2026). That makes heavy or gnarly tasks " +
-      "cost more. AUREM bills flat per month for task outcomes: $0 free, $9 " +
-      "Starter (50 tasks), $19 Pro (300 tasks), $49 Team — a hard task costs the " +
-      "same as an easy one.",
+      "cost more. " +
+      (TOKEN_WORDING_ACTIVE
+        ? "AUREM bills a flat monthly price with a token balance: $0 free " +
+          "(one scan), $9 Starter (900 tokens), $19 Pro (1,900 tokens), $49 " +
+          "Team (4,900 tokens) — your price never changes, only your balance moves."
+        : "AUREM bills flat per month for task outcomes: $0 free, $9 " +
+          "Starter (50 tasks), $19 Pro (300 tasks), $49 Team — a hard task costs the " +
+          "same as an easy one."),
     ],
     pricingFootnote:
       "Replit figures last verified June 2026 from replit.com/pricing and " +
@@ -364,7 +441,9 @@ export const COMPETITORS = {
       ["Where your code lives", "Your GitHub repos — AUREM commits to them", "Replit cloud workspace (GitHub import/export available)"],
       ["Pricing model", AUREM.pricing, "Core $25/mo ($20 annual) + effort-based Agent billing per task"],
       ["Free tier", AUREM.freeTier, "Starter — limited Agent access"],
-      ["Cost predictability", "Flat — task difficulty never changes the bill", "Variable — effort-based billing scales with task complexity"],
+      ["Cost predictability", TOKEN_WORDING_ACTIVE
+        ? "Flat — your monthly price never changes, only your token balance moves"
+        : "Flat — task difficulty never changes the bill", "Variable — effort-based billing scales with task complexity"],
       ["Delivery mode", AUREM.delivery, "Edits the workspace app; deploys on Replit hosting"],
       ["Pre-commit security scan", AUREM.security, "Not advertised as a pre-commit gate"],
       ["Autonomy pipeline", AUREM.loop, "Agent plans + builds + deploys in-workspace"],
@@ -384,9 +463,14 @@ export const COMPETITORS = {
       {
         q: "How does effort-based billing compare to AUREM's flat tasks?",
         a: "Replit bills Agent work by effort — complex tasks consume more and " +
-           "cost more, which is flexible but hard to budget. AUREM charges " +
-           "flat: $19/month Pro includes 300 tasks whether each one took 2 " +
-           "minutes or 20. If you need cost certainty, flat wins.",
+           "cost more, which is flexible but hard to budget. " +
+           (TOKEN_WORDING_ACTIVE
+             ? "AUREM charges a flat monthly price with a token balance — $19/month " +
+               "Pro includes 1,900 tokens, and unused tokens carry forward. If " +
+               "you need cost certainty, flat wins."
+             : "AUREM charges " +
+               "flat: $19/month Pro includes 300 tasks whether each one took 2 " +
+               "minutes or 20. If you need cost certainty, flat wins."),
       },
       {
         q: "Can AUREM host my app like Replit does?",
@@ -424,7 +508,9 @@ export const COMPETITORS = {
       "Delegate whole tasks and get verified commits back",
       "No IDE install — web, mobile, VS Code extension, MCP",
       "Vanguard 2.0 security scan before every commit",
-      "Flat task pricing immune to quota changes",
+      TOKEN_WORDING_ACTIVE
+        ? "Flat monthly pricing immune to quota changes"
+        : "Flat task pricing immune to quota changes",
       "Checkpoints + one-click rollback per autonomous run",
       "A free tier without a credit card",
     ],
@@ -438,8 +524,13 @@ export const COMPETITORS = {
       "Windsurf reworked pricing in March 2026: the credit pool gave way to " +
       "daily/weekly quotas — Free, Pro $20/month, Teams $40/user, with a $200 " +
       "Max tier reported by several trackers. Quota models can shift under your " +
-      "feet mid-quarter. AUREM stays flat: $0 free, $9 Starter (50 tasks), " +
-      "$19 Pro (300 tasks), $49 Team — billed on task outcomes, not quotas.",
+      "feet mid-quarter. " +
+      (TOKEN_WORDING_ACTIVE
+        ? "AUREM stays flat: $0 free (one scan), $9 Starter (900 tokens), " +
+          "$19 Pro (1,900 tokens), $49 Team (4,900 tokens) — you see your token " +
+          "balance, never a quota that resets without warning."
+        : "AUREM stays flat: $0 free, $9 Starter (50 tasks), " +
+          "$19 Pro (300 tasks), $49 Team — billed on task outcomes, not quotas."),
     ],
     pricingFootnote:
       "Windsurf figures last verified June 2026 across vendor pages and " +
@@ -469,9 +560,14 @@ export const COMPETITORS = {
       {
         q: "How does AUREM's pricing compare to Windsurf's?",
         a: "Windsurf moved to quota-based plans in March 2026 — Free, $20/month " +
-           "Pro, $40/user Teams, with daily/weekly usage quotas. AUREM is " +
-           "flat per month on task outcomes: $0 free, $9 Starter (50 tasks), " +
-           "$19 Pro (300 tasks), $49 Team. No quotas that reset under you.",
+           "Pro, $40/user Teams, with daily/weekly usage quotas. " +
+           (TOKEN_WORDING_ACTIVE
+             ? "AUREM is flat per month with a token balance: $0 free, $9 " +
+               "Starter (900 tokens), $19 Pro (1,900 tokens), $49 Team. No " +
+               "quotas that reset under you."
+             : "AUREM is " +
+               "flat per month on task outcomes: $0 free, $9 Starter (50 tasks), " +
+               "$19 Pro (300 tasks), $49 Team. No quotas that reset under you."),
       },
       {
         q: "Does Windsurf verify or security-scan its changes?",
@@ -531,7 +627,9 @@ COMPETITORS["vibe-coders"] = {
     "destination is a real, existing codebase, that's the job ORA is built for.",
   pickAurem: [
     "Work on your existing GitHub repos, not a locked-in workspace",
-    "Flat task pricing — no credit ladders or effort-based billing",
+    TOKEN_WORDING_ACTIVE
+      ? "Flat monthly pricing — no credit ladders or effort-based billing"
+      : "Flat task pricing — no credit ladders or effort-based billing",
     "A pre-commit security scan (Vanguard 2.0) before anything lands",
     "Changes land in your own branch protection flow — fast path or review checkpoint",
     "Deploy anywhere — Vercel, your CI, your own infra, your call",
@@ -568,10 +666,17 @@ COMPETITORS["vibe-coders"] = {
     "Standard $20/month (100 credits) or Pro $200/month (750 credits), with " +
     "credits spent on prompts, app generation, and hosting — 50 " +
     "credits/month per deployed app.",
-    "AUREM stays a flat fee no matter how a task turns out: Free is 10 " +
-    "tasks/month (no card), Starter is $9 for 50 tasks, Pro is $19 for 300 " +
-    "tasks, Team is $49 per user. A task that takes 20 minutes costs the " +
-    "same as one that takes two.",
+    TOKEN_WORDING_ACTIVE
+      ? "AUREM stays a flat monthly price no matter how a task turns out: Free " +
+        "comes with one full scan (no card), Starter is $9/month for 900 " +
+        "tokens, Pro is $19/month for 1,900 tokens, Team is $49 per user for " +
+        "4,900 tokens, and unused tokens carry forward. A task that takes 20 " +
+        "minutes draws down your balance more than one that takes two — but " +
+        "your monthly price never moves."
+      : "AUREM stays a flat fee no matter how a task turns out: Free is 10 " +
+        "tasks/month (no card), Starter is $9 for 50 tasks, Pro is $19 for 300 " +
+        "tasks, Team is $49 per user. A task that takes 20 minutes costs the " +
+        "same as one that takes two.",
   ],
   pricingFootnote:
     "Lovable figures last verified June 2026 from lovable.dev/pricing and " +
@@ -597,7 +702,9 @@ COMPETITORS["vibe-coders"] = {
      "Yes — 5 daily build credits (30/month cap), no card",
      "Starter — limited Agent access",
      "Yes — 10 credits/month, no card"],
-    ["Cost predictability", "Flat — task difficulty never changes the bill",
+    ["Cost predictability", TOKEN_WORDING_ACTIVE
+      ? "Flat — your monthly price never changes, only your token balance moves"
+      : "Flat — task difficulty never changes the bill",
      "Variable — credits consumed per build/AI action",
      "Variable — effort-based billing scales with task complexity",
      "Variable — credits per prompt/task, plus per-deployed-app hosting credits"],
@@ -634,8 +741,12 @@ COMPETITORS["vibe-coders"] = {
          "credit ladders or effort-based billing that scale with how " +
          "complex a task turns out to be, plus (for Replit and " +
          "Emergent) credits spent on hosting the deployed app itself. " +
-         "AUREM is a flat fee regardless of task difficulty: $9 Starter " +
-         "(50 tasks), $19 Pro (300 tasks), $49 Team.",
+         (TOKEN_WORDING_ACTIVE
+           ? "AUREM is a flat monthly price regardless of task difficulty: $9 " +
+             "Starter (900 tokens), $19 Pro (1,900 tokens), $49 Team (4,900 " +
+             "tokens) — your balance moves, your price doesn't."
+           : "AUREM is a flat fee regardless of task difficulty: $9 Starter " +
+             "(50 tasks), $19 Pro (300 tasks), $49 Team."),
     },
     {
       q: "Do Lovable, Replit or Emergent run a pre-commit security scan?",

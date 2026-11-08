@@ -52,6 +52,53 @@ const DIST = join(ROOT, "dist");
 // existing copy unchanged (none of those make a token-count claim).
 const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
 
+// 2026-11-09 — bugfix: the comment above ("only the homepage snapshot
+// is gated") was wrong once /vs/*, /compare and /about started
+// carrying their own token-count claims (see src/data/competitors.mjs,
+// src/data/companyInfo.mjs). Worse, EVERY non-homepage snapshot below
+// inherits its <head>/<noscript> from `base` — the just-built
+// dist/index.html — so the stale homepage phrases baked into that
+// file's JSON-LD/noscript fallback were leaking into every /vs/*,
+// /compare, /about, /contact, /privacy, /developers page too, even
+// though each page's own <title>/description get correctly swapped
+// per-page. Patch `base` itself, once, before any page is written
+// from it. No-op (not an error) if a target phrase already changed.
+function patchStaleTokenPhrases(html) {
+  return html
+    .replace(
+      "The AI engineer that actually commits — $9/month, no IDE, no token billing.",
+      "The AI engineer that actually commits — $9/month, no IDE, no per-action billing.",
+    )
+    .replace(
+      "Flat monthly pricing starting at $9/month with 10 tasks free.",
+      "Flat monthly pricing starting at $9/month with one free full scan, no card required.",
+    )
+    .replace(
+      '"description": "10 tasks free per month. No credit card required."',
+      '"description": "One free full repo scan per month. No credit card required."',
+    )
+    .replace(
+      '"description": "$9/month flat — no token metering, no per-seat pricing, unlimited repositories. Limited to the first 500 users."',
+      '"description": "$9/month flat for 900 tokens — no per-seat pricing, unlimited repositories, unused tokens carry forward. Limited to the first 500 users."',
+    )
+    .replace(
+      '"Flat monthly pricing with no token metering",',
+      '"Flat monthly pricing, no per-action billing — unused tokens carry forward",',
+    )
+    .replace(
+      'there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500.',
+      'you get one free full repo scan with no credit card. The $9 plan grants 900 tokens/month, no per-seat pricing — unused tokens carry forward to the next month.',
+    )
+    .replace(
+      "No IDE required, no token billing.",
+      "No IDE required, no per-action billing.",
+    )
+    .replace(
+      "10 free tasks on signup. No credit card required. 498 of 500",
+      "One free full scan on signup. No credit card required. 498 of 500",
+    );
+}
+
 const esc = (s) =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -158,7 +205,7 @@ ${c.pricingProse.map((p) => `<p>${esc(p)}</p>`).join("")}
 ${faq}
 <h2>More comparisons</h2>
 <p>${others} · <a href="/compare">All comparisons</a></p>
-<p><a href="/signup">Start free — 10 tasks/month, no credit card</a></p>
+<p><a href="/signup">${TOKEN_MODE ? "Start free — one full scan, no credit card" : "Start free — 10 tasks/month, no credit card"}</a></p>
 </main>`;
 }
 
@@ -170,7 +217,7 @@ function compareBody() {
 <h1>How ORA compares</h1>
 <p>${esc(COMPARE_HUB.description)}</p>
 <ul>${cards}</ul>
-<p><a href="/signup">Start free — 10 tasks/month, no credit card</a></p>
+<p><a href="/signup">${TOKEN_MODE ? "Start free — one full scan, no credit card" : "Start free — 10 tasks/month, no credit card"}</a></p>
 </main>`;
 }
 
@@ -194,7 +241,9 @@ function ldForVs(c) {
   };
 }
 
-const base = readFileSync(join(DIST, "index.html"), "utf8");
+const base = TOKEN_MODE
+  ? patchStaleTokenPhrases(readFileSync(join(DIST, "index.html"), "utf8"))
+  : readFileSync(join(DIST, "index.html"), "utf8");
 let written = 0;
 
 for (const c of Object.values(COMPETITORS)) {
@@ -308,50 +357,6 @@ ${sections}
     canonical: "https://auremcto.com/",
   });
   html = injectRoot(html, homeBody());
-  if (TOKEN_MODE) {
-    // 2026-10-27 — homepage-only token-mode cutover for the parts of
-    // the shared `base` template `swapHead`/`injectRoot` don't reach:
-    // the WebSite/SoftwareApplication/FAQPage JSON-LD (<head>, outside
-    // #root) and the <noscript> non-JS-crawler fallback (outside
-    // #root, before it). Scoped to literal string replacements of the
-    // exact known stale phrases so a future, unrelated edit to any of
-    // these blocks can't silently go un-gated — each `.replace()`
-    // below is a no-op (not an error) if its target text has already
-    // changed, same tolerance swapHead's own regexes have.
-    html = html
-      .replace(
-        "The AI engineer that actually commits — $9/month, no IDE, no token billing.",
-        "The AI engineer that actually commits — $9/month, no IDE, no per-action billing.",
-      )
-      .replace(
-        "Flat monthly pricing starting at $9/month with 10 tasks free.",
-        "Flat monthly pricing starting at $9/month with one free full scan, no card required.",
-      )
-      .replace(
-        '"description": "10 tasks free per month. No credit card required."',
-        '"description": "One free full repo scan per month. No credit card required."',
-      )
-      .replace(
-        '"description": "$9/month flat — no token metering, no per-seat pricing, unlimited repositories. Limited to the first 500 users."',
-        '"description": "$9/month flat for 900 tokens — no per-seat pricing, unlimited repositories, unused tokens carry forward. Limited to the first 500 users."',
-      )
-      .replace(
-        '"Flat monthly pricing with no token metering",',
-        '"Flat monthly pricing, no per-action billing — unused tokens carry forward",',
-      )
-      .replace(
-        'there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500.',
-        'you get one free full repo scan with no credit card. The $9 plan grants 900 tokens/month, no per-seat pricing — unused tokens carry forward to the next month.',
-      )
-      .replace(
-        "No IDE required, no token billing.",
-        "No IDE required, no per-action billing.",
-      )
-      .replace(
-        "10 free tasks on signup. No credit card required. 498 of 500",
-        "One free full scan on signup. No credit card required. 498 of 500",
-      );
-  }
   writeFileSync(join(DIST, "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote / (root index.html, homepage content)");
