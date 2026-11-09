@@ -31,6 +31,8 @@ from typing import Optional
 
 import httpx
 
+from services.project_versions import record_version_on_merge
+
 logger = logging.getLogger("aurem-dev.loop_safety")
 
 
@@ -751,6 +753,28 @@ async def resolve_ship_target(
     return st_owner, st_repo, branch, None
 
 
+async def update_pr_body(
+    *, owner: str, repo: str, pr_number: int, body: str, token: str,
+) -> tuple[bool, Optional[str]]:
+    """PATCH a PR's body in place (used by the shared-fix-batch flow
+    to refresh the running fix table after each successful commit,
+    instead of posting a new comment per fix). Returns (ok, error).
+    Best-effort — a body-update failure must never block or undo a
+    commit that already landed."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "aurem-pr-helper",
+    }
+    r = await github_request_with_retry(
+        "PATCH", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+        headers=headers, json={"body": body[:65000]},
+    )
+    if r.status_code == 200:
+        return True, None
+    return False, f"update_pr_body_status_{r.status_code}"
+
+
 async def close_pr(
     *, owner: str, repo: str, pr_number: int, token: str,
 ) -> tuple[bool, Optional[str]]:
@@ -896,7 +920,13 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
     """
     pr = payload.get("pull_request") or {}
     labels = [(l.get("name") or "") for l in (pr.get("labels") or [])]
-    head_ref = ((pr.get("head") or {}).get("ref")) or ""
+    _raw_head_ref = ((pr.get("head") or {}).get("ref")) or ""
+    # A webhook payload's `head.ref` is attacker-shaped JSON (even once
+    # signature-verified) — every branch below feeds it straight into a
+    # Mongo equality filter. A non-string value (e.g. a crafted
+    # `{"$ne": "x"}` object some JSON clients would accept) must never
+    # reach that query, or it becomes a NoSQL operator-injection vector.
+    head_ref = _raw_head_ref if isinstance(_raw_head_ref, str) else ""
     merged = bool(pr.get("merged"))
     pr_number = pr.get("number")
     is_ship_label = "aura:ship" in labels
@@ -939,6 +969,40 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                     {"$set": {"merged_sha": real_merge_sha,
                               "merged_at": time.time()}},
                 )
+            # ORA Brain Part 4, F2 — objective outcome signal: a
+            # merged ship PR is a strong positive. loop_id (the same
+            # identifier current_surface_context() falls back to as
+            # task_id when a Loop run never set an explicit task_id)
+            # is how the ORIGINAL brain_calls rows from this ship get
+            # found again here, in a completely separate request.
+            # user_id comes from loop_outcomes itself, never from the
+            # (unauthenticated, GitHub-controlled) webhook payload —
+            # cross-user isolation is enforced by attach_outcome_for_
+            # task's own user_id filter.
+            try:
+                outcome_row = await db.loop_outcomes.find_one({"ship_branch": head_ref})
+                loop_id = (outcome_row or {}).get("loop_id")
+                owner_user_id = (outcome_row or {}).get("user_id")
+                owner_project_id = (outcome_row or {}).get("project_id")
+                # Part 2c B2 — Project Versions. user_id/project_id
+                # come ONLY from this already-trusted loop_outcomes
+                # row (never from the webhook payload itself).
+                # Best-effort: record_version_on_merge never raises.
+                if loop_id and owner_user_id and owner_project_id and real_merge_sha:
+                    await record_version_on_merge(
+                        db, user_id=owner_user_id, project_id=owner_project_id,
+                        merged_sha=real_merge_sha, pr_url=pr.get("html_url") or "",
+                        pr_number=pr_number, branch=head_ref, source="ship_pr",
+                        summary=pr.get("title") or "", loop_id=loop_id,
+                    )
+                if loop_id and owner_user_id:
+                    from services.brain_gateway import attach_outcome_for_task
+                    await attach_outcome_for_task(
+                        db, task_id=loop_id, outcome="pr_merged",
+                        user_id=owner_user_id,
+                    )
+            except Exception as e:                            # noqa: BLE001
+                logger.debug("brain outcome attach (pr_merged) skipped: %r", e)
         elif new_status == "closed":
             # R10 (d) — cancelled PR: nothing landed on the base branch, so
             # there is nothing to revert; just remove the throwaway branch.
@@ -981,6 +1045,73 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
             upsert=True,
         )
         return {"routed": "kit", "labels": kit_labels}
+
+    # FIX_one_branch_for_all_fixes — shared fix-batch PRs. Deliberately
+    # a SEPARATE branch from `aura:ship` above: a batch PR is never a
+    # loop_outcomes row, and closing/merging one must never touch any
+    # OTHER fix on the same batch (H3) — only the batch's own status
+    # and its OWN finding_fixes rows.
+    is_batch_label = "aura:fix-batch" in labels
+    if is_batch_label and head_ref:
+        new_status = (
+            "merged" if (action == "closed" and merged)
+            else "closed" if action == "closed"
+            else "open"
+        )
+        batch = await db.fix_batches.find_one({"branch": head_ref})
+        if batch:
+            await db.fix_batches.update_one(
+                {"batch_id": batch["batch_id"]},
+                {"$set": {"status": new_status, "updated_at": time.time()}},
+            )
+            await db.finding_fixes.update_many(
+                {"batch_id": batch["batch_id"]},
+                {"$set": {"merged": new_status == "merged",
+                          "batch_pr_status": new_status}},
+            )
+            # Part 2c B2 — Project Versions, the fix-batch door.
+            # user_id/project_id come ONLY from this already-trusted
+            # fix_batches row (never from the webhook payload).
+            # Best-effort: record_version_on_merge never raises.
+            if new_status == "merged":
+                real_merge_sha = pr.get("merge_commit_sha")
+                batch_user_id = batch.get("user_id")
+                batch_project_id = batch.get("project_id")
+                if batch_user_id and batch_project_id and real_merge_sha:
+                    await record_version_on_merge(
+                        db, user_id=batch_user_id, project_id=batch_project_id,
+                        merged_sha=real_merge_sha, pr_url=pr.get("html_url") or "",
+                        pr_number=pr_number, branch=head_ref, source="fix_batch",
+                        summary=pr.get("title") or "", batch_id=batch["batch_id"],
+                    )
+            # ORA Brain Part 4 — objective outcome signal, same
+            # fail-open try/except pattern as the aura:ship branch
+            # above. Skipped silently (and noted here, not faked) if
+            # brain_gateway's outcome helpers aren't present.
+            if new_status in ("merged", "closed"):
+                try:
+                    from services.brain_gateway import attach_outcome_for_task
+                    outcome = "pr_merged" if new_status == "merged" else "rolled_back"
+                    await attach_outcome_for_task(
+                        db, task_id=batch["batch_id"], outcome=outcome,
+                        user_id=batch.get("user_id"),
+                    )
+                except ImportError:
+                    logger.debug(
+                        "brain_gateway outcome helpers not present — "
+                        "skipping outcome attach for batch %s",
+                        batch.get("batch_id"),
+                    )
+                except Exception as e:                        # noqa: BLE001
+                    logger.debug("brain outcome attach (batch) skipped: %r", e)
+        else:
+            logger.info(
+                "dispatch_pull_request_webhook: aura:fix-batch PR with "
+                "no matching fix_batches row (branch=%s) — log only",
+                head_ref,
+            )
+        return {"routed": "fix_batch", "status": new_status, "head_ref": head_ref,
+                "batch_id": (batch or {}).get("batch_id")}
 
     logger.info("dispatch_pull_request_webhook: no matching label (labels=%s) "
                 "— log-only, no state write", labels)

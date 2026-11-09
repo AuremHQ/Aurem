@@ -563,6 +563,8 @@ class TestSaveFindingRemaining:
         from services import local_tools as m
         ctx = {"bin_ctx": _FakeBinCtx(), "user_id": "u1"}
         with patch("services.local_tools.get_db", return_value=MagicMock()), \
+             patch("services.finding_scope.resolve_findings_scope",
+                  AsyncMock(return_value={"user_id": "u1", "project_id": "p1"})), \
              patch("services.loop_full_scan.persist_findings_to_backlog",
                   AsyncMock(return_value=1)):
             result = await m.save_finding(ctx, {
@@ -584,6 +586,8 @@ class TestSaveFindingRemaining:
         from services import local_tools as m
         ctx = {"bin_ctx": _FakeBinCtx(), "user_id": "u1"}
         with patch("services.local_tools.get_db", return_value=MagicMock()), \
+             patch("services.finding_scope.resolve_findings_scope",
+                  AsyncMock(return_value={"user_id": "u1", "project_id": "p1"})), \
              patch("services.loop_full_scan.persist_findings_to_backlog",
                   AsyncMock(side_effect=RuntimeError("mongo down"))):
             result = await m.save_finding(ctx, {"title": "XSS", "severity": "medium"})

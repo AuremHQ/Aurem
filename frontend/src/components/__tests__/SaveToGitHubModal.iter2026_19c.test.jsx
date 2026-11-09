@@ -1,5 +1,5 @@
 /**
- * SaveToGitHubModal.iter2026_10h.test.jsx — follow-up regression for
+ * SaveToGitHubModal.iter2026_19c.test.jsx — follow-up regression for
  * the "Save to GitHub" modal showing a raw Cloudflare error page.
  *
  * Covers the frontend half of the 424-not-502 fix: structured
@@ -169,5 +169,43 @@ describe("SaveToGitHubModal — structured-error + Retry (iter2026_10h)", () => 
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({
       repo: "acme/widgets", branch: "auremcto/ship-fixed123", create_branch: true, base_branch: "main",
     }));
+  });
+
+  it("snaps the repo selection to a listed repo when the project's own github_repo isn't in the installation's writable list (code-review fix)", async () => {
+    // activeProject.github_repo is "widgets", but the installation
+    // only has access to a DIFFERENTLY-named repo — the <select>'s
+    // initial value would match no <option>.
+    api.get.mockImplementation((url) => {
+      if (url.includes("/github/repos")) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            repos: [{ owner: "acme", repo: "other-repo", full_name: "acme/other-repo", private: false, default_branch: "main" }],
+            default_owner: "acme", default_repo: "widgets", // the stale default, also not in the list
+          },
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    const onConfirm = vi.fn().mockResolvedValue({ task_id: "t3" });
+    render(<SaveToGitHubModal open activeProject={PROJECT} onCancel={vi.fn()} onConfirm={onConfirm} />);
+    await screen.findByTestId("save-to-github-modal");
+    await waitFor(() => {
+      expect(screen.getByTestId("save-to-github-repo-select").value).toBe("acme/other-repo");
+    });
+    const input = screen.getByTestId("save-to-github-new-branch-input");
+    fireEvent.change(input, { target: { value: "auremcto/ship-abc" } });
+    fireEvent.click(screen.getByTestId("save-to-github-save"));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      repo: "acme/other-repo",
+    })));
+  });
+
+  it("does NOT re-snap the selection when the project's own repo IS in the listed repos (no regression)", async () => {
+    render(<SaveToGitHubModal open activeProject={PROJECT} onCancel={vi.fn()} onConfirm={vi.fn()} />);
+    await screen.findByTestId("save-to-github-modal");
+    await waitFor(() => {
+      expect(screen.getByTestId("save-to-github-repo-select").value).toBe("acme/widgets");
+    });
   });
 });

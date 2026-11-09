@@ -75,6 +75,9 @@ from routers.github_auth_migration import router as github_auth_migration_router
 from routers.support import router as support_router
 from routers.payments import router as payments_router
 from routers.stripe_webhook_compat import router as stripe_webhook_compat_router  # Iter 388-ae — legacy /api/stripe/webhook alias (see Payments $0 root-cause memo)
+from routers.harness import router as harness_router  # Aurem Loop harness Phase A — /api/harness/verify (external client contract, no /aurem-dev segment)
+from routers.harness_downloads import router as harness_downloads_router  # Aurem Loop harness Phase B — user-facing download
+from routers.admin_harness import router as admin_harness_router  # Aurem Loop harness Phase B — admin release/download-log view
 from routers.mcp import router as mcp_router, mcp_discovery_root
 from routers.mcp_ora_chat import router as mcp_ora_chat_router  # 2026-09-28 ORA Chat MCP (admin-only, Part A)
 from routers.admin_gateway import router as admin_gateway_router  # 2026-09-28 ORA Chat MCP/Gateway key admin API
@@ -106,6 +109,7 @@ from routers.security_scan import router as security_scan_router    # Iter 212m-
 from routers.vanguard_ci import router as vanguard_ci_router        # Iter 212m-120 Phase 1: trufflehog CI ingest
 from routers.synthetic_checks_ci import router as synthetic_checks_ci_router  # 2026-08-20 · G1/G15 CI ingest
 from routers.fix_pipeline import router as fix_pipeline_router      # Iter 212m-121 bulk + SSE fix pipeline
+from routers.project_versions import router as project_versions_router  # Part 2c B3 — Project Versions "Changes" page
 from routers.repo_status import router as repo_status_router        # Iter 212m-125 live repo connection ping
 from routers.codebase_health import router as codebase_health_router # Iter 212m-72 5-category health scanner
 from routers.evidence import router as evidence_router  # 2026-09-20 — pointer+preview resolver (scan / loop_run)
@@ -123,6 +127,9 @@ from routers.admin_connect_diagnostic import router as admin_connect_diagnostic_
 from routers.admin_onboarding_funnel import router as admin_onboarding_funnel_router  # Onboarding Funnel dashboard (2026-09-08)
 from routers.version       import router as version_router          # Iter 212m-205 build info + system health
 from routers.advisor_context import router as advisor_ctx_router     # Iter 212m-209 advisor read layer
+from routers.project_memory import router as project_memory_router   # ORA Brain Part 2 — view/wipe own project memory
+from routers.brain_admin import admin_router as brain_admin_router   # ORA Brain Part 3/4 — scoreboard, export, health, delete-own-data (admin)
+from routers.brain_admin import user_router as brain_user_router     # ORA Brain Part 4, F3 — DELETE /api/brain/my-data (canonical path)
 from routers.qa_probe      import router as qa_probe_router         # Iter 212m-190 QA-only chat-probe
 from routers.loop          import router as loop_router             # Iter 212m-60 Loop Mode engine
 from routers.diagram       import router as diagram_router          # Iter 212m-61 /diagram
@@ -1076,6 +1083,37 @@ async def lifespan(app: FastAPI):
         except Exception as e:                                # noqa: BLE001
             logger.warning("project_health_snapshots index failed: %r", e)
     _asyncio.create_task(_ensure_project_health_trend_indexes())
+
+    # ORA Brain Part 2 — per-user project_memory unique index.
+    async def _ensure_project_memory_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(36)
+            from services.project_memory import ensure_indexes as _pm_idx
+            await _pm_idx(app.state.db)
+            logger.info("📚 project_memory index ensured")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("project_memory index failed: %r", e)
+    _asyncio.create_task(_ensure_project_memory_indexes())
+
+    # ORA Brain Part 3 — brain_calls indexes + the bounded-queue drain
+    # worker (services/brain_gateway.py). The worker is started here,
+    # once, rather than implicitly on first record_call — see that
+    # module's start_worker() docstring.
+    async def _ensure_brain_gateway_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(38)
+            from services.brain_gateway import ensure_indexes as _bg_idx
+            from services.brain_gateway import start_worker as _bg_start
+            await _bg_idx(app.state.db)
+            _bg_start()
+            logger.info("📚 brain_calls index ensured + drain worker started")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("brain_gateway indexes/worker failed: %r", e)
+    _asyncio.create_task(_ensure_brain_gateway_indexes())
 
     # Iter 272 — held-out verification + outcomes indexes.
     async def _ensure_iter272_indexes():
@@ -4037,6 +4075,9 @@ app.include_router(payments_router,      prefix="/api/aurem-dev")
 # URL. This alias forwards to the canonical handler in payments.py so
 # no dashboard change is required.
 app.include_router(stripe_webhook_compat_router, prefix="/api")
+app.include_router(harness_router, prefix="/api")  # /api/harness/verify — external harness client, matches its hardcoded URL exactly
+app.include_router(harness_downloads_router, prefix="/api/aurem-dev")  # /api/aurem-dev/harness/download — logged-in browser user
+app.include_router(admin_harness_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/harness/* — release + download-log admin view
 app.include_router(usage_router,         prefix="/api/aurem-dev")
 app.include_router(lint_preview_router,  prefix="/api/aurem-dev")
 app.include_router(shipwall_router,      prefix="/api/aurem-dev")
@@ -4064,6 +4105,7 @@ app.include_router(team_invite_accept_router, prefix="/api/aurem-dev")  # Admin 
 app.include_router(security_scan_router,  prefix="/api/aurem-dev")  # Iter 212m-55 1-click vuln scanner
 app.include_router(vanguard_ci_router,    prefix="/api/aurem-dev")  # Iter 212m-120 Phase 1: trufflehog CI ingest
 app.include_router(fix_pipeline_router,   prefix="/api/aurem-dev")  # Iter 212m-121 bulk + SSE fix pipeline
+app.include_router(project_versions_router, prefix="/api/aurem-dev")  # Part 2c B3 — Project Versions "Changes" page
 app.include_router(repo_status_router,    prefix="/api/aurem-dev")  # Iter 212m-125 live repo connection ping
 app.include_router(codebase_health_router, prefix="/api/aurem-dev")  # Iter 212m-72 5-cat health
 app.include_router(evidence_router, prefix="/api/aurem-dev")  # 2026-09-20 — evidence pointer resolver
@@ -4075,6 +4117,9 @@ app.include_router(admin_connect_diagnostic_router, prefix="/api/aurem-dev")  # 
 app.include_router(admin_onboarding_funnel_router, prefix="/api/aurem-dev")  # Onboarding Funnel dashboard (2026-09-08)
 app.include_router(version_router)                                  # Iter 212m-205 (already prefixed inside)
 app.include_router(advisor_ctx_router)                              # Iter 212m-209 (already prefixed inside)
+app.include_router(project_memory_router)                           # ORA Brain Part 2 (already prefixed inside)
+app.include_router(brain_admin_router)                              # ORA Brain Part 3 (already prefixed inside)
+app.include_router(brain_user_router)                               # ORA Brain Part 4, F3 (already prefixed inside)
 app.include_router(qa_probe_router,        prefix="/api/aurem-dev")  # Iter 212m-190 QA-only probe
 # Iter 212m-158 — /tools page "Notify me" capture endpoint.
 from routers.notify_interest import router as notify_interest_router

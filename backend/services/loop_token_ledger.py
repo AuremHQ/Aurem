@@ -160,7 +160,8 @@ def current_surface_context() -> dict:
 
 
 def tag_request_surface(surface: str, *, session_id: Optional[str] = None,
-                         project_id: Optional[str] = None) -> None:
+                         project_id: Optional[str] = None,
+                         task_id: str | None = None) -> None:
     """Set-and-forget variant of `llm_surface_context` for a top-level
     request handler that runs a huge, hard-to-reindent function body
     (e.g. `routers/chat/stream.py::chat_stream`) rather than a small
@@ -171,10 +172,16 @@ def tag_request_surface(surface: str, *, session_id: Optional[str] = None,
     this inside a function that shares a Task with other logical
     turns (e.g. a background job processing a queue in a loop) —
     use `llm_surface_context` (properly scoped + reset) there
-    instead."""
+    instead.
+
+    `task_id` (ORA Brain Part 4, F2) — same one-shot-per-request
+    reasoning as project_id/session_id; a single-fix endpoint (one
+    LLM call per request) can safely set-and-forget it here."""
     _SURFACE_CV.set(surface)
     if session_id is not None:
         _SESSION_ID_CV.set(session_id)
+    if task_id is not None:
+        _TASK_ID_CV.set(task_id)
     if project_id is not None:
         _PROJECT_ID_CV.set(project_id)
 

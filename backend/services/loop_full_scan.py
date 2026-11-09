@@ -187,6 +187,14 @@ async def persist_findings_to_backlog(
                         "last_exposed_at": now,
                         "exposure_count":  new_exposure,
                         "source":          scan_source,
+                        # Robot Fix List B2 — scanner-origin findings
+                        # are verified by construction (no key in `f`
+                        # means "verified" via finding_scope.
+                        # verified_only_filter()'s $ne:False default);
+                        # ora_chat_audit findings carry an explicit
+                        # bool computed by save_finding's pre-check.
+                        "verified":        f.get("verified", True),
+                        "verified_reason": f.get("verified_reason") or "",
                     },
                 },
                 upsert=True,

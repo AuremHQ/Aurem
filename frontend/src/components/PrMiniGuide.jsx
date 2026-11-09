@@ -62,11 +62,12 @@ export default function PrMiniGuide({ mode = "auto" }) {
         <div style={{ flex: 1, lineHeight: 1.55 }}>
           <strong>What happens next:</strong>
           <ol data-testid="pr-mini-guide-branch-pr-copy" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            <li>ORA commits to a new branch — never straight to main.</li>
+            <li>ORA commits to a new branch by default, ready for you to review.</li>
             <li>It tries to open a draft PR for you to review. If GitHub
               won't let it open one, you'll still get the branch, ready
               to review yourself.</li>
-            <li>Nothing lands on your main branch until you merge.</li>
+            <li>Want it live right away instead? You can choose to commit
+              straight to your main branch — you'll be asked to confirm first.</li>
           </ol>
         </div>
         <button

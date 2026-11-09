@@ -67,6 +67,26 @@ class _FakeColl:
     async def count_documents(self, query):
         return 0
 
+    # Part 2c C4 — reconcile_findings_against_stored_rows/
+    # drop_unverified_findings (now called in strict=True mode by
+    # start_bulk_fix) query cto_open_findings.find(...).to_list(...).
+    # Same "empty is the correct signal" convention as aggregate()
+    # above — same fix applied to test_iter212m121_fix_pipeline.py's
+    # identical fake collection.
+    def find(self, query, projection=None):
+        rows = [
+            dict(r) for r in self.rows
+            if all(r.get(k) == v for k, v in (query or {}).items() if not isinstance(v, dict))
+        ]
+
+        class _Cur:
+            def __init__(self, items):
+                self.items = items
+
+            async def to_list(self, length=None):
+                return list(self.items)[: (length if length is not None else len(self.items))]
+        return _Cur(rows)
+
 
 class _FakeDB:
     def __init__(self, user_doc=None, projects=None):
@@ -134,18 +154,25 @@ class TestFixPipelineBulkEntitlementGate:
             "fix_entitlement": True,
         })
         try:
-            async def fake_apply(**kw):
-                return {"ok": True, "commit_sha": "abc1234",
+            # Part 2b F2/C7 — the bulk job resolves per FILE via
+            # apply_file_fixes (apply_finding_fix is no longer called
+            # or imported by fix_pipeline.py at all); same mock shape
+            # convention as test_regression_iter2026_10y.
+            async def fake_apply_file(*, db, user, project_id, file, findings):
+                return {"ok": True, "file": file, "commit_sha": "abc1234",
                         "full_sha": "abc1234" + "0" * 33,
                         "html_url": "https://github.com/x/y/commit/abc1234",
-                        "file": kw["finding"].get("file"),
-                        "rule_id": kw["finding"].get("rule_id"),
-                        "message": "stub"}
+                        "pr_url": "https://x/pull/1", "branch": "aurem/fixes-x",
+                        "batch_id": "fb_1",
+                        "results": [{"finding_id": findings[0]["id"],
+                                     "rule_id": findings[0].get("rule_id"),
+                                     "file": file, "status": "resolved",
+                                     "commit_sha": "abc1234", "fix_id": "fx_stub"}]}
 
             async def _verify_ok(**kw):
                 return True
 
-            monkeypatch.setattr("routers.fix_pipeline.apply_finding_fix", fake_apply)
+            monkeypatch.setattr("routers.fix_pipeline.apply_file_fixes", fake_apply_file)
             monkeypatch.setattr("routers.fix_pipeline._verify_commit_exists", _verify_ok)
             # Wallet wiring (Master Prompt v2 Part 1.1) — this FakeDB
             # has no real wallet balance; mock the gate so this test
@@ -170,18 +197,21 @@ class TestFixPipelineBulkEntitlementGate:
             "is_admin": False, "is_unlimited": False,
         })
         try:
-            async def fake_apply(**kw):
-                return {"ok": True, "commit_sha": "abc1234",
+            async def fake_apply_file(*, db, user, project_id, file, findings):
+                return {"ok": True, "file": file, "commit_sha": "abc1234",
                         "full_sha": "abc1234" + "0" * 33,
                         "html_url": "https://github.com/x/y/commit/abc1234",
-                        "file": kw["finding"].get("file"),
-                        "rule_id": kw["finding"].get("rule_id"),
-                        "message": "stub"}
+                        "pr_url": "https://x/pull/1", "branch": "aurem/fixes-x",
+                        "batch_id": "fb_1",
+                        "results": [{"finding_id": findings[0]["id"],
+                                     "rule_id": findings[0].get("rule_id"),
+                                     "file": file, "status": "resolved",
+                                     "commit_sha": "abc1234", "fix_id": "fx_stub"}]}
 
             async def _verify_ok(**kw):
                 return True
 
-            monkeypatch.setattr("routers.fix_pipeline.apply_finding_fix", fake_apply)
+            monkeypatch.setattr("routers.fix_pipeline.apply_file_fixes", fake_apply_file)
             monkeypatch.setattr("routers.fix_pipeline._verify_commit_exists", _verify_ok)
 
             r = c.post("/api/aurem-dev/fix-pipeline/bulk",

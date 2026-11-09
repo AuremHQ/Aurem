@@ -50,7 +50,11 @@ describe("ShipDialog 'Approve the fix' — PrMiniGuide copy is flag-independent"
     render(<ShipDialog {...baseProps} />);
     expect(screen.getByTestId("pr-mini-guide-branch-pr-copy")).toBeInTheDocument();
     expect(screen.queryByTestId("pr-mini-guide-direct-copy")).not.toBeInTheDocument();
-    expect(screen.getByText(/never straight to main/i)).toBeInTheDocument();
+    // 2026-10-27 — the modal now lets a user choose to commit straight
+    // to main (with a confirm step), so the old "never straight to
+    // main" promise is no longer accurate; the copy was updated to
+    // describe that choice instead of forbidding it.
+    expect(screen.getByText(/commit straight to your main branch/i)).toBeInTheDocument();
   });
 
   it("ship_via_pr flag ON: shows the SAME branch+PR copy, never the generic 'we'll open a pull request' promise", () => {
@@ -58,7 +62,7 @@ describe("ShipDialog 'Approve the fix' — PrMiniGuide copy is flag-independent"
     render(<ShipDialog {...baseProps} />);
     expect(screen.getByTestId("pr-mini-guide-branch-pr-copy")).toBeInTheDocument();
     expect(screen.queryByTestId("pr-mini-guide-pr-copy")).not.toBeInTheDocument();
-    expect(screen.getByText(/never straight to main/i)).toBeInTheDocument();
+    expect(screen.getByText(/commit straight to your main branch/i)).toBeInTheDocument();
   });
 
   it("approve button's title no longer implies a direct push to the base branch", () => {

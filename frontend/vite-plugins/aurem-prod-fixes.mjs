@@ -65,6 +65,12 @@ const KNOWN_PREFIXES = new Set([
   // Admin Team S3 (AT2) — /team-invite/accept standalone invite-accept
   // page (frontend/src/pages/TeamInviteAccept.jsx).
   "team-invite",
+  // 2026-11-09 · Aurem Loop harness Phase B — /harness (HarnessPage.jsx,
+  // App.jsx route) was missing here, so a direct load/refresh/curl of
+  // /harness in the dev preview 404'd even though in-app SPA
+  // navigation to it worked fine and production (served by the real
+  // build, not this dev-only 404 middleware) already returned 200.
+  "harness",
 ]);
 
 const HAS_EXTENSION = /\.[a-zA-Z0-9]+$/;

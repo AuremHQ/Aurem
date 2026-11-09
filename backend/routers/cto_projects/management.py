@@ -55,6 +55,28 @@ class AddProject(BaseModel):
     funnel_session: Optional[str] = None
 
 
+def _reject_unsafe_preview_url(preview_url: Optional[str]) -> None:
+    """Part 2c C8 — `preview_url` is later navigated by Playwright
+    (services/preview_capture.py::capture_screenshot) with no further
+    say from the user; validate it HERE, at save time, as the first
+    of three defense-in-depth layers (capture_screenshot re-checks at
+    call time since DNS can change, and again per-request via route
+    interception for redirects). An empty/absent value is fine —
+    preview_url is optional."""
+    if not preview_url:
+        return
+    from services.url_guard import is_safe_public_http_url
+    if not is_safe_public_http_url(preview_url):
+        raise HTTPException(400, {
+            "error": "unsafe_preview_url",
+            "message": (
+                "That URL can't be used as a live-site preview — it must "
+                "be a public http(s) address, not a local/internal/"
+                "cloud-metadata address."
+            ),
+        })
+
+
 async def get_repo_token(project: dict) -> Optional[str]:
     from services.pat_vault import get_repo_token as _svc_get_repo_token
     return await _svc_get_repo_token(project)
@@ -244,6 +266,7 @@ async def email_delivery_status(authorization: Optional[str] = Header(None)) -> 
 async def add_project(body: AddProject, authorization: str = Header(None)) -> dict:
     me = await _pkg.current_dev(authorization)
     db = _pkg.require_db()
+    _reject_unsafe_preview_url(body.preview_url)
     from services.team_permissions import check_permission
     ctx = await check_permission(me, "projects", "write", db=db)
     account_id = ctx["effective_account_id"]  # owner's account — shared across the team
@@ -909,6 +932,10 @@ async def update_project(
     # 2026-06 PAT-removal — PATs are no longer accepted on update either.
     if "github_token" in updates and updates["github_token"]:
         raise HTTPException(400, "PATs are no longer supported. Connect via the AUREM GitHub App instead.")
+    # Part 2c C8 — same SSRF guard as add_project; preview_url is later
+    # navigated by Playwright with no further say from the user.
+    if "preview_url" in updates:
+        _reject_unsafe_preview_url(updates["preview_url"])
     # 2026-08-20 — Auto-Reconnect Prompt. Re-attaching a project to a
     # fresh GitHub App installation (after the user revoked/reinstalled
     # it) takes over as the auth method, same precedence rule as

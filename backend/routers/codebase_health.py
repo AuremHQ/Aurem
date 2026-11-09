@@ -862,6 +862,13 @@ async def request_fix(
     from services.finding_fix_applier import apply_finding_fix
     from services import ora_fix_learning as _ofl
     import time as _t
+    # ORA Brain Part 4, F2 — tag this fix attempt so the LLM call
+    # inside apply_finding_fix stamps project_id + a task_id onto its
+    # brain_calls row, letting the outcome hook below find it.
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface(
+        "codebase_health", project_id=project_id, task_id=f"fix:{finding_id}",
+    )
     _t_start = _t.time()
     try:
         res = await apply_finding_fix(
@@ -871,8 +878,16 @@ async def request_fix(
         logger.exception("health apply_finding_fix raised")
         res = {"ok": False, "error": f"unhandled: {e}"}
     _dur_ms = int((_t.time() - _t_start) * 1000)
-    await finalize_hold(db, user_id=user_id, action="fix", run_id=wallet_run_id,
-                        ok=bool(res.get("ok")), reason=res.get("error") or "")
+    # FIX_one_branch_for_all_fixes, design item 12 — an idempotent
+    # re-run that found nothing new to commit is NOT charged, even
+    # though `ok=True` (it's not a failure either — the fix is
+    # already on the shared branch).
+    await finalize_hold(
+        db, user_id=user_id, action="fix", run_id=wallet_run_id,
+        ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+           and not res.get("skipped_not_present"),
+        reason=res.get("error") or "",
+    )
 
     # Iter 212m-129 — Learning hook (single-finding codebase-health fix).
     try:
@@ -886,6 +901,48 @@ async def request_fix(
         )
     except Exception as _e:
         logger.debug("learning hook (health) soft-failed: %r", _e)
+
+    # ORA Brain Part 4, F2 — objective outcome signal. This endpoint
+    # has no independent GitHub-commit verification step (unlike
+    # fix_pipeline.py's bulk path), so only the objectively-knowable
+    # FAILURE signal is wired here — attaching "verification_passed"
+    # on bare res.get("ok") would claim a confidence level nothing
+    # here actually checked.
+    if not res.get("ok"):
+        try:
+            from services.brain_gateway import attach_outcome_for_task
+            await attach_outcome_for_task(
+                db, task_id=f"fix:{finding_id}",
+                outcome="tests_failed", user_id=user_id,
+            )
+        except Exception as _bge:                                # noqa: BLE001
+            logger.debug("brain outcome attach skipped: %r", _bge)
+
+    if res.get("skipped_no_change") or res.get("skipped_not_present"):
+        # FIX_one_branch_for_all_fixes, design item 12 — the file
+        # already carries this exact fix on the shared branch
+        # (idempotent re-run). Not a failure, but not a NEW commit
+        # either — refund the same way a failure would, and say so
+        # plainly rather than claiming a fix just happened.
+        # Part 2b R1 — skipped_not_present (the scanner confirmed the
+        # finding was already gone BEFORE the LLM ever ran) gets the
+        # exact same refund treatment.
+        if not is_unlimited_user and tokens_cost:
+            try:
+                await db.dev_users.update_one(
+                    {"user_id": user_id},
+                    {"$inc": {"tokens_remaining": tokens_cost}},
+                )
+                new_balance += tokens_cost
+            except Exception as e:                                 # noqa: BLE001
+                logger.warning("health refund failed (skipped_no_change/not_present): %r", e)
+        return {
+            "ok": True,
+            "skipped_no_change": bool(res.get("skipped_no_change")),
+            "skipped_not_present": bool(res.get("skipped_not_present")),
+            "message": res.get("message") or "This file already has this fix — nothing new to commit.",
+            "tokens_refunded": True, "new_balance": new_balance,
+        }
 
     if not res.get("ok"):
         # Refund tokens if deduction happened (founders deducted=0).

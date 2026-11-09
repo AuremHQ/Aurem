@@ -442,6 +442,13 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     # existing /admin/2fa/* self-service rows above.
     ("GET",  "/api/aurem-dev/admin/team/my-access", None, VIEW),
     ("POST", "/api/aurem-dev/admin/team/access-requests", None, WORK),
+
+    # ───────────────────────── harness.releases / harness.downloads ──
+    # Aurem Loop harness Phase B — release manifest + download log.
+    ("GET",  "/api/aurem-dev/admin/harness/releases", "harness.releases", VIEW),
+    ("POST", "/api/aurem-dev/admin/harness/releases", "harness.releases", MANAGE),
+    ("POST", "/api/aurem-dev/admin/harness/releases/{release_id}/publish", "harness.releases", MANAGE),
+    ("GET",  "/api/aurem-dev/admin/harness/downloads", "harness.downloads", VIEW),
 ]
 
 import re as _re
