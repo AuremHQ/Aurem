@@ -611,14 +611,14 @@ const TEAMS = [
     title: "Security-First by Default",
     desc: "25-pattern Vanguard scan runs before every commit. Secrets, injection, JWT replay, XSS — all caught before they reach your repo. The only AI engineer with mandatory pre-commit security." },
   { icon: "🔄", tag: "NEW · verified loop",
-    title: "Loop Mode — Never Breaks",
-    desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically." },
+    title: "Loop Mode — Verified Before Ship",
+    desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically, up to a 2-retry cap." },
   { icon: "🏥", tag: "NEW · token-based",
     title: "Codebase Health Scanner",
     desc: "16-category audit: security, performance, code quality, dependencies, database, and more. Health score 0-100. Individual fix buttons. Find 44 issues in minutes, fix them with one click." },
   { icon: "⚡", tag: "UNIQUE · 4-hop chain",
-    title: "Never Goes Down",
-    desc: "OpenRouter → DeepSeek → OR free chain → Groq emergency. When Cursor and Copilot go down with their providers, ORA keeps shipping. Silent failover, zero downtime for you." },
+    title: "4-Provider Failover Chain",
+    desc: "OpenRouter → DeepSeek → OR free chain → Groq emergency. If one provider has an outage, ORA automatically retries the next in the chain — reducing (not eliminating) the chance that a single provider's downtime stops your ship." },
   { icon: "🧠", tag: "UNIQUE · self-learning",
     title: "ORA Learns Your Codebase",
     desc: "ORA Council tracks every interaction across 5 modes (chat, advice, code, debug, audit) and fine-tunes ORA on your specific patterns. The more you use ORA, the better it gets at your codebase." },
@@ -897,7 +897,7 @@ export default function Landing() {
                 <span style={{ opacity: 0.5 }}>·</span>
                 <span>GDPR · PIPEDA · DPDP · CCPA aligned</span>
                 <span style={{ opacity: 0.5 }}>·</span>
-                <span style={{ color: "var(--accent, #ff8a2a)" }}>SOC 2 Type I · Q4 2026</span>
+                <span style={{ color: "var(--accent, #ff8a2a)" }}>SOC 2 Type I (target: Q4 2026)</span>
               </Link>
             </div>
             <div className="hero-stats">
@@ -952,7 +952,6 @@ export default function Landing() {
               {proof.review_save_rate_pct > 0 && (
                 <div><div className="proof-num" data-testid="proof-corrections">{proof.review_save_rate_pct}%</div><div className="proof-label">AI mistakes auto-caught</div></div>
               )}
-              <div><div className="proof-num">55%</div><div className="proof-label">cheaper than Copilot</div></div>
             </div>
           </div>
         </section>
@@ -1249,9 +1248,10 @@ export default function Landing() {
                 Your advisor sees<br />what you see.
               </h3>
               <p className="k3-desc">
-                html2canvas silently captures your current screen and pipes it to Gemini
-                2.5 Flash vision. When you ask &ldquo;why is this red?&rdquo; the advisor
-                actually looks at the pixels. No upload UX — it just works.
+                When you ask the on-screen advisor &ldquo;why is this red?&rdquo;,
+                it captures a screenshot of what you&apos;re currently looking at and
+                sends it to Gemini 2.5 Flash vision so it can actually look at the
+                pixels — no manual screenshot, no upload step.
               </p>
               <code className="k3-proof">services/advisor_vision.py</code>
             </div>
