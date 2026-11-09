@@ -1,0 +1,28 @@
+{
+  "summary": "Independently verified homepage chooser strip + /both 301 retirement on branch harness-homepage-chooser-strip-draft. Flag OFF: page-status=false, SSR <main> body byte-identical to main's homeBody() (1041 chars, programmatic compare), no 'Choose a product' nav, no data-testid=homepage-chooser-strip in browser, /both, /both/ and /both?x=1 -> HTTP 301 Location: '/', browser goto /both lands on /, /harness 200 (shows gated 'isn't available yet' as expected). Flag ON (temporary upsert + backend restart + 18s wait): page-status=true, SSR contains exact '<main>\\n<nav aria-label=\"Choose a product\"><a href=\"/\" aria-current=\"page\">ORA by AUREM</a> &middot; <a href=\"/harness\">AUREM LOOP harness</a></nav>\\n<h1>', anonymous browser shows strip above hero (strip y=93, hero y=143.5), ora pill is SPAN with aria-current=page, harness pill is <A href=/harness>, clicking it navigates to /harness (full page renders), lower promo section renders, /both still 301. No console errors in either state, desktop + mobile. Flag REVERTED: doc deleted (original state had NO harness_page doc), backend restarted, page-status=false, curl / has no nav, browser shows no strip. Vitest (chooserStrip, harnessPromo, tokenWording: 18/18) and eslint on changed files pass. Both.jsx deleted, no imports remain.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Homepage (flag ON)", "issues": [
+        "SSR no-JS nav has a ' · ' separator between links; the React strip has none (pill style) — cosmetic copy mismatch only, both have identical text/hrefs.",
+        "React strip only appears after the async /harness/page-status fetch resolves, so with flag ON the hero shifts down ~50px after first paint (small CLS). Acceptable for a draft; could reserve space or prefetch if CLS budget matters.",
+        "Mobile (390px): the two pills wrap onto two lines (strip height 91px). Readable, but a single row would look tidier."
+      ]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/harness_flag_toggle.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "frontend/Dockerfile nginx: 'location = /both' doesn't match '/both/' (Vite middleware handles both). Low priority since that stack is unused.",
+    "aurem-prod-fixes.mjs isHarnessPageEnabled caches failures for 15s as well (fail-closed) — fine, but a transient backend blip hides the strip for 15s.",
+    "Landing.jsx promo section (data-testid=aurem-loop-promo-section) is unchanged vs main (git diff has no changes to it) and still gated by the same harnessPageEnabled state."
+  ],
+  "updated_files": ["/app/backend/tests/harness_flag_toggle.py (new test-only helper, no app code changed)"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Temporarily upserted {flag:'harness_page', enabled:true} in feature_flags (no such doc existed before). Deleted it afterward (deleted_count=1) and restarted backend; final state matches the start: no doc, page-status=false.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use `python3 /app/backend/tests/harness_flag_toggle.py on|off|show` and then `sudo supervisorctl restart backend` plus wait about 16s for the vite plugin's 15s cache. The starting DB state was NO harness_page doc. 'off' deletes it to restore that state. The full vitest suite was not re-run; only the 3 related test files were."
+}
