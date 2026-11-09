@@ -24,11 +24,11 @@ import logging
 import os
 import re
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 import httpx
 
 from services.http import ext_client
+from services.url_guard import is_safe_public_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -42,26 +42,18 @@ FIRECRAWL_CRAWL_POLL_MAX = 90.0   # total seconds we'll wait for /crawl
 URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 
 
-# ── SSRF guard reused from services/url_fetcher.py ────────────────────
-_BLOCKED_HOSTS = {"localhost", "0.0.0.0", "127.0.0.1", "::1"}
-_BLOCKED_PREFIXES = (
-    "10.", "192.168.", "169.254.",
-    "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
-    "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-    "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-)
-
-
-def _is_blocked(url: str) -> bool:
-    try:
-        host = (urlparse(url).hostname or "").lower()
-    except Exception:
-        return True
-    if not host:
-        return True
-    if host in _BLOCKED_HOSTS:
-        return True
-    return any(host.startswith(p) for p in _BLOCKED_PREFIXES)
+# 2026-11-09 — devil's-advocate audit: this used to be a hand-rolled,
+# hostname-STRING-only blocklist (no DNS resolution at all), despite
+# its own comment claiming to reuse url_fetcher.py's guard. A hostname
+# that isn't itself "localhost"/a literal private IP sailed through
+# even if it resolved to one — the exact DNS-rebinding class
+# services.url_guard (built for the preview_capture.py SSRF fix, C8)
+# exists to catch. fetch_url/firecrawl_scrape/firecrawl_crawl_site are
+# real LLM-invokable chat tools, and orchestrator.py auto-invokes
+# fetch_url on any URL found in the raw user prompt BEFORE the LLM
+# even runs — so this guard is reachable with nothing more than
+# pasting a URL into chat. Now actually reuses the real, DNS-
+# resolving, fail-closed guard instead of a second implementation.
 
 
 def _tavily_key() -> str | None:
@@ -164,7 +156,7 @@ async def fetch_url(ctx: dict, args: dict) -> dict:
     for u in raw_urls[:5]:
         if not isinstance(u, str) or not u.startswith(("http://", "https://")):
             continue
-        if _is_blocked(u):
+        if not is_safe_public_http_url(u):
             continue
         urls.append(u)
     if not urls:
@@ -290,7 +282,7 @@ async def firecrawl_scrape(ctx: dict, args: dict) -> dict:
     url = (args or {}).get("url", "").strip()
     if not url or not url.startswith(("http://", "https://")):
         return {"ok": False, "error": "Missing or invalid `url`"}
-    if _is_blocked(url):
+    if not is_safe_public_http_url(url):
         return {"ok": False, "error": "URL refused by SSRF guard"}
 
     formats = (args or {}).get("formats") or ["markdown"]
@@ -346,7 +338,7 @@ async def firecrawl_crawl_site(ctx: dict, args: dict) -> dict:
     url = (args or {}).get("url", "").strip()
     if not url or not url.startswith(("http://", "https://")):
         return {"ok": False, "error": "Missing or invalid `url`"}
-    if _is_blocked(url):
+    if not is_safe_public_http_url(url):
         return {"ok": False, "error": "URL refused by SSRF guard"}
 
     limit = int((args or {}).get("limit") or 10)
