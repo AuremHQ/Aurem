@@ -37,16 +37,55 @@
  * requested to re-confirm the real prod command before this comment
  * (and the "dead code" claim about scripts/seo-prerender.mjs /
  * Dockerfile below) is trusted again either way.
+ *
+ * 2026-11-xx · Homepage chooser strip (harness_page flag, draft).
+ * Since THIS file is what actually serves the no-JS "/" body in both
+ * preview and (per the note above) production, the new "ORA by AUREM
+ * / AUREM LOOP harness" chooser strip is injected here — NOT in
+ * scripts/seo-prerender.mjs, which per the same note never runs on
+ * Emergent's real deploy path. Reads the same public, no-auth
+ * GET /api/harness/page-status endpoint (fail-closed: any fetch
+ * error or flag-off leaves homeBody() byte-identical to before this
+ * change). Same request also retires /both with a real HTTP 301 —
+ * the Builder/Developer switcher it hosted is replaced by this strip.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ABOUT, CONTACT } from "../src/data/companyInfo.mjs";
 import { DEVELOPERS } from "../src/data/developerInfo.mjs";
 
+// Short in-memory cache so a burst of no-JS/crawler hits to "/" don't
+// each pay a network round trip to the backend just to read one flag.
+// Fails closed (false) on any error — never shows the strip by mistake.
+const HARNESS_FLAG_TTL_MS = 15000;
+let _harnessFlagCache = { value: false, ts: 0 };
+
+async function isHarnessPageEnabled(backendUrl) {
+  const now = Date.now();
+  if (now - _harnessFlagCache.ts < HARNESS_FLAG_TTL_MS) return _harnessFlagCache.value;
+  let value = false;
+  try {
+    if (backendUrl) {
+      const resp = await fetch(`${backendUrl}/api/harness/page-status`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (resp.ok) {
+        const body = await resp.json();
+        value = body?.harness_page_enabled === true;
+      }
+    }
+  } catch (e) {
+    console.warn(`[aurem-prod-fixes] harness/page-status fetch failed (${e.message}) — defaulting chooser strip to hidden`);
+    value = false;
+  }
+  _harnessFlagCache = { value, ts: now };
+  return value;
+}
+
 // Mirrors frontend/Dockerfile's nginx allowlist regex EXACTLY — keep
 // both lists in sync when routes are added/removed in src/App.jsx.
 const KNOWN_PREFIXES = new Set([
-  "both", "why-ora", "demo", "login", "signup", "reset-password", "verify",
+  "why-ora", "demo", "login", "signup", "reset-password", "verify",
   "support", "dashboard", "ora", "build", "integrations", "deploy", "domain",
   "settings", "profile", "tokens", "analytics", "projects", "admin", "tools",
   "feature-window", "codebase-health", "health", "bug-hunt",
@@ -79,9 +118,9 @@ function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function homeBody() {
+function homeBody(chooserNav) {
   return `<main>
-<h1>ORA by AUREM — the AI engineer that actually commits</h1>
+${chooserNav}<h1>ORA by AUREM — the AI engineer that actually commits</h1>
 <p>ORA is an autonomous AI software engineer. It connects to your GitHub repository, plans a change, writes the code, runs a pre-commit security scan (Vanguard), and commits the result directly to your branch — only after your manual approval.</p>
 <h2>How it works</h2>
 <ul>
@@ -95,6 +134,18 @@ function homeBody() {
 <p>Free: 10 tasks/month, no credit card. Starter: $9/month flat — no per-token billing.</p>
 <p><a href="/about">About AUREM</a> · <a href="/compare">How ORA compares</a> · <a href="/pricing">Pricing</a> · <a href="/signup">Start free</a></p>
 </main>`;
+}
+
+// 2026-11-xx · Homepage chooser strip (harness_page flag, draft). Two
+// links — the current page (ORA by AUREM, marked aria-current) and
+// AUREM LOOP harness (/harness). Mirrors Landing.jsx's React-rendered
+// strip exactly (same copy, same two hrefs) so JS and no-JS visitors
+// see the same thing. Empty string when the flag is off — homeBody()
+// then renders byte-identical to before this change.
+async function homeChooserNav(backendUrl) {
+  const on = await isHarnessPageEnabled(backendUrl);
+  if (!on) return "";
+  return `<nav aria-label="Choose a product"><a href="/" aria-current="page">ORA by AUREM</a> &middot; <a href="/harness">AUREM LOOP harness</a></nav>\n`;
 }
 
 function aboutBody() {
@@ -139,7 +190,7 @@ const ROUTE_META = {
   "/": {
     title: "ORA by AUREM — the AI engineer that actually commits",
     description: "ORA connects to your GitHub repo, writes code, runs a security scan, and commits on your approval. Free tier: 10 tasks/month, no card. Starter: $9/month flat.",
-    body: () => homeBody(),
+    body: async (root, backendUrl) => homeBody(await homeChooserNav(backendUrl)),
   },
   "/about": {
     title: ABOUT.title, description: ABOUT.description, body: () => aboutBody(),
@@ -157,17 +208,31 @@ const ROUTE_META = {
   },
 };
 
-export default function auremProdFixes() {
+export default function auremProdFixes(options = {}) {
   let root = process.cwd();
+  const backendUrl = options.backendUrl || "";
   return {
     name: "aurem-prod-fixes",
     configResolved(cfg) { root = cfg.root; },
     configureServer(server) {
-      // P0 #2 — real 404 for unknown top-level paths, BEFORE Vite's
-      // own SPA fallback (which otherwise serves index.html for
-      // literally everything, the exact soft-404 bug).
       server.middlewares.use((req, res, next) => {
         const urlPath = (req.url || "/").split("?")[0];
+        // 2026-11-xx — /both retired (Builder/Developer switcher
+        // replaced by the homepage chooser strip, same harness_page
+        // flag). Real HTTP 301, not a client-side <Navigate> — fires
+        // before React/Vite ever serve the SPA shell, so curl,
+        // crawlers, and stale full-page bookmarks all land on "/"
+        // directly instead of a blank shell that only redirects once
+        // JS runs.
+        if (urlPath === "/both" || urlPath === "/both/") {
+          res.statusCode = 301;
+          res.setHeader("Location", "/");
+          res.end();
+          return;
+        }
+        // P0 #2 — real 404 for unknown top-level paths, BEFORE Vite's
+        // own SPA fallback (which otherwise serves index.html for
+        // literally everything, the exact soft-404 bug).
         if (
           urlPath === "/" ||
           urlPath.startsWith("/@") ||
@@ -214,7 +279,7 @@ export default function auremProdFixes() {
       const urlPath = (ctx.originalUrl || ctx.path || "/").split("?")[0];
       const meta = ROUTE_META[urlPath];
       if (!meta) return html;
-      return Promise.resolve(meta.body(root)).then((body) =>
+      return Promise.resolve(meta.body(root, backendUrl)).then((body) =>
         html
           .replace(/<title>[^<]*<\/title>/, `<title>${esc(meta.title)}</title>`)
           .replace(

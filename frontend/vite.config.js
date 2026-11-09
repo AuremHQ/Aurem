@@ -44,7 +44,7 @@ export default defineConfig(({ mode }) => {
   console.log(`[vite.config] Frontend build sha resolved: ${buildSha}`)
 
   return {
-    plugins: [react(), auremProdFixes(), oauthWellKnownProxy()],
+    plugins: [react(), auremProdFixes({ backendUrl: apiTarget }), oauthWellKnownProxy()],
     server: {
       port: 3000,
       host: '0.0.0.0',

@@ -119,6 +119,27 @@ const LANDING_CSS = `
 .ora-landing .topstrip-track span::before { content: "▪"; color: var(--accent); opacity: 0.7; }
 @keyframes oraStripScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 
+/* 2026-11-xx — Homepage chooser strip (harness_page flag, draft).
+   Small and quiet, deliberately NOT a second hero — two low-key
+   pills above the existing hero, replacing the old /both in-page
+   Builder/Developer switcher with real navigation between the two
+   standalone product pages ("/" itself, and "/harness"). */
+.ora-landing .chooser-strip {
+  display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
+  padding: 18px 32px 0; max-width: 1200px; margin: 0 auto;
+}
+.ora-landing .chooser-pill {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; padding: 7px 16px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted-1);
+  text-decoration: none; transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.ora-landing .chooser-pill:hover { color: var(--text); border-color: var(--muted-3); }
+.ora-landing .chooser-pill-active {
+  background: var(--accent-bg); color: var(--accent); border-color: var(--accent-br);
+  cursor: default;
+}
+
 /* Hero */
 .ora-landing .hero { padding: 76px 32px 56px; }
 .ora-landing .hero-badge {
@@ -771,6 +792,35 @@ export default function Landing() {
       </div>
 
       <div className="container">
+
+        {/* ─── Homepage chooser strip (harness_page flag, draft) ───
+            Replaces the old /both in-page switcher: two real pages,
+            not two tabs. "ORA by AUREM" is the current page (inert,
+            aria-current); "AUREM LOOP harness" links out to /harness.
+            Reuses the SAME harnessPageEnabled state/fetch as the
+            promo section below — one anonymous, no-auth request. */}
+        {harnessPageEnabled && (
+          <nav
+            className="chooser-strip"
+            data-testid="homepage-chooser-strip"
+            aria-label="Choose a product"
+          >
+            <span
+              className="chooser-pill chooser-pill-active"
+              data-testid="chooser-pill-ora"
+              aria-current="page"
+            >
+              ORA by AUREM
+            </span>
+            <Link
+              className="chooser-pill"
+              to="/harness"
+              data-testid="chooser-pill-harness"
+            >
+              AUREM LOOP harness
+            </Link>
+          </nav>
+        )}
 
         {/* ─── HERO ─── */}
         <section className="hero">
