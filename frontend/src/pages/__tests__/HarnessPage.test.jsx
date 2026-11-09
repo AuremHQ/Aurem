@@ -1,9 +1,9 @@
 /**
- * HarnessPage.test.jsx — Aurem Loop harness Phase B.
- * Signed-out teaser, flag-off "not available", full page when flag is
- * on, download success/no-release/error paths, and the honesty
- * constraints (no Ollama/local-model claim, no benchmark-number
- * claim, Loop C zero-real-weight-changes line present).
+ * HarnessPage.test.jsx — Aurem Loop harness Phase B (redesigned).
+ * Flag checked via the public GET /harness/page-status (not
+ * pageFlags.js, which only resolves after login — the pre-login gap
+ * this redesign closes). Flag off -> hidden for everyone. Flag on ->
+ * full page for everyone; only the CTA button differs by login state.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -12,15 +12,14 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 vi.mock("../../lib/api", () => ({
   api: { post: vi.fn() },
+  healthApi: { get: vi.fn() },
   getToken: vi.fn(),
-}));
-vi.mock("../../lib/pageFlags", () => ({
-  isHarnessPageEnabled: vi.fn(),
+  getUser: vi.fn(() => null),
+  isAdminOrFounder: vi.fn(() => false),
 }));
 
 import HarnessPage from "../HarnessPage.jsx";
-import { api, getToken } from "../../lib/api";
-import { isHarnessPageEnabled } from "../../lib/pageFlags";
+import { api, healthApi, getToken } from "../../lib/api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,77 +38,131 @@ function renderPage() {
 }
 
 describe("HarnessPage", () => {
-  it("shows the signup CTA when signed out, never the full page", () => {
+  it("shows a loading state before the flag check resolves", () => {
     getToken.mockReturnValue(null);
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockReturnValue(new Promise(() => {})); // never resolves
     renderPage();
-    expect(screen.getByTestId("harness-page-signed-out")).toBeInTheDocument();
+    expect(screen.getByTestId("harness-page-loading")).toBeInTheDocument();
+  });
+
+  it("shows 'not available yet' for EVERYONE when the flag is off, signed out", async () => {
+    getToken.mockReturnValue(null);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument());
     expect(screen.queryByTestId("harness-page")).not.toBeInTheDocument();
+  });
+
+  it("shows 'not available yet' for EVERYONE when the flag is off, signed in", async () => {
+    getToken.mockReturnValue("fake-jwt");
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument());
+  });
+
+  it("a failed flag-status fetch defaults to hidden, never shows the real page", async () => {
+    getToken.mockReturnValue(null);
+    healthApi.get.mockRejectedValue(new Error("network down"));
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument());
+  });
+
+  it("shows the full page to a SIGNED-OUT visitor when the flag is on, with a signup CTA", async () => {
+    getToken.mockReturnValue(null);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
     expect(screen.getByTestId("harness-signup-cta")).toBeInTheDocument();
+    expect(screen.queryByTestId("harness-download-button")).not.toBeInTheDocument();
   });
 
-  it("shows 'not available yet' when signed in but the flag is off", () => {
+  it("shows the full page to a SIGNED-IN user when the flag is on, with a download button", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(false);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     renderPage();
-    expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument();
-    expect(screen.queryByTestId("harness-page")).not.toBeInTheDocument();
-  });
-
-  it("shows the full page when signed in and the flag is on", () => {
-    getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
-    renderPage();
-    expect(screen.getByTestId("harness-page")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
     expect(screen.getByTestId("harness-download-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("harness-signup-cta")).not.toBeInTheDocument();
   });
 
-  it("never claims Ollama/local-model support (that feature is not_built)", () => {
+  it("renders exactly 7 FAQ entries", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+    for (let i = 0; i < 7; i++) {
+      expect(screen.getByTestId(`harness-faq-${i}`)).toBeInTheDocument();
+    }
+    expect(screen.queryByTestId("harness-faq-7")).not.toBeInTheDocument();
+  });
+
+  it("renders the site's real nav, not a bespoke one", async () => {
+    getToken.mockReturnValue("fake-jwt");
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+    expect(document.querySelector(".aurem-marketing-nav")).toBeTruthy();
+  });
+
+  it("renders a footer with About/Contact/Privacy links", async () => {
+    getToken.mockReturnValue("fake-jwt");
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-footer")).toBeInTheDocument());
+    const footer = screen.getByTestId("harness-footer");
+    expect(footer.textContent).toContain("About");
+    expect(footer.textContent).toContain("Contact");
+    expect(footer.textContent).toContain("Privacy");
+  });
+
+  it("never claims Ollama/local-model support anywhere on the page", async () => {
+    getToken.mockReturnValue("fake-jwt");
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
     const bodyText = document.body.textContent;
     expect(bodyText).not.toMatch(/ollama/i);
     expect(bodyText).not.toMatch(/lm studio/i);
     expect(bodyText).not.toMatch(/llama\.cpp/i);
   });
 
-  it("never claims a specific benchmark pass-rate lift", () => {
+  it("never claims a specific benchmark pass-rate", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
     const bodyText = document.body.textContent;
-    // No "X/Y" style benchmark fraction and no "% faster/better" claim.
     expect(bodyText).not.toMatch(/\d+\/\d+/);
     expect(bodyText).not.toMatch(/\d+%\s*(faster|better|improvement)/i);
   });
 
-  it("states plainly that Loop C has not produced real weight changes", () => {
+  it("states plainly that Loop C has not produced real weight changes", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-what-it-does-not-do")).toBeInTheDocument());
     expect(screen.getByTestId("harness-what-it-does-not-do").textContent)
       .toMatch(/not produced any real weight changes/i);
   });
 
-  it("presents exactly one package — free and subscriber both show the local harness as Included", () => {
+  it("shows the cloud option as Locked for free, never as working", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     renderPage();
-    expect(screen.getByTestId("harness-tier-free-basic").textContent).toBe("Included");
-    expect(screen.getByTestId("harness-tier-sub-basic").textContent).toBe("Included");
-    expect(screen.getByTestId("harness-tier-free-cloud").textContent).toBe("Locked");
+    await waitFor(() => expect(screen.getByTestId("harness-tiers")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-tier-free-1").textContent).toBe("Locked");
   });
 
-  it("clicking download calls the real endpoint with a blob response type and saves the file", async () => {
+  it("clicking download (signed in) calls the real endpoint and saves the blob", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     const fakeBlob = new Blob(["fake zip bytes"]);
     api.post.mockResolvedValue({
       data: fakeBlob,
       headers: { "content-disposition": 'attachment; filename="aurem-loop-0.8.0.zip"' },
     });
     renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("harness-download-button"));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       "/harness/download", null, { responseType: "blob" },
@@ -119,18 +172,20 @@ describe("HarnessPage", () => {
 
   it("shows a clean message, never a crash, when no release is published (409)", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     api.post.mockRejectedValue({ response: { status: 409 } });
     renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("harness-download-button"));
     await waitFor(() => expect(screen.getByTestId("harness-no-release")).toBeInTheDocument());
   });
 
   it("shows a generic error message on any other download failure", async () => {
     getToken.mockReturnValue("fake-jwt");
-    isHarnessPageEnabled.mockReturnValue(true);
+    healthApi.get.mockResolvedValue({ data: { harness_page_enabled: true } });
     api.post.mockRejectedValue({ response: { status: 500 } });
     renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("harness-download-button"));
     await waitFor(() => expect(screen.getByTestId("harness-download-error")).toBeInTheDocument());
   });

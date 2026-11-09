@@ -86,6 +86,7 @@ const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
 const { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } = await import("../src/data/competitors.mjs");
 const { ABOUT, CONTACT } = await import("../src/data/companyInfo.mjs");
 const { DEVELOPERS } = await import("../src/data/developerInfo.mjs");
+const { HARNESS } = await import("../src/data/harnessPage.mjs");
 
 // 2026-11-09 — "Aurem Loop" homepage promo section (draft, flag
 // default OFF — do not flip without separate founder approval).
@@ -469,6 +470,70 @@ ${sections}
   writeFileSync(join(DIST, "developers", "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote /developers/index.html");
+}
+
+// 2026-11-09 — /harness itself (not just the homepage promo blurb
+// above). ONLY written when HARNESS_PAGE_MODE is true — the same
+// build-time flag read. When the flag is off, no dedicated
+// dist/harness/index.html is written at all; a no-JS visitor hitting
+// /harness falls back to the generic SPA shell (dist/index.html),
+// same as any other unmatched route — "flag off means the page stays
+// hidden" holds trivially, there is no harness content baked in
+// anywhere in that build.
+function harnessBody() {
+  const howItWorks = HARNESS.howItWorks
+    .map((s) => `<li>${esc(s)}</li>`).join("");
+  const whatItDoes = HARNESS.whatItDoes
+    .map((s) => `<li>${esc(s)}</li>`).join("");
+  const tierRows = HARNESS.tiers.map((t) =>
+    `<tr><td>${esc(t.feature)}</td><td>${esc(t.free)}</td><td>${esc(t.subscriber)}</td></tr>`,
+  ).join("");
+  const installSteps = HARNESS.installSteps
+    .map((s) => `<li>${esc(s)}</li>`).join("");
+  const faqItems = HARNESS.faq.map((f) =>
+    `<details><summary>${esc(f.q)}</summary><p>${esc(f.a)}</p></details>`,
+  ).join("");
+  const faqLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: HARNESS.faq.map((f) => ({
+      "@type": "Question",
+      name: f.q,
+      acceptedAnswer: { "@type": "Answer", text: f.a },
+    })),
+  };
+  return {
+    body: `<main>
+<h1>${esc(HARNESS.title)}</h1>
+<p>${esc(HARNESS.heroLine)}</p>
+<p><a href="/signup">Create a free account to download</a></p>
+<h2>How it works</h2>
+<ol>${howItWorks}</ol>
+<h2>What it does — and doesn't</h2>
+<ul>${whatItDoes}</ul>
+<h2>Free vs. subscriber</h2>
+<table><tbody>${tierRows}</tbody></table>
+<h2>Install (Windows)</h2>
+<ol>${installSteps}</ol>
+<h2>FAQ</h2>
+${faqItems}
+<p><a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a></p>
+</main>`,
+    ld: faqLd,
+  };
+}
+
+if (HARNESS_PAGE_MODE) {
+  let html = swapHead(base, HARNESS);
+  const { body, ld } = harnessBody();
+  html = injectRoot(html, body);
+  html = injectLd(html, ld);
+  mkdirSync(join(DIST, "harness"), { recursive: true });
+  writeFileSync(join(DIST, "harness", "index.html"), html);
+  written += 1;
+  console.log("[seo-prerender] wrote /harness/index.html (harness_page flag ON)");
+} else {
+  console.log("[seo-prerender] skipped /harness/index.html (harness_page flag OFF — page stays hidden)");
 }
 
 console.log(`[seo-prerender] done — ${written} snapshots.`);
