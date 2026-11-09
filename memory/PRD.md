@@ -2,6 +2,17 @@
 
 Last updated: 2026-11-09 (Aurem Loop homepage promo section, flag-gated draft — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
 
+## Aurem Loop /harness page — real design, SSR, and release checklist (2026-11-09, DONE)
+
+Follow-up to the homepage promo above — the founder's suggested next step ("style the harness page before the flag ever goes live") was carried out: `/harness` now has a full real design (reuses `MarketingNav`, hero + free-download CTA, how-it-works, honest capabilities table with the locked cloud option, install steps, 7-question FAQ) instead of plain unstyled text, built via `src/data/harnessPage.mjs` as the single source of truth shared by the live React page and the build-time SSR snapshot (same pattern as `companyInfo.mjs`/`competitors.mjs`).
+
+- Flag check uses the same public `GET /api/harness/page-status` endpoint (not the auth-gated `pageFlags.js` mirror) — consistent with the homepage promo's pre-login fix.
+- Found and fixed a real bug: the page's flag check was going through the `api` axios instance (baseURL always prepends `/api/aurem-dev`), but this endpoint deliberately lives at the bare `/api` path. Switched to the existing `healthApi` instance instead.
+- `scripts/seo-prerender.mjs` now writes `dist/harness/index.html` (with FAQPage JSON-LD) only when the flag is on at build time — flag off means nothing harness-shaped is baked into the build at all.
+- Verified for real: backend restart + curl confirming the flag value, a real `yarn build` with the flag on producing real static HTML (grep-verified clean of Ollama/benchmark-number mentions), a clean rebuild with the flag off confirming no `/harness` snapshot is written, a real headless-browser pass (desktop + mobile viewports, FAQ expand/collapse interaction), and a normal `.env.production` build confirming the real production path also fails closed. Flag confirmed back to off via curl before finishing (106/106 harness-related backend tests passing).
+- Added `docs/HARNESS_RELEASE_CHECKLIST.md` — the tick-off checklist for the first real, hosted release (D1 approval, test gates, docs, published-release-artifact contents, go-live sequence, rollback). Checklist only, nothing on it executed.
+- **Status: still NOT deployed**, still on `harness-phase-a-b-draft` only (confirmed not an ancestor-merged branch of `main`), flag still off in Mongo.
+
 ## Aurem Loop homepage promo section — flag-gated draft, NOT deployed, flag OFF (2026-11-09, DONE)
 
 Founder asked to add a homepage section promoting the existing "Aurem Loop" local harness (`/harness`, built in an earlier "Phase A + Phase B" commit on branch `harness-phase-a-b-draft`), tied to the same `harness_page` feature flag that gates the authenticated `/harness` page — with the explicit constraint that it must work for anonymous/signed-out visitors (not depend on `/auth/me`), be visible in raw `curl`/view-source with no JS, use honest copy only, stay OFF by default, and stay a draft on this branch (never merged to main, never deployed).
