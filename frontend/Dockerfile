@@ -61,7 +61,7 @@ RUN printf 'server {\n\
   # 2026-11-xx — /both retired (Builder/Developer switcher replaced\n\
   # by the homepage chooser strip, same harness_page flag). Real 301,\n\
   # mirrors vite-plugins/aurem-prod-fixes.mjs'"'"'s dev-server middleware.\n\
-  location = /both {\n\
+  location ~ ^/both/?$ {\n\
     return 301 /;\n\
   }\n\
   location ~ ^/(why-ora|demo|login|signup|reset-password|verify|support|dashboard|ora|build|integrations|deploy|domain|settings|profile|tokens|analytics|projects|admin|tools|feature-window|codebase-health|health|bug-hunt|sidebar-preview|dashboard-preview-v2|privacy|terms|acceptable-use|cookie-policy|cookie-preferences|refund-policy|ai-code-processing|subprocessors|dpa|security|status|policies|wall|wrapped|automations|oauth-finish|magic-login|vs|pricing|compare|dev|about|contact|developers|team|team-invite|harness)(/|$) {\n\
