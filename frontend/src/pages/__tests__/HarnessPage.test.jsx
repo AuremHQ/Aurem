@@ -197,20 +197,27 @@ describe("HarnessPage", () => {
     it("a signed-out visitor clicking Download is redirected to signup, no API call made", async () => {
       getToken.mockReturnValue(null);
       mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      const originalLocation = window.location;
       delete window.location;
       window.location = { href: "" };
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
-      screen.getByTestId("harness-download-button").click();
-      expect(window.location.href).toBe("/signup?next=/harness");
-      expect(api.post).not.toHaveBeenCalled();
+      try {
+        renderPage();
+        await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+        screen.getByTestId("harness-download-button").click();
+        expect(window.location.href).toBe("/signup?next=/harness");
+        expect(api.post).not.toHaveBeenCalled();
+      } finally {
+        window.location = originalLocation;
+      }
     });
 
-    it("a signed-in visitor clicking Download calls the authenticated download endpoint", async () => {
+    it("a signed-in visitor clicking Download calls the authenticated download endpoint and triggers a named file download", async () => {
       getToken.mockReturnValue("fake-jwt");
       api.post.mockResolvedValue({ data: new Blob(["zip-bytes"]) });
-      global.URL.createObjectURL = vi.fn(() => "blob:mock-url");
-      global.URL.revokeObjectURL = vi.fn();
+      const createObjectURL = vi.fn(() => "blob:mock-url");
+      const revokeObjectURL = vi.fn();
+      global.URL.createObjectURL = createObjectURL;
+      global.URL.revokeObjectURL = revokeObjectURL;
       mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
       renderPage();
       await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
@@ -218,7 +225,22 @@ describe("HarnessPage", () => {
       await waitFor(() => expect(api.post).toHaveBeenCalledWith(
         "/harness/download", {}, { responseType: "blob" },
       ));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob)));
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url"));
       await waitFor(() => expect(screen.getByTestId("harness-download-button")).not.toBeDisabled());
+    });
+
+    it("shows neither the Phase A banner nor the download section while release-status is still resolving (no flash)", async () => {
+      healthApi.get.mockImplementation((path) => {
+        if (path === "/harness/page-status") return Promise.resolve({ data: { harness_page_enabled: true } });
+        if (path === "/harness/content") return Promise.resolve({ data: { content: CONTENT, live_stats: { stars: 16, forks: 2 } } });
+        if (path === "/harness/release-status") return new Promise(() => {}); // never resolves
+        return Promise.reject(new Error(`unexpected path ${path}`));
+      });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.queryByTestId("harness-phase-a-banner")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
     });
 
     it("stays on the Phase A waitlist banner when no release is published (current real state)", async () => {

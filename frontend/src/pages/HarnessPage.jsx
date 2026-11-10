@@ -131,6 +131,7 @@ export default function HarnessPage() {
   const [liveStats, setLiveStats] = useState(null);
   const [contentState, setContentState] = useState("loading"); // loading|ready|unavailable|error
   const [release, setRelease] = useState(null); // Phase B readiness — {available:false} until a real release is published
+  const [releaseLoading, setReleaseLoading] = useState(true); // avoids a Phase-A-banner flash before this resolves
   const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
   const [downloadError, setDownloadError] = useState("");
 
@@ -155,7 +156,8 @@ export default function HarnessPage() {
       .catch(() => setContentState("error"));
     healthApi.get("/harness/release-status")
       .then((r) => setRelease(r.data || { available: false }))
-      .catch(() => setRelease({ available: false }));
+      .catch(() => setRelease({ available: false }))
+      .finally(() => setReleaseLoading(false));
   }
 
   async function handleDownloadClick() {
@@ -296,7 +298,7 @@ export default function HarnessPage() {
           <p style={pStyle}>{content.hero?.subhead}</p>
           <p style={pStyle}>{content.hero?.body}</p>
 
-          {release?.available ? (
+          {releaseLoading ? null : release?.available ? (
             <div style={downloadCardStyle} data-testid="harness-download-section">
               <strong>Download available</strong> — v<span data-testid="harness-download-version">{release.version}</span>
               {release.mandatory && <span style={{ marginLeft: 8, ...badgeStyle }}>REQUIRED UPDATE</span>}
