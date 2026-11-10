@@ -392,7 +392,7 @@ function homeBody() {
     : "Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing."}</p>
 ${HARNESS_PAGE_MODE ? `<h2>Aurem Loop</h2>
 <p>A local coding harness that checks its own work. Not available to download yet.</p>
-<p><a href="/harness">Get Aurem Loop \u2192</a></p>
+<p><a href="/harness">Learn about Aurem Loop \u2192</a></p>
 ` : ""}<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }

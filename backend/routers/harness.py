@@ -25,6 +25,7 @@ by services.harness_auth. It must never require current_dev/JWT auth.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -80,8 +81,9 @@ async def harness_page_status() -> HarnessPageStatusResponse:
 # one never blocks the other.
 @router.get("/harness/content")
 async def harness_content() -> dict:
-    content = await fetch_harness_page_content()
-    live_stats = await fetch_wsp_kit_live_stats()
+    content, live_stats = await asyncio.gather(
+        fetch_harness_page_content(), fetch_wsp_kit_live_stats(),
+    )
     return {"content": content, "live_stats": live_stats}
 
 

@@ -48,6 +48,11 @@ _CACHE_TTL_S = 300
 # keep their own, which is fine: worst case is a <=5min staleness
 # skew across workers, never a crash, never fabricated content.
 _cache: dict = {"data": None, "ts": 0.0}
+# Negative cache for failed fetches (content missing / repo unreachable)
+# so a 404 (e.g. content file not seeded yet) doesn't trigger a fresh
+# outbound GitHub call on every single page load.
+_fail_cache: dict = {"ts": 0.0}
+_FAIL_CACHE_TTL_S = 60
 
 
 _VALID_TOKEN_PREFIXES = ("ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_")
@@ -81,16 +86,20 @@ async def fetch_harness_page_content(force: bool = False) -> dict:
     success. On any failure, returns the last good cached copy (also
     `available: True`, just possibly stale up to _CACHE_TTL_S) or, if
     nothing has ever been fetched successfully, `{"available": False}`.
-    Never raises."""
+    Never raises.
+
+    Reads proceed even with no token (token=None) — the repo is
+    public as of 2026-11-10, so an unauthenticated GET still works;
+    only the WRITE path (push_harness_page_content) hard-requires a
+    token, since GitHub always rejects anonymous writes regardless of
+    repo visibility."""
     now = time.time()
     if not force and _cache["data"] is not None and (now - _cache["ts"]) < _CACHE_TTL_S:
         return _cache["data"]
+    if not force and _cache["data"] is None and (now - _fail_cache["ts"]) < _FAIL_CACHE_TTL_S:
+        return {"available": False}
 
     token = _token()
-    if not token:
-        logger.warning("fetch_harness_page_content: %s is not configured", _TOKEN_ENV)
-        return _cache["data"] or {"available": False}
-
     try:
         raw = await fetch_file(
             HARNESS_REPO_OWNER, HARNESS_REPO_NAME, HARNESS_CONTENT_PATH,
@@ -104,6 +113,7 @@ async def fetch_harness_page_content(force: bool = False) -> dict:
         parsed = json.loads(raw)
     except Exception as e:                                       # noqa: BLE001
         logger.warning("fetch_harness_page_content failed (serving cache): %r", e)
+        _fail_cache["ts"] = now
         return _cache["data"] or {"available": False}
 
     parsed["available"] = True
