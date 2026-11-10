@@ -22,7 +22,7 @@ import { SupportButton } from "./SupportPopup";
 // the list.
 export const HIDE_PREFIXES = [
   "/login", "/signup", "/verify", "/support",
-  "/demo", "/bug-hunt", "/why-ora", "/both",
+  "/demo", "/bug-hunt", "/why-ora",
   "/admin",
   "/dev/",
 ];

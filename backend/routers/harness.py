@@ -1,8 +1,9 @@
 """
-routers/harness.py — Aurem Loop harness, Phase A verify endpoint only.
+routers/harness.py — Aurem Loop harness, Phase A.
 
-Scope note (explicit, per the approved plan's own restriction): this
-file builds ONLY `POST /api/harness/verify`. No billing, no telemetry
+Builds `POST /api/harness/verify` (external client contract — see
+below) and `GET /api/harness/page-status` / `GET /api/harness/content`
+(public page-content delivery, 2026-11-10). No billing, no telemetry
 ingestion, no cloud-run endpoint — those are separate, later phases
 and are deliberately not touched here.
 
@@ -24,6 +25,7 @@ by services.harness_auth. It must never require current_dev/JWT auth.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -32,7 +34,9 @@ from pydantic import BaseModel, Field
 from cto_services.db import require_db
 from services.feature_flags import is_enabled
 from services.harness_auth import verify_harness_identity
+from services.harness_content_repo import fetch_harness_page_content
 from services.rate_limiter import check_rate_limit_async
+from services.wsp_kit_stats import fetch_wsp_kit_live_stats
 
 logger = logging.getLogger("aurem-dev.harness")
 
@@ -63,6 +67,24 @@ class HarnessPageStatusResponse(BaseModel):
 async def harness_page_status() -> HarnessPageStatusResponse:
     enabled = await is_enabled("harness_page")
     return HarnessPageStatusResponse(harness_page_enabled=enabled)
+
+
+# 2026-11-10 — Phase A page content. Public (no-auth), same visibility
+# pattern as page-status above: this does NOT itself check the
+# harness_page flag (the caller — HarnessPage.jsx / seo-prerender.mjs
+# — already gates the fetch on page-status being true first), so this
+# stays a dumb, cheap content+stats read with no flag-logic duplicated
+# here. `content` is fetched from the private AuremHQ/aurem-loop repo
+# (services/harness_content_repo.py); `live_stats` overlays real-time
+# stars/forks for the wsp-kit repo (services/wsp_kit_stats.py) — the
+# two are intentionally separate fetches/caches so a GitHub outage on
+# one never blocks the other.
+@router.get("/harness/content")
+async def harness_content() -> dict:
+    content, live_stats = await asyncio.gather(
+        fetch_harness_page_content(), fetch_wsp_kit_live_stats(),
+    )
+    return {"content": content, "live_stats": live_stats}
 
 
 class HarnessVerifyRequest(BaseModel):

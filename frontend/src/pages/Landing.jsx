@@ -119,6 +119,30 @@ const LANDING_CSS = `
 .ora-landing .topstrip-track span::before { content: "▪"; color: var(--accent); opacity: 0.7; }
 @keyframes oraStripScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 
+/* 2026-11-xx — Homepage chooser strip (harness_page flag, draft).
+   Small and quiet, deliberately NOT a second hero — two low-key
+   pills, replacing the old /both in-page Builder/Developer switcher
+   with real navigation between the two standalone product pages
+   ("/" itself, and "/harness"). Lives inside the hero's top badge
+   row (moved 2026-11-10) so it's visible as part of the hero. */
+.ora-landing .chooser-strip {
+  display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
+  max-width: 1200px; margin: 0 auto;
+}
+.ora-landing .chooser-strip-in-hero { margin-top: 0; margin-bottom: 42px; }
+.ora-landing .hero-badge:has(+ .chooser-strip-in-hero) { margin-bottom: 14px; }
+.ora-landing .chooser-pill {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; padding: 7px 16px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted-1);
+  text-decoration: none; transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.ora-landing .chooser-pill:hover { color: var(--text); border-color: var(--muted-3); }
+.ora-landing .chooser-pill-active {
+  background: var(--accent-bg); color: var(--accent); border-color: var(--accent-br);
+  cursor: default;
+}
+
 /* Hero */
 .ora-landing .hero { padding: 76px 32px 56px; }
 .ora-landing .hero-badge {
@@ -623,14 +647,14 @@ const TEAMS = [
     title: "Security-First by Default",
     desc: "25-pattern Vanguard scan runs before every commit. Secrets, injection, JWT replay, XSS — all caught before they reach your repo. The only AI engineer with mandatory pre-commit security." },
   { icon: "🔄", tag: "NEW · verified loop",
-    title: "Loop Mode — Never Breaks",
-    desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically." },
+    title: "Loop Mode — Verified Before Ship",
+    desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically, up to a 2-retry cap." },
   { icon: "🏥", tag: "NEW · token-based",
     title: "Codebase Health Scanner",
     desc: "16-category audit: security, performance, code quality, dependencies, database, and more. Health score 0-100. Individual fix buttons. Find 44 issues in minutes, fix them with one click." },
   { icon: "⚡", tag: "UNIQUE · 4-hop chain",
-    title: "Never Goes Down",
-    desc: "OpenRouter → DeepSeek → OR free chain → Groq emergency. When Cursor and Copilot go down with their providers, ORA keeps shipping. Silent failover, zero downtime for you." },
+    title: "4-Provider Failover Chain",
+    desc: "OpenRouter → DeepSeek → OR free chain → Groq emergency. If one provider has an outage, ORA automatically retries the next in the chain — reducing (not eliminating) the chance that a single provider's downtime stops your ship." },
   { icon: "🧠", tag: "UNIQUE · self-learning",
     title: "ORA Learns Your Codebase",
     desc: "ORA Council tracks every interaction across 5 modes (chat, advice, code, debug, audit) and fine-tunes ORA on your specific patterns. The more you use ORA, the better it gets at your codebase." },
@@ -809,6 +833,36 @@ export default function Landing() {
         <section className="hero">
           <div style={{ textAlign: "center" }}>
             <div className="hero-badge">▸ Developers Choice</div>
+
+            {/* ─── Homepage chooser strip (harness_page flag, draft) ───
+                Replaces the old /both in-page switcher: two real pages,
+                not two tabs. "ORA by AUREM" is the current page (inert,
+                aria-current); "AUREM LOOP harness" links out to /harness.
+                Moved inside the hero (2026-11-10, founder request) so
+                it's visible as part of the hero itself instead of a
+                separate strip floating above it. */}
+            {harnessPageEnabled && (
+              <nav
+                className="chooser-strip chooser-strip-in-hero"
+                data-testid="homepage-chooser-strip"
+                aria-label="Choose a product"
+              >
+                <span
+                  className="chooser-pill chooser-pill-active"
+                  data-testid="chooser-pill-ora"
+                  aria-current="page"
+                >
+                  ORA by AUREM
+                </span>
+                <Link
+                  className="chooser-pill"
+                  to="/harness"
+                  data-testid="chooser-pill-harness"
+                >
+                  AUREM LOOP harness
+                </Link>
+              </nav>
+            )}
           </div>
           <div className="hero-split">
             <h1 className="hero-title" data-testid="hero-headline">
@@ -880,7 +934,7 @@ export default function Landing() {
                 <span style={{ opacity: 0.5 }}>·</span>
                 <span>GDPR · PIPEDA · DPDP · CCPA aligned</span>
                 <span style={{ opacity: 0.5 }}>·</span>
-                <span style={{ color: "var(--accent, #ff8a2a)" }}>SOC 2 Type I · Q4 2026</span>
+                <span style={{ color: "var(--accent, #ff8a2a)" }}>SOC 2 Type I (target: Q4 2026)</span>
               </Link>
             </div>
             <div className="hero-stats">
@@ -935,7 +989,6 @@ export default function Landing() {
               {proof.review_save_rate_pct > 0 && (
                 <div><div className="proof-num" data-testid="proof-corrections">{proof.review_save_rate_pct}%</div><div className="proof-label">AI mistakes auto-caught</div></div>
               )}
-              <div><div className="proof-num">55%</div><div className="proof-label">cheaper than Copilot</div></div>
             </div>
           </div>
         </section>
@@ -1232,9 +1285,10 @@ export default function Landing() {
                 Your advisor sees<br />what you see.
               </h3>
               <p className="k3-desc">
-                html2canvas silently captures your current screen and pipes it to Gemini
-                2.5 Flash vision. When you ask &ldquo;why is this red?&rdquo; the advisor
-                actually looks at the pixels. No upload UX — it just works.
+                When you ask the on-screen advisor &ldquo;why is this red?&rdquo;,
+                it captures a screenshot of what you&apos;re currently looking at and
+                sends it to Gemini 2.5 Flash vision so it can actually look at the
+                pixels — no manual screenshot, no upload step.
               </p>
               <code className="k3-proof">services/advisor_vision.py</code>
             </div>
@@ -1406,8 +1460,8 @@ export default function Landing() {
         {harnessPageEnabled && (
           <section className="section harness-promo" data-testid="aurem-loop-promo-section">
             <h2 className="section-title" data-testid="aurem-loop-promo-heading">Aurem Loop</h2>
-            <p className="section-sub" data-testid="aurem-loop-promo-line">A local coding harness that checks its own work. Free — signup only.</p>
-            <Link className="btn-ghost" to="/harness" data-testid="aurem-loop-promo-cta">Get Aurem Loop →</Link>
+            <p className="section-sub" data-testid="aurem-loop-promo-line">A local coding harness that checks its own work. Not available to download yet.</p>
+            <Link className="btn-ghost" to="/harness" data-testid="aurem-loop-promo-cta">Learn about Aurem Loop →</Link>
           </section>
         )}
 

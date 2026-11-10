@@ -86,7 +86,6 @@ const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
 const { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } = await import("../src/data/competitors.mjs");
 const { ABOUT, CONTACT } = await import("../src/data/companyInfo.mjs");
 const { DEVELOPERS } = await import("../src/data/developerInfo.mjs");
-const { HARNESS } = await import("../src/data/harnessPage.mjs");
 
 // 2026-11-09 — "Aurem Loop" homepage promo section (draft, flag
 // default OFF — do not flip without separate founder approval).
@@ -118,6 +117,39 @@ async function resolveHarnessPageMode() {
   }
 }
 const HARNESS_PAGE_MODE = await resolveHarnessPageMode();
+
+// 2026-11-10 — Phase A content now lives in the private AuremHQ/aurem-loop
+// repo (services/harness_content_repo.py on the backend); this build-time
+// script fetches it through the SAME GET /api/harness/content a real
+// visitor's browser calls, so the static snapshot can never show
+// different copy than the live page. If the flag is on but the
+// content isn't available yet (nobody has pushed the content file to
+// the harness repo yet, or the fetch fails), no dedicated
+// dist/harness/index.html is written — same "stays hidden" fallback
+// as the flag being off.
+async function resolveHarnessContent() {
+  if (!HARNESS_PAGE_MODE) return null;
+  const backendUrl =
+    process.env.VITE_API_URL ||
+    _loadedEnv.VITE_API_URL ||
+    process.env.REACT_APP_BACKEND_URL ||
+    _loadedEnv.REACT_APP_BACKEND_URL;
+  if (!backendUrl) return null;
+  try {
+    const resp = await fetch(`${backendUrl}/api/harness/content`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return null;
+    const body = await resp.json();
+    const content = body?.content;
+    if (!content || content.available === false) return null;
+    return { content, liveStats: body?.live_stats || null };
+  } catch (e) {
+    console.warn(`[seo-prerender] harness/content fetch failed (${e.message}) — /harness snapshot skipped`);
+    return null;
+  }
+}
+const HARNESS_CONTENT = await resolveHarnessContent();
 
 // 2026-11-09 — bugfix: the comment above ("only the homepage snapshot
 // is gated") was wrong once /vs/*, /compare and /about started
@@ -359,8 +391,8 @@ function homeBody() {
     ? "One free full scan, no credit card. Starter: $9/month flat for 900 tokens \u2014 no per-action billing, unused tokens carry forward."
     : "Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing."}</p>
 ${HARNESS_PAGE_MODE ? `<h2>Aurem Loop</h2>
-<p>A local coding harness that checks its own work. Free \u2014 signup only.</p>
-<p><a href="/harness">Get Aurem Loop \u2192</a></p>
+<p>A local coding harness that checks its own work. Not available to download yet.</p>
+<p><a href="/harness">Learn about Aurem Loop \u2192</a></p>
 ` : ""}<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }
@@ -480,60 +512,99 @@ ${sections}
 // same as any other unmatched route — "flag off means the page stays
 // hidden" holds trivially, there is no harness content baked in
 // anywhere in that build.
-function harnessBody() {
-  const howItWorks = HARNESS.howItWorks
+function harnessBody(content, liveStats) {
+  const howItWorks = (content.setup?.steps || [])
     .map((s) => `<li>${esc(s)}</li>`).join("");
-  const whatItDoes = HARNESS.whatItDoes
+  const whatItIsNot = (content.whatItIsNot || [])
     .map((s) => `<li>${esc(s)}</li>`).join("");
-  const tierRows = HARNESS.tiers.map((t) =>
-    `<tr><td>${esc(t.feature)}</td><td>${esc(t.free)}</td><td>${esc(t.subscriber)}</td></tr>`,
+  const featureTags = (content.featureTags || [])
+    .map((s) => `<li>${esc(s)}</li>`).join("");
+  const whoNot = (content.whoShouldNotPick || [])
+    .map((s) => `<li>${esc(s)}</li>`).join("");
+  const troubleshooting = (content.troubleshooting || []).map((t) =>
+    `<details><summary>${esc(t.q)}</summary><p>${esc(t.a)}</p></details>`,
   ).join("");
-  const installSteps = HARNESS.installSteps
-    .map((s) => `<li>${esc(s)}</li>`).join("");
-  const faqItems = HARNESS.faq.map((f) =>
+  const faqItems = (content.faq || []).map((f) =>
     `<details><summary>${esc(f.q)}</summary><p>${esc(f.a)}</p></details>`,
   ).join("");
-  const faqLd = {
+  const compareRows = Object.entries(content.compare?.auremRow || {})
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
+  const mailtoHref = `mailto:${esc(content.phaseA?.waitlistEmail || "polarisbuiltinc@gmail.com")}` +
+    `?subject=${encodeURIComponent(content.phaseA?.waitlistSubject || "Aurem Loop waitlist")}` +
+    `&body=${encodeURIComponent(content.phaseA?.waitlistBody || "")}`;
+  const stars = liveStats?.stars ?? "\u2014";
+  const forks = liveStats?.forks ?? "\u2014";
+
+  const ld = {
     "@context": "https://schema.org",
-    "@type": "FAQPage",
-    mainEntity: HARNESS.faq.map((f) => ({
-      "@type": "Question",
-      name: f.q,
-      acceptedAnswer: { "@type": "Answer", text: f.a },
-    })),
+    "@graph": [
+      {
+        "@type": "FAQPage",
+        mainEntity: (content.faq || []).map((f) => ({
+          "@type": "Question",
+          name: f.q,
+          acceptedAnswer: { "@type": "Answer", text: f.a },
+        })),
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
+          { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
+        ],
+      },
+    ],
   };
   return {
     body: `<main>
-<h1>${esc(HARNESS.title)}</h1>
-<p>${esc(HARNESS.heroLine)}</p>
-<p><a href="/signup">Create a free account to download</a></p>
-<h2>How it works</h2>
+<p>${(content.badges || []).map(esc).join(" \u00b7 ")}</p>
+<h1>${esc(content.hero?.headline)}</h1>
+<p>${esc(content.hero?.subhead)}</p>
+<p>${esc(content.hero?.body)}</p>
+<p><strong>PHASE A</strong> \u2014 ${esc(content.phaseA?.banner)}</p>
+<p><a href="${mailtoHref}">Join the waitlist</a></p>
+<ul>${featureTags}</ul>
+<h2>${esc(content.setApart?.headline)}</h2>
+<p>${esc(content.setApart?.wspKit?.badge)} \u2014 ${esc(content.setApart?.wspKit?.body)}</p>
+<p>${esc(content.setApart?.phoneTunnel?.badge)} \u2014 ${esc(content.setApart?.phoneTunnel?.body)}</p>
+<h2>${esc(content.githubStats?.repoLabel)}</h2>
+<p>${esc(content.githubStats?.note)}</p>
+<p>Stars (live): ${esc(String(stars))} \u00b7 Forks (live): ${esc(String(forks))} \u00b7 Clones: ${esc(String(content.githubStats?.clones))} \u00b7 Views: ${esc(String(content.githubStats?.views))} (last verified ${esc(content.githubStats?.lastVerified)})</p>
+<h2>What it is not</h2>
+<ul>${whatItIsNot}</ul>
+<h2>${esc(content.compare?.headline)}</h2>
+<p>${esc(content.compare?.body)}</p>
+<table><tbody>${compareRows}</tbody></table>
+<p>${esc(content.compare?.competitorNote)}</p>
+<h2>Who should not pick Aurem Loop</h2>
+<ul>${whoNot}</ul>
+<h2>${esc(content.usersSay?.headline)}</h2>
+<p>${esc(content.usersSay?.body)}</p>
+<h2>${esc(content.setup?.headline)}</h2>
 <ol>${howItWorks}</ol>
-<h2>What it does — and doesn't</h2>
-<ul>${whatItDoes}</ul>
-<h2>Free vs. subscriber</h2>
-<table><tbody>${tierRows}</tbody></table>
-<h2>Install (Windows)</h2>
-<ol>${installSteps}</ol>
+<h2>Troubleshooting</h2>
+${troubleshooting}
 <h2>FAQ</h2>
 ${faqItems}
-<p><a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a></p>
+<p>${esc(content.footer?.tagline)} ${esc(content.footer?.legal)}</p>
+<p><a href="/about">About</a> \u00b7 <a href="/contact">Contact</a> \u00b7 <a href="/privacy">Privacy</a></p>
 </main>`,
-    ld: faqLd,
+    ld,
+    meta: { title: content.title, description: content.description, canonical: content.canonical },
   };
 }
 
-if (HARNESS_PAGE_MODE) {
-  let html = swapHead(base, HARNESS);
-  const { body, ld } = harnessBody();
+if (HARNESS_CONTENT) {
+  const { body, ld, meta } = harnessBody(HARNESS_CONTENT.content, HARNESS_CONTENT.liveStats);
+  let html = swapHead(base, meta);
   html = injectRoot(html, body);
   html = injectLd(html, ld);
   mkdirSync(join(DIST, "harness"), { recursive: true });
   writeFileSync(join(DIST, "harness", "index.html"), html);
   written += 1;
-  console.log("[seo-prerender] wrote /harness/index.html (harness_page flag ON)");
+  console.log("[seo-prerender] wrote /harness/index.html (harness_page flag ON, content available)");
 } else {
-  console.log("[seo-prerender] skipped /harness/index.html (harness_page flag OFF — page stays hidden)");
+  console.log("[seo-prerender] skipped /harness/index.html (flag OFF or content not yet available — page stays hidden)");
 }
 
 console.log(`[seo-prerender] done — ${written} snapshots.`);
