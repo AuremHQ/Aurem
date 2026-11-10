@@ -1423,7 +1423,7 @@ export default function Landing() {
         {harnessPageEnabled && (
           <section className="section harness-promo" data-testid="aurem-loop-promo-section">
             <h2 className="section-title" data-testid="aurem-loop-promo-heading">Aurem Loop</h2>
-            <p className="section-sub" data-testid="aurem-loop-promo-line">A local coding harness that checks its own work. Free — signup only.</p>
+            <p className="section-sub" data-testid="aurem-loop-promo-line">A local coding harness that checks its own work. Not available to download yet.</p>
             <Link className="btn-ghost" to="/harness" data-testid="aurem-loop-promo-cta">Get Aurem Loop →</Link>
           </section>
         )}
