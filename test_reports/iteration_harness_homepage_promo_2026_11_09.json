@@ -1,0 +1,37 @@
+{
+  "summary": "Tested the Aurem Loop homepage promo, which is hidden behind the harness_page flag. All 7 requested checks passed. (1) GET /api/harness/page-status with no auth headers returned 200 {harness_page_enabled:false}. (2) With the flag off, the raw homepage HTML from curl and the rendered page in a browser both had no 'Aurem Loop' and no aurem-loop-promo elements. (3) I turned the flag on by upserting the Mongo doc and waited 63s. The endpoint then returned true. In a real Playwright browser the section was visible, with heading 'Aurem Loop', the exact line 'A local coding harness that checks its own work. Free — signup only.', and the CTA 'Get Aurem Loop →' with href=/harness. All four data-testids were present. It sits just above the footer, centered, with readable contrast. (4) The promo copy has no Ollama, cloud, Loop C, benchmark wording or numbers. (5) Clicking the CTA went to /harness, and HarnessPage loaded with no 404. (6) Regressions: the hero still shows 'Engineered for the lowest token usage.' and 'Flat $9/mo · 900 tokens'. Full vitest: 226 files / 1174 tests passed. Backend: the harness tests (iter2026_63/64/65) passed 66/66. A wider run of feature-flag-related tests gave 187 passed, 12 failed. The same 3 failed on the parent commit 8d9b24be. The other 9 passed when their files ran alone, so they are test-order side effects, not regressions. I did not run the full backend suite (about 1073 files): it was too slow and I stopped it at 5%. (7) I deleted the flag doc afterwards. Final state: no feature_flags doc, and the endpoint returns false.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests (pre-existing)", "issue": "3 tests also fail on the parent commit 8d9b24be, so the harness change did not cause them: test_iter328_11_feature_flag_seed_upsert::test_seed_inserts_missing_flag_via_set_on_insert, test_iter2026_08_27_p1_egress_net (2 tests). 9 more fail only when run in one session with other files (test_quickwins_batch_2026_01 canary rollout, test_regression_iter2026_10c/10d ship-branch); they pass alone."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dev-server 404 middleware (vite-plugins/aurem-prod-fixes.mjs KNOWN_PREFIXES)", "issue": "'harness' is not in KNOWN_PREFIXES, so loading /harness directly in the preview (typed URL, refresh, curl) returns the static 404 page. Clicking the promo works because it navigates inside the app. Production (auremcto.com/harness) returns 200, so this only affects the preview. This came from Phase B, not from this change.", "selector": "n/a", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/harness (HarnessPage.jsx, from Phase B)", "issues": ["The page has no styling: plain text in the top-left corner, no MarketingNav and no footer. Clicking the promo CTA lands on this bare page, which looks unfinished next to the styled homepage."]},
+      {"screen": "Homepage promo", "issues": ["The CTA uses the muted btn-ghost style (slate text #94a3b8). It is readable but quiet. This is optional to change."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_regression_iter2026_65_harness_page_status_public.py", "/app/frontend/src/pages/__tests__/Landing.harnessPromo.test.jsx", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Add 'harness' to KNOWN_PREFIXES in frontend/vite-plugins/aurem-prod-fixes.mjs so /harness does not 404 on direct load in the preview.",
+    "Note the build-time nature of the raw HTML. The promo only appears in raw HTML in production, because seo-prerender.mjs adds it during the build. scripts/seo-prerender.mjs reads the flag once, at build time, from VITE_API_URL=https://auremcto.com, so the raw HTML only changes on the next build and deploy. That applies to turning the flag on and to turning it off. Also, the prod backend returns 404 for /api/harness/page-status until this branch is deployed, so a build run before then hides the promo (it fails closed). The React section reflects the flag within 60s.",
+    "Preview check: vite-plugins/aurem-prod-fixes.mjs builds its own homepage HTML (homeBody()), which has no promo. So in the preview, curl never shows the promo even with the flag on. Only the production build's seo-prerender output contains it. If raw-HTML parity in the preview matters, add the same block there.",
+    "Optional: style HarnessPage.jsx (nav, footer, layout) before the flag is turned on, since the promo sends visitors there."
+  ],
+  "critical_code_review_comments": [
+    "The endpoint is minimal and correct: it calls is_enabled('harness_page') without a user_id, and the Pydantic response model returns only harness_page_enabled (no internal flag details).",
+    "Landing.jsx fetch: the state defaults to false, it only sets true on an exact === true, and catch() keeps it hidden. Same pattern as the proof fetch. This adds one more public API call per homepage view, which is fine at this scale.",
+    "seo-prerender resolveHarnessPageMode: 5s timeout and fails closed. It is correct, but it hits the network during every build."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% of feature-relevant tests (66/66 harness); no regressions", "frontend": "100% (6/6 requested UI checks; vitest 1174/1174)"},
+  "seed_data_creation": "Temporarily upserted feature_flags {flag:'harness_page', enabled:true, rollout_pct:100, tier_allowlist:[], user_allowlist:[]}, then DELETED it. Verified afterwards: find_one returns None and the endpoint returns false.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview serves the Vite dev server, not dist. The raw-HTML promo only exists in a prod build (seo-prerender.mjs). To turn the flag on: upsert the Mongo doc, wait 61s+ for the cache, then always delete the doc at the end. The Playwright browser_automation tool rendered the below-fold section fine after mouse.wheel and scroll_into_view_if_needed. The full backend suite is too large to run (about 1073 files); use the targeted harness and feature-flag tests."
+}

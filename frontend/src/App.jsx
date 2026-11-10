@@ -39,7 +39,7 @@ import Landing from "./pages/Landing";
 // Iter 358 — bundle diet: dev/harness/admin-QA pages don't belong in
 // the first-paint entry chunk. Lazy-load them so the entry stays under
 // the 350KB code-splitting target (they render behind Suspense).
-const Both              = lazy(() => import("./pages/Both"));
+
 const ResetPassword     = lazy(() => import("./pages/ResetPassword"));
 const AcceptInvite      = lazy(() => import("./pages/AcceptInvite"));  // 2026-02 · Phase 1 team RBAC
 const TeamInviteAccept  = lazy(() => import("./pages/TeamInviteAccept"));  // Admin Team S3 (AT2)
@@ -73,6 +73,7 @@ const Analytics         = lazy(() => import("./pages/Analytics"));
 const Projects          = lazy(() => import("./pages/Projects"));
 const FreeScanResults   = lazy(() => import("./pages/FreeScanResults"));
 const ProjectChanges    = lazy(() => import("./pages/ProjectChanges"));  // Part 2c B4 — Project Versions
+const HarnessPage       = lazy(() => import("./pages/HarnessPage"));  // Aurem Loop harness Phase B — public page, not PrivateRoute (handles signed-out itself)
 const Integrations      = lazy(() => import("./pages/Integrations")); // Iter 212m-174
 const Admin             = lazy(() => import("./pages/Admin"));
 // Feb 2026 · AdminOverview no longer imported here — /admin/overview
@@ -374,7 +375,16 @@ export default function App() {
         <main id="main-content" tabIndex={-1}>
         <Routes>
           <Route path="/"                element={<Landing />} />
-          <Route path="/both"            element={<Both />} />
+          {/* 2026-11-xx — /both retired: the Builder/Developer switcher
+              it hosted is replaced by the homepage chooser strip
+              (same harness_page flag, Landing.jsx). The real HTTP 301
+              lives in vite-plugins/aurem-prod-fixes.mjs's server
+              middleware (fires before React even loads, so curl/bots/
+              stale full-page bookmarks never see a blank SPA shell);
+              this client-side route is only a defensive fallback for
+              an in-app SPA transition that somehow lands here without
+              a full page load. */}
+          <Route path="/both"            element={<Navigate to="/" replace />} />
           <Route path="/dev/loop-live-feed" element={<LoopLiveFeedDemo />} />
           <Route path="/dev/shipped-row-harness" element={<ShippedRowHarness />} />
           {/* Iter 302 — Frontend QA Charter Layer 2 Batch 2 —
@@ -434,6 +444,7 @@ export default function App() {
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
           <Route path="/projects/:projectId/free-scan" element={<PrivateRoute><FreeScanResults /></PrivateRoute>} />
           <Route path="/projects/:projectId/changes"   element={<PrivateRoute><ProjectChanges /></PrivateRoute>} />  {/* Part 2c B4 — Project Versions */}
+          <Route path="/harness"                        element={<HarnessPage />} />  {/* Aurem Loop harness Phase B — public, handles signed-out state itself */}
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/dashboard" element={<AdminRoute><Admin initialTab="dash" /></AdminRoute>} />

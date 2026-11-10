@@ -11,6 +11,26 @@
  * instead of fabricating one.
  */
 
+// 2026-11-08 — homepage token-billing cutover, extended to /about.
+// Same dual-environment check as competitors.mjs's TOKEN_WORDING_ACTIVE
+// (this file is loaded by both Vite-bundled React and plain Node).
+export const TOKEN_WORDING_ACTIVE = (() => {
+  const _VALID = new Set(["off", "shadow", "on"]);
+  const _pick = (raw) => {
+    const v = String(raw).trim().toLowerCase();
+    return _VALID.has(v) ? v !== "off" : false;
+  };
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_TOKEN_BILLING_MODE) {
+      return _pick(import.meta.env.VITE_TOKEN_BILLING_MODE);
+    }
+  } catch { /* import.meta access guarded for plain-Node callers */ }
+  if (typeof process !== "undefined" && process.env && process.env.VITE_TOKEN_BILLING_MODE) {
+    return _pick(process.env.VITE_TOKEN_BILLING_MODE);
+  }
+  return false;
+})();
+
 export const ABOUT = {
   title: "About AUREM — the company behind ORA",
   description:
@@ -35,9 +55,15 @@ export const ABOUT = {
       "company's sole founder and CTO.",
     "ORA runs a verified five-phase Loop on every task \u2014 Plan, " +
       "Execute, Verify, Scan, Ship \u2014 with a hard self-heal cap so " +
-      "no task can retry forever. Pricing is flat, not per-token: a " +
-      "free tier (10 tasks/month, no card) and a $9/month Starter " +
-      "tier for developers who want more.",
+      "no task can retry forever. " +
+      (TOKEN_WORDING_ACTIVE
+        ? "Pricing is a flat monthly price with a token balance: a " +
+          "free tier (one full scan, no card) and a $9/month Starter " +
+          "tier with 900 tokens for developers who want more. Unused " +
+          "tokens carry forward."
+        : "Pricing is flat, not per-token: a " +
+          "free tier (10 tasks/month, no card) and a $9/month Starter " +
+          "tier for developers who want more."),
   ],
   links: [
     { label: "GitHub", href: "https://github.com/TJSNDHU/Aurem" },

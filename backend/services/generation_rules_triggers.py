@@ -38,7 +38,7 @@ TRIGGER_ONELINE: dict[str, str] = {
     "exec_usage":              "any call to `exec(`",
     "subprocess_shell_true":   "`subprocess.*(... shell=True ...)`",
     "os_system":               "any call to `os.system(`",
-    "pickle_loads":            "any call to `pickle.load(` or `pickle.loads(`",
+    "pickle_loads":            "any call to `pickle.load(` or `pickle.loads(` — unsafe deserialization",
     "yaml_unsafe_load":        "`yaml.load(...)` without an explicit `Loader=`",
     "requests_no_verify":      "`requests/httpx/urllib .* verify=False`",
     "sql_string_format":       "`cursor.execute(f\"…{var}…\")` — f-string SQL",
@@ -115,3 +115,4 @@ TRIGGER_ONELINE: dict[str, str] = {
 from services.security_extra_rules import EXTRA_RULE_META as _EXTRA_META
 
 TRIGGER_ONELINE.update({rid: meta["trigger"] for rid, meta in _EXTRA_META.items()})
+}

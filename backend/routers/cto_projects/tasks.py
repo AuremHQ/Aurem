@@ -380,11 +380,25 @@ async def submit_task(
         })
     except Exception:
         from services.wallet import release as _release_wallet_hold
-        await _release_wallet_hold(
-            db, user_id=me["user_id"], run_id=task_id,
-            idempotency_key=f"wallet_release:{task_id}",
-            reason="submit_task_insert_failed",
-        )
+        try:
+            await _release_wallet_hold(
+                db, user_id=me["user_id"], run_id=task_id,
+                idempotency_key=f"wallet_release:{task_id}",
+                reason="submit_task_insert_failed",
+            )
+        except Exception:
+            # 2026-10-27 — testing-agent finding: if release() itself
+            # raised, that exception used to REPLACE the original
+            # insert error (Python's `raise` inside an `except` block
+            # swaps the active exception) — the real root cause of the
+            # failed submit would be lost from the logs entirely.
+            # Log and swallow so the original `raise` below always
+            # surfaces the real failure.
+            logger.exception(
+                "[tasks] wallet release failed while handling an insert "
+                "error for task_id=%s — original insert error follows",
+                task_id,
+            )
         raise
     if proj.get("preview_url"):
         from services.preview_capture import capture_before_snapshot_for_task

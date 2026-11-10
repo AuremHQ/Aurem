@@ -25,35 +25,10 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { sanitizeApiErrorDetail } from "../lib/cleanErr";
 
 function _shortSlug() {
   return Math.random().toString(36).slice(2, 8);
-}
-
-// 2026-10-27 — root-cause fix for the "Cloudflare error page in the
-// Save-to-GitHub modal" founder report. Diagnosis found the backend
-// was raising HTTPException(502, ...) on a GitHub failure — Cloudflare
-// (and most edge/CDN layers) REPLACE a 502/503/504 response BODY with
-// their own HTML/text before it reaches the browser, so the backend's
-// own honest message never arrived here; `e.response.data` was either
-// missing entirely or raw infra HTML. The backend fix (services/
-// github_errors.py) now always replies with a real 4xx (424) carrying
-// a structured `{code, message, retryable}` detail, which this reads
-// first. Deliberately NEVER falls back to `e.message`/`e.toString()`
-// (a raw JS/axios error string, e.g. "Network Error") — only the
-// backend's own detail, or one fixed generic sentence.
-function _sanitizeGithubModalError(e, fallback) {
-  const detail = e?.response?.data?.detail;
-  let msg = (detail && typeof detail === "object" && typeof detail.message === "string")
-    ? detail.message
-    : (typeof detail === "string" ? detail : null);
-  if (msg == null) return fallback;
-  const looksLikeInfra =
-    /<\s*(html|!doctype)|cloudflare|could not parse|bad gateway|origin web server/i.test(msg);
-  if (looksLikeInfra || msg.length > 220) {
-    return "The server returned an unreadable response (usually a transient issue). Please retry in a moment.";
-  }
-  return msg;
 }
 
 export default function SaveToGitHubModal({
@@ -121,15 +96,36 @@ export default function SaveToGitHubModal({
     api.get(`/cto/projects/${activeProject.project_id}/github/repos`)
       .then((r) => {
         if (cancelled) return;
-        setRepos(r?.data?.repos || []);
+        const list = r?.data?.repos || [];
+        setRepos(list);
+        // 2026-10-27 — code-review fix. The project's own
+        // `github_owner`/`github_repo` (the initial selection) isn't
+        // guaranteed to be in THIS installation's writable-repo list
+        // (e.g. the installation's repo access was changed on GitHub's
+        // side). A <select> whose `value` matches no `<option>` shows
+        // the browser's own fallback (the first option) while React
+        // state silently keeps the stale, invisible value — Save would
+        // then submit a repo the user never actually saw selected.
+        // Snap to a real, listed repo as soon as the list is known.
+        const stillValid = list.some(
+          (x) => x.owner === selectedOwner && x.repo === selectedRepo,
+        );
+        if (!stillValid && list.length) {
+          const fallback = list.find(
+            (x) => x.owner === r?.data?.default_owner && x.repo === r?.data?.default_repo,
+          ) || list[0];
+          setSelectedOwner(fallback.owner);
+          setSelectedRepo(fallback.repo);
+        }
       })
       .catch((e) => {
         if (cancelled) return;
-        setReposError(_sanitizeGithubModalError(e, "Couldn't load your connected repos."));
+        setReposError(sanitizeApiErrorDetail(e, "Couldn't load your connected repos."));
         setReposErrorStatus(e?.response?.status || null);
       })
       .finally(() => { if (!cancelled) setReposLoading(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, activeProject?.project_id, reposRetryTick]);
 
   const selectedRepoObj = repos.find(
@@ -167,7 +163,7 @@ export default function SaveToGitHubModal({
       })
       .catch((e) => {
         if (cancelled) return;
-        setBranchesError(_sanitizeGithubModalError(e, "Couldn't load branches for this repo."));
+        setBranchesError(sanitizeApiErrorDetail(e, "Couldn't load branches for this repo."));
         setBranchesErrorStatus(e?.response?.status || null);
       })
       .finally(() => { if (!cancelled) setBranchesLoading(false); });
@@ -223,11 +219,11 @@ export default function SaveToGitHubModal({
       setPhase("queued");
     } catch (e) {
       // Never surface a raw exception string (or raw Cloudflare/HTML
-      // infra text) — _sanitizeGithubModalError() reads the backend's
+      // infra text) — sanitizeApiErrorDetail() reads the backend's
       // structured {code,message,retryable} detail (or sanitizes an
       // infra body) into one human sentence, same "never e.message"
       // contract as before.
-      setSubmitError(_sanitizeGithubModalError(e, "Couldn't save to GitHub — please try again."));
+      setSubmitError(sanitizeApiErrorDetail(e, "Couldn't save to GitHub — please try again."));
       setSubmitErrorStatus(e?.response?.status || null);
       setPhase("error");
     }

@@ -605,6 +605,35 @@ class TestWalletHoldReleasedOnSubmitFailure:
         assert released["user_id"] == "u1"
         assert fake_db.cto_tasks.rows == []
 
+    def test_release_failure_does_not_mask_the_original_insert_error(self, client, fake_db, monkeypatch):
+        """2026-10-27 — testing-agent finding: if `release()` itself
+        raised inside the `except` block, Python's `raise` there used
+        to swap the active exception — the REAL root cause of the
+        failed submit (e.g. a duplicate task_id) would be lost from
+        the logs entirely, replaced by an unrelated wallet error."""
+        monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
+        fake_db.cto_projects.rows.append(dict(PROJ))
+        fake_db.dev_users.rows.append({"user_id": "u1", "fix_entitlement": True})
+        fake_ctx = type("Ctx", (), {"pat": "tok"})()
+
+        async def _boom_insert(doc):
+            raise RuntimeError("the REAL root cause: duplicate task_id")
+
+        async def _release_also_fails(db, *, user_id, run_id, idempotency_key, reason=""):
+            raise ConnectionError("wallet service unreachable")
+
+        with patch("routers.cto_projects.assert_has_budget", AsyncMock(return_value=None)), \
+             patch("routers.cto_projects.assert_has_task_budget", AsyncMock(return_value=None)), \
+             patch("services.rate_limiter.check_rate_limit_async", AsyncMock(return_value=True)), \
+             patch("services.ora_context.build_ora_context", AsyncMock(return_value=fake_ctx)), \
+             patch("services.wallet.assert_wallet",
+                   AsyncMock(return_value={"mode": "on", "held": True})), \
+             patch("services.wallet.release", _release_also_fails), \
+             patch.object(fake_db.cto_tasks, "insert_one", _boom_insert):
+            with pytest.raises(RuntimeError, match="the REAL root cause"):
+                client.post("/api/aurem-dev/cto/tasks/submit", headers=AUTH,
+                            json=_submit_body())
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 5. IDOR — a repo/branch check always resolves through the CALLER's

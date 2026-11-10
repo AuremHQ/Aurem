@@ -1,0 +1,35 @@
+{
+  "summary": "Tested Aurem Loop /harness Phase A content pipeline in the current not-yet-seeded state. Backend (live public URL): /api/harness/page-status returns {harness_page_enabled:false} by default; /api/harness/content returns 200 {content:{available:false}, live_stats:{stars:16, forks:2}} (ints, matching api.github.com live values); no token leak; /both 301 -> /; /, /harness, /vs, /compare, /about all return 200. 12/12 pytest pass (9 new live + 3 existing ASGI). Frontend flag OFF (desktop + mobile): /harness shows ora-nav + 'Aurem Loop isn't available yet.' (harness-page-not-available), no download text, no chooser strip/promo on /, /vs /compare /about render, 0 console errors/pageerrors. Flag ON (temp upsert + backend restart): page-status true; /harness shows harness-page-content-unavailable with exact text \"Aurem Loop's page content is temporarily unavailable — check back shortly.\", 0 download mentions; homepage strip shows 'ORA by AUREM' (active, non-link) + 'AUREM LOOP harness' -> /harness, clicking it navigates correctly; promo line reads exactly 'A local coding harness that checks its own work. Not available to download yet.'; 0 console errors. Flag reverted (doc deleted, backend restarted, page-status false again, verified in browser).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "services/harness_content_repo.py fetch_harness_page_content", "issue": "Code and docstring disagree. _token()'s docstring says the repo is public for now (confirmed: GET api.github.com/repos/AuremHQ/aurem-loop returns 200) and that reads should go ahead unauthenticated with token=None. But fetch_harness_page_content() returns {available:false} early with `if not token:` and never tries the read. AUREM_LOOP_REPO_TOKEN is not in backend/.env. Result: even after the founder pushes web/harness-page-content.json to the public repo (for example through the GitHub web UI), /harness will stay 'temporarily unavailable' until a PAT is configured. Also, the warning 'is not configured' is logged on every request (nothing is cached on failure)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Homepage Aurem Loop promo (flag ON)", "issues": ["The CTA button (data-testid=aurem-loop-promo-cta) says 'Get Aurem Loop →', right under the line 'Not available to download yet.' 'Get' suggests a download, which conflicts with the Phase A no-download rule. Consider 'Join the waitlist →' or 'Learn about Aurem Loop →'."]},
+      {"screen": "/harness unavailable and not-available states", "issues": ["A single line of text on an otherwise empty page, with no link back or waitlist CTA. Acceptable for fail-closed, but it could include the waitlist mailto and a link home."]},
+      {"screen": "/harness server-rendered HTML (no-JS/SEO)", "issues": ["With the flag ON, the prerendered /harness HTML serves the generic ORA homepage <title> and <main> copy, not Aurem Loop copy. Probably expected while the content is unavailable, but crawlers would index ORA copy under /harness."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_harness_phase_a_live.py", "/app/backend/tests/test_regression_iter2026_66_harness_content_endpoint.py", "/app/test_reports/pytest/harness_phase_a.xml"],
+  "action_items": [
+    "Decide whether harness_content_repo should read the content file without a token while the repo is public (drop the `if not token` early return, or call fetch_file with token=None), or fix the docstring. Otherwise, seeding the file alone won't make the page go live.",
+    "Optional: change the promo CTA wording 'Get Aurem Loop →' to non-download wording for Phase A."
+  ],
+  "critical_code_review_comments": [
+    "harness_content_repo.py: the 'no token' path returns {available:false} without trying an unauthenticated read, contradicting the _token() docstring (see the minor backend issue).",
+    "harness_content_repo.py and wsp_kit_stats.py: failures are not negatively cached, so with no token or during a GitHub outage every /harness/content request logs a warning. Each wsp-kit failure also makes an outbound GitHub call (60 req/h unauthenticated limit). Consider caching the failure briefly.",
+    "routers/harness.py /harness/content: the two fetches run one after the other; asyncio.gather would cut latency (up to 10s timeout each).",
+    "HarnessPage.jsx: the 'error' contentState (network failure) renders the same unavailable message. That's fine, but the 'Refresh now' button only exists in the ready state."
+  ],
+  "updated_files": ["/app/backend/tests/test_harness_phase_a_live.py (new test-only file; no app code changed)"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Temporarily upserted {flag:'harness_page', enabled:true} in feature_flags (no such doc existed before). Deleted it afterward (deleted 1), restarted backend, and verified page-status=false and the browser OFF state. The final state matches the start.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Toggle the flag with `python3 /app/backend/tests/harness_flag_toggle.py on|off|show`, then `sudo supervisorctl restart backend` and wait about 16-20s. Start state: no harness_page doc. Live tests: `pytest tests/test_harness_phase_a_live.py`. Set EXPECT_HARNESS_ON=1 when the flag is ON; once real content is seeded, the test_content_fail_closed assertion must be updated. AuremHQ/aurem-loop is currently public; web/harness-page-content.json returns 404 there. Full vitest and full backend suites were NOT re-run by me."
+}

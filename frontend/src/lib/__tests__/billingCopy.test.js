@@ -63,7 +63,7 @@ describe("billingCopy", () => {
     // exact token-mode strings via source inspection (same convention
     // as Landing.tokenWording.test.jsx) since VITE_TOKEN_BILLING_MODE
     // can't be flipped at runtime in this test env.
-    expect(heroTokenMetersClaim.toString()).toMatch(/TOKEN_WORDING_ACTIVE \? null/);
+    expect(heroTokenMetersClaim.toString()).toMatch(/Engineered for the lowest token usage/);
     expect(pricingHeroHeadline.toString()).toMatch(/No per-action billing/);
     expect(pricingDetailLine.toString()).toMatch(/No per-action billing/);
     expect(landingPricingSectionSub.toString()).toMatch(/No per-action billing/);

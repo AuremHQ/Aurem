@@ -39,6 +39,7 @@ from services import loop_engine as eng
 
 logger = logging.getLogger(__name__)
 from services.feature_flags import is_enabled
+from services.rate_limiter import check_rate_limit_async
 
 router = APIRouter(prefix="/loop", tags=["Loop Mode"])
 
