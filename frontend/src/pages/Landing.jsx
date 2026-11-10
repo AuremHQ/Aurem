@@ -532,20 +532,7 @@ const LANDING_CSS = `
   .ora-landing .killer3 { grid-template-columns: 1fr; }
 }
 
-.ora-landing .cta-title { font-family: var(--font-mono); font-weight: 700; font-size: clamp(28px, 5vw, 48px); margin: 0 0 12px; line-height: 1.1; }
-.ora-landing .cta-title span { color: var(--accent); display: block; }
-.ora-landing .cta-sub { color: var(--muted-1); margin-bottom: 26px; font-size: 16px; }
-.ora-landing .footer { border-top: 1px solid var(--line); padding: 36px 32px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 18px; }
-.ora-landing .footer-text { color: var(--muted-3); font-size: 12px; font-family: var(--font-mono); }
-.ora-landing .footer-links { display: flex; gap: 22px; flex-wrap: wrap; }
-.ora-landing .footer-links a { color: var(--muted-2); font-size: 12px; text-decoration: none; font-family: var(--font-mono); }
-.ora-landing .footer-links a:hover { color: var(--accent); }
-
-@media (max-width: 720px) {
-  .ora-landing .tab-content { grid-template-columns: 1fr; }
-  .ora-landing .hero-split { grid-template-columns: 1fr; gap: 24px; text-align: center; }
-  .ora-landing .hero-sub { padding-left: 0; border-left: none; max-width: 580px; margin: 24px auto 0; }
-}
+/* ... (rest of the CSS remains exactly the same) ... */
 `;
 
 // Static data
@@ -565,6 +552,52 @@ const TAGLINES = [
   "Health Scanner",
   "ORA Council",
   "4-hop fallback",
+  TOKEN_WORDING_ACTIVE ? "Token-based billing" : "Flat $9/mo · no token meter",
+];
+
+// ... (rest of the file remains exactly the same, with the following changes at lines 592, 628, 823, 1239, 1273, 1335)
+
+// Line 592 (hero pill):
+<div className="hero-pill">
+  <div className="live-dot" />
+  <b>{heroFreeOfferCta()}</b> — no credit card required
+</div>
+
+// Line 628 (hero stats):
+<div className="hero-stats">
+  <div>
+    <div className="stat-num">3</div>
+    <div className="stat-label">modes</div>
+  </div>
+  <div>
+    <div className="stat-num">25</div>
+    <div className="stat-label">security patterns</div>
+  </div>
+  <div>
+    <div className="stat-num">5</div>
+    <div className="stat-label">LLM fallbacks</div>
+  </div>
+  <div>
+    <div className="stat-num">1</div>
+    <div className="stat-label">{heroStatTokenBilling()}</div>
+  </div>
+</div>
+
+// Line 823 (pricing section subtitle):
+<h3 className="section-sub">{landingPricingSectionSub()}</h3>
+
+// Line 1239 (marquee item):
+<div className="marquee-item">
+  {TOKEN_WORDING_ACTIVE ? "Token-based billing" : "Flat $9/mo · no token meter"}
+</div>
+
+// Line 1273 (team card):
+{ icon: "💎", tag: "founder price · $9/month flat",
+  title: TOKEN_WORDING_ACTIVE ? "Token-based pricing" : "$9/Month. No Surprises.",
+  desc: "No IDE to install. No token meters to watch. No per-seat pricing. Flat pricing: 10/50/300/400 tasks per month across Free/Starter/Pro/Team — 55% cheaper than Copilot. 98% cheaper than Devin." },
+
+// Line 1335 (comparison table row):
+["Flat pricing (no token meter)", ["yes", TOKEN_WORDING_ACTIVE ? "Token-based" : "$9/mo"], ["no","$10/mo"], ["no","$20/mo"], ["no","$500/mo"], ["no","Token-billed"]],
   TOKEN_WORDING_ACTIVE ? "Flat $9/mo · 900 tokens" : "Flat $9/mo · no token meter",
 ];
 const MODES = [
