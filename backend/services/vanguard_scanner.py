@@ -96,6 +96,14 @@ _DANGEROUS_PATTERN_DEFS = [
     ("exec_usage",            r"""(?<![.\w])exec\s*\(""",                               "CRITICAL"),
     ("subprocess_shell_true", r"""subprocess\.\w+\(.*shell\s*=\s*True""",               "CRITICAL"),
     ("os_system",             r"""\bos\.system\s*\(""",                                 "HIGH"),
+    # 2026-11-09 — devil's-advocate audit: os_system (above) was
+    # already HIGH, but the same "destructive, shell-adjacent
+    # capability written into shippable code" risk class had no rule
+    # for actual file-deletion calls. A written patch containing one
+    # of these sailed through Vanguard with zero findings before this.
+    ("shutil_rmtree",         r"""\bshutil\.rmtree\s*\(""",                             "HIGH"),
+    ("os_remove",             r"""\bos\.remove\s*\(""",                                 "HIGH"),
+    ("os_unlink",             r"""\bos\.unlink\s*\(""",                                 "HIGH"),
     ("pickle_loads",          r"""\bpickle\.loads?\s*\(""",                             "HIGH"),
     ("yaml_unsafe_load",      r"""\byaml\.load\s*\((?!.*Loader\s*=)""",                 "HIGH"),
     ("requests_no_verify",    r"""(?:requests|httpx|urllib)\b.*\bverify\s*=\s*False""",          "HIGH"),

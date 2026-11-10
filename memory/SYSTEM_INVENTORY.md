@@ -1088,3 +1088,9 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 | `routers/project_versions.py` | `/projects` | 1 | auto-detected new router (verify) (Iter 0, 2026-11-02T00:31:21.188163Z) | <!-- inv:router:routers/project_versions.py -->
 - `services/project_versions.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-02T00:31:21.188213Z] <!-- inv:service:services/project_versions.py -->
 - `services/url_guard.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-02T00:31:21.188250Z] <!-- inv:service:services/url_guard.py -->
+
+### Iter 0 · 2026-11-10
+
+- `services/harness_content_repo.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-10T15:49:10.334409Z] <!-- inv:service:services/harness_content_repo.py -->
+- `services/wsp_kit_stats.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-10T15:49:10.334460Z] <!-- inv:service:services/wsp_kit_stats.py -->
+- `EXPECT_HARNESS_ON` — auto-detected in backend/tests/test_harness_phase_a_live.py (verify) (default: unset) [Iter 0, 2026-11-10T16:00:21.407723Z] <!-- inv:envvar:EXPECT_HARNESS_ON -->

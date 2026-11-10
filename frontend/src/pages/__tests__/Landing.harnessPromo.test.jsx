@@ -36,8 +36,8 @@ describe("Landing.jsx — Aurem Loop promo section", () => {
 
   it("uses the exact founder-approved heading, line, and CTA copy, linking to /harness", () => {
     expect(SRC).toMatch(/data-testid="aurem-loop-promo-heading">Aurem Loop</);
-    expect(SRC).toMatch(/data-testid="aurem-loop-promo-line">A local coding harness that checks its own work\. Free — signup only\./);
-    expect(SRC).toMatch(/data-testid="aurem-loop-promo-cta">Get Aurem Loop →/);
+    expect(SRC).toMatch(/data-testid="aurem-loop-promo-line">A local coding harness that checks its own work\. Not available to download yet\./);
+    expect(SRC).toMatch(/data-testid="aurem-loop-promo-cta">Learn about Aurem Loop →/);
     expect(SRC).toMatch(/<Link className="btn-ghost" to="\/harness" data-testid="aurem-loop-promo-cta">/);
   });
 

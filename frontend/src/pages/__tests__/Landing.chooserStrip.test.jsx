@@ -24,9 +24,21 @@ describe("Landing.jsx — homepage chooser strip", () => {
     expect(SRC).toMatch(/<Link\s+className="chooser-pill"\s+to="\/harness"\s+data-testid="chooser-pill-harness"\s*>\s*AUREM LOOP harness/);
   });
 
-  it("is a quiet nav strip with its own test id, not a second hero", () => {
+  it("is a quiet pill row with its own test id, living inside the hero (not a second hero, not a separate strip above it)", () => {
     expect(SRC).toMatch(/data-testid="homepage-chooser-strip"/);
-    expect(SRC).toMatch(/className="chooser-strip"/);
+    expect(SRC).toMatch(/className="chooser-strip chooser-strip-in-hero"/);
+  });
+
+  it("sits inside the hero section, right after the hero-badge, before the H1", () => {
+    const heroBlock = SRC.match(/<section className="hero">[\s\S]*?<\/section>/);
+    expect(heroBlock, "hero section not found").toBeTruthy();
+    const hero = heroBlock[0];
+    const badgeIdx = hero.indexOf('className="hero-badge"');
+    const stripIdx = hero.indexOf('data-testid="homepage-chooser-strip"');
+    const h1Idx = hero.indexOf('data-testid="hero-headline"');
+    expect(badgeIdx).toBeGreaterThan(-1);
+    expect(stripIdx).toBeGreaterThan(badgeIdx);
+    expect(h1Idx).toBeGreaterThan(stripIdx);
   });
 
   it("the /both route has been retired, not just hidden", () => {
