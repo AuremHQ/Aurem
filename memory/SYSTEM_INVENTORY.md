@@ -1093,3 +1093,4 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 
 - `services/harness_content_repo.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-10T15:49:10.334409Z] <!-- inv:service:services/harness_content_repo.py -->
 - `services/wsp_kit_stats.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-10T15:49:10.334460Z] <!-- inv:service:services/wsp_kit_stats.py -->
+- `EXPECT_HARNESS_ON` — auto-detected in backend/tests/test_harness_phase_a_live.py (verify) (default: unset) [Iter 0, 2026-11-10T16:00:21.407723Z] <!-- inv:envvar:EXPECT_HARNESS_ON -->

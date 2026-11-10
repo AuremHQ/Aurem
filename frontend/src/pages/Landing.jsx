@@ -121,13 +121,16 @@ const LANDING_CSS = `
 
 /* 2026-11-xx — Homepage chooser strip (harness_page flag, draft).
    Small and quiet, deliberately NOT a second hero — two low-key
-   pills above the existing hero, replacing the old /both in-page
-   Builder/Developer switcher with real navigation between the two
-   standalone product pages ("/" itself, and "/harness"). */
+   pills, replacing the old /both in-page Builder/Developer switcher
+   with real navigation between the two standalone product pages
+   ("/" itself, and "/harness"). Lives inside the hero's top badge
+   row (moved 2026-11-10) so it's visible as part of the hero. */
 .ora-landing .chooser-strip {
   display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
-  padding: 18px 32px 0; max-width: 1200px; margin: 0 auto;
+  max-width: 1200px; margin: 0 auto;
 }
+.ora-landing .chooser-strip-in-hero { margin-top: 0; margin-bottom: 42px; }
+.ora-landing .hero-badge:has(+ .chooser-strip-in-hero) { margin-bottom: 14px; }
 .ora-landing .chooser-pill {
   font-family: var(--font-mono); font-size: 11px; font-weight: 600;
   letter-spacing: 0.04em; padding: 7px 16px; border-radius: 999px;
@@ -793,39 +796,40 @@ export default function Landing() {
 
       <div className="container">
 
-        {/* ─── Homepage chooser strip (harness_page flag, draft) ───
-            Replaces the old /both in-page switcher: two real pages,
-            not two tabs. "ORA by AUREM" is the current page (inert,
-            aria-current); "AUREM LOOP harness" links out to /harness.
-            Reuses the SAME harnessPageEnabled state/fetch as the
-            promo section below — one anonymous, no-auth request. */}
-        {harnessPageEnabled && (
-          <nav
-            className="chooser-strip"
-            data-testid="homepage-chooser-strip"
-            aria-label="Choose a product"
-          >
-            <span
-              className="chooser-pill chooser-pill-active"
-              data-testid="chooser-pill-ora"
-              aria-current="page"
-            >
-              ORA by AUREM
-            </span>
-            <Link
-              className="chooser-pill"
-              to="/harness"
-              data-testid="chooser-pill-harness"
-            >
-              AUREM LOOP harness
-            </Link>
-          </nav>
-        )}
-
         {/* ─── HERO ─── */}
         <section className="hero">
           <div style={{ textAlign: "center" }}>
             <div className="hero-badge">▸ Developers Choice</div>
+
+            {/* ─── Homepage chooser strip (harness_page flag, draft) ───
+                Replaces the old /both in-page switcher: two real pages,
+                not two tabs. "ORA by AUREM" is the current page (inert,
+                aria-current); "AUREM LOOP harness" links out to /harness.
+                Moved inside the hero (2026-11-10, founder request) so
+                it's visible as part of the hero itself instead of a
+                separate strip floating above it. */}
+            {harnessPageEnabled && (
+              <nav
+                className="chooser-strip chooser-strip-in-hero"
+                data-testid="homepage-chooser-strip"
+                aria-label="Choose a product"
+              >
+                <span
+                  className="chooser-pill chooser-pill-active"
+                  data-testid="chooser-pill-ora"
+                  aria-current="page"
+                >
+                  ORA by AUREM
+                </span>
+                <Link
+                  className="chooser-pill"
+                  to="/harness"
+                  data-testid="chooser-pill-harness"
+                >
+                  AUREM LOOP harness
+                </Link>
+              </nav>
+            )}
           </div>
           <div className="hero-split">
             <h1 className="hero-title" data-testid="hero-headline">
