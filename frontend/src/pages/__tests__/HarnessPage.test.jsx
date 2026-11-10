@@ -13,13 +13,14 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 vi.mock("../../lib/api", () => ({
   healthApi: { get: vi.fn() },
+  api: { post: vi.fn() },
   getToken: vi.fn(() => null),
   getUser: vi.fn(() => null),
   isAdminOrFounder: vi.fn(() => false),
 }));
 
 import HarnessPage from "../HarnessPage.jsx";
-import { healthApi } from "../../lib/api";
+import { api, getToken, healthApi } from "../../lib/api";
 
 const CONTENT = {
   available: true,
@@ -65,7 +66,18 @@ const CONTENT = {
   },
 };
 
-function mockEndpoints({ flag, content, liveStats = { stars: 16, forks: 2 } }) {
+const RELEASE = {
+  available: true,
+  version: "0.8.0",
+  platform: "windows",
+  sha256: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+  changelog: ["Initial public Windows build"],
+  mandatory: false,
+  size_bytes: 292519,
+  published_at: 1762819200,
+};
+
+function mockEndpoints({ flag, content, liveStats = { stars: 16, forks: 2 }, release = { available: false } }) {
   healthApi.get.mockImplementation((path) => {
     if (path === "/harness/page-status") {
       return Promise.resolve({ data: { harness_page_enabled: flag } });
@@ -73,6 +85,9 @@ function mockEndpoints({ flag, content, liveStats = { stars: 16, forks: 2 } }) {
     if (path === "/harness/content") {
       if (content === "error") return Promise.reject(new Error("network down"));
       return Promise.resolve({ data: { content, live_stats: liveStats } });
+    }
+    if (path === "/harness/release-status") {
+      return Promise.resolve({ data: release });
     }
     return Promise.reject(new Error(`unexpected path ${path}`));
   });
@@ -164,5 +179,55 @@ describe("HarnessPage", () => {
     await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
     expect(screen.getByTestId("ora-nav")).toBeInTheDocument();
     expect(screen.getByTestId("harness-anchor-nav")).toBeInTheDocument();
+  });
+
+  describe("Phase B — only once a real release is published (release-status.available)", () => {
+    it("shows the download section with version/SHA-256/changelog and NO Phase A banner, once a release exists", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId("harness-download-section")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-download-version")).toHaveTextContent("0.8.0");
+      expect(screen.getByTestId("harness-download-sha256")).toHaveTextContent(RELEASE.sha256);
+      expect(screen.getByTestId("harness-download-changelog")).toHaveTextContent("Initial public Windows build");
+      expect(screen.queryByTestId("harness-phase-a-banner")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("harness-waitlist-cta")).not.toBeInTheDocument();
+    });
+
+    it("a signed-out visitor clicking Download is redirected to signup, no API call made", async () => {
+      getToken.mockReturnValue(null);
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      delete window.location;
+      window.location = { href: "" };
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+      screen.getByTestId("harness-download-button").click();
+      expect(window.location.href).toBe("/signup?next=/harness");
+      expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it("a signed-in visitor clicking Download calls the authenticated download endpoint", async () => {
+      getToken.mockReturnValue("fake-jwt");
+      api.post.mockResolvedValue({ data: new Blob(["zip-bytes"]) });
+      global.URL.createObjectURL = vi.fn(() => "blob:mock-url");
+      global.URL.revokeObjectURL = vi.fn();
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+      screen.getByTestId("harness-download-button").click();
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+        "/harness/download", {}, { responseType: "blob" },
+      ));
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).not.toBeDisabled());
+    });
+
+    it("stays on the Phase A waitlist banner when no release is published (current real state)", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-phase-a-banner")).toBeInTheDocument();
+      expect(screen.getByTestId("harness-waitlist-cta")).toBeInTheDocument();
+      expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
+    });
   });
 });

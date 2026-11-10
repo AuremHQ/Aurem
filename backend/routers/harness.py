@@ -3,7 +3,8 @@ routers/harness.py — Aurem Loop harness, Phase A.
 
 Builds `POST /api/harness/verify` (external client contract — see
 below) and `GET /api/harness/page-status` / `GET /api/harness/content`
-(public page-content delivery, 2026-11-10). No billing, no telemetry
+/ `GET /api/harness/release-status` (public page-content + Phase B
+readiness delivery, 2026-11-10). No billing, no telemetry
 ingestion, no cloud-run endpoint — those are separate, later phases
 and are deliberately not touched here.
 
@@ -35,6 +36,7 @@ from cto_services.db import require_db
 from services.feature_flags import is_enabled
 from services.harness_auth import verify_harness_identity
 from services.harness_content_repo import fetch_harness_page_content
+from services.harness_releases import get_latest_release
 from services.rate_limiter import check_rate_limit_async
 from services.wsp_kit_stats import fetch_wsp_kit_live_stats
 
@@ -85,6 +87,40 @@ async def harness_content() -> dict:
         fetch_harness_page_content(), fetch_wsp_kit_live_stats(),
     )
     return {"content": content, "live_stats": live_stats}
+
+
+# 2026-11-10 — Phase B readiness check. Public (no-auth): version,
+# artifact_sha256, changelog, mandatory, size_bytes and published_at
+# are not secrets, and exposing them lets the website show "Download
+# available" state WITHOUT a login. This is the one and only switch
+# between Phase A ("not available yet" banner + waitlist) and Phase B
+# (real download section) on the frontend — there is no separate
+# feature flag for it. D1 (hosting a real package) is not approved as
+# of this writing (see routers/admin_harness.py's own docstring), so
+# get_latest_release() correctly returns None and `available` stays
+# false until an admin explicitly publishes a real release. Never
+# returns the artifact bytes themselves — only POST /aurem-dev/
+# harness/download (routers/harness_downloads.py, login required)
+# does that.
+_RELEASE_PLATFORM = "windows"
+
+
+@router.get("/harness/release-status")
+async def harness_release_status() -> dict:
+    db = require_db()
+    release = await get_latest_release(db, platform=_RELEASE_PLATFORM)
+    if not release:
+        return {"available": False}
+    return {
+        "available": True,
+        "version": release["version"],
+        "platform": release["platform"],
+        "sha256": release["artifact_sha256"],
+        "changelog": release.get("changelog") or [],
+        "mandatory": release.get("mandatory", False),
+        "size_bytes": release.get("size_bytes"),
+        "published_at": release.get("published_at"),
+    }
 
 
 class HarnessVerifyRequest(BaseModel):

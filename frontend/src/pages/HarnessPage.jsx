@@ -27,7 +27,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { healthApi } from "../lib/api";
+import { api, getToken, healthApi } from "../lib/api";
 import MarketingNav from "../components/marketing/MarketingNav";
 
 const ANCHORS = [
@@ -102,6 +102,18 @@ const footerStyle = {
   borderTop: "1px solid var(--border, rgba(255,200,120,0.16))",
   fontSize: 11, color: "var(--text-faint, #7a7462)",
 };
+// Phase B — download section (2026-11-10). Only ever rendered when
+// GET /api/harness/release-status returns `available: true`, i.e. an
+// admin has actually published a real release. See routers/harness.py.
+const downloadCardStyle = {
+  marginTop: 20, padding: "16px 20px", borderRadius: 8,
+  background: "rgba(120,200,140,0.06)", border: "1px solid rgba(120,200,140,0.28)",
+};
+const monoStyle = {
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12,
+  wordBreak: "break-all", color: "var(--text, #e8e3d3)",
+};
+const errorTextStyle = { fontSize: 12, color: "#e08a6a", marginTop: 8 };
 
 function waitlistMailto(content) {
   const email = content?.phaseA?.waitlistEmail || "polarisbuiltinc@gmail.com";
@@ -118,6 +130,9 @@ export default function HarnessPage() {
   const [content, setContent] = useState(null);
   const [liveStats, setLiveStats] = useState(null);
   const [contentState, setContentState] = useState("loading"); // loading|ready|unavailable|error
+  const [release, setRelease] = useState(null); // Phase B readiness — {available:false} until a real release is published
+  const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -138,6 +153,38 @@ export default function HarnessPage() {
         setContentState("ready");
       })
       .catch(() => setContentState("error"));
+    healthApi.get("/harness/release-status")
+      .then((r) => setRelease(r.data || { available: false }))
+      .catch(() => setRelease({ available: false }));
+  }
+
+  async function handleDownloadClick() {
+    if (!getToken()) {
+      window.location.href = "/signup?next=/harness";
+      return;
+    }
+    setDownloadState("downloading");
+    setDownloadError("");
+    try {
+      const resp = await api.post("/harness/download", {}, { responseType: "blob" });
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `aurem-loop-${release?.version || "latest"}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setDownloadState("idle");
+    } catch (e) {
+      const status = e?.response?.status;
+      let msg = "Could not start the download — try again.";
+      if (status === 401) msg = "You're not logged in — please sign in again.";
+      else if (status === 409) msg = "No release is published yet — check back shortly.";
+      else if (status === 429) msg = "Too many download attempts — try again in a minute.";
+      setDownloadError(msg);
+      setDownloadState("error");
+    }
   }
 
   useEffect(() => {
@@ -149,35 +196,47 @@ export default function HarnessPage() {
     if (!content) return;
     const prevTitle = document.title;
     document.title = content.title || "Aurem Loop";
+    const graph = [
+      {
+        "@type": "FAQPage",
+        mainEntity: (content.faq || []).map(({ q, a }) => ({
+          "@type": "Question",
+          name: q,
+          acceptedAnswer: { "@type": "Answer", text: a },
+        })),
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
+          { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
+        ],
+      },
+    ];
+    // Phase B — only added once a real release exists (release.available),
+    // never speculatively. No "HowTo" block per the Phase A spec even here;
+    // this is a plain SoftwareApplication fact sheet.
+    if (release?.available) {
+      graph.push({
+        "@type": "SoftwareApplication",
+        name: "Aurem Loop",
+        operatingSystem: "Windows",
+        applicationCategory: "DeveloperApplication",
+        softwareVersion: release.version,
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+        license: "https://opensource.org/licenses/MIT",
+      });
+    }
     const ld = document.createElement("script");
     ld.type = "application/ld+json";
     ld.id = "ld-harness";
-    ld.text = JSON.stringify({
-      "@context": "https://schema.org",
-      "@graph": [
-        {
-          "@type": "FAQPage",
-          mainEntity: (content.faq || []).map(({ q, a }) => ({
-            "@type": "Question",
-            name: q,
-            acceptedAnswer: { "@type": "Answer", text: a },
-          })),
-        },
-        {
-          "@type": "BreadcrumbList",
-          itemListElement: [
-            { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
-            { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
-          ],
-        },
-      ],
-    });
+    ld.text = JSON.stringify({ "@context": "https://schema.org", "@graph": graph });
     document.head.appendChild(ld);
     return () => {
       document.title = prevTitle;
       document.getElementById("ld-harness")?.remove();
     };
-  }, [content]);
+  }, [content, release]);
 
   if (flagEnabled === null) {
     return (
@@ -237,14 +296,46 @@ export default function HarnessPage() {
           <p style={pStyle}>{content.hero?.subhead}</p>
           <p style={pStyle}>{content.hero?.body}</p>
 
-          <div style={phaseABannerStyle} data-testid="harness-phase-a-banner">
-            <strong>PHASE A</strong> — {content.phaseA?.banner}
-          </div>
+          {release?.available ? (
+            <div style={downloadCardStyle} data-testid="harness-download-section">
+              <strong>Download available</strong> — v<span data-testid="harness-download-version">{release.version}</span>
+              {release.mandatory && <span style={{ marginLeft: 8, ...badgeStyle }}>REQUIRED UPDATE</span>}
+              <p style={{ ...pStyle, marginTop: 10 }}>
+                SHA-256: <span style={monoStyle} data-testid="harness-download-sha256">{release.sha256}</span>
+              </p>
+              {release.changelog?.length > 0 && (
+                <ul data-testid="harness-download-changelog">
+                  {release.changelog.map((item, i) => (<li key={i} style={pStyle}>{item}</li>))}
+                </ul>
+              )}
+              <button
+                type="button"
+                data-testid="harness-download-button"
+                style={buttonStyle}
+                disabled={downloadState === "downloading"}
+                onClick={handleDownloadClick}
+              >
+                {downloadState === "downloading" ? "Starting download…" : "Download for Windows"}
+              </button>
+              {downloadState === "error" && (
+                <p style={errorTextStyle} data-testid="harness-download-error">{downloadError}</p>
+              )}
+              <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
+                MIT licensed. Requires a free ORA account to sign in locally — no cloud account, no credit card.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div style={phaseABannerStyle} data-testid="harness-phase-a-banner">
+                <strong>PHASE A</strong> — {content.phaseA?.banner}
+              </div>
 
-          <a href={mailto} data-testid="harness-waitlist-cta" style={buttonStyle}>Join the waitlist</a>
-          <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
-            Opens your email app with a pre-filled note — one email when the download goes live, nothing else.
-          </p>
+              <a href={mailto} data-testid="harness-waitlist-cta" style={buttonStyle}>Join the waitlist</a>
+              <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
+                Opens your email app with a pre-filled note — one email when the download goes live, nothing else.
+              </p>
+            </>
+          )}
 
           <div style={tagRowStyle}>
             {(content.featureTags || []).map((t) => (
