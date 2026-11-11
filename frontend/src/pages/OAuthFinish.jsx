@@ -68,7 +68,8 @@ export default function OAuthFinish() {
         // oauth_states — never trust a redirect target without checking
         // it again at the point it's actually used for navigation.
         const rawNext = parts.get("next") || "";
-        const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
+        const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\"))
+          ? rawNext : "/dashboard";
         if (!token) {
           setStatus("No sign-in token returned. Redirecting…");
           setTimeout(() => nav(`/login?${provider}=missing_token`, { replace: true }), 800);

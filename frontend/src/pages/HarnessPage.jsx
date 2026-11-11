@@ -314,9 +314,22 @@ export default function HarnessPage() {
 
   useEffect(() => {
     let active = true;
-    healthApi.get("/harness/page-status")
-      .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
-      .catch(() => { if (active) setFlagEnabled(false); });
+    // 2026-11-11 testing-agent finding: a transient network error here
+    // (e.g. a brief rate-limit hit) was being treated identically to a
+    // real "flag is off" — bouncing straight to the permanent "Aurem
+    // Loop isn't available yet" screen with no retry. One silent retry
+    // after a short delay before giving up distinguishes a one-off
+    // blip from an actual flag-off/misconfigured state.
+    function fetchPageStatus(isRetry) {
+      healthApi.get("/harness/page-status")
+        .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
+        .catch(() => {
+          if (!active) return;
+          if (!isRetry) { setTimeout(() => fetchPageStatus(true), 1200); return; }
+          setFlagEnabled(false);
+        });
+    }
+    fetchPageStatus(false);
 
     loadContent();
 

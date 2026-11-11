@@ -20,9 +20,12 @@ export default function Login() {
   });
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  // Honour ?next=… for safe in-app paths only (must start with /, not //)
+  // Honour ?next=… for safe in-app paths only (must start with /, not
+  // // or a backslash — 2026-11-11, aligned with the backend's
+  // _safe_next() in routers/github_oauth.py).
   const rawNext = searchParams.get("next") || "";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
+  const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\"))
+    ? rawNext : "/dashboard";
   // Iter 113 — friendly banner when user cancelled the GitHub OAuth flow
   // and was sent back here.
   const cancelled = searchParams.get("github") === "cancelled";

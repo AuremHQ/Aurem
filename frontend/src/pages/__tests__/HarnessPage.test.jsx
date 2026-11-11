@@ -121,13 +121,21 @@ describe("HarnessPage", () => {
     expect(screen.queryByTestId("harness-page")).not.toBeInTheDocument();
   });
 
-  it("a failed flag-status fetch defaults to hidden, never shows the real page", async () => {
+  it("a failed flag-status fetch retries once, then defaults to hidden, never shows the real page", async () => {
+    // 2026-11-11 — HarnessPage now retries page-status once (1.2s
+    // delay) before giving up, so a transient blip doesn't permanently
+    // hide the page; this mock rejects both the initial call AND the
+    // retry, so the test still exercises the ultimate "stays hidden"
+    // outcome, just with the expected extra delay.
     healthApi.get.mockImplementation((path) => {
       if (path === "/harness/page-status") return Promise.reject(new Error("network down"));
       return Promise.reject(new Error("should not be called"));
     });
     renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument());
+    await waitFor(
+      () => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
   });
 
   it("shows 'temporarily unavailable' when the flag is on but content isn't", async () => {

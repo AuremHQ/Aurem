@@ -26,7 +26,10 @@ export default function Signup() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const rawNext = searchParams.get("next") || "";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
+  // 2026-11-11 — aligned with the backend's _safe_next() (rejects a
+  // backslash too, not just a leading "//").
+  const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\"))
+    ? rawNext : "/dashboard";
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", password_confirm: "" });
   // 2026-09-22 — country-code selector for the phone field (still fully
   // optional, this only supplies the "+XX" prefix so the user doesn't

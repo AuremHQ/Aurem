@@ -38,6 +38,18 @@ Founder sent a detailed 6-fix spec after a manual browser check of `/harness`. E
 - **Post-testing fixes (from the testing_agent's code-review findings):** `loadContent()`'s content-fetch failure now only flips the page to the full "temporarily unavailable" screen on the INITIAL load — a failed "Refresh now" retry on an already-loaded page just leaves the existing content on screen instead of wiping it (and any in-progress waitlist form state) out. Waitlist form input/button height mismatch fixed (both 40px, centered). Mobile nav "Start free" button `white-space: nowrap` fix (was wrapping to 2 lines at 390px).
 - **Status: live in preview only** — needs a redeploy to reach production. **Fix 6 blocked** until founder creates the new fine-grained GitHub token (AuremHQ/aurem-loop only, Contents read+write) and resubmits it via the secure card.
 
+## Fix 7 — OAuth signup/login return gating (2026-11-11, DONE in preview, needs redeploy for production)
+
+Founder confirmed the standing decision: ORA keeps its single signup/signin, no separate harness-specific form. Fix 7 scope was narrowed to: make GitHub + Google OAuth honor the same `?next=` return-path mechanism email signup/login already had.
+
+- **`backend/routers/github_oauth.py`** — new `_safe_next()` validator (same-origin relative path only: must start with `/`, not `//`, no backslash, ≤2048 chars). `/connect` now accepts+stores `next` on the `oauth_states` row; the callback's cancel branch AND success branch (signup flow) both carry it through to the frontend redirect.
+- **`backend/routers/google_oauth.py`** — mirrors exactly (imports `_safe_next` from `github_oauth.py`); `/start` accepts+stores `next`; callback cancel+success carry it through.
+- **`frontend/src/pages/Login.jsx` / `Signup.jsx`** — all 4 OAuth buttons (GitHub+Google × login+signup) now append `&next=${encodeURIComponent(next)}` to the backend URL. Also aligned the frontend's own `?next=` guard to reject backslashes too (was only checking `//`), matching the backend exactly.
+- **`frontend/src/pages/OAuthFinish.jsx`** — reads `next` from the returned URL fragment, re-validates it (defense-in-depth — never trusts a redirect target at the point it's used, even though the backend validated it first), navigates there instead of the old hardcoded `/dashboard`.
+- Verified end-to-end by testing_agent (100%/100%): email signup/login with `?next=/harness` land on `/harness`; all 4 OAuth button URLs correctly carry `next=%2Fharness` (or default to `%2Fdashboard` when absent); malicious `next` (`https://evil.com`, `//evil.com`, `/\evil.com`) rejected at both backend-storage and frontend-consumption layers; cancelled OAuth attempts still carry `next` back to the retry page. 17 new backend tests (`test_regression_iter2026_69_oauth_next_redirect.py`) + 5 new frontend tests (`OAuthFinish.next.test.jsx`), both 100%.
+- **Post-testing fix:** `HarnessPage.jsx`'s page-status fetch now retries once (1.2s delay) before falling back to "not available" — a transient network blip/rate-limit was previously treated identically to a real flag-off state.
+- **Status: live in preview only** — needs a redeploy to reach production.
+
 ## Deployment blocker fixed — cto_open_findings dedup ran unconditionally on every boot (2026-11-11, DONE)
 
 Founder shared real production pod logs (brief `/health` upstream timeouts at cold-start, Resend 401, Redis rate-limited) and asked for a deployment-agent scan + code-level fix (no Docker changes). `deployment_agent` found one real BLOCKER (unrelated to the log symptoms, which were self-resolving cold-start noise / pre-existing third-party issues):
