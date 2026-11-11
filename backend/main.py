@@ -839,6 +839,33 @@ async def lifespan(app: FastAPI):
                         ok, len(_g6_res))
         except Exception as _e:                                  # noqa: BLE001
             logger.warning("[G6] ensure_dedup_indexes failed: %r", _e)
+
+        # 2026-11-11 — Aurem Loop harness flag seed. Founder-reported bug:
+        # `harness_page` had NO row in `feature_flags` at all on production
+        # (not just OFF), so the Admin → Feature Flags screen never listed
+        # it — there was nothing to click, on any environment that hadn't
+        # had it manually created via curl (preview only, this session).
+        # `$setOnInsert` makes this safe to run on every boot forever: it
+        # only ever WRITES on the very first boot where the row is missing
+        # entirely, and never touches `enabled` again afterwards — once
+        # the row exists (here or via a future manual Admin toggle), this
+        # is a permanent no-op, so it can never silently re-flip a later
+        # founder decision back to its seeded default.
+        try:
+            await app.state.db.feature_flags.update_one(
+                {"flag": "harness_page"},
+                {"$setOnInsert": {
+                    "flag": "harness_page",
+                    "enabled": True,
+                    "tier_allowlist": [],
+                    "user_allowlist": [],
+                    "rollout_pct": 100,
+                    "description": "Gates the Aurem Loop homepage chip + /harness page",
+                }},
+                upsert=True,
+            )
+        except Exception as _e:                                  # noqa: BLE001
+            logger.warning("[harness] feature-flag seed failed: %r", _e)
     _asyncio.create_task(_boot_maintenance_g19_g6())
 
     # Iter 212m-115 safety — Create the unique index for the
