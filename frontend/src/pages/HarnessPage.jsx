@@ -142,6 +142,116 @@ const monoStyle = {
 };
 const errorTextStyle = { fontSize: 12, color: "#e08a6a", marginTop: 8 };
 
+// Fix 3 (2026-11-11) — replaces the flat black "Loading…" text with a
+// lightweight pulsing skeleton (nav height + hero-shaped bars) so the
+// first paint looks like "the real page is arriving" instead of "the
+// page is broken/blank". Pure CSS, no extra request.
+const SKELETON_CSS = `
+@keyframes aurem-skel-pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.12; } }
+.aurem-harness-skel-bar {
+  background: var(--text, #e8e3d3);
+  border-radius: 6px;
+  animation: aurem-skel-pulse 1.6s ease-in-out infinite;
+}
+`;
+
+function HarnessSkeleton() {
+  return (
+    <div style={pageStyle} data-testid="harness-page-skeleton">
+      <style>{SKELETON_CSS}</style>
+      <div className="aurem-harness-skel-bar" style={{ width: 160, height: 28, marginBottom: 24 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: "70%", height: 40, marginBottom: 16 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: "90%", height: 16, marginBottom: 10 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: "55%", height: 16, marginBottom: 32 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: 140, height: 40 }} />
+    </div>
+  );
+}
+
+const waitlistInputStyle = {
+  padding: "10px 14px", borderRadius: 8, fontSize: 14,
+  background: "rgba(255,255,255,0.05)", border: "1px solid var(--border, rgba(255,200,120,0.16))",
+  color: "var(--text, #e8e3d3)", minWidth: 240,
+};
+const waitlistFormRowStyle = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 };
+const waitlistSuccessStyle = {
+  marginTop: 16, padding: "10px 16px", borderRadius: 8, fontSize: 13,
+  background: "rgba(120,200,140,0.1)", border: "1px solid rgba(120,200,140,0.32)",
+  color: "var(--text, #e8e3d3)",
+};
+
+// Fix 2 (2026-11-11) — real on-page waitlist form. Previously the
+// only CTA was a `mailto:` link, which does nothing visible in a
+// browser with no mail client configured (most automated/clean-
+// machine test environments, and plenty of real browsers) — looked
+// broken even though it "worked" for someone with Outlook/Mail.app
+// set up. Posts to POST /api/harness/waitlist (routers/harness.py,
+// public, per-IP rate-limited). The mailto is kept as a small
+// secondary fallback link, not the primary action.
+function WaitlistForm({ idSuffix, mailto, ctaLabel }) {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("idle"); // idle|submitting|success|error
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setStatus("submitting");
+    setError("");
+    try {
+      await healthApi.post("/harness/waitlist", { email: trimmed });
+      setStatus("success");
+    } catch (err) {
+      const msg = err?.response?.data?.detail || "Could not join the waitlist — try again.";
+      setError(msg);
+      setStatus("error");
+    }
+  }
+
+  if (status === "success") {
+    return (
+      <div style={waitlistSuccessStyle} data-testid={`harness-waitlist-success-${idSuffix}`}>
+        You&apos;re on the waitlist — one email when the download goes live, nothing else.
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} data-testid={`harness-waitlist-form-${idSuffix}`}>
+      <div style={waitlistFormRowStyle}>
+        <input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          style={waitlistInputStyle}
+          data-testid={`harness-waitlist-email-${idSuffix}`}
+          disabled={status === "submitting"}
+        />
+        <button
+          type="submit"
+          style={buttonStyle}
+          data-testid={`harness-waitlist-submit-${idSuffix}`}
+          disabled={status === "submitting"}
+        >
+          {status === "submitting" ? "Joining…" : ctaLabel}
+        </button>
+      </div>
+      {status === "error" && (
+        <p style={errorTextStyle} data-testid={`harness-waitlist-error-${idSuffix}`}>{error}</p>
+      )}
+      <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
+        One email when the download goes live, nothing else. Prefer email?{" "}
+        <a href={mailto} data-testid={`harness-waitlist-mailto-${idSuffix}`} style={{ color: "inherit" }}>
+          Send it directly instead
+        </a>.
+      </p>
+    </form>
+  );
+}
+
 function waitlistMailto(content) {
   const email = content?.phaseA?.waitlistEmail || "polarisbuiltinc@gmail.com";
   const subject = encodeURIComponent(content?.phaseA?.waitlistSubject || "Aurem Loop waitlist");
@@ -162,16 +272,19 @@ export default function HarnessPage() {
   const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
   const [downloadError, setDownloadError] = useState("");
 
-  useEffect(() => {
-    let active = true;
-    healthApi.get("/harness/page-status")
-      .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
-      .catch(() => { if (active) setFlagEnabled(false); });
-    return () => { active = false; };
-  }, []);
-
+  // Fix 3 (2026-11-11) — all 3 public GETs now fire together on mount
+  // instead of page-status → (then) content+release. The old shape
+  // added one full network round-trip to the critical path before the
+  // content fetch even started; this one costs nothing extra (content/
+  // release are discarded harmlessly in the rare case the flag turns
+  // out to be off) and the page now shows real content in max(3
+  // requests) time instead of page-status + max(2 requests).
+  //
+  // loadContent() is pulled out as its own function (not inlined in
+  // the effect below) so the "Refresh now" live-stats button further
+  // down the page can re-run the same content+release fetch on demand
+  // without re-checking page-status (which never changes mid-session).
   function loadContent() {
-    setContentState("loading");
     healthApi.get("/harness/content")
       .then((r) => {
         const c = r.data?.content;
@@ -181,11 +294,23 @@ export default function HarnessPage() {
         setContentState("ready");
       })
       .catch(() => setContentState("error"));
+
     healthApi.get("/harness/release-status")
       .then((r) => setRelease(r.data || { available: false }))
       .catch(() => setRelease({ available: false }))
       .finally(() => setReleaseLoading(false));
   }
+
+  useEffect(() => {
+    let active = true;
+    healthApi.get("/harness/page-status")
+      .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
+      .catch(() => { if (active) setFlagEnabled(false); });
+
+    loadContent();
+
+    return () => { active = false; };
+  }, []);
 
   async function handleDownloadClick() {
     if (!getToken()) {
@@ -215,11 +340,6 @@ export default function HarnessPage() {
       setDownloadState("error");
     }
   }
-
-  useEffect(() => {
-    if (flagEnabled === true) loadContent();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flagEnabled]);
 
   useEffect(() => {
     if (!content) return;
@@ -272,7 +392,7 @@ export default function HarnessPage() {
       <div data-testid="harness-page-loading" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
         <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
-        <div style={pageStyle}>Loading…</div>
+        <HarnessSkeleton />
       </div>
     );
   }
@@ -292,7 +412,7 @@ export default function HarnessPage() {
       <div data-testid="harness-page-content-loading" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
         <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
-        <div style={pageStyle}>Loading…</div>
+        <HarnessSkeleton />
       </div>
     );
   }
@@ -364,10 +484,7 @@ export default function HarnessPage() {
                 <strong>PHASE A</strong> — {content.phaseA?.banner}
               </div>
 
-              <a href={mailto} data-testid="harness-waitlist-cta" style={buttonStyle}>Join the waitlist</a>
-              <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
-                Opens your email app with a pre-filled note — one email when the download goes live, nothing else.
-              </p>
+              <WaitlistForm idSuffix="hero" mailto={mailto} ctaLabel="Join the waitlist" />
             </>
           )}
 
@@ -470,9 +587,7 @@ export default function HarnessPage() {
         <section id="stories" data-testid="harness-users-say" style={sectionStyle}>
           <h2 style={h2Style}>{content.usersSay?.headline}</h2>
           <p style={pStyle}>{content.usersSay?.body}</p>
-          <a href={mailto} data-testid="harness-users-say-cta" style={buttonStyle}>
-            Be one of the first — join the waitlist
-          </a>
+          <WaitlistForm idSuffix="stories" mailto={mailto} ctaLabel="Be one of the first — join the waitlist" />
         </section>
 
         <section id="setup" data-testid="harness-install-steps" style={sectionStyle}>

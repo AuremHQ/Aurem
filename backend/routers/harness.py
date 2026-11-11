@@ -3,10 +3,10 @@ routers/harness.py — Aurem Loop harness, Phase A.
 
 Builds `POST /api/harness/verify` (external client contract — see
 below) and `GET /api/harness/page-status` / `GET /api/harness/content`
-/ `GET /api/harness/release-status` (public page-content + Phase B
-readiness delivery, 2026-11-10). No billing, no telemetry
-ingestion, no cloud-run endpoint — those are separate, later phases
-and are deliberately not touched here.
+/ `GET /api/harness/release-status` / `POST /api/harness/waitlist`
+(public page-content + Phase B readiness delivery, 2026-11-10/11). No
+billing, no telemetry ingestion, no cloud-run endpoint — those are
+separate, later phases and are deliberately not touched here.
 
 Mounted with a bare prefix (no internal APIRouter(prefix=...)) under
 `app.include_router(harness_router, prefix="/api")` in main.py, same
@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from cto_services.db import require_db
@@ -37,7 +39,7 @@ from services.feature_flags import is_enabled
 from services.harness_auth import verify_harness_identity
 from services.harness_content_repo import fetch_harness_page_content
 from services.harness_releases import get_latest_release
-from services.rate_limiter import check_rate_limit_async
+from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 from services.wsp_kit_stats import fetch_wsp_kit_live_stats
 
 logger = logging.getLogger("aurem-dev.harness")
@@ -45,6 +47,10 @@ logger = logging.getLogger("aurem-dev.harness")
 router = APIRouter()
 
 _VERIFY_RATE_LIMIT_PER_MINUTE = 10
+_EMAIL_RX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Same ceiling routers/support.py's public ticket form uses — generous
+# for a real human, blocks scripted abuse of a zero-identity-proof form.
+_WAITLIST_RATE_PER_IP_MIN = 5
 
 
 class HarnessPageStatusResponse(BaseModel):
@@ -121,6 +127,43 @@ async def harness_release_status() -> dict:
         "size_bytes": release.get("size_bytes"),
         "published_at": release.get("published_at"),
     }
+
+
+class HarnessWaitlistRequest(BaseModel):
+    email: str = Field(..., max_length=254)
+
+
+# 2026-11-11 — real on-page waitlist (Fix 2). Previously "Join the
+# waitlist" was a mailto-only link — did nothing in a browser with no
+# mail client configured, which is most browsers in a sandboxed/clean
+# test environment. Public, no-auth, per-IP rate-limited exactly like
+# routers/support.py's `/tickets/public` (same zero-identity-proof
+# shape). Upserts on email so a visitor double-clicking submit, or
+# re-joining later, never creates duplicate rows — `joined_at` is
+# left untouched on a repeat submit (first-join date is what matters
+# for the eventual "email the waitlist when download goes live" step).
+@router.post("/harness/waitlist")
+async def harness_waitlist_join(body: HarnessWaitlistRequest, request: Request) -> dict:
+    email = (body.email or "").strip().lower()
+    if not email or not _EMAIL_RX.match(email):
+        raise HTTPException(400, "Please enter a valid email address.")
+
+    client_ip = client_ip_from_request(request)
+    if not await check_rate_limit_async(
+        f"harness-waitlist-ip:{client_ip}", _WAITLIST_RATE_PER_IP_MIN,
+    ):
+        raise HTTPException(429, "Too many requests from this network. Try again in a minute.")
+
+    db = require_db()
+    await db.harness_waitlist.update_one(
+        {"email": email},
+        {
+            "$setOnInsert": {"email": email, "joined_at": time.time(), "source": "harness_page"},
+            "$set": {"last_submitted_at": time.time()},
+        },
+        upsert=True,
+    )
+    return {"ok": True}
 
 
 class HarnessVerifyRequest(BaseModel):

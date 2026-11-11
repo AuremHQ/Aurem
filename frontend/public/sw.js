@@ -8,8 +8,20 @@
  *   • Everything else                                     → network with cache fallback
  *
  * Versioning: bump CACHE_VERSION on shipped changes so old caches purge.
+ *
+ * 2026-11-11 — Fix 4 root cause: a founder-reported "ghost" link row
+ * on /harness ("Watch the 3-minute demo" etc., seen once, never
+ * again) does not exist anywhere in the current HarnessPage.jsx or in
+ * harness-page-content.json — it was a ONE-TIME stale-while-revalidate
+ * hit: the JS bundle's cache-first-then-update strategy below serves
+ * whatever bundle is already cached on the FIRST request after a
+ * deploy, while fetching the new one in the background for next time.
+ * A visitor who had an old (pre-harness-redesign) bundle cached from
+ * before this feature existed would see that old bundle once, then
+ * get the current one on every request after. Bumping the version
+ * here purges every visitor's stale cache on next activate.
  */
-const CACHE_VERSION = "aurem-v3";
+const CACHE_VERSION = "aurem-v4";
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

@@ -8,11 +8,11 @@
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 vi.mock("../../lib/api", () => ({
-  healthApi: { get: vi.fn() },
+  healthApi: { get: vi.fn(), post: vi.fn() },
   api: { post: vi.fn() },
   getToken: vi.fn(() => null),
   getUser: vi.fn(() => null),
@@ -142,16 +142,31 @@ describe("HarnessPage", () => {
     await waitFor(() => expect(screen.getByTestId("harness-page-content-unavailable")).toBeInTheDocument());
   });
 
-  it("renders the full Phase A page with a waitlist CTA and NO download button anywhere", async () => {
+  it("renders the full Phase A page with a real waitlist form and NO download button anywhere", async () => {
     mockEndpoints({ flag: true, content: CONTENT });
     renderPage();
     await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-    expect(screen.getByTestId("harness-waitlist-cta")).toHaveAttribute(
+    expect(screen.getByTestId("harness-waitlist-form-hero")).toBeInTheDocument();
+    expect(screen.getByTestId("harness-waitlist-email-hero")).toBeInTheDocument();
+    expect(screen.getByTestId("harness-waitlist-mailto-hero")).toHaveAttribute(
       "href", expect.stringContaining("mailto:polarisbuiltinc@gmail.com"),
     );
     expect(screen.queryByTestId("harness-download-button")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /download/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
+  });
+
+  it("submitting the hero waitlist form posts the email and shows an on-page confirmation", async () => {
+    mockEndpoints({ flag: true, content: CONTENT });
+    healthApi.post.mockResolvedValue({ data: { ok: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByTestId("harness-waitlist-email-hero"), { target: { value: "dev@example.com" } });
+    fireEvent.click(screen.getByTestId("harness-waitlist-submit-hero"));
+
+    await waitFor(() => expect(screen.getByTestId("harness-waitlist-success-hero")).toBeInTheDocument());
+    expect(healthApi.post).toHaveBeenCalledWith("/harness/waitlist", { email: "dev@example.com" });
   });
 
   it("renders live GitHub stars/forks plus the static clones/views snapshot", async () => {
@@ -191,7 +206,7 @@ describe("HarnessPage", () => {
       expect(screen.getByTestId("harness-download-sha256")).toHaveTextContent(RELEASE.sha256);
       expect(screen.getByTestId("harness-download-changelog")).toHaveTextContent("Initial public Windows build");
       expect(screen.queryByTestId("harness-phase-a-banner")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("harness-waitlist-cta")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("harness-waitlist-form-hero")).not.toBeInTheDocument();
     });
 
     it("a signed-out visitor clicking Download is redirected to signup, no API call made", async () => {
@@ -248,7 +263,7 @@ describe("HarnessPage", () => {
       renderPage();
       await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
       expect(screen.getByTestId("harness-phase-a-banner")).toBeInTheDocument();
-      expect(screen.getByTestId("harness-waitlist-cta")).toBeInTheDocument();
+      expect(screen.getByTestId("harness-waitlist-form-hero")).toBeInTheDocument();
       expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
     });
   });
