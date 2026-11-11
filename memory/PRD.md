@@ -1,8 +1,17 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-11-10 (dead-code cleanup branch + stale admin-test finding — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-11-11 (deployment blocker fix — destructive DB cleanup on every boot — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
 
-## Dead-code cleanup — branch ready for review, NOT merged (2026-11-10, DONE/PENDING REVIEW)
+## Deployment blocker fixed — cto_open_findings dedup ran unconditionally on every boot (2026-11-11, DONE)
+
+Founder shared real production pod logs (brief `/health` upstream timeouts at cold-start, Resend 401, Redis rate-limited) and asked for a deployment-agent scan + code-level fix (no Docker changes). `deployment_agent` found one real BLOCKER (unrelated to the log symptoms, which were self-resolving cold-start noise / pre-existing third-party issues):
+
+- **`backend/services/db_indexes.py`** (`ensure_dedup_indexes`, ~line 225) — the `cto_open_findings` duplicate-row cleanup ran an unconditional `aggregate` + `delete_many` on **every single pod boot/restart**, never gated behind a one-time marker — the exact same bug class the team had already fixed for `onboarding_emails` a few lines above it (gated behind a `db_migrations` marker since 2026-08-20), but the fix was never mirrored onto this block.
+- **Fix:** gated the `cto_open_findings` block behind a new one-time marker (`g6_cto_open_findings_dedup_2026_11_11` in `db_migrations`), exactly mirroring the `onboarding_emails` pattern — the dedup+delete now runs at most once ever, then every later boot skips it entirely.
+- Verified: backend restart clean, `/api/health` → `{"ok": true, "db": true}`, migration marker confirmed written (`dup_removed: 0`, no existing dupes), new regression test `backend/tests/test_2026_11_11_cto_open_findings_dedup_migration_gate.py` (3 tests, all pass) locks in: first-boot-runs-once, marker-present-skips-entirely, no-duplicates-is-still-a-no-op-but-marks-done. Re-ran `deployment_agent` after the fix — **status: pass, no blockers**.
+- The log symptoms the founder originally shared (brief nginx `/health` timeout at the very start of cold boot, Resend 401, Redis rate-limited at Upstash) were separately confirmed to be unrelated noise: `/health`/`/healthz` are already trivial zero-dependency endpoints and `lifespan()` already returns in <50ms (both hardened in earlier iterations per inline comments) — the timeout blip self-resolved with no crash and the deploy had already completed successfully per the platform's own notification. Resend 401 is the already-documented invalid-key issue in `test_credentials.md`; Redis rate-limiting is an Upstash-side plan limit with an existing in-memory fallback, not a code bug.
+
+## Harness homepage chip + /harness content — both root-caused and fixed in preview (2026-11-10/11, DONE in preview, production flag step pending founder)
 
 Founder asked for a conservative scan-then-confirm dead-code audit ("default ALIVE unless proven dead"), then approved only the HIGH-confidence items, keeping MEDIUM-confidence proof directories, plus a docstring fix in `backend/routers/admin.py`.
 
@@ -12,8 +21,6 @@ Founder asked for a conservative scan-then-confirm dead-code audit ("default ALI
 - `backend/routers/admin.py` — only the stale header docstring was corrected (was wrongly claiming it's "Mounted under /api/aurem-dev/admin/* by main.py" — it isn't; its `router` object intentionally has zero routes post Phase-2-split, kept alive only for shared helpers like `_require_admin` that other admin routers import).
 - Verified on the branch: frontend lint clean, full frontend suite 227 files/1182 tests passing, backend collects 9827/9947 (120 deselected) cleanly.
 - **Next step: founder is pushing this branch via the platform's "Save to GitHub" feature for team PR review** — hit a UI issue (dialog not scrolling to the "create new branch" option); routed to support with troubleshooting steps (zoom out / resize / hard refresh / desktop instead of mobile / check paid plan). Not yet resolved as of this entry. No further cleanup should happen without a new approved list.
-
-## Harness homepage chip + /harness content — both root-caused and fixed in preview (2026-11-10/11, DONE in preview, production flag step pending founder)
 
 Founder reported "homepage pe harness show kyun nahi ho rahi" — root-caused as TWO separate, now-fixed issues:
 
