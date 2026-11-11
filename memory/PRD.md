@@ -1,6 +1,24 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-11-09 (homepage chooser strip + /both retirement, draft branch — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-11-10 (dead-code cleanup branch + stale admin-test finding — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## Dead-code cleanup — branch ready for review, NOT merged (2026-11-10, DONE/PENDING REVIEW)
+
+Founder asked for a conservative scan-then-confirm dead-code audit ("default ALIVE unless proven dead"), then approved only the HIGH-confidence items, keeping MEDIUM-confidence proof directories, plus a docstring fix in `backend/routers/admin.py`.
+
+- **Branch:** `maid/2026-11-10-dead-code-cleanup`, single commit `00cb888b`. **Not merged to `main`, not deployed.** Working tree is back on `main`.
+- Removed: `frontend/src/pages/OAuthAuthorize.jsx` (orphaned, no route/import/test; its referenced `routers/oauth_mcp.py` no longer exists — real OAuth consent is server-rendered from `routers/oauth.py`), plus confirmed-dead scratch/debris: `ci_work_item2/3/4`, `ci_work_main`, `ci_work_oauth` (stale git submodule pointers, not plain files), `qa_run/`, `e2e_prod_qa_final/`, `e2e_iter280_logs*`, `e2e_iter281_step0_proof*` and related root proof artifacts, `lint-baseline.txt`. 66 files changed, 1773 lines removed (~496MB disk freed).
+- Explicitly kept alive (not deleted): `qa/simulated-user/` (CI + runtime reference despite ~2GB size), `postmortems/` (read by `services/qa_matrix.py`), `browser-extension/`, `vscode-extension/` (shipped features), `e2e-proof/`, `gate4_fixture/` (MEDIUM-confidence, founder asked to retain).
+- `backend/routers/admin.py` — only the stale header docstring was corrected (was wrongly claiming it's "Mounted under /api/aurem-dev/admin/* by main.py" — it isn't; its `router` object intentionally has zero routes post Phase-2-split, kept alive only for shared helpers like `_require_admin` that other admin routers import).
+- Verified on the branch: frontend lint clean, full frontend suite 227 files/1182 tests passing, backend collects 9827/9947 (120 deselected) cleanly.
+- **Next step: founder is pushing this branch via the platform's "Save to GitHub" feature for team PR review** — hit a UI issue (dialog not scrolling to the "create new branch" option); routed to support with troubleshooting steps (zoom out / resize / hard refresh / desktop instead of mobile / check paid plan). Not yet resolved as of this entry. No further cleanup should happen without a new approved list.
+
+## Stale admin-router tests finding — NOT a real bug, founder deferred fix (2026-11-10, NOTED/DEFERRED)
+
+While verifying the cleanup branch, found that 8 pre-existing test files (`test_iter69_brain_dump_and_build_hash.py`, `test_iter70_mode_telemetry_and_brain_replay.py`, `test_iter212m3_activation_funnel.py`, `test_iter96_sentry_live.py`, and others, ~45 assertions total) import `from routers.admin import router` and check `router.routes` for paths like `/admin/brain/{project_id}/dump`.
+
+- **Confirmed this is NOT a production bug.** During the Feb 2026 "Phase 2 admin split" refactor, every real handler (`admin_brain_dump`, `mode_telemetry`, `activation_funnel`, `brain_recent_commits`, etc.) was moved into dedicated files (`admin_projects_brain.py`, `admin_analytics.py`, `admin_funnel.py`, `admin_users.py`, `admin_ops_config.py`) which ARE all correctly mounted in `main.py` via `app.include_router(...)`. `routers/admin.py`'s own `router` object was intentionally left with zero routes (kept only for shared helpers). All admin endpoints work correctly live — this is a stale-test issue only, pre-dating this session, unrelated to the dead-code cleanup.
+- Founder was asked whether to fix the 8 stale test files (test-only change, zero production risk) and **chose to defer** ("Nahi, abhi chhodo"). Left as a backlog item — not touched.
 
 ## Homepage chooser strip ("ORA by AUREM" / "AUREM LOOP harness") + /both retired — draft branch, flag OFF (2026-11-09, DONE)
 
