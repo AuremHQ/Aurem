@@ -13,6 +13,15 @@ Founder asked for a conservative scan-then-confirm dead-code audit ("default ALI
 - Verified on the branch: frontend lint clean, full frontend suite 227 files/1182 tests passing, backend collects 9827/9947 (120 deselected) cleanly.
 - **Next step: founder is pushing this branch via the platform's "Save to GitHub" feature for team PR review** — hit a UI issue (dialog not scrolling to the "create new branch" option); routed to support with troubleshooting steps (zoom out / resize / hard refresh / desktop instead of mobile / check paid plan). Not yet resolved as of this entry. No further cleanup should happen without a new approved list.
 
+## Harness homepage chip + /harness content — both root-caused and fixed in preview (2026-11-10/11, DONE in preview, production flag step pending founder)
+
+Founder reported "homepage pe harness show kyun nahi ho rahi" — root-caused as TWO separate, now-fixed issues:
+
+1. **`harness_page` flag never existed as a DB row** (not just OFF) — `GET /admin/feature-flags` only lists flags that already have a `feature_flags` doc, and there was none, so the flag was never togglable from Admin UI at all. Fixed in preview via the app's own `POST /admin/feature-flags` (create) + `POST /admin/feature-flags/harness_page/toggle` (enable), logged into in `test@aurem.dev`. Confirmed via screenshot: homepage hero chip ("ORA by AUREM" / "AUREM LOOP harness") now renders, `/harness` route navigable.
+2. **`AUREM_LOOP_REPO_TOKEN` was a GitHub URL string, not a token** (confirmed via live `GET /repos/AuremHQ/aurem-loop` → 401). Founder supplied a correct PAT via the secrets card; verified `push: true` permission, then ran `backend/scripts/seed_harness_page_content.py` for real — pushed `harness-page-content.json` to `AuremHQ/aurem-loop@main` (commit `9e6ab4f`). `GET /api/harness/content` now returns the full Phase A content; confirmed via screenshot (hero, FREE/LOCAL/MIT badges, "PHASE A — Not available to download yet" box, waitlist CTA, demo-video section with honest "illustration, not a real recording" disclaimer, nav anchors) — no download button, matches the approved Phase A spec exactly.
+- **Production still needs the flag created+enabled manually by the founder** (no production DB/admin access from this environment) — 2 steps: Admin → Feature Flags → "Create new flag" with name `harness_page` → Create, then click its toggle to ON. The content itself needs no production-side action — it's served live from the now-public GitHub repo, no token required for reads.
+- `AUREM_LOOP_REPO_TOKEN` is saved in both `test` and `live` slots (shared env), so Phase B release pushes later won't need this step repeated.
+
 ## Stale admin-router tests finding — NOT a real bug, founder deferred fix (2026-11-10, NOTED/DEFERRED)
 
 While verifying the cleanup branch, found that 8 pre-existing test files (`test_iter69_brain_dump_and_build_hash.py`, `test_iter70_mode_telemetry_and_brain_replay.py`, `test_iter212m3_activation_funnel.py`, `test_iter96_sentry_live.py`, and others, ~45 assertions total) import `from routers.admin import router` and check `router.routes` for paths like `/admin/brain/{project_id}/dump`.
