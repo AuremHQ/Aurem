@@ -169,11 +169,11 @@ function HarnessSkeleton() {
 }
 
 const waitlistInputStyle = {
-  padding: "10px 14px", borderRadius: 8, fontSize: 14,
+  padding: "10px 14px", borderRadius: 8, fontSize: 14, height: 40, boxSizing: "border-box",
   background: "rgba(255,255,255,0.05)", border: "1px solid var(--border, rgba(255,200,120,0.16))",
   color: "var(--text, #e8e3d3)", minWidth: 240,
 };
-const waitlistFormRowStyle = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 };
+const waitlistFormRowStyle = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16, alignItems: "center" };
 const waitlistSuccessStyle = {
   marginTop: 16, padding: "10px 16px", borderRadius: 8, fontSize: 13,
   background: "rgba(120,200,140,0.1)", border: "1px solid rgba(120,200,140,0.32)",
@@ -232,7 +232,7 @@ function WaitlistForm({ idSuffix, mailto, ctaLabel }) {
         />
         <button
           type="submit"
-          style={buttonStyle}
+          style={{ ...buttonStyle, marginTop: 0, height: 40, boxSizing: "border-box", display: "inline-flex", alignItems: "center" }}
           data-testid={`harness-waitlist-submit-${idSuffix}`}
           disabled={status === "submitting"}
         >
@@ -284,6 +284,15 @@ export default function HarnessPage() {
   // the effect below) so the "Refresh now" live-stats button further
   // down the page can re-run the same content+release fetch on demand
   // without re-checking page-status (which never changes mid-session).
+  //
+  // 2026-11-11 testing-agent finding: a failed REFRESH (content
+  // already loaded once) must never wipe the whole page back to the
+  // "temporarily unavailable" screen — that would also discard any
+  // in-progress/just-submitted waitlist form state. Only the initial
+  // load (no content yet) is allowed to flip to the full-page error;
+  // a refresh failure instead just leaves the existing content on
+  // screen and logs quietly (the stats simply stay at their last-known
+  // values until the next successful refresh).
   function loadContent() {
     healthApi.get("/harness/content")
       .then((r) => {
@@ -293,7 +302,9 @@ export default function HarnessPage() {
         setLiveStats(r.data?.live_stats || null);
         setContentState("ready");
       })
-      .catch(() => setContentState("error"));
+      .catch(() => {
+        setContentState((prev) => (prev === "ready" ? prev : "error"));
+      });
 
     healthApi.get("/harness/release-status")
       .then((r) => setRelease(r.data || { available: false }))

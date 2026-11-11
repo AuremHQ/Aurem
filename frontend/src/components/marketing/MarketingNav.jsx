@@ -62,6 +62,7 @@ const CSS = `
   font-family: var(--mn-font-mono); font-size: 13px;
   background: var(--mn-accent); color: #000; padding: 9px 18px;
   border-radius: 8px; text-decoration: none; font-weight: 600;
+  white-space: nowrap;
   transition: opacity 0.15s, transform 0.08s;
 }
 .aurem-marketing-nav .mn-cta:hover { opacity: 0.92; }
