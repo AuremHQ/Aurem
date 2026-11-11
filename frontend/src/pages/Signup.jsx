@@ -18,18 +18,26 @@ import { isValidPhoneNumber } from "libphonenumber-js";
 import { signupFreeOfferTitle, signupFreeOfferDescription, freeOfferShortLine } from "../lib/billingCopy";
 
 export default function Signup() {
-  usePageMeta({
-    title: signupFreeOfferTitle(),
-    description: signupFreeOfferDescription(),
-    canonical: (typeof window !== "undefined" ? window.location.origin : "") + "/signup",
-  });
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const rawNext = searchParams.get("next") || "";
   // 2026-11-11 — aligned with the backend's _safe_next() (rejects a
   // backslash too, not just a leading "//").
   const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\"))
     ? rawNext : "/dashboard";
+  // 2026-11-11 — Fix 8: see Login.jsx's identical comment — a visitor
+  // arriving via ?next=/harness came from Aurem Loop's download
+  // button, not ORA, so this page re-brands itself "Aurem Loop"
+  // throughout. Same account/credentials either way.
+  const isHarness = next === "/harness" || next.startsWith("/harness");
+
+  usePageMeta({
+    title: isHarness ? "Sign up · Aurem Loop" : signupFreeOfferTitle(),
+    description: isHarness
+      ? "Create your free AUREM account to download Aurem Loop — it also gives you access to ORA."
+      : signupFreeOfferDescription(),
+    canonical: (typeof window !== "undefined" ? window.location.origin : "") + "/signup",
+  });
+  const navigate = useNavigate();
   const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", password_confirm: "" });
   // 2026-09-22 — country-code selector for the phone field (still fully
   // optional, this only supplies the "+XX" prefix so the user doesn't
@@ -144,6 +152,7 @@ export default function Signup() {
 
   return (
     <AuthShell
+      brand={isHarness ? "Aurem Loop" : "ORA by Aurem"}
       secondaryCta={
         <Link to="/login" data-testid="auth-nav-login" className="btn-ghost" style={{ fontSize: 12 }}>
           Sign in
@@ -153,11 +162,28 @@ export default function Signup() {
       <section style={{ maxWidth: 460, margin: "20px auto" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign up</span>
-          <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>Start building, production-ready from day one</h1>
+          <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>
+            {isHarness ? "One account for Aurem Loop" : "Start building, production-ready from day one"}
+          </h1>
           <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            {freeOfferShortLine()}
+            {isHarness ? "Free to use locally — also unlocks ORA." : freeOfferShortLine()}
           </p>
         </div>
+
+        {isHarness && (
+          <div
+            data-testid="signup-harness-guidelines"
+            style={{
+              background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)",
+              borderRadius: 8, padding: "12px 14px", marginBottom: 20,
+              fontSize: 12.5, lineHeight: 1.6, color: "var(--text-dim)",
+            }}
+          >
+            This account is for downloading <strong>Aurem Loop</strong> — free, and it runs on your
+            own PC. After signup you&rsquo;ll land back on the Aurem Loop download page. The same
+            login also works for ORA.
+          </div>
+        )}
 
         <div className="card" data-testid="signup-card" style={{
           background: "rgba(20, 20, 28, 0.55)",
@@ -172,7 +198,9 @@ export default function Signup() {
               error
                 ? `Hmm — <strong>${escapeHtml(error)}</strong>. Fix the highlighted field and try again.`
                 : !form.email
-                  ? (welcomeMsg || `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — creates your account instantly, no password needed.`)
+                  ? (welcomeMsg || (isHarness
+                      ? `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — creates your account and takes you straight back to the Aurem Loop download.`
+                      : `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — creates your account instantly, no password needed.`))
                   : !form.password
                     ? `Pick a <strong>strong password</strong> (6+ characters) below. <span class="ora-arrow">👇</span>`
                     : form.password_confirm && form.password !== form.password_confirm
@@ -414,7 +442,9 @@ export default function Signup() {
             data-testid="signup-legal-line"
             style={{ marginTop: 12, textAlign: "center", fontSize: 10.5, color: "var(--text-faint)" }}
           >
-            © 2026 Polaris Built Inc. — ORA by Aurem, made by AUREM
+            {isHarness
+              ? "© 2026 Polaris Built Inc. — Aurem Loop, made by AUREM"
+              : "© 2026 Polaris Built Inc. — ORA by Aurem, made by AUREM"}
           </div>
         </div>
       </section>

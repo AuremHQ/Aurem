@@ -5,6 +5,10 @@
  *   • Same responsive WebP background image (instant blur placeholder → real)
  *   • Same dark gradient overlay so copy stays readable
  *
+ * `brand` prop (2026-11-11, Fix 8) — defaults to "ORA by Aurem"; Login.jsx/
+ * Signup.jsx pass `brand="Aurem Loop"` when the visitor arrived via
+ * `?next=/harness` so the page doesn't look like a wrong-product redirect.
+ *
  * Deliberately does NOT use `<Shell>` (which renders the in-app sidebar).
  */
 import React, { useEffect, useState } from "react";
@@ -28,7 +32,7 @@ function useResponsiveBg() {
   return src;
 }
 
-export default function AuthShell({ children, secondaryCta }) {
+export default function AuthShell({ children, secondaryCta, brand = "ORA by Aurem" }) {
   const bgSrc = useResponsiveBg();
   return (
     <div
@@ -60,7 +64,7 @@ export default function AuthShell({ children, secondaryCta }) {
           fontFamily: "'JetBrains Mono', monospace",
           fontWeight: 600, fontSize: 14, letterSpacing: "0.08em",
         }}>
-          ORA by Aurem
+          {brand}
         </Link>
         <div style={{ display: "flex", gap: 10 }}>
           <Link to="/" data-testid="auth-back-home" className="btn-ghost"
