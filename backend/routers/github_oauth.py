@@ -479,7 +479,19 @@ async def callback(
     gh_name   = sanitize_display_name(gh_name)
 
     # ── Signup / sign-in flow ─────────────────────────────────────────
-    if flow == "signup":
+    # 2026-11-11 — bug found while writing the real-success-path
+    # regression test (test_regression_iter2026_70): `flow` above is
+    # the LITERAL state-row `mode` ("signup" OR "login"), never just
+    # "signup" — so a real login-intent success (`/connect?signup=1&
+    # intent=login`, exactly what the "Continue with GitHub" button on
+    # /login sends) was falling through to the unrelated
+    # connect-existing-account branch below, corrupting a dev_users
+    # update with the literal user_id "login" and redirecting to
+    # /settings instead of minting a JWT and landing on /oauth-finish.
+    # Iter 113's own docstring already promised "both signup: and
+    # login: prefixes use the same OAuth-first auth path" — this
+    # restores that for real.
+    if flow in ("signup", "login"):
         # Pull a verified email if GitHub hid it on the public profile.
         if not gh_email:
             gh_email = await _gh_primary_email(token)
