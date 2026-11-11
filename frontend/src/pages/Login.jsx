@@ -250,7 +250,7 @@ export default function Login() {
             data-testid="login-google-oauth"
             onClick={() => {
               const base = window.location.origin;
-              window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=login`;
+              window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=login&next=${encodeURIComponent(next)}`;
             }}
             style={{
               padding: "12px 14px", marginBottom: 12,
@@ -285,15 +285,18 @@ export default function Login() {
                 // Iter 113 — pass intent=login so backend redirects to
                 // /login (not /signup) if the user clicks Cancel on
                 // GitHub's consent screen.
+                // 2026-11-11 — Fix 7: carry ?next= through so a
+                // signup/login started from /harness returns there
+                // instead of always landing on /dashboard.
                 const url = withFunnelParams(
-                  `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login`,
+                  `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login&next=${encodeURIComponent(next)}`,
                   "login",
                 );
                 window.location.href = url;
               } catch {
                 // Telemetry lib failure MUST NOT block the OAuth flow.
                 const base = window.location.origin;
-                window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login`;
+                window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login&next=${encodeURIComponent(next)}`;
               }
             }}
             style={{

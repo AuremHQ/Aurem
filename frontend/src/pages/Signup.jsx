@@ -186,7 +186,7 @@ export default function Signup() {
             data-testid="signup-google-oauth"
             onClick={() => {
               const base = window.location.origin;
-              window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=signup`;
+              window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=signup&next=${encodeURIComponent(next)}`;
             }}
             style={{
               padding: "12px 14px", marginBottom: 12,
@@ -214,14 +214,15 @@ export default function Signup() {
                 // Live origin keeps callback aligned with whichever
                 // host (preview / auremcto.com / custom) loaded the app.
                 const base = window.location.origin;
+                // 2026-11-11 — Fix 7: carry ?next= through.
                 const url = withFunnelParams(
-                  `${base}/api/aurem-dev/github/oauth/connect?signup=1`,
+                  `${base}/api/aurem-dev/github/oauth/connect?signup=1&next=${encodeURIComponent(next)}`,
                   "signup",
                 );
                 window.location.href = url;
               } catch {
                 const base = window.location.origin;
-                window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1`;
+                window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&next=${encodeURIComponent(next)}`;
               }
             }}
             style={{
