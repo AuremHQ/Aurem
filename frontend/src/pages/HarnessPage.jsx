@@ -30,6 +30,33 @@ import { Link } from "react-router-dom";
 import { api, getToken, healthApi } from "../lib/api";
 import MarketingNav from "../components/marketing/MarketingNav";
 
+// 2026-11-11 — founder asked for the exact same background treatment
+// as the ORA homepage (Landing.jsx's `.ora-landing` class: layered
+// radial-gradient glows + `/aurem-bg.webp` hero image + mobile
+// variant). Extracted here as its own scoped class (not reusing
+// `.ora-landing` directly — that class also carries ~70 unrelated
+// homepage-specific rules this page doesn't want) so only the
+// background itself is shared, pixel-identical.
+const HARNESS_BG_CSS = `
+.aurem-harness-page {
+  background:
+    radial-gradient(900px 540px at 18% -8%,  rgba(245,158,11,0.20), transparent 70%),
+    radial-gradient(820px 480px at 86% 6%,   rgba(99,102,241,0.14), transparent 65%),
+    radial-gradient(700px 520px at 50% 110%, rgba(245,158,11,0.10), transparent 70%),
+    linear-gradient(180deg, rgba(10,14,26,0.78) 0%, rgba(5,8,17,0.92) 100%),
+    url('/aurem-bg.webp') center top / cover no-repeat,
+    #050811;
+  background-attachment: fixed, fixed, fixed, fixed, fixed, fixed;
+  min-height: 100vh;
+}
+@media (max-width: 720px) {
+  .aurem-harness-page { background-image:
+    radial-gradient(700px 420px at 50% -4%, rgba(245,158,11,0.18), transparent 70%),
+    linear-gradient(180deg, rgba(10,14,26,0.82) 0%, rgba(5,8,17,0.94) 100%),
+    url('/aurem-bg-mobile.webp') center top / cover no-repeat; }
+}
+`;
+
 const ANCHORS = [
   ["what-it-is", "What it is"],
   ["control", "Control"],
@@ -242,7 +269,8 @@ export default function HarnessPage() {
 
   if (flagEnabled === null) {
     return (
-      <div data-testid="harness-page-loading">
+      <div data-testid="harness-page-loading" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
         <MarketingNav minimal />
         <div style={pageStyle}>Loading…</div>
       </div>
@@ -251,7 +279,8 @@ export default function HarnessPage() {
 
   if (!flagEnabled) {
     return (
-      <div data-testid="harness-page-not-available">
+      <div data-testid="harness-page-not-available" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
         <MarketingNav minimal />
         <div style={pageStyle}>Aurem Loop isn&apos;t available yet.</div>
       </div>
@@ -260,7 +289,8 @@ export default function HarnessPage() {
 
   if (contentState === "loading") {
     return (
-      <div data-testid="harness-page-content-loading">
+      <div data-testid="harness-page-content-loading" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
         <MarketingNav minimal />
         <div style={pageStyle}>Loading…</div>
       </div>
@@ -269,7 +299,8 @@ export default function HarnessPage() {
 
   if (contentState !== "ready" || !content) {
     return (
-      <div data-testid="harness-page-content-unavailable">
+      <div data-testid="harness-page-content-unavailable" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
         <MarketingNav minimal />
         <div style={pageStyle}>Aurem Loop&apos;s page content is temporarily unavailable — check back shortly.</div>
       </div>
@@ -281,7 +312,8 @@ export default function HarnessPage() {
   const forks = liveStats?.forks;
 
   return (
-    <div data-testid="harness-page">
+    <div data-testid="harness-page" className="aurem-harness-page">
+      <style>{HARNESS_BG_CSS}</style>
       <MarketingNav minimal />
       <div style={pageStyle}>
         <nav data-testid="harness-anchor-nav" style={anchorNavStyle} aria-label="Page sections">

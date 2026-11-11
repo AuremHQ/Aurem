@@ -12,6 +12,14 @@ Founder shared a screenshot with red circles around "Features"/"Integrations"/"R
 - Verified: `HarnessPage.test.jsx` (14 tests) + `OraGuideMascot` suites (17 tests) still pass, eslint clean, screenshots confirm `/harness` nav now shows only logo/Pricing/Sign in/Start free while the homepage's full nav (Features/Pricing/Integrations/Reviews/Bug Hunt) is untouched.
 - **Status: live in preview only.** Founder needs to redeploy for this to reach `auremcto.com` — it was made after the most recent production deploy completed.
 
+## /harness page — homepage background applied (2026-11-11, DONE in preview, needs redeploy for production)
+
+Founder asked for the exact same background as the ORA homepage (Landing.jsx's `.ora-landing`: layered radial-gradient glows + `/aurem-bg.webp` hero image + `/aurem-bg-mobile.webp` mobile variant) to also render on `/harness`, which previously had a flat solid background.
+
+- Extracted the background-only rules into a new scoped class `.aurem-harness-page` (not reusing `.ora-landing` directly — that class also carries ~70 unrelated homepage-specific rules) in `HarnessPage.jsx`, applied to all 5 outer wrapper divs (same pattern as the `minimal` nav fix above).
+- Verified: `HarnessPage.test.jsx` (14 tests) still pass, eslint clean, screenshot confirms pixel-matching background (same gradient glow + geometric hero image) between `/` and `/harness`.
+- **Status: live in preview only** — needs a redeploy to reach production, same as the nav fix above.
+
 ## Deployment blocker fixed — cto_open_findings dedup ran unconditionally on every boot (2026-11-11, DONE)
 
 Founder shared real production pod logs (brief `/health` upstream timeouts at cold-start, Resend 401, Redis rate-limited) and asked for a deployment-agent scan + code-level fix (no Docker changes). `deployment_agent` found one real BLOCKER (unrelated to the log symptoms, which were self-resolving cold-start noise / pre-existing third-party issues):
