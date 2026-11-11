@@ -27,6 +27,11 @@
  * product links (Features/Integrations/Reviews/Bug Hunt) don't apply
  * there. Pass `<MarketingNav minimal />` to hide just those 4 and
  * keep the logo + Pricing + Sign in + Start free as-is.
+ *
+ * `logoText`/`logoSubtext` props (2026-11-11) — override the
+ * "ORA"/"by Aurem" wordmark for a page under a different name, e.g.
+ * `<MarketingNav logoText="Aurem Loop" logoSubtext="Harness" />` on
+ * /harness. Same orange accent + muted-subtext styling either way.
  */
 import React from "react";
 import { Link } from "react-router-dom";
@@ -69,7 +74,7 @@ const CSS = `
 }
 `;
 
-export default function MarketingNav({ minimal = false }) {
+export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem" }) {
   return (
     <nav className="aurem-marketing-nav" data-testid="ora-nav">
       <style>{CSS}</style>
@@ -78,7 +83,7 @@ export default function MarketingNav({ minimal = false }) {
           <source srcSet="/ora-icon.webp 1x, /ora-icon@2x.webp 2x" type="image/webp" />
           <img src="/ora-icon.png" srcSet="/ora-icon.png 1x, /ora-icon@2x.png 2x" alt="ORA" className="mn-logo-img" width="38" height="38" decoding="async" />
         </picture>
-        <div className="mn-logo-text">ORA<span> by Aurem</span></div>
+        <div className="mn-logo-text">{logoText}<span> {logoSubtext}</span></div>
       </Link>
       <div className="mn-links">
         {!minimal && (

@@ -271,7 +271,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-loading" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
         <div style={pageStyle}>Loading…</div>
       </div>
     );
@@ -281,7 +281,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-not-available" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
         <div style={pageStyle}>Aurem Loop isn&apos;t available yet.</div>
       </div>
     );
@@ -291,7 +291,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-content-loading" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
         <div style={pageStyle}>Loading…</div>
       </div>
     );
@@ -301,7 +301,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-content-unavailable" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
         <div style={pageStyle}>Aurem Loop&apos;s page content is temporarily unavailable — check back shortly.</div>
       </div>
     );
@@ -314,7 +314,7 @@ export default function HarnessPage() {
   return (
     <div data-testid="harness-page" className="aurem-harness-page">
       <style>{HARNESS_BG_CSS}</style>
-      <MarketingNav minimal />
+      <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
       <div style={pageStyle}>
         <nav data-testid="harness-anchor-nav" style={anchorNavStyle} aria-label="Page sections">
           {ANCHORS.map(([id, label]) => (

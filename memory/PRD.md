@@ -20,6 +20,14 @@ Founder asked for the exact same background as the ORA homepage (Landing.jsx's `
 - Verified: `HarnessPage.test.jsx` (14 tests) still pass, eslint clean, screenshot confirms pixel-matching background (same gradient glow + geometric hero image) between `/` and `/harness`.
 - **Status: live in preview only** — needs a redeploy to reach production, same as the nav fix above.
 
+## /harness page — header wordmark changed to "Aurem Loop" / "Harness" (2026-11-11, DONE in preview, needs redeploy for production)
+
+Founder asked to change the shared nav's "ORA" / "by Aurem" wordmark to "Aurem Loop" (same orange accent color) / "Harness" (same muted subtext color) specifically on `/harness`.
+
+- `MarketingNav.jsx` now takes optional `logoText`/`logoSubtext` props (default "ORA"/"by Aurem", so every other page is unaffected); `HarnessPage.jsx`'s 5 render sites pass `logoText="Aurem Loop" logoSubtext="Harness"`.
+- Verified: 25 tests pass (`HarnessPage.test.jsx` + both `Landing.*` nav-dependent suites), eslint clean, screenshots confirm `/harness` shows "Aurem Loop" (orange) / "Harness" (muted) while `/` still shows "ORA" / "by Aurem" unchanged.
+- **Status: live in preview only** — needs a redeploy to reach production.
+
 ## Deployment blocker fixed — cto_open_findings dedup ran unconditionally on every boot (2026-11-11, DONE)
 
 Founder shared real production pod logs (brief `/health` upstream timeouts at cold-start, Resend 401, Redis rate-limited) and asked for a deployment-agent scan + code-level fix (no Docker changes). `deployment_agent` found one real BLOCKER (unrelated to the log symptoms, which were self-resolving cold-start noise / pre-existing third-party issues):
