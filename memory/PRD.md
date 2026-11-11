@@ -1,6 +1,16 @@
 # Aurem / ORA — Product Requirements and Current Handoff
 
-Last updated: 2026-11-11 (deployment blocker fix — destructive DB cleanup on every boot — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+Last updated: 2026-11-11 (harness page nav cleanup — see below). The previous 9,681-line combined history is preserved without deletion in `PRD_ARCHIVE_2026_09_22.md`.
+
+## /harness page — removed irrelevant nav links + help mascot (2026-11-11, DONE in preview, needs redeploy for production)
+
+Founder shared a screenshot with red circles around "Features"/"Integrations"/"Reviews"/"Bug Hunt" in the top nav and the orange "Need help?" mascot bubble (bottom-right, visible when logged in) on `/harness`, asking to remove them — these are ORA-SaaS-specific surfaces that don't belong on Aurem Loop's standalone free-tool page.
+
+- **`frontend/src/components/marketing/MarketingNav.jsx`** — added a `minimal` prop (default false, so every other page using this shared header is unaffected). When `minimal`, hides Features/Integrations/Reviews/Bug Hunt; keeps logo, **Pricing** (not circled, kept as-is), Sign in, Start free.
+- **`frontend/src/pages/HarnessPage.jsx`** — all 5 `<MarketingNav />` render sites (loading/flag-off/content-loading/content-unavailable/ready states) now pass `minimal`.
+- **`frontend/src/components/GlobalHelpFAB.jsx`** — added `/harness` to the shared `HIDE_PREFIXES` list (also used by `OraGuideMascot.jsx` via the exported `shouldHide()`), so the "Need help?" FAB/mascot never renders on `/harness` for a logged-in visitor either.
+- Verified: `HarnessPage.test.jsx` (14 tests) + `OraGuideMascot` suites (17 tests) still pass, eslint clean, screenshots confirm `/harness` nav now shows only logo/Pricing/Sign in/Start free while the homepage's full nav (Features/Pricing/Integrations/Reviews/Bug Hunt) is untouched.
+- **Status: live in preview only.** Founder needs to redeploy for this to reach `auremcto.com` — it was made after the most recent production deploy completed.
 
 ## Deployment blocker fixed — cto_open_findings dedup ran unconditionally on every boot (2026-11-11, DONE)
 

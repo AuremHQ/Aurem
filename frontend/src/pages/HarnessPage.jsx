@@ -243,7 +243,7 @@ export default function HarnessPage() {
   if (flagEnabled === null) {
     return (
       <div data-testid="harness-page-loading">
-        <MarketingNav />
+        <MarketingNav minimal />
         <div style={pageStyle}>Loading…</div>
       </div>
     );
@@ -252,7 +252,7 @@ export default function HarnessPage() {
   if (!flagEnabled) {
     return (
       <div data-testid="harness-page-not-available">
-        <MarketingNav />
+        <MarketingNav minimal />
         <div style={pageStyle}>Aurem Loop isn&apos;t available yet.</div>
       </div>
     );
@@ -261,7 +261,7 @@ export default function HarnessPage() {
   if (contentState === "loading") {
     return (
       <div data-testid="harness-page-content-loading">
-        <MarketingNav />
+        <MarketingNav minimal />
         <div style={pageStyle}>Loading…</div>
       </div>
     );
@@ -270,7 +270,7 @@ export default function HarnessPage() {
   if (contentState !== "ready" || !content) {
     return (
       <div data-testid="harness-page-content-unavailable">
-        <MarketingNav />
+        <MarketingNav minimal />
         <div style={pageStyle}>Aurem Loop&apos;s page content is temporarily unavailable — check back shortly.</div>
       </div>
     );
@@ -282,7 +282,7 @@ export default function HarnessPage() {
 
   return (
     <div data-testid="harness-page">
-      <MarketingNav />
+      <MarketingNav minimal />
       <div style={pageStyle}>
         <nav data-testid="harness-anchor-nav" style={anchorNavStyle} aria-label="Page sections">
           {ANCHORS.map(([id, label]) => (

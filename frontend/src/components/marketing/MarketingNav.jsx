@@ -21,6 +21,12 @@
  * `/#features` etc. so they work correctly from any page — Landing.jsx
  * has a small on-mount effect that scrolls to `location.hash` when
  * you land there from elsewhere (see Landing.jsx `useLocation` effect).
+ *
+ * `minimal` prop (2026-11-11) — /harness is a different, free,
+ * open-source tool, not the ORA SaaS product, so the ORA-specific
+ * product links (Features/Integrations/Reviews/Bug Hunt) don't apply
+ * there. Pass `<MarketingNav minimal />` to hide just those 4 and
+ * keep the logo + Pricing + Sign in + Start free as-is.
  */
 import React from "react";
 import { Link } from "react-router-dom";
@@ -63,7 +69,7 @@ const CSS = `
 }
 `;
 
-export default function MarketingNav() {
+export default function MarketingNav({ minimal = false }) {
   return (
     <nav className="aurem-marketing-nav" data-testid="ora-nav">
       <style>{CSS}</style>
@@ -75,12 +81,18 @@ export default function MarketingNav() {
         <div className="mn-logo-text">ORA<span> by Aurem</span></div>
       </Link>
       <div className="mn-links">
-        <Link className="mn-link" to="/#features" data-testid="nav-features">Features</Link>
+        {!minimal && (
+          <Link className="mn-link" to="/#features" data-testid="nav-features">Features</Link>
+        )}
         <Link className="mn-link" to="/#pricing" data-testid="nav-pricing">Pricing</Link>
-        <Link className="mn-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
-        <Link className="mn-link" to="/#reviews" data-testid="nav-reviews">Reviews</Link>
-        {(!getToken() || isAdminOrFounder(getUser())) && (
-          <Link className="mn-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
+        {!minimal && (
+          <>
+            <Link className="mn-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
+            <Link className="mn-link" to="/#reviews" data-testid="nav-reviews">Reviews</Link>
+            {(!getToken() || isAdminOrFounder(getUser())) && (
+              <Link className="mn-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
+            )}
+          </>
         )}
         <Link className="mn-link" to="/login" data-testid="nav-login">Sign in</Link>
         <Link className="mn-cta" to="/signup" data-testid="nav-signup-cta">Start free</Link>
