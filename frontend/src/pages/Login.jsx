@@ -229,12 +229,11 @@ export default function Login() {
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign in</span>
           <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>
-            {isHarness ? "Welcome back." : "Welcome back, builder."}
+            {isHarness ? "Your code. Your PC. Your model." : "Welcome back, builder."}
           </h1>
           {isHarness ? (
             <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              Sign in to continue to <strong>Aurem Loop</strong>
-              <span style={{ color: "var(--text-dim)", opacity: 0.7 }}> — the same account also works for ORA</span>.
+              With weight-space refine loop. Your local model improves itself on each run.
             </p>
           ) : (
             <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
@@ -266,6 +265,7 @@ export default function Login() {
           <RobotGuideKeyframes />
           <RobotGuide
             testid="login-robot-guide"
+            brand={isHarness ? "AUREM LOOP" : "ORA"}
             kind={error ? "error" : "info"}
             message={
               error

@@ -166,10 +166,12 @@ export default function Signup() {
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign up</span>
           <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>
-            {isHarness ? "One account for Aurem Loop" : "Start building, production-ready from day one"}
+            {isHarness ? "Your code. Your PC. Your model." : "Start building, production-ready from day one"}
           </h1>
           <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            {isHarness ? "Free to use locally — also unlocks ORA." : freeOfferShortLine()}
+            {isHarness
+              ? "With weight-space refine loop. Your local model improves itself on each run."
+              : freeOfferShortLine()}
           </p>
         </div>
 
@@ -196,6 +198,7 @@ export default function Signup() {
           <RobotGuideKeyframes />
           <RobotGuide
             testid="signup-robot-guide"
+            brand={isHarness ? "AUREM LOOP" : "ORA"}
             kind={error ? "error" : "info"}
             message={
               error

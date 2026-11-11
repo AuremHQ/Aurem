@@ -75,6 +75,27 @@ describe("Login — Fix 8 harness branding", () => {
     renderAt("/login", Login);
     expect(screen.getByTestId("login-to-signup")).toHaveAttribute("href", "/signup");
   });
+
+  // 2026-11-11 — founder's screenshots caught two spots Fix 8 missed:
+  // the RobotGuide mascot's own corner label still hardcoded "ORA
+  // GUIDE" even on the harness-branded page, and the headline still
+  // read old copy instead of the agreed hero wording.
+  it("the robot guide's corner label reads AUREM LOOP, not ORA, when ?next=/harness", () => {
+    renderAt("/login?next=%2Fharness", Login);
+    expect(screen.getByTestId("login-robot-guide")).toHaveTextContent("AUREM LOOP GUIDE");
+    expect(screen.getByTestId("login-robot-guide")).not.toHaveTextContent("ORA GUIDE");
+  });
+
+  it("the robot guide's corner label stays ORA GUIDE with no ?next=/harness", () => {
+    renderAt("/login", Login);
+    expect(screen.getByTestId("login-robot-guide")).toHaveTextContent("ORA GUIDE");
+  });
+
+  it("shows the agreed hero headline on the harness-branded login page", () => {
+    renderAt("/login?next=%2Fharness", Login);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your code. Your PC. Your model.");
+    expect(screen.getByText(/weight-space refine loop/i)).toBeInTheDocument();
+  });
 });
 
 describe("Signup — Fix 8 harness branding", () => {
@@ -97,5 +118,22 @@ describe("Signup — Fix 8 harness branding", () => {
   it("carries ?next= through the 'Already have an account?' cross-link to /login", () => {
     renderAt("/signup?next=%2Fharness", Signup);
     expect(screen.getByTestId("signup-to-login")).toHaveAttribute("href", "/login?next=%2Fharness");
+  });
+
+  it("the robot guide's corner label reads AUREM LOOP, not ORA, when ?next=/harness", () => {
+    renderAt("/signup?next=%2Fharness", Signup);
+    expect(screen.getByTestId("signup-robot-guide")).toHaveTextContent("AUREM LOOP GUIDE");
+    expect(screen.getByTestId("signup-robot-guide")).not.toHaveTextContent("ORA GUIDE");
+  });
+
+  it("the robot guide's corner label stays ORA GUIDE with no ?next=/harness", () => {
+    renderAt("/signup", Signup);
+    expect(screen.getByTestId("signup-robot-guide")).toHaveTextContent("ORA GUIDE");
+  });
+
+  it("shows the agreed hero headline on the harness-branded signup page", () => {
+    renderAt("/signup?next=%2Fharness", Signup);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your code. Your PC. Your model.");
+    expect(screen.getByText(/weight-space refine loop/i)).toBeInTheDocument();
   });
 });

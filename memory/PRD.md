@@ -60,6 +60,16 @@ Founder reported users landing on /login or /signup from the Aurem Loop download
 - Verified by testing_agent (100% on all requested checks, including 2 real end-to-end account flows — email signup and email login both landing on `/harness` with the new branding intact): 8 new frontend tests in `Login.Signup.harnessBranding.test.jsx` (all passing).
 - **Status: live in preview only** — needs a redeploy to reach production.
 
+## Fix 8 gap closed — robot mascot label + agreed hero headline (2026-11-11, DONE in preview, needs redeploy for production)
+
+Teji's screenshots (Nov 11 08:45–08:46) showed header/robot-box/footer still reading "ORA by Aurem" on the harness-branded auth page. Checked both possibilities directly:
+
+- **Header + footer were already correct in preview** (confirmed live via screenshot of `/login?next=/harness` on the preview URL: logo reads "Aurem Loop", footer reads "Aurem Loop, made by AUREM") — Teji's screenshot showing the old branding for those two was almost certainly taken on **production**, which has never received this Fix 8 deploy. Not a code gap.
+- **Real gap found and fixed:** the `RobotGuide.jsx` mascot's own corner label (top-left of the amber box) was hardcoded `"ORA GUIDE"` / `"ORA · HEADS UP"` / `"ORA · ALL SET"` inside `paletteFor()`, with no way for a caller to override it — so it kept reading "ORA GUIDE" even on the fully Aurem Loop-branded page. Added a new optional `brand` prop (defaults to `"ORA"`, every other caller of this shared component across the app is unaffected); `Login.jsx`/`Signup.jsx` now pass `brand={isHarness ? "AUREM LOOP" : "ORA"}`, so the box reads **"AUREM LOOP GUIDE"** on the harness-branded page.
+- **Hero headline updated per Teji's decision (Nov 11 08:57):** harness-branded `/login` and `/signup` now both show headline **"Your code. Your PC. Your model."** + sub-line **"With weight-space refine loop. Your local model improves itself on each run."**, replacing the previous placeholder copy ("Welcome back." / "One account for Aurem Loop"). Default ORA copy on both pages is untouched.
+- Verified: 6 new tests added to `Login.Signup.harnessBranding.test.jsx` (now 14/14 passing — robot label switches correctly both ways, headline text asserted on both pages), eslint clean, screenshot of `/login?next=/harness` on preview confirms header/robot-box/footer/headline all now read Aurem Loop consistently.
+- **Status: live in preview only** — still needs the same redeploy as the rest of Fix 7/8 to reach production, which is almost certainly what Teji's screenshot was actually showing for the header/footer.
+
 ## Fix 7 confirmation — found + fixed a real GitHub login-intent OAuth bug (2026-11-11, DONE in preview, needs redeploy for production)
 
 Teji asked for the two outstanding confirmations from Fix 7/8: (1) real-account GitHub/Google OAuth landing on `/harness`, (2) download gated on login end-to-end. Honesty note: this sandbox cannot drive a real github.com/accounts.google.com consent screen (needs a real human + real browser + real account — no automated tool here can do that without live credentials). What WAS done instead, and it caught a real bug:
