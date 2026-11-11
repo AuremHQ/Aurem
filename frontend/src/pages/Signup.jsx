@@ -28,7 +28,10 @@ export default function Signup() {
   // arriving via ?next=/harness came from Aurem Loop's download
   // button, not ORA, so this page re-brands itself "Aurem Loop"
   // throughout. Same account/credentials either way.
-  const isHarness = next === "/harness" || next.startsWith("/harness");
+  const isHarness = next === "/harness" || next.startsWith("/harness/")
+    || next.startsWith("/harness?") || next.startsWith("/harness#");
+  // 2026-11-11 testing-agent finding — see Login.jsx's identical comment.
+  const crossLinkQuery = next !== "/dashboard" ? `?next=${encodeURIComponent(next)}` : "";
 
   usePageMeta({
     title: isHarness ? "Sign up · Aurem Loop" : signupFreeOfferTitle(),
@@ -154,7 +157,7 @@ export default function Signup() {
     <AuthShell
       brand={isHarness ? "Aurem Loop" : "ORA by Aurem"}
       secondaryCta={
-        <Link to="/login" data-testid="auth-nav-login" className="btn-ghost" style={{ fontSize: 12 }}>
+        <Link to={`/login${crossLinkQuery}`} data-testid="auth-nav-login" className="btn-ghost" style={{ fontSize: 12 }}>
           Sign in
         </Link>
       }
@@ -435,7 +438,7 @@ export default function Signup() {
             textAlign: "center", fontSize: 13, color: "var(--text-dim)",
           }}>
             Already have an account?{" "}
-            <Link to="/login" data-testid="signup-to-login">Sign in →</Link>
+            <Link to={`/login${crossLinkQuery}`} data-testid="signup-to-login">Sign in →</Link>
           </div>
 
           <div

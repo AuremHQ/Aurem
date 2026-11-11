@@ -28,7 +28,16 @@ export default function Login() {
   // (i.e. from ORA itself) keeps the existing "ORA by Aurem" branding
   // exactly as before — this is an ADDITIVE branding layer, same one
   // account/credentials either way.
-  const isHarness = next === "/harness" || next.startsWith("/harness");
+  const isHarness = next === "/harness" || next.startsWith("/harness/")
+    || next.startsWith("/harness?") || next.startsWith("/harness#");
+  // 2026-11-11 testing-agent finding: the login<->signup cross-links
+  // were hardcoded to plain /signup and /login, dropping `next` — a
+  // harness visitor without an account who clicked "Get started"
+  // landed back on the plain ORA-branded /signup and, after signing
+  // up, on /dashboard instead of /harness. Append `?next=` whenever
+  // it isn't the default, so switching forms (or signing up from
+  // here) keeps both the branding AND the eventual redirect intact.
+  const crossLinkQuery = next !== "/dashboard" ? `?next=${encodeURIComponent(next)}` : "";
 
   usePageMeta({
     title: isHarness ? "Sign in · Aurem Loop" : "Sign in · ORA by Aurem",
@@ -178,7 +187,7 @@ export default function Login() {
     <AuthShell
       brand={isHarness ? "Aurem Loop" : "ORA by Aurem"}
       secondaryCta={
-        <Link to="/signup" data-testid="auth-nav-signup" className="btn-primary" style={{ fontSize: 12 }}>
+        <Link to={`/signup${crossLinkQuery}`} data-testid="auth-nav-signup" className="btn-primary" style={{ fontSize: 12 }}>
           Get started
         </Link>
       }
@@ -595,7 +604,7 @@ export default function Login() {
             textAlign: "center", fontSize: 13, color: "var(--text-dim)",
           }}>
             No account yet?{" "}
-            <Link to="/signup" data-testid="login-to-signup">{loginFreeOfferCta()}</Link>
+            <Link to={`/signup${crossLinkQuery}`} data-testid="login-to-signup">{loginFreeOfferCta()}</Link>
           </div>
 
           <div

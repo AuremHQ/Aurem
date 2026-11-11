@@ -1,0 +1,39 @@
+{
+  "summary": "Fix 8 (Aurem Loop branding toggle on /login and /signup) frontend-only verification. Tested 8 URL variants on desktop, ran real email signup and login with ?next=/harness, spot-checked the outgoing Google and GitHub OAuth URLs on both pages, checked a 390px mobile layout, and took a quick look at /harness. All requested checks pass. Found 2 non-blocking issues: (1) the harness test uses next.startsWith('/harness'), so /harnessfoo also gets the Aurem Loop branding; (2) the login<->signup cross-links drop ?next=/harness, which affects the harness funnel.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login.jsx / Signup.jsx isHarness", "issue": "next.startsWith('/harness') matches /harnessfoo, /harness-anything. Verified: /login?next=/harnessfoo shows Aurem Loop branding. The spec says only an exact /harness or a /harness/* sub-path should trigger it. Fix: next === '/harness' || next.startsWith('/harness/') (ideally also allow '/harness?' and '/harness#').", "selector": "[data-testid=auth-logo]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Harness funnel: /login?next=/harness -> 'Get started' / 'Claim your free scan' -> signup (and the reverse)", "issue": "Cross-links are hardcoded as /signup and /login with no ?next, so they drop it. A harness visitor without an account who clicks 'Get started' lands on the ORA-branded /signup, and after signup goes to /dashboard instead of /harness. This brings back the 'why did it send me to ORA' confusion Fix 8 targets. Existing behaviour, not a regression from this round, but it belongs to the same funnel. Fix: when next != '/dashboard', append ?next=${encodeURIComponent(next)} to these links.", "affected_selectors": ["[data-testid=auth-nav-signup]", "[data-testid=login-to-signup]", "[data-testid=auth-nav-login]", "[data-testid=signup-to-login]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Tighten isHarness to an exact '/harness' or a '/harness/' sub-path (LOW).",
+    "Keep ?next on the login<->signup cross-links (auth-nav-signup, login-to-signup, auth-nav-login, signup-to-login) so the Aurem Loop branding and the /harness redirect carry over when users switch between sign in and sign up (MEDIUM, funnel UX)."
+  ],
+  "critical_code_review_comments": [
+    "An admin-set welcomeMsg from /auth/robot-guide replaces the harness robot message (welcomeMsg || (isHarness ? ...)). It is empty right now, but if an admin sets a login/signup message that mentions ORA, it will show on harness-branded pages. Consider using the harness copy first when isHarness is true.",
+    "Login.jsx is 613 lines, close to the 700-line split threshold."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% of requested checks (2 minor out-of-spec findings above)"},
+  "verified": [
+    "/login?next=/harness and /login?next=/harness/download: logo 'Aurem Loop', h1 'Welcome back.', subcopy mentions Aurem Loop + ORA, login-harness-guidelines visible, legal line '...Aurem Loop, made by AUREM', robot message mentions the Aurem Loop download, title 'Sign in · Aurem Loop', 'ORA by Aurem' not found anywhere in the page text.",
+    "/signup?next=/harness: logo 'Aurem Loop', h1 'One account for Aurem Loop', signup-harness-guidelines visible, legal line '...Aurem Loop...', robot message mentions Aurem Loop, 'ORA by Aurem' not found in the page text.",
+    "/login, /login?next=/dashboard, /signup, /signup?next=/settings: ORA by Aurem logo, no guidelines element, ORA legal line, original headlines and robot messages unchanged.",
+    "Email signup (regr70-s9g2ydmp@example.com) from /signup?next=/harness: account created, aurem_token stored, landed on /harness.",
+    "Email login with test@aurem.dev from /login?next=/harness: landed on /harness.",
+    "OAuth URLs all include next=%2Fharness: google start (intent=login and intent=signup) and github connect (login and signup).",
+    "Mobile 390px: guidelines box is 350px wide, scrollWidth equals innerWidth (390), no overflow on either page.",
+    "/harness renders normally (nav, hero, waitlist form, demo video)."
+  ],
+  "seed_data_creation": "Created 1 throwaway account via the real signup UI: regr70-s9g2ydmp@example.com / Regr70Test!2026x (name TEST_Regr70). Not deleted; safe to remove.",
+  "test_credentials": "test@aurem.dev / AuremTest2026! (unchanged)",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Fix 8 branding verified. If the main agent fixes the isHarness check or the cross-link ?next issue, retest: /login?next=/harnessfoo should show ORA branding, and clicking auth-nav-signup on /login?next=/harness should open /signup?next=%2Fharness with Aurem Loop branding."
+}

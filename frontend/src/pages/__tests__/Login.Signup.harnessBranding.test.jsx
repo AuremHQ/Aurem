@@ -59,6 +59,22 @@ describe("Login — Fix 8 harness branding", () => {
     expect(screen.getByTestId("login-legal-line")).toHaveTextContent("Aurem Loop");
     expect(screen.getByTestId("login-legal-line")).not.toHaveTextContent("ORA by Aurem");
   });
+
+  it("does NOT treat a path that merely starts with /harness (e.g. /harnessfoo) as the harness flow", () => {
+    renderAt("/login?next=%2Fharnessfoo", Login);
+    expect(screen.getByTestId("auth-logo")).toHaveTextContent("ORA by Aurem");
+    expect(screen.queryByTestId("login-harness-guidelines")).not.toBeInTheDocument();
+  });
+
+  it("carries ?next= through the 'No account yet?' cross-link to /signup (testing-agent finding)", () => {
+    renderAt("/login?next=%2Fharness", Login);
+    expect(screen.getByTestId("login-to-signup")).toHaveAttribute("href", "/signup?next=%2Fharness");
+  });
+
+  it("the 'No account yet?' cross-link has no ?next= suffix for the default /dashboard case", () => {
+    renderAt("/login", Login);
+    expect(screen.getByTestId("login-to-signup")).toHaveAttribute("href", "/signup");
+  });
 });
 
 describe("Signup — Fix 8 harness branding", () => {
@@ -76,5 +92,10 @@ describe("Signup — Fix 8 harness branding", () => {
     expect(screen.getByTestId("signup-harness-guidelines")).toBeInTheDocument();
     expect(screen.getByTestId("signup-legal-line")).toHaveTextContent("Aurem Loop");
     expect(screen.getByTestId("signup-legal-line")).not.toHaveTextContent("ORA by Aurem");
+  });
+
+  it("carries ?next= through the 'Already have an account?' cross-link to /login", () => {
+    renderAt("/signup?next=%2Fharness", Signup);
+    expect(screen.getByTestId("signup-to-login")).toHaveAttribute("href", "/login?next=%2Fharness");
   });
 });

@@ -50,6 +50,16 @@ Founder confirmed the standing decision: ORA keeps its single signup/signin, no 
 - **Post-testing fix:** `HarnessPage.jsx`'s page-status fetch now retries once (1.2s delay) before falling back to "not available" — a transient network blip/rate-limit was previously treated identically to a real flag-off state.
 - **Status: live in preview only** — needs a redeploy to reach production.
 
+## Fix 8 — Signup/signin brands as "Aurem Loop" when coming from /harness (2026-11-11, DONE in preview, needs redeploy for production)
+
+Founder reported users landing on /login or /signup from the Aurem Loop download button saw "ORA by Aurem" everywhere, which looked like a wrong-product redirect.
+
+- **`frontend/src/pages/Login.jsx` / `Signup.jsx`** — `isHarness = next === "/harness" || next.startsWith("/harness/" | "/harness?" | "/harness#")` (tightened after a testing-agent finding — a plain `.startsWith("/harness")` would have also matched an unrelated `/harnessfoo` path). When true: header logo reads "Aurem Loop" (via `AuthShell`'s new `brand` prop, default unchanged), headline/subcopy/robot-guide message/footer legal line all switch to Aurem Loop-specific copy, and a new plain-language guidelines box (`login-harness-guidelines` / `signup-harness-guidelines`) explains the account is free, runs locally, returns to the download page, and also works for ORA. Default case (no `?next=/harness`) is byte-for-byte unchanged.
+- **`frontend/src/components/AuthShell.jsx`** — new optional `brand` prop, defaults to `"ORA by Aurem"` so every other caller is unaffected.
+- **Post-testing fix:** the login↔signup cross-links (`login-to-signup`, `signup-to-login`, and the top-nav `auth-nav-signup`/`auth-nav-login`) were dropping `?next=` entirely — a harness visitor without an account clicking "Get started" lost both the branding AND the eventual /harness redirect. Now append `?next=...` whenever it isn't the default `/dashboard`.
+- Verified by testing_agent (100% on all requested checks, including 2 real end-to-end account flows — email signup and email login both landing on `/harness` with the new branding intact): 8 new frontend tests in `Login.Signup.harnessBranding.test.jsx` (all passing).
+- **Status: live in preview only** — needs a redeploy to reach production.
+
 ## Deployment blocker fixed — cto_open_findings dedup ran unconditionally on every boot (2026-11-11, DONE)
 
 Founder shared real production pod logs (brief `/health` upstream timeouts at cold-start, Resend 401, Redis rate-limited) and asked for a deployment-agent scan + code-level fix (no Docker changes). `deployment_agent` found one real BLOCKER (unrelated to the log symptoms, which were self-resolving cold-start noise / pre-existing third-party issues):
