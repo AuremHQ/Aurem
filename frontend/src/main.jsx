@@ -14,12 +14,35 @@ import "./utils/errorReporter";
 
 // PWA — register the service worker (sw.js) once the page is settled.
 // Stays no-op in dev (Vite serves over HTTP, browsers refuse SW on http://).
+//
+// 2026-11-12 — durable fix for a production RCA: sw.js already calls
+// self.skipWaiting() on install and self.clients.claim() on activate,
+// so a new SW version takes control of already-open tabs immediately
+// — but nothing told the PAGE to actually use the new JS it just
+// activated for. A returning visitor kept running the OLD bundle
+// (old branding/copy/behavior) in memory until their next full
+// navigation, even though the new SW + cache were already live.
+// `controllerchange` fires once per new SW taking control — including
+// on a visitor's very FIRST-EVER install (no previous controller),
+// where a reload would be pointless (nothing stale to replace). Only
+// attach the reload-once listener when this page was ALREADY
+// controlled by a prior SW, i.e. this is a genuine update, not a
+// first visit.
 if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  const hadControllerAlready = !!navigator.serviceWorker.controller;
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js", { scope: "/" })
       .catch(() => { /* HTTP/non-supported — ignore silently */ });
   });
+  if (hadControllerAlready) {
+    let swRefreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (swRefreshing) return;
+      swRefreshing = true;
+      window.location.reload();
+    });
+  }
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(

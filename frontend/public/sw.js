@@ -20,8 +20,19 @@
  * before this feature existed would see that old bundle once, then
  * get the current one on every request after. Bumping the version
  * here purges every visitor's stale cache on next activate.
+ *
+ * 2026-11-12 — same root cause bit again, this time site-wide: a
+ * production deploy RCA (deployer-agent) confirmed the correct Fix
+ * 7/8 code (harness auth branding, ?next= passthrough, Home-link fix)
+ * was built and live on the server, but returning browsers still
+ * showed the OLD "ORA by Aurem" branding because CACHE_VERSION here
+ * was never bumped for that deploy — stale-while-revalidate kept
+ * serving the cached pre-Fix-7/8 JS bundle. Bumping again. The
+ * durable fix (main.jsx) now also reloads the page ONCE when a new
+ * service worker takes control, so this class of bug can't recur
+ * silently even if a future change forgets to bump this constant.
  */
-const CACHE_VERSION = "aurem-v4";
+const CACHE_VERSION = "aurem-v5";
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
