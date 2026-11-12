@@ -647,7 +647,9 @@ async def oauth_token(
     if redirect_uri and code_doc.get("redirect_uri") and redirect_uri != code_doc["redirect_uri"]:
         raise HTTPException(400, "invalid_grant: redirect_uri mismatch")
 
-    # PKCE — S256
+    # PKCE — S256. Deliberately validated BEFORE the code is burned
+    # below: a wrong code_verifier must never consume a legitimate
+    # code out from under the real client that's about to retry.
     challenge = code_doc.get("code_challenge", "")
     method    = code_doc.get("code_challenge_method", "S256")
     if method != "S256":
@@ -657,11 +659,26 @@ async def oauth_token(
     if computed != challenge:
         raise HTTPException(400, "invalid_grant: PKCE verification failed")
 
-    # Burn the code so a replay can't reuse it
-    await db.oauth_codes.update_one(
-        {"code": code},
+    # 2026-11-12 SECURITY FIX (race-condition code reuse): burning the
+    # code used to be a plain, unconditional `update_one()` run AFTER
+    # all the checks above had already read `code_doc` once at the
+    # top — so two concurrent /oauth/token requests presenting the
+    # exact same code could both pass every check against their own
+    # copy of `code_doc` before either request's update landed, and
+    # both would go on to mint a separate access token from one
+    # single-use code. The burn is now the atomic claim itself
+    # (find_one_and_update gated on `used: False` AND not-yet-
+    # expired, rechecked here since validating PKCE above takes a
+    # little real time): only the request that wins it proceeds to
+    # mint a token; every other concurrent caller gets the same
+    # OAuth-compatible `invalid_grant` a replayed code already
+    # produced.
+    code_doc = await db.oauth_codes.find_one_and_update(
+        {"code": code, "used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}},
         {"$set": {"used": True, "used_at": time.time()}},
     )
+    if code_doc is None:
+        raise HTTPException(400, "invalid_grant: code not found, already used, or expired")
 
     # Issue access token → reuse the api_keys collection so MCP server's
     # existing _resolve_user (mcp.py line 194) accepts it transparently.

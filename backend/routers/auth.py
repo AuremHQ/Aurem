@@ -605,20 +605,46 @@ async def forgot_password(body: ForgotPasswordBody, request: Request) -> dict:
 
 @router.post("/reset-password")
 async def reset_password(body: ResetPasswordBody) -> dict:
+    """2026-11-12 — SECURITY FIX (race-condition token reuse): token
+    consumption is now a single atomic `find_one_and_update` gated on
+    `{token, used: False, expires_at: {$gt: now}}` — the same pattern
+    already proven correct in `github_app.py`'s OAuth-state claim.
+    Previously this did a plain `find_one()` check, then a SEPARATE
+    `update_one()` to burn the token afterwards — two concurrent
+    requests with the same still-valid token could both pass the
+    check before either burned it, so both could successfully reset
+    the password (classic check-then-act / TOCTOU race). Only one
+    concurrent request can win the atomic claim now; every losing
+    request gets the exact same "Invalid or expired" error a truly
+    dead token already produced — no new error surface, no behavior
+    change for the normal single-request case.
+    The expensive bcrypt hash is computed BEFORE the claim so expiry
+    is rechecked as close as possible to the moment the token is
+    actually burned and the password actually changes.
+    """
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
     if len(body.new_password) < 6:
         raise HTTPException(400, "New password must be at least 6 characters")
-    row = await db.password_reset_tokens.find_one({"token": body.token})
-    if not row or row.get("used") or row.get("expires_at", 0) < time.time():
+    # Cheap read-only probe so an obviously dead token never pays for
+    # a bcrypt hash — this is cost control only; the atomic claim
+    # below is the sole authority that actually prevents the race.
+    probe = await db.password_reset_tokens.find_one({"token": body.token})
+    if not probe or probe.get("used") or probe.get("expires_at", 0) < time.time():
         raise HTTPException(400, "Invalid or expired reset link. Request a new one.")
     hashed = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    row = await db.password_reset_tokens.find_one_and_update(
+        {"token": body.token, "used": False, "expires_at": {"$gt": time.time()}},
+        {"$set": {"used": True, "used_at": time.time()}},
+    )
+    if row is None:
+        # Lost the race to a concurrent request, or the window closed
+        # while hashing — same generic error either way (no account
+        # enumeration, no "someone else just used this" leak).
+        raise HTTPException(400, "Invalid or expired reset link. Request a new one.")
     await db.dev_users.update_one(
         {"user_id": row["user_id"]}, {"$set": {"password": hashed}},
-    )
-    await db.password_reset_tokens.update_one(
-        {"_id": row["_id"]}, {"$set": {"used": True}},
     )
     return {"ok": True}
 
@@ -667,35 +693,64 @@ async def magic_login_refresh(body: MagicLoginExchangeBody) -> dict:
         raise HTTPException(404, "invalid_link")
     if old_row.get("used"):
         raise HTTPException(410, "already_used")
-    # Permanently retire the stale token, then mint + consume a fresh one.
-    await db.magic_login_tokens.update_one({"_id": old_row["_id"]}, {"$set": {"used": True}})
+    # 2026-11-12 SECURITY FIX — this used to burn `old_row` with a
+    # plain unconditional update_one() right after a non-atomic
+    # `.get("used")` check, so two concurrent /refresh calls for the
+    # same old token could both pass the check and both mint their
+    # own brand-new replacement token+session. The retire-the-old-
+    # token step is now the same atomic claim used everywhere else
+    # here: only one concurrent caller can win it.
+    claimed_old = await db.magic_login_tokens.find_one_and_update(
+        {"_id": old_row["_id"], "used": False},
+        {"$set": {"used": True, "used_at": time.time()}},
+    )
+    if claimed_old is None:
+        raise HTTPException(410, "already_used")
     from services.funnel_nudge_cron import create_magic_login_token
     new_token = await create_magic_login_token(
-        db, old_row["user_id"], old_row["email"], old_row["stage"],
+        db, claimed_old["user_id"], claimed_old["email"], claimed_old["stage"],
     )
     new_row = await db.magic_login_tokens.find_one({"token": new_token})
     return await _consume_magic_token(db, new_row)
 
 
 async def _consume_magic_token(db, row: dict) -> dict:
-    await db.magic_login_tokens.update_one(
-        {"_id": row["_id"]}, {"$set": {"used": True, "used_at": time.time()}},
+    """2026-11-12 — SECURITY FIX (race-condition token reuse): this
+    used to blindly `update_one({"_id": row["_id"]}, {"$set":
+    {"used": True}})` with NO condition on the write itself — the
+    docstring on the call sites already promised "single-use", but
+    the actual write never verified it was still unused at the
+    moment it ran. Two concurrent /magic-login/exchange (or /refresh)
+    requests racing on the exact same row both passed their callers'
+    earlier `.get("used")` read-only check, then both landed here and
+    both "successfully" set used=True and both received a real
+    session — a genuine single-use violation. The claim itself is now
+    the atomic `find_one_and_update`: only the request that actually
+    wins `{"_id": row["_id"], "used": False}` gets a session; every
+    other concurrent caller gets the pre-existing `already_used`
+    error a second click already produced today.
+    """
+    claimed = await db.magic_login_tokens.find_one_and_update(
+        {"_id": row["_id"], "used": False},
+        {"$set": {"used": True, "used_at": time.time()}},
     )
-    user = await db.dev_users.find_one({"user_id": row["user_id"]}, {"_id": 0})
+    if claimed is None:
+        raise HTTPException(410, "already_used")
+    user = await db.dev_users.find_one({"user_id": claimed["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(404, "account_not_found")
     is_founder = is_founder_email(user.get("email", ""))
     is_admin = bool(user.get("is_admin")) or is_founder
     session = _issue_session(user, is_admin, is_founder)
-    session["stage"] = row.get("stage")
+    session["stage"] = claimed.get("stage")
     # Log the click the same way GET /onboarding/click does, so admin
     # visibility (emails-sent card, click-through stats) is identical
     # regardless of which link style a user actually clicked.
     try:
         now = datetime.now(timezone.utc)
         doc = await db.onboarding_emails.find_one(
-            {"user_id": row["user_id"], "campaign": "funnel_stage_nudge",
-             "stage": row.get("stage"), "sent_ok": True},
+            {"user_id": claimed["user_id"], "campaign": "funnel_stage_nudge",
+             "stage": claimed.get("stage"), "sent_ok": True},
             sort=[("sent_at", -1)],
         )
         if doc:
