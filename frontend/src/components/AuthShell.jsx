@@ -9,6 +9,14 @@
  * Signup.jsx pass `brand="Aurem Loop"` when the visitor arrived via
  * `?next=/harness` so the page doesn't look like a wrong-product redirect.
  *
+ * `homeHref` prop (2026-11-11, Fix 8 gap) — defaults to "/". The logo
+ * and the "← Home" link were previously hardcoded to "/", so a visitor
+ * on the Aurem Loop-branded page who clicked "Home" was bounced to
+ * ORA's homepage instead of back to /harness — a founder-reported bug.
+ * Login.jsx/Signup.jsx pass `homeHref="/harness"` alongside `brand=
+ * "Aurem Loop"` so both links stay consistent with the page's own
+ * branding.
+ *
  * Deliberately does NOT use `<Shell>` (which renders the in-app sidebar).
  */
 import React, { useEffect, useState } from "react";
@@ -32,7 +40,7 @@ function useResponsiveBg() {
   return src;
 }
 
-export default function AuthShell({ children, secondaryCta, brand = "ORA by Aurem" }) {
+export default function AuthShell({ children, secondaryCta, brand = "ORA by Aurem", homeHref = "/" }) {
   const bgSrc = useResponsiveBg();
   return (
     <div
@@ -59,7 +67,7 @@ export default function AuthShell({ children, secondaryCta, brand = "ORA by Aure
           borderBottom: "1px solid rgba(255,255,255,0.06)",
         }}
       >
-        <Link to="/" data-testid="auth-logo" style={{
+        <Link to={homeHref} data-testid="auth-logo" style={{
           color: "var(--text)", textDecoration: "none",
           fontFamily: "'JetBrains Mono', monospace",
           fontWeight: 600, fontSize: 14, letterSpacing: "0.08em",
@@ -67,7 +75,7 @@ export default function AuthShell({ children, secondaryCta, brand = "ORA by Aure
           {brand}
         </Link>
         <div style={{ display: "flex", gap: 10 }}>
-          <Link to="/" data-testid="auth-back-home" className="btn-ghost"
+          <Link to={homeHref} data-testid="auth-back-home" className="btn-ghost"
                 style={{ fontSize: 12 }}>
             <ArrowLeft size={13} /> Home
           </Link>

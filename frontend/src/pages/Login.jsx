@@ -186,6 +186,7 @@ export default function Login() {
   return (
     <AuthShell
       brand={isHarness ? "Aurem Loop" : "ORA by Aurem"}
+      homeHref={isHarness ? "/harness" : "/"}
       secondaryCta={
         <Link to={`/signup${crossLinkQuery}`} data-testid="auth-nav-signup" className="btn-primary" style={{ fontSize: 12 }}>
           Get started

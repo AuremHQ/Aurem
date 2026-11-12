@@ -96,6 +96,22 @@ describe("Login — Fix 8 harness branding", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your code. Your PC. Your model.");
     expect(screen.getByText(/weight-space refine loop/i)).toBeInTheDocument();
   });
+
+  // 2026-11-11 — founder-reported: on the harness-branded page, the
+  // logo AND the "← Home" link were hardcoded to "/" (ORA's
+  // homepage), so leaving the page sent the user to the wrong
+  // product instead of back to /harness.
+  it("the logo and Home link point to /harness (not ORA's /) when ?next=/harness", () => {
+    renderAt("/login?next=%2Fharness", Login);
+    expect(screen.getByTestId("auth-logo")).toHaveAttribute("href", "/harness");
+    expect(screen.getByTestId("auth-back-home")).toHaveAttribute("href", "/harness");
+  });
+
+  it("the logo and Home link still point to / with no ?next=/harness", () => {
+    renderAt("/login", Login);
+    expect(screen.getByTestId("auth-logo")).toHaveAttribute("href", "/");
+    expect(screen.getByTestId("auth-back-home")).toHaveAttribute("href", "/");
+  });
 });
 
 describe("Signup — Fix 8 harness branding", () => {
@@ -135,5 +151,17 @@ describe("Signup — Fix 8 harness branding", () => {
     renderAt("/signup?next=%2Fharness", Signup);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your code. Your PC. Your model.");
     expect(screen.getByText(/weight-space refine loop/i)).toBeInTheDocument();
+  });
+
+  it("the logo and Home link point to /harness (not ORA's /) when ?next=/harness", () => {
+    renderAt("/signup?next=%2Fharness", Signup);
+    expect(screen.getByTestId("auth-logo")).toHaveAttribute("href", "/harness");
+    expect(screen.getByTestId("auth-back-home")).toHaveAttribute("href", "/harness");
+  });
+
+  it("the logo and Home link still point to / with no ?next=/harness", () => {
+    renderAt("/signup", Signup);
+    expect(screen.getByTestId("auth-logo")).toHaveAttribute("href", "/");
+    expect(screen.getByTestId("auth-back-home")).toHaveAttribute("href", "/");
   });
 });
