@@ -54,6 +54,7 @@ const Verify            = lazy(() => import("./pages/Verify"));  // Track 3 (ite
 const Support           = lazy(() => import("./pages/Support"));  // 2026-02-12 — public token-verified support inbox
 const SupportThread     = lazy(() => import("./pages/SupportThread"));  // 2026-02-13 · Iter 388u — public HMAC-verified reply-thread view
 const WhyOra            = lazy(() => import("./pages/WhyOra"));
+const FaqPage           = lazy(() => import("./pages/FaqPage"));  // 2026-11-12 · AlsoAsked FAQ page (public)
 import { initTheme } from "./services/theme";
 
 // Iter 212m-52 — apply theme as early as possible (BEFORE React
@@ -392,6 +393,7 @@ export default function App() {
               regression. See docs/visual_regression.md. */}
           <Route path="/dev/visual"         element={<VisualFixtures />} />
           <Route path="/why-ora"         element={<WhyOra />} />
+          <Route path="/faq"             element={<FaqPage />} />  {/* 2026-11-12 · AlsoAsked FAQ page (public) */}
           <Route path="/demo"            element={<Demo />} />
           <Route path="/login"           element={<Login />} />
           <Route path="/signup"          element={<Signup />} />
