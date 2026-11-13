@@ -1271,6 +1271,24 @@ async def lifespan(app: FastAPI):
             logger.warning("funnel_snapshot_cron not started: %r", e)
     else:
         app.state.funnel_snapshot_task = None
+    # 2026-11-12 — crash-safety reconciler for interrupted wallet
+    # settle()/release() calls (security-audit finding, P0 financial
+    # integrity). See services/wallet.py `reconcile_stale_holds` for
+    # the full story — this is the periodic trigger for it, same
+    # create-then-loop convention as the nudge crons above.
+    try:
+        from services.wallet import reconcile_stale_holds_cron as _reconcile_stale_holds_cron
+        app.state.wallet_reconcile_task = _supervise(
+            _reconcile_stale_holds_cron(300),
+            name="wallet_reconcile_stale_holds",
+            db_getter=lambda: app.state.db,
+            long_lived=True,
+        )
+        logger.info("💰 wallet stale-hold reconciler cron enabled (every 5min)")
+    except Exception as e:
+        app.state.wallet_reconcile_task = None
+        logger.warning("wallet reconcile_stale_holds_cron not started: %r", e)
+
     # 2026-09-22 — fast "stuck at the repo-connect gate" nudge (hourly,
     # hours-scale window). Separate from the daily funnel_stage_nudge
     # above: this targets ONE narrow case (started GitHub connect,
