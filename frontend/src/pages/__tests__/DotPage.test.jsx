@@ -55,7 +55,11 @@ describe("DotPage", () => {
 
   it("says plainly there is no download yet", () => {
     renderPage();
-    expect(screen.getByText(/No download yet/i)).toBeInTheDocument();
+    // The phrase appears twice (hero + FAQ answer), so getByText would
+    // match multiple elements — assert on the hero line by testid, and
+    // on the FAQ answer by its own testid.
+    expect(screen.getByTestId("dot-no-download")).toHaveTextContent(/No download yet/i);
+    expect(screen.getByTestId("dot-faq-1")).toHaveTextContent(/No download yet/i);
   });
 
   it("submitting the form posts name + email and shows an on-page confirmation", async () => {

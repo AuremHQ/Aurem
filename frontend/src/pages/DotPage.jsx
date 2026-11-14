@@ -142,7 +142,7 @@ function DotSignupForm() {
   }
 
   return (
-    <form onSubmit={submit} data-testid="dot-signup-form" style={cardStyle}>
+    <form onSubmit={submit} noValidate data-testid="dot-signup-form" style={cardStyle}>
       <label htmlFor="dot-signup-name" style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Your name</label>
       <input
         id="dot-signup-name"
@@ -213,7 +213,7 @@ export default function DotPage() {
             Chat, documents, coding and research — with open-source models running on your PC.
             Your files stay on your machine. Nothing leaves it unless you say so.
           </p>
-          <p style={pStyle}>
+          <p data-testid="dot-no-download" style={pStyle}>
             No download yet — we&rsquo;re building it now. Join the list and we&rsquo;ll tell you
             when it&rsquo;s ready.
           </p>
