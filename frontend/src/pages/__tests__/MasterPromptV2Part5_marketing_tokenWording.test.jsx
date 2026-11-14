@@ -8,6 +8,8 @@
  * behind TOKEN_WORDING_ACTIVE rather than hardcoding the legacy
  * string unconditionally.
  */
+
+// static-grep-ok: source-inspection test by design — it pins the exact marketing token wording in the Signup.jsx/Login.jsx/etc. source (shared billingCopy imports + token function calls); the assertions cannot be behavioural because their purpose is to verify the component source calls those functions, not rendered output.
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
