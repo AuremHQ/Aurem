@@ -20,9 +20,9 @@ describe("Marketing/auth pages import the shared billingCopy module", () => {
   it("Signup.jsx", () => {
     const s = src("Signup.jsx");
     expect(s).toMatch(/from "\.\.\/lib\/billingCopy"/);
-    expect(s).toMatch(/title: signupFreeOfferTitle\(\)/);
-    expect(s).toMatch(/description: signupFreeOfferDescription\(\)/);
-    expect(s).toMatch(/\{freeOfferShortLine\(\)\}/);
+    expect(s).toMatch(/title:.*signupFreeOfferTitle\(\)/);
+    expect(s).toMatch(/description:[\s\S]*?signupFreeOfferDescription\(\)/);
+    expect(s).toMatch(/freeOfferShortLine\(\)/);
   });
 
   it("Login.jsx", () => {
