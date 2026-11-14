@@ -74,6 +74,7 @@ const Projects          = lazy(() => import("./pages/Projects"));
 const FreeScanResults   = lazy(() => import("./pages/FreeScanResults"));
 const ProjectChanges    = lazy(() => import("./pages/ProjectChanges"));  // Part 2c B4 — Project Versions
 const HarnessPage       = lazy(() => import("./pages/HarnessPage"));  // Aurem Loop harness Phase B — public page, not PrivateRoute (handles signed-out itself)
+const DotPage           = lazy(() => import("./pages/DotPage"));  // ORA dot — public page, not PrivateRoute (handles signed-out itself)
 const Integrations      = lazy(() => import("./pages/Integrations")); // Iter 212m-174
 const Admin             = lazy(() => import("./pages/Admin"));
 // Feb 2026 · AdminOverview no longer imported here — /admin/overview
@@ -445,11 +446,13 @@ export default function App() {
           <Route path="/projects/:projectId/free-scan" element={<PrivateRoute><FreeScanResults /></PrivateRoute>} />
           <Route path="/projects/:projectId/changes"   element={<PrivateRoute><ProjectChanges /></PrivateRoute>} />  {/* Part 2c B4 — Project Versions */}
           <Route path="/harness"                        element={<HarnessPage />} />  {/* Aurem Loop harness Phase B — public, handles signed-out state itself */}
+          <Route path="/dot"                           element={<DotPage />} />  {/* ORA dot — public, handles signed-out state itself */}
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/dashboard" element={<AdminRoute><Admin initialTab="dash" /></AdminRoute>} />
           <Route path="/admin/users"       element={<AdminRoute><Admin initialTab="users" /></AdminRoute>} />
           <Route path="/admin/suggestions" element={<AdminRoute><Admin initialTab="suggestions" /></AdminRoute>} />
+          <Route path="/admin/dot-signups" element={<AdminRoute><Admin initialTab="dot_signups" /></AdminRoute>} />
           <Route path="/admin/self-bugs" element={<AdminRoute><Admin initialTab="self_bugs" /></AdminRoute>} />
           <Route path="/admin/overview"  element={<AdminRoute><Admin initialTab="overview" /></AdminRoute>} />
           {/* Feb 2026 · Sidebar Integrity fix — every in-shell sidebar
