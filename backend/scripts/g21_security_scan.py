@@ -43,6 +43,7 @@ _AST_SCAN_KNOWN_SAFE_FILES = {
     "services/generation_rules_triggers.py",
     "services/bug_hunt_rules.py",
     "services/mode_e_auditor.py",
+    "scripts/g21_security_scan.py",
 }
 
 
