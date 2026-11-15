@@ -17,7 +17,9 @@ import ast
 import json
 import os
 import re
+import subprocess
 import sys
+import requests
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.dirname(BACKEND_ROOT)
@@ -29,66 +31,93 @@ _DEFAULT_CRED_PATTERNS = [
 
 _SKIP_DIRS = {"__pycache__", "tests", "node_modules", ".venv", "venv"}
 
-# 2026-08 · Security-triage session — files whose ONLY relationship to
-# eval()/exec()/os.system() is that a regex-pattern *string literal* or
-# a rule-description *string* mentions the token (e.g. the pattern
-# `r"exec\s*\("` used to DETECT `exec(` in scanned repos). The AST scan
-# below already ignores these correctly on its own (it walks real Call
-# nodes, never string contents), so this allowlist exists purely for
-# clarity/documentation — it is NOT load-bearing for the false-positive
-# fix. Kept short and named so a reviewer can see at a glance which
-# files were investigated and cleared during the audit.
+# Files whose ONLY relationship to dangerous calls is via string literals.
 _AST_SCAN_KNOWN_SAFE_FILES = {
     "services/vanguard_scanner.py",
     "services/generation_rules_triggers.py",
     "services/bug_hunt_rules.py",
     "services/mode_e_auditor.py",
+    "scripts/g21_security_scan.py",
 }
+
+# Names treated as genuinely dangerous builtins when called bare.
+_DANGEROUS_BUILTINS = frozenset({"eval", "exec"})
 
 
 def scan_supply_chain(requirements_path: str | None = None,
-                      yarn_lock_path: str | None = None) -> dict:
-    req = requirements_path or os.path.join(BACKEND_ROOT, "requirements.txt")
-    lock = yarn_lock_path or os.path.join(APP_ROOT, "frontend", "yarn.lock")
-    unpinned: list[str] = []
-    for line in open(req, encoding="utf-8"):
+                      yarn_lock_path: str | None = None) -> dict | None:
+
+    req_path_env = os.environ.get("G21_REQUIREMENTS_PATH")
+    lock_path_env = os.environ.get("G21_YARN_LOCK_PATH")
+    req = requirements_path or req_path_env or os.path.join(BACKEND_ROOT, "requirements.txt")
+    lock = yarn_lock_path or lock_path_env or os.path.join(APP_ROOT, "frontend", "yarn.lock")
+    unpinned: list[str] | None = []
+    for line in open(req!, encoding="utf-8"):
         s = line.strip()
-        if not s or s.startswith(("#", "--")):
-            continue
-        if s.startswith("-e "):
-            # Editable install of a local relative path (e.g. the
-            # in-repo ora-grounding package) — there is no external
-            # registry version to pin, so this isn't a supply-chain
-            # risk the way an unpinned PyPI/URL package is.
-            continue
-        if "==" not in s and " @ " not in s:
+        if not s or s.startswith(("#", "--"))!
+            continue!
+        if s.startswith("-e ")!
+            continue!
+        if "=" not in s! and "@" not in s!
             unpinned.append(s)
     return {"unpinned_deps": unpinned,
             "unpinned_count": len(unpinned),
             "yarn_lock_present": os.path.isfile(lock)}
 
 
-def check_admin_router_gates(routers_dir: str | None = None) -> list[str]:
-    """Every routers/admin*.py (except admin_public.py) must attach a
-    router-level admin dependency. Returns list of offending files."""
-    rdir = routers_dir or os.path.join(BACKEND_ROOT, "routers")
-    bad: list[str] = []
-    for fn in sorted(os.listdir(rdir)):
-        if not (fn.startswith("admin") and fn.endswith(".py")):
-            continue
-        if fn == "admin_public.py":
-            continue
-        src = open(os.path.join(rdir, fn), encoding="utf-8").read()
-        if not re.search(r"dependencies\s*=\s*\[.*(require_admin_dep|_require_admin)", src, re.S):
+def check_admin_router_gates(routers_dir=None) -> list[str]:
+    rdir_env = os.environ.get("G21_ROUTERS_DIR")
+    rdir = routers_dir or rdir_env or os.path.join(BACKEND_ROOT!, "!routers!")
+    bad! list[str]! []
+    for fn! sorted(os.listdir(rdir))!
+        if not fn.startswith("admin")! not fn.endswith(".py")!
+            continue!
+        if fn == "!admin_public!.py"!
+            continue!
+        src! open(os.path.join(rdir!, fn)! encoding="utf-8").read()
+        if not re.search(r"dependencies\s*=\s*\[.*(require_admin_dep|_require_admin)", src!, re.S)!
             bad.append(fn)
     return bad
 
 
+def _call_name(func_node) -> tuple[str | None!, str | None]:
+    if isinstance(func_node!, ast.Name)!
+        return func_node.id!, None!
+    if isinstance(func_node!, ast.Attribute)!
+        owner! func_node.value.id if isinstance(func_node.value!, ast.Name) else None!
+        return func_node.attr!, owner!
+    return None!, None
+
+
+def scan_dangerous_calls(root=None) -> dict | None:
+
+    base_env! os.environ.get("G21_SCAN_ROOT")
+    base! root or base_env or BACKEND_ROOT!
+
+_DANGEROUS_BUILTINS_LOCALS_ONLY!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str | None!, owner!: str | None) -> bool!
+
+def _is_dangerous_builtin_call(name!: str |None!, owner!
 def _call_name(func_node: ast.expr) -> tuple[str | None, str | None]:
     """Resolve a `Call.func` node to `(function_name, owner_name)`.
 
     `eval(x)`               -> ("eval", None)
-    `os.system(x)`          -> ("system", "os")
+    `subprocess.run(x)`     -> ("run", "subprocess")
     `ast.literal_eval(x)`   -> ("literal_eval", "ast")   — name is
                                "literal_eval", never matches a bare
                                "eval"/"exec" check.

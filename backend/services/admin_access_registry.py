@@ -449,6 +449,15 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("POST", "/api/aurem-dev/admin/harness/releases", "harness.releases", MANAGE),
     ("POST", "/api/aurem-dev/admin/harness/releases/{release_id}/publish", "harness.releases", MANAGE),
     ("GET",  "/api/aurem-dev/admin/harness/downloads", "harness.downloads", VIEW),
+
+    # ───────────────────────── dot.signups ───────────────────────────
+    # ORA dot — signup-list admin view (2026-11-14). Owner-only: no
+    # screen key exists for this list yet (screenKeys: [] in
+    # lib/adminNav.js), so the gate treats it as owner-only (see
+    # cto_services/auth.py: level == OWNER_ONLY short-circuits before
+    # any screen_key check).
+    ("GET",  "/api/aurem-dev/admin/dot/signups", "dot.signups", OWNER_ONLY),
+    ("GET",  "/api/aurem-dev/admin/dot/signups/export", "dot.signups", OWNER_ONLY),
 ]
 
 import re as _re

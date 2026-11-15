@@ -86,6 +86,7 @@ const TOKEN_MODE = process.env.VITE_TOKEN_BILLING_MODE === "on";
 const { COMPETITORS, COMPARE_HUB, LAST_VERIFIED } = await import("../src/data/competitors.mjs");
 const { ABOUT, CONTACT } = await import("../src/data/companyInfo.mjs");
 const { DEVELOPERS } = await import("../src/data/developerInfo.mjs");
+const { FAQ } = await import("../src/data/faq.mjs");
 
 // 2026-11-09 — "Aurem Loop" homepage promo section (draft, flag
 // default OFF — do not flip without separate founder approval).
@@ -502,6 +503,47 @@ ${sections}
   writeFileSync(join(DIST, "developers", "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote /developers/index.html");
+}
+
+// 2026-11-12 · /faq — AlsoAsked FAQ page (11 questions people actually
+// search). Same drift-proof pattern as /about: content lives in
+// src/data/faq.mjs, rendered by FaqPage.jsx and by this snapshot.
+{
+  const faqItems = FAQ.items.map((f) =>
+    `<details><summary>${esc(f.q)}</summary><p>${esc(f.a)}</p></details>`,
+  ).join("");
+  const faqLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "FAQPage",
+        mainEntity: FAQ.items.map((f) => ({
+          "@type": "Question",
+          name: f.q,
+          acceptedAnswer: { "@type": "Answer", text: f.a },
+        })),
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
+          { "@type": "ListItem", position: 2, name: "FAQ", item: "https://auremcto.com/faq" },
+        ],
+      },
+    ],
+  };
+  let html = swapHead(base, FAQ);
+  html = injectRoot(html, `<main>
+<h1>${esc(FAQ.heading)}</h1>
+<p>${esc(FAQ.intro)}</p>
+${faqItems}
+<p><a href="/about">About</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/contact">Contact</a></p>
+</main>`);
+  html = injectLd(html, faqLd);
+  mkdirSync(join(DIST, "faq"), { recursive: true });
+  writeFileSync(join(DIST, "faq", "index.html"), html);
+  written += 1;
+  console.log("[seo-prerender] wrote /faq/index.html");
 }
 
 // 2026-11-09 — /harness itself (not just the homepage promo blurb

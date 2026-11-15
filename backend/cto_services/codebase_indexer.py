@@ -32,7 +32,7 @@ import time
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Request
 
 from .db import get_db
 from .auth import current_dev
@@ -45,6 +45,7 @@ GITHUB_API = "https://api.github.com"
 INDEX_TTL_SECONDS = 600          # avoid hammering GitHub on every turn
 MAX_FILES = 80                    # cap memory; LLM context budget is small
 MAX_BYTES_PER_FILE = 12_000       # only first chunk goes into the index
+MAX_BODY_BYTES = 10_000           # cap incoming /refresh payloads
 ROLE_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(^|/)(routers?|api|server|app)\.py$"), "routes"),
     (re.compile(r"(^|/)routers/.+\.py$"),                "routes"),
@@ -258,95 +259,4 @@ async def build_context_block(user_id: str,
 
 
 async def _fetch_user_pat(user_id: str) -> Optional[str]:
-    """Whitelisted host import: services.byok_store fernet decrypt.
-
-    Looks first in `developer_github_links` (where /api/developers/github/link
-    actually writes the PAT), then falls back to `developer_accounts`
-    for older accounts."""
-    db = get_db()
-    if db is None:
-        return None
-    # Primary location (live since iter 332b D-30).
-    row = await db.developer_github_links.find_one(
-        {"user_id": user_id, "pat_enc": {"$ne": None}},
-        {"_id": 0, "pat_enc": 1},
-    )
-    enc = (row or {}).get("pat_enc")
-    if not enc:
-        # Legacy location for older accounts.
-        legacy = await db.developer_accounts.find_one(
-            {"user_id": user_id, "github_pat_enc": {"$ne": None}},
-            {"_id": 0, "github_pat_enc": 1},
-        )
-        enc = (legacy or {}).get("github_pat_enc")
-    if not enc:
-        return None
-    try:
-        from services.byok_store import _decrypt  # whitelisted
-        return _decrypt(enc)
-    except Exception as e:
-        logger.warning(f"[indexer] PAT decrypt failed for {user_id}: {e}")
-        return None
-
-
-async def _fetch_user_repo_url(user_id: str,
-                                project_id: Optional[str] = None) -> Optional[str]:
-    """Resolves the repo URL. If a project_id is given and that project
-    has `github_repo_url` saved, that wins. Otherwise falls back to
-    the legacy `developer_accounts.github_repo_url`."""
-    db = get_db()
-    if db is None:
-        return None
-    if project_id:
-        # `cto_projects` stores repo coords as separate `github_owner`
-        # and `github_repo` fields (no `github_repo_url` column).
-        # Compose the URL from those so the indexer keeps its
-        # project-scoped preference over the legacy per-user account.
-        proj = await db.cto_projects.find_one(
-            {"project_id": project_id, "user_id": user_id},
-            {"_id": 0, "github_owner": 1, "github_repo": 1},
-        )
-        owner = (proj or {}).get("github_owner")
-        repo  = (proj or {}).get("github_repo")
-        if owner and repo:
-            return f"https://github.com/{owner}/{repo}"
-    legacy = await db.developer_accounts.find_one(
-        {"user_id": user_id, "github_repo_url": {"$ne": None}},
-        {"_id": 0, "github_repo_url": 1},
-    )
-    return (legacy or {}).get("github_repo_url")
-
-
-# ─── HTTP surface ────────────────────────────────────────────────────
-
-@router.post("/refresh")
-async def refresh_route(project_id: str = "",
-                        authorization: str = Header(None)) -> dict:
-    """Customer (or the chat-stream pre-hook) calls this to re-pull
-    the index. Auto-grabs the saved PAT from developer_github_links,
-    and the repo URL from the project doc (preferred) or the legacy
-    developer_accounts row."""
-    me = await current_dev(authorization)
-    pat = await _fetch_user_pat(me["user_id"])
-    if not pat:
-        raise HTTPException(400, "no_github_pat_saved")
-    repo_url = await _fetch_user_repo_url(me["user_id"],
-                                            project_id or None)
-    if not repo_url:
-        raise HTTPException(400, "no_github_repo_saved")
-    return await refresh_index(me["user_id"], repo_url, pat)
-
-
-@router.get("/index")
-async def get_index(authorization: str = Header(None)) -> dict:
-    me = await current_dev(authorization)
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "db_not_ready")
-    doc = await db.aurem_cto_codebase_index.find_one(
-        {"user_id": me["user_id"]},
-        {"_id": 0, "files.snippet": 0},   # keep payload small for the UI
-    )
-    if not doc:
-        return {"indexed": False}
-    return {"indexed": True, **doc}
+    """Whitelisted host import

@@ -56,6 +56,8 @@ def test_require_permission_rejects_invalid_level():
 @pytest.mark.asyncio
 async def test_read_write_satisfies_both_read_and_write_required():
     from services import team_permissions as tp
+    import sys
+    import types
 
     class _FakeUser(dict):
         pass
@@ -70,15 +72,27 @@ async def test_read_write_satisfies_both_read_and_write_required():
     class _FakeDb:
         team_members = _FakeColl()
 
-    tp.current_dev = _fake_current_dev  # patch module-level import
-    import types
+    # Patch module-level imports for this test ONLY. The previous version
+    # left both patches in place, which replaced the real cto_services.db
+    # module for every test file that ran afterwards (46 ImportErrors +
+    # AttributeErrors downstream). Restore in `finally` so a failure here
+    # can never leak the stubs again.
+    orig_current_dev = tp.current_dev
+    orig_db_module = sys.modules.get("cto_services.db")
     fake_db_module = types.SimpleNamespace(get_db=lambda: _FakeDb())
-    import sys
-    sys.modules["cto_services.db"] = fake_db_module
+    try:
+        tp.current_dev = _fake_current_dev  # patch module-level import
+        sys.modules["cto_services.db"] = fake_db_module
 
-    check_read = require_permission("projects", "read")
-    check_write = require_permission("projects", "write")
-    ctx1 = await check_read("Bearer whatever")
-    ctx2 = await check_write("Bearer whatever")
-    assert ctx1["permissions"]["projects"] == "read_write"
-    assert ctx2["is_owner"] is True
+        check_read = require_permission("projects", "read")
+        check_write = require_permission("projects", "write")
+        ctx1 = await check_read("Bearer whatever")
+        ctx2 = await check_write("Bearer whatever")
+        assert ctx1["permissions"]["projects"] == "read_write"
+        assert ctx2["is_owner"] is True
+    finally:
+        tp.current_dev = orig_current_dev
+        if orig_db_module is None:
+            sys.modules.pop("cto_services.db", None)
+        else:
+            sys.modules["cto_services.db"] = orig_db_module

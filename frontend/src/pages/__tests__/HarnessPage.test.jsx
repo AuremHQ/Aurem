@@ -275,4 +275,91 @@ describe("HarnessPage", () => {
       expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
     });
   });
+
+  describe("Fix B — SHA-256 of the DELIVERED zip (per-user identity.json injected)", () => {
+    const DELIVERED_SHA256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+    async function renderAndClickDownload({ header = DELIVERED_SHA256 } = {}) {
+      getToken.mockReturnValue("fake-jwt");
+      const headers = header ? { "x-aurem-package-sha256": header } : {};
+      api.post.mockResolvedValue({ data: new Blob(["zip-bytes"]), headers });
+      const createObjectURL = vi.fn(() => "blob:mock-url");
+      global.URL.createObjectURL = createObjectURL;
+      global.URL.revokeObjectURL = vi.fn();
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+      screen.getByTestId("harness-download-button").click();
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+        "/harness/download", {}, { responseType: "blob" },
+      ));
+    }
+
+    it("labels the static hash as the base package, before the personal identity file is added", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-download-section")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-download-sha256")).toHaveTextContent(RELEASE.sha256);
+      expect(screen.getByText(/Base package \(before your personal identity file is added\)/i)).toBeInTheDocument();
+      // The old bare "SHA-256:" label must be gone — nobody should
+      // compare the delivered file against the base hash.
+      expect(screen.queryByText(/^SHA-256:$/)).not.toBeInTheDocument();
+    });
+
+    it("after a download, shows the delivered hash with a copy button, the PowerShell check, and the honest line", async () => {
+      await renderAndClickDownload();
+      await waitFor(() => expect(screen.getByTestId("harness-download-delivered-sha256")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-download-delivered-sha256")).toHaveTextContent(DELIVERED_SHA256);
+      expect(screen.getByText(/SHA-256 of YOUR downloaded package/i)).toBeInTheDocument();
+      expect(screen.getByTestId("harness-download-copy-sha256")).toBeInTheDocument();
+      expect(screen.getByTestId("harness-download-verify-command")).toHaveTextContent(
+        "Get-FileHash aurem-loop-0.8.0.zip -Algorithm SHA256",
+      );
+      expect(screen.getByTestId("harness-download-hash-note")).toHaveTextContent(
+        "This hash comes from our server, so it detects a damaged download, not a compromised server.",
+      );
+    });
+
+    it("the copy button copies the delivered hash to the clipboard", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.assign(navigator, { clipboard: { writeText } });
+      await renderAndClickDownload();
+      await waitFor(() => expect(screen.getByTestId("harness-download-copy-sha256")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("harness-download-copy-sha256"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(DELIVERED_SHA256));
+      expect(screen.getByTestId("harness-download-copy-sha256")).toHaveTextContent(/Copied/i);
+    });
+
+    it("shows no delivered-hash block when the server sends no header (graceful, old behaviour)", async () => {
+      await renderAndClickDownload({ header: null });
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).not.toBeDisabled());
+      expect(screen.queryByTestId("harness-download-delivered-sha256")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("harness-download-copy-sha256")).not.toBeInTheDocument();
+    });
+
+    it("shows no delivered hash when the download fails", async () => {
+      getToken.mockReturnValue("fake-jwt");
+      api.post.mockRejectedValue({ response: { status: 409 } });
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+      screen.getByTestId("harness-download-button").click();
+      await waitFor(() => expect(screen.getByTestId("harness-download-error")).toBeInTheDocument());
+      expect(screen.queryByTestId("harness-download-delivered-sha256")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Subdomain JSON-LD — page URL comes from window.location.origin (2026-11-15)", () => {
+    it("points the BreadcrumbList at this origin + /harness on a non-loop host", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const ld = document.getElementById("ld-harness");
+      expect(ld).not.toBeNull();
+      const graph = JSON.parse(ld.textContent)["@graph"];
+      const crumbs = graph.find((n) => n["@type"] === "BreadcrumbList").itemListElement;
+      expect(crumbs[0].item).toBe(`${window.location.origin}/`);
+      expect(crumbs[1].item).toBe(`${window.location.origin}/harness`);
+    });
+  });
 });

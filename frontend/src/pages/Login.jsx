@@ -30,6 +30,12 @@ export default function Login() {
   // account/credentials either way.
   const isHarness = next === "/harness" || next.startsWith("/harness/")
     || next.startsWith("/harness?") || next.startsWith("/harness#");
+  // 2026-11-14 — ORA dot: same pattern as isHarness above. A visitor
+  // arriving via ?next=/dot came from the ORA dot page, not ORA, so
+  // this page re-brands itself "ORA dot" throughout. Same
+  // account/credentials either way; after signin they land back on /dot.
+  const isDot = next === "/dot" || next.startsWith("/dot/")
+    || next.startsWith("/dot?") || next.startsWith("/dot#");
   // 2026-11-11 testing-agent finding: the login<->signup cross-links
   // were hardcoded to plain /signup and /login, dropping `next` — a
   // harness visitor without an account who clicked "Get started"
@@ -40,10 +46,12 @@ export default function Login() {
   const crossLinkQuery = next !== "/dashboard" ? `?next=${encodeURIComponent(next)}` : "";
 
   usePageMeta({
-    title: isHarness ? "Sign in · Aurem Loop" : "Sign in · ORA by Aurem",
-    description: isHarness
-      ? "Sign in to download Aurem Loop — the same free account also gives you access to ORA."
-      : "Sign in to your AUREM account and continue shipping features to your GitHub repo with an autonomous AI engineer.",
+    title: isDot ? "Sign in · ORA dot" : isHarness ? "Sign in · Aurem Loop" : "Sign in · ORA by Aurem",
+    description: isDot
+      ? "Sign in for ORA dot — the same free account also gives you access to ORA."
+      : isHarness
+        ? "Sign in to download Aurem Loop — the same free account also gives you access to ORA."
+        : "Sign in to your AUREM account and continue shipping features to your GitHub repo with an autonomous AI engineer.",
     canonical: (typeof window !== "undefined" ? window.location.origin : "") + "/login",
   });
   const navigate = useNavigate();
@@ -185,8 +193,8 @@ export default function Login() {
 
   return (
     <AuthShell
-      brand={isHarness ? "Aurem Loop" : "ORA by Aurem"}
-      homeHref={isHarness ? "/harness" : "/"}
+      brand={isDot ? "ORA dot" : isHarness ? "Aurem Loop" : "ORA by Aurem"}
+      homeHref={isDot ? "/dot" : isHarness ? "/harness" : "/"}
       secondaryCta={
         <Link to={`/signup${crossLinkQuery}`} data-testid="auth-nav-signup" className="btn-primary" style={{ fontSize: 12 }}>
           Get started
@@ -230,9 +238,13 @@ export default function Login() {
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign in</span>
           <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>
-            {isHarness ? "Your code. Your PC. Your model." : "Welcome back, builder."}
+            {isDot ? "Your AI workspace, on your own machine." : isHarness ? "Your code. Your PC. Your model." : "Welcome back, builder."}
           </h1>
-          {isHarness ? (
+          {isDot ? (
+            <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+              Chat, documents, coding and research — with open-source models on your PC.
+            </p>
+          ) : isHarness ? (
             <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
               With weight-space refine loop. Your local model improves itself on each run.
             </p>
@@ -258,6 +270,20 @@ export default function Login() {
           </div>
         )}
 
+        {isDot && (
+          <div
+            data-testid="login-dot-guidelines"
+            style={{
+              background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)",
+              borderRadius: 8, padding: "12px 14px", marginBottom: 20,
+              fontSize: 12.5, lineHeight: 1.6, color: "var(--text-dim)",
+            }}
+          >
+            One account, two things: sign in here, then you&rsquo;ll land back on the ORA dot
+            page. This same login also works for ORA.
+          </div>
+        )}
+
         <div className="card" data-testid="login-card" style={{
           background: "rgba(20, 20, 28, 0.55)",
           backdropFilter: "blur(10px)",
@@ -266,7 +292,7 @@ export default function Login() {
           <RobotGuideKeyframes />
           <RobotGuide
             testid="login-robot-guide"
-            brand={isHarness ? "AUREM LOOP" : "ORA"}
+            brand={isDot ? "ORA DOT" : isHarness ? "AUREM LOOP" : "ORA"}
             kind={error ? "error" : "info"}
             message={
               error
@@ -277,9 +303,11 @@ export default function Login() {
                     ? `Looks good — hit <strong>Sign in</strong> when you&rsquo;re ready. <span class="ora-arrow">👇</span>`
                     : email
                       ? `Now enter your <strong>password</strong> and sign in. <span class="ora-arrow">👇</span>`
-                      : (welcomeMsg || (isHarness
-                          ? `Sign in to pick up your <strong>Aurem Loop</strong> download <span class="ora-arrow">👇</span> — or use GitHub/Google above, one tap, no password.`
-                          : `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — one tap, no password.`))
+                      : (welcomeMsg || (isDot
+                          ? `Sign in to pick up <strong>ORA dot</strong> <span class="ora-arrow">👇</span> — or use GitHub/Google above, one tap, no password.`
+                          : isHarness
+                            ? `Sign in to pick up your <strong>Aurem Loop</strong> download <span class="ora-arrow">👇</span> — or use GitHub/Google above, one tap, no password.`
+                            : `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — one tap, no password.`))
             }
           />
           {/* Iter 113 — friendly banner when GitHub OAuth was cancelled */}
@@ -612,9 +640,11 @@ export default function Login() {
             data-testid="login-legal-line"
             style={{ marginTop: 12, textAlign: "center", fontSize: 10.5, color: "var(--text-faint)" }}
           >
-            {isHarness
-              ? "© 2026 Polaris Built Inc. — Aurem Loop, made by AUREM"
-              : "© 2026 Polaris Built Inc. — ORA by Aurem, made by AUREM"}
+            {isDot
+              ? "© 2026 Polaris Built Inc. — ORA dot, made by AUREM"
+              : isHarness
+                ? "© 2026 Polaris Built Inc. — Aurem Loop, made by AUREM"
+                : "© 2026 Polaris Built Inc. — ORA by Aurem, made by AUREM"}
           </div>
         </div>
       </section>
