@@ -52,4 +52,48 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev
+from cto_services.db import get_db, require_db  # noqa: F401 — get_db is a test patch target
+from services import github_app as _ga
+from services.github_app_config import is_configured as _app_configured
+from routers.github_funnel import track_server_side as _funnel_track
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/github/app", tags=["GitHub App"])
+
+# State row TTL — user must complete the install within this window.
+_STATE_TTL_SECONDS = 15 * 60
+
+# Webhook delivery dedupe collection retention.
+_WEBHOOK_DELIVERY_TTL_SECONDS = 7 * 24 * 60 * 60
+
+# Frontend deep-links (relative — the caller's browser resolves against
+# the domain they're currently on, so multi-domain deploys just work).
+_BRIDGE_PATH             = "/api/aurem-dev/github/app/installed"
+_DEEP_LINK_SUCCESS       = _BRIDGE_PATH + "?status=success&install_id={iid}"
+_DEEP_LINK_ERR_STATE     = _BRIDGE_PATH + "?status=err&err=invalid_state"
+_DEEP_LINK_ERR_PROBE     = _BRIDGE_PATH + "?status=err&err=github_probe_failed"
+_DEEP_LINK_APP_PENDING   = _BRIDGE_PATH + "?status=pending"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Helpers
+# ═════════════════════════════════════════════════════════════════════
+
+def _now_utc_epoch() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+
+async def _fetch_installation_meta(installation_id: int) -> dict:
+    """`GET /app/installations/{id}` with App-JWT. Returns the full
+    installation payload (account, target_type, permissions, events,
+    repository_selection, ...)."""
+    headers = {
+        "Authorization":        f"Bearer {_ga.app_jwt()}",
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent":           "aurem-github-app/1.0",
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(
+            f"https://api.github.com/app/installations/{installation_id}",
 from cto_services.db import get_db, require_db  # noqa: F401 — get
