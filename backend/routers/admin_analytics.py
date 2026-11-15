@@ -63,6 +63,13 @@ class _CleanupE2EBody(BaseModel):
 
 
 @router.post("/qa/cleanup-e2e-sessions")
+async def cleanup_e2e_sessions(request: Request,
+                               authorization: Optional[str] = Header(None)):
+    # lpdos_no_body_limit_deep — reject oversized bodies; this endpoint
+    # needs no payload at all.
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > 1024:
+        raise HTTPException(413, "Request body too large")
 async def cleanup_e2e_sessions(
     body: _CleanupE2EBody,
     authorization: Optional[str] = Header(None),
@@ -179,4 +186,93 @@ async def business_pulse(authorization: Optional[str] = Header(None)):
     try:
         (
             total_users_raw, total_users_organic,
+            gh_raw, gh_organic,
+            paid_users_raw, paid_users_organic,
+            paid_new_30d_raw, paid_new_30d_organic,
+        ) = await asyncio.wait_for(
+            asyncio.gather(
+                db.dev_users.count_documents({}),
+                db.dev_users.count_documents(org_filter),
+                db.dev_users.count_documents(gh_filter),
+                db.dev_users.count_documents({**org_filter, **gh_filter}),
+                db.dev_users.count_documents(paid_raw_filter),
+                db.dev_users.count_documents({**org_filter, **paid_raw_filter}),
+                db.dev_users.count_documents(paid_new_raw_filter),
+                db.dev_users.count_documents({**org_filter, **paid_new_raw_filter}),
+            ),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            504, "business pulse timed out after 10s — check Mongo indexes on dev_users"
+        )
+
+    def _pct(num, denom):
+        return round(100.0 * num / denom, 1) if denom else 0.0
+
+    return {
+        # Environment identification — added Feb 2026 after
+        # preview/prod denominator confusion audit.
+        **env_stamp(),
+        # Raw (unfiltered) — same as before.
+        "raw": {
+            "total_users":         total_users_raw,
+            "github_connected":    gh_raw,
+            "github_connect_pct":  _pct(gh_raw, total_users_raw),
+            "paid_users":          paid_users_raw,
+            "paid_new_30d":        paid_new_30d_raw,
+        },
+        # Organic — synthetic test/bot rows excluded. This is the
+        # denominator the cockpit renders.
+        "organic": {
+            "total_users":         total_users_organic,
+            "github_connected":    gh_organic,
+            "github_connect_pct":  _pct(gh_organic, total_users_organic),
+            "paid_users":          paid_users_organic,
+            "paid_new_30d":        paid_new_30d_organic,
+        },
+        # Convenience mirror for the current cockpit code that reads
+        # top-level fields; will migrate to explicit organic.* soon.
+        "total_users":         total_users_organic,
+        "github_connected":    gh_organic,
+        "github_connect_pct":  _pct(gh_organic, total_users_organic),
+        "paid_users":          paid_users_organic,
+        "paid_new_30d":        paid_new_30d_organic,
+    }
+
+
+@router.get("/system-stats")
+async def admin_system_stats(
+    window_hours: int = 24,
+    authorization: Optional[str] = Header(None),
+):
+    """Aggregates the 4 observability collections written by recent
+    iters (parliament_log, intent_classifications, quality_scores,
+    plus syntax_gate metrics derived from chat.py logs)."""
+    await _require_admin(authorization)
+    db = require_db()
+    now_ts  = time.time()
+    cutoff  = now_ts - (max(1, min(window_hours, 24 * 30)) * 3600)
+    cutoff_24h = now_ts - 86400
+
+    # ── Parliament ────────────────────────────────────────────────
+    parl_total = await db.parliament_log.count_documents(
+        {"event": "aggregate", "ts": {"$gte": cutoff}}
+    )
+    parl_success = await db.parliament_log.count_documents(
+        {"event": "aggregate", "status": "success",
+         "ts": {"$gte": cutoff}}
+    )
+    parl_review = await db.parliament_log.count_documents(
+        {"event": "aggregate", "status": "manual_review",
+         "ts": {"$gte": cutoff}}
+    )
+    parl_cb_opens_24h = await db.parliament_log.count_documents(
+        {"event": "circuit_open_fallback", "ts": {"$gte": cutoff_24h}}
+    )
+    # Council A member-win distribution.
+    council_win_pipeline = [
+        {"$match": {"event": "aggregate", "status": "success",
+                    "council": "A", "ts": {"$gte": cutoff}}},
+        {"
             gh_raw, gh
