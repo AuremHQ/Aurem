@@ -1,6 +1,10 @@
-# QA Report — commit c2a0ddc (2026-11-15T02:49:21+00:00)
+# QA Report — commit 81e571e (2026-11-15T03:02:55+00:00)
 
-**Commit message**: quality-gate: invariants timeout 15 -> 20 min
+**Commit message**: fix(tests): restore sys.modules cto_services.db + current_dev after phase1 team-permissions test
+
+test_read_write_satisfies_both_read_and_write_required replaced
+sys.modules['cto_services.db'] with a SimpleNamespace (only get_db) and
+overwrote tp.current_dev, never restoring either. Every test file 
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
