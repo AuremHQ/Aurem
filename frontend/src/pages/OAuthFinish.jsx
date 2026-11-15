@@ -1,9 +1,17 @@
 /**
- * OAuthFinish.jsx — final hop after GitHub OAuth signup/sign-in.
+ * OAuthFinish.jsx — final hop after GitHub/Google OAuth signup/sign-in.
  *
  * Backend redirects here with the JWT in the URL fragment (#token=…
- * &login=…) so the token never lands in server access logs or Referer
- * headers. We stash it in localStorage and route to /dashboard.
+ * &login=…&next=…) so the token never lands in server access logs or
+ * Referer headers. We stash it in localStorage and route to `next`
+ * (defaults to /dashboard when absent — e.g. a plain Settings
+ * "Connect GitHub" round-trip never sets one).
+ *
+ * 2026-11-11 — Fix 7: `next` lets a signup/login started from a page
+ * like /harness return there after OAuth instead of always landing on
+ * /dashboard. Set by Login.jsx/Signup.jsx's OAuth buttons, carried
+ * through oauth_states server-side (github_oauth.py/google_oauth.py),
+ * re-validated here (same-origin relative path only) before use.
  *
  * Failure modes (no token, bad fragment) bounce the user back to /login
  * with a friendly error.
@@ -53,6 +61,15 @@ export default function OAuthFinish() {
         // OAuth callback minted a brand-new account row. We fire
         // the Google Ads signup conversion at most once per session.
         const isNewAccount = parts.get("new") === "1";
+        // 2026-11-11 — Fix 7: honour the ?next= the signup/login OAuth
+        // buttons attached, so a flow started from /harness lands back
+        // there instead of always on /dashboard. Re-validated here even
+        // though the backend already validated it before storing it in
+        // oauth_states — never trust a redirect target without checking
+        // it again at the point it's actually used for navigation.
+        const rawNext = parts.get("next") || "";
+        const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\"))
+          ? rawNext : "/dashboard";
         if (!token) {
           setStatus("No sign-in token returned. Redirecting…");
           setTimeout(() => nav(`/login?${provider}=missing_token`, { replace: true }), 800);
@@ -108,8 +125,8 @@ export default function OAuthFinish() {
         try {
           window.history.replaceState(null, "", "/oauth-finish");
         } catch {}
-        setStatus("Signed in. Redirecting to your dashboard…");
-        nav("/dashboard", { replace: true });
+        setStatus("Signed in. Redirecting…");
+        nav(next, { replace: true });
       } catch (e) {
         setStatus("Sign-in failed. Sending you back to login…");
         setTimeout(() => nav("/login?github=error", { replace: true }), 1200);

@@ -3422,9 +3422,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // resends the SAME last user message that produced the missing
   // button, via `send()`'s `promptOverride` (no reliance on `input`
   // state / a second manual send click).
+  //
+  // 2026-10-25 bug fix — if the turn being retried was a Mode E
+  // audit/scan reply (worker.py marks it provider: "mode-e-auditor",
+  // mode: "E"), blindly resending the last USER prompt just re-runs
+  // the whole scan again instead of fixing anything. Send the same
+  // "fix the ... issues" style prompt the audit footer itself tells
+  // the user to type instead.
   function retryLastFix() {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser || busy) return;
+    if (messages[messages.length - 1]?.provider === "mode-e-auditor") {
+      send(null, { promptOverride: "Fix the top issues" });
+      return;
+    }
     send(null, { promptOverride: lastUser.content });
   }
 

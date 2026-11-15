@@ -2226,6 +2226,54 @@ async def get_repo_info(ctx: dict, args: dict) -> dict:
 # by the automated scanner pipelines. This tool lets ORA write ONE
 # finding at a time into that same real backlog while it narrates the
 # audit, using the exact same persistence helper the scanners use.
+async def _verify_chat_finding(
+    *, rc: dict, file_: str, line_: int,
+) -> tuple[bool, str, str | None]:
+    """Robot Fix List B2 — real-only gate. Returns
+    (verified, verified_reason, normalized_category).
+
+    A chat-audit finding is verified ONLY when: the file exists in the
+    repo at the project's branch, the claimed line is within the
+    file's length, AND the static scanner (services.vanguard_scanner)
+    independently detects SOMETHING within 2 lines of the claim —
+    `normalized_category` is that scanner hit's own rule name, used
+    for the canonical id instead of the LLM's free-text title (so the
+    same real issue, described two different ways, collapses to one
+    id). Never raises — any failure degrades to unverified, never to
+    "verified" by default."""
+    if not file_:
+        return False, "no_file_specified", None
+    if line_ <= 0:
+        return False, "no_line_specified", None
+    try:
+        from services.finding_fix_applier import _fetch_file_content
+        content, err = await _fetch_file_content(
+            rc["owner"], rc["repo"], rc["branch"], file_, rc["token"],
+        )
+    except Exception as e:                                # noqa: BLE001
+        logger.warning("save_finding verify fetch failed: %r", e)
+        return False, "repo_unreadable", None
+    if err:
+        reason = "file_not_found" if err == "file_not_found" else "repo_unreadable"
+        return False, reason, None
+    total_lines = content.count("\n") + 1
+    if line_ > total_lines:
+        return False, "line_out_of_range", None
+    try:
+        from services.vanguard_scanner import scan_text
+        hits = scan_text(content, file_) or []
+    except Exception as e:                                # noqa: BLE001
+        logger.warning("save_finding verify scan failed: %r", e)
+        return False, "scan_failed", None
+    for h in hits:
+        h_line = h.get("line") or 0
+        if abs(int(h_line) - line_) <= 2:
+            category = h.get("name") or h.get("rule") or ""
+            if category:
+                return True, "", category
+    return False, "not_detected_by_scanner", None
+
+
 async def save_finding(ctx: dict, args: dict) -> dict:
     """Persist one security/bug/quality finding discovered during a
     conversational audit into the user's real findings backlog (the
@@ -2251,7 +2299,48 @@ async def save_finding(ctx: dict, args: dict) -> dict:
     except (TypeError, ValueError):
         line_ = 0
 
-    rule_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "finding"
+    db = get_db()
+    if db is None:
+        return {"ok": False, "error": "database unavailable"}
+
+    # Robot Fix List B1/BE2 — resolve the SAME effective account
+    # fix_list reads (team member -> owner's shared id), not the
+    # caller's own raw bin_id. Without this, a team member's own
+    # chat-saved findings were written under an id fix_list never
+    # queries and silently never appeared.
+    from services.finding_scope import resolve_findings_scope
+    scope = await resolve_findings_scope(
+        db, caller_user_id=rc["bin_id"], project_id=rc["pid"], level="write",
+    )
+    effective_user_id = scope["user_id"]
+
+    verified, verified_reason, normalized_category = await _verify_chat_finding(
+        rc=rc, file_=file_, line_=line_,
+    )
+    rule_slug = (
+        normalized_category
+        if verified and normalized_category
+        else (re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "finding")
+    )
+
+    # B2 — a scanner-origin finding already covering this exact
+    # file+line+category wins; the chat-audit duplicate is dropped
+    # rather than creating a second row for the same real issue.
+    if verified and normalized_category:
+        existing_scanner_row = await db.cto_open_findings.find_one({
+            "user_id": effective_user_id, "project_id": rc["pid"],
+            "file": file_, "line": line_, "status": "open",
+            "scanner": {"$ne": "ora_chat_audit"},
+            "rule_id": normalized_category,
+        })
+        if existing_scanner_row:
+            return {
+                "ok": True, "saved": False, "severity": severity,
+                "finding_id": existing_scanner_row.get("finding_id"),
+                "file": file_, "line": line_,
+                "note": "Already tracked by an automated scan — not duplicated.",
+            }
+
     # 2026-10 — C3 fix. `a.get("description")`/`a.get("fix_hint")` is
     # whatever free text the model wrote — when the user pasted code
     # containing a REAL secret and asked ORA to review it, the model
@@ -2270,16 +2359,14 @@ async def save_finding(ctx: dict, args: dict) -> dict:
         "title":    redact_secrets_in_text(title[:200]),
         "message":  redact_secrets_in_text((a.get("description") or "")[:500]),
         "fix_hint": redact_secrets_in_text((a.get("fix_hint") or "")[:300]),
+        "verified": verified,
+        "verified_reason": "" if verified else verified_reason,
     }
-
-    db = get_db()
-    if db is None:
-        return {"ok": False, "error": "database unavailable"}
 
     from services.loop_full_scan import persist_findings_to_backlog
     try:
         written = await persist_findings_to_backlog(
-            db, user_id=rc["bin_id"], project_id=rc["pid"],
+            db, user_id=effective_user_id, project_id=rc["pid"],
             findings=[finding], scan_source="ora_chat_audit",
         )
     except Exception as e:                             # noqa: BLE001
@@ -2290,6 +2377,7 @@ async def save_finding(ctx: dict, args: dict) -> dict:
         "ok":       True,
         "saved":    written > 0,
         "severity": severity,
+        "verified": verified,
         # 2026-08-23 — findings-to-fix bridge. Same deterministic id
         # formula as persist_findings_to_backlog (loop_full_scan.py)
         # so orchestrator.py can track this finding and, later, the
@@ -2302,6 +2390,10 @@ async def save_finding(ctx: dict, args: dict) -> dict:
         "message":  finding["message"],
         "fix_hint": finding["fix_hint"],
         "note": (
+            "Recorded, but could not be independently verified "
+            f"({verified_reason}) — it won't appear in the Fix List "
+            "or suggestions until it is."
+            if not verified else
             "Saved to the user's findings backlog — it will surface in "
             "their reminder strip and personalized suggestions."
             if severity in ("critical", "high") else

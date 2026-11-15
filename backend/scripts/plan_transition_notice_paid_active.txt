@@ -1,0 +1,53 @@
+DRAFT — NOT SENT. For founder review only.
+Master Prompt v2 PART 6 / ITEM 9 — per-segment notice variant: paid_active.
+
+Audience: users with an active paid subscription (tier starter/pro/team,
+a live stripe_sub_id). See services/plan_transition.py::classify_user
+for the exact segment rule.
+
+{{TOKEN_GRANT}} is computed per-tier by
+services/plan_transition.py::tokens_per_old_task_micro (price_monthly *
+USD_TO_TOKENS / tasks_per_month, read from
+services/subscription_tiers.py — never hardcoded here) times this
+user's remaining_old_allowance for the current month. If
+LEGACY_TASK_TO_TOKEN_RATE is set (override active), that flat rate is
+used instead for every tier — the dry-run report's `summary.
+override_active` flag tells you which case applied.
+
+---
+
+Subject: Your AUREM plan is moving to tokens
+
+Hey {{FIRST_NAME}},
+
+We're switching AUREM's pricing from a flat task count to a token
+balance — the same work, measured more precisely instead of in whole
+tasks.
+
+What this means for you:
+- Your current plan converts to {{TOKEN_GRANT}} tokens this month.
+- Nothing else about your plan changes — same price, same features.
+- You can see your new balance any time in Settings > Plans & Usage.
+
+{{#if loses_unlimited_maxx}}
+One change worth flagging: your Team plan's unlimited Maxx mode moves
+to the same token-metered model as everything else under this
+cutover — {{MAXX_GRANDFATHER_DECISION}} [founder decision pending,
+see the Item 9 report's MISSING DECISIONS].
+{{/if}}
+
+Questions? Reply to this email or reach us at the usual support
+channel.
+
+— The AUREM team
+
+---
+
+MISSING DECISIONS before this can actually be sent:
+  - Whether LEGACY_TASK_TO_TOKEN_RATE (override) should be set at all,
+    or whether the per-tier default derivation is the final number —
+    a founder call, not inferred here.
+  - The actual cutover date.
+  - Whether Team users keep unlimited Maxx mode (grandfathered) or
+    move to the metered model like everyone else — see
+    `loses_unlimited_maxx` in the dry-run report's per-row output.

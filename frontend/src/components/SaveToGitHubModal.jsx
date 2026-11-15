@@ -21,10 +21,11 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
-  X, Loader2, GitBranch, GitPullRequest, AlertTriangle, ExternalLink, CheckCircle2,
+  X, Loader2, GitBranch, GitPullRequest, AlertTriangle, ExternalLink, CheckCircle2, RotateCcw,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { sanitizeApiErrorDetail } from "../lib/cleanErr";
 
 function _shortSlug() {
   return Math.random().toString(36).slice(2, 8);
@@ -42,22 +43,31 @@ export default function SaveToGitHubModal({
   const [repos, setRepos] = useState([]);
   const [reposLoading, setReposLoading] = useState(false);
   const [reposError, setReposError] = useState(null);
+  const [reposErrorStatus, setReposErrorStatus] = useState(null);
+  const [reposRetryTick, setReposRetryTick] = useState(0);
 
   const [selectedOwner, setSelectedOwner] = useState(activeProject?.github_owner || "");
   const [selectedRepo, setSelectedRepo] = useState(activeProject?.github_repo || "");
 
   const [tab, setTab] = useState("create"); // "create" | "existing"
   const [newBranchName, setNewBranchName] = useState(() => `auremcto/ship-${_shortSlug()}`);
+  // Cosmetic nit noticed in the same pass — computed once so the
+  // (normally-invisible-since-the-input-starts-non-empty) placeholder
+  // doesn't silently change value on every re-render.
+  const [placeholderBranch] = useState(() => `auremcto/ship-${_shortSlug()}`);
 
   const [branches, setBranches] = useState([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState(null);
+  const [branchesErrorStatus, setBranchesErrorStatus] = useState(null);
+  const [branchesRetryTick, setBranchesRetryTick] = useState(0);
   const [existingBranch, setExistingBranch] = useState("");
   const [branchSearch, setBranchSearch] = useState("");
 
   const [mainConfirmChecked, setMainConfirmChecked] = useState(false);
   const [phase, setPhase] = useState("idle"); // idle | submitting | error | queued
   const [submitError, setSubmitError] = useState(null);
+  const [submitErrorStatus, setSubmitErrorStatus] = useState(null);
   const [queued, setQueued] = useState(null);
 
   // Reset to a clean, safe state every time the modal opens.
@@ -72,27 +82,51 @@ export default function SaveToGitHubModal({
     setMainConfirmChecked(false);
     setPhase("idle");
     setSubmitError(null);
+    setSubmitErrorStatus(null);
     setQueued(null);
   }, [open, activeProject?.project_id]);
 
-  // Fetch the writable-repo list once per open.
+  // Fetch the writable-repo list once per open (or on Retry click).
   useEffect(() => {
     if (!open || !activeProject?.project_id) return;
     let cancelled = false;
     setReposLoading(true);
     setReposError(null);
+    setReposErrorStatus(null);
     api.get(`/cto/projects/${activeProject.project_id}/github/repos`)
       .then((r) => {
         if (cancelled) return;
-        setRepos(r?.data?.repos || []);
+        const list = r?.data?.repos || [];
+        setRepos(list);
+        // 2026-10-27 — code-review fix. The project's own
+        // `github_owner`/`github_repo` (the initial selection) isn't
+        // guaranteed to be in THIS installation's writable-repo list
+        // (e.g. the installation's repo access was changed on GitHub's
+        // side). A <select> whose `value` matches no `<option>` shows
+        // the browser's own fallback (the first option) while React
+        // state silently keeps the stale, invisible value — Save would
+        // then submit a repo the user never actually saw selected.
+        // Snap to a real, listed repo as soon as the list is known.
+        const stillValid = list.some(
+          (x) => x.owner === selectedOwner && x.repo === selectedRepo,
+        );
+        if (!stillValid && list.length) {
+          const fallback = list.find(
+            (x) => x.owner === r?.data?.default_owner && x.repo === r?.data?.default_repo,
+          ) || list[0];
+          setSelectedOwner(fallback.owner);
+          setSelectedRepo(fallback.repo);
+        }
       })
       .catch((e) => {
         if (cancelled) return;
-        setReposError(e?.response?.data?.detail || "Couldn't load your connected repos.");
+        setReposError(sanitizeApiErrorDetail(e, "Couldn't load your connected repos."));
+        setReposErrorStatus(e?.response?.status || null);
       })
       .finally(() => { if (!cancelled) setReposLoading(false); });
     return () => { cancelled = true; };
-  }, [open, activeProject?.project_id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeProject?.project_id, reposRetryTick]);
 
   const selectedRepoObj = repos.find(
     (r) => r.owner === selectedOwner && r.repo === selectedRepo,
@@ -105,13 +139,15 @@ export default function SaveToGitHubModal({
     ? (activeProject?.branch || selectedRepoObj?.default_branch || "main")
     : (selectedRepoObj?.default_branch || "main");
 
-  // Fetch branches lazily — only once the "Existing branch" tab is opened.
+  // Fetch branches lazily — only once the "Existing branch" tab is opened
+  // (or on Retry click).
   useEffect(() => {
     if (!open || tab !== "existing" || !activeProject?.project_id
         || !selectedOwner || !selectedRepo) return;
     let cancelled = false;
     setBranchesLoading(true);
     setBranchesError(null);
+    setBranchesErrorStatus(null);
     api.get(`/cto/projects/${activeProject.project_id}/github/branches`, {
       params: { owner: selectedOwner, repo: selectedRepo },
     })
@@ -127,12 +163,13 @@ export default function SaveToGitHubModal({
       })
       .catch((e) => {
         if (cancelled) return;
-        setBranchesError(e?.response?.data?.detail || "Couldn't load branches for this repo.");
+        setBranchesError(sanitizeApiErrorDetail(e, "Couldn't load branches for this repo."));
+        setBranchesErrorStatus(e?.response?.status || null);
       })
       .finally(() => { if (!cancelled) setBranchesLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab, activeProject?.project_id, selectedOwner, selectedRepo]);
+  }, [open, tab, activeProject?.project_id, selectedOwner, selectedRepo, branchesRetryTick]);
 
   if (!open) return null;
 
@@ -152,10 +189,18 @@ export default function SaveToGitHubModal({
     if (!canSave) return;
     setPhase("submitting");
     setSubmitError(null);
+    setSubmitErrorStatus(null);
+    // 2026-10-27 — if the chosen "new branch" name is actually the
+    // same as the repo's base/default branch, there is no new branch
+    // to create — commit directly to it (the existing main-branch
+    // confirm checkbox above already gates this). Sending
+    // create_branch:true here would ask the worker to "create" a
+    // branch that already exists, a redundant call that can 422.
+    const createBranch = tab === "create" && chosenBranch !== defaultBaseBranch;
     const shipTarget = {
       repo: `${selectedOwner}/${selectedRepo}`,
       branch: chosenBranch,
-      create_branch: tab === "create",
+      create_branch: createBranch,
       base_branch: tab === "create" ? defaultBaseBranch : null,
     };
     try {
@@ -169,18 +214,17 @@ export default function SaveToGitHubModal({
       }
       setQueued({
         owner: selectedOwner, repo: selectedRepo, branch: chosenBranch,
-        createBranch: tab === "create",
+        createBranch,
       });
       setPhase("queued");
     } catch (e) {
-      // Never surface a raw exception string — the backend already
-      // returns a human `detail` for every rejection (bad branch name,
-      // repo not writable, branch-creation failure); fall back to one
-      // generic sentence, never e.message/e.toString() raw.
-      setSubmitError(
-        e?.response?.data?.detail
-        || "Couldn't save to GitHub — please try again.",
-      );
+      // Never surface a raw exception string (or raw Cloudflare/HTML
+      // infra text) — sanitizeApiErrorDetail() reads the backend's
+      // structured {code,message,retryable} detail (or sanitizes an
+      // infra body) into one human sentence, same "never e.message"
+      // contract as before.
+      setSubmitError(sanitizeApiErrorDetail(e, "Couldn't save to GitHub — please try again."));
+      setSubmitErrorStatus(e?.response?.status || null);
       setPhase("error");
     }
   }
@@ -277,7 +321,21 @@ export default function SaveToGitHubModal({
                   Loading your connected repos…
                 </div>
               ) : reposError ? (
-                <div data-testid="save-to-github-repos-error" style={{ color: "var(--danger)" }}>{reposError}</div>
+                <div data-testid="save-to-github-repos-error" style={{ color: "var(--danger)" }}>
+                  <div>{reposError}{reposErrorStatus ? ` (HTTP ${reposErrorStatus})` : ""}</div>
+                  <button
+                    type="button"
+                    data-testid="save-to-github-repos-retry"
+                    onClick={() => setReposRetryTick((n) => n + 1)}
+                    style={{
+                      marginTop: 6, display: "inline-flex", alignItems: "center", gap: 4,
+                      background: "none", border: "1px solid var(--border)", borderRadius: 6,
+                      color: "var(--text-dim)", padding: "4px 8px", cursor: "pointer",
+                    }}
+                  >
+                    <RotateCcw size={12} /> Retry
+                  </button>
+                </div>
               ) : repos.length === 0 ? (
                 <div data-testid="save-to-github-repos-empty" style={{ color: "var(--text-faint)" }}>
                   No writable repos found for your GitHub connection.
@@ -347,7 +405,7 @@ export default function SaveToGitHubModal({
                     data-testid="save-to-github-new-branch-input"
                     value={newBranchName}
                     onChange={(e) => setNewBranchName(e.target.value)}
-                    placeholder={`auremcto/ship-${_shortSlug()}`}
+                    placeholder={placeholderBranch}
                     style={{
                       flex: 1, padding: "8px 10px", borderRadius: 6,
                       background: "var(--panel-2)", color: "var(--text)",
@@ -374,7 +432,21 @@ export default function SaveToGitHubModal({
                       Loading branches…
                     </div>
                   ) : branchesError ? (
-                    <div data-testid="save-to-github-branches-error" style={{ color: "var(--danger)" }}>{branchesError}</div>
+                    <div data-testid="save-to-github-branches-error" style={{ color: "var(--danger)" }}>
+                      <div>{branchesError}{branchesErrorStatus ? ` (HTTP ${branchesErrorStatus})` : ""}</div>
+                      <button
+                        type="button"
+                        data-testid="save-to-github-branches-retry"
+                        onClick={() => setBranchesRetryTick((n) => n + 1)}
+                        style={{
+                          marginTop: 6, display: "inline-flex", alignItems: "center", gap: 4,
+                          background: "none", border: "1px solid var(--border)", borderRadius: 6,
+                          color: "var(--text-dim)", padding: "4px 8px", cursor: "pointer",
+                        }}
+                      >
+                        <RotateCcw size={12} /> Retry
+                      </button>
+                    </div>
                   ) : filteredBranches.length === 0 ? (
                     <div data-testid="save-to-github-branches-empty" style={{ color: "var(--text-faint)" }}>
                       No branches match.
@@ -438,7 +510,12 @@ export default function SaveToGitHubModal({
                   color: "var(--danger)",
                 }}
               >
-                {submitError}
+                <div>{submitError}</div>
+                {submitErrorStatus && (
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 2 }}>
+                    HTTP {submitErrorStatus}
+                  </div>
+                )}
               </div>
             )}
 

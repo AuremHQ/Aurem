@@ -206,14 +206,28 @@ class TestClassifyUser:
         assert result["segment"] == "huge_allowance"
         assert result["excluded"] is True
 
-    async def test_no_configured_rate_means_needs_decision_for_paying_users(self, db, seeded_12_types, monkeypatch):
+    async def test_no_override_configured_still_computes_a_real_per_tier_grant(self, db, seeded_12_types, monkeypatch):
+        """2026-10-25 (ITEM 9, independent review) — corrected from
+        the old default ("no rate configured -> needs_decision for
+        EVERY paying user"). That default is exactly what this item
+        replaces: a paying user on a real, priced, capped tier
+        (starter here) now gets a real proposed grant BY DEFAULT, via
+        services.plan_transition.tokens_per_old_task_micro's per-tier
+        derivation from services.subscription_tiers — no founder
+        env-var action required. See
+        test_regression_iter2026_23a_plan_transition_per_tier_rate.py
+        for the full new-behavior test suite this correction defers
+        to (exact worked numbers, override-still-works, free/founder
+        never-guess, paid_cancelled unknown-former-tier case)."""
         import config.plan_transition as cfg
         monkeypatch.setattr(cfg, "LEGACY_TASK_TO_TOKEN_RATE", None)
         from services.plan_transition import classify_user
         user = await db.dev_users.find_one({"user_id": seeded_12_types["paid_active"]})
         result = await classify_user(db, user)
-        assert result["needs_decision"] is True
-        assert result["proposed_token_grant"] is None
+        assert result["needs_decision"] is False
+        assert result["proposed_token_grant"] is not None
+        assert result["proposed_token_grant"] > 0
+        assert result["override_active"] is False
 
     async def test_configured_rate_computes_a_real_proposed_grant(self, db, seeded_12_types, monkeypatch):
         import config.plan_transition as cfg

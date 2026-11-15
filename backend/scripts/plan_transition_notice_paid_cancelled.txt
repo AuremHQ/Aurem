@@ -1,0 +1,55 @@
+DRAFT — NOT SENT. For founder review only.
+Master Prompt v2 PART 6 / ITEM 9 — per-segment notice variant: paid_cancelled.
+
+Audience: users whose subscription already ended (tier downgraded to
+free by the Stripe cancellation webhook) but who still have
+fix_entitlement on file and a tier_updated_at timestamp — see
+services/plan_transition.py::classify_user's "paid_cancelled" branch.
+
+IMPORTANT — this segment is DIFFERENT from paid_active: the user's
+CURRENT tier field already reads "free" (the cancellation webhook
+already downgraded it), and this codebase has no stored field
+(last_paid_tier/previous_tier/former_tier/tier_before — confirmed by
+grep) recording which paid tier they actually had. That means
+{{TOKEN_GRANT}} CANNOT be derived automatically for this segment
+unless LEGACY_TASK_TO_TOKEN_RATE (the flat override) is set — the
+dry-run report flags this exact case with `needs_decision: true` and
+a `grant_reason` explaining why. Do not guess a former tier here.
+
+This notice must NOT claim "nothing else about your plan changes" —
+unlike paid_active, their plan already changed (it lapsed).
+
+---
+
+Subject: Your AUREM account and the move to token billing
+
+Hey {{FIRST_NAME}},
+
+Your AUREM subscription isn't currently active, so this note is just
+to explain what the token-billing change means for your account.
+
+- You keep free-tier access (one full repo scan) during a
+  {{GRACE_PERIOD_DAYS}}-day grace period after this change goes live.
+- {{IF_TOKEN_GRANT_DECIDED}} As a former paying member, we're crediting
+  your account {{TOKEN_GRANT}} tokens as a one-time goodwill grant.
+  {{ELSE}} [No grant number yet — see MISSING DECISIONS below.]{{/IF}}
+- After the grace period, fixing issues needs an active paid plan
+  again — scanning stays free either way.
+
+Questions? Reply to this email or reach us at the usual support
+channel.
+
+— The AUREM team
+
+---
+
+MISSING DECISIONS before this can actually be sent:
+  - {{TOKEN_GRANT}} has no value unless LEGACY_TASK_TO_TOKEN_RATE is
+    set (override) — the former paid tier can't be recovered from any
+    stored field, so there is no per-tier default for this segment.
+  - Whether a goodwill grant is offered to this segment AT ALL (the
+    draft above is conditional on that being a real founder decision,
+    not assumed).
+  - {{GRACE_PERIOD_DAYS}} — currently FREE_PLAN_GRACE_DAYS
+    (config/plan_transition.py), confirm this is still the intended
+    value for this specific segment before sending.

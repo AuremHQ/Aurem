@@ -32,6 +32,53 @@ async def _llm_call_protected(*, system: str, user: str, max_tokens: int,
                               trace_name: str = "parliament.llm_call",
                               trace_metadata: Optional[dict] = None,
                               ) -> tuple[str, float, Optional[str]]:
+    """ORA Brain Part 3, Phase E — record-only gateway, wrapped AROUND
+    the real implementation (`_llm_call_protected_impl`) rather than
+    inside it, so the breaker/timeout logic below is untouched.
+    `claim_recording` ensures this call is recorded exactly once even
+    though it calls `services.llm.call_llm_with_meta` internally
+    (which would otherwise also record itself) — see
+    services/brain_gateway.py's module docstring. Fail-open: a
+    gateway error here can delay nothing, since recording happens
+    AFTER the real call has already returned."""
+    from services.brain_gateway import claim_recording, record_call
+    _meta_sink: dict = {}
+    async with claim_recording() as _already_claimed:
+        content, latency_ms, err = await _llm_call_protected_impl(
+            system=system, user=user, max_tokens=max_tokens, mode=mode,
+            review_mode=review_mode, user_id=user_id, temperature=temperature,
+            trace_name=trace_name, trace_metadata=trace_metadata,
+            _meta_sink=_meta_sink,
+        )
+        if not _already_claimed:
+            try:
+                from services.loop_token_ledger import current_surface_context
+                _ctx = current_surface_context()
+                await record_call(
+                    user_id=user_id,
+                    project_id=_ctx.get("project_id"),
+                    task_id=_ctx.get("task_id"),
+                    task_type=mode,
+                    model=_meta_sink.get("model") or _meta_sink.get("provider"),
+                    latency_ms=latency_ms, tokens=_meta_sink.get("total_tokens"),
+                    system=system, user=user, surface="parliament",
+                )
+            except Exception as _bge:                             # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).debug(
+                    "brain_gateway record skipped: %r", _bge,
+                )
+        return content, latency_ms, err
+
+
+async def _llm_call_protected_impl(*, system: str, user: str, max_tokens: int,
+                              mode: str, review_mode: str,
+                              user_id: Optional[str] = None,
+                              temperature: float = 0.1,
+                              trace_name: str = "parliament.llm_call",
+                              trace_metadata: Optional[dict] = None,
+                              _meta_sink: Optional[dict] = None,
+                              ) -> tuple[str, float, Optional[str]]:
     """Make a single LLM call wrapped by the global semaphore + the
     circuit breaker's hard per-call timeout.
 
@@ -41,7 +88,11 @@ async def _llm_call_protected(*, system: str, user: str, max_tokens: int,
 
     Iter 212m-153 — Every call is wrapped by a Langfuse generation
     observation.  Silent no-op when Langfuse keys are not configured.
-    """
+
+    `_meta_sink`, when provided (ORA Brain Part 3), is updated in
+    place with the real `model`/`provider`/`total_tokens` once `meta`
+    is known, so the outer `_llm_call_protected` can record them
+    without widening this function's own return contract."""
     from services.llm import call_llm_with_meta
     from services.loop_token_ledger import llm_surface_context
     t0 = time.monotonic()
@@ -103,6 +154,10 @@ async def _llm_call_protected(*, system: str, user: str, max_tokens: int,
                 span.set_metadata({"latency_ms": latency_ms, "error": "cost_cap_reached"})
                 span.record_error("cost_cap_reached")
                 return "", latency_ms, "cost_cap_reached"
+            if _meta_sink is not None and isinstance(meta, dict):
+                for k in ("model", "provider", "total_tokens"):
+                    if meta.get(k) is not None:
+                        _meta_sink[k] = meta[k]
             content = (meta or {}).get("content", "") or ""
             if not content.strip():
                 _GLOBAL_BREAKER.record_failure(latency_ms, kind="empty")

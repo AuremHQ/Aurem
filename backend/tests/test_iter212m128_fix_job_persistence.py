@@ -345,14 +345,19 @@ def test_run_bulk_job_top_level_exception_handled(monkeypatch):
     db = _FakeDB()
     findings = [{"id": "f1", "severity": "high", "file": "a.py"}]
 
-    # Stub apply_finding_fix to NOT raise — the worker should
-    # complete cleanly.  We then inject a poisoned _interleave_by_
-    # severity that DOES raise to trigger the top-level path.
-    async def fake_apply(*a, **kw):
-        return {"ok": True, "commit_sha": "abc1234",
-                "full_sha": "abc1234" + "0" * 33,
-                "html_url": "https://x", "file": "a.py", "rule_id": "r"}
-    monkeypatch.setattr(fp, "apply_finding_fix", fake_apply)
+    # Stub apply_file_fixes (Part 2b F2 renamed the per-file entry
+    # point) to NOT raise — the worker should complete cleanly. We
+    # then inject a poisoned _interleave_by_severity that DOES raise
+    # to trigger the top-level path — this stub is never actually
+    # reached (the poison fires before any per-file work starts),
+    # kept only so a future change that reorders the two doesn't
+    # trip over a missing attribute.
+    async def fake_apply_file(*a, **kw):
+        return {"ok": True, "file": "a.py", "commit_sha": "abc1234",
+                "full_sha": "abc1234" + "0" * 33, "html_url": "https://x",
+                "results": [{"finding_id": "f1", "rule_id": "r", "file": "a.py",
+                             "status": "resolved"}]}
+    monkeypatch.setattr(fp, "apply_file_fixes", fake_apply_file)
 
     def poisoned(_):
         raise RuntimeError("simulated worker crash")

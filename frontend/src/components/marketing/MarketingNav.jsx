@@ -21,6 +21,17 @@
  * `/#features` etc. so they work correctly from any page — Landing.jsx
  * has a small on-mount effect that scrolls to `location.hash` when
  * you land there from elsewhere (see Landing.jsx `useLocation` effect).
+ *
+ * `minimal` prop (2026-11-11) — /harness is a different, free,
+ * open-source tool, not the ORA SaaS product, so the ORA-specific
+ * product links (Features/Integrations/Reviews/Bug Hunt) don't apply
+ * there. Pass `<MarketingNav minimal />` to hide just those 4 and
+ * keep the logo + Pricing + Sign in + Start free as-is.
+ *
+ * `logoText`/`logoSubtext` props (2026-11-11) — override the
+ * "ORA"/"by Aurem" wordmark for a page under a different name, e.g.
+ * `<MarketingNav logoText="Aurem Loop" logoSubtext="Harness" />` on
+ * /harness. Same orange accent + muted-subtext styling either way.
  */
 import React from "react";
 import { Link } from "react-router-dom";
@@ -51,6 +62,7 @@ const CSS = `
   font-family: var(--mn-font-mono); font-size: 13px;
   background: var(--mn-accent); color: #000; padding: 9px 18px;
   border-radius: 8px; text-decoration: none; font-weight: 600;
+  white-space: nowrap;
   transition: opacity 0.15s, transform 0.08s;
 }
 .aurem-marketing-nav .mn-cta:hover { opacity: 0.92; }
@@ -63,27 +75,45 @@ const CSS = `
 }
 `;
 
-export default function MarketingNav() {
+// `homeHref`/`next`/`hidePricing` props (2026-11-14) — a page under a
+// different product name (e.g. /dot) must keep its visitors on that
+// product: the logo links to `homeHref` (default "/", ORA's homepage),
+// "Sign in"/"Start free" carry `?next=` so auth returns to the page
+// (Fix 7 gating), and `hidePricing` drops the ORA pricing link, which
+// would otherwise send a Dot visitor to ORA's homepage. Defaults keep
+// every existing page's behaviour exactly as before.
+export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem", homeHref = "/", next = "", hidePricing = false }) {
+  const loginHref = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
+  const signupHref = next ? `/signup?next=${encodeURIComponent(next)}` : "/signup";
   return (
     <nav className="aurem-marketing-nav" data-testid="ora-nav">
       <style>{CSS}</style>
-      <Link to="/" className="mn-left" data-testid="marketing-nav-logo">
+      <Link to={homeHref} className="mn-left" data-testid="marketing-nav-logo">
         <picture>
           <source srcSet="/ora-icon.webp 1x, /ora-icon@2x.webp 2x" type="image/webp" />
           <img src="/ora-icon.png" srcSet="/ora-icon.png 1x, /ora-icon@2x.png 2x" alt="ORA" className="mn-logo-img" width="38" height="38" decoding="async" />
         </picture>
-        <div className="mn-logo-text">ORA<span> by Aurem</span></div>
+        <div className="mn-logo-text">{logoText}<span> {logoSubtext}</span></div>
       </Link>
       <div className="mn-links">
-        <Link className="mn-link" to="/#features" data-testid="nav-features">Features</Link>
-        <Link className="mn-link" to="/#pricing" data-testid="nav-pricing">Pricing</Link>
-        <Link className="mn-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
-        <Link className="mn-link" to="/#reviews" data-testid="nav-reviews">Reviews</Link>
-        {(!getToken() || isAdminOrFounder(getUser())) && (
-          <Link className="mn-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
+        {!minimal && (
+          <Link className="mn-link" to="/#features" data-testid="nav-features">Features</Link>
         )}
-        <Link className="mn-link" to="/login" data-testid="nav-login">Sign in</Link>
-        <Link className="mn-cta" to="/signup" data-testid="nav-signup-cta">Start free</Link>
+        {!hidePricing && (
+          <Link className="mn-link" to="/#pricing" data-testid="nav-pricing">Pricing</Link>
+        )}
+        {!minimal && (
+          <>
+            <Link className="mn-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
+            <Link className="mn-link" to="/#reviews" data-testid="nav-reviews">Reviews</Link>
+            <Link className="mn-link" to="/faq" data-testid="nav-faq">FAQ</Link>
+            {(!getToken() || isAdminOrFounder(getUser())) && (
+              <Link className="mn-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
+            )}
+          </>
+        )}
+        <Link className="mn-link" to={loginHref} data-testid="nav-login">Sign in</Link>
+        <Link className="mn-cta" to={signupHref} data-testid="nav-signup-cta">Start free</Link>
       </div>
     </nav>
   );

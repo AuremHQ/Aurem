@@ -218,6 +218,9 @@ export default function SecurityScanDrawer({ open, onClose, projectId, projectLa
     function onFixed(e) {
       const fid = e?.detail?.finding_id;
       if (!fid) return;
+      // Robot Fix List F4 — ignore a fix event for a DIFFERENT
+      // project; this drawer's `data` is scoped to `projectId`.
+      if (e?.detail?.project_id && e.detail.project_id !== projectId) return;
       setData((d) => {
         if (!d) return d;
         const before = d.findings || [];
@@ -243,7 +246,7 @@ export default function SecurityScanDrawer({ open, onClose, projectId, projectLa
     }
     window.addEventListener("aurem:finding-fixed", onFixed);
     return () => window.removeEventListener("aurem:finding-fixed", onFixed);
-  }, []);
+  }, [projectId]);
 
   if (!open) return null;
 

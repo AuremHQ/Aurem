@@ -39,6 +39,7 @@ from services import loop_engine as eng
 
 logger = logging.getLogger(__name__)
 from services.feature_flags import is_enabled
+from services.rate_limiter import check_rate_limit_async
 
 router = APIRouter(prefix="/loop", tags=["Loop Mode"])
 
@@ -1101,17 +1102,28 @@ async def cancel_loop(loop_id: str,
         if db is not None:
             doc = await eng.load_session(db, loop_id)
             if doc and doc.get("user_id") == user["user_id"]:
-                # Iter 277 — write the aborted state AND write a terminal
-                # audit row that the frontend's SSE fallback path picks
-                # up. Previously this fallback branch only set state in
-                # `loop_sessions`, leaving the SSE stream with no
-                # terminal frame — the UI kept rendering the stale
-                # "executing" state for minutes until the user refreshed.
+                # 2026-11-12 — SECURITY AUDIT FINDING (P1, execution
+                # integrity): this write used to be unconditional — if
+                # the loop had ACTUALLY already reached a terminal
+                # state (completed/failed/expired) in the brief window
+                # between the user's /cancel click and this fallback
+                # landing (e.g. the pipeline finished naturally right
+                # as the user hit cancel), a late abort here would
+                # silently overwrite a real COMPLETED result with
+                # "aborted" — the user would see "Loop cancelled" for
+                # a run that had actually succeeded. The write is now
+                # a conditional update gated on the CURRENT state
+                # still being non-terminal; a loop that already
+                # finished is left exactly as it finished, and this
+                # endpoint reports that real terminal state back
+                # instead of claiming "aborted" for a run it didn't
+                # actually touch.
                 from datetime import datetime, timezone
                 terminal_dt = datetime.now(timezone.utc)
                 terminal_ts = terminal_dt.isoformat()
-                await db.loop_sessions.update_one(
-                    {"loop_id": loop_id},
+                _TERMINAL_STATES = ("completed", "failed", "aborted", "expired")
+                abort_result = await db.loop_sessions.update_one(
+                    {"loop_id": loop_id, "state": {"$nin": list(_TERMINAL_STATES)}},
                     {"$set": {"state": "aborted",
                               "phase": doc.get("phase") or "?",
                               # 2026-08-27 — TTL fix: real BSON Date
@@ -1129,6 +1141,26 @@ async def cancel_loop(loop_id: str,
                                   "ts":      terminal_ts,
                               }}},
                 )
+                if abort_result.matched_count == 0:
+                    # Already terminal (completed/failed/aborted/
+                    # expired) before we got here — nothing to abort.
+                    # Still safe/idempotent to make sure no stale lock
+                    # is left behind, but report the REAL state, not a
+                    # false "aborted".
+                    try:
+                        from services.loop_safety import release_loop_lock
+                        proj_key = doc.get("project_id") or "_no_project"
+                        await release_loop_lock(
+                            db, proj_key, doc.get("user_id") or user["user_id"],
+                            loop_id,
+                        )
+                    except Exception as e:                          # noqa: BLE001
+                        logger.debug(
+                            "loop %s — fallback release_loop_lock (already-terminal) failed: %r",
+                            loop_id, e,
+                        )
+                    return {"loop_id": loop_id, "state": doc.get("state"),
+                            "already_terminal": True, "lock_released": True}
                 # Also drop an event row into `loop_events` so any
                 # /stream consumer polling the log picks up the terminal
                 # marker on its next tick.

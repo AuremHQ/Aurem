@@ -96,3 +96,4 @@ async def _fetch_installation_meta(installation_id: int) -> dict:
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.get(
             f"https://api.github.com/app/installations/{installation_id}",
+from cto_services.db import get_db, require_db  # noqa: F401 — get

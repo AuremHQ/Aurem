@@ -28,11 +28,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import stripe
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import require_db
+from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 from services.subscription_tiers import TIER_LIMITS, _coerce
 from services.team_permissions import check_permission
 
@@ -803,10 +804,21 @@ async def stripe_webhook(request: Request) -> dict:
         # Iter 352 — abandoned checkouts previously stayed "pending"
         # forever (founder audit: 22 stuck rows, some 35 days old).
         # Stripe fires this ~24h after an un-paid session is created.
+        #
+        # 2026-11-12 — SECURITY AUDIT FINDING (P1, payment correctness):
+        # this write was unconditional. Stripe's webhook delivery is
+        # at-least-once and NOT guaranteed in-order — if this "expired"
+        # event were ever delivered AFTER a "checkout.session.completed"
+        # event for the SAME session (out-of-order redelivery/retry),
+        # it would overwrite an already-paid row's status back to
+        # "expired" in the admin ledger, even though the user's tier/
+        # tokens are untouched (those come from the completed-event
+        # branch above and are not re-read here). Explicit state rule
+        # per the audit: complete → never downgrades to expired.
         obj = event["data"]["object"]
         try:
             await db.cto_payments.update_one(
-                {"session_id": obj.get("id")},
+                {"session_id": obj.get("id"), "status": {"$ne": "complete"}},
                 {"$set": {
                     "payment_status": "expired",
                     "status":         "expired",
@@ -963,23 +975,35 @@ async def stripe_webhook(request: Request) -> dict:
         # downgraded `tier` to "free" but never touched
         # `fix_entitlement`, so a cancelled/paused subscriber kept Fix
         # access forever (the field stays True until something sets it
-        # False — nothing did). Gated on TOKEN_BILLING_MODE != "off" so
-        # an account that was never part of the token-billing rollout
-        # doesn't get a new field written to it at all.
+        # False — nothing did).
+        # 2026-10-25 (ITEM 1, independent review) — this call used to be
+        # gated on `billing_mode() != "off"`, under the theory that an
+        # account outside the token-billing rollout shouldn't get a new
+        # field written at mode "off". That reasoning didn't hold: the
+        # GRANT path (grant_fix_entitlement, ~line 777 above) and the
+        # refund/dispute revoke paths already write fix_entitlement
+        # unconditionally, with no mode check at all — only this one
+        # revoke was asymmetric. The result: a user who cancelled while
+        # mode was "off" kept fix_entitlement=True forever, and if the
+        # founder later flips TOKEN_BILLING_MODE to "shadow"/"on", that
+        # stale True passes the Fix gate for free. Revoke unconditionally
+        # now, matching every other write path. (Rows already poisoned
+        # by the old gated behavior, before this fix, are self-healed by
+        # services/fix_entitlement.py::is_fix_entitled's own narrow
+        # stale-shape check, and listed by the Item 1(c) pre-flight
+        # report for the founder's real-revoke decision.)
         if user_row and user_row.get("user_id"):
-            from services.wallet import billing_mode
-            if billing_mode() != "off":
-                from services.fix_entitlement import revoke_fix_entitlement
-                try:
-                    await revoke_fix_entitlement(
-                        db, user_row["user_id"],
-                        reason=f"stripe_webhook:{etype}",
-                    )
-                except Exception as e:                          # noqa: BLE001
-                    logger.warning(
-                        "[webhook] fix_entitlement revoke failed for "
-                        "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
-                    )
+            from services.fix_entitlement import revoke_fix_entitlement
+            try:
+                await revoke_fix_entitlement(
+                    db, user_row["user_id"],
+                    reason=f"stripe_webhook:{etype}",
+                )
+            except Exception as e:                          # noqa: BLE001
+                logger.warning(
+                    "[webhook] fix_entitlement revoke failed for "
+                    "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
+                )
         # Iter 212m-240 — Tier 3: paid → free means any dedicated Supabase
         # Postgres projects the user has must enter the downgrade grace
         # window using the configured policy (default = migrate_back,
@@ -1316,6 +1340,28 @@ async def stripe_webhook(request: Request) -> dict:
 # through the current margin, falling back to the flat PRICE_TABLE
 # guess when there's no live measurement yet — never raises, never
 # shows a per-action dollar figure (this returns a FIX COUNT only).
+_BILLING_MODE_RATE_PER_MIN = 30
+
+
+@router.get("/payments/billing-mode")
+async def get_billing_mode_public(request: Request, response: Response = None) -> dict:
+    """ITEM 5(a) (independent review) — small, public, read-only.
+    Lets the frontend compare its own BUILD-TIME
+    VITE_TOKEN_BILLING_MODE constant against the backend's live
+    RUNTIME TOKEN_BILLING_MODE and detect drift (a stale build still
+    showing task wording while the backend is actually billing in
+    tokens, or vice versa) — see
+    frontend/src/lib/billingModeCheck.js. No secrets, no auth, rate-
+    limited per IP, response cacheable for a few seconds."""
+    ip = client_ip_from_request(request)
+    if not await check_rate_limit_async(f"billing_mode_public:{ip}", _BILLING_MODE_RATE_PER_MIN):
+        raise HTTPException(429, "Too many requests")
+    if response is not None:
+        response.headers["Cache-Control"] = "public, max-age=10"
+    from services.wallet import billing_mode
+    return {"mode": billing_mode()}
+
+
 @router.get("/payments/fix-estimate")
 async def fix_estimate(price_usd: float) -> dict:
     import math

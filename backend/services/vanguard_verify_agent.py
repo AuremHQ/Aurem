@@ -383,15 +383,28 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
         model_used = _VERIFY_MODEL
         raw = ""
         primary_error: Optional[str] = None
+        # ORA Brain Part 4, F5 — record-only; no routing change.
+        from services.brain_gateway import record_wrap
+        from services.loop_token_ledger import (
+            current_ambient_user_id,
+            current_surface_context,
+        )
+        _bg_user_id = current_ambient_user_id()
+        _bg_ctx = current_surface_context()
         try:
             raw = await asyncio.wait_for(
-                call_openrouter_model(
-                    model=_VERIFY_MODEL,
-                    system=sys_prompt,
-                    user="Review the following patch:\n\n" + envelope,
-                    max_tokens=2000,
-                    temperature=0.0,
-                    feature="Vanguard Verify",
+                record_wrap(
+                    call_openrouter_model(
+                        model=_VERIFY_MODEL,
+                        system=sys_prompt,
+                        user="Review the following patch:\n\n" + envelope,
+                        max_tokens=2000,
+                        temperature=0.0,
+                        feature="Vanguard Verify",
+                    ),
+                    user_id=_bg_user_id, project_id=_bg_ctx.get("project_id"),
+                    task_id=_bg_ctx.get("task_id"), task_type="vanguard_verify",
+                    model=_VERIFY_MODEL, surface="vanguard_verify",
                 ),
                 timeout=30.0,
             )
@@ -405,13 +418,18 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
             )
             try:
                 raw = await asyncio.wait_for(
-                    call_openrouter_model(
-                        model=_VERIFY_RESCUE_MODEL,
-                        system=sys_prompt,
-                        user="Review the following patch:\n\n" + envelope,
-                        max_tokens=2000,
-                        temperature=0.0,
-                        feature="Vanguard Verify",
+                    record_wrap(
+                        call_openrouter_model(
+                            model=_VERIFY_RESCUE_MODEL,
+                            system=sys_prompt,
+                            user="Review the following patch:\n\n" + envelope,
+                            max_tokens=2000,
+                            temperature=0.0,
+                            feature="Vanguard Verify",
+                        ),
+                        user_id=_bg_user_id, project_id=_bg_ctx.get("project_id"),
+                        task_id=_bg_ctx.get("task_id"), task_type="vanguard_verify",
+                        model=_VERIFY_RESCUE_MODEL, surface="vanguard_verify",
                     ),
                     timeout=30.0,
                 )

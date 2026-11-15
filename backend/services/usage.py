@@ -35,20 +35,24 @@ DECOUPLE the token meter from customer-facing gating:
     is untouched.
 """
 from __future__ import annotations
+
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from fastapi import HTTPException
 
 from cto_services.db import require_db
 
 logger = logging.getLogger(__name__)
 
-from services.subscription_tiers import get_limit as _tier_limit
 from config.quota_limits import (
-    FREE_LIFETIME_BUDGET_USD, FREE_LIFETIME_TOKEN_DISPLAY, FIRST_SCAN_EXEMPT,
+    FIRST_SCAN_EXEMPT,
+    FREE_LIFETIME_BUDGET_USD,
+    FREE_LIFETIME_TOKEN_DISPLAY,
     PER_USER_DAILY_SPEND_CAP_USD,
 )
+from services.subscription_tiers import get_limit as _tier_limit
 
 PLAN_LIMITS = {
     # Q1 (2026-02) — derived from the single USD source of truth in
@@ -109,8 +113,16 @@ def is_founder_email(email: str | None) -> bool:
     return bool(email) and email.lower().strip() in founder_emails()
 
 
-async def get_usage(user_id: str) -> dict:
-    db = require_db()
+async def get_usage(user_id: str, db=None) -> dict:
+    """`db` is optional and defaults to the global db singleton (every
+    existing caller passes only `user_id`, unaffected). 2026-10-25
+    (ITEM 3, independent review) — added so a caller already holding
+    a specific db handle (e.g. services.plan_transition's
+    WriteGuardedDB-wrapped dry run) can route get_usage's own reads
+    through THAT handle instead of silently reaching past it to the
+    real global db."""
+    if db is None:
+        db = require_db()
     user = await db.dev_users.find_one(
         {"user_id": user_id},
         {"tier": 1, "tokens_granted": 1, "is_unlimited": 1, "email": 1},
@@ -174,7 +186,7 @@ async def get_usage(user_id: str) -> dict:
     # user has SUBMITTED + ran since the first of the current UTC month.
     # Failed tasks are excluded (Iter 52 BUG 3) — a stale PAT or auth
     # error shouldn't burn the user's quota before the AI ran.
-    month_start = datetime.now(timezone.utc).replace(
+    month_start = datetime.now(UTC).replace(
         day=1, hour=0, minute=0, second=0, microsecond=0,
     )
     tasks_this_month = await db.cto_tasks.count_documents({
@@ -299,7 +311,7 @@ async def assert_scan_budget(user_id: str, *, is_account_first_scan: bool) -> No
         dedupe_key = f"free_allowance_exhausted:{user_id}"
         existing = await db.notif_dedupe.find_one({"_id": dedupe_key})
         if not existing:
-            await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(timezone.utc)})
+            await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(UTC)})
             await emit_notification(
                 db, user_id=user_id, type="free_allowance_exhausted",
                 text="You've used your free allowance. Upgrade to keep scanning and fixing.",
@@ -342,7 +354,7 @@ async def assert_daily_spend_cap(user_id: str) -> None:
     if (user.get("is_unlimited") or tier == "founder"
             or is_founder_email(user.get("email")) or tier != "free"):
         return
-    since = datetime.now(timezone.utc).timestamp() - 86400
+    since = datetime.now(UTC).timestamp() - 86400
     agg = await db.real_llm_usage.aggregate([
         {"$match": {"user_id": user_id, "created_at": {"$gte": since}}},
         {"$group": {"_id": None, "cost_usd": {"$sum": "$cost_usd"}}},
@@ -352,10 +364,10 @@ async def assert_daily_spend_cap(user_id: str) -> None:
         return
     try:
         from services.notifications import emit_notification
-        dedupe_key = f"daily_spend_cap_hit:{user_id}:{datetime.now(timezone.utc).date().isoformat()}"
+        dedupe_key = f"daily_spend_cap_hit:{user_id}:{datetime.now(UTC).date().isoformat()}"
         existing = await db.notif_dedupe.find_one({"_id": dedupe_key})
         if not existing:
-            await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(timezone.utc)})
+            await db.notif_dedupe.insert_one({"_id": dedupe_key, "ts": datetime.now(UTC)})
             await emit_notification(
                 db, user_id=user_id, type="daily_spend_cap_hit",
                 text="You've hit today's usage cap. Try again tomorrow, or upgrade for a higher limit.",
@@ -426,7 +438,7 @@ async def assert_has_budget(user_id: str) -> None:
 # ── Iter 94: Maxx-mode usage tracking ─────────────────────────────────
 def _current_year_month() -> str:
     """Returns 'YYYY-MM' for current UTC time — the bucket key."""
-    n = datetime.now(timezone.utc)
+    n = datetime.now(UTC)
     return f"{n.year:04d}-{n.month:02d}"
 
 
@@ -484,24 +496,72 @@ async def get_maxx_usage(user_id: str) -> dict:
     }
 
 
+async def _maxx_cap_for_user(user_id: str) -> int | None:
+    """Tier -> cap lookup only (no count read) — tier changes rarely
+    enough that this alone being a separate, earlier read is not the
+    race; the count read-then-write below is."""
+    db = require_db()
+    user = await db.dev_users.find_one(
+        {"user_id": user_id}, {"tier": 1, "email": 1, "is_unlimited": 1},
+    )
+    if not user:
+        tier = "free"
+    else:
+        tier = user.get("tier", "free")
+        if (is_founder_email(user.get("email"))
+                or user.get("is_unlimited") or tier == "founder"):
+            tier = "founder"
+    return MAXX_MONTHLY_LIMITS.get(tier)
+
+
 async def incr_maxx_usage(user_id: str) -> int:
-    """Atomically bump this user's Maxx counter for the current month.
-    Returns the new count. Iter 101 — also bumps `overage_count` when
-    we're already past the cap (for end-of-month $0.50/task billing
-    of Pro+ users)."""
+    """Atomically bump this user's Maxx counter for the current
+    month. Returns the new count.
+
+    2026-10-25 (ITEM 4(d), independent review) — this used to read
+    `capped` via a SEPARATE get_maxx_usage() call, then increment via
+    its own find_one_and_update: a TOCTOU race where concurrent calls
+    could all read "not yet capped" off a stale snapshot and all skip
+    the overage bump, undercounting overage_count (empirically, 50
+    concurrent calls against a cap of 20 only correctly flagged 1 as
+    overage instead of the correct 30). The count-read and the
+    increment are now ONE atomic pipeline update (same style as
+    services/wallet.py::_atomic_bucket_spend) — whether THIS call is
+    over the cap is decided from the post-increment count inside the
+    SAME atomic operation that performs the increment."""
     db = require_db()
     bucket = _current_year_month()
-    # First, check if user is currently capped — that determines whether
-    # this call is overage or included.
-    pre = await get_maxx_usage(user_id)
-    is_overage = bool(pre.get("capped"))
-    inc = {"count": 1}
-    if is_overage:
-        inc["overage_count"] = 1
+    cap = await _maxx_cap_for_user(user_id)
+    created_at = datetime.now(UTC).isoformat()
+
+    if cap is None:
+        # Unlimited tier — no overage concept applies, plain increment.
+        res = await db.cto_maxx_usage.find_one_and_update(
+            {"user_id": user_id, "month": bucket},
+            {"$inc": {"count": 1},
+             "$setOnInsert": {"created_at": created_at}},
+            upsert=True,
+            return_document=True,
+        )
+        return int((res or {}).get("count") or 1)
+
+    pipeline = [
+        {"$set": {"created_at": {"$ifNull": ["$created_at", created_at]}}},
+        {"$set": {"count": {"$add": [{"$ifNull": ["$count", 0]}, 1]}}},
+        {"$set": {"overage_count": {
+            "$add": [
+                {"$ifNull": ["$overage_count", 0]},
+                # This call is the (cap+1)-th or later this month iff
+                # the POST-increment count (computed by the stage
+                # above, visible here within the same pipeline) is
+                # already past the cap.
+                {"$cond": [{"$gt": ["$count", cap]}, 1, 0]},
+            ],
+        }}},
+    ]
     res = await db.cto_maxx_usage.find_one_and_update(
         {"user_id": user_id, "month": bucket},
-        {"$inc": inc,
-         "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
+        pipeline,
         upsert=True,
         return_document=True,
     )

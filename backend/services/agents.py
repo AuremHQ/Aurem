@@ -23,12 +23,13 @@ returns a safe value (original code, empty findings) rather than
 raising, so the chat path can never be broken by a flaky reviewer.
 """
 from __future__ import annotations
+
 import asyncio
 import json
 import logging
 from typing import Optional
 
-from .smart_router import get_model, get_budget, get_provider_name, MODELS
+from .smart_router import MODELS, get_budget, get_model, get_provider_name
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +67,26 @@ async def _call(
     """Single entry point — delegates to llm.call_openrouter_model
     with a hard `asyncio.wait_for` ceiling so a hung upstream cannot
     block the orchestrator past the per-turn budget."""
+    # ORA Brain Part 4, F5 — record-only; no routing change. user_id/
+    # project_id come from the ambient context the caller (orchestrator/
+    # Parliament) already set via llm_user_context/llm_surface_context —
+    # this function has no such params of its own.
+    from .brain_gateway import record_wrap
     from .llm import call_openrouter_model
+    from .loop_token_ledger import current_ambient_user_id, current_surface_context
+    _bg_user_id = current_ambient_user_id()
+    _bg_ctx = current_surface_context()
     try:
         return await asyncio.wait_for(
-            call_openrouter_model(
-                model=model, system=system, user=user,
-                max_tokens=max_tokens, temperature=temperature,
-                feature=feature,
+            record_wrap(
+                call_openrouter_model(
+                    model=model, system=system, user=user,
+                    max_tokens=max_tokens, temperature=temperature,
+                    feature=feature,
+                ),
+                user_id=_bg_user_id, project_id=_bg_ctx.get("project_id"),
+                task_id=_bg_ctx.get("task_id"), task_type="agent",
+                model=model, surface="agents",
             ),
             timeout=timeout_s,
         )
@@ -85,10 +99,15 @@ async def _call(
         # chat alive when Kimi is flaky.
         try:
             return await asyncio.wait_for(
-                call_openrouter_model(
-                    model=MODELS["fallback"], system=system, user=user,
-                    max_tokens=max_tokens, temperature=temperature,
-                    feature=feature,
+                record_wrap(
+                    call_openrouter_model(
+                        model=MODELS["fallback"], system=system, user=user,
+                        max_tokens=max_tokens, temperature=temperature,
+                        feature=feature,
+                    ),
+                    user_id=_bg_user_id, project_id=_bg_ctx.get("project_id"),
+                    task_id=_bg_ctx.get("task_id"), task_type="agent",
+                    model=MODELS["fallback"], surface="agents",
                 ),
                 timeout=timeout_s,
             )

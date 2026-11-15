@@ -1,0 +1,34 @@
+{
+  "summary": "/harness Fix 2 (waitlist form), Fix 3 (parallel GETs + skeleton, Refresh now) and Fix 4 (no dead link row) verified end-to-end on the preview public URL. Backend: 16/16 pytest passed (10 new live tests plus the 6 existing unit tests). Frontend: all flows passed: hero and stories forms submit inline with no navigation, inline 400 errors work, the two forms keep separate state, mailto fallbacks are present, the skeleton shows during load, there is no download button (Phase A), Refresh now re-fetches content and release-status, the minimal nav holds, and the homepage nav is unchanged.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/harness/waitlist", "issue": "The per-IP rate limit keys on the first X-Forwarded-For entry, and the caller controls that value. Live tests bypassed the 5/min limit just by rotating a fake XFF header. This is the same known gap already documented in services/rate_limiter.py (client_ip_from_request vs client_ip_trusted_from_request), so it is not new to this endpoint."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/harness hero waitlist form (desktop)", "issues": ["The email input (~48px tall) is taller than the 'Join the waitlist' button (~36px), so the row looks a little uneven. Consider alignItems:'center' or matching heights."]},
+      {"screen": "/harness mobile 390px", "issues": ["The nav 'Start free' button wraps onto two lines. Consider whiteSpace:'nowrap'."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_harness_waitlist_live.py", "/app/backend/tests/test_regression_iter2026_68_harness_waitlist.py", "/app/test_reports/pytest/pytest_harness_waitlist.xml"],
+  "action_items": [
+    "Optional: switch the waitlist rate limit to client_ip_trusted_from_request once step 2b of the XFF fix lands",
+    "Optional: align the waitlist input and button heights; add nowrap to the mobile 'Start free' button"
+  ],
+  "critical_code_review_comments": [
+    "HarnessPage.loadContent(): when called from 'Refresh now', a failed /harness/content request sets contentState='error'. The whole page is then replaced by the 'temporarily unavailable' screen, which wipes any waitlist success state. Consider keeping the existing content on refresh failure and only showing a small inline error.",
+    "loadContent() does not check whether the component is still mounted (the `active` guard only covers page-status). Harmless in React 18, but inconsistent.",
+    "input type=email required: the browser blocks clearly malformed emails (e.g. 'not-an-email') with its native tooltip, so the inline -error-* element only shows for values that pass browser validation but fail the backend regex (e.g. 'a@b'). This is acceptable, but note it if a fully custom error UX was intended.",
+    "In dev (StrictMode) the 3 GETs fire twice on mount. They do fire in parallel, as intended."
+  ],
+  "updated_files": ["/app/backend/tests/test_harness_waitlist_live.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created throwaway test-waitlist-<hex>@example.com rows in harness_waitlist. All were deleted by exact email afterwards: pytest fixture teardown, plus the 2 UI-created rows removed manually. 0 test-waitlist-* rows remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "harness_page flag is ON; release-status available=false (Phase A). The live waitlist tests use a random X-Forwarded-For per test to avoid 5/min per-IP rate-limit collisions. Static snapshot: 16 stars / 2 forks / 939 clones / 562 views (last verified 10 Nov 2026). sw.js CACHE_VERSION=aurem-v4. No 'Watch the 3-minute demo / See the setup / Compare with paid tools / More FAQ' text exists in the page body or the content JSON."
+}

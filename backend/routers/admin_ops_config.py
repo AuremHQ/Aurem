@@ -504,6 +504,20 @@ async def db_health(authorization: Optional[str] = Header(None)):
     }
 
 
+@router.get("/jev-health")
+async def jev_health(authorization: str | None = Header(None)):
+    """Robot Fix List STEP 4 — Jev (services/llm/jev_client.py) falls
+    back to keyword rules silently by design, which made it
+    impossible to tell from the outside whether it's actually
+    working. Returns the in-process success/fallback counters
+    recorded at its two real call sites (semantic_mode_router.py,
+    ora_chat/intent_router.py) since this process started. Admin-only
+    — 403 otherwise, same gate as every other handler in this file."""
+    await _require_admin(authorization)
+    from services.jev_observability import get_jev_stats
+    return {"ok": True, **get_jev_stats()}
+
+
 @router.get("/github-app-config")
 async def admin_get_github_app_config(
     authorization: Optional[str] = Header(None),

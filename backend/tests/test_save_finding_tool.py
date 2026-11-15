@@ -27,6 +27,16 @@ async def test_save_finding_persists_critical_finding():
                      repo_name="Hello-World", branch="main", pat="fake", is_founder=False)
     ctx = {"user_id": "pytest_user", "bin_ctx": bc}
 
+    # Robot Fix List B1 — save_finding now resolves ownership/
+    # effective-account scope the same way fix_list reads do, which
+    # needs a real cto_projects row for this (user_id, project_id).
+    db = get_db()
+    await db.cto_projects.insert_one({
+        "project_id": project_id, "user_id": "pytest_user",
+        "github_owner": "octocat", "github_repo": "Hello-World",
+        "github_branch": "main",
+    })
+
     r = await invoke_local_tool("save_finding", {
         "title": "Hardcoded JWT secret fallback",
         "severity": "critical",
@@ -40,7 +50,6 @@ async def test_save_finding_persists_critical_finding():
     assert r["saved"] is True
     assert r["severity"] == "critical"
 
-    db = get_db()
     doc = await db.cto_open_findings.find_one({"project_id": project_id, "user_id": "pytest_user"})
     assert doc is not None
     assert doc["severity"] == "critical"
@@ -49,6 +58,7 @@ async def test_save_finding_persists_critical_finding():
     assert doc["status"] == "open"
     assert doc["scanner"] == "ora_chat_audit"
     await db.cto_open_findings.delete_many({"project_id": project_id})
+    await db.cto_projects.delete_many({"project_id": project_id})
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,31 @@
  *   • Everything else                                     → network with cache fallback
  *
  * Versioning: bump CACHE_VERSION on shipped changes so old caches purge.
+ *
+ * 2026-11-11 — Fix 4 root cause: a founder-reported "ghost" link row
+ * on /harness ("Watch the 3-minute demo" etc., seen once, never
+ * again) does not exist anywhere in the current HarnessPage.jsx or in
+ * harness-page-content.json — it was a ONE-TIME stale-while-revalidate
+ * hit: the JS bundle's cache-first-then-update strategy below serves
+ * whatever bundle is already cached on the FIRST request after a
+ * deploy, while fetching the new one in the background for next time.
+ * A visitor who had an old (pre-harness-redesign) bundle cached from
+ * before this feature existed would see that old bundle once, then
+ * get the current one on every request after. Bumping the version
+ * here purges every visitor's stale cache on next activate.
+ *
+ * 2026-11-12 — same root cause bit again, this time site-wide: a
+ * production deploy RCA (deployer-agent) confirmed the correct Fix
+ * 7/8 code (harness auth branding, ?next= passthrough, Home-link fix)
+ * was built and live on the server, but returning browsers still
+ * showed the OLD "ORA by Aurem" branding because CACHE_VERSION here
+ * was never bumped for that deploy — stale-while-revalidate kept
+ * serving the cached pre-Fix-7/8 JS bundle. Bumping again. The
+ * durable fix (main.jsx) now also reloads the page ONCE when a new
+ * service worker takes control, so this class of bug can't recur
+ * silently even if a future change forgets to bump this constant.
  */
-const CACHE_VERSION = "aurem-v3";
+const CACHE_VERSION = "aurem-v5";
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

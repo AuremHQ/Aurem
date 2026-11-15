@@ -25,6 +25,13 @@ jobs:
     name: "Regression locks — ALL past bugs re-verified"
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 2026-11-14 — the "Commit report back to repo" step pushes the
+    # report to this branch with GITHUB_TOKEN; without write permission
+    # the push dies 403 ("Write access to repository not granted") and
+    # fails the job after the locks already passed. Same job-level
+    # `permissions: contents: write` pattern as ci.yml's delete-gate.
+    permissions:
+      contents: write
     services:
       mongodb:
         image: mongo:7

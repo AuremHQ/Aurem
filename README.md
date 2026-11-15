@@ -1,7 +1,7 @@
 # ORA by Aurem
 ### The AI Engineer That Actually Commits.
 
-> No IDE. No token billing. No broken loops. Just code that ships.
+> No IDE. No broken loops. Just code that ships.
 
 [![Founders 500](https://img.shields.io/badge/Founders-500-orange)](https://auremcto.com/)
 [![$9/month](https://img.shields.io/badge/Price-%249%2Fmonth-orange)]()
@@ -36,530 +36,560 @@ Two products in the same house:
 - **auremcto.com** — this repo. The AI CTO / codebase engineer.
 - **aurem.live** — sister app. Autonomous AI workforce for lead-gen,
   outreach, and business automation (Scout → Closer → Followup agents
-  running 24/7).
-
----
-
-## Architecture Map <a id="architecture-map"></a>
-
-Deeper per-layer files live in `memory/architecture/01…07_*.md`. This
-is the one-screen mental model.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     USER (Browser / PWA)                     │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTPS
-┌──────────────────────────▼──────────────────────────────────┐
-│              FRONTEND — React SPA (port 3000)                │
-│  Tailwind + Shadcn UI + Context API + SSE streaming          │
-│  88 pages · ~279 custom components  (see memory/architecture/02) │
-└──────────────────────────┬──────────────────────────────────┘
-                           │  /api/aurem-dev/*  (Kubernetes ingress)
-┌──────────────────────────▼──────────────────────────────────┐
-│              BACKEND — FastAPI (port 8001)                   │
-│  102 include_router calls in `backend/main.py`               │
-│  Router → Core (Parliament) → 345 Services → External APIs   │
-└──────────┬───────────────┬───────────────┬──────────────────┘
-           │               │               │
-     ┌─────▼─────┐   ┌─────▼──────┐  ┌─────▼──────────────┐
-     │  MongoDB  │   │ GitHub App │  │ LLM Providers        │
-     │ (Motor)   │   │ (install-  │  │ OpenRouter · Groq ·  │
-     │ 150+ cols │   │  based)    │  │ Anthropic (Emergent) │
-     └───────────┘   └────────────┘  │ Council A primary =  │
-                                     │ claude-sonnet-4.5    │
-                                     └──────────────────────┘
-```
-
-### Layer responsibilities (one line each)
-
-| Layer | Job | Docs |
-|-------|-----|------|
-| Frontend | React SPA — chat UI, dashboards, wizards, admin suite. `REACT_APP_BACKEND_URL` only. 88 pages · ~279 custom components. | `memory/architecture/02_frontend_spec.md` |
-| Backend Core "Parliament" | Intent classification + multi-agent routing (`backend/core/`) | `memory/architecture/03_backend_core_and_routers.md` |
-| Backend Routers | 102 HTTP endpoint groups (`backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, QA, suggestions, verification | `03_…` |
-| Backend Services | 345 modules (`backend/services/`) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing, trust & verification | `memory/architecture/04_backend_services.md` |
-| Data Layer | MongoDB via Motor — users, projects, tasks, fixed-findings ledger, audit logs | `memory/architecture/05_data_and_integrations.md` |
-| Business Logic | Tier/quota system (`subscription_tiers.py` + `scan_fix_quota.py`) | `memory/architecture/06_business_logic_and_open_items.md` |
-| Demo Drift Guardrails | Reality contract for the marketing `/demo` route — audit before shipping any UI change it depicts | `memory/architecture/07_demo_drift.md` |
-
-### The 5 core patterns (must-follow)
-
-1. **Parliament Pattern** — every AI request is classified by
-   `core/intent_gateway.py` before `core/parliament.py` picks the
-   agent. No endpoint may call an agent directly.
-2. **Fixed-Findings Ledger** — an applied fix goes into
-   `cto_fixed_findings` and stays hidden from rescans **until its PR
-   merges**. Prevents the health score from falsely regressing.
-3. **Quota-as-Tasks** — 1 fix = 1 task. No severity-based pricing.
-   Gating in `services/scan_fix_quota.py`. Deduction only on success
-   via `record_scan_fixes()` — a failed fix never burns a task.
-4. **Local Snapshot Cache** — `.aurem_cache` holds a local git-tree
-   snapshot so scans stay fast and GitHub secondary rate limits stay
-   quiet. New repo-reading features read the snapshot first.
-5. **Guard Layers** — `services/hallucination_guard.py` +
-   `services/citation_guard.py` both verify LLM output before any
-   fix hits a user repo.
-
-### Council A live status
-
-Council A primary is `anthropic/claude-sonnet-4.5` (via OpenRouter).
-The on-boot probe + a 15-min background re-probe write outcomes to
-`council_health_probes` and expose live state at
-`GET /api/aurem-dev/admin/council/health`. The admin overview shows
-a prominent orange banner within one probe cycle if the primary ever
-degrades — the fallback is `z-ai/glm-5.2`, whose malformed XML
-tool-call emissions are absorbed by a lenient extractor in
-`services/tools_bridge.py`.
-
----
-
-## Feature Log — Prod-Live vs Rolling Out <a id="feature-log"></a>
-
-Every feature below is labeled with its **actual** current availability,
-not "ships today" as a blanket claim:
-- **🟢 PROD-LIVE** — running in production for real users right now.
-- **🟡 ROLLING OUT** — built and tested on preview; deploying to
-  production, or still behind a safety gate pending its own
-  verification. See "Two environments" further down: every fix lands
-  on preview first, production catches up on the next redeploy.
-
-### 🧭 Interaction Reliability Contract (`INTERACTION_CONTRACT_V1`) *(2026-09-23)*
-**Status: 🟡 ROLLING OUT** — sandbox-reproduced against real Mongo + real LLM
-calls, not yet production-verified (no production access from this agent).
-- 4 distinct timeout clocks (`services/timeout_clocks.py`): `connect` /
-  `first_token` / `stream_idle` / `hard_deadline` — replaces one conflated
-  elapsed-time signal; `hard_deadline` always mirrors the legacy timeout
-  exactly, so a turn can only stop *earlier/clearer*, never later.
-- Idempotent retry replay (`services/chat_reliability.py`): every chat turn
-  is durably recorded in `chat_request_ledger` on acceptance. A retry of an
-  already-`completed` turn replays verbatim — zero new LLM call, zero new
-  tool dispatch. A self-healing reconciler cron marks stuck rows `unknown`
-  after 240s (never fakes `completed`/`cancelled`).
-- Live E2E proof: real retry replayed in 206 ms with `replayed_from_retry:
-  true`; client-disconnect-mid-request repro confirmed the ledger row
-  durably written before any provider work, then correctly resolved to
-  `unknown` by the reconciler.
-- `/chat/send` (non-streaming fallback) and `/ora` (separate advisor engine)
-  are out of scope this round — only `/chat/stream`, the live production
-  chat path, received this treatment.
-
-### 🔍 Evidence-Bound Trust & Verification *(2026-09-23)*
-**Status: 🟡 ROLLING OUT** — unit + live-endpoint tested on preview, not yet
-production-verified end-to-end against a real GitHub-connected project.
-Six-part audit + build against a trust/verifiability spec:
-- **Independent verification** — `task_independent_verifier.py` extends the
-  existing Loop-Mode-only pattern to single-edit chat tasks, gated before
-  commit/disk-write; both paths mirror into a shared append-only
-  `task_verifications` ledger enforcing `verified_by != executed_by`.
-- **User-visible verification levels** — `VerificationLevelBadge.jsx`,
-  surfaced on live task popups and persistent ship cards.
-- **Retroactive downgrade** — `services/task_downgrade.py`: a guarded
-  `done → needs_review` transition via explicit "report an issue" or an
-  implicit correction-report trigger; re-verify only, never a manual flip
-  back to done.
-- **Trust-calibration metric** — `services/trust_calibration.py` + cron:
-  30-day correction-rate snapshot at `GET /admin/trust-calibration`, honest
-  "not enough data" instead of a fabricated 0% when there's nothing to
-  measure yet.
-- **Pre-execution scope confirmation** — `services/scope_confirmation.py`
-  gates the real execution choke point using the classifier's own
-  `needs_confirm` signal; `ScopeConfirmCard.jsx` renders Confirm/Change/
-  Cancel before an ambiguous request runs.
-- **Absolute-claim CI lint** — `backend/scripts/lint_absolute_claims.py`,
-  a required CI job that already caught and fixed one real "always works"
-  claim in production copy before this line was written.
-
-### 🔀 Ship-via-PR — never direct push
-**Status: 🟡 ROLLING OUT**
-**Correction (2026-08-31):** an earlier version of this doc said this
-flag was "gated OFF in prod, no prod row" — that was based on a stale
-written memo, not a live check, and a live production screenshot check
-this session showed `ship_via_pr` is actually **ON** right now. That
-specific factual claim was wrong and is fixed here.
-What's still true, and is the real reason this stays ROLLING OUT and
-not PROD-LIVE: the flag being ON is not the same as "proven live." A
-separate master flag, `kit_apply_enabled`, documents this exact
-distinction in its own description — it stays OFF "until R9 is proven
-live on production (a real ship completing PR→merge→Live, not just the
-R9 flag being on)." The same rollback-on-merge gaps an internal risk
-memo flagged in Aug 2026 (squash/rebase-merge revert accuracy,
-stale-SHA drift) have not been confirmed fixed. So: the PR-only ship
-mechanism may currently be active for real ships, but has not cleared
-its own documented proof bar yet.
-- Ships as a **draft PR to a throwaway branch**, never a direct push to
-  your base branch — you review and merge yourself
-- Rollback closes/retracts the PR if it was never merged, or reverts
-  the merge commit if it was
-- The safety model itself (PR-only by default) is not something other
-  AI coding tools ship
-
-### 🛡️ Vanguard Security Scanner
-**Status: 🟢 PROD-LIVE**
-- 25-pattern pre-commit security scan on every commit
-- Detects: secrets, SQL/NoSQL injection, JWT replay, XSS, CSRF, path
-  traversal, IDOR, missing auth, SSTI, ReDoS, LPDoS
-- Critical findings block the commit automatically
-- Security badge always visible in composer toolbar with red-dot
-  critical count
-- No other AI coding tool ships this. Reference: Lovable
-  CVE-2025-48757 (April 2026).
-
-### 🔄 Loop Mode — Verified Execution
-**Status: 🟢 PROD-LIVE**
-- PLAN → EXECUTE → VERIFY → SECURITY SCAN → SHIP
-- Plan shown before any code is written; user approves
-- Files written one at a time with live progress
-- `ruff` + `eslint` run after every file; auto-retry 3× on failure
-- Self-heal: ORA reads errors and rewrites automatically
-- Only commits after every step passes; 90 s watchdog +
-  `StreamHealthPill` feedback prevents stuck runs
-
-### 🏥 Codebase Health Scanner — 7 categories
-**Status: 🟢 PROD-LIVE**
-- Security · Performance · Code Quality · Dependencies · Database ·
-  HTTP Headers · Docker CIS
-- Individual fix buttons per finding (micro-satisfaction loop)
-- Dramatic 0–100 health score with urgency copy
-- Full-scan aggregation via `services/loop_full_scan.py` with depth
-  gate + 3× auto-retry
-
-### 💬 Chat-native Scan Commands *(Iter 212m-190)*
-**Status: 🟢 PROD-LIVE**
-Type `/` in the composer:
-- `/scan` — all 4 scanners
-- `/health-scan` · `/security-scan` · `/bug-hunt` · `/docker-scan`
-
-Above the composer, `ScanStatusStrip` shows scan lifecycle events —
-in-progress spinner, just-completed critical/high totals, X-dismiss.
-Grafted straight into the real production `ChatPanel.jsx` (not the
-v2 preview page, which stays a hardcoded visual mock per its own
-docstring).
-
-### 📮 Founder Suggestion Box *(Iter 212m-193)*
-**Status: 🟢 PROD-LIVE**
-- `POST /suggestions` — JWT-auth, body `{text}` only. User identity
-  and active project come from the server, not the client.
-- **Date-based** rate limit (1 per user per UTC day) — session
-  bypasses do nothing.
-- Background Groq pre-analysis writes `{summary, benefits[3],
-  risks[3], effort, overlaps_existing, recommendation}`. Strict JSON
-  validation; malformed responses set `analysis_failed: true` with
-  raw output preserved.
-- Explicitly isolated from `orchestrator.py`'s Council chain —
-  a future Ask Advisor outage can't take the suggestion box down.
-- User surface: sidebar dropdown → "Suggest a feature" modal.
-- Admin surface: new `/admin` "Suggestions" tab with expandable
-  "AI analysis — not a decision" chip + tick/cross that records
-  `decided_by` for audit.
-
-### ⚡ 4-Hop LLM Fallback Chain
-**Status: 🟢 PROD-LIVE**
-- OpenRouter primary → DeepSeek direct → OR free chain → Groq
-- Provenance tags show which hop served each response
-- Silent failover — user never notices
-
-### 🧠 ORA Council — self-learning
-**Status: 🟢 PROD-LIVE**
-Every interaction is captured across five modes (Chat / Advice /
-Code / Debug / Audit). Fine-tune threshold: 1000 interactions.
-
-### 🔐 Security posture
-**Status: 🟢 PROD-LIVE**
-- JWT tokens include `jti` + `iat`
-- NoSQL operator sanitizer ASGI middleware blocks `$where`/`$expr`
-- Request body size limit — LPDoS shield
-- Global `unhandledrejection` handler ships client errors to
-  `frontend_errors`
-
-### 🎨 UI polish
-**Status: 🟢 PROD-LIVE**
-- Token-by-token streaming
-- Skeleton loading (no "Loading 80%" fake bar)
-- Syntax highlighting + copy button on all code blocks
-- Day/Night theme toggle (localStorage)
-- `StreamHealthPill` — reconnect status above the composer
-- Inline loop progress: PLAN✓ → EXECUTE⏳ → VERIFY○ → SCAN○ → SHIP○
-
-### 📊 SEO / GEO / AEO
-**Status: 🟢 PROD-LIVE**
-- Meta Pixel on every page
-- JSON-LD: SoftwareApplication · Organization · FAQPage · WebSite
-- `llms.txt` for AI-crawler discovery
-- `robots.txt` explicitly allows every major AI crawler
-- OG image + preview cards for social sharing
-
-*(Static site meta tags above. The customer-facing scan-and-fix product
-built on top of these same primitives is the AI-Visibility Kit below.)*
-
-### 📈 AI-Visibility Kit (SEO + GEO + AEO)
-**Status: 🟢 PROD-LIVE**
-Scans any connected site for how visible it is to AI answer engines and
-crawlers, scores it 0–100, and ships fixes as a **draft PR (PR-only,
-never a direct push)**:
-- **Preferred Sources badge** — a generated on-site badge/asset
-- **`robots.txt` AI-crawler policy** — blocks AI *training* crawlers
-  (GPTBot, ClaudeBot, Google-Extended, CCBot), explicitly allows AI
-  *retrieval* crawlers (OAI-SearchBot, Claude-SearchBot, PerplexityBot)
-- **JSON-LD structured data** — Organization (stable `@id`) + WebSite +
-  FAQPage + Person
-- **`llms.txt` generation** — honestly scoped: Google ignores this file
-  for Search/AI Overviews; it helps Claude, ChatGPT, and coding agents
-  that do read it
-- **Sitemap automation**
-- **3 advisory-only checklists** (never auto-applied, no Google OAuth/
-  API used): Google Business Profile, Search Console + GBP, Google
-  Platforms
-- The 0–100 score is a **preparedness score**, not a live count of AI
-  citations — AUREM doesn't track whether any AI engine has actually
-  cited you
-
-### 🤖 ORA Admin Copilot
-**Status: 🟡 ROLLING OUT**
-Built and tested on preview; not yet confirmed running against the
-production environment. A founder-facing ops assistant with its own
-guardrails, separate from customer-facing ORA:
-- **Approve/reject action catalog** — every admin action (toggle a
-  flag, trigger a digest, edit the backlog) is proposed first, applied
-  only after an explicit approve, and logged to an audit trail
-- **Live `web_verify` / `web_inspect` tools** — the admin can ask ORA to
-  check any deployed URL in the same chat; degrades gracefully (a clear
-  "browser unavailable — text check only" badge) instead of a silent
-  skip if server-side Chromium isn't available
-- **Budget + rate-limit guardrails** — hard USD-per-call caps and a
-  request-rate ceiling, same enforcement layer as customer chat
-
-### 🩻 Deploy Verify engine
-**Status: 🟡 ROLLING OUT**
-The browser-free fallback path is live everywhere; full browser-based
-verification (screenshots, console errors) is confirmed working on
-preview only — production is missing the Chromium binary as of this
-writing, pending a Dockerfile fix + redeploy. Server-side headless-
-browser verification of any deployed URL:
-- Reachability, build-identity match, console/runtime error capture,
-  mobile + desktop screenshots
-- **Graceful browser-free fallback** — if Chromium itself isn't
-  installed in an environment, falls back to a plain HTTP check
-  (status code + raw-HTML signal) and labels the result `degraded`
-  instead of hard-failing or silently skipping
-
-### 🔌 Integrations
-**Status: 🟢 PROD-LIVE**
-Claude Desktop · Claude Code · Cursor · VS Code · Ollama (offline) ·
-LM Studio · GitHub · MCP 2.4
-
-### 🩺 Ops surface *(Iter 212m-192)*
-**Status: 🟢 PROD-LIVE**
-- `GET /api/aurem-dev/admin/council/health` — live Council A status
-- Persistent probe history in `council_health_probes`
-- Admin banner + "LLM PROVIDER STATUS" pane on `/admin` overview
-- `/connection-status` now probes GitHub's **contents** endpoint so
-  a green sidebar dot means real file-read permission, not just
-  repo visibility
-
-### 🛡️ ORA Chat Hallucination Defence Stack *(Iter 264 → 270)*
-**Status: 🟢 PROD-LIVE**
-
-Multi-layer defence against the LLM confidently making things up.
-Every layer is deterministic (regex / set-membership) or strictly
-programmatic (peer-review with verbatim-quote guards). No layer is
-"another prompt telling the model to be careful."
-
-- **Iter 264 — Post-response grounding validator**
-  `services/ora_chat/grounding_check.py`. Every reply is scanned
-  after generation for file-path / symbol / line-number claims not
-  supported by the retrieval context this turn. Split into
-  `FABRICATED` (does not exist in the repo) and `UNVERIFIED` (exists
-  but not retrieved this turn). Rows land in `ora_hallucination_log`.
-- **Iter 264 — Prompt snapshots**
-  Every high-stakes turn writes the exact assembled prompt to
-  `ora_prompt_snapshots` for audit / regression testing.
-- **Iter 264 — Nightly canary**
-  `services/ora_chat/canary.py` runs 8 fixed prompts against
-  production, logs deltas in `ora_canary_runs`. Gated by
-  `ORA_CANARY_ENABLED=1`.
-- **Iter 266 — GitHub adapter honesty**
-  Direct `owner/repo` lookup on URL paste; empty-result vs error
-  distinction; query cleaning for free-text search.
-- **Iter 267 — Generic URL fetch + retry**
-  `deep_research.py::_fetch_urls` — the chat can now fetch any
-  public http(s) URL the user pastes and cite it. Retries once
-  with a reformulated query on empty results.
-- **Iter 268 — Cross-family adversarial reviewer**
-  `services/ora_chat/adversarial_review.py`. High-stakes drafts
-  are reviewed by `z-ai/glm-5.2` (a *different family* from the
-  drafter's `deepseek-v3` — sibling models share blind spots).
-  Every flag's `quote` field is string-checked verbatim against
-  the draft; hallucinated flags are dropped and logged to
-  `ora_reviewer_errors`. Hard flags trigger one silent regen;
-  soft flags surface as an "unverified" caveat chip in the UI.
-- **Iter 269 — Capability scan honesty**
-  Real file-tree fetch via the GitHub API on any repo-scan query;
-  line-number claims and slash-commands are verified against
-  canonical indexes.
-- **Iter 270 — SSRF hard gate on `fetch_url`**
-  `deep_research.py::_is_safe_public_url` — parses every URL,
-  resolves DNS, and blocks loopback / RFC1918 private / link-local
-  (`169.254.169.254`) / CGNAT / multicast / reserved / IPv6
-  loopback + link-local + unique-local. Non-http(s) schemes
-  (`file://`, `gopher://`, `data:`) are rejected. Redirects are
-  handled manually with per-hop re-validation, capped at 3 hops.
-  37 pytest cases covering AWS-metadata SSRF, DNS-rebinding,
-  redirect-to-private, IPv6 variants.
-
-Together this stack drove the hard-fabrication rate from
-noticeable-in-testing down to essentially zero in preview across
-Iter 264-270 across the public grounding-check hooks; regression
-suite lives in `backend/tests/test_iter264_*.py` through
-`test_iter270_*.py`.
-
----
-
-## Open Source <a id="open-source"></a>
-
-The deterministic grounding + adversarial-review core of ORA Chat has
-been extracted into a small standalone library so anyone building
-their own LLM chat agent can use the same defence:
-
-- **Repo:** [github.com/polarisbuiltinc-wq/ora-grounding](https://github.com/polarisbuiltinc-wq/ora-grounding)
-- **License:** MIT
-- **Size:** ~500 LoC, zero runtime dependencies
-- **What it ships:**
-  - `run_post_response_check()` — the grounding validator from
-    Iter 264 (regex extraction + set-membership classification,
-    no LLM in the hot path)
-  - `run_review()` — the cross-family adversarial reviewer from
-    Iter 268 (with the verbatim-quote guard against reviewer
-    hallucination)
-- **Persistence / LLM adapters:** both entry points take
-  caller-supplied async callables (`on_log`, `llm_call`,
-  `canonical_paths_provider`) so there is no MongoDB, OpenRouter,
-  or AUREM-specific dependency in the released package.
-- **Tests:** 34 unit tests, ~100 ms runtime, LLM fully mocked.
-
-If you're building a chat agent that references files, symbols,
-line numbers, or commands and you want a small piece of defence
-against fabrication, this is the piece to bolt on. PRs and
-real-world failure-mode reports welcome.
-
----
-
-## Pricing / Tiers <a id="pricing--tiers"></a>
-
-Source of truth: `backend/services/subscription_tiers.py`.
-
-| Tier | Price / mo | Tasks / mo | Fix tools | Bulk fix | Modes |
-|------|------------|------------|-----------|----------|-------|
-| Free | $0 | 10 | none (scans only) | ✗ | swift |
-| Starter | $9 | 50 | vanguard-scan | ✗ | swift |
-| Pro | $19 | 300 | vanguard + health | ✗ | swift, pro |
-| Team | $49 | 400 | all 4 (vanguard, health, security, bug-hunt) | ✓ | swift, pro, maxx |
-| Founder | $0 (internal) | unlimited | all 4 | ✓ | all |
-
-**Rule:** 1 fix = 1 task, regardless of severity. Scan-fix quota
-rolls into the same monthly meter as chat tasks (`services/usage.py`).
-
-**AI-Visibility Kit pricing:** not yet published. `subscription_tiers.py`
-has no Kit tier/add-on wired in today — the Kit's readiness scan is
-viewable, but there is no enforced billing price for it yet, so none is
-listed here. Coming once it's wired into the tiers file.
-
----
-
-## Head-to-head <a id="head-to-head"></a>
-
-| Feature | ORA | Cursor | Copilot | Bolt | Devin |
-|---------|-----|--------|---------|------|-------|
-| Pre-commit security scan | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 4-hop LLM fallback | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Self-learning per user | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Verified loop mode | ✅ | ❌ | ❌ | ❌ | partial |
-| No IDE required | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Full codebase health scanner | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Chat-native `/scan` commands | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Fixed-findings PR-merge ledger | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Starting price | $9 | $20 | $10 | $20 | $500 |
-
----
-
-## Tech Stack <a id="tech-stack"></a>
-
-- **Frontend:** React 18 + Vite + Tailwind + Shadcn UI + Lucide icons
-- **Backend:** FastAPI + Uvicorn + Motor (async MongoDB) +
-  APScheduler + httpx
-- **Database:** MongoDB (Motor async driver)
-- **AI:** OpenRouter proxy + Groq direct + Anthropic via
-  Emergent LLM Key + emergentintegrations
-- **Auth:** Custom JWT (with `jti` + `iat`) + Google OAuth
-  (Emergent-managed) + GitHub App (installation-based, preferred) with
-  legacy PAT (`github_token`) still supported as a fallback
-- **Real-time:** SSE (Server-Sent Events) for chat streams and fix
-  progress. No websockets, no long-polling.
-- **Cache / snapshots:** `.aurem_cache/` git-tree snapshots on disk
-
----
-
-## Runbook (dev preview) <a id="runbook"></a>
-
-Local services are supervisor-managed. Every URL/port/credential
-comes from `.env` files — nothing is hardcoded.
-
-```bash
-# Backend logs
-sudo supervisorctl status
-tail -f /var/log/supervisor/backend.err.log
-
-# Restart after .env or dependency change (hot-reload handles code edits)
-sudo supervisorctl restart backend
-sudo supervisorctl restart frontend
-
-# Health
-curl "$REACT_APP_BACKEND_URL/api/aurem-dev/system/health"
-
-# Council A live status (admin-only)
-curl "$REACT_APP_BACKEND_URL/api/aurem-dev/admin/council/health" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-```
-
-### Two environments
-
-- **PREVIEW** (this codebase) — editable, hot-reload, testing surface.
-- **PRODUCTION** (`https://auremcto.com`) — the live deploy. Code
-  changes only reach production after a manual redeploy.
-
-Every fix documented above lands on preview first. Production catches
-up on the next redeploy.
-
-### Container / deploy notes
-
-- Both services are containerised (`backend/Dockerfile`,
-  `frontend/Dockerfile`) — no supervisor in the image.
-- Three `.dockerignore` files (`/`, `/backend`, `/frontend`) keep
-  the build context lean and — critically — keep `backend/.env`,
-  `frontend/.env`, `.aurem_cache/`, `node_modules/`, and the
-  pytest / ruff caches out of every image layer. **Never remove
-  these `.dockerignore` files.**
-- Build context sizes with these ignores in place:
-  frontend `~14 MB`, backend `~81 MB`, root `~27 MB`. Regressions
-  usually mean a new folder needs to be added to `.dockerignore`.
-
----
-
-## Support & Status <a id="support--status"></a>
-
-- **Support:** [auremcto.com/support](https://auremcto.com/support)
-- **Integrations docs:**
-  [auremcto.com/integrations](https://auremcto.com/integrations)
-- **Health:** [auremcto.com/api/aurem-dev/system/health](https://auremcto.com/api/aurem-dev/system/health)
-- **Founder Suggestion Box:** in-app, sidebar dropdown → *Suggest a
-  feature*
-
----
-
-**License:** Proprietary — All Rights Reserved, Polaris Built Inc.
-See [`LICENSE`](./LICENSE). This is a commercial product, not open
-source (the standalone `ora-grounding` extraction above is the one
-MIT-licensed exception).
-
-*Built by Aurem CTO · [auremcto.com](https://auremcto.com) ·
-sister app [aurem.live](https://aurem.live)*
+    running 24/7).
+
+    ---
+
+    ## Architecture Map <a id="architecture-map"></a>
+
+    Deeper per-layer files live in `memory/architecture/01…07_*.md`. This
+    is the one-screen mental model.
+
+    ```
+    ┌─────────────────────────────────────────────────────────────┐
+    │                     USER (Browser / PWA)                     │
+    └──────────────────────────┬──────────────────────────────────┘
+                               │ HTTPS
+                               ┌──────────────────────────▼──────────────────────────────────┐
+                               │              FRONTEND — React SPA (port 3000)                │
+                               │  Tailwind + Shadcn UI + Context API + SSE streaming          │
+                               │  88 pages · ~279 custom components  (see memory/architecture/02) │
+                               └──────────────────────────┬──────────────────────────────────┘
+                                                          │  /api/aurem-dev/*  (Kubernetes ingress)
+                                                          ┌──────────────────────────▼──────────────────────────────────┐
+                                                          │              BACKEND — FastAPI (port 8001)                   │
+                                                          │  102 include_router calls in `backend/main.py`               │
+                                                          │  Router → Core (Parliament) → 345 Services → External APIs   │
+                                                          └──────────┬───────────────┬───────────────┬──────────────────┘
+                                                                     │               │               │
+                                                                          ┌─────▼─────┐   ┌─────▼──────┐  ┌─────▼──────────────┐
+                                                                               │  MongoDB  │   │ GitHub App │  │ LLM Providers        │
+                                                                                    │ (Motor)   │   │ (install-  │  │ OpenRouter · Groq ·  │
+                                                                                         │ 150+ cols │   │  based)    │  │ Anthropic (Emergent) │
+                                                                                              └───────────┘   └────────────┘  │ Council A primary =  │
+                                                                                                                                   │ claude-sonnet-4.5    │
+                                                                                                                                                                        └──────────────────────┘
+                                                                                                                                                                        ```
+
+                                                                                                                                                                        ### Layer responsibilities (one line each)
+
+                                                                                                                                                                        | Layer | Job | Docs |
+                                                                                                                                                                        |-------|-----|------|
+                                                                                                                                                                        | Frontend | React SPA — chat UI, dashboards, wizards, admin suite. `REACT_APP_BACKEND_URL` only. 88 pages · ~279 custom components. | `memory/architecture/02_frontend_spec.md` |
+                                                                                                                                                                        | Backend Core "Parliament" | Intent classification + multi-agent routing (`backend/core/`) | `memory/architecture/03_backend_core_and_routers.md` |
+                                                                                                                                                                        | Backend Routers | 102 HTTP endpoint groups (`backend/routers/`) — auth, scanning, fixing, repo, business, deploy, admin, QA, suggestions, verification | `03_…` |
+                                                                                                                                                                        | Backend Services | 345 modules (`backend/services/`) — AI orchestration, scanners, fix engine, repo intelligence, safety guards, learning, billing, trust & verification | `memory/architecture/04_backend_services.md` |
+                                                                                                                                                                        | Data Layer | MongoDB via Motor — users, projects, tasks, fixed-findings ledger, audit logs | `memory/architecture/05_data_and_integrations.md` |
+                                                                                                                                                                        | Business Logic | Token wallet (`wallet.py`, behind `TOKEN_BILLING_MODE`, default off) + live task/quota system (`subscription_tiers.py` + `scan_fix_quota.py`) | `memory/architecture/06_business_logic_and_open_items.md` |
+                                                                                                                                                                        | Demo Drift Guardrails | Reality contract for the marketing `/demo` route — audit before shipping any UI change it depicts | `memory/architecture/07_demo_drift.md` |
+
+                                                                                                                                                                        ### The 5 core patterns (must-follow)
+
+                                                                                                                                                                        1. **Parliament Pattern** — every AI request is classified by
+                                                                                                                                                                           `core/intent_gateway.py` before `core/parliament.py` picks the
+                                                                                                                                                                              agent. No endpoint may call an agent directly.
+                                                                                                                                                                              2. **Fixed-Findings Ledger** — an applied fix goes into
+                                                                                                                                                                                 `cto_fixed_findings` and stays hidden from rescans **until its PR
+                                                                                                                                                                                    merges**. Prevents the health score from falsely regressing.
+                                                                                                                                                                                    3. **Billing: token wallet (built) + task gating (live)** — A token
+                                                                                                                                                                                       wallet system is built (`services/wallet.py`: promo/plan/purchased
+                                                                                                                                                                                          buckets, hold/settle/release, idempotent ledger) and priced by
+                                                                                                                                                                                             `services/pricing_engine.py` + `config/token_pricing.py`
+                                                                                                                                                                                                (1 USD = 100 tokens, so $9 = 900, $19 = 1,900, $49 = 4,900 tokens).
+                                                                                                                                                                                                   It sits behind `TOKEN_BILLING_MODE`, default `off`, which has never
+                                                                                                                                                                                                      been `on` in production — so the live gate is still task-based:
+                                                                                                                                                                                                         1 fix = 1 task, no severity-based pricing, gating in
+                                                                                                                                                                                                            `services/scan_fix_quota.py`, deduction only on success via
+                                                                                                                                                                                                               `record_scan_fixes()` — a failed fix never burns a task, and a
+                                                                                                                                                                                                                  failed token run is fully refunded (`release()`). Per-action token
+                                                                                                                                                                                                                     prices are still placeholders (estimates, not measured medians),
+                                                                                                                                                                                                                        so no fixes-per-month figure is quoted from them.
+                                                                                                                                                                                                                        4. **Local Snapshot Cache** — `.aurem_cache` holds a local git-tree
+                                                                                                                                                                                                                           snapshot so scans stay fast and GitHub secondary rate limits stay
+                                                                                                                                                                                                                              quiet. New repo-reading features read the snapshot first.
+                                                                                                                                                                                                                              5. **Guard Layers** — `services/hallucination_guard.py` +
+                                                                                                                                                                                                                                 `services/citation_guard.py` both verify LLM output before any
+                                                                                                                                                                                                                                    fix hits a user repo.
+
+                                                                                                                                                                                                                                    ### Council A live status
+
+                                                                                                                                                                                                                                    Council A primary is `anthropic/claude-sonnet-4.5` (via OpenRouter).
+                                                                                                                                                                                                                                    The on-boot probe + a 15-min background re-probe write outcomes to
+                                                                                                                                                                                                                                    `council_health_probes` and expose live state at
+                                                                                                                                                                                                                                    `GET /api/aurem-dev/admin/council/health`. The admin overview shows
+                                                                                                                                                                                                                                    a prominent orange banner within one probe cycle if the primary ever
+                                                                                                                                                                                                                                    degrades — the fallback is `z-ai/glm-5.2`, whose malformed XML
+                                                                                                                                                                                                                                    tool-call emissions are absorbed by a lenient extractor in
+                                                                                                                                                                                                                                    `services/tools_bridge.py`.
+
+                                                                                                                                                                                                                                    ---
+
+                                                                                                                                                                                                                                    ## Feature Log — Prod-Live vs Rolling Out <a id="feature-log"></a>
+
+                                                                                                                                                                                                                                    Every feature below is labeled with its **actual** current availability,
+                                                                                                                                                                                                                                    not "ships today" as a blanket claim:
+                                                                                                                                                                                                                                    - **🟢 PROD-LIVE** — running in production for real users right now.
+                                                                                                                                                                                                                                    - **🟡 ROLLING OUT** — built and tested on preview; deploying to
+                                                                                                                                                                                                                                      production, or still behind a safety gate pending its own
+                                                                                                                                                                                                                                        verification. See "Two environments" further down: every fix lands
+                                                                                                                                                                                                                                          on preview first, production catches up on the next redeploy.
+
+                                                                                                                                                                                                                                          ### 🧭 Interaction Reliability Contract (`INTERACTION_CONTRACT_V1`) *(2026-09-23)*
+                                                                                                                                                                                                                                          **Status: 🟡 ROLLING OUT** — sandbox-reproduced against real Mongo + real LLM
+                                                                                                                                                                                                                                          calls, not yet production-verified (no production access from this agent).
+                                                                                                                                                                                                                                          - 4 distinct timeout clocks (`services/timeout_clocks.py`): `connect` /
+                                                                                                                                                                                                                                            `first_token` / `stream_idle` / `hard_deadline` — replaces one conflated
+                                                                                                                                                                                                                                              elapsed-time signal; `hard_deadline` always mirrors the legacy timeout
+                                                                                                                                                                                                                                                exactly, so a turn can only stop *earlier/clearer*, never later.
+                                                                                                                                                                                                                                                - Idempotent retry replay (`services/chat_reliability.py`): every chat turn
+                                                                                                                                                                                                                                                  is durably recorded in `chat_request_ledger` on acceptance. A retry of an
+                                                                                                                                                                                                                                                    already-`completed` turn replays verbatim — zero new LLM call, zero new
+                                                                                                                                                                                                                                                      tool dispatch. A self-healing reconciler cron marks stuck rows `unknown`
+                                                                                                                                                                                                                                                        after 240s (never fakes `completed`/`cancelled`).
+                                                                                                                                                                                                                                                        - Live E2E proof: real retry replayed in 206 ms with `replayed_from_retry:
+                                                                                                                                                                                                                                                          true`; client-disconnect-mid-request repro confirmed the ledger row
+                                                                                                                                                                                                                                                            durably written before any provider work, then correctly resolved to
+                                                                                                                                                                                                                                                              `unknown` by the reconciler.
+                                                                                                                                                                                                                                                              - `/chat/send` (non-streaming fallback) and `/ora` (separate advisor engine)
+                                                                                                                                                                                                                                                                are out of scope this round — only `/chat/stream`, the live production
+                                                                                                                                                                                                                                                                  chat path, received this treatment.
+
+                                                                                                                                                                                                                                                                  ### 🔍 Evidence-Bound Trust & Verification *(2026-09-23)*
+                                                                                                                                                                                                                                                                  **Status: 🟡 ROLLING OUT** — unit + live-endpoint tested on preview, not yet
+                                                                                                                                                                                                                                                                  production-verified end-to-end against a real GitHub-connected project.
+                                                                                                                                                                                                                                                                  Six-part audit + build against a trust/verifiability spec:
+                                                                                                                                                                                                                                                                  - **Independent verification** — `task_independent_verifier.py` extends the
+                                                                                                                                                                                                                                                                    existing Loop-Mode-only pattern to single-edit chat tasks, gated before
+                                                                                                                                                                                                                                                                      commit/disk-write; both paths mirror into a shared append-only
+                                                                                                                                                                                                                                                                        `task_verifications` ledger enforcing `verified_by != executed_by`.
+                                                                                                                                                                                                                                                                        - **User-visible verification levels** — `VerificationLevelBadge.jsx`,
+                                                                                                                                                                                                                                                                          surfaced on live task popups and persistent ship cards.
+                                                                                                                                                                                                                                                                          - **Retroactive downgrade** — `services/task_downgrade.py`: a guarded
+                                                                                                                                                                                                                                                                            `done → needs_review` transition via explicit "report an issue" or an
+                                                                                                                                                                                                                                                                              implicit correction-report trigger; re-verify only, never a manual flip
+                                                                                                                                                                                                                                                                                back to done.
+                                                                                                                                                                                                                                                                                - **Trust-calibration metric** — `services/trust_calibration.py` + cron:
+                                                                                                                                                                                                                                                                                  30-day correction-rate snapshot at `GET /admin/trust-calibration`, honest
+                                                                                                                                                                                                                                                                                    "not enough data" instead of a fabricated 0% when there's nothing to
+                                                                                                                                                                                                                                                                                      measure yet.
+                                                                                                                                                                                                                                                                                      - **Pre-execution scope confirmation** — `services/scope_confirmation.py`
+                                                                                                                                                                                                                                                                                        gates the real execution choke point using the classifier's own
+                                                                                                                                                                                                                                                                                          `needs_confirm` signal; `ScopeConfirmCard.jsx` renders Confirm/Change/
+                                                                                                                                                                                                                                                                                            Cancel before an ambiguous request runs.
+                                                                                                                                                                                                                                                                                            - **Absolute-claim CI lint** — `backend/scripts/lint_absolute_claims.py`,
+                                                                                                                                                                                                                                                                                              a required CI job that already caught and fixed one real "always works"
+                                                                                                                                                                                                                                                                                                claim in production copy before this line was written.
+
+                                                                                                                                                                                                                                                                                                ### 🔀 Ship-via-PR — never direct push
+                                                                                                                                                                                                                                                                                                **Status: 🟡 ROLLING OUT**
+                                                                                                                                                                                                                                                                                                **Correction (2026-08-31):** an earlier version of this doc said this
+                                                                                                                                                                                                                                                                                                flag was "gated OFF in prod, no prod row" — that was based on a stale
+                                                                                                                                                                                                                                                                                                written memo, not a live check, and a live production screenshot check
+                                                                                                                                                                                                                                                                                                this session showed `ship_via_pr` is actually **ON** right now. That
+                                                                                                                                                                                                                                                                                                specific factual claim was wrong and is fixed here.
+                                                                                                                                                                                                                                                                                                What's still true, and is the real reason this stays ROLLING OUT and
+                                                                                                                                                                                                                                                                                                not PROD-LIVE: the flag being ON is not the same as "proven live." A
+                                                                                                                                                                                                                                                                                                separate master flag, `kit_apply_enabled`, documents this exact
+                                                                                                                                                                                                                                                                                                distinction in its own description — it stays OFF "until R9 is proven
+                                                                                                                                                                                                                                                                                                live on production (a real ship completing PR→merge→Live, not just the
+                                                                                                                                                                                                                                                                                                R9 flag being on)." The same rollback-on-merge gaps an internal risk
+                                                                                                                                                                                                                                                                                                memo flagged in Aug 2026 (squash/rebase-merge revert accuracy,
+                                                                                                                                                                                                                                                                                                stale-SHA drift) have not been confirmed fixed. So: the PR-only ship
+                                                                                                                                                                                                                                                                                                mechanism may currently be active for real ships, but has not cleared
+                                                                                                                                                                                                                                                                                                its own documented proof bar yet.
+                                                                                                                                                                                                                                                                                                - Ships as a **draft PR to a throwaway branch**, never a direct push to
+                                                                                                                                                                                                                                                                                                  your base branch — you review and merge yourself
+                                                                                                                                                                                                                                                                                                  - Rollback closes/retracts the PR if it was never merged, or reverts
+                                                                                                                                                                                                                                                                                                    the merge commit if it was
+                                                                                                                                                                                                                                                                                                    - The safety model itself (PR-only by default) is not something other
+                                                                                                                                                                                                                                                                                                      AI coding tools ship
+
+                                                                                                                                                                                                                                                                                                      ### 🛡️ Vanguard Security Scanner
+                                                                                                                                                                                                                                                                                                      **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                      - 25-pattern pre-commit security scan on every commit
+                                                                                                                                                                                                                                                                                                      - Detects: secrets, SQL/NoSQL injection, JWT replay, XSS, CSRF, path
+                                                                                                                                                                                                                                                                                                        traversal, IDOR, missing auth, SSTI, ReDoS, LPDoS
+                                                                                                                                                                                                                                                                                                        - Critical findings block the commit automatically
+                                                                                                                                                                                                                                                                                                        - Security badge always visible in composer toolbar with red-dot
+                                                                                                                                                                                                                                                                                                          critical count
+                                                                                                                                                                                                                                                                                                          - No other AI coding tool ships this. Reference: Lovable
+                                                                                                                                                                                                                                                                                                            CVE-2025-48757 (April 2026).
+
+                                                                                                                                                                                                                                                                                                            ### 🔄 Loop Mode — Verified Execution
+                                                                                                                                                                                                                                                                                                            **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                            - PLAN → EXECUTE → VERIFY → SECURITY SCAN → SHIP
+                                                                                                                                                                                                                                                                                                            - Plan shown before any code is written; user approves
+                                                                                                                                                                                                                                                                                                            - Files written one at a time with live progress
+                                                                                                                                                                                                                                                                                                            - `ruff` + `eslint` run after every file; auto-retry 3× on failure
+                                                                                                                                                                                                                                                                                                            - Self-heal: ORA reads errors and rewrites automatically
+                                                                                                                                                                                                                                                                                                            - Only commits after every step passes; 90 s watchdog +
+                                                                                                                                                                                                                                                                                                              `StreamHealthPill` feedback prevents stuck runs
+
+                                                                                                                                                                                                                                                                                                              ### 🏥 Codebase Health Scanner — 7 categories
+                                                                                                                                                                                                                                                                                                              **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                              - Security · Performance · Code Quality · Dependencies · Database ·
+                                                                                                                                                                                                                                                                                                                HTTP Headers · Docker CIS
+                                                                                                                                                                                                                                                                                                                - Individual fix buttons per finding (micro-satisfaction loop)
+                                                                                                                                                                                                                                                                                                                - Dramatic 0–100 health score with urgency copy
+                                                                                                                                                                                                                                                                                                                - Full-scan aggregation via `services/loop_full_scan.py` with depth
+                                                                                                                                                                                                                                                                                                                  gate + 3× auto-retry
+
+                                                                                                                                                                                                                                                                                                                  ### 💬 Chat-native Scan Commands *(Iter 212m-190)*
+                                                                                                                                                                                                                                                                                                                  **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                  Type `/` in the composer:
+                                                                                                                                                                                                                                                                                                                  - `/scan` — all 4 scanners
+                                                                                                                                                                                                                                                                                                                  - `/health-scan` · `/security-scan` · `/bug-hunt` · `/docker-scan`
+
+                                                                                                                                                                                                                                                                                                                  Above the composer, `ScanStatusStrip` shows scan lifecycle events —
+                                                                                                                                                                                                                                                                                                                  in-progress spinner, just-completed critical/high totals, X-dismiss.
+                                                                                                                                                                                                                                                                                                                  Grafted straight into the real production `ChatPanel.jsx` (not the
+                                                                                                                                                                                                                                                                                                                  v2 preview page, which stays a hardcoded visual mock per its own
+                                                                                                                                                                                                                                                                                                                  docstring).
+
+                                                                                                                                                                                                                                                                                                                  ### 📮 Founder Suggestion Box *(Iter 212m-193)*
+                                                                                                                                                                                                                                                                                                                  **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                  - `POST /suggestions` — JWT-auth, body `{text}` only. User identity
+                                                                                                                                                                                                                                                                                                                    and active project come from the server, not the client.
+                                                                                                                                                                                                                                                                                                                    - **Date-based** rate limit (1 per user per UTC day) — session
+                                                                                                                                                                                                                                                                                                                      bypasses do nothing.
+                                                                                                                                                                                                                                                                                                                      - Background Groq pre-analysis writes `{summary, benefits[3],
+                                                                                                                                                                                                                                                                                                                        risks[3], effort, overlaps_existing, recommendation}`. Strict JSON
+                                                                                                                                                                                                                                                                                                                          validation; malformed responses set `analysis_failed: true` with
+                                                                                                                                                                                                                                                                                                                            raw output preserved.
+                                                                                                                                                                                                                                                                                                                            - Explicitly isolated from `orchestrator.py`'s Council chain —
+                                                                                                                                                                                                                                                                                                                              a future Ask Advisor outage can't take the suggestion box down.
+                                                                                                                                                                                                                                                                                                                              - User surface: sidebar dropdown → "Suggest a feature" modal.
+                                                                                                                                                                                                                                                                                                                              - Admin surface: new `/admin` "Suggestions" tab with expandable
+                                                                                                                                                                                                                                                                                                                                "AI analysis — not a decision" chip + tick/cross that records
+                                                                                                                                                                                                                                                                                                                                  `decided_by` for audit.
+
+                                                                                                                                                                                                                                                                                                                                  ### ⚡ 4-Hop LLM Fallback Chain
+                                                                                                                                                                                                                                                                                                                                  **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                  - OpenRouter primary → DeepSeek direct → OR free chain → Groq
+                                                                                                                                                                                                                                                                                                                                  - Provenance tags show which hop served each response
+                                                                                                                                                                                                                                                                                                                                  - Silent failover — user never notices
+
+                                                                                                                                                                                                                                                                                                                                  ### 🧠 ORA Council — learning (logging + RAG, no weight training)
+                                                                                                                                                                                                                                                                                                                                  **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                  Every interaction is captured across five modes (Chat / Advice /
+                                                                                                                                                                                                                                                                                                                                  Code / Debug / Audit). Learning today is logging + retrieval only:
+                                                                                                                                                                                                                                                                                                                                  low-confidence replies are shadow-logged, fix outcomes are recorded,
+                                                                                                                                                                                                                                                                                                                                  and a TF-IDF retriever supplies approved-style few-shot examples.
+                                                                                                                                                                                                                                                                                                                                  **No model weights are trained anywhere.** The 1000-row mark in
+                                                                                                                                                                                                                                                                                                                                  `ora_council_logger.py` is a logger threshold ("ready_for_finetune"
+                                                                                                                                                                                                                                                                                                                                  marker), not a training run.
+
+                                                                                                                                                                                                                                                                                                                                  ### 🔐 Security posture
+                                                                                                                                                                                                                                                                                                                                  **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                  - JWT tokens include `jti` + `iat`
+                                                                                                                                                                                                                                                                                                                                  - NoSQL operator sanitizer ASGI middleware blocks `$where`/`$expr`
+                                                                                                                                                                                                                                                                                                                                  - Request body size limit — LPDoS shield
+                                                                                                                                                                                                                                                                                                                                  - Global `unhandledrejection` handler ships client errors to
+                                                                                                                                                                                                                                                                                                                                    `frontend_errors`
+
+                                                                                                                                                                                                                                                                                                                                    ### 🎨 UI polish
+                                                                                                                                                                                                                                                                                                                                    **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                    - Token-by-token streaming
+                                                                                                                                                                                                                                                                                                                                    - Skeleton loading (no "Loading 80%" fake bar)
+                                                                                                                                                                                                                                                                                                                                    - Syntax highlighting + copy button on all code blocks
+                                                                                                                                                                                                                                                                                                                                    - Day/Night theme toggle (localStorage)
+                                                                                                                                                                                                                                                                                                                                    - `StreamHealthPill` — reconnect status above the composer
+                                                                                                                                                                                                                                                                                                                                    - Inline loop progress: PLAN✓ → EXECUTE⏳ → VERIFY○ → SCAN○ → SHIP○
+
+                                                                                                                                                                                                                                                                                                                                    ### 📊 SEO / GEO / AEO
+                                                                                                                                                                                                                                                                                                                                    **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                    - Meta Pixel on every page
+                                                                                                                                                                                                                                                                                                                                    - JSON-LD: SoftwareApplication · Organization · FAQPage · WebSite
+                                                                                                                                                                                                                                                                                                                                    - `llms.txt` for AI-crawler discovery
+                                                                                                                                                                                                                                                                                                                                    - `robots.txt` explicitly allows every major AI crawler
+                                                                                                                                                                                                                                                                                                                                    - OG image + preview cards for social sharing
+
+                                                                                                                                                                                                                                                                                                                                    *(Static site meta tags above. The customer-facing scan-and-fix product
+                                                                                                                                                                                                                                                                                                                                    built on top of these same primitives is the AI-Visibility Kit below.)*
+
+                                                                                                                                                                                                                                                                                                                                    ### 📈 AI-Visibility Kit (SEO + GEO + AEO)
+                                                                                                                                                                                                                                                                                                                                    **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                    Scans any connected site for how visible it is to AI answer engines and
+                                                                                                                                                                                                                                                                                                                                    crawlers, scores it 0–100, and ships fixes as a **draft PR (PR-only,
+                                                                                                                                                                                                                                                                                                                                    never a direct push)**:
+                                                                                                                                                                                                                                                                                                                                    - **Preferred Sources badge** — a generated on-site badge/asset
+                                                                                                                                                                                                                                                                                                                                    - **`robots.txt` AI-crawler policy** — blocks AI *training* crawlers
+                                                                                                                                                                                                                                                                                                                                      (GPTBot, ClaudeBot, Google-Extended, CCBot), explicitly allows AI
+                                                                                                                                                                                                                                                                                                                                        *retrieval* crawlers (OAI-SearchBot, Claude-SearchBot, PerplexityBot)
+                                                                                                                                                                                                                                                                                                                                        - **JSON-LD structured data** — Organization (stable `@id`) + WebSite +
+                                                                                                                                                                                                                                                                                                                                          FAQPage + Person
+                                                                                                                                                                                                                                                                                                                                          - **`llms.txt` generation** — honestly scoped: Google ignores this file
+                                                                                                                                                                                                                                                                                                                                            for Search/AI Overviews; it helps Claude, ChatGPT, and coding agents
+                                                                                                                                                                                                                                                                                                                                              that do read it
+                                                                                                                                                                                                                                                                                                                                              - **Sitemap automation**
+                                                                                                                                                                                                                                                                                                                                              - **3 advisory-only checklists** (never auto-applied, no Google OAuth/
+                                                                                                                                                                                                                                                                                                                                                API used): Google Business Profile, Search Console + GBP, Google
+                                                                                                                                                                                                                                                                                                                                                  Platforms
+                                                                                                                                                                                                                                                                                                                                                  - The 0–100 score is a **preparedness score**, not a live count of AI
+                                                                                                                                                                                                                                                                                                                                                    citations — AUREM doesn't track whether any AI engine has actually
+                                                                                                                                                                                                                                                                                                                                                      cited you
+
+                                                                                                                                                                                                                                                                                                                                                      ### 🤖 ORA Admin Copilot
+                                                                                                                                                                                                                                                                                                                                                      **Status: 🟡 ROLLING OUT**
+                                                                                                                                                                                                                                                                                                                                                      Built and tested on preview; not yet confirmed running against the
+                                                                                                                                                                                                                                                                                                                                                      production environment. A founder-facing ops assistant with its own
+                                                                                                                                                                                                                                                                                                                                                      guardrails, separate from customer-facing ORA:
+                                                                                                                                                                                                                                                                                                                                                      - **Approve/reject action catalog** — every admin action (toggle a
+                                                                                                                                                                                                                                                                                                                                                        flag, trigger a digest, edit the backlog) is proposed first, applied
+                                                                                                                                                                                                                                                                                                                                                          only after an explicit approve, and logged to an audit trail
+                                                                                                                                                                                                                                                                                                                                                          - **Live `web_verify` / `web_inspect` tools** — the admin can ask ORA to
+                                                                                                                                                                                                                                                                                                                                                            check any deployed URL in the same chat; degrades gracefully (a clear
+                                                                                                                                                                                                                                                                                                                                                              "browser unavailable — text check only" badge) instead of a silent
+                                                                                                                                                                                                                                                                                                                                                                skip if server-side Chromium isn't available
+                                                                                                                                                                                                                                                                                                                                                                - **Budget + rate-limit guardrails** — hard USD-per-call caps and a
+                                                                                                                                                                                                                                                                                                                                                                  request-rate ceiling, same enforcement layer as customer chat
+
+                                                                                                                                                                                                                                                                                                                                                                  ### 🩻 Deploy Verify engine
+                                                                                                                                                                                                                                                                                                                                                                  **Status: 🟡 ROLLING OUT**
+                                                                                                                                                                                                                                                                                                                                                                  The browser-free fallback path is live everywhere; full browser-based
+                                                                                                                                                                                                                                                                                                                                                                  verification (screenshots, console errors) is confirmed working on
+                                                                                                                                                                                                                                                                                                                                                                  preview only — production is missing the Chromium binary as of this
+                                                                                                                                                                                                                                                                                                                                                                  writing, pending a Dockerfile fix + redeploy. Server-side headless-
+                                                                                                                                                                                                                                                                                                                                                                  browser verification of any deployed URL:
+                                                                                                                                                                                                                                                                                                                                                                  - Reachability, build-identity match, console/runtime error capture,
+                                                                                                                                                                                                                                                                                                                                                                    mobile + desktop screenshots
+                                                                                                                                                                                                                                                                                                                                                                    - **Graceful browser-free fallback** — if Chromium itself isn't
+                                                                                                                                                                                                                                                                                                                                                                      installed in an environment, falls back to a plain HTTP check
+                                                                                                                                                                                                                                                                                                                                                                        (status code + raw-HTML signal) and labels the result `degraded`
+                                                                                                                                                                                                                                                                                                                                                                          instead of hard-failing or silently skipping
+
+                                                                                                                                                                                                                                                                                                                                                                          ### 🔌 Integrations
+                                                                                                                                                                                                                                                                                                                                                                          **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                                                          Claude Desktop · Claude Code · Cursor · VS Code · Ollama (offline) ·
+                                                                                                                                                                                                                                                                                                                                                                          LM Studio · GitHub · MCP 2.4
+
+                                                                                                                                                                                                                                                                                                                                                                          ### 🩺 Ops surface *(Iter 212m-192)*
+                                                                                                                                                                                                                                                                                                                                                                          **Status: 🟢 PROD-LIVE**
+                                                                                                                                                                                                                                                                                                                                                                          - `GET /api/aurem-dev/admin/council/health` — live Council A status
+                                                                                                                                                                                                                                                                                                                                                                          - Persistent probe history in `council_health_probes`
+                                                                                                                                                                                                                                                                                                                                                                          - Admin banner + "LLM PROVIDER STATUS" pane on `/admin` overview
+                                                                                                                                                                                                                                                                                                                                                                          - `/connection-status` now probes GitHub's **contents** endpoint so
+                                                                                                                                                                                                                                                                                                                                                                            a green sidebar dot means real file-read permission, not just
+                                                                                                                                                                                                                                                                                                                                                                              repo visibility
+
+                                                                                                                                                                                                                                                                                                                                                                              ### 🛡️ ORA Chat Hallucination Defence Stack *(Iter 264 → 270)*
+                                                                                                                                                                                                                                                                                                                                                                              **Status: 🟢 PROD-LIVE**
+
+                                                                                                                                                                                                                                                                                                                                                                              Multi-layer defence against the LLM confidently making things up.
+                                                                                                                                                                                                                                                                                                                                                                              Every layer is deterministic (regex / set-membership) or strictly
+                                                                                                                                                                                                                                                                                                                                                                              programmatic (peer-review with verbatim-quote guards). No layer is
+                                                                                                                                                                                                                                                                                                                                                                              "another prompt telling the model to be careful."
+
+                                                                                                                                                                                                                                                                                                                                                                              - **Iter 264 — Post-response grounding validator**
+                                                                                                                                                                                                                                                                                                                                                                                `services/ora_chat/grounding_check.py`. Every reply is scanned
+                                                                                                                                                                                                                                                                                                                                                                                  after generation for file-path / symbol / line-number claims not
+                                                                                                                                                                                                                                                                                                                                                                                    supported by the retrieval context this turn. Split into
+                                                                                                                                                                                                                                                                                                                                                                                      `FABRICATED` (does not exist in the repo) and `UNVERIFIED` (exists
+                                                                                                                                                                                                                                                                                                                                                                                        but not retrieved this turn). Rows land in `ora_hallucination_log`.
+                                                                                                                                                                                                                                                                                                                                                                                        - **Iter 264 — Prompt snapshots**
+                                                                                                                                                                                                                                                                                                                                                                                          Every high-stakes turn writes the exact assembled prompt to
+                                                                                                                                                                                                                                                                                                                                                                                            `ora_prompt_snapshots` for audit / regression testing.
+                                                                                                                                                                                                                                                                                                                                                                                            - **Iter 264 — Nightly canary**
+                                                                                                                                                                                                                                                                                                                                                                                              `services/ora_chat/canary.py` runs 8 fixed prompts against
+                                                                                                                                                                                                                                                                                                                                                                                                production, logs deltas in `ora_canary_runs`. Gated by
+                                                                                                                                                                                                                                                                                                                                                                                                  `ORA_CANARY_ENABLED=1`.
+                                                                                                                                                                                                                                                                                                                                                                                                  - **Iter 266 — GitHub adapter honesty**
+                                                                                                                                                                                                                                                                                                                                                                                                    Direct `owner/repo` lookup on URL paste; empty-result vs error
+                                                                                                                                                                                                                                                                                                                                                                                                      distinction; query cleaning for free-text search.
+                                                                                                                                                                                                                                                                                                                                                                                                      - **Iter 267 — Generic URL fetch + retry**
+                                                                                                                                                                                                                                                                                                                                                                                                        `deep_research.py::_fetch_urls` — the chat can now fetch any
+                                                                                                                                                                                                                                                                                                                                                                                                          public http(s) URL the user pastes and cite it. Retries once
+                                                                                                                                                                                                                                                                                                                                                                                                            with a reformulated query on empty results.
+                                                                                                                                                                                                                                                                                                                                                                                                            - **Iter 268 — Cross-family adversarial reviewer**
+                                                                                                                                                                                                                                                                                                                                                                                                              `services/ora_chat/adversarial_review.py`. High-stakes drafts
+                                                                                                                                                                                                                                                                                                                                                                                                                are reviewed by `z-ai/glm-5.2` (a *different family* from the
+                                                                                                                                                                                                                                                                                                                                                                                                                  drafter's `deepseek-v3` — sibling models share blind spots).
+                                                                                                                                                                                                                                                                                                                                                                                                                    Every flag's `quote` field is string-checked verbatim against
+                                                                                                                                                                                                                                                                                                                                                                                                                      the draft; hallucinated flags are dropped and logged to
+                                                                                                                                                                                                                                                                                                                                                                                                                        `ora_reviewer_errors`. Hard flags trigger one silent regen;
+                                                                                                                                                                                                                                                                                                                                                                                                                          soft flags surface as an "unverified" caveat chip in the UI.
+                                                                                                                                                                                                                                                                                                                                                                                                                          - **Iter 269 — Capability scan honesty**
+                                                                                                                                                                                                                                                                                                                                                                                                                            Real file-tree fetch via the GitHub API on any repo-scan query;
+                                                                                                                                                                                                                                                                                                                                                                                                                              line-number claims and slash-commands are verified against
+                                                                                                                                                                                                                                                                                                                                                                                                                                canonical indexes.
+                                                                                                                                                                                                                                                                                                                                                                                                                                - **Iter 270 — SSRF hard gate on `fetch_url`**
+                                                                                                                                                                                                                                                                                                                                                                                                                                  `deep_research.py::_is_safe_public_url` — parses every URL,
+                                                                                                                                                                                                                                                                                                                                                                                                                                    resolves DNS, and blocks loopback / RFC1918 private / link-local
+                                                                                                                                                                                                                                                                                                                                                                                                                                      (`169.254.169.254`) / CGNAT / multicast / reserved / IPv6
+                                                                                                                                                                                                                                                                                                                                                                                                                                        loopback + link-local + unique-local. Non-http(s) schemes
+                                                                                                                                                                                                                                                                                                                                                                                                                                          (`file://`, `gopher://`, `data:`) are rejected. Redirects are
+                                                                                                                                                                                                                                                                                                                                                                                                                                            handled manually with per-hop re-validation, capped at 3 hops.
+                                                                                                                                                                                                                                                                                                                                                                                                                                              37 pytest cases covering AWS-metadata SSRF, DNS-rebinding,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                redirect-to-private, IPv6 variants.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                Together this stack drove the hard-fabrication rate from
+                                                                                                                                                                                                                                                                                                                                                                                                                                                noticeable-in-testing down to essentially zero in preview across
+                                                                                                                                                                                                                                                                                                                                                                                                                                                Iter 264-270 across the public grounding-check hooks; regression
+                                                                                                                                                                                                                                                                                                                                                                                                                                                suite lives in `backend/tests/test_iter264_*.py` through
+                                                                                                                                                                                                                                                                                                                                                                                                                                                `test_iter270_*.py`.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                ## Open Source <a id="open-source"></a>
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                The deterministic grounding + adversarial-review core of ORA Chat has
+                                                                                                                                                                                                                                                                                                                                                                                                                                                been extracted into a small standalone library so anyone building
+                                                                                                                                                                                                                                                                                                                                                                                                                                                their own LLM chat agent can use the same defence:
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                - **Repo:** [github.com/polarisbuiltinc-wq/ora-grounding](https://github.com/polarisbuiltinc-wq/ora-grounding)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                - **License:** MIT
+                                                                                                                                                                                                                                                                                                                                                                                                                                                - **Size:** ~500 LoC, zero runtime dependencies
+                                                                                                                                                                                                                                                                                                                                                                                                                                                - **What it ships:**
+                                                                                                                                                                                                                                                                                                                                                                                                                                                  - `run_post_response_check()` — the grounding validator from
+                                                                                                                                                                                                                                                                                                                                                                                                                                                      Iter 264 (regex extraction + set-membership classification,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                          no LLM in the hot path)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                            - `run_review()` — the cross-family adversarial reviewer from
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                Iter 268 (with the verbatim-quote guard against reviewer
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                    hallucination)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                    - **Persistence / LLM adapters:** both entry points take
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                      caller-supplied async callables (`on_log`, `llm_call`,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        `canonical_paths_provider`) so there is no MongoDB, OpenRouter,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          or AUREM-specific dependency in the released package.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          - **Tests:** 34 unit tests, ~100 ms runtime, LLM fully mocked.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          If you're building a chat agent that references files, symbols,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          line numbers, or commands and you want a small piece of defence
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          against fabrication, this is the piece to bolt on. PRs and
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          real-world failure-mode reports welcome.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## Pricing / Tiers <a id="pricing--tiers"></a>
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          Source of truth: `backend/services/subscription_tiers.py` (live
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          task limits) + `backend/services/wallet.py` +
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          `config/token_pricing.py` (token system, behind flag).
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Tier | Price / mo | Tokens / mo | Tasks / mo (live gate) | Fix tools | Bulk fix | Modes |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |------|------------|-------------|------------------------|-----------|----------|-------|
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Free | $0 | 0 | 10 | none (scans only) | ✗ | swift |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Starter | $9 | 900 | 50 | vanguard-scan | ✗ | swift |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Pro | $19 | 1,900 | 300 | vanguard + health | ✗ | swift, pro |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Team | $49 | 4,900 | 400 | all 4 (vanguard, health, security, bug-hunt) | ✓ | swift, pro, maxx |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Founder | $0 (internal) | unlimited | unlimited | all 4 | ✓ | all |
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          **How billing works today (verified 2026-10-27 on main):** the token
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          system is built — wallet buckets (promo/plan/purchased),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          hold/settle/release, spend order promo → plan → purchased, and a
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          conversion of 1 USD = 100 tokens, so $9 = 900, $19 = 1,900,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          $49 = 4,900 tokens. But it sits behind `TOKEN_BILLING_MODE`
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          (default `off`), which has never been `on` in production — so the
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          **live** gate is still task-based: 1 fix = 1 task, regardless of
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          severity, and scan-fix quota rolls into the same monthly meter as
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          chat tasks (`services/usage.py`). A failed fix never burns a task,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          and a failed token run is fully refunded. Per-action token prices
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          are still placeholders (estimates, not measured medians), so this
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          doc quotes no fixes-per-month figure from them. Services prices
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          (App Rescue / Launch Audit / App Care) are founder-stated and are
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          not in code, so none are listed here.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          **AI-Visibility Kit pricing:** not yet published. `subscription_tiers.py`
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          has no Kit tier/add-on wired in today — the Kit's readiness scan is
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          viewable, but there is no enforced billing price for it yet, so none is
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          listed here. Coming once it's wired into the tiers file.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## Head-to-head <a id="head-to-head"></a>
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Feature | ORA | Cursor | Copilot | Bolt | Devin |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |---------|-----|--------|---------|------|-------|
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Pre-commit security scan | ✅ | ❌ | ❌ | ❌ | ❌ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 4-hop LLM fallback | ✅ | ❌ | ❌ | ❌ | ❌ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Self-learning per user | ✅ | ❌ | ❌ | ❌ | ❌ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Verified loop mode | ✅ | ❌ | ❌ | ❌ | partial |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | No IDE required | ✅ | ❌ | ❌ | ✅ | ✅ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Full codebase health scanner | ✅ | ❌ | ❌ | ❌ | ❌ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Chat-native `/scan` commands | ✅ | ❌ | ❌ | ❌ | ❌ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Fixed-findings PR-merge ledger | ✅ | ❌ | ❌ | ❌ | ❌ |
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Starting price | $9 | $20 | $10 | $20 | $500 |
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## Tech Stack <a id="tech-stack"></a>
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          - **Frontend:** React 18 + Vite + Tailwind + Shadcn UI + Lucide icons
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          - **Backend:** FastAPI + Uvicorn + Motor (async MongoDB) +
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                            APScheduler + httpx
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                            - **Database:** MongoDB (Motor async driver)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                            - **AI:** OpenRouter proxy + Groq direct + Anthropic via
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                              Emergent LLM Key + emergentintegrations
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                              - **Auth:** Custom JWT (with `jti` + `iat`) + Google OAuth
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                (Emergent-managed) + GitHub App (installation-based, preferred) with
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  legacy PAT (`github_token`) still supported as a fallback
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  - **Real-time:** SSE (Server-Sent Events) for chat streams and fix
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    progress. No websockets, no long-polling.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    - **Cache / snapshots:** `.aurem_cache/` git-tree snapshots on disk
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ## Runbook (dev preview) <a id="runbook"></a>
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    Local services are supervisor-managed. Every URL/port/credential
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    comes from `.env` files — nothing is hardcoded.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ```bash
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    # Backend logs
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    sudo supervisorctl status
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    tail -f /var/log/supervisor/backend.err.log
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    # Restart after .env or dependency change (hot-reload handles code edits)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    sudo supervisorctl restart backend
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    sudo supervisorctl restart frontend
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    # Health
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    curl "$REACT_APP_BACKEND_URL/api/aurem-dev/system/health"
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    # Council A live status (admin-only)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    curl "$REACT_APP_BACKEND_URL/api/aurem-dev/admin/council/health" \
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      -H "Authorization: Bearer $ADMIN_TOKEN"
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ```
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ### Two environments
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      - **PREVIEW** (this codebase) — editable, hot-reload, testing surface.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      - **PRODUCTION** (`https://auremcto.com`) — the live deploy. Code
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        changes only reach production after a manual redeploy.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Every fix documented above lands on preview first. Production catches
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        up on the next redeploy.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ### Container / deploy notes
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        - Both services are containerised (`backend/Dockerfile`,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          `frontend/Dockerfile`) — no supervisor in the image.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          - Three `.dockerignore` files (`/`, `/backend`, `/frontend`) keep
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            the build context lean and — critically — keep `backend/.env`,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              `frontend/.env`, `.aurem_cache/`, `node_modules/`, and the
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                pytest / ruff caches out of every image layer. **Never remove
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  these `.dockerignore` files.**
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  - Build context sizes with these ignores in place:
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    frontend `~14 MB`, backend `~81 MB`, root `~27 MB`. Regressions
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      usually mean a new folder needs to be added to `.dockerignore`.
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ## Support & Status <a id="support--status"></a>
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      - **Support:** [auremcto.com/support](https://auremcto.com/support)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      - **Integrations docs:**
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        [auremcto.com/integrations](https://auremcto.com/integrations)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        - **Health:** [auremcto.com/api/aurem-dev/system/health](https://auremcto.com/api/aurem-dev/system/health)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        - **Founder Suggestion Box:** in-app, sidebar dropdown → *Suggest a
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          feature*
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ---
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          **License:** Proprietary — All Rights Reserved, Polaris Built Inc.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          See [`LICENSE`](./LICENSE). This is a commercial product, not open
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          source (the standalone `ora-grounding` extraction above is the one
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          MIT-licensed exception).
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          *Built by Aurem CTO · [auremcto.com](https://auremcto.com) ·
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          sister app [aurem.live](https://aurem.live)*
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          

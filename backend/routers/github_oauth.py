@@ -78,6 +78,22 @@ def _frontend_settings_url(query: str, origin: Optional[str] = None) -> str:
     return _frontend_url("/settings", query, origin=origin)
 
 
+# 2026-11-11 — Fix 7: safe `?next=` redirect target, carried through
+# oauth_states (never through the `state` value itself — that stays an
+# opaque CSRF nonce per OAuth best practice). Mirrors the EXACT same
+# validation Login.jsx/Signup.jsx already apply client-side (must be a
+# same-origin relative path: starts with "/", not "//"), re-checked
+# here server-side since a state row is untrusted input too. Also
+# rejects backslashes (browsers sometimes normalize `\` to `/`, which
+# is how `/\evil.com` style payloads bypass a naive `startswith` check).
+def _safe_next(raw: Optional[str]) -> Optional[str]:
+    if not raw or len(raw) > 2048:
+        return None
+    if "\\" in raw or not raw.startswith("/") or raw.startswith("//"):
+        return None
+    return raw
+
+
 async def _gh_primary_email(token: str) -> Optional[str]:
     """GitHub's /user endpoint returns email=null when the user marked
     it private. Hit /user/emails (needs read:user / user:email scope
@@ -123,6 +139,7 @@ async def connect(
     app_install: Optional[str] = Query(None),
     fs: Optional[str] = Query(default=None),    # 2026-08-01 funnel session_id
     fsrc: Optional[str] = Query(default=None),  # 2026-08-01 funnel source
+    next: Optional[str] = Query(default=None),  # 2026-11-11 Fix 7 — post-auth return path
 ):
     """Kick off OAuth.
 
@@ -197,6 +214,8 @@ async def connect(
                 # 2026-08-01 — funnel stitching.
                 "funnel_session": fs,
                 "funnel_source":  fsrc or prefix,
+                # 2026-11-11 — Fix 7: safe post-auth return path.
+                "next": _safe_next(next),
             })
         # 2026-08-01 — server-side funnel event.
         await _funnel_track(
@@ -284,12 +303,14 @@ async def callback(
         # cancel-redirect lands on the same host the user started on.
         cancel_origin = None
         cancel_mode = None
+        cancel_next = None
         try:
             db_tmp = get_db()
             if db_tmp is not None and state:
                 s_tmp = await db_tmp.oauth_states.find_one({"state": state})
                 cancel_origin = (s_tmp or {}).get("origin")
                 cancel_mode = (s_tmp or {}).get("mode")
+                cancel_next = (s_tmp or {}).get("next")
         except Exception:
             pass
         # Clean up the dangling state row so it can't be replayed.
@@ -323,9 +344,15 @@ async def callback(
             target_path = "/login"
         reason = error or "missing_code"
         # Keep the redirect URL short — frontend reads ?github=cancelled
+        # 2026-11-11 — Fix 7: carry the return path through a cancelled
+        # attempt too, so retrying from /login or /signup still comes
+        # back to /harness (or wherever) instead of losing it.
+        cancel_query = f"github=cancelled&reason={reason}"
+        if cancel_next:
+            from urllib.parse import quote_plus as _qp
+            cancel_query += f"&next={_qp(cancel_next)}"
         return RedirectResponse(
-            url=_frontend_url(target_path, f"github=cancelled&reason={reason}",
-                              origin=cancel_origin)
+            url=_frontend_url(target_path, cancel_query, origin=cancel_origin)
         )
 
     if not state or ":" not in state:
@@ -452,7 +479,19 @@ async def callback(
     gh_name   = sanitize_display_name(gh_name)
 
     # ── Signup / sign-in flow ─────────────────────────────────────────
-    if flow == "signup":
+    # 2026-11-11 — bug found while writing the real-success-path
+    # regression test (test_regression_iter2026_70): `flow` above is
+    # the LITERAL state-row `mode` ("signup" OR "login"), never just
+    # "signup" — so a real login-intent success (`/connect?signup=1&
+    # intent=login`, exactly what the "Continue with GitHub" button on
+    # /login sends) was falling through to the unrelated
+    # connect-existing-account branch below, corrupting a dev_users
+    # update with the literal user_id "login" and redirecting to
+    # /settings instead of minting a JWT and landing on /oauth-finish.
+    # Iter 113's own docstring already promised "both signup: and
+    # login: prefixes use the same OAuth-first auth path" — this
+    # restores that for real.
+    if flow in ("signup", "login"):
         # Pull a verified email if GitHub hid it on the public profile.
         if not gh_email:
             gh_email = await _gh_primary_email(token)
@@ -573,6 +612,13 @@ async def callback(
         base = (state_origin or os.getenv("APP_URL") or "").rstrip("/")
         if not base:
             raise HTTPException(500, "APP_URL not configured")
+        # 2026-11-11 — Fix 7: carry the validated return path through
+        # to OAuthFinish.jsx, which now navigates there instead of
+        # always hardcoding /dashboard. Percent-encoded since the
+        # path could itself contain `&`/`=`/`?` which would otherwise
+        # break the fragment's own `&`-delimited key=value parsing.
+        finish_next = s.get("next")
+        from urllib.parse import quote_plus as _qp_next
         return RedirectResponse(
             url=(
                 f"{base}/oauth-finish"
@@ -583,6 +629,7 @@ async def callback(
                 # the page can fire the Google Ads signup conversion
                 # exactly once (no double-fire for return logins).
                 f"&new={'1' if is_new_account else '0'}"
+                + (f"&next={_qp_next(finish_next)}" if finish_next else "")
             )
         )
 

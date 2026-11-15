@@ -16,19 +16,18 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, PrivateAttr
 
-from services.usage import is_founder_email
+import routers.cto_projects as _pkg
 from services.ambiguity_gate import is_ambiguous_task as _is_ambiguous_task
 from services.cto_projects_helpers import _task_queues
+from services.usage import is_founder_email
 
-import routers.cto_projects as _pkg
-from . import router, PENDING_EDITS_TTL_S
+from . import PENDING_EDITS_TTL_S, router
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,7 @@ class TaskBody(BaseModel):
     _scope_proposal: dict | None = PrivateAttr(default=None)
     project_id: str
     task: str
-    files: List[str] = []
+    files: list[str] = []
     context: str = ""
     auto_deploy: bool = False
     maxx_mode: bool = False     # iter 40: enable Two-Agent (DeepSeek + Claude review)
@@ -56,9 +55,9 @@ class TaskBody(BaseModel):
 
 async def _enqueue_cto_task(
     user_id: str,
-    project_id: Optional[str],
+    project_id: str | None,
     task_text: str,
-    bg: Optional[BackgroundTasks] = None,
+    bg: BackgroundTasks | None = None,
     maxx_mode: bool = False,
 ) -> dict:
     """Iter 46 — programmatic Mode C trigger.
@@ -314,13 +313,25 @@ async def submit_task(
             try:
                 _repos = await list_installation_repos(int(installation_id))
             except Exception as e:                            # noqa: BLE001
-                from services.error_classifier import classify_error
+                # 2026-10-27 — was HTTPException(502, ...), replaced
+                # by Cloudflare's own HTML before reaching the user.
+                # See services/github_errors.py's module docstring.
+                from services.github_errors import (
+                    GITHUB_FAILURE_HTTP_STATUS,
+                    classify_github_failure,
+                )
                 logger.warning("[tasks] list_installation_repos failed: %r", e)
-                raise HTTPException(502, classify_error(e)["user_message"])
+                raise HTTPException(GITHUB_FAILURE_HTTP_STATUS, classify_github_failure(e))
             _wanted = body.repo.lower()
+            # Same fix as routers/cto_projects/github_browse.py — being
+            # listed by `/installation/repositories` at all already
+            # means this installation can push here; `permissions.push`
+            # is not a meaningful per-repo signal for GitHub Apps (it
+            # reflects a legacy collaborator-access model, confirmed
+            # LIVE to read `push: False` for a repo this exact App was
+            # pushing to at that moment).
             _ok_repo = any(
                 (r.get("full_name") or "").lower() == _wanted
-                and (r.get("permissions") or {}).get("push")
                 for r in _repos
             )
             if not _ok_repo:
@@ -346,18 +357,49 @@ async def submit_task(
     await assert_wallet(db, user_id=me["user_id"], action="fix",
                         run_id=task_id, idempotency_key=f"wallet_hold:{task_id}")
 
-    await db.cto_tasks.insert_one({
-        "task_id": task_id, "project_id": body.project_id,
-        "user_id": me["user_id"], "task": body.task,
-        "files": body.files, "context": body.context,
-        "status": "queued", "steps": [], "commit_sha": None,
-        "result": None, "error": None,
-        "maxx_mode": bool(body.maxx_mode),
-        "created_at": time.time(),
-        **({"scope_proposal_id": body._scope_proposal["id"],
-            "session_id": body._scope_proposal["session_id"]} if body._scope_proposal else {}),
-        **({"ship_target": ship_target} if ship_target else {}),
-    })
+    # 2026-10-27 — wallet-hold leak fix: `assert_wallet` above may have
+    # taken a REAL hold (mode="on"). If anything between here and the
+    # task row actually landing in Mongo raises (e.g. a duplicate
+    # `task_id`, a transient Mongo error), the hold had no task doc to
+    # ever be settled/released by — `_run_task`'s finally-block (the
+    # normal release path) never runs because the task was never
+    # queued. Release explicitly on that narrow failure window so a
+    # failed submit never leaves a stuck hold.
+    try:
+        await db.cto_tasks.insert_one({
+            "task_id": task_id, "project_id": body.project_id,
+            "user_id": me["user_id"], "task": body.task,
+            "files": body.files, "context": body.context,
+            "status": "queued", "steps": [], "commit_sha": None,
+            "result": None, "error": None,
+            "maxx_mode": bool(body.maxx_mode),
+            "created_at": time.time(),
+            **({"scope_proposal_id": body._scope_proposal["id"],
+                "session_id": body._scope_proposal["session_id"]} if body._scope_proposal else {}),
+            **({"ship_target": ship_target} if ship_target else {}),
+        })
+    except Exception:
+        from services.wallet import release as _release_wallet_hold
+        try:
+            await _release_wallet_hold(
+                db, user_id=me["user_id"], run_id=task_id,
+                idempotency_key=f"wallet_release:{task_id}",
+                reason="submit_task_insert_failed",
+            )
+        except Exception:
+            # 2026-10-27 — testing-agent finding: if release() itself
+            # raised, that exception used to REPLACE the original
+            # insert error (Python's `raise` inside an `except` block
+            # swaps the active exception) — the real root cause of the
+            # failed submit would be lost from the logs entirely.
+            # Log and swallow so the original `raise` below always
+            # surfaces the real failure.
+            logger.exception(
+                "[tasks] wallet release failed while handling an insert "
+                "error for task_id=%s — original insert error follows",
+                task_id,
+            )
+        raise
     if proj.get("preview_url"):
         from services.preview_capture import capture_before_snapshot_for_task
         bg.add_task(capture_before_snapshot_for_task, db, body.project_id, me["user_id"], task_id, proj.get("preview_url"))
@@ -522,8 +564,8 @@ async def retry_task(
             _saved_at = None
         if _saved_at is not None:
             if _saved_at.tzinfo is None:
-                _saved_at = _saved_at.replace(tzinfo=timezone.utc)
-            _age_s = (datetime.now(timezone.utc) - _saved_at).total_seconds()
+                _saved_at = _saved_at.replace(tzinfo=UTC)
+            _age_s = (datetime.now(UTC) - _saved_at).total_seconds()
             if 0 <= _age_s <= PENDING_EDITS_TTL_S:
                 resume_edits = _pe
     # Pattern #1 fix from RECURRING_ISSUES.md — the AI failed last time for a
@@ -654,7 +696,7 @@ async def task_stream(task_id: str, authorization: str = Header(None)):
         while time.time() < deadline:
             try:
                 event = await asyncio.wait_for(q.get(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield "data: {\"type\":\"ping\"}\n\n"
                 # Poll Mongo — covers the case where the worker finished
                 # but its terminal _emit was dropped (e.g. queue full or

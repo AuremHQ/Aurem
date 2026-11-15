@@ -662,6 +662,9 @@ function CodebaseHealthInner() {
     async function onFixed(e) {
       const fid = e?.detail?.finding_id;
       if (!fid) return;
+      // Robot Fix List F4 — ignore a fix event for a DIFFERENT
+      // project; this page's data is scoped to `projectId`.
+      if (e?.detail?.project_id && e.detail.project_id !== projectId) return;
       const d = dataRef.current;
       if (!d) return;
       const scoreBefore = d.score;

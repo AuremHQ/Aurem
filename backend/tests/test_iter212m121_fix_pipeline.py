@@ -81,6 +81,26 @@ class _FakeColl:
         # Same intent as aggregate — no prior data.
         return 0
 
+    # Part 2c C4 — reconcile_findings_against_stored_rows/
+    # drop_unverified_findings (now called in strict=True mode by
+    # start_bulk_fix) query cto_open_findings.find(...).to_list(...).
+    # Same "empty is the correct signal" philosophy as aggregate()
+    # above — these tests start from a clean cto_open_findings slate,
+    # so every item is legitimately "no matching stored row".
+    def find(self, query, projection=None):
+        rows = [
+            dict(r) for r in self.rows
+            if all(r.get(k) == v for k, v in (query or {}).items() if not isinstance(v, dict))
+        ]
+
+        class _Cur:
+            def __init__(self, items):
+                self.items = items
+
+            async def to_list(self, length=None):
+                return list(self.items)[: (length if length is not None else len(self.items))]
+        return _Cur(rows)
+
 
 class _FakeDB:
     def __init__(self, user_doc=None, projects=None):
@@ -210,16 +230,23 @@ def test_preview_insufficient_shortfall(client_paying):
 def test_bulk_start_returns_job_id(client_founder, monkeypatch):
     c, _ = client_founder
 
-    async def fake_apply(**kw):
-        return {"ok": True, "commit_sha": "abc1234",
+    # Part 2b F2 — the bulk job resolves per FILE now; config.py and
+    # db.py are different files, so each gets its own apply_file_fixes
+    # call, both resolving their one finding successfully.
+    async def fake_apply_file(**kw):
+        findings = kw["findings"]
+        file = kw["file"]
+        return {"ok": True, "file": file, "commit_sha": "abc1234",
                 "full_sha": "abc1234" + "0" * 33,
                 "html_url": "https://github.com/x/y/commit/abc1234",
-                "file": kw["finding"].get("file"),
-                "rule_id": kw["finding"].get("rule_id"),
-                "message": "stub"}
+                "pr_url": "https://github.com/x/y/pull/1",
+                "branch": "aurem/fixes-x", "batch_id": "fb_1",
+                "results": [{"finding_id": f.get("id"), "rule_id": f.get("rule_id"),
+                             "file": file, "status": "resolved"}
+                            for f in findings]}
 
     monkeypatch.setattr(
-        "routers.fix_pipeline.apply_finding_fix", fake_apply,
+        "routers.fix_pipeline.apply_file_fixes", fake_apply_file,
     )
     # Skip the live GitHub verification call.
     monkeypatch.setattr(

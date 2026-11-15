@@ -12,6 +12,7 @@ import Shell from "../components/Shell";
 import PricingCards from "../components/PricingCards";
 import MarketingNav from "../components/marketing/MarketingNav";
 import { api, getToken } from "../lib/api";
+import { pricingHeroHeadline, pricingDetailLine } from "../lib/billingCopy";
 
 export default function Pricing() {
   const [currentTier, setCurrentTier] = useState("");
@@ -39,10 +40,10 @@ export default function Pricing() {
         <div style={{ textAlign: "center", marginBottom: 48 }}>
           <span className="eyebrow">pricing</span>
           <h1 className="serif" style={{ fontSize: 36, marginTop: 8 }}>
-            Flat pricing. No token meters.
+            {pricingHeroHeadline()}
           </h1>
           <p style={{ color: "var(--text-dim)", marginTop: 8 }}>
-            One flat monthly price. No token meters — pay for your plan's task allotment, not per-request.
+            {pricingDetailLine()}
           </p>
         </div>
         <PricingCards currentTier={currentTier} />

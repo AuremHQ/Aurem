@@ -651,7 +651,12 @@ async def _ora_agent_cascade(state: StreamState) -> Optional[dict]:
         _step(q, "🤔 Thinking…")
         # ── Step 1: PRIMARY (admin-selected) ──
         try:
-            glm_text, _adv_model_tag = await _adv_primary(_adv_llm)
+            from services.brain_gateway import record_wrap
+            glm_text, _adv_model_tag = await record_wrap(
+                _adv_primary(_adv_llm), user_id=state.user_id,
+                project_id=body.project_id, task_type="chat_advisor",
+                model=_adv_llm, surface="chat_advisor_primary",
+            )
             _adv_chain.append(_adv_model_tag)
         except Exception as _p_err:
             logger.warning(
@@ -667,11 +672,17 @@ async def _ora_agent_cascade(state: StreamState) -> Optional[dict]:
             try:
                 activity["label"] = "trying backup model…"
                 _step(q, "⚙️ Switching to backup model…")
-                glm_text = await _call_groq(
-                    messages=[{"role": "user", "content": body.prompt}],
-                    system=ora_system,
-                    max_tokens=_adv_max_tokens,
-                    temperature=_adv_temperature,
+                from services.brain_gateway import record_wrap
+                glm_text = await record_wrap(
+                    _call_groq(
+                        messages=[{"role": "user", "content": body.prompt}],
+                        system=ora_system,
+                        max_tokens=_adv_max_tokens,
+                        temperature=_adv_temperature,
+                    ),
+                    user_id=state.user_id, project_id=body.project_id,
+                    task_type="chat_advisor", model="groq-llama-3.3-70b",
+                    surface="chat_advisor_rescue",
                 )
                 if (glm_text or "").strip():
                     _adv_model_tag = "groq-llama-3.3-70b-rescue"
@@ -690,11 +701,17 @@ async def _ora_agent_cascade(state: StreamState) -> Optional[dict]:
             try:
                 activity["label"] = "trying backup model…"
                 _step(q, "⚙️ Switching to backup model…")
-                glm_text = await _call_deepseek(
-                    messages=[{"role": "user", "content": body.prompt}],
-                    system=ora_system,
-                    max_tokens=_adv_max_tokens,
-                    temperature=_adv_temperature,
+                from services.brain_gateway import record_wrap
+                glm_text = await record_wrap(
+                    _call_deepseek(
+                        messages=[{"role": "user", "content": body.prompt}],
+                        system=ora_system,
+                        max_tokens=_adv_max_tokens,
+                        temperature=_adv_temperature,
+                    ),
+                    user_id=state.user_id, project_id=body.project_id,
+                    task_type="chat_advisor", model="deepseek-v3",
+                    surface="chat_advisor_rescue",
                 )
                 if (glm_text or "").strip():
                     _adv_model_tag = "deepseek-v3-rescue"

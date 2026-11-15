@@ -12,7 +12,7 @@
  *
  * Iter 62: extracted from ChatPanel.jsx as part of the P1 split.
  */
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { hasVerifiedReview } from "../utils/interactionState";
 import { InteractionStatus } from "./InteractionStatus";
 import {
@@ -38,6 +38,7 @@ import UnlockProCTA, { shouldShowUnlockProCTA } from "./UnlockProCTA";
 import StepCards from "./StepCards";   // Iter 212m-19 — live step cards
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import SaveToGitHubModal from "./SaveToGitHubModal";
+import { sanitizeApiErrorDetail } from "../lib/cleanErr";
 import ReaAnalysisCard from "./ReaAnalysisCard";
 import ThinkingLoader from "./ThinkingLoader";
 import { brandProvider } from "../lib/providerLabel";
@@ -51,7 +52,19 @@ import { sanitizeErrorMessage } from "../lib/sanitizeError";
 // see detectShipCtaFallback usage below. Exported for direct unit
 // testing (same convention as stripHandoffFenceForDisplay).
 const SHIP_FENCE_MARKER = /```aurem-handoff/i;
-const SHIP_CTA_MENTION = /(ship via cto|approve the fix|ship (it|this|the)\s*(fix|code)?|click[^.]{0,40}(ship|approve)[^.]{0,20}button)/i;
+// 2026-10-25 bug fix — the previous pattern's `ship (it|this|the)`
+// alternative had no word boundaries, so "ship the" matched as a
+// literal substring prefix of "ship them"/"ship these" and "ship it"
+// matched inside "relationship it". That false-positived on every
+// Mode E audit/scan reply (backend/services/mode_e_auditor.py's own
+// footer ends "...and I'll ship them via Mode C."), which has no
+// fence and no button by design. Narrowed to the one unambiguous
+// no-fence signal — the assistant explicitly claiming a clickable
+// button exists ("click the ... button") — since vaguer phrasing
+// ("ship it", "approve the fix" on its own) describes a future/
+// descriptive action, not a current UI claim, and is exactly the
+// kind of loose-prose match that produced this bug.
+const SHIP_CTA_MENTION = /\bclick\b[^.]{0,40}\b(?:ship|approve)\b[^.]{0,20}\bbutton\b/i;
 
 export function detectShipCtaFallback(content) {
   if (typeof content !== "string" || !content) {
@@ -746,7 +759,15 @@ export default function MessageBubble({
   // This is the user-reported fix: previously the button reappeared
   // after refresh / re-login because extractHandoffBrief ran against
   // the raw content and didn't know the turn had already shipped.
-  const handoffBrief = showActions && !m.shipped_task_id && !m.ship_cancelled
+  // 2026-10-25 — a Mode E (audit/scan) reply can echo scanned repo
+  // content verbatim (finding descriptions, file snippets). Without
+  // this gate, an attacker-controlled file containing a well-formed
+  // ```aurem-handoff fence could get quoted into the report and
+  // fabricate a REAL, clickable Approve button out of a scan result
+  // — a prompt-injection path, not merely the cosmetic fallback-
+  // banner bug this gate was first added for below.
+  const isAuditMessage = m.provider === "mode-e-auditor" || m.mode === "E";
+  const handoffBrief = showActions && !m.shipped_task_id && !m.ship_cancelled && !isAuditMessage
     ? extractHandoffBrief(m.content, m.verifiedPaths)
     : null;
   const canShip = !!(handoffBrief && activeProject?.project_id && !exhausted);
@@ -767,8 +788,16 @@ export default function MessageBubble({
   // never actually happen with no project connected, so the warning
   // is nonsensical there — gate on activeProject to match the same
   // precondition `canShip` already requires for a real ship.
+  // 2026-10-25 — Mode E (audit/scan) replies never carry a real ship
+  // fence by design (worker.py's _mode_d_e marks them with
+  // provider: "mode-e-auditor" / mode: "E"), and their report footer
+  // routinely describes what Mode C ship WILL do next ("I'll ship
+  // them via Mode C."). That description is not a render failure, so
+  // skip the check entirely for these messages rather than relying
+  // only on the regex to never collide with future audit copy.
   const shipCtaCheck = (m.role === "assistant" && showActions
-      && !m.shipped_task_id && !handoffBrief && !!activeProject?.project_id)
+      && !m.shipped_task_id && !handoffBrief && !!activeProject?.project_id
+      && !isAuditMessage)
     ? detectShipCtaFallback(m.content)
     : { shouldFallback: false, hasFence: false };
   const shipCtaFallback = shipCtaCheck.shouldFallback;
@@ -792,6 +821,17 @@ export default function MessageBubble({
   // below, called by the modal's own "Save to GitHub" button, never
   // before the user explicitly confirms a repo+branch there.
   const [showSaveModal, setShowSaveModal] = useState(false);
+  // 2026-10-24 — founder report: typing a branch name in this modal
+  // kept losing focus after each word, forcing a re-click. Root cause:
+  // `useModalA11y` (used by SaveToGitHubModal) re-runs its "move focus
+  // into the modal" effect whenever its `onClose` prop changes
+  // identity — and an inline `() => setShowSaveModal(false)` below got
+  // a BRAND NEW function on every MessageBubble re-render (e.g. the
+  // ~5s ship-phase countdown poll in ChatPanel.jsx), re-stealing focus
+  // to the modal's first focusable element every time. `setShowSaveModal`
+  // itself is already stable (React guarantees this for useState
+  // setters), so an empty dep array is correct here.
+  const handleSaveModalCancel = useCallback(() => setShowSaveModal(false), []);
 
   function openSaveToGithubModal() {
     if (!canShip || shipState.status === "shipping" || shipState.status === "shipped") return;
@@ -859,7 +899,19 @@ export default function MessageBubble({
       // "shipped") for post-push polling + rollback affordance.
       return { task_id: taskId };
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || "Submit failed";
+      // 2026-10-27 — CRITICAL fix (live-reproduced page crash). The
+      // backend's GitHub-failure detail is now a structured
+      // `{code,message,retryable}` OBJECT (services/github_errors.py),
+      // not always a string. `e?.response?.data?.detail || e?.message`
+      // put that raw object straight into shipState.error, and
+      // ShipApproveCard renders `{error || label}` directly as a React
+      // child — "Objects are not valid as a React child" threw and the
+      // route error boundary replaced the ENTIRE chat page. Also never
+      // fall back to `e?.message` (e.g. axios's own "Request failed
+      // with status code 502") — same infra-leak class the modal's own
+      // sanitizer already guards against; reuse it here so both
+      // surfaces agree.
+      const msg = sanitizeApiErrorDetail(e, "Submit failed");
       setShipState({ status: "error", taskId: null, error: msg });
       // Re-throw (with the ORIGINAL error, not just `msg`) so the
       // modal's own catch can read e?.response?.data?.detail itself —
@@ -1710,7 +1762,7 @@ export default function MessageBubble({
       <SaveToGitHubModal
         open={showSaveModal}
         activeProject={activeProject}
-        onCancel={() => setShowSaveModal(false)}
+        onCancel={handleSaveModalCancel}
         onConfirm={doSubmitShipTarget}
       />
     </div>

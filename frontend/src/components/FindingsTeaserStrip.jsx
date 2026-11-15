@@ -121,11 +121,16 @@ function FindingsTeaserStripInner({ newFindings, projectId }) {
     function onFixed(e) {
       const fid = e?.detail?.finding_id;
       if (!fid) return;
+      // Robot Fix List F4 — ignore a fix event for a DIFFERENT
+      // project (the payload now carries project_id); this strip is
+      // scoped to `projectId` via the prop, same as every other read
+      // here.
+      if (e?.detail?.project_id && e.detail.project_id !== projectId) return;
       setTracked((cur) => cur.filter((f) => f.finding_id !== fid));
     }
     window.addEventListener("aurem:finding-fixed", onFixed);
     return () => window.removeEventListener("aurem:finding-fixed", onFixed);
-  }, []);
+  }, [projectId]);
 
   if (!tracked.length || dismissed) return null;
 

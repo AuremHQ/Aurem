@@ -62,10 +62,35 @@ async def call_llm_with_meta(system: str, user: str,
     everywhere. Full implementation + docstring: `_call_llm_with_meta_impl`."""
     from services.loop_token_ledger import llm_user_context, llm_surface_context
     async with llm_user_context(user_id), llm_surface_context(mode=mode):
-        return await _call_llm_with_meta_impl(
-            system, user, max_tokens=max_tokens, mode=mode, user_id=user_id,
-            review_mode=review_mode, step_hook=step_hook, feature=feature,
-        )
+        # ORA Brain Part 3, Phase E — record-only gateway. claim_recording
+        # ensures a Parliament-originated call (which calls this function
+        # internally) is recorded ONCE at the outermost level, not twice.
+        from services.brain_gateway import claim_recording, record_call
+        import time as _time
+        async with claim_recording() as _already_claimed:
+            _t0 = _time.monotonic()
+            result = await _call_llm_with_meta_impl(
+                system, user, max_tokens=max_tokens, mode=mode, user_id=user_id,
+                review_mode=review_mode, step_hook=step_hook, feature=feature,
+            )
+            if not _already_claimed:
+                try:
+                    from services.loop_token_ledger import current_surface_context
+                    _ctx = current_surface_context()
+                    _meta = result if isinstance(result, dict) else {}
+                    await record_call(
+                        user_id=user_id,
+                        project_id=_ctx.get("project_id"),
+                        task_id=_ctx.get("task_id"),
+                        task_type=mode,
+                        model=_meta.get("model") or _meta.get("provider"),
+                        latency_ms=round((_time.monotonic() - _t0) * 1000, 1),
+                        tokens=_meta.get("total_tokens"),
+                        system=system, user=user, surface="orchestrator",
+                    )
+                except Exception as _bge:                        # noqa: BLE001
+                    logger.debug("brain_gateway record skipped: %r", _bge)
+            return result
 
 
 async def _call_llm_with_meta_impl(system: str, user: str,
