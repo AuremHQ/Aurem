@@ -1,6 +1,6 @@
-# QA Report — commit ac853d4 (2026-11-15T02:44:15+00:00)
+# QA Report — commit c2a0ddc (2026-11-15T02:49:21+00:00)
 
-**Commit message**: auto-qa: grant contents write to regression-locks job (report push 403 fix)
+**Commit message**: quality-gate: invariants timeout 15 -> 20 min
 **Scope decided**: backend=False, ui=False, scenarios=[]
 **Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
