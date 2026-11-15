@@ -20,6 +20,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import useAutoClearConsole from "./lib/useAutoClearConsole";
 import { getToken } from "./lib/api";
+import { isLoopSubdomain } from "./lib/loopSubdomain"; // 2026-11-15 — loop.auremcto.com serves the harness page as its homepage
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import { useEffect, useRef, lazy, Suspense } from "react";
 import Toaster, { toast } from "./components/Toast";
@@ -221,6 +222,15 @@ function SessionExpiredListener() {
 }
 
 export default function App() {
+  // 2026-11-15 — Nov 10 founder decision: the harness lives at
+  // loop.auremcto.com as its own homepage. On that host, "/" IS the
+  // harness page and "/harness" folds back to "/". On every other
+  // host (auremcto.com, localhost, Emergent preview) this is false
+  // and routing is byte-for-byte the old behaviour. The cross-domain
+  // redirect (auremcto.com/harness -> loop.auremcto.com) is STEP 2 —
+  // it ships only after the subdomain DNS resolves, never before,
+  // or /harness would point at a dead domain.
+  const isLoopHost = isLoopSubdomain();
   // Iter 101 — Capture `?ref=<uid>` on any landing, stash in localStorage
   // so Signup can attribute the referrer after account creation.
   // Also pings the public /referrals/track endpoint so the referrer
@@ -374,7 +384,7 @@ export default function App() {
             (semantic `<main>` was missing from the shell entirely). */}
         <main id="main-content" tabIndex={-1}>
         <Routes>
-          <Route path="/"                element={<Landing />} />
+          <Route path="/"                element={isLoopHost ? <HarnessPage /> : <Landing />} />  {/* 2026-11-15 — on loop.auremcto.com the harness page IS the homepage */}
           {/* 2026-11-xx — /both retired: the Builder/Developer switcher
               it hosted is replaced by the homepage chooser strip
               (same harness_page flag, Landing.jsx). The real HTTP 301
@@ -444,7 +454,7 @@ export default function App() {
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
           <Route path="/projects/:projectId/free-scan" element={<PrivateRoute><FreeScanResults /></PrivateRoute>} />
           <Route path="/projects/:projectId/changes"   element={<PrivateRoute><ProjectChanges /></PrivateRoute>} />  {/* Part 2c B4 — Project Versions */}
-          <Route path="/harness"                        element={<HarnessPage />} />  {/* Aurem Loop harness Phase B — public, handles signed-out state itself */}
+          <Route path="/harness"                        element={isLoopHost ? <Navigate to="/" replace /> : <HarnessPage />} />  {/* Aurem Loop harness Phase B — public, handles signed-out state itself; on loop.auremcto.com /harness folds to the subdomain homepage */}
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/dashboard" element={<AdminRoute><Admin initialTab="dash" /></AdminRoute>} />
