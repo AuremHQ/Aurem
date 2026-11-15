@@ -86,7 +86,7 @@ from __future__ import annotations
 import logging
 import math
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -524,8 +524,11 @@ async def hold(
              "held": est_tokens, "breakdown": breakdown}
 
 
-async def _claim_hold(db, user_id: str, run_id: str) -> dict | None:
-    """Atomically READ-AND-REMOVE the hold in one Mongo operation.
+async def _claim_hold(db, user_id: str, run_id: str, *,
+                       idempotency_key: str, claim_kind: str) -> dict | None:
+    """Atomically READ-AND-REMOVE the hold in one Mongo operation —
+    AND, in that SAME atomic operation, durably record its full
+    contents into `wallets.pending_finalizations.{idempotency_key}`.
 
     PRE-STEP (a) self-red-team fix (Master Prompt v2 continuation) — a
     real, 100%-reproducible double-refund bug: the old two-step
@@ -542,15 +545,69 @@ async def _claim_hold(db, user_id: str, run_id: str) -> dict | None:
     correctly sees `None` (already resolved) and takes its existing
     safe path (settle() raises, release() no-ops at amount=0) — see
     tests/test_regression_iter2026_11c_prestep_redteam_and_edge_cases.py.
+
+    2026-11-12 — SECURITY AUDIT FINDING, P0 financial integrity: that
+    fix closed the double-refund race but left a DIFFERENT, real gap —
+    plain `$unset` DELETES the hold with nothing else written. If the
+    process crashed between this call returning and the caller's
+    subsequent bucket-credit + `wallet_ledger` insert (settle()'s
+    refund application, release()'s full refund), the hold's amount/
+    breakdown was gone forever with NO record anywhere it had ever
+    existed — tokens silently lost. A retry of the SAME
+    idempotency_key would find no ledger row, call this again, get
+    `None` back (hold already gone), and — for release() — write a
+    ZERO-amount "no_active_hold" ledger row, masking real token loss
+    as an ordinary "nothing to do" outcome.
+
+    Fix: the SAME atomic update that removes the hold now ALSO copies
+    its full contents into `pending_finalizations.{idempotency_key}`
+    in the SAME document, via a Mongo aggregation-pipeline update
+    (same technique `_atomic_bucket_spend` already uses elsewhere in
+    this file) — still a single-document operation, atomic on ANY
+    Mongo topology, no multi-document transaction required. If the
+    process dies right after this call returns, the claimed hold's
+    data SURVIVES (relocated, not erased) in `pending_finalizations`,
+    and `reconcile_stale_holds()` can finish the interrupted settle/
+    release later using that exact same idempotency_key — no
+    guessing, no double-crediting (the `wallet_ledger` dedup this
+    module already relies on everywhere else still applies). The
+    normal (non-crashed) path removes its own `pending_finalizations`
+    entry once its ledger row is durably written — see settle()/
+    release() below.
     """
     doc = await db.wallets.find_one_and_update(
         {"_id": user_id, f"holds.{run_id}": {"$exists": True}},
-        {"$unset": {f"holds.{run_id}": ""}},
+        [
+            {"$set": {"_claimed_hold": f"$holds.{run_id}"}},
+            {"$set": {
+                f"pending_finalizations.{idempotency_key}": {
+                    "$mergeObjects": [
+                        "$_claimed_hold",
+                        {"run_id": run_id, "claim_kind": claim_kind, "claimed_at": _now()},
+                    ],
+                },
+            }},
+            {"$unset": [f"holds.{run_id}", "_claimed_hold"]},
+        ],
         return_document=ReturnDocument.BEFORE,
     )
     if doc is None:
         return None
     return (doc.get("holds") or {}).get(run_id)
+
+
+async def _clear_pending_finalization(db, user_id: str, idempotency_key: str) -> None:
+    """Cleanup only — removes the now-unneeded `pending_finalizations`
+    entry once the operation it was protecting has durably completed
+    (its `wallet_ledger` row exists). Never load-bearing for
+    correctness: `reconcile_stale_holds()` already checks for an
+    existing ledger row before acting on any entry it finds, so a
+    leftover entry (e.g. this cleanup itself racing a crash) is
+    harmless, just a no-op `pending_finalizations` document the next
+    cleanup pass removes."""
+    await db.wallets.update_one(
+        {"_id": user_id}, {"$unset": {f"pending_finalizations.{idempotency_key}": ""}},
+    )
 
 
 async def settle(
@@ -586,11 +643,8 @@ async def settle(
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "charged": existing.get("amount")}
 
-    h = await _claim_hold(db, user_id, run_id)
+    h = await _claim_hold(db, user_id, run_id, idempotency_key=idempotency_key, claim_kind="settle")
     if h is None:
-        # Already settled/released by a prior call with a DIFFERENT
-        # idempotency_key (shouldn't happen for a well-behaved caller,
-        # but fail loud rather than silently charging nothing) — OR a
         # concurrent release() just atomically claimed it first (see
         # _claim_hold's docstring).
         raise ValueError(f"no active hold for run_id={run_id!r} (already settled/released?)")
@@ -716,9 +770,11 @@ async def settle(
             )
             if batch_refund:
                 await _restore_batches(db, user_id, {k: -v for k, v in batch_refund.items()})
+        await _clear_pending_finalization(db, user_id, idempotency_key)
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "charged": existing.get("amount"), "charged_micro": existing.get("amount_micro")}
+    await _clear_pending_finalization(db, user_id, idempotency_key)
     return {"ok": True, "idempotent_replay": False, "run_id": run_id,
              "charged": actual, "refunded": refund_total,
              "charged_micro": actual_micro, "refunded_micro": refund_total_micro}
@@ -745,7 +801,7 @@ async def release(db, *, user_id: str, run_id: str, idempotency_key: str,
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "released": existing.get("amount")}
 
-    h = await _claim_hold(db, user_id, run_id)
+    h = await _claim_hold(db, user_id, run_id, idempotency_key=idempotency_key, claim_kind="release")
     now = _now()
     if h is None:
         # Nothing to release — either already settled/released under a
@@ -787,9 +843,11 @@ async def release(db, *, user_id: str, run_id: str, idempotency_key: str,
         )
         if batch_breakdown:
             await _restore_batches(db, user_id, {k: -v for k, v in batch_breakdown.items()})
+        await _clear_pending_finalization(db, user_id, idempotency_key)
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
         return {"ok": True, "idempotent_replay": True, "run_id": run_id,
                  "released": existing.get("amount")}
+    await _clear_pending_finalization(db, user_id, idempotency_key)
     return {"ok": True, "idempotent_replay": False, "run_id": run_id, "released": held_amount}
 
 
@@ -1002,7 +1060,6 @@ async def _expire_old_batches(db, user_id: str, months: int) -> int:
     not under concurrent load, so a plain read-modify-write (no
     optimistic-lock retry) is fine here — unlike the hot hold()/settle()
     path."""
-    from datetime import timedelta
     cutoff = _now() - timedelta(days=months * 30)
     w = await db.wallets.find_one({"_id": user_id}, {"batches": 1}) or {}
     batches = list(w.get("batches") or [])
@@ -1164,6 +1221,130 @@ async def check_thresholds(db, user_id: str) -> dict:
             "stop": flags.get("stop") or "stop" in newly_fired,
         },
     }
+
+
+# ── B8a — crash-safety reconciler for interrupted settle()/release() ───
+# 2026-11-12 — security-audit finding (P0 financial integrity). See
+# _claim_hold()'s docstring for the full story: a process crash
+# between that atomic claim and the ledger write that was supposed to
+# finish settle()/release() used to lose the held tokens with no
+# trace. Every claim now durably survives as a
+# `wallets.pending_finalizations.{idempotency_key}` entry until its
+# operation completes; this function finds any that are older than
+# `grace_seconds` with no matching `wallet_ledger` row (i.e. genuinely
+# interrupted, not just "still running") and finishes them.
+
+async def reconcile_stale_holds(db, *, grace_seconds: int = 300) -> dict:
+    """Completes any settle()/release() that claimed its hold but
+    never finished writing its `wallet_ledger` row (the process died
+    in between). Intended to run periodically (e.g. from the existing
+    cron infrastructure), same spirit as `reconcile_report` above but
+    this one WRITES — it is the actual recovery action, not just a
+    report.
+
+    Every interrupted operation (settle OR release) is resolved as a
+    FULL refund of the held amount, using the idempotency_key the
+    ORIGINAL caller already chose (recorded in the pending-
+    finalization entry itself) — never a new decision, never a guess.
+    This is safe specifically because a run that never finished
+    settling is, by definition, a run whose outcome was never
+    recorded — and this module's own hard ceiling already treats "the
+    user is never charged more than the held estimate" as the
+    universal safe default; an unresolved hold refunding in full is
+    exactly that same default, just applied automatically instead of
+    by an explicit release() call.
+
+    Safe to call concurrently (multiple pods, or overlapping cron
+    runs) and safe to call on a hold that ISN'T actually stuck: the
+    `wallet_ledger.insert_one` dedup this module already relies on
+    everywhere else is still the sole source of truth for "already
+    credited" — if the original (slow, not actually crashed) caller
+    finishes first, this function's own speculative credit is undone
+    by the same `DuplicateKeyError` compensation pattern used
+    throughout settle()/release()."""
+    cutoff = _now() - timedelta(seconds=grace_seconds)
+    resolved: list[dict] = []
+    cursor = db.wallets.find(
+        {"pending_finalizations": {"$exists": True, "$ne": {}}},
+        {"pending_finalizations": 1},
+    )
+    async for w in cursor:
+        user_id = w["_id"]
+        for key, pf in (w.get("pending_finalizations") or {}).items():
+            claimed_at = pf.get("claimed_at")
+            if claimed_at and claimed_at.tzinfo is None:
+                # Mongo round-trips a stored UTC datetime as naive by
+                # default (this connection's tz_aware=False) — every
+                # write here used _now() (always UTC), so a naive
+                # read-back is always UTC, never ambiguous.
+                claimed_at = claimed_at.replace(tzinfo=UTC)
+            if not claimed_at or claimed_at > cutoff:
+                continue  # too recent — the original caller may still be mid-flight
+            existing = await db.wallet_ledger.find_one({"_id": key})
+            if existing is not None:
+                # The ledger write already succeeded — only this
+                # now-stale bookkeeping entry's cleanup never ran.
+                await _clear_pending_finalization(db, user_id, key)
+                resolved.append({"user_id": user_id, "idempotency_key": key, "note": "cleanup_only"})
+                continue
+
+            run_id = pf.get("run_id")
+            breakdown = pf.get("breakdown") or {}
+            batch_breakdown = pf.get("batch_breakdown") or {}
+            held_amount = int(pf.get("amount") or 0)
+            if held_amount > 0:
+                await db.wallets.update_one(
+                    {"_id": user_id},
+                    {"$inc": {f"buckets.{b}": v for b, v in breakdown.items() if v}},
+                )
+                if batch_breakdown:
+                    await _restore_batches(db, user_id, batch_breakdown)
+            ledger_row = {
+                "_id": key, "user_id": user_id, "kind": "release",
+                "run_id": run_id, "amount": held_amount,
+                "reason": "reconciled_stale_claim", "created_at": _now(),
+            }
+            try:
+                await db.wallet_ledger.insert_one(dict(ledger_row))
+            except DuplicateKeyError:
+                # A concurrent caller (or another reconciler pass) beat
+                # us to it — undo our speculative credit above.
+                if held_amount > 0:
+                    await db.wallets.update_one(
+                        {"_id": user_id},
+                        {"$inc": {f"buckets.{b}": -v for b, v in breakdown.items() if v}},
+                    )
+                    if batch_breakdown:
+                        await _restore_batches(db, user_id, {k: -v for k, v in batch_breakdown.items()})
+            await _clear_pending_finalization(db, user_id, key)
+            resolved.append({"user_id": user_id, "idempotency_key": key,
+                              "run_id": run_id, "amount": held_amount})
+    return {"resolved": resolved, "grace_seconds": grace_seconds}
+
+
+async def reconcile_stale_holds_cron(interval_seconds: int = 300, *,
+                                      startup_delay_seconds: int = 60) -> None:
+    """Background loop wiring for `reconcile_stale_holds()` — same
+    `asyncio.create_task` + delay-then-loop-forever convention already
+    used by `services/funnel_nudge_cron.py`'s `nudge_cron`. Runs every
+    5 minutes by default; each tick's `grace_seconds=300` default
+    inside `reconcile_stale_holds` means a claim only gets recovered
+    once it's genuinely been sitting unfinished for 5+ minutes, never
+    racing a caller that's still actually mid-flight."""
+    import asyncio
+    from cto_services.db import get_db
+    await asyncio.sleep(startup_delay_seconds)
+    while True:
+        try:
+            db = get_db()
+            if db is not None:
+                result = await reconcile_stale_holds(db)
+                if result["resolved"]:
+                    logger.info("💰 wallet reconcile_stale_holds — resolved=%d",
+                                len(result["resolved"]))
+        except Exception as e:
+            logger.warning("reconcile_stale_holds_cron tick failed: %r", e)
+        await asyncio.sleep(interval_seconds)
 
 
 # ── B8 — reconciliation report (read-only) ──────────────────────────────

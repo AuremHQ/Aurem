@@ -1,0 +1,30 @@
+{
+  "summary": "Verified the Phase B readiness scaffolding (GET /api/harness/release-status and the data-driven download section on /harness). Live preview: release-status returns 200 {\"available\":false}, page-status returns false, and POST /api/aurem-dev/harness/download with no auth returns 401. Backend: the 3 new tests pass and the full -k harness suite passes (121/121). Frontend: HarnessPage.test.jsx passes 13/13, and I spot-checked its assertions against HarnessPage.jsx (they match). ESLint and ruff are clean on the touched files. sitemap.xml parses as valid XML and no '55%' claim is left. UI, flag OFF: the homepage looks unchanged, /harness shows 'isn't available yet', the page makes no release-status request, and there are no console errors. UI, flag ON (temporary doc, removed afterwards): the real state shows 'page content is temporarily unavailable' as expected, with no crash and no console errors. Using browser route mocks (content + release-status): with available:false, the Phase A banner and mailto waitlist CTA render and there is no download section. With available:true, the download section renders version 0.8.0, SHA-256, changelog and the REQUIRED UPDATE badge; the Phase A banner and CTA disappear; the JSON-LD includes SoftwareApplication; and a signed-out click sends the visitor to /signup?next=/harness with no download POST.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/harness (once a release exists)", "issues": ["While release-status is still loading (release === null), the page renders the Phase A banner and waitlist CTA, then switches to the download section. Once a real release exists, visitors will see a brief flash of the waitlist banner. Consider rendering neither until release has resolved."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_regression_iter2026_67_harness_release_status.py",
+    "/app/frontend/src/pages/__tests__/HarnessPage.test.jsx"
+  ],
+  "action_items": [
+    "Optional: avoid the Phase A banner flash before release-status resolves (render neither branch while release === null).",
+    "Optional test hardening: the signed-out test runs `delete window.location` and never restores it, so later tests in the file can be affected. The signed-in test does not assert URL.createObjectURL or the a.download filename (aurem-loop-0.8.0.zip). No tests cover the 401/409/429 error messages."
+  ],
+  "critical_code_review_comments": [
+    "routers/harness.py release-status: builds an explicit response dict, so _id, release_id and artifact bytes cannot leak (artifact bytes live in a separate collection anyway). The endpoint is public and has no rate limit. That is acceptable because it is a single indexed find_one, but consider a light rate limit or a cache for consistency with the other public harness endpoints.",
+    "HarnessPage.jsx handleDownloadClick: if the shared `api` instance has a global 401 interceptor that redirects to login, the custom 401 message may never be shown. This is minor.",
+    "HarnessPage.jsx loadContent fetches release-status even when content is unavailable. This is harmless (one extra GET)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Temporarily inserted feature_flags {flag:'harness_page', enabled:true, _test_marker:'TEST_t1_iter67'}, restarted the backend, tested, then deleted exactly that doc (deleted_count=1) and restarted the backend again. page-status is confirmed back to false. No releases were created and the admin publish endpoints were not called.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "To test flag-ON, insert {flag:'harness_page', enabled:true} into feature_flags and restart the backend (there is an in-process cache), then remove it and restart again. The real content is still not pushed to AuremHQ/aurem-loop (/api/harness/content returns available:false), so a flag-ON /harness shows 'temporarily unavailable'. Use page.route mocks for /api/harness/content and /api/harness/release-status to exercise the Phase A and Phase B render branches. Run frontend tests with vitest: `CI=true yarn test <file>` (do not pass --watchAll)."
+}

@@ -25,6 +25,10 @@ export const HIDE_PREFIXES = [
   "/demo", "/bug-hunt", "/why-ora",
   "/admin",
   "/dev/",
+  // 2026-11-11 — /harness is Aurem Loop's standalone marketing page
+  // (a free, separate tool), not an in-app ORA surface — the mascot/
+  // FAB's "file a support ticket" entry point doesn't apply there.
+  "/harness",
 ];
 export const EXACT_HIDE = new Set(["/"]);
 

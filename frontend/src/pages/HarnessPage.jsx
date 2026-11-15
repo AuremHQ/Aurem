@@ -27,8 +27,36 @@
  */
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { healthApi } from "../lib/api";
+import { api, getToken, healthApi } from "../lib/api";
+import { isLoopSubdomain } from "../lib/loopSubdomain"; // 2026-11-15 — JSON-LD page URL differs on loop.auremcto.com (homepage there)
 import MarketingNav from "../components/marketing/MarketingNav";
+
+// 2026-11-11 — founder asked for the exact same background treatment
+// as the ORA homepage (Landing.jsx's `.ora-landing` class: layered
+// radial-gradient glows + `/aurem-bg.webp` hero image + mobile
+// variant). Extracted here as its own scoped class (not reusing
+// `.ora-landing` directly — that class also carries ~70 unrelated
+// homepage-specific rules this page doesn't want) so only the
+// background itself is shared, pixel-identical.
+const HARNESS_BG_CSS = `
+.aurem-harness-page {
+  background:
+    radial-gradient(900px 540px at 18% -8%,  rgba(245,158,11,0.20), transparent 70%),
+    radial-gradient(820px 480px at 86% 6%,   rgba(99,102,241,0.14), transparent 65%),
+    radial-gradient(700px 520px at 50% 110%, rgba(245,158,11,0.10), transparent 70%),
+    linear-gradient(180deg, rgba(10,14,26,0.78) 0%, rgba(5,8,17,0.92) 100%),
+    url('/aurem-bg.webp') center top / cover no-repeat,
+    #050811;
+  background-attachment: fixed, fixed, fixed, fixed, fixed, fixed;
+  min-height: 100vh;
+}
+@media (max-width: 720px) {
+  .aurem-harness-page { background-image:
+    radial-gradient(700px 420px at 50% -4%, rgba(245,158,11,0.18), transparent 70%),
+    linear-gradient(180deg, rgba(10,14,26,0.82) 0%, rgba(5,8,17,0.94) 100%),
+    url('/aurem-bg-mobile.webp') center top / cover no-repeat; }
+}
+`;
 
 const ANCHORS = [
   ["what-it-is", "What it is"],
@@ -102,6 +130,128 @@ const footerStyle = {
   borderTop: "1px solid var(--border, rgba(255,200,120,0.16))",
   fontSize: 11, color: "var(--text-faint, #7a7462)",
 };
+// Phase B — download section (2026-11-10). Only ever rendered when
+// GET /api/harness/release-status returns `available: true`, i.e. an
+// admin has actually published a real release. See routers/harness.py.
+const downloadCardStyle = {
+  marginTop: 20, padding: "16px 20px", borderRadius: 8,
+  background: "rgba(120,200,140,0.06)", border: "1px solid rgba(120,200,140,0.28)",
+};
+const monoStyle = {
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12,
+  wordBreak: "break-all", color: "var(--text, #e8e3d3)",
+};
+const errorTextStyle = { fontSize: 12, color: "#e08a6a", marginTop: 8 };
+
+// Fix 3 (2026-11-11) — replaces the flat black "Loading…" text with a
+// lightweight pulsing skeleton (nav height + hero-shaped bars) so the
+// first paint looks like "the real page is arriving" instead of "the
+// page is broken/blank". Pure CSS, no extra request.
+const SKELETON_CSS = `
+@keyframes aurem-skel-pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.12; } }
+.aurem-harness-skel-bar {
+  background: var(--text, #e8e3d3);
+  border-radius: 6px;
+  animation: aurem-skel-pulse 1.6s ease-in-out infinite;
+}
+`;
+
+function HarnessSkeleton() {
+  return (
+    <div style={pageStyle} data-testid="harness-page-skeleton">
+      <style>{SKELETON_CSS}</style>
+      <div className="aurem-harness-skel-bar" style={{ width: 160, height: 28, marginBottom: 24 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: "70%", height: 40, marginBottom: 16 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: "90%", height: 16, marginBottom: 10 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: "55%", height: 16, marginBottom: 32 }} />
+      <div className="aurem-harness-skel-bar" style={{ width: 140, height: 40 }} />
+    </div>
+  );
+}
+
+const waitlistInputStyle = {
+  padding: "10px 14px", borderRadius: 8, fontSize: 14, height: 40, boxSizing: "border-box",
+  background: "rgba(255,255,255,0.05)", border: "1px solid var(--border, rgba(255,200,120,0.16))",
+  color: "var(--text, #e8e3d3)", minWidth: 240,
+};
+const waitlistFormRowStyle = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16, alignItems: "center" };
+const waitlistSuccessStyle = {
+  marginTop: 16, padding: "10px 16px", borderRadius: 8, fontSize: 13,
+  background: "rgba(120,200,140,0.1)", border: "1px solid rgba(120,200,140,0.32)",
+  color: "var(--text, #e8e3d3)",
+};
+
+// Fix 2 (2026-11-11) — real on-page waitlist form. Previously the
+// only CTA was a `mailto:` link, which does nothing visible in a
+// browser with no mail client configured (most automated/clean-
+// machine test environments, and plenty of real browsers) — looked
+// broken even though it "worked" for someone with Outlook/Mail.app
+// set up. Posts to POST /api/harness/waitlist (routers/harness.py,
+// public, per-IP rate-limited). The mailto is kept as a small
+// secondary fallback link, not the primary action.
+function WaitlistForm({ idSuffix, mailto, ctaLabel }) {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("idle"); // idle|submitting|success|error
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setStatus("submitting");
+    setError("");
+    try {
+      await healthApi.post("/harness/waitlist", { email: trimmed });
+      setStatus("success");
+    } catch (err) {
+      const msg = err?.response?.data?.detail || "Could not join the waitlist — try again.";
+      setError(msg);
+      setStatus("error");
+    }
+  }
+
+  if (status === "success") {
+    return (
+      <div style={waitlistSuccessStyle} data-testid={`harness-waitlist-success-${idSuffix}`}>
+        You&apos;re on the waitlist — one email when the download goes live, nothing else.
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} data-testid={`harness-waitlist-form-${idSuffix}`}>
+      <div style={waitlistFormRowStyle}>
+        <input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          style={waitlistInputStyle}
+          data-testid={`harness-waitlist-email-${idSuffix}`}
+          disabled={status === "submitting"}
+        />
+        <button
+          type="submit"
+          style={{ ...buttonStyle, marginTop: 0, height: 40, boxSizing: "border-box", display: "inline-flex", alignItems: "center" }}
+          data-testid={`harness-waitlist-submit-${idSuffix}`}
+          disabled={status === "submitting"}
+        >
+          {status === "submitting" ? "Joining…" : ctaLabel}
+        </button>
+      </div>
+      {status === "error" && (
+        <p style={errorTextStyle} data-testid={`harness-waitlist-error-${idSuffix}`}>{error}</p>
+      )}
+      <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
+        One email when the download goes live, nothing else. Prefer email?{" "}
+        <a href={mailto} data-testid={`harness-waitlist-mailto-${idSuffix}`} style={{ color: "inherit" }}>
+          Send it directly instead
+        </a>.
+      </p>
+    </form>
+  );
+}
 
 function waitlistMailto(content) {
   const email = content?.phaseA?.waitlistEmail || "polarisbuiltinc@gmail.com";
@@ -118,17 +268,38 @@ export default function HarnessPage() {
   const [content, setContent] = useState(null);
   const [liveStats, setLiveStats] = useState(null);
   const [contentState, setContentState] = useState("loading"); // loading|ready|unavailable|error
+  const [release, setRelease] = useState(null); // Phase B readiness — {available:false} until a real release is published
+  const [releaseLoading, setReleaseLoading] = useState(true); // avoids a Phase-A-banner flash before this resolves
+  const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
+  const [downloadError, setDownloadError] = useState("");
+  // Fix B — SHA-256 of the DELIVERED zip, read from the download
+  // response header X-Aurem-Package-SHA256 (null until a download
+  // completes, or when the server sends no header).
+  const [deliveredSha256, setDeliveredSha256] = useState(null);
+  const [copiedSha, setCopiedSha] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    healthApi.get("/harness/page-status")
-      .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
-      .catch(() => { if (active) setFlagEnabled(false); });
-    return () => { active = false; };
-  }, []);
-
+  // Fix 3 (2026-11-11) — all 3 public GETs now fire together on mount
+  // instead of page-status → (then) content+release. The old shape
+  // added one full network round-trip to the critical path before the
+  // content fetch even started; this one costs nothing extra (content/
+  // release are discarded harmlessly in the rare case the flag turns
+  // out to be off) and the page now shows real content in max(3
+  // requests) time instead of page-status + max(2 requests).
+  //
+  // loadContent() is pulled out as its own function (not inlined in
+  // the effect below) so the "Refresh now" live-stats button further
+  // down the page can re-run the same content+release fetch on demand
+  // without re-checking page-status (which never changes mid-session).
+  //
+  // 2026-11-11 testing-agent finding: a failed REFRESH (content
+  // already loaded once) must never wipe the whole page back to the
+  // "temporarily unavailable" screen — that would also discard any
+  // in-progress/just-submitted waitlist form state. Only the initial
+  // load (no content yet) is allowed to flip to the full-page error;
+  // a refresh failure instead just leaves the existing content on
+  // screen and logs quietly (the stats simply stay at their last-known
+  // values until the next successful refresh).
   function loadContent() {
-    setContentState("loading");
     healthApi.get("/harness/content")
       .then((r) => {
         const c = r.data?.content;
@@ -137,61 +308,144 @@ export default function HarnessPage() {
         setLiveStats(r.data?.live_stats || null);
         setContentState("ready");
       })
-      .catch(() => setContentState("error"));
+      .catch(() => {
+        setContentState((prev) => (prev === "ready" ? prev : "error"));
+      });
+
+    healthApi.get("/harness/release-status")
+      .then((r) => setRelease(r.data || { available: false }))
+      .catch(() => setRelease({ available: false }))
+      .finally(() => setReleaseLoading(false));
   }
 
   useEffect(() => {
-    if (flagEnabled === true) loadContent();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flagEnabled]);
+    let active = true;
+    // 2026-11-11 testing-agent finding: a transient network error here
+    // (e.g. a brief rate-limit hit) was being treated identically to a
+    // real "flag is off" — bouncing straight to the permanent "Aurem
+    // Loop isn't available yet" screen with no retry. One silent retry
+    // after a short delay before giving up distinguishes a one-off
+    // blip from an actual flag-off/misconfigured state.
+    function fetchPageStatus(isRetry) {
+      healthApi.get("/harness/page-status")
+        .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
+        .catch(() => {
+          if (!active) return;
+          if (!isRetry) { setTimeout(() => fetchPageStatus(true), 1200); return; }
+          setFlagEnabled(false);
+        });
+    }
+    fetchPageStatus(false);
+
+    loadContent();
+
+    return () => { active = false; };
+  }, []);
+
+  async function handleDownloadClick() {
+    if (!getToken()) {
+      window.location.href = "/signup?next=/harness";
+      return;
+    }
+    setDownloadState("downloading");
+    setDownloadError("");
+    setDeliveredSha256(null);
+    setCopiedSha(false);
+    try {
+      const resp = await api.post("/harness/download", {}, { responseType: "blob" });
+      // Fix B: the server hashes the EXACT bytes it sent (per-user
+      // identity.json already baked in). axios lowercases header
+      // names; an older server sends no header — show nothing then.
+      const delivered = resp.headers?.["x-aurem-package-sha256"] || null;
+      if (delivered) setDeliveredSha256(delivered);
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `aurem-loop-${release?.version || "latest"}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setDownloadState("idle");
+    } catch (e) {
+      const status = e?.response?.status;
+      let msg = "Could not start the download — try again.";
+      if (status === 401) msg = "You're not logged in — please sign in again.";
+      else if (status === 409) msg = "No release is published yet — check back shortly.";
+      else if (status === 429) msg = "Too many download attempts — try again in a minute.";
+      setDownloadError(msg);
+      setDownloadState("error");
+    }
+  }
 
   useEffect(() => {
     if (!content) return;
     const prevTitle = document.title;
     document.title = content.title || "Aurem Loop";
+    // 2026-11-15 — loop.auremcto.com (Nov 10 decision): on the
+    // subdomain the harness page IS the homepage, so its own URL is
+    // the subdomain root, not /harness. Derive from
+    // window.location.origin so the output is byte-identical on
+    // auremcto.com and correct on the subdomain — no hardcoded host.
+    const origin = (typeof window !== "undefined" && window.location?.origin) || "https://auremcto.com";
+    const harnessUrl = isLoopSubdomain() ? `${origin}/` : `${origin}/harness`;
+    const graph = [
+      {
+        "@type": "FAQPage",
+        mainEntity: (content.faq || []).map(({ q, a }) => ({
+          "@type": "Question",
+          name: q,
+          acceptedAnswer: { "@type": "Answer", text: a },
+        })),
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "AUREM", item: `${origin}/` },
+          { "@type": "ListItem", position: 2, name: "Aurem Loop", item: harnessUrl },
+        ],
+      },
+    ];
+    // Phase B — only added once a real release exists (release.available),
+    // never speculatively. No "HowTo" block per the Phase A spec even here;
+    // this is a plain SoftwareApplication fact sheet.
+    if (release?.available) {
+      graph.push({
+        "@type": "SoftwareApplication",
+        name: "Aurem Loop",
+        operatingSystem: "Windows",
+        applicationCategory: "DeveloperApplication",
+        softwareVersion: release.version,
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+        license: "https://opensource.org/licenses/MIT",
+      });
+    }
     const ld = document.createElement("script");
     ld.type = "application/ld+json";
     ld.id = "ld-harness";
-    ld.text = JSON.stringify({
-      "@context": "https://schema.org",
-      "@graph": [
-        {
-          "@type": "FAQPage",
-          mainEntity: (content.faq || []).map(({ q, a }) => ({
-            "@type": "Question",
-            name: q,
-            acceptedAnswer: { "@type": "Answer", text: a },
-          })),
-        },
-        {
-          "@type": "BreadcrumbList",
-          itemListElement: [
-            { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
-            { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
-          ],
-        },
-      ],
-    });
+    ld.text = JSON.stringify({ "@context": "https://schema.org", "@graph": graph });
     document.head.appendChild(ld);
     return () => {
       document.title = prevTitle;
       document.getElementById("ld-harness")?.remove();
     };
-  }, [content]);
+  }, [content, release]);
 
   if (flagEnabled === null) {
     return (
-      <div data-testid="harness-page-loading">
-        <MarketingNav />
-        <div style={pageStyle}>Loading…</div>
+      <div data-testid="harness-page-loading" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+        <HarnessSkeleton />
       </div>
     );
   }
 
   if (!flagEnabled) {
     return (
-      <div data-testid="harness-page-not-available">
-        <MarketingNav />
+      <div data-testid="harness-page-not-available" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
         <div style={pageStyle}>Aurem Loop isn&apos;t available yet.</div>
       </div>
     );
@@ -199,17 +453,19 @@ export default function HarnessPage() {
 
   if (contentState === "loading") {
     return (
-      <div data-testid="harness-page-content-loading">
-        <MarketingNav />
-        <div style={pageStyle}>Loading…</div>
+      <div data-testid="harness-page-content-loading" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+        <HarnessSkeleton />
       </div>
     );
   }
 
   if (contentState !== "ready" || !content) {
     return (
-      <div data-testid="harness-page-content-unavailable">
-        <MarketingNav />
+      <div data-testid="harness-page-content-unavailable" className="aurem-harness-page">
+        <style>{HARNESS_BG_CSS}</style>
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
         <div style={pageStyle}>Aurem Loop&apos;s page content is temporarily unavailable — check back shortly.</div>
       </div>
     );
@@ -220,8 +476,9 @@ export default function HarnessPage() {
   const forks = liveStats?.forks;
 
   return (
-    <div data-testid="harness-page">
-      <MarketingNav />
+    <div data-testid="harness-page" className="aurem-harness-page">
+      <style>{HARNESS_BG_CSS}</style>
+      <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
       <div style={pageStyle}>
         <nav data-testid="harness-anchor-nav" style={anchorNavStyle} aria-label="Page sections">
           {ANCHORS.map(([id, label]) => (
@@ -237,14 +494,72 @@ export default function HarnessPage() {
           <p style={pStyle}>{content.hero?.subhead}</p>
           <p style={pStyle}>{content.hero?.body}</p>
 
-          <div style={phaseABannerStyle} data-testid="harness-phase-a-banner">
-            <strong>PHASE A</strong> — {content.phaseA?.banner}
-          </div>
+          {releaseLoading ? null : release?.available ? (
+            <div style={downloadCardStyle} data-testid="harness-download-section">
+              <strong>Download available</strong> — v<span data-testid="harness-download-version">{release.version}</span>
+              {release.mandatory && <span style={{ marginLeft: 8, ...badgeStyle }}>REQUIRED UPDATE</span>}
+              <p style={{ ...pStyle, marginTop: 10 }}>
+                Base package (before your personal identity file is added) — SHA-256: <span style={monoStyle} data-testid="harness-download-sha256">{release.sha256}</span>
+              </p>
+              {release.changelog?.length > 0 && (
+                <ul data-testid="harness-download-changelog">
+                  {release.changelog.map((item, i) => (<li key={i} style={pStyle}>{item}</li>))}
+                </ul>
+              )}
+              <button
+                type="button"
+                data-testid="harness-download-button"
+                style={buttonStyle}
+                disabled={downloadState === "downloading"}
+                onClick={handleDownloadClick}
+              >
+                {downloadState === "downloading" ? "Starting download…" : "Download for Windows"}
+              </button>
+              {downloadState === "error" && (
+                <p style={errorTextStyle} data-testid="harness-download-error">{downloadError}</p>
+              )}
+              {deliveredSha256 && (
+                <div data-testid="harness-download-delivered">
+                  <p style={{ ...pStyle, marginTop: 10 }}>
+                    SHA-256 of YOUR downloaded package: <span style={monoStyle} data-testid="harness-download-delivered-sha256">{deliveredSha256}</span>
+                    <button
+                      type="button"
+                      data-testid="harness-download-copy-sha256"
+                      onClick={async () => {
+                        if (!navigator.clipboard?.writeText) return; // no clipboard API — the hash stays on screen to copy by hand
+                        try {
+                          await navigator.clipboard.writeText(deliveredSha256);
+                          setCopiedSha(true);
+                        } catch {
+                          // Clipboard denied — do not claim "Copied".
+                        }
+                      }}
+                      style={{ marginLeft: 8 }}
+                    >
+                      {copiedSha ? "Copied" : "Copy"}
+                    </button>
+                  </p>
+                  <p style={{ ...pStyle, fontSize: 12 }}>
+                    Check your file with PowerShell: <code data-testid="harness-download-verify-command">Get-FileHash aurem-loop-{release?.version || "latest"}.zip -Algorithm SHA256</code>
+                  </p>
+                  <p style={{ ...pStyle, fontSize: 12 }} data-testid="harness-download-hash-note">
+                    This hash comes from our server, so it detects a damaged download, not a compromised server.
+                  </p>
+                </div>
+              )}
+              <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
+                MIT licensed. Requires a free ORA account to sign in locally — no cloud account, no credit card.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div style={phaseABannerStyle} data-testid="harness-phase-a-banner">
+                <strong>PHASE A</strong> — {content.phaseA?.banner}
+              </div>
 
-          <a href={mailto} data-testid="harness-waitlist-cta" style={buttonStyle}>Join the waitlist</a>
-          <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
-            Opens your email app with a pre-filled note — one email when the download goes live, nothing else.
-          </p>
+              <WaitlistForm idSuffix="hero" mailto={mailto} ctaLabel="Join the waitlist" />
+            </>
+          )}
 
           <div style={tagRowStyle}>
             {(content.featureTags || []).map((t) => (
@@ -345,9 +660,7 @@ export default function HarnessPage() {
         <section id="stories" data-testid="harness-users-say" style={sectionStyle}>
           <h2 style={h2Style}>{content.usersSay?.headline}</h2>
           <p style={pStyle}>{content.usersSay?.body}</p>
-          <a href={mailto} data-testid="harness-users-say-cta" style={buttonStyle}>
-            Be one of the first — join the waitlist
-          </a>
+          <WaitlistForm idSuffix="stories" mailto={mailto} ctaLabel="Be one of the first — join the waitlist" />
         </section>
 
         <section id="setup" data-testid="harness-install-steps" style={sectionStyle}>

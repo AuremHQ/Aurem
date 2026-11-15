@@ -804,10 +804,21 @@ async def stripe_webhook(request: Request) -> dict:
         # Iter 352 — abandoned checkouts previously stayed "pending"
         # forever (founder audit: 22 stuck rows, some 35 days old).
         # Stripe fires this ~24h after an un-paid session is created.
+        #
+        # 2026-11-12 — SECURITY AUDIT FINDING (P1, payment correctness):
+        # this write was unconditional. Stripe's webhook delivery is
+        # at-least-once and NOT guaranteed in-order — if this "expired"
+        # event were ever delivered AFTER a "checkout.session.completed"
+        # event for the SAME session (out-of-order redelivery/retry),
+        # it would overwrite an already-paid row's status back to
+        # "expired" in the admin ledger, even though the user's tier/
+        # tokens are untouched (those come from the completed-event
+        # branch above and are not re-read here). Explicit state rule
+        # per the audit: complete → never downgrades to expired.
         obj = event["data"]["object"]
         try:
             await db.cto_payments.update_one(
-                {"session_id": obj.get("id")},
+                {"session_id": obj.get("id"), "status": {"$ne": "complete"}},
                 {"$set": {
                     "payment_status": "expired",
                     "status":         "expired",

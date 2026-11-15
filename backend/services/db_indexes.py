@@ -222,26 +222,54 @@ async def ensure_dedup_indexes(db) -> List[dict]:
     # seen row per group, delete the rest. Real duplicates are
     # expected pre-fix (BE4 — chat-audit findings keyed off a free-
     # text title slug collapsed inconsistently before this change).
+    #
+    # 2026-11-11 · deployment_agent flagged this as DESTRUCTIVE_DB_STARTUP
+    # (same class of bug already fixed for onboarding_emails above, at
+    # #9): the aggregate+delete_many ran unconditionally on EVERY boot —
+    # a no-op after the first successful pass since the unique index
+    # built right after prevents new dupes from ever forming, but a bulk
+    # hard-delete reachable from every restart is a real policy hit
+    # regardless of current no-op-ness. Fixed by gating it behind a
+    # one-time migration marker, mirroring #9 exactly — this cleanup now
+    # runs at most ONCE ever, then permanently skips on every later boot.
+    _FINDINGS_MIGRATION_KEY = "g6_cto_open_findings_dedup_2026_11_11"
     try:
-        cursor = db.cto_open_findings.aggregate([
-            {"$group": {
-                "_id": {"user_id": "$user_id", "project_id": "$project_id",
-                         "finding_id": "$finding_id"},
-                "ids": {"$push": "$_id"},
-                "count": {"$sum": 1},
-            }},
-            {"$match": {"count": {"$gt": 1}}},
-        ])
-        async for grp in cursor:
-            doc_ids = grp.get("ids") or []
-            if len(doc_ids) > 1:
-                # Keep the LAST _id (ObjectId is roughly insertion-
-                # ordered — newest row survives), delete the rest.
-                await db.cto_open_findings.delete_many(
-                    {"_id": {"$in": doc_ids[:-1]}},
+        findings_already_ran = await db.db_migrations.find_one({"_id": _FINDINGS_MIGRATION_KEY})
+    except Exception:
+        findings_already_ran = None
+    if not findings_already_ran:
+        try:
+            findings_dup_removed = 0
+            cursor = db.cto_open_findings.aggregate([
+                {"$group": {
+                    "_id": {"user_id": "$user_id", "project_id": "$project_id",
+                             "finding_id": "$finding_id"},
+                    "ids": {"$push": "$_id"},
+                    "count": {"$sum": 1},
+                }},
+                {"$match": {"count": {"$gt": 1}}},
+            ])
+            async for grp in cursor:
+                doc_ids = grp.get("ids") or []
+                if len(doc_ids) > 1:
+                    # Keep the LAST _id (ObjectId is roughly insertion-
+                    # ordered — newest row survives), delete the rest.
+                    r = await db.cto_open_findings.delete_many(
+                        {"_id": {"$in": doc_ids[:-1]}},
+                    )
+                    findings_dup_removed += r.deleted_count
+            if findings_dup_removed:
+                logger.warning(
+                    "[G6] cto_open_findings: removed %d duplicate (user,project,finding) "
+                    "rows before building uniq_user_project_finding", findings_dup_removed,
                 )
-    except Exception as e:                                 # noqa: BLE001
-        logger.warning("[G6] cto_open_findings pre-dedup failed: %r", e)
+            await db.db_migrations.update_one(
+                {"_id": _FINDINGS_MIGRATION_KEY},
+                {"$set": {"ran_at": time.time(), "dup_removed": findings_dup_removed}},
+                upsert=True,
+            )
+        except Exception as e:                                 # noqa: BLE001
+            logger.warning("[G6] cto_open_findings pre-dedup failed: %r", e)
     await _mk("cto_open_findings",
               [("user_id", ASCENDING), ("project_id", ASCENDING),
                ("finding_id", ASCENDING)],
