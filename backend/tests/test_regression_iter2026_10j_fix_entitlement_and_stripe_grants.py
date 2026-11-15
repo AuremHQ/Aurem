@@ -239,7 +239,22 @@ class TestSubscriptionCancelRevokesFixEntitlement:
     customer.subscription.deleted/paused branch already downgraded
     `tier` to "free" but never touched `fix_entitlement` — a cancelled
     subscriber kept Fix access forever. Fixed by revoking it in the
-    SAME branch, gated on TOKEN_BILLING_MODE != "off"."""
+    SAME branch.
+
+    2026-10-25 (ITEM 1, independent review) — this revoke call used to
+    be gated on `TOKEN_BILLING_MODE != "off"`, which is EXACTLY the bug
+    ITEM 1 reported: a user who cancelled while mode was "off" kept
+    fix_entitlement=True forever, and a later flip to shadow/on let
+    that stale True pass the Fix gate for free. The gate is removed —
+    revoke is now unconditional, matching the already-unconditional
+    grant path (grant_fix_entitlement, no mode check) and the
+    already-unconditional refund/dispute revoke paths
+    (test_regression_iter2026_11a). The test below that locked in the
+    OLD (buggy) "off mode never touches the field" behavior as a "hard
+    rule" is updated to assert the corrected behavior instead of being
+    weakened or deleted — see
+    test_regression_iter2026_17a_stale_entitlement_cancelled_user.py
+    for the full red/green proof of this fix."""
 
     async def test_subscription_deleted_revokes_entitlement_in_on_mode(self, db, monkeypatch):
         from routers import payments
@@ -278,18 +293,22 @@ class TestSubscriptionCancelRevokesFixEntitlement:
             "downgrade the display tier"
         )
 
-    async def test_off_mode_downgrades_tier_but_never_touches_fix_entitlement_field(
+    async def test_off_mode_also_revokes_fix_entitlement_now(
         self, db, monkeypatch,
     ):
-        """Hard rule: in off mode, this new revocation must not touch
-        existing users' fields beyond what the webhook already wrote
-        before this fix existed."""
+        """2026-10-25 (ITEM 1) — corrected from the old "off mode must
+        not write the field at all" expectation, which was the exact
+        bug: it let a cancelled-while-off user keep fix_entitlement
+        stuck True forever, becoming a free Fix pass the moment the
+        founder later flips TOKEN_BILLING_MODE to shadow/on. Revoke now
+        fires in every mode, same as the grant path already does."""
         from routers import payments
         monkeypatch.delenv("TOKEN_BILLING_MODE", raising=False)
         u = _uid("cancelledoff")
         sub_id = f"sub_{uuid.uuid4().hex[:10]}"
         await db.dev_users.insert_one({
             "user_id": u, "tier": "pro", "stripe_sub_id": sub_id,
+            "fix_entitlement": True,
         })
         event = {
             "id": f"evt_{uuid.uuid4().hex[:10]}",
@@ -313,8 +332,9 @@ class TestSubscriptionCancelRevokesFixEntitlement:
 
         row = await db.dev_users.find_one({"user_id": u})
         assert row["tier"] == "free"
-        assert "fix_entitlement" not in row, (
-            "off mode must not write the fix_entitlement field at all"
+        assert row["fix_entitlement"] is False, (
+            "off mode must revoke fix_entitlement too now — leaving it "
+            "True was the exact bug this item fixes"
         )
 
 

@@ -366,7 +366,12 @@ async def test_quoted_no_edit_phrase_is_negative_control_not_conflict(monkeypatc
         )
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload.get("provider") == "mock"
+    # Provider is user-facing branding: sanitize_provider_for_user maps
+    # every truthy provider to "ORA" (mirrors providerLabel.js), so the
+    # mock path also reports "ORA" — the old "mock" expectation predates
+    # that branding. The mock path itself is proven by meta.mock.
+    assert payload.get("provider") == "ORA"
+    assert payload.get("meta", {}).get("mock") is True
 
 
 # -------------------- Contradictory instruction entry guard wiring ------------

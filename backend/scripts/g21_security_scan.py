@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import requests
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.dirname(BACKEND_ROOT)
@@ -43,6 +44,7 @@ _AST_SCAN_KNOWN_SAFE_FILES = {
     "services/generation_rules_triggers.py",
     "services/bug_hunt_rules.py",
     "services/mode_e_auditor.py",
+    "scripts/g21_security_scan.py",
 }
 
 

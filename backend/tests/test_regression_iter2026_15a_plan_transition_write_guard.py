@@ -108,14 +108,21 @@ class TestWriteGuardAllowlist:
 
 
 class TestWriteGuardEdgeCases:
-    async def test_unknown_attribute_on_guarded_collection_is_not_silently_swallowed(self, db):
-        """Motor itself treats `collection.anything` as a (lazily
-        invalid) sub-collection name access, only raising on CALL —
-        confirms the guard's __getattr__ delegates faithfully rather
-        than masking this with its own, different error."""
-        from services.plan_transition_write_guard import WriteGuardedDB
+    async def test_unknown_attribute_on_guarded_collection_is_blocked_immediately(self, db):
+        """2026-10-25 (ITEM 3, independent review) — corrected from a
+        deny-list-era expectation that an unknown name delegated to
+        Motor's own lazy sub-collection behavior (TypeError only on
+        call). That WAS the gap: any method this guard had never
+        heard of (a future Motor API, `update`, `save`, ...) fell
+        through untouched. The guard is now an ALLOW-LIST — an
+        unrecognised name is blocked immediately, on the attribute
+        access itself, not merely "eventually not callable"."""
+        from services.plan_transition_write_guard import (
+            WriteBlockedError,
+            WriteGuardedDB,
+        )
         guarded = WriteGuardedDB(db)
-        with pytest.raises(TypeError, match="not callable"):
+        with pytest.raises(WriteBlockedError):
             guarded.dev_users.this_method_does_not_exist()
 
     async def test_guard_works_for_any_collection_name_including_unseen_ones(self, db):

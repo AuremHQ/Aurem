@@ -18,6 +18,7 @@ point via `routers.cto_projects` package-level shim).
 from __future__ import annotations
 
 import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -112,11 +113,17 @@ class TestPreviewUrlSetsSiteMetaDomain:
             "preview_url": "https://old.example.com",
             "site_meta.domain": "old.example.com",
         })
-        resp = client.patch(
-            "/api/aurem-dev/cto/projects/p1",
-            json={"preview_url": "https://new.example.com/app"},
-            headers=AUTH,
-        )
+        # new.example.com is a placeholder that doesn't actually
+        # resolve — mock DNS so the Part2c C8 SSRF guard (which fails
+        # closed on a DNS error) sees it as a safe public host rather
+        # than rejecting the PATCH outright.
+        with patch("socket.getaddrinfo",
+                   MagicMock(return_value=[(2, None, None, "", ("93.184.216.34", 0))])):
+            resp = client.patch(
+                "/api/aurem-dev/cto/projects/p1",
+                json={"preview_url": "https://new.example.com/app"},
+                headers=AUTH,
+            )
         assert resp.status_code == 200
         row = fake_db.cto_projects.rows[0]
         assert row["site_meta.domain"] == "new.example.com"

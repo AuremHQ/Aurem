@@ -12,6 +12,7 @@ without the heavy `nodes` field by default so the orchestrator
 injection stays cheap (~300 tokens).
 """
 from __future__ import annotations
+
 import asyncio
 import logging
 import re
@@ -195,11 +196,25 @@ async def _llm_describe_files(files_content: dict[str, str]) -> dict[str, str]:
     user = "\n".join(file_list)
 
     try:
+        # ORA Brain Part 4, F5 — record-only; no routing change.
+        from services.brain_gateway import record_wrap
+        from services.loop_token_ledger import (
+            current_ambient_user_id,
+            current_surface_context,
+        )
+        _bg_ctx = current_surface_context()
         text = await asyncio.wait_for(
-            call_openrouter_model(
-                model="minimax/minimax-m2.5",
-                system=system, user=user,
-                max_tokens=800, temperature=0.0,
+            record_wrap(
+                call_openrouter_model(
+                    model="minimax/minimax-m2.5",
+                    system=system, user=user,
+                    max_tokens=800, temperature=0.0,
+                ),
+                user_id=current_ambient_user_id(),
+                project_id=_bg_ctx.get("project_id"),
+                task_id=_bg_ctx.get("task_id"),
+                task_type="graph_describe", model="minimax/minimax-m2.5",
+                surface="graph_builder",
             ),
             timeout=25.0,
         )
@@ -259,6 +274,7 @@ async def build_graph(
         return {}
 
     import httpx
+
     from services.http import ext_client
     headers = {
         "Authorization": f"token {gh_token}",

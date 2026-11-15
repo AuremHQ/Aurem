@@ -215,10 +215,17 @@ class TestSubmitTaskShipTargetValidation:
         assert r.status_code == 403
         assert fake_db.cto_tasks.rows == []
 
-    def test_repo_with_read_only_permission_rejected(self, client, fake_db):
-        """acme/readonly-repo IS in the installation's repo list but
-        the caller's token has no push permission on it — must be
-        rejected the same as a repo not in the list at all."""
+    def test_repo_listed_by_installation_accepted_even_if_push_flag_false(self, client, fake_db):
+        """2026-10-24 regression (founder report: "Save to GitHub"
+        always said "not in your connected GitHub access" for a repo
+        ORA was actively committing to live). GitHub's
+        `permissions.push` on `/installation/repositories` reflects a
+        legacy collaborator-access model GitHub Apps don't participate
+        in — confirmed LIVE to read `push: False` for a real,
+        currently-working installation. `acme/readonly-repo` IS in the
+        installation's repo list (that alone proves write access, via
+        the App's own `contents: write` permission) and must now be
+        ACCEPTED despite its misleading `push: False` flag."""
         fake_db.cto_projects.rows.append(dict(PROJ))
         fake_ctx = type("Ctx", (), {"pat": "tok"})()
         with patch("routers.cto_projects.assert_has_budget", AsyncMock(return_value=None)), \
@@ -226,11 +233,12 @@ class TestSubmitTaskShipTargetValidation:
              patch("services.rate_limiter.check_rate_limit_async", AsyncMock(return_value=True)), \
              patch("services.ora_context.build_ora_context", AsyncMock(return_value=fake_ctx)), \
              patch("services.github_app.list_installation_repos",
-                   AsyncMock(return_value=REPO_LIST)):
+                   AsyncMock(return_value=REPO_LIST)), \
+             patch("routers.cto_projects._run_task", AsyncMock(return_value=None)):
             r = client.post("/api/aurem-dev/cto/tasks/submit", headers=AUTH,
                              json=_submit_body(repo="acme/readonly-repo",
                                                 branch="auremcto/ship-x"))
-        assert r.status_code == 403
+        assert r.status_code == 200, r.text
 
     def test_valid_repo_and_branch_stores_ship_target(self, client, fake_db):
         fake_db.cto_projects.rows.append(dict(PROJ))
@@ -272,7 +280,11 @@ class TestSubmitTaskShipTargetValidation:
 
 
 class TestGithubBrowseEndpoints:
-    def test_list_repos_filters_to_push_only(self, client, fake_db):
+    def test_list_repos_includes_repos_regardless_of_misleading_push_flag(self, client, fake_db):
+        """2026-10-24 regression — see test_repo_listed_by_installation_
+        accepted_even_if_push_flag_false above for the full root cause.
+        Every repo GitHub lists for this installation must appear here,
+        including ones with `permissions.push: False`."""
         fake_db.cto_projects.rows.append(dict(PROJ))
         with patch("services.pat_vault.get_repo_token_or_error",
                    AsyncMock(return_value=("tok", None, None))), \
@@ -284,7 +296,10 @@ class TestGithubBrowseEndpoints:
         names = [x["full_name"] for x in body["repos"]]
         assert "acme/widgets" in names
         assert "other-org/other-repo" in names
-        assert "acme/readonly-repo" not in names, "no-push repos must be filtered out"
+        assert "acme/readonly-repo" in names, (
+            "a repo listed by /installation/repositories must be treated "
+            "as writable even when its misleading push flag is False"
+        )
         assert body["default_owner"] == "acme"
         assert body["default_repo"] == "widgets"
 

@@ -28,6 +28,8 @@ import {
 import { api, getToken, logout as apiLogout, newSessionId, fetchMyAdminAccess } from "../../lib/api";
 import { setChipV2Enabled } from "../../lib/chipFlag";
 import { setPageFlags, isAutomationsPageEnabled, isAnalyticsPageEnabled, isShipWallEnabled } from "../../lib/pageFlags";
+import { buildTimeBillingMode } from "../../lib/billingCopy";
+import { checkBillingModeDriftOnce } from "../../lib/billingModeCheck";
 import { useChatSession } from "../Shell";
 
 const BG      = "rgb(7,8,13)";
@@ -120,6 +122,15 @@ export default function RailShell({
   // link — keep the raw screens map too, not just the boolean.
   const [teamScreens, setTeamScreens] = useState(null); // null = owner (no filtering)
   const wrapRef = useRef(null);
+  // ITEM 5(d) (independent review) — this is the logged-in shell, so
+  // mounting here scopes the frontend/backend billing-mode drift
+  // check to authenticated sessions (see lib/billingModeCheck.js's
+  // own docstring for why public prerendered pages don't call this).
+  // Diagnostic only — console warning + one analytics event, never a
+  // UI change.
+  useEffect(() => {
+    checkBillingModeDriftOnce({ buildMode: buildTimeBillingMode() });
+  }, []);
   // 2026-10 — AUTO-mode hover flyout. Debounced so moving the
   // pointer from an icon onto its own flyout (a real gap exists
   // between them) doesn't close it; closes shortly after the pointer

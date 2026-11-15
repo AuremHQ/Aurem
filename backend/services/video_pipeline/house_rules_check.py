@@ -47,9 +47,16 @@ async def evaluate(script: str, rules_text: str, mode: str) -> Verdict:
         )
         user = f"House rules:\n{rules_text}\n\nOriginal script:\n{script}"
         try:
-            revised = await call_openrouter_model(
-                model=_CLAUDE_MODEL, system=system, user=user,
-                max_tokens=600, temperature=0.3)
+            # ORA Brain Part 4, F5 — record-only; no routing change.
+            from services.brain_gateway import record_wrap
+            from services.loop_token_ledger import current_ambient_user_id
+            revised = await record_wrap(
+                call_openrouter_model(
+                    model=_CLAUDE_MODEL, system=system, user=user,
+                    max_tokens=600, temperature=0.3),
+                user_id=current_ambient_user_id(), task_type="video_house_rules",
+                model=_CLAUDE_MODEL, surface="video_house_rules",
+            )
             revised = (revised or "").strip()
             if not revised:
                 return Verdict(blocked=False, reason=None, final_script=script)
@@ -67,9 +74,16 @@ async def evaluate(script: str, rules_text: str, mode: str) -> Verdict:
     )
     user = f"House rules:\n{rules_text}\n\nScript to check:\n{script}"
     try:
-        raw = await call_openrouter_model(
-            model=_CLAUDE_MODEL, system=system, user=user,
-            max_tokens=200, temperature=0.0)
+        # ORA Brain Part 4, F5 — record-only; no routing change.
+        from services.brain_gateway import record_wrap
+        from services.loop_token_ledger import current_ambient_user_id
+        raw = await record_wrap(
+            call_openrouter_model(
+                model=_CLAUDE_MODEL, system=system, user=user,
+                max_tokens=200, temperature=0.0),
+            user_id=current_ambient_user_id(), task_type="video_house_rules",
+            model=_CLAUDE_MODEL, surface="video_house_rules",
+        )
         start, end = raw.find("{"), raw.rfind("}")
         parsed = json.loads(raw[start:end + 1])
         if parsed.get("violates"):

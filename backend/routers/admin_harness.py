@@ -1,0 +1,126 @@
+"""
+routers/admin_harness.py — Aurem Loop harness, Phase B admin surface.
+
+Release management (create draft / publish / list) and the download
+log view. Every write route is admin-gated via require_admin_dep
+(cto_services.auth) — same pattern as every other admin router in this
+codebase (see routers/admin_observability.py, routers/admin_bin.py).
+
+Mass-assignment guard: HarnessReleaseCreate intentionally has no
+`status` or `is_latest` field — create_draft_release() always produces
+a draft; publishing is a separate, explicit POST to
+/admin/harness/releases/{release_id}/publish. An attacker (or an
+honest mistake) supplying extra "status"/"is_latest" keys in the
+request body is silently ignored by Pydantic's own field set, never
+reaching services.harness_releases.
+
+D1 (hosting the real fix-branch package) is not approved — the
+`source` field on every created release is one of exactly two values
+("test_fixture" / "muse_fix_branch_approved"), never free text, so the
+provenance of what's hosted is always visible in this admin view.
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from cto_services.auth import require_admin_dep
+from cto_services.db import require_db
+from services.harness_releases import create_draft_release, publish_release
+
+logger = logging.getLogger("aurem-dev.admin_harness")
+
+router = APIRouter(dependencies=[Depends(require_admin_dep)])
+
+_VALID_SOURCES = ("test_fixture", "muse_fix_branch_approved")
+_MAX_CHANGELOG_ITEMS = 50
+_MAX_CHANGELOG_ITEM_LEN = 500
+
+
+class HarnessReleaseCreate(BaseModel):
+    version: str = Field(..., min_length=1, max_length=64)
+    platform: str = Field("windows", max_length=32)
+    changelog: list[str] = Field(default_factory=list, max_length=_MAX_CHANGELOG_ITEMS)
+    mandatory: bool = False
+    artifact_base64: str = Field(..., min_length=1)
+    source: str = Field(...)
+
+    def validated_changelog(self) -> list[str]:
+        return self.changelog
+
+    @property
+    def artifact_bytes(self) -> bytes:
+        try:
+            return base64.b64decode(self.artifact_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(400, "artifact_base64 is not valid base64") from e
+
+
+@router.post("/admin/harness/releases")
+async def admin_create_release(
+    body: HarnessReleaseCreate,
+    admin: dict = Depends(require_admin_dep),
+) -> dict:
+    if body.source not in _VALID_SOURCES:
+        raise HTTPException(422, f"source must be one of {_VALID_SOURCES}")
+    for item in body.changelog:
+        if len(item) > _MAX_CHANGELOG_ITEM_LEN:
+            raise HTTPException(422, "a changelog entry exceeds the length cap")
+
+    db = require_db()
+    try:
+        result = await create_draft_release(
+            db,
+            version=body.version, platform=body.platform,
+            changelog=body.changelog, mandatory=body.mandatory,
+            artifact_bytes=body.artifact_bytes, source=body.source,
+            created_by=admin.get("user_id", "unknown-admin"),
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return result
+
+
+@router.post("/admin/harness/releases/{release_id}/publish")
+async def admin_publish_release(release_id: str) -> dict:
+    db = require_db()
+    try:
+        return await publish_release(db, release_id=release_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+@router.get("/admin/harness/releases")
+async def admin_list_releases() -> dict:
+    db = require_db()
+    rows = await db.harness_releases.find(
+        {}, {"_id": 0},
+    ).sort("created_at", -1).limit(200).to_list(200)
+    return {"releases": rows}
+
+
+@router.get("/admin/harness/downloads")
+async def admin_list_downloads(
+    plan: str | None = None,
+    version: str | None = None,
+) -> dict:
+    db = require_db()
+    filt: dict = {}
+    if plan:
+        filt["plan"] = plan
+    if version:
+        filt["version"] = version
+    rows = await db.harness_downloads.find(
+        filt, {"_id": 0},
+    ).sort("issued_at", -1).limit(500).to_list(500)
+    total = len(rows)
+    free_count = sum(1 for r in rows if r.get("plan") == "free")
+    paid_count = total - free_count
+    return {
+        "downloads": rows, "total": total,
+        "free_count": free_count, "paid_count": paid_count,
+    }

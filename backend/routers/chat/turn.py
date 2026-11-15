@@ -161,7 +161,8 @@ MOCK_SEND_TEXT = (
 
 def _mock_send_response(body: ChatBody, user: dict) -> dict:
     """Canned /chat/send reply for MOCK_LLM — same shape as the real
-    return, provider='mock', never carries an aurem-handoff fence."""
+    return, provider is the branded "ORA" (sanitize_provider_for_user
+    maps any truthy provider), never carries an aurem-handoff fence."""
     return {
         "ok": True, "content": MOCK_SEND_TEXT, "provider": sanitize_provider_for_user("mock"),
         "watchdog": None, "mode": "A", "temperature": 0.0, "iterations": 0,
@@ -346,6 +347,22 @@ async def chat_send(
                              + ("\n\n" + extra_sys if extra_sys else ""))
     except Exception as _cre:
         logger.debug("council retrieval skipped (chat/send): %r", _cre)
+
+    # ORA Brain Part 1, Phase D — ONE shared context builder (off by
+    # default; see services/knowledge_injector.py::build_answer_context
+    # for the full off/shadow/on contract). Appended only when
+    # non-empty, same "byte-identical prompt at off/shadow" guarantee
+    # the council block above already relies on.
+    try:
+        from services.knowledge_injector import build_answer_context
+        _knowledge_block, _knowledge_files = await build_answer_context(
+            user.get("user_id"), body.project_id, body.prompt or "",
+        )
+        if _knowledge_block:
+            extra_sys = (_knowledge_block
+                         + ("\n\n" + extra_sys if extra_sys else ""))
+    except Exception as _kce:
+        logger.debug("knowledge context skipped (chat/send): %r", _kce)
 
     # 2026-08-27 · Plain-English Output Contract (Phase 1, flag-gated).
     # Only for explain/advisory turns (council mode "A") on the main

@@ -1,0 +1,31 @@
+{
+  "summary": "Fix 7 (?next= passthrough through GitHub/Google OAuth) verified end-to-end. Backend: 17/17 existing pytest pass; independent live checks (9 cases) of oauth_states.next storage for both providers incl. https://evil.com, //evil.com, /\\evil.com (all stored null), /harness?a=1 preserved; cancel callbacks (error=access_denied) for GitHub-login and Google-signup redirect to /login?github=cancelled...&next=%2Fharness and /signup?google=cancelled...&next=%2Fharness. Frontend (Playwright, routes intercepted+aborted): 10/10 OAuth button URL checks pass — login/signup x GitHub/Google with next=/harness, without next (next=%2Fdashboard), and malicious ?next=//evil.com and https://evil.com fall back to %2Fdashboard; /signup GitHub URL has no intent=login. Email signup (new account) from /signup?next=/harness lands on /harness; email login test@aurem.dev from /login?next=/harness lands on /harness. /oauth-finish#token=test&next=%2Fharness navigates to /harness (then app bounces to /login?next=%2Fharness because the fake token 401s - expected); next=%2F%2Fevil.com goes to /dashboard path (-> /login?next=%2Fdashboard), guard works. Regression: /harness minimal nav (Pricing/Sign in/Start free only), Phase A content, no download button, hero waitlist submit shows harness-waitlist-success-hero; stories form present. No console errors on /login and /signup.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/aurem-dev/github/oauth/connect", "issue": "Pre-existing/config: in preview, GitHub redirect_uri points to https://auremcto.com/api/aurem-dev/github/oauth/callback (prod) while Google uses the preview origin, so a GitHub round-trip started in preview finishes on prod. Not a Fix 7 regression."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "/harness flag fetch", "issue": "HarnessPage.jsx line ~319: any error on GET /harness/page-status (e.g. transient 429 rate-limit, which we hit once during rapid testing) is treated as flag OFF and shows 'Aurem Loop isn't available yet.' with no retry. Seen once, gone on reload. Consider retry, or keep the loading/skeleton state on a network error instead of showing the 'not available' state.", "affected_selectors": ["[data-testid='harness-page-not-available']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_regression_iter2026_69_oauth_next_redirect.py"],
+  "action_items": [
+    "Optional: make the HarnessPage page-status catch() retry, or tell a network/429 error apart from flag=false",
+    "Optional: frontend next guards (Login/Signup/OAuthFinish) don't reject backslashes like the backend _safe_next does. This is harmless because react-router navigate keeps the path same-origin, but you could align them for consistency."
+  ],
+  "critical_code_review_comments": [
+    "3-layer validation is consistent. Backend _safe_next rejects backslash/non-'/'/'//'/>2048 chars. Frontend guards check startsWith('/') && !startsWith('//').",
+    "HarnessPage.jsx is 648 lines, close to the 700-line split threshold."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Throwaway account regr69-772209@example.com / Regr69Test2026! (name TEST_Regr69) created via email signup. Waitlist entry TEST_regr69_wl@example.com added. A few oauth_states rows from the curl checks (these expire normally).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix 7 fully verified. To check OAuth button URLs, intercept with page.route('**/api/aurem-dev/{github,google}/oauth/**') and abort. Rapid back-to-back browser runs can trigger Cloudflare challenges or 429s on the preview; space the runs out."
+}

@@ -1,1 +1,1317 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="34" time="3.437" timestamp="2026-09-09T04:49:10.891298+00:00" hostname="agent-env-00f4b217-af18-4f22-8897-05bbe431b0a7"><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_bug1_exact_text_detected_as_intent_only" time="0.053" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_bug4_gerund_lead_with_stall_tell_detected_as_intent_only" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_bug4_contract_raises_on_violating_case" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_bug4_wrapped_partial_satisfies_contract" time="0.004" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_stall_tell_alone_without_intent_lead_still_caught" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_real_delivered_list_is_not_intent_only" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_real_long_answer_starting_with_ill_is_not_intent_only" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_code_block_reply_is_not_intent_only" time="0.004" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_contract_raises_on_violating_case" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_contract_does_not_raise_once_wrapped_as_partial" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_contract_does_not_raise_on_real_error" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestTurnEndsOnlyInThreeStates" name="test_chat_with_tools_never_returns_bare_intent_only_success" time="0.013" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestStreamIdleTimeoutFires" name="test_slow_notice_flips_true_past_threshold_with_no_progress" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestStreamIdleTimeoutFires" name="test_watchdog_timeout_payload_carries_partial_state_with_progress" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestStreamIdleTimeoutFires" name="test_watchdog_timeout_payload_carries_error_state_with_no_progress" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestStreamDistinguishDoneFromError" name="test_classify_failure_mode_not_called_on_clean_result" time="0.006" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestStreamDistinguishDoneFromError" name="test_classify_failure_mode_maps_known_error_strings" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestStreamDistinguishDoneFromError" name="test_normal_completion_never_misclassified_as_error" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestPartialPreservedOnDrop" name="test_persist_turn_marks_interrupted_flag" time="0.008" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestPartialPreservedOnDrop" name="test_persist_turn_omits_interrupted_when_false" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestFalseSuccessImpossible" name="test_success_state_requires_real_content" time="0.005" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestFalseSuccessImpossible" name="test_real_content_with_success_state_is_fine" time="0.004" /><testcase classname="tests.test_turn_completion_contract_2026_09_08.TestFalseSuccessImpossible" name="test_budget_exhausted_path_never_returns_bare_success_on_intent_only" time="0.007" /><testcase classname="tests.test_session5_item2_orchestrator_silent_catch_lock" name="test_orchestrator_silent_catch_count_is_bounded" time="0.022" /><testcase classname="tests.test_session5_item2_orchestrator_silent_catch_lock" name="test_every_orchestrator_silent_catch_is_ui_hook" time="0.021" /><testcase classname="tests.test_session5_item2_orchestrator_silent_catch_lock" name="test_orchestrator_silent_catch_lines_are_locked" time="0.021" /><testcase classname="tests.test_session5_item2_orchestrator_silent_catch_lock" name="test_locked_sites_still_call_hooks" time="0.020" /><testcase classname="tests.test_session5_item2_orchestrator_silent_catch_lock" name="test_this_test_file_documents_the_no_op_rationale" time="0.005" /><testcase classname="tests.test_stream_golden_regression" name="test_stream_matches_golden[confidence_retry]" time="0.090" /><testcase classname="tests.test_stream_golden_regression" name="test_stream_matches_golden[hard_timeout]" time="0.257" /><testcase classname="tests.test_stream_golden_regression" name="test_stream_matches_golden[mode_d_fast_path]" time="0.431" /><testcase classname="tests.test_stream_golden_regression" name="test_stream_matches_golden[mode_f_engage]" time="0.089" /><testcase classname="tests.test_stream_golden_regression" name="test_stream_matches_golden[plain_agentic]" time="0.063" /><testcase classname="tests.test_stream_golden_regression" name="test_stream_matches_golden[soft_timeout]" time="0.760" /></testsuite></testsuites>
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="12" skipped="0" tests="199" time="10.763" timestamp="2026-11-08T21:20:23.961185+00:00" hostname="agent-env-00f4b217-af18-4f22-8897-05bbe431b0a7"><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_integration_health_cron_flag_is_in_seed_list" time="0.014" /><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_feature_flag_seed_uses_set_on_insert_not_set" time="0.011" /><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_seed_inserts_missing_flag_via_set_on_insert" time="0.047"><failure message="AssertionError: integration_health_cron must be inserted on fresh DB. created=[] errors=[&quot;feature_flags seed new_analytics_v2: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed maxx_mode_beta: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed parallel_agents: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed chrome_extension_beta: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed integration_health_cron: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed github_bulk_revoke_live_verified: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed kit_apply_enabled: TypeError: object MagicMock can't be used in 'await' expression&quot;]&#10;assert 'integration_health_cron' in ''">def test_seed_inserts_missing_flag_via_set_on_insert():
+        """Fresh feature_flags collection: seed inserts every flag via
+        $setOnInsert with defaults."""
+        # Import lazily so the module reload picks up the latest source.
+        import importlib
+        import scripts.init_prod_collections as ipc
+        importlib.reload(ipc)
+    
+        db, ops_log, state = _make_fake_db_with_flags(existing_flags=[])
+    
+        # Patch out the rest of init_prod_collections' work — we only care
+        # about the feature_flags seed block. Give it a fake db that
+        # answers only the seed's calls plus a couple of noops for the
+        # bootstrap machinery.
+        # The full init_prod_collections touches many collections; here we
+        # bypass by calling only the feature_flags portion via a wrapper.
+        # Simpler: run init_prod_collections but swallow errors on the
+        # rest.
+        async def _touch(name: str):
+            # Simulate the "touch every collection" call
+            return None
+    
+        # Stub out other collections used by the bootstrap.
+        for coll in [
+            "cto_payments", "cto_support", "cto_support_messages",
+            "cto_token_grants", "cto_vault_audit_log", "vanguard_audit",
+            "integration_health", "integration_health_history",
+            "dev_users", "dev_sessions", "cto_projects", "loop_sessions",
+            "feature_flags",
+        ]:
+            m = MagicMock()
+            m.create_index = AsyncMock(return_value="idx")
+            m.insert_one   = AsyncMock(return_value=None)
+            m.delete_one   = AsyncMock(return_value=None)
+            m.find_one     = AsyncMock(return_value=None)
+            m.count_documents = AsyncMock(return_value=0)
+            if coll != "feature_flags":
+                setattr(db, coll, m)
+    
+        # Run only the feature_flags seed portion. We inspect ops_log.
+        result = asyncio.run(ipc.init_prod_collections(db))
+        # feature_flags:inserted(...) should include integration_health_cron
+        created = " ".join(result.get("created", []))
+&gt;       assert "integration_health_cron" in created, (
+            f"integration_health_cron must be inserted on fresh DB. "
+            f"created={result.get('created')} errors={result.get('errors')}"
+        )
+E       AssertionError: integration_health_cron must be inserted on fresh DB. created=[] errors=["feature_flags seed new_analytics_v2: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed maxx_mode_beta: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed parallel_agents: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed chrome_extension_beta: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed integration_health_cron: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed github_bulk_revoke_live_verified: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed kit_apply_enabled: TypeError: object MagicMock can't be used in 'await' expression"]
+E       assert 'integration_health_cron' in ''
+
+tests/test_iter328_11_feature_flag_seed_upsert.py:150: AssertionError</failure></testcase><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_seed_preserves_founder_toggled_state_on_re_run" time="0.042" /><testcase classname="tests.test_iter337_auth_me_no_secrets" name="test_me_strips_secrets_source_lock" time="0.011" /><testcase classname="tests.test_iter337_auth_me_no_secrets" name="test_me_live_response_has_no_secrets" time="0.286" /><testcase classname="tests.test_iter337_auth_me_no_secrets" name="test_me_live_response_strips_pending_mfa_enrollment_secrets" time="0.492" /><testcase classname="tests.test_regression_iter2026_61_part2c_b4_auth_me_flag.TestAuthMeProjectVersionsFlag" name="test_me_includes_project_versions_enabled_field" time="0.056" /><testcase classname="tests.test_regression_iter2026_61_part2c_b4_auth_me_flag.TestAuthMeProjectVersionsFlag" name="test_defaults_off_when_flag_disabled" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_issue_then_verify_matching_pair_is_subscriber_for_paid_tier" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_free_tier_user_is_not_subscriber" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_missing_tier_field_defaults_to_free_not_subscriber" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_unknown_garbage_tier_value_coerces_to_free_not_a_crash" time="0.015" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_every_non_free_tier_is_subscriber[starter]" time="0.013" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_every_non_free_tier_is_subscriber[pro]" time="0.011" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_every_non_free_tier_is_subscriber[team]" time="0.011" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_every_non_free_tier_is_subscriber[founder]" time="0.013" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_token_for_a_different_bin_is_rejected" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_wrong_token_for_a_real_bin_is_rejected" time="0.011" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_nonexistent_bin_is_rejected" time="0.011" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_empty_bin_or_token_rejected_without_a_db_call" time="0.011" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_revoked_token_is_rejected_immediately" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_token_is_stored_as_a_digest_never_plaintext" time="0.013" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_db_error_during_lookup_fails_closed_not_raises" time="0.013" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestIssueAndVerifyHarnessToken" name="test_duplicate_idempotent_token_lookup_uses_the_latest_active_one" time="0.013" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_subscriber_gets_200_subscriber_true" time="0.103" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_free_user_gets_200_subscriber_false" time="0.019" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_bad_token_gets_200_subscriber_false_not_a_401_crash" time="0.016" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_malformed_body_returns_clean_4xx_json_no_stack_trace" time="0.015" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_missing_body_entirely_returns_4xx" time="0.014" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_db_unavailable_returns_503_not_500" time="0.015" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointIntegration" name="test_route_is_mounted_at_exact_public_contract_path" time="0.012" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_token_never_appears_in_the_response_body" time="0.015" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_token_never_appears_in_logs" time="0.014" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_mongo_operator_injection_in_bin_is_rejected_as_invalid_input" time="0.014" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_mongo_operator_injection_in_token_is_rejected_as_invalid_input" time="0.017" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_rate_limited_bin_gets_429" time="0.015" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_rate_limit_keyed_by_bin_not_shared_globally" time="0.018" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_huge_bin_and_token_strings_do_not_crash" time="0.016" /><testcase classname="tests.test_regression_iter2026_63_harness_verify_phase_a.TestVerifyEndpointSecurity" name="test_unicode_bin_and_token_handled_safely" time="0.012" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_create_draft_release_computes_real_sha256" time="0.012" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_signature_is_verifiable_and_tamper_evident" time="0.011" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_rejects_an_unknown_source_value" time="0.013" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_rejects_empty_artifact" time="0.011" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_rejects_oversized_artifact" time="0.016" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_publish_sets_is_latest_and_unsets_the_previous_one" time="0.011" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_publishing_nonexistent_release_raises" time="0.011" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_get_latest_release_is_none_when_nothing_published" time="0.013" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestReleaseCreationAndSigning" name="test_different_platforms_have_independent_latest" time="0.012" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestIdentityInjection" name="test_identity_json_is_injected_with_the_given_bin_and_token" time="0.013" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestIdentityInjection" name="test_a_stray_identity_json_already_in_the_artifact_is_overwritten_not_duplicated" time="0.012" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestIdentityInjection" name="test_two_different_users_downloading_the_same_release_get_different_identities" time="0.012" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestDownloadEndpoint" name="test_no_release_published_returns_409_never_fabricates_one" time="0.015" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestDownloadEndpoint" name="test_subscriber_download_returns_a_zip_with_their_identity_and_logs_it" time="0.015" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestDownloadEndpoint" name="test_free_user_gets_the_same_package_extras_gated_at_runtime_not_in_the_zip" time="0.017" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestDownloadEndpoint" name="test_redownload_issues_a_new_token_and_never_revokes_the_first" time="0.021" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestDownloadEndpoint" name="test_rate_limited_user_gets_429" time="0.016" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestDownloadEndpoint" name="test_no_auth_header_returns_401_not_a_crash" time="0.015" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestAdminReleaseManagement" name="test_non_admin_gets_403_on_every_admin_harness_route" time="0.026" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestAdminReleaseManagement" name="test_admin_can_create_a_draft_release_via_the_endpoint" time="0.020" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestAdminReleaseManagement" name="test_admin_can_publish_a_draft_release" time="0.019" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestAdminReleaseManagement" name="test_release_create_rejects_an_invalid_source_with_400" time="0.018" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestAdminReleaseManagement" name="test_release_list_never_includes_the_raw_artifact_bytes" time="0.018" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestAdminReleaseManagement" name="test_download_log_lists_rows_newest_first_with_a_free_vs_paid_split" time="0.018" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestSecurity" name="test_mass_assignment_cannot_force_a_release_straight_to_published" time="0.018" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestSecurity" name="test_download_log_idor_a_user_cannot_see_another_users_rows_via_any_user_facing_endpoint" time="0.014" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestSecurity" name="test_path_traversal_in_a_hostile_filename_inside_the_artifact_does_not_escape" time="0.012" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestSecurity" name="test_changelog_entries_are_length_capped_server_side" time="0.022" /><testcase classname="tests.test_regression_iter2026_64_harness_phase_b_releases_and_downloads.TestRealAcceptanceFlowServerSideOnly" name="test_download_as_subscriber_verify_true_then_revoke_then_verify_refuses" time="0.014" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_no_auth_header_required" time="0.017" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_response_shape_is_exactly_one_boolean_field" time="0.016" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_tracks_is_enabled_true" time="0.017" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_tracks_is_enabled_false" time="0.017" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_no_flag_doc_fails_closed_not_errors" time="0.016" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_no_user_id_passed_to_is_enabled_anonymous_safe" time="0.016" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestRevokeInstallationVerbose" name="test_204_reports_deleted" time="0.123" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestRevokeInstallationVerbose" name="test_404_reports_already_gone_not_failed" time="0.104" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestRevokeInstallationVerbose" name="test_410_also_reports_already_gone" time="0.111" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestRevokeInstallationVerbose" name="test_500_reports_failed_with_reason" time="0.142" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestRevokeInstallationVerbose" name="test_jwt_key_never_exposed" time="0.199" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestRevokeInstallationVerbose" name="test_backcompat_wrapper_raises_only_on_failure" time="0.242" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeService" name="test_stale_installation_counts_as_skipped_not_failed" time="0.011" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeService" name="test_parallel_timeout_does_not_stop_batch" time="0.061" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeService" name="test_one_exception_does_not_sink_the_batch" time="0.011" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestGithubConnections" name="test_default_view_excludes_valid" time="0.025" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestGithubConnections" name="test_idle_view_is_valid_but_zero_tasks" time="0.012" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_dry_run_precedes_github_call" time="0.012" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_hard_guard_blocks_valid_selection_without_confirm" time="0.013" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_hard_guard_blocks_over_five_even_all_broken" time="0.011" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_gated_by_live_verified_flag_even_with_confirm" time="0.014" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_real_github_call_not_db_only" time="0.012" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_partial_failure_reported" time="0.013" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_audit_logged" time="0.014" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_reason_required_for_real_revoke" time="0.013" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_batch_capped_at_ten" time="0.011" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestBulkRevokeRouter" name="test_user_data_preserved_on_revoke" time="0.013" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestFlagIdle" name="test_idle_flag_non_destructive" time="0.014" /><testcase classname="tests.test_bulk_github_revoke_2026_08_30.TestWebhookInstallationDeletedIdempotent" name="test_deleted_webhook_twice_does_not_crash" time="0.068" /><testcase classname="tests.test_integration_health_cron" name="test_is_enabled_default_on" time="0.012" /><testcase classname="tests.test_integration_health_cron" name="test_is_enabled_off_variants[0]" time="0.012" /><testcase classname="tests.test_integration_health_cron" name="test_is_enabled_off_variants[false]" time="0.012" /><testcase classname="tests.test_integration_health_cron" name="test_is_enabled_off_variants[OFF]" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_is_enabled_off_variants[no]" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_interval_default" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_interval_custom" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_interval_clamps_to_60s_floor" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_interval_invalid_falls_back" time="0.010" /><testcase classname="tests.test_integration_health_cron" name="test_probe_persist_writes_latest_and_history" time="0.018" /><testcase classname="tests.test_integration_health_cron" name="test_probe_persist_fails_open" time="0.013" /><testcase classname="tests.test_integration_health_cron" name="test_paused_when_flag_disabled" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_not_paused_when_flag_enabled" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_not_paused_when_flag_missing" time="0.011" /><testcase classname="tests.test_integration_health_cron" name="test_flag_load_failure_defaults_to_allow" time="0.011" /><testcase classname="tests.test_iter124j_public_polling_caches" name="test_public_stats_uses_cache_on_second_call" time="0.016" /><testcase classname="tests.test_iter124j_public_polling_caches" name="test_public_stats_cache_expires" time="0.012" /><testcase classname="tests.test_iter124j_public_polling_caches" name="test_wall_feed_uses_cache" time="0.015" /><testcase classname="tests.test_iter124j_public_polling_caches" name="test_caches_have_sensible_ttls" time="0.011" /><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestEgressNoMachineryLeak" name="test_leaked_machinery_tokens_stripped_from_real_response" time="0.063"><failure message="assert False is True">self = &lt;test_iter2026_08_27_p1_egress_net.TestEgressNoMachineryLeak object at 0xfcf12f649310&gt;
+
+    def test_leaked_machinery_tokens_stripped_from_real_response(self):
+        client, router_mod, old_dev, _dbmod = _make_client(ALLOWLISTED_USER)
+        leaky_answer = (
+            "Your project uses a 5-adviser council (chairman: the lead "
+            "model) reached via deepseek true. Details live in "
+            "backend/services/ora_council_retriever.py and are logged to "
+            "ora_council_logs. It's built with pydantic and asyncio."
+        )
+    
+        async def _fake_chat_with_tools(**kwargs):
+            return {"content": leaky_answer, "provider": "deepseek", "meta": {}}
+    
+        try:
+            with patch("services.usage.assert_has_budget", AsyncMock(return_value=None)), \
+                 patch("services.usage.assert_has_task_budget", AsyncMock(return_value=None)), \
+                 patch("services.ora_council_retriever.get_council_few_shot",
+                       AsyncMock(return_value=("", 0))), \
+                 patch("services.feature_flags.is_enabled",
+                       AsyncMock(side_effect=_flag_on_for("test_admin_001"))), \
+                 patch("routers.chat.turn.chat_with_tools", _fake_chat_with_tools), \
+                 patch("services.response_confidence.response_seems_mismatched", return_value=False), \
+                 patch("routers.chat.turn._deduct_tokens", AsyncMock(return_value=500)):
+                r = client.post(
+                    "/api/aurem-dev/chat/send",
+                    headers={"Authorization": "Bearer test_admin_001"},
+                    json={"prompt": "how do the agents in my project work? explain simply",
+                          "project_id": "home", "session_id": "s1"},
+                )
+        finally:
+            router_mod.turn.current_dev = old_dev
+            _dbmod.set_db(None)
+    
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["plain_english_contract_active"] is True
+&gt;       assert body["leak_stripped"] is True
+E       assert False is True
+
+tests/test_iter2026_08_27_p1_egress_net.py:102: AssertionError</failure></testcase><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestLengthCapNet" name="test_over_long_answer_gets_capped" time="0.031"><failure message="assert False is True">self = &lt;test_iter2026_08_27_p1_egress_net.TestLengthCapNet object at 0xfcf12f649cd0&gt;
+
+    def test_over_long_answer_gets_capped(self):
+        client, router_mod, old_dev, _dbmod = _make_client(ALLOWLISTED_USER)
+        long_answer = " ".join(["word"] * 700)  # ~930 approx tokens, over the 500 cap
+        compressed = "A short, plain-English summary of the same idea. Want the technical detail?"
+    
+        async def _fake_chat_with_tools(**kwargs):
+            return {"content": long_answer, "provider": "deepseek", "meta": {}}
+    
+        async def _fake_call_llm_with_meta(*a, **kw):
+            return {"content": compressed, "ok": True}
+    
+        try:
+            with patch("services.usage.assert_has_budget", AsyncMock(return_value=None)), \
+                 patch("services.usage.assert_has_task_budget", AsyncMock(return_value=None)), \
+                 patch("services.ora_council_retriever.get_council_few_shot",
+                       AsyncMock(return_value=("", 0))), \
+                 patch("services.feature_flags.is_enabled",
+                       AsyncMock(side_effect=_flag_on_for("test_admin_001"))), \
+                 patch("routers.chat.turn.chat_with_tools", _fake_chat_with_tools), \
+                 patch("services.llm._meta.call_llm_with_meta", _fake_call_llm_with_meta), \
+                 patch("services.response_confidence.response_seems_mismatched", return_value=False), \
+                 patch("routers.chat.turn._deduct_tokens", AsyncMock(return_value=500)):
+                r = client.post(
+                    "/api/aurem-dev/chat/send",
+                    headers={"Authorization": "Bearer test_admin_001"},
+                    json={"prompt": "how do the agents in my project work? explain simply",
+                          "project_id": "home", "session_id": "s1"},
+                )
+        finally:
+            router_mod.turn.current_dev = old_dev
+            _dbmod.set_db(None)
+    
+        assert r.status_code == 200, r.text
+        body = r.json()
+&gt;       assert body["length_capped"] is True
+E       assert False is True
+
+tests/test_iter2026_08_27_p1_egress_net.py:146: AssertionError</failure></testcase><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestShipCardKeepsFileline" name="test_mutation_turn_not_touched_by_output_guard" time="0.028" /><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestScanSeverityCalibrated" name="test_internal_only_finding_never_top_severity" time="0.013" /><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestScanSeverityCalibrated" name="test_external_secret_finding_stays_top_severity" time="0.011" /><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestScanSeverityCalibrated" name="test_normalise_adds_plain_severity_field" time="0.012" /><testcase classname="tests.test_iter2026_08_27_p1_egress_net.TestScanSeverityCalibrated" name="test_ship_block_reason_shows_plain_scale_not_raw_caps" time="0.012" /><testcase classname="tests.test_iter2026_08_27_plain_english_contract.TestPlainEnglishContractInjection" name="test_t1_explain_turn_flag_on_injects_contract" time="0.028" /><testcase classname="tests.test_iter2026_08_27_plain_english_contract.TestPlainEnglishContractInjection" name="test_t2_mutation_shaped_turn_flag_on_does_not_inject" time="0.029" /><testcase classname="tests.test_iter2026_08_27_plain_english_contract.TestPlainEnglishContractInjection" name="test_t3_flag_off_non_allowlisted_user_byte_identical" time="0.033" /><testcase classname="tests.test_iter2026_08_27_plain_english_contract.TestPlainEnglishContractInjection" name="test_ask_advisor_never_gets_the_contract" time="0.106" /><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_integration_health_cron_flag_is_in_seed_list" time="0.012" /><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_feature_flag_seed_uses_set_on_insert_not_set" time="0.011" /><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_seed_inserts_missing_flag_via_set_on_insert" time="0.048"><failure message="AssertionError: integration_health_cron must be inserted on fresh DB. created=[] errors=[&quot;feature_flags seed new_analytics_v2: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed maxx_mode_beta: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed parallel_agents: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed chrome_extension_beta: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed integration_health_cron: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed github_bulk_revoke_live_verified: TypeError: object MagicMock can't be used in 'await' expression&quot;, &quot;feature_flags seed kit_apply_enabled: TypeError: object MagicMock can't be used in 'await' expression&quot;]&#10;assert 'integration_health_cron' in ''">def test_seed_inserts_missing_flag_via_set_on_insert():
+        """Fresh feature_flags collection: seed inserts every flag via
+        $setOnInsert with defaults."""
+        # Import lazily so the module reload picks up the latest source.
+        import importlib
+        import scripts.init_prod_collections as ipc
+        importlib.reload(ipc)
+    
+        db, ops_log, state = _make_fake_db_with_flags(existing_flags=[])
+    
+        # Patch out the rest of init_prod_collections' work — we only care
+        # about the feature_flags seed block. Give it a fake db that
+        # answers only the seed's calls plus a couple of noops for the
+        # bootstrap machinery.
+        # The full init_prod_collections touches many collections; here we
+        # bypass by calling only the feature_flags portion via a wrapper.
+        # Simpler: run init_prod_collections but swallow errors on the
+        # rest.
+        async def _touch(name: str):
+            # Simulate the "touch every collection" call
+            return None
+    
+        # Stub out other collections used by the bootstrap.
+        for coll in [
+            "cto_payments", "cto_support", "cto_support_messages",
+            "cto_token_grants", "cto_vault_audit_log", "vanguard_audit",
+            "integration_health", "integration_health_history",
+            "dev_users", "dev_sessions", "cto_projects", "loop_sessions",
+            "feature_flags",
+        ]:
+            m = MagicMock()
+            m.create_index = AsyncMock(return_value="idx")
+            m.insert_one   = AsyncMock(return_value=None)
+            m.delete_one   = AsyncMock(return_value=None)
+            m.find_one     = AsyncMock(return_value=None)
+            m.count_documents = AsyncMock(return_value=0)
+            if coll != "feature_flags":
+                setattr(db, coll, m)
+    
+        # Run only the feature_flags seed portion. We inspect ops_log.
+        result = asyncio.run(ipc.init_prod_collections(db))
+        # feature_flags:inserted(...) should include integration_health_cron
+        created = " ".join(result.get("created", []))
+&gt;       assert "integration_health_cron" in created, (
+            f"integration_health_cron must be inserted on fresh DB. "
+            f"created={result.get('created')} errors={result.get('errors')}"
+        )
+E       AssertionError: integration_health_cron must be inserted on fresh DB. created=[] errors=["feature_flags seed new_analytics_v2: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed maxx_mode_beta: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed parallel_agents: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed chrome_extension_beta: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed integration_health_cron: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed github_bulk_revoke_live_verified: TypeError: object MagicMock can't be used in 'await' expression", "feature_flags seed kit_apply_enabled: TypeError: object MagicMock can't be used in 'await' expression"]
+E       assert 'integration_health_cron' in ''
+
+tests/test_iter328_11_feature_flag_seed_upsert.py:150: AssertionError</failure></testcase><testcase classname="tests.test_iter328_11_feature_flag_seed_upsert" name="test_seed_preserves_founder_toggled_state_on_re_run" time="0.044" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_webhook_403_when_secret_unset" time="0.011" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_webhook_401_on_missing_signature_when_secret_set" time="0.012" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_webhook_401_on_wrong_signature_when_secret_set" time="0.011" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_webhook_200_with_correct_signature_push_event" time="0.013" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_webhook_200_skipped_for_non_push_with_correct_signature" time="0.012" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_wall_endpoints_404_when_flag_off" time="0.013" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_wall_stats_200_when_flag_on" time="0.013" /><testcase classname="tests.test_master_task_2026_09_28_webhook_signature" name="test_automations_create_403_when_flag_off" time="0.013" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestShipViaPr" name="test_flag_off_by_default_no_row" time="0.012" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestShipViaPr" name="test_flag_on_path_creates_auremcto_branch_and_opens_pr" time="0.107" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestNoOrphanBranches" name="test_close_and_retract_deletes_auremcto_branch" time="0.067" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestLabelDispatchNoCrosswrite" name="test_ship_label_writes_only_loop_outcomes" time="0.014" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestLabelDispatchNoCrosswrite" name="test_kit_label_writes_only_kit_collection" time="0.015" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestLabelDispatchNoCrosswrite" name="test_unknown_label_writes_nothing" time="0.016" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestRevertReversePathAlive" name="test_user_rollback_loop_rollback_revert_commit_chain_present" time="0.014" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestRevertReversePathAlive" name="test_close_and_retract_does_not_force_push_or_rewrite_history" time="0.011" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestRevertReversePathAlive" name="test_finding_fix_applier_revert_reuses_shared_helper_not_a_new_one" time="0.012" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestDeleteShipBranchNamespaced" name="test_rejects_non_auremcto_branch_with_zero_github_calls" time="0.014" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestDeleteShipBranchNamespaced" name="test_rejects_legacy_aurem_fix_branch_too" time="0.013" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestDeleteShipBranchNamespaced" name="test_accepts_auremcto_namespaced_branch" time="0.040" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestPrStatusChipField" name="test_pr_status_defaults_to_open_when_no_outcome_row_yet" time="0.037" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestPrStatusChipField" name="test_pr_status_reflects_merged_outcome" time="0.014" /><testcase classname="tests.test_overnight_t7_ship_via_pr.TestPrStatusChipField" name="test_pr_status_omitted_for_direct_commit_ship" time="0.016" /><testcase classname="tests.test_quickwins_batch_2026_01.TestCanaryRollout" name="test_create_flag_with_rollout_pct" time="0.480" /><testcase classname="tests.test_quickwins_batch_2026_01.TestCanaryRollout" name="test_rollout_pct_clamping" time="0.291" /><testcase classname="tests.test_quickwins_batch_2026_01.TestCanaryRollout" name="test_rollout_pct_deterministic_distribution" time="0.021"><failure message="AssertionError: expected ~30% True, got 0.0% (0/300)&#10;assert 20 &lt;= 0.0">self = &lt;test_quickwins_batch_2026_01.TestCanaryRollout object at 0xfcf13c708e10&gt;
+admin_headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...pIjoiNmQxNWJiZDE0NmIyNDAyZmEzYzcwNmEwZjYzMTYwNDMiLCJleHAiOjE3OTQ3Nzc2MzF9.UlPrBtFTLGDMiwo4TRjN2VbLBY_cTlFtnI6UkIcEod0'}
+mongo = Database(MongoClient(host=['localhost:27017'], document_class=dict, tz_aware=False, connect=True, serverselectiontimeoutms=3000), 'aurem_dev')
+
+    def test_rollout_pct_deterministic_distribution(self, admin_headers, mongo):
+        """Call is_enabled() (via replicating exact sha1 bucketing logic) for
+        300 user_ids. Confirm ~30% True, and idempotent for same user."""
+        # Confirm flag is 30%
+        doc = mongo.feature_flags.find_one({"flag": TEST_FLAG})
+        assert doc and doc["rollout_pct"] == 30 and doc["enabled"] is True
+    
+        # Import the actual service and drive it — must set _db first
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from cto_services.db import set_db
+        from services import feature_flags as ff
+        from motor.motor_asyncio import AsyncIOMotorClient
+    
+        async def _run():
+            client = AsyncIOMotorClient(MONGO_URL)
+            set_db(client[DB_NAME])
+            ff.invalidate_cache()
+            uids = [f"u_{i}" for i in range(300)]
+            results = {}
+            for uid in uids:
+                results[uid] = await ff.is_enabled(TEST_FLAG, user_id=uid)
+            # Determinism — call again for same uid, must match
+            for uid in uids[:50]:
+                again = await ff.is_enabled(TEST_FLAG, user_id=uid)
+                assert again == results[uid], f"non-deterministic for {uid}"
+            client.close()
+            return results
+    
+        results = asyncio.get_event_loop().run_until_complete(_run()) \
+            if False else asyncio.new_event_loop().run_until_complete(_run())
+    
+        true_count = sum(1 for v in results.values() if v)
+        pct = 100.0 * true_count / len(results)
+        # 30% target, tolerance 20-40%
+&gt;       assert 20 &lt;= pct &lt;= 40, f"expected ~30% True, got {pct:.1f}% ({true_count}/300)"
+E       AssertionError: expected ~30% True, got 0.0% (0/300)
+E       assert 20 &lt;= 0.0
+
+tests/test_quickwins_batch_2026_01.py:155: AssertionError</failure></testcase><testcase classname="tests.test_quickwins_batch_2026_01.TestCanaryRollout" name="test_rollout_pct_100_default" time="0.118"><failure message="AssertionError: rollout_pct=100 should return True for all, got 0/100&#10;assert 0 == 100">self = &lt;test_quickwins_batch_2026_01.TestCanaryRollout object at 0xfcf13c708250&gt;
+admin_headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidGVzdF9hZG1pbl8wMDEiLCJlbWFpbCI6InRlc3R...pIjoiNmQxNWJiZDE0NmIyNDAyZmEzYzcwNmEwZjYzMTYwNDMiLCJleHAiOjE3OTQ3Nzc2MzF9.UlPrBtFTLGDMiwo4TRjN2VbLBY_cTlFtnI6UkIcEod0'}
+mongo = Database(MongoClient(host=['localhost:27017'], document_class=dict, tz_aware=False, connect=True, serverselectiontimeoutms=3000), 'aurem_dev')
+
+    def test_rollout_pct_100_default(self, admin_headers, mongo):
+        """Default rollout_pct=100 (omitted) always True when enabled+tier match."""
+        flag = f"{TEST_FLAG}_all"
+        mongo.feature_flags.delete_one({"flag": flag})
+        r = requests.post(f"{BASE_URL}/admin/feature-flags",
+                          headers=admin_headers,
+                          json={"flag": flag, "enabled": True},  # rollout_pct omitted
+                          timeout=10)
+        assert r.status_code == 200
+        doc = mongo.feature_flags.find_one({"flag": flag})
+        assert doc["rollout_pct"] == 100
+    
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from cto_services.db import set_db
+        from services import feature_flags as ff
+        from motor.motor_asyncio import AsyncIOMotorClient
+    
+        async def _run():
+            client = AsyncIOMotorClient(MONGO_URL)
+            set_db(client[DB_NAME])
+            ff.invalidate_cache()
+            trues = 0
+            for i in range(100):
+                if await ff.is_enabled(flag, user_id=f"u_{i}"):
+                    trues += 1
+            client.close()
+            return trues
+    
+        trues = asyncio.new_event_loop().run_until_complete(_run())
+&gt;       assert trues == 100, f"rollout_pct=100 should return True for all, got {trues}/100"
+E       AssertionError: rollout_pct=100 should return True for all, got 0/100
+E       assert 0 == 100
+
+tests/test_quickwins_batch_2026_01.py:198: AssertionError</failure></testcase><testcase classname="tests.test_quickwins_batch_2026_01.TestCanaryRollout" name="test_rollout_pct_0_always_false" time="0.120" /><testcase classname="tests.test_quickwins_batch_2026_01.TestChatOpenedFunnel" name="test_chat_opened_first_call_writes_event_and_stamps_user" time="0.430" /><testcase classname="tests.test_quickwins_batch_2026_01.TestChatOpenedFunnel" name="test_chat_opened_second_call_is_idempotent" time="1.173" /><testcase classname="tests.test_quickwins_batch_2026_01.TestChatOpenedFunnel" name="test_chat_opened_requires_auth" time="0.100" /><testcase classname="tests.test_quickwins_batch_2026_01.TestTaskSubmittedFunnel" name="test_submit_endpoint_exists_and_is_authed" time="0.115" /><testcase classname="tests.test_quickwins_batch_2026_01.TestTaskSubmittedFunnel" name="test_task_submitted_idempotency_via_direct_db_pattern" time="0.015" /><testcase classname="tests.test_quickwins_batch_2026_01.TestTaskSubmittedFunnel" name="test_task_submitted_code_wiring" time="0.013" /><testcase classname="tests.test_quickwins_batch_2026_01.TestRollbackDrillCron" name="test_boot_log_present" time="0.147" /><testcase classname="tests.test_quickwins_batch_2026_01.TestRollbackDrillCron" name="test_backend_healthy_after_boot" time="0.100" /><testcase classname="tests.test_quickwins_batch_2026_01.TestRollbackDrillCron" name="test_module_importable_and_shape" time="0.012" /><testcase classname="tests.test_regression_iter2026_10c_approve_fix_ship_branch.TestCommitLandsOnNewBranchNotMain" name="test_push_targets_ship_branch_not_base_branch" time="0.024"><failure message="AttributeError: '_FakeDB' object has no attribute 'cto_tasks'">task_id = 'shipbr_ok'
+proj = {'branch': 'main', 'github_owner': 'acme', 'github_repo': 'widgets', 'installation_id': '111', ...}
+task = 'add a helper function', files = [], context = ''
+user_token = 'ghp_faketoken_shipbr1', maxx_mode = False
+resume_edits = {'edits': {'feature.py': 'def add(a, b):\n    return a + b\n'}, 'summary': 'add helper'}
+
+    async def _run_task_with_git(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
+                                 resume_edits: Optional[dict] = None):
+    
+        def _scrub(s: str) -&gt; str:
+            # Defence-in-depth: clone URLs, stderr, and Python tracebacks can
+            # all leak the PAT. Scrub every error string before it lands in
+            # Mongo or the user's task feed.
+            if not s:
+                return s
+            return s.replace(user_token or "", "***PAT***") if user_token else s
+    
+        ws = _pkg.WORKSPACE / task_id
+        ws.mkdir(parents=True, exist_ok=True)
+        repo_path = ws / "repo"
+        owner, repo, branch = proj["github_owner"], proj["github_repo"], proj.get("branch", "main")
+        # 2026-08-24 fix — see matching fix in _run_rollback_with_git above:
+        # GitHub App installation tokens are the HTTPS PASSWORD (username
+        # "x-access-token"), not a username-only PAT-style embed.
+        clone_url = (f"https://x-access-token:{user_token}@github.com/{owner}/{repo}.git"
+                     if user_token else f"https://github.com/{owner}/{repo}.git")
+    
+        try:
+            # 1) clone
+&gt;           await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+
+routers/cto_projects/worker_git.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipbr_ok'
+fields = {'started_at': 1794172834.0344386, 'status': 'pulling'}
+get_db = &lt;function TestWebhookInstallationDeletedIdempotent.test_deleted_webhook_twice_does_not_crash.&lt;locals&gt;.&lt;lambda&gt; at 0xfcf12c7d1c60&gt;
+db = &lt;tests.test_github_app_router._FakeDB object at 0xfcf12e8d72d0&gt;
+
+    async def _set_status(task_id: str, **fields):
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            # Iter 212m-12 — auto-translate failure errors into a
+            # non-technical Hinglish explanation with concrete steps so
+            # founders aren't staring at raw stack traces. We only run
+            # the translator when the new status is `failed` AND a
+            # raw error string is being set.
+            if fields.get("status") == "failed" and fields.get("error"):
+                # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+                # breakdown of WHY. Gate-rejected failures (hallucination/
+                # syntax/design-lint checks) return an error STRING with no
+                # exception at all, so they never get an `error_code` from
+                # the exception-classifier call sites (worker_git.py /
+                # worker_api.py's `except Exception` blocks). Fill the gap
+                # here, at the one shared write choke point, so EVERY
+                # failure gets tagged — never overwrite an `error_code` a
+                # caller already set (the exception-classifier path is more
+                # precise than this best-effort text match).
+                if not fields.get("error_code"):
+                    from services.failure_taxonomy import classify_failure_reason_from_text
+                    fields["error_code"] = classify_failure_reason_from_text(fields["error"])
+                try:
+                    # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
+                    # in AUREM's own calling code, e.g. a missing-argument
+                    # TypeError) must NEVER go through the LLM rewrite below.
+                    # The raw text often contains words that happen to look
+                    # like user-data field names (e.g. "author_email",
+                    # "author_name"), and the LLM has been observed
+                    # confidently inventing "update your profile" guidance
+                    # from that — blaming the user for AUREM's own bug. Use
+                    # the already-correct, human-reviewed catalog message
+                    # instead, same one loop_engine.py's _fail_ship() uses.
+                    if fields.get("error_code") == "INTERNAL_CALL_ERROR":
+                        from core.errors import translate_error, ErrorCode
+                        catalog = translate_error(ErrorCode.INTERNAL_CALL_ERROR)
+                        fields["error_plain"]      = catalog["what_happened"]
+                        fields["error_steps"]      = catalog["what_to_try"]
+                        fields["error_suggestion"] = ""
+                        fields["error_source"]     = "internal_call_error_catalog"
+                    else:
+                        from services.error_translator import translate
+                        friendly = await translate(fields["error"])
+                        fields["error_plain"]      = friendly.get("plain") or ""
+                        fields["error_steps"]      = friendly.get("steps") or []
+                        fields["error_suggestion"] = friendly.get("suggestion") or ""
+                        fields["error_source"]     = friendly.get("source") or "unknown"
+                except Exception as _e:                  # noqa: BLE001
+                    # Translator must never block the failure write —
+                    # fall back to leaving only `error` populated.
+                    logger.warning("error_translator wedged: %r", _e)
+            # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+            # write (done/failed), roll up this task's real LLM spend from
+            # the unified `real_llm_usage` ledger (Part A) straight onto the
+            # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+            # /admin/token-pnl and the user's own tokens-used total agree
+            # with the SAME source everywhere), `llm_mode` (the mode(s) this
+            # task actually ran — fixes the empty "mode distribution" the
+            # founder reported), and — for failures only, and only when no
+            # human-readable reason was set above — a real `error_reason`
+            # pulled from the LAST failed call this task made, so failures
+            # stop showing "unknown".
+            if fields.get("status") in ("done", "failed"):
+                try:
+                    await _rollup_task_llm_usage(db, task_id, fields)
+                except Exception as _e:                  # noqa: BLE001
+                    logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                    task_id, _e)
+&gt;           await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:286: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_regression_iter2026_10c_approve_fix_ship_branch.TestCommitLandsOnNewBranchNotMain object at 0xfcf12feedc90&gt;
+fake_db = &lt;test_regression_iter2026_10c_approve_fix_ship_branch._FakeDB object at 0xfcf13c5cf610&gt;
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_push_targets_ship_branch_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0xfcf12c9aa310&gt;
+
+    @pytest.mark.asyncio
+    async def test_push_targets_ship_branch_not_base_branch(self, fake_db, tmp_path, monkeypatch):
+        monkeypatch.setattr(router_mod, "WORKSPACE", tmp_path)
+        task_id = "shipbr_ok"
+        repo_path = tmp_path / task_id / "repo"
+        await _seed(fake_db, task_id)
+        sh_calls: list = []
+    
+        with patch.object(router_mod, "_sh", side_effect=_fake_sh_factory(repo_path, sh_calls)), \
+             patch("routers.cto_projects.worker_git._run_hallucination_gate", _passthrough_hallucination_gate), \
+             patch("routers.cto_projects.worker_git._run_syntax_gate", _passthrough_syntax_gate), \
+             patch("routers.cto_projects.worker_git._run_lint_gate", _passthrough_lint_gate), \
+             patch("services.vanguard_verify_agent.verify_patch",
+                   AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+             patch("services.loop_safety.create_or_reuse_branch",
+                   AsyncMock(return_value=(True, None))) as branch_mock, \
+             patch("services.loop_safety.open_or_reuse_pr",
+                   AsyncMock(return_value={"ok": True, "pr_url": "https://github.com/acme/widgets/pull/1",
+                                            "pr_number": 1, "reused": False, "error": None})) as pr_mock:
+&gt;           await router_mod._run_task_with_git(
+                task_id, PROJ, "add a helper function", [], "",
+                "ghp_faketoken_shipbr1", resume_edits=RESUME_EDITS,
+            )
+
+tests/test_regression_iter2026_10c_approve_fix_ship_branch.py:179: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+routers/cto_projects/worker_git.py:753: in _run_task_with_git
+    await _pkg._log(task_id, f"❌ {_safe_msg} (ref: {_ref_id})", "error")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipbr_ok'
+step = '❌ An internal error occurred. Please try again. (ref: ORA-97e3d3)'
+status = 'error'
+
+    async def _log(task_id: str, step: str, status: str = "info"):
+        from cto_services.db import get_db
+        db = get_db()
+        # Iter 168 — persist phase bucket alongside the raw step text so
+        # the LiveTaskPopup can render phase chips from polled steps[].
+        phase = _classify_phase(step)
+        if db is not None:
+            doc = {"step": step, "status": status, "ts": time.time()}
+            if phase:
+                doc["kind"] = phase
+&gt;           await db.cto_tasks.update_one(
+                {"task_id": task_id},
+                {"$push": {"steps": doc}},
+            )
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:205: AttributeError</failure></testcase><testcase classname="tests.test_regression_iter2026_10c_approve_fix_ship_branch.TestBranchCreationFailureBlocksPush" name="test_no_push_when_branch_creation_fails" time="0.017"><failure message="AttributeError: '_FakeDB' object has no attribute 'cto_tasks'">task_id = 'shipbr_branchfail'
+proj = {'branch': 'main', 'github_owner': 'acme', 'github_repo': 'widgets', 'installation_id': '111', ...}
+task = 'add a helper function', files = [], context = ''
+user_token = 'ghp_faketoken_shipbr2', maxx_mode = False
+resume_edits = {'edits': {'feature.py': 'def add(a, b):\n    return a + b\n'}, 'summary': 'add helper'}
+
+    async def _run_task_with_git(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
+                                 resume_edits: Optional[dict] = None):
+    
+        def _scrub(s: str) -&gt; str:
+            # Defence-in-depth: clone URLs, stderr, and Python tracebacks can
+            # all leak the PAT. Scrub every error string before it lands in
+            # Mongo or the user's task feed.
+            if not s:
+                return s
+            return s.replace(user_token or "", "***PAT***") if user_token else s
+    
+        ws = _pkg.WORKSPACE / task_id
+        ws.mkdir(parents=True, exist_ok=True)
+        repo_path = ws / "repo"
+        owner, repo, branch = proj["github_owner"], proj["github_repo"], proj.get("branch", "main")
+        # 2026-08-24 fix — see matching fix in _run_rollback_with_git above:
+        # GitHub App installation tokens are the HTTPS PASSWORD (username
+        # "x-access-token"), not a username-only PAT-style embed.
+        clone_url = (f"https://x-access-token:{user_token}@github.com/{owner}/{repo}.git"
+                     if user_token else f"https://github.com/{owner}/{repo}.git")
+    
+        try:
+            # 1) clone
+&gt;           await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+
+routers/cto_projects/worker_git.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipbr_branchfail'
+fields = {'started_at': 1794172834.085333, 'status': 'pulling'}
+get_db = &lt;function TestWebhookInstallationDeletedIdempotent.test_deleted_webhook_twice_does_not_crash.&lt;locals&gt;.&lt;lambda&gt; at 0xfcf12c7d1c60&gt;
+db = &lt;tests.test_github_app_router._FakeDB object at 0xfcf12e8d72d0&gt;
+
+    async def _set_status(task_id: str, **fields):
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            # Iter 212m-12 — auto-translate failure errors into a
+            # non-technical Hinglish explanation with concrete steps so
+            # founders aren't staring at raw stack traces. We only run
+            # the translator when the new status is `failed` AND a
+            # raw error string is being set.
+            if fields.get("status") == "failed" and fields.get("error"):
+                # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+                # breakdown of WHY. Gate-rejected failures (hallucination/
+                # syntax/design-lint checks) return an error STRING with no
+                # exception at all, so they never get an `error_code` from
+                # the exception-classifier call sites (worker_git.py /
+                # worker_api.py's `except Exception` blocks). Fill the gap
+                # here, at the one shared write choke point, so EVERY
+                # failure gets tagged — never overwrite an `error_code` a
+                # caller already set (the exception-classifier path is more
+                # precise than this best-effort text match).
+                if not fields.get("error_code"):
+                    from services.failure_taxonomy import classify_failure_reason_from_text
+                    fields["error_code"] = classify_failure_reason_from_text(fields["error"])
+                try:
+                    # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
+                    # in AUREM's own calling code, e.g. a missing-argument
+                    # TypeError) must NEVER go through the LLM rewrite below.
+                    # The raw text often contains words that happen to look
+                    # like user-data field names (e.g. "author_email",
+                    # "author_name"), and the LLM has been observed
+                    # confidently inventing "update your profile" guidance
+                    # from that — blaming the user for AUREM's own bug. Use
+                    # the already-correct, human-reviewed catalog message
+                    # instead, same one loop_engine.py's _fail_ship() uses.
+                    if fields.get("error_code") == "INTERNAL_CALL_ERROR":
+                        from core.errors import translate_error, ErrorCode
+                        catalog = translate_error(ErrorCode.INTERNAL_CALL_ERROR)
+                        fields["error_plain"]      = catalog["what_happened"]
+                        fields["error_steps"]      = catalog["what_to_try"]
+                        fields["error_suggestion"] = ""
+                        fields["error_source"]     = "internal_call_error_catalog"
+                    else:
+                        from services.error_translator import translate
+                        friendly = await translate(fields["error"])
+                        fields["error_plain"]      = friendly.get("plain") or ""
+                        fields["error_steps"]      = friendly.get("steps") or []
+                        fields["error_suggestion"] = friendly.get("suggestion") or ""
+                        fields["error_source"]     = friendly.get("source") or "unknown"
+                except Exception as _e:                  # noqa: BLE001
+                    # Translator must never block the failure write —
+                    # fall back to leaving only `error` populated.
+                    logger.warning("error_translator wedged: %r", _e)
+            # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+            # write (done/failed), roll up this task's real LLM spend from
+            # the unified `real_llm_usage` ledger (Part A) straight onto the
+            # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+            # /admin/token-pnl and the user's own tokens-used total agree
+            # with the SAME source everywhere), `llm_mode` (the mode(s) this
+            # task actually ran — fixes the empty "mode distribution" the
+            # founder reported), and — for failures only, and only when no
+            # human-readable reason was set above — a real `error_reason`
+            # pulled from the LAST failed call this task made, so failures
+            # stop showing "unknown".
+            if fields.get("status") in ("done", "failed"):
+                try:
+                    await _rollup_task_llm_usage(db, task_id, fields)
+                except Exception as _e:                  # noqa: BLE001
+                    logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                    task_id, _e)
+&gt;           await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:286: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_regression_iter2026_10c_approve_fix_ship_branch.TestBranchCreationFailureBlocksPush object at 0xfcf12e83f390&gt;
+fake_db = &lt;test_regression_iter2026_10c_approve_fix_ship_branch._FakeDB object at 0xfcf12d59d350&gt;
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_no_push_when_branch_creat0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0xfcf12c1b0bd0&gt;
+
+    @pytest.mark.asyncio
+    async def test_no_push_when_branch_creation_fails(self, fake_db, tmp_path, monkeypatch):
+        monkeypatch.setattr(router_mod, "WORKSPACE", tmp_path)
+        task_id = "shipbr_branchfail"
+        repo_path = tmp_path / task_id / "repo"
+        await _seed(fake_db, task_id)
+        sh_calls: list = []
+    
+        with patch.object(router_mod, "_sh", side_effect=_fake_sh_factory(repo_path, sh_calls)), \
+             patch("routers.cto_projects.worker_git._run_hallucination_gate", _passthrough_hallucination_gate), \
+             patch("routers.cto_projects.worker_git._run_syntax_gate", _passthrough_syntax_gate), \
+             patch("routers.cto_projects.worker_git._run_lint_gate", _passthrough_lint_gate), \
+             patch("services.vanguard_verify_agent.verify_patch",
+                   AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+             patch("services.loop_safety.create_or_reuse_branch",
+                   AsyncMock(return_value=(False, "create_branch_status_403"))), \
+             patch("services.loop_safety.open_or_reuse_pr", AsyncMock()) as pr_mock:
+&gt;           await router_mod._run_task_with_git(
+                task_id, PROJ, "add a helper function", [], "",
+                "ghp_faketoken_shipbr2", resume_edits=RESUME_EDITS,
+            )
+
+tests/test_regression_iter2026_10c_approve_fix_ship_branch.py:227: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+routers/cto_projects/worker_git.py:753: in _run_task_with_git
+    await _pkg._log(task_id, f"❌ {_safe_msg} (ref: {_ref_id})", "error")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipbr_branchfail'
+step = '❌ An internal error occurred. Please try again. (ref: ORA-46cdcf)'
+status = 'error'
+
+    async def _log(task_id: str, step: str, status: str = "info"):
+        from cto_services.db import get_db
+        db = get_db()
+        # Iter 168 — persist phase bucket alongside the raw step text so
+        # the LiveTaskPopup can render phase chips from polled steps[].
+        phase = _classify_phase(step)
+        if db is not None:
+            doc = {"step": step, "status": status, "ts": time.time()}
+            if phase:
+                doc["kind"] = phase
+&gt;           await db.cto_tasks.update_one(
+                {"task_id": task_id},
+                {"$push": {"steps": doc}},
+            )
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:205: AttributeError</failure></testcase><testcase classname="tests.test_regression_iter2026_10c_approve_fix_ship_branch.TestBehaviorIndependentOfShipViaPrFlag" name="test_flag_is_never_consulted_by_this_worker" time="0.016"><failure message="AttributeError: '_FakeDB' object has no attribute 'cto_tasks'">task_id = 'shipbr_flagcheck'
+proj = {'branch': 'main', 'github_owner': 'acme', 'github_repo': 'widgets', 'installation_id': '111', ...}
+task = 'add a helper function', files = [], context = ''
+user_token = 'ghp_faketoken_shipbr3', maxx_mode = False
+resume_edits = {'edits': {'feature.py': 'def add(a, b):\n    return a + b\n'}, 'summary': 'add helper'}
+
+    async def _run_task_with_git(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
+                                 resume_edits: Optional[dict] = None):
+    
+        def _scrub(s: str) -&gt; str:
+            # Defence-in-depth: clone URLs, stderr, and Python tracebacks can
+            # all leak the PAT. Scrub every error string before it lands in
+            # Mongo or the user's task feed.
+            if not s:
+                return s
+            return s.replace(user_token or "", "***PAT***") if user_token else s
+    
+        ws = _pkg.WORKSPACE / task_id
+        ws.mkdir(parents=True, exist_ok=True)
+        repo_path = ws / "repo"
+        owner, repo, branch = proj["github_owner"], proj["github_repo"], proj.get("branch", "main")
+        # 2026-08-24 fix — see matching fix in _run_rollback_with_git above:
+        # GitHub App installation tokens are the HTTPS PASSWORD (username
+        # "x-access-token"), not a username-only PAT-style embed.
+        clone_url = (f"https://x-access-token:{user_token}@github.com/{owner}/{repo}.git"
+                     if user_token else f"https://github.com/{owner}/{repo}.git")
+    
+        try:
+            # 1) clone
+&gt;           await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+
+routers/cto_projects/worker_git.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipbr_flagcheck'
+fields = {'started_at': 1794172834.1321607, 'status': 'pulling'}
+get_db = &lt;function TestWebhookInstallationDeletedIdempotent.test_deleted_webhook_twice_does_not_crash.&lt;locals&gt;.&lt;lambda&gt; at 0xfcf12c7d1c60&gt;
+db = &lt;tests.test_github_app_router._FakeDB object at 0xfcf12e8d72d0&gt;
+
+    async def _set_status(task_id: str, **fields):
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            # Iter 212m-12 — auto-translate failure errors into a
+            # non-technical Hinglish explanation with concrete steps so
+            # founders aren't staring at raw stack traces. We only run
+            # the translator when the new status is `failed` AND a
+            # raw error string is being set.
+            if fields.get("status") == "failed" and fields.get("error"):
+                # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+                # breakdown of WHY. Gate-rejected failures (hallucination/
+                # syntax/design-lint checks) return an error STRING with no
+                # exception at all, so they never get an `error_code` from
+                # the exception-classifier call sites (worker_git.py /
+                # worker_api.py's `except Exception` blocks). Fill the gap
+                # here, at the one shared write choke point, so EVERY
+                # failure gets tagged — never overwrite an `error_code` a
+                # caller already set (the exception-classifier path is more
+                # precise than this best-effort text match).
+                if not fields.get("error_code"):
+                    from services.failure_taxonomy import classify_failure_reason_from_text
+                    fields["error_code"] = classify_failure_reason_from_text(fields["error"])
+                try:
+                    # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
+                    # in AUREM's own calling code, e.g. a missing-argument
+                    # TypeError) must NEVER go through the LLM rewrite below.
+                    # The raw text often contains words that happen to look
+                    # like user-data field names (e.g. "author_email",
+                    # "author_name"), and the LLM has been observed
+                    # confidently inventing "update your profile" guidance
+                    # from that — blaming the user for AUREM's own bug. Use
+                    # the already-correct, human-reviewed catalog message
+                    # instead, same one loop_engine.py's _fail_ship() uses.
+                    if fields.get("error_code") == "INTERNAL_CALL_ERROR":
+                        from core.errors import translate_error, ErrorCode
+                        catalog = translate_error(ErrorCode.INTERNAL_CALL_ERROR)
+                        fields["error_plain"]      = catalog["what_happened"]
+                        fields["error_steps"]      = catalog["what_to_try"]
+                        fields["error_suggestion"] = ""
+                        fields["error_source"]     = "internal_call_error_catalog"
+                    else:
+                        from services.error_translator import translate
+                        friendly = await translate(fields["error"])
+                        fields["error_plain"]      = friendly.get("plain") or ""
+                        fields["error_steps"]      = friendly.get("steps") or []
+                        fields["error_suggestion"] = friendly.get("suggestion") or ""
+                        fields["error_source"]     = friendly.get("source") or "unknown"
+                except Exception as _e:                  # noqa: BLE001
+                    # Translator must never block the failure write —
+                    # fall back to leaving only `error` populated.
+                    logger.warning("error_translator wedged: %r", _e)
+            # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+            # write (done/failed), roll up this task's real LLM spend from
+            # the unified `real_llm_usage` ledger (Part A) straight onto the
+            # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+            # /admin/token-pnl and the user's own tokens-used total agree
+            # with the SAME source everywhere), `llm_mode` (the mode(s) this
+            # task actually ran — fixes the empty "mode distribution" the
+            # founder reported), and — for failures only, and only when no
+            # human-readable reason was set above — a real `error_reason`
+            # pulled from the LAST failed call this task made, so failures
+            # stop showing "unknown".
+            if fields.get("status") in ("done", "failed"):
+                try:
+                    await _rollup_task_llm_usage(db, task_id, fields)
+                except Exception as _e:                  # noqa: BLE001
+                    logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                    task_id, _e)
+&gt;           await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:286: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_regression_iter2026_10c_approve_fix_ship_branch.TestBehaviorIndependentOfShipViaPrFlag object at 0xfcf12e83ffd0&gt;
+fake_db = &lt;test_regression_iter2026_10c_approve_fix_ship_branch._FakeDB object at 0xfcf12c1d0250&gt;
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_flag_is_never_consulted_b0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0xfcf13c39fe90&gt;
+
+    @pytest.mark.asyncio
+    async def test_flag_is_never_consulted_by_this_worker(self, fake_db, tmp_path, monkeypatch):
+        monkeypatch.setattr(router_mod, "WORKSPACE", tmp_path)
+        await _seed(fake_db, "shipbr_flagcheck")
+    
+        async def _run_once(task_id):
+            repo_path = tmp_path / task_id / "repo"
+            sh_calls: list = []
+            with patch.object(router_mod, "_sh", side_effect=_fake_sh_factory(repo_path, sh_calls)), \
+                 patch("routers.cto_projects.worker_git._run_hallucination_gate", _passthrough_hallucination_gate), \
+                 patch("routers.cto_projects.worker_git._run_syntax_gate", _passthrough_syntax_gate), \
+                 patch("routers.cto_projects.worker_git._run_lint_gate", _passthrough_lint_gate), \
+                 patch("services.vanguard_verify_agent.verify_patch",
+                       AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+                 patch("services.loop_safety.create_or_reuse_branch",
+                       AsyncMock(return_value=(True, None))), \
+                 patch("services.loop_safety.open_or_reuse_pr",
+                       AsyncMock(return_value={"ok": True, "pr_url": "https://github.com/acme/widgets/pull/9",
+                                                "pr_number": 9, "reused": False, "error": None})), \
+                 patch("services.feature_flags.is_enabled", AsyncMock(return_value=True)) as flag_mock:
+                await router_mod._run_task_with_git(
+                    task_id, PROJ, "add a helper function", [], "",
+                    "ghp_faketoken_shipbr3", resume_edits=RESUME_EDITS,
+                )
+            return flag_mock
+    
+&gt;       flag_mock_on = await _run_once("shipbr_flagcheck")
+
+tests/test_regression_iter2026_10c_approve_fix_ship_branch.py:279: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_regression_iter2026_10c_approve_fix_ship_branch.py:273: in _run_once
+    await router_mod._run_task_with_git(
+routers/cto_projects/worker_git.py:753: in _run_task_with_git
+    await _pkg._log(task_id, f"❌ {_safe_msg} (ref: {_ref_id})", "error")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipbr_flagcheck'
+step = '❌ An internal error occurred. Please try again. (ref: ORA-756a72)'
+status = 'error'
+
+    async def _log(task_id: str, step: str, status: str = "info"):
+        from cto_services.db import get_db
+        db = get_db()
+        # Iter 168 — persist phase bucket alongside the raw step text so
+        # the LiveTaskPopup can render phase chips from polled steps[].
+        phase = _classify_phase(step)
+        if db is not None:
+            doc = {"step": step, "status": status, "ts": time.time()}
+            if phase:
+                doc["kind"] = phase
+&gt;           await db.cto_tasks.update_one(
+                {"task_id": task_id},
+                {"$push": {"steps": doc}},
+            )
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:205: AttributeError</failure></testcase><testcase classname="tests.test_regression_iter2026_10c_approve_fix_ship_branch.TestBehaviorIndependentOfShipViaPrFlag" name="test_worker_git_source_has_no_ship_via_pr_reference" time="0.011" /><testcase classname="tests.test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestCommitLandsOnNewBranchNotMain" name="test_commit_and_verify_target_ship_branch_not_base_branch" time="0.020"><failure message="AttributeError: '_FakeDB' object has no attribute 'cto_tasks'">task_id = 'shipapi_ok'
+proj = {'branch': 'main', 'github_owner': 'acme', 'github_repo': 'widgets', 'installation_id': '111', ...}
+task = 'add a comment to README.md', files = ['README.md'], context = ''
+user_token = 'ghp_faketoken_shipapi1', maxx_mode = False
+resume_edits = {'edits': {'README.md': '# widgets\n\nOriginal content.\n\nA test comment.\n'}, 'summary': 'add a test comment'}
+
+    async def _run_task_via_api(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
+                                resume_edits: Optional[dict] = None):
+        """API-only worker — no `git` binary needed. Reads target files from
+        GitHub, asks AUREM to generate edits, then commits everything as ONE
+        atomic commit via the Git Data API."""
+        owner = proj["github_owner"]
+        repo = proj["github_repo"]
+        branch = proj.get("branch", "main")
+        # H3 hardening (2026-08-30, overnight-loop-2 P0) — pin {owner, repo,
+        # branch, installation_id} the moment this worker starts (this
+        # function runs the whole task — LLM generation + edit application
+        # — before it ever writes to GitHub; a project's binding could
+        # theoretically change underneath it during that window). Re-
+        # asserted right before the real commit below.
+        _pin_owner, _pin_repo, _pin_branch = owner, repo, branch
+        _pin_installation_id = proj.get("installation_id")
+        _pin_project_id = proj.get("project_id")
+        _pin_user_id = proj.get("user_id")
+        if not user_token:
+            await _pkg._set_status(task_id, status="failed",
+                              error="No PAT on project — open Edit and add one",
+                              completed_at=time.time())
+            return
+    
+        # Resolve the project owner's current tier ONCE — drives every
+        # feature gate downstream (parallel agents, priority queue, etc.).
+        user_tier = "free"
+        try:
+            _db_for_tier = _pkg.get_db()
+            if _db_for_tier is not None:
+                _u = await _db_for_tier.dev_users.find_one(
+                    {"user_id": proj.get("user_id")}, {"tier": 1},
+                )
+                if _u and _u.get("tier"):
+                    user_tier = _u["tier"]
+        except Exception:
+            pass
+    
+        try:
+&gt;           await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+
+routers/cto_projects/worker_api.py:260: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipapi_ok'
+fields = {'started_at': 1794172834.263824, 'status': 'pulling'}
+get_db = &lt;function TestWebhookInstallationDeletedIdempotent.test_deleted_webhook_twice_does_not_crash.&lt;locals&gt;.&lt;lambda&gt; at 0xfcf12c7d1c60&gt;
+db = &lt;tests.test_github_app_router._FakeDB object at 0xfcf12e8d72d0&gt;
+
+    async def _set_status(task_id: str, **fields):
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            # Iter 212m-12 — auto-translate failure errors into a
+            # non-technical Hinglish explanation with concrete steps so
+            # founders aren't staring at raw stack traces. We only run
+            # the translator when the new status is `failed` AND a
+            # raw error string is being set.
+            if fields.get("status") == "failed" and fields.get("error"):
+                # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+                # breakdown of WHY. Gate-rejected failures (hallucination/
+                # syntax/design-lint checks) return an error STRING with no
+                # exception at all, so they never get an `error_code` from
+                # the exception-classifier call sites (worker_git.py /
+                # worker_api.py's `except Exception` blocks). Fill the gap
+                # here, at the one shared write choke point, so EVERY
+                # failure gets tagged — never overwrite an `error_code` a
+                # caller already set (the exception-classifier path is more
+                # precise than this best-effort text match).
+                if not fields.get("error_code"):
+                    from services.failure_taxonomy import classify_failure_reason_from_text
+                    fields["error_code"] = classify_failure_reason_from_text(fields["error"])
+                try:
+                    # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
+                    # in AUREM's own calling code, e.g. a missing-argument
+                    # TypeError) must NEVER go through the LLM rewrite below.
+                    # The raw text often contains words that happen to look
+                    # like user-data field names (e.g. "author_email",
+                    # "author_name"), and the LLM has been observed
+                    # confidently inventing "update your profile" guidance
+                    # from that — blaming the user for AUREM's own bug. Use
+                    # the already-correct, human-reviewed catalog message
+                    # instead, same one loop_engine.py's _fail_ship() uses.
+                    if fields.get("error_code") == "INTERNAL_CALL_ERROR":
+                        from core.errors import translate_error, ErrorCode
+                        catalog = translate_error(ErrorCode.INTERNAL_CALL_ERROR)
+                        fields["error_plain"]      = catalog["what_happened"]
+                        fields["error_steps"]      = catalog["what_to_try"]
+                        fields["error_suggestion"] = ""
+                        fields["error_source"]     = "internal_call_error_catalog"
+                    else:
+                        from services.error_translator import translate
+                        friendly = await translate(fields["error"])
+                        fields["error_plain"]      = friendly.get("plain") or ""
+                        fields["error_steps"]      = friendly.get("steps") or []
+                        fields["error_suggestion"] = friendly.get("suggestion") or ""
+                        fields["error_source"]     = friendly.get("source") or "unknown"
+                except Exception as _e:                  # noqa: BLE001
+                    # Translator must never block the failure write —
+                    # fall back to leaving only `error` populated.
+                    logger.warning("error_translator wedged: %r", _e)
+            # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+            # write (done/failed), roll up this task's real LLM spend from
+            # the unified `real_llm_usage` ledger (Part A) straight onto the
+            # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+            # /admin/token-pnl and the user's own tokens-used total agree
+            # with the SAME source everywhere), `llm_mode` (the mode(s) this
+            # task actually ran — fixes the empty "mode distribution" the
+            # founder reported), and — for failures only, and only when no
+            # human-readable reason was set above — a real `error_reason`
+            # pulled from the LAST failed call this task made, so failures
+            # stop showing "unknown".
+            if fields.get("status") in ("done", "failed"):
+                try:
+                    await _rollup_task_llm_usage(db, task_id, fields)
+                except Exception as _e:                  # noqa: BLE001
+                    logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                    task_id, _e)
+&gt;           await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:286: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestCommitLandsOnNewBranchNotMain object at 0xfcf12e84b150&gt;
+fake_db = &lt;test_regression_iter2026_10d_approve_fix_ship_branch_api_path._FakeDB object at 0xfcf12c155d10&gt;
+
+    @pytest.mark.asyncio
+    async def test_commit_and_verify_target_ship_branch_not_base_branch(self, fake_db):
+        task_id = "shipapi_ok"
+        await _seed(fake_db, task_id)
+    
+        with patch.object(router_mod, "gh_api_fetch_file", AsyncMock(side_effect=_fake_fetch)), \
+             patch.object(router_mod, "gh_api_commit", AsyncMock(side_effect=_fake_commit)) as commit_mock, \
+             patch("services.git_identity.resolve_git_identity",
+                   AsyncMock(return_value=("Jane Dev", "jane@example.com"))), \
+             patch("services.vanguard_verify_agent.verify_patch",
+                   AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+             patch("services.loop_safety.create_or_reuse_branch",
+                   AsyncMock(return_value=(True, None))) as branch_mock, \
+             patch("services.loop_safety.open_or_reuse_pr",
+                   AsyncMock(return_value={"ok": True, "pr_url": "https://github.com/acme/widgets/pull/7",
+                                            "pr_number": 7, "reused": False, "error": None})) as pr_mock:
+&gt;           await router_mod._run_task_via_api(
+                task_id, PROJ, "add a comment to README.md",
+                ["README.md"], "", "ghp_faketoken_shipapi1", resume_edits=RESUME_EDITS,
+            )
+
+tests/test_regression_iter2026_10d_approve_fix_ship_branch_api_path.py:165: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+routers/cto_projects/worker_api.py:1571: in _run_task_via_api
+    await _pkg._log(task_id, f"❌ {_safe_msg} (ref: {_ref_id})", "error")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipapi_ok'
+step = '❌ An internal error occurred. Please try again. (ref: ORA-8ad013)'
+status = 'error'
+
+    async def _log(task_id: str, step: str, status: str = "info"):
+        from cto_services.db import get_db
+        db = get_db()
+        # Iter 168 — persist phase bucket alongside the raw step text so
+        # the LiveTaskPopup can render phase chips from polled steps[].
+        phase = _classify_phase(step)
+        if db is not None:
+            doc = {"step": step, "status": status, "ts": time.time()}
+            if phase:
+                doc["kind"] = phase
+&gt;           await db.cto_tasks.update_one(
+                {"task_id": task_id},
+                {"$push": {"steps": doc}},
+            )
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:205: AttributeError</failure></testcase><testcase classname="tests.test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestBranchCreationFailureBlocksCommit" name="test_no_commit_when_branch_creation_fails" time="0.016"><failure message="AttributeError: '_FakeDB' object has no attribute 'cto_tasks'">task_id = 'shipapi_branchfail'
+proj = {'branch': 'main', 'github_owner': 'acme', 'github_repo': 'widgets', 'installation_id': '111', ...}
+task = 'add a comment to README.md', files = ['README.md'], context = ''
+user_token = 'ghp_faketoken_shipapi2', maxx_mode = False
+resume_edits = {'edits': {'README.md': '# widgets\n\nOriginal content.\n\nA test comment.\n'}, 'summary': 'add a test comment'}
+
+    async def _run_task_via_api(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
+                                resume_edits: Optional[dict] = None):
+        """API-only worker — no `git` binary needed. Reads target files from
+        GitHub, asks AUREM to generate edits, then commits everything as ONE
+        atomic commit via the Git Data API."""
+        owner = proj["github_owner"]
+        repo = proj["github_repo"]
+        branch = proj.get("branch", "main")
+        # H3 hardening (2026-08-30, overnight-loop-2 P0) — pin {owner, repo,
+        # branch, installation_id} the moment this worker starts (this
+        # function runs the whole task — LLM generation + edit application
+        # — before it ever writes to GitHub; a project's binding could
+        # theoretically change underneath it during that window). Re-
+        # asserted right before the real commit below.
+        _pin_owner, _pin_repo, _pin_branch = owner, repo, branch
+        _pin_installation_id = proj.get("installation_id")
+        _pin_project_id = proj.get("project_id")
+        _pin_user_id = proj.get("user_id")
+        if not user_token:
+            await _pkg._set_status(task_id, status="failed",
+                              error="No PAT on project — open Edit and add one",
+                              completed_at=time.time())
+            return
+    
+        # Resolve the project owner's current tier ONCE — drives every
+        # feature gate downstream (parallel agents, priority queue, etc.).
+        user_tier = "free"
+        try:
+            _db_for_tier = _pkg.get_db()
+            if _db_for_tier is not None:
+                _u = await _db_for_tier.dev_users.find_one(
+                    {"user_id": proj.get("user_id")}, {"tier": 1},
+                )
+                if _u and _u.get("tier"):
+                    user_tier = _u["tier"]
+        except Exception:
+            pass
+    
+        try:
+&gt;           await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+
+routers/cto_projects/worker_api.py:260: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipapi_branchfail'
+fields = {'started_at': 1794172834.3227975, 'status': 'pulling'}
+get_db = &lt;function TestWebhookInstallationDeletedIdempotent.test_deleted_webhook_twice_does_not_crash.&lt;locals&gt;.&lt;lambda&gt; at 0xfcf12c7d1c60&gt;
+db = &lt;tests.test_github_app_router._FakeDB object at 0xfcf12e8d72d0&gt;
+
+    async def _set_status(task_id: str, **fields):
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            # Iter 212m-12 — auto-translate failure errors into a
+            # non-technical Hinglish explanation with concrete steps so
+            # founders aren't staring at raw stack traces. We only run
+            # the translator when the new status is `failed` AND a
+            # raw error string is being set.
+            if fields.get("status") == "failed" and fields.get("error"):
+                # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+                # breakdown of WHY. Gate-rejected failures (hallucination/
+                # syntax/design-lint checks) return an error STRING with no
+                # exception at all, so they never get an `error_code` from
+                # the exception-classifier call sites (worker_git.py /
+                # worker_api.py's `except Exception` blocks). Fill the gap
+                # here, at the one shared write choke point, so EVERY
+                # failure gets tagged — never overwrite an `error_code` a
+                # caller already set (the exception-classifier path is more
+                # precise than this best-effort text match).
+                if not fields.get("error_code"):
+                    from services.failure_taxonomy import classify_failure_reason_from_text
+                    fields["error_code"] = classify_failure_reason_from_text(fields["error"])
+                try:
+                    # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
+                    # in AUREM's own calling code, e.g. a missing-argument
+                    # TypeError) must NEVER go through the LLM rewrite below.
+                    # The raw text often contains words that happen to look
+                    # like user-data field names (e.g. "author_email",
+                    # "author_name"), and the LLM has been observed
+                    # confidently inventing "update your profile" guidance
+                    # from that — blaming the user for AUREM's own bug. Use
+                    # the already-correct, human-reviewed catalog message
+                    # instead, same one loop_engine.py's _fail_ship() uses.
+                    if fields.get("error_code") == "INTERNAL_CALL_ERROR":
+                        from core.errors import translate_error, ErrorCode
+                        catalog = translate_error(ErrorCode.INTERNAL_CALL_ERROR)
+                        fields["error_plain"]      = catalog["what_happened"]
+                        fields["error_steps"]      = catalog["what_to_try"]
+                        fields["error_suggestion"] = ""
+                        fields["error_source"]     = "internal_call_error_catalog"
+                    else:
+                        from services.error_translator import translate
+                        friendly = await translate(fields["error"])
+                        fields["error_plain"]      = friendly.get("plain") or ""
+                        fields["error_steps"]      = friendly.get("steps") or []
+                        fields["error_suggestion"] = friendly.get("suggestion") or ""
+                        fields["error_source"]     = friendly.get("source") or "unknown"
+                except Exception as _e:                  # noqa: BLE001
+                    # Translator must never block the failure write —
+                    # fall back to leaving only `error` populated.
+                    logger.warning("error_translator wedged: %r", _e)
+            # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+            # write (done/failed), roll up this task's real LLM spend from
+            # the unified `real_llm_usage` ledger (Part A) straight onto the
+            # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+            # /admin/token-pnl and the user's own tokens-used total agree
+            # with the SAME source everywhere), `llm_mode` (the mode(s) this
+            # task actually ran — fixes the empty "mode distribution" the
+            # founder reported), and — for failures only, and only when no
+            # human-readable reason was set above — a real `error_reason`
+            # pulled from the LAST failed call this task made, so failures
+            # stop showing "unknown".
+            if fields.get("status") in ("done", "failed"):
+                try:
+                    await _rollup_task_llm_usage(db, task_id, fields)
+                except Exception as _e:                  # noqa: BLE001
+                    logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                    task_id, _e)
+&gt;           await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:286: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestBranchCreationFailureBlocksCommit object at 0xfcf12e84b890&gt;
+fake_db = &lt;test_regression_iter2026_10d_approve_fix_ship_branch_api_path._FakeDB object at 0xfcf13c5c5250&gt;
+
+    @pytest.mark.asyncio
+    async def test_no_commit_when_branch_creation_fails(self, fake_db):
+        task_id = "shipapi_branchfail"
+        await _seed(fake_db, task_id)
+    
+        with patch.object(router_mod, "gh_api_fetch_file", AsyncMock(side_effect=_fake_fetch)), \
+             patch.object(router_mod, "gh_api_commit", AsyncMock(side_effect=_fake_commit)) as commit_mock, \
+             patch("services.git_identity.resolve_git_identity",
+                   AsyncMock(return_value=("Jane Dev", "jane@example.com"))), \
+             patch("services.vanguard_verify_agent.verify_patch",
+                   AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+             patch("services.loop_safety.create_or_reuse_branch",
+                   AsyncMock(return_value=(False, "create_branch_status_403"))), \
+             patch("services.loop_safety.open_or_reuse_pr", AsyncMock()) as pr_mock:
+&gt;           await router_mod._run_task_via_api(
+                task_id, PROJ, "add a comment to README.md",
+                ["README.md"], "", "ghp_faketoken_shipapi2", resume_edits=RESUME_EDITS,
+            )
+
+tests/test_regression_iter2026_10d_approve_fix_ship_branch_api_path.py:217: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+routers/cto_projects/worker_api.py:1571: in _run_task_via_api
+    await _pkg._log(task_id, f"❌ {_safe_msg} (ref: {_ref_id})", "error")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipapi_branchfail'
+step = '❌ An internal error occurred. Please try again. (ref: ORA-294725)'
+status = 'error'
+
+    async def _log(task_id: str, step: str, status: str = "info"):
+        from cto_services.db import get_db
+        db = get_db()
+        # Iter 168 — persist phase bucket alongside the raw step text so
+        # the LiveTaskPopup can render phase chips from polled steps[].
+        phase = _classify_phase(step)
+        if db is not None:
+            doc = {"step": step, "status": status, "ts": time.time()}
+            if phase:
+                doc["kind"] = phase
+&gt;           await db.cto_tasks.update_one(
+                {"task_id": task_id},
+                {"$push": {"steps": doc}},
+            )
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:205: AttributeError</failure></testcase><testcase classname="tests.test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestBehaviorIndependentOfShipViaPrFlag" name="test_flag_is_never_consulted_by_this_worker" time="0.015"><failure message="AttributeError: '_FakeDB' object has no attribute 'cto_tasks'">task_id = 'shipapi_flagcheck'
+proj = {'branch': 'main', 'github_owner': 'acme', 'github_repo': 'widgets', 'installation_id': '111', ...}
+task = 'add a comment to README.md', files = ['README.md'], context = ''
+user_token = 'ghp_faketoken_shipapi3', maxx_mode = False
+resume_edits = {'edits': {'README.md': '# widgets\n\nOriginal content.\n\nA test comment.\n'}, 'summary': 'add a test comment'}
+
+    async def _run_task_via_api(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
+                                resume_edits: Optional[dict] = None):
+        """API-only worker — no `git` binary needed. Reads target files from
+        GitHub, asks AUREM to generate edits, then commits everything as ONE
+        atomic commit via the Git Data API."""
+        owner = proj["github_owner"]
+        repo = proj["github_repo"]
+        branch = proj.get("branch", "main")
+        # H3 hardening (2026-08-30, overnight-loop-2 P0) — pin {owner, repo,
+        # branch, installation_id} the moment this worker starts (this
+        # function runs the whole task — LLM generation + edit application
+        # — before it ever writes to GitHub; a project's binding could
+        # theoretically change underneath it during that window). Re-
+        # asserted right before the real commit below.
+        _pin_owner, _pin_repo, _pin_branch = owner, repo, branch
+        _pin_installation_id = proj.get("installation_id")
+        _pin_project_id = proj.get("project_id")
+        _pin_user_id = proj.get("user_id")
+        if not user_token:
+            await _pkg._set_status(task_id, status="failed",
+                              error="No PAT on project — open Edit and add one",
+                              completed_at=time.time())
+            return
+    
+        # Resolve the project owner's current tier ONCE — drives every
+        # feature gate downstream (parallel agents, priority queue, etc.).
+        user_tier = "free"
+        try:
+            _db_for_tier = _pkg.get_db()
+            if _db_for_tier is not None:
+                _u = await _db_for_tier.dev_users.find_one(
+                    {"user_id": proj.get("user_id")}, {"tier": 1},
+                )
+                if _u and _u.get("tier"):
+                    user_tier = _u["tier"]
+        except Exception:
+            pass
+    
+        try:
+&gt;           await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+
+routers/cto_projects/worker_api.py:260: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipapi_flagcheck'
+fields = {'started_at': 1794172834.379394, 'status': 'pulling'}
+get_db = &lt;function TestWebhookInstallationDeletedIdempotent.test_deleted_webhook_twice_does_not_crash.&lt;locals&gt;.&lt;lambda&gt; at 0xfcf12c7d1c60&gt;
+db = &lt;tests.test_github_app_router._FakeDB object at 0xfcf12e8d72d0&gt;
+
+    async def _set_status(task_id: str, **fields):
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            # Iter 212m-12 — auto-translate failure errors into a
+            # non-technical Hinglish explanation with concrete steps so
+            # founders aren't staring at raw stack traces. We only run
+            # the translator when the new status is `failed` AND a
+            # raw error string is being set.
+            if fields.get("status") == "failed" and fields.get("error"):
+                # 2026-09-17 — Bug 8 fix: "33.9% task success rate" with no
+                # breakdown of WHY. Gate-rejected failures (hallucination/
+                # syntax/design-lint checks) return an error STRING with no
+                # exception at all, so they never get an `error_code` from
+                # the exception-classifier call sites (worker_git.py /
+                # worker_api.py's `except Exception` blocks). Fill the gap
+                # here, at the one shared write choke point, so EVERY
+                # failure gets tagged — never overwrite an `error_code` a
+                # caller already set (the exception-classifier path is more
+                # precise than this best-effort text match).
+                if not fields.get("error_code"):
+                    from services.failure_taxonomy import classify_failure_reason_from_text
+                    fields["error_code"] = classify_failure_reason_from_text(fields["error"])
+                try:
+                    # 2026-08-28 · P0 hotfix — an INTERNAL_CALL_ERROR (a bug
+                    # in AUREM's own calling code, e.g. a missing-argument
+                    # TypeError) must NEVER go through the LLM rewrite below.
+                    # The raw text often contains words that happen to look
+                    # like user-data field names (e.g. "author_email",
+                    # "author_name"), and the LLM has been observed
+                    # confidently inventing "update your profile" guidance
+                    # from that — blaming the user for AUREM's own bug. Use
+                    # the already-correct, human-reviewed catalog message
+                    # instead, same one loop_engine.py's _fail_ship() uses.
+                    if fields.get("error_code") == "INTERNAL_CALL_ERROR":
+                        from core.errors import translate_error, ErrorCode
+                        catalog = translate_error(ErrorCode.INTERNAL_CALL_ERROR)
+                        fields["error_plain"]      = catalog["what_happened"]
+                        fields["error_steps"]      = catalog["what_to_try"]
+                        fields["error_suggestion"] = ""
+                        fields["error_source"]     = "internal_call_error_catalog"
+                    else:
+                        from services.error_translator import translate
+                        friendly = await translate(fields["error"])
+                        fields["error_plain"]      = friendly.get("plain") or ""
+                        fields["error_steps"]      = friendly.get("steps") or []
+                        fields["error_suggestion"] = friendly.get("suggestion") or ""
+                        fields["error_source"]     = friendly.get("source") or "unknown"
+                except Exception as _e:                  # noqa: BLE001
+                    # Translator must never block the failure write —
+                    # fall back to leaving only `error` populated.
+                    logger.warning("error_translator wedged: %r", _e)
+            # 2026-09-27 MASTER TASK Part B #6/#7 — on every TERMINAL status
+            # write (done/failed), roll up this task's real LLM spend from
+            # the unified `real_llm_usage` ledger (Part A) straight onto the
+            # task document: `tokens_used`/`cost_usd` (so /admin/agent-tokens,
+            # /admin/token-pnl and the user's own tokens-used total agree
+            # with the SAME source everywhere), `llm_mode` (the mode(s) this
+            # task actually ran — fixes the empty "mode distribution" the
+            # founder reported), and — for failures only, and only when no
+            # human-readable reason was set above — a real `error_reason`
+            # pulled from the LAST failed call this task made, so failures
+            # stop showing "unknown".
+            if fields.get("status") in ("done", "failed"):
+                try:
+                    await _rollup_task_llm_usage(db, task_id, fields)
+                except Exception as _e:                  # noqa: BLE001
+                    logger.warning("[master-task Part B] llm usage rollup failed for task=%s: %r",
+                                    task_id, _e)
+&gt;           await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:286: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestBehaviorIndependentOfShipViaPrFlag object at 0xfcf12e854350&gt;
+fake_db = &lt;test_regression_iter2026_10d_approve_fix_ship_branch_api_path._FakeDB object at 0xfcf13c44bad0&gt;
+
+    @pytest.mark.asyncio
+    async def test_flag_is_never_consulted_by_this_worker(self, fake_db):
+        task_id = "shipapi_flagcheck"
+        await _seed(fake_db, task_id)
+    
+        with patch.object(router_mod, "gh_api_fetch_file", AsyncMock(side_effect=_fake_fetch)), \
+             patch.object(router_mod, "gh_api_commit", AsyncMock(side_effect=_fake_commit)), \
+             patch("services.git_identity.resolve_git_identity",
+                   AsyncMock(return_value=("Jane Dev", "jane@example.com"))), \
+             patch("services.vanguard_verify_agent.verify_patch",
+                   AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})), \
+             patch("services.loop_safety.create_or_reuse_branch",
+                   AsyncMock(return_value=(True, None))), \
+             patch("services.loop_safety.open_or_reuse_pr",
+                   AsyncMock(return_value={"ok": True, "pr_url": "https://github.com/acme/widgets/pull/8",
+                                            "pr_number": 8, "reused": False, "error": None})), \
+             patch("services.feature_flags.is_enabled", AsyncMock(return_value=True)) as flag_mock:
+&gt;           await router_mod._run_task_via_api(
+                task_id, PROJ, "add a comment to README.md",
+                ["README.md"], "", "ghp_faketoken_shipapi3", resume_edits=RESUME_EDITS,
+            )
+
+tests/test_regression_iter2026_10d_approve_fix_ship_branch_api_path.py:252: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+routers/cto_projects/worker_api.py:1571: in _run_task_via_api
+    await _pkg._log(task_id, f"❌ {_safe_msg} (ref: {_ref_id})", "error")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+task_id = 'shipapi_flagcheck'
+step = '❌ An internal error occurred. Please try again. (ref: ORA-bbd51d)'
+status = 'error'
+
+    async def _log(task_id: str, step: str, status: str = "info"):
+        from cto_services.db import get_db
+        db = get_db()
+        # Iter 168 — persist phase bucket alongside the raw step text so
+        # the LiveTaskPopup can render phase chips from polled steps[].
+        phase = _classify_phase(step)
+        if db is not None:
+            doc = {"step": step, "status": status, "ts": time.time()}
+            if phase:
+                doc["kind"] = phase
+&gt;           await db.cto_tasks.update_one(
+                {"task_id": task_id},
+                {"$push": {"steps": doc}},
+            )
+E           AttributeError: '_FakeDB' object has no attribute 'cto_tasks'
+
+services/cto_projects_helpers.py:205: AttributeError</failure></testcase><testcase classname="tests.test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestBehaviorIndependentOfShipViaPrFlag" name="test_worker_api_source_has_no_ship_via_pr_reference" time="0.011" /><testcase classname="tests.test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestDispatcherBranchPerFixOnBothWorkers" name="test_dispatches_to_api_worker_when_git_unavailable" time="0.014" /><testcase classname="tests.test_regression_iter2026_10d_approve_fix_ship_branch_api_path.TestDispatcherBranchPerFixOnBothWorkers" name="test_dispatches_to_git_worker_when_git_available" time="0.013" /><testcase classname="tests.test_regression_iter2026_61_part2c_b4_auth_me_flag.TestAuthMeProjectVersionsFlag" name="test_me_includes_project_versions_enabled_field" time="0.011" /><testcase classname="tests.test_regression_iter2026_61_part2c_b4_auth_me_flag.TestAuthMeProjectVersionsFlag" name="test_defaults_off_when_flag_disabled" time="0.010" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_no_auth_header_required" time="0.015" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_response_shape_is_exactly_one_boolean_field" time="0.015" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_tracks_is_enabled_true" time="0.016" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_tracks_is_enabled_false" time="0.016" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_no_flag_doc_fails_closed_not_errors" time="0.015" /><testcase classname="tests.test_regression_iter2026_65_harness_page_status_public" name="test_no_user_id_passed_to_is_enabled_anonymous_safe" time="0.016" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_tool_registered" time="0.012" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_used_on_complex" time="0.011" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_not_used_on_trivial" time="0.011" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_not_used_on_trivial_query_tier" time="0.012" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_cost_logged" time="0.012" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_cost_log_never_raises_on_db_failure" time="0.013" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_thinking_basic_call_shape" time="0.012" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_thinking_missing_thought_errors" time="0.011" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_thinking_revision_and_branch_tracked" time="0.012" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_thinking_is_local_only_no_network" time="0.011" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_sequential_thinking_thought_with_parens_still_parses" time="0.011" /><testcase classname="tests.test_sequential_thinking_s2_2026_09_07" name="test_multiple_known_tool_calls_with_parens_all_parse" time="0.011" /></testsuite></testsuites>

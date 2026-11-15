@@ -30,6 +30,7 @@ import PhoneNumberCard from "../components/PhoneNumberCard";
 import ShipWallOptInCard from "../components/ShipWallOptInCard";
 import TeamManagementPanel from "../components/TeamManagementPanel";
 import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
+import { useTokenMeter } from "../hooks/useTokenMeter";
 
 // 2026-08 · Round-2 PR (P0-4, founder ruling D-TRACK) — Personal
 // Track switching is hidden from new users. Component, the
@@ -53,6 +54,13 @@ export default function Settings() {
   const [usage, setUsage]   = useState(null);
   const [audit, setAudit]   = useState([]);
   const [billingMsg, setBillingMsg] = useState("");
+  // ITEM 8 (independent review) — same hook/data source as
+  // components/TokenMeter.jsx, so the "tokens remaining" tile here
+  // and the TokenMeter badge never disagree. Falls back to the
+  // legacy /usage/me `remaining` estimate (below) only while the
+  // server reports the real meter as not visible (today: mode "off",
+  // or no paid plan) — same condition TokenMeter itself hides on.
+  const { meter: tokenMeter } = useTokenMeter();
 
   const params = new URLSearchParams(location.search);
   const hasStripeSession = !!params.get("session_id");
@@ -302,9 +310,11 @@ export default function Settings() {
                   <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>
                     {usage?.is_unlimited || me?.is_unlimited
                       ? "∞"
-                      : (usage?.remaining != null
-                          ? Number(usage.remaining).toLocaleString()
-                          : "—")}
+                      : tokenMeter?.visible
+                        ? Number(tokenMeter.balance).toLocaleString()
+                        : (usage?.remaining != null
+                            ? Number(usage.remaining).toLocaleString()
+                            : "—")}
                   </div>
                 </div>
                 <div data-testid="key-balance-used" style={{
@@ -313,9 +323,11 @@ export default function Settings() {
                 }}>
                   <div className="label-mini" style={{ marginBottom: 6 }}>tokens used</div>
                   <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>
-                    {usage?.used != null
-                      ? Number(usage.used).toLocaleString()
-                      : "—"}
+                    {tokenMeter?.visible && tokenMeter.base != null && tokenMeter.balance != null
+                      ? Number(tokenMeter.base - tokenMeter.balance).toLocaleString()
+                      : (usage?.used != null
+                          ? Number(usage.used).toLocaleString()
+                          : "—")}
                   </div>
                 </div>
                 {!TOKEN_WORDING_ACTIVE && (

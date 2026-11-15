@@ -49,6 +49,10 @@ export function FixJobProvider({ children }) {
   const [activeId, setActiveId] = useState(null);  // currently-streaming finding
   const [terminal, setTerminal] = useState(null);
   const [error,    setError]    = useState(null);
+  // FIX_one_branch_for_all_fixes — every fix in this job lands on
+  // ONE shared branch/PR. Set from the "batch-info" SSE event; null
+  // for a legacy job (the drawer falls back to per-fix links).
+  const [batchInfo, setBatchInfo] = useState(null);
   // Restart UX.
   const [canRestart, setCanRestart] = useState(false);
   const [hydrated,   setHydrated]   = useState(false);
@@ -98,6 +102,7 @@ export function FixJobProvider({ children }) {
     setActiveId(null);
     setTerminal(null);
     setError(null);
+    setBatchInfo(null);
     setCanRestart(false);
     setHydrated(false);
     setDismissed(false);
@@ -187,6 +192,7 @@ export function FixJobProvider({ children }) {
       setActiveId(null);
       setTerminal(null);
       setError(null);
+      setBatchInfo(null);
       setCanRestart(false);
       setHydrated(false);
       setDismissed(false);
@@ -268,6 +274,7 @@ export function FixJobProvider({ children }) {
           window.dispatchEvent(new CustomEvent("aurem:finding-fixed", {
             detail: {
               finding_id: data.finding_id,
+              project_id: data.project_id,
               rule_id:    data.rule_id,
               commit_sha: data.commit_sha,
               html_url:   data.html_url,
@@ -294,6 +301,12 @@ export function FixJobProvider({ children }) {
       if (ph === "job-error") {
         setError(data.message || data.error || "Worker error");
         setCanRestart(data.can_restart !== false);
+      }
+      if (ph === "batch-info" && data.pr_url) {
+        setBatchInfo({
+          pr_url: data.pr_url, branch: data.branch,
+          batch_id: data.batch_id, fix_count: data.fix_count,
+        });
       }
       if (ph === "hydrated") {
         setHydrated(true);
@@ -435,6 +448,10 @@ export function FixJobProvider({ children }) {
     jobId, total,
     // derived state
     status, terminal, error, hydrated, canRestart,
+    // FIX_one_branch_for_all_fixes — one shared branch/PR link for
+    // the whole job; null on a legacy job (no batch-info event ever
+    // arrived), in which case consumers fall back to per-fix links.
+    batchInfo,
     completed, failed, remaining,
     allRows, completedRows, activeRow,
     // timing

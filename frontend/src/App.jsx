@@ -20,6 +20,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import useAutoClearConsole from "./lib/useAutoClearConsole";
 import { getToken } from "./lib/api";
+import { isLoopSubdomain } from "./lib/loopSubdomain"; // 2026-11-15 — loop.auremcto.com serves the harness page as its homepage
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import { useEffect, useRef, lazy, Suspense } from "react";
 import Toaster, { toast } from "./components/Toast";
@@ -39,7 +40,7 @@ import Landing from "./pages/Landing";
 // Iter 358 — bundle diet: dev/harness/admin-QA pages don't belong in
 // the first-paint entry chunk. Lazy-load them so the entry stays under
 // the 350KB code-splitting target (they render behind Suspense).
-const Both              = lazy(() => import("./pages/Both"));
+
 const ResetPassword     = lazy(() => import("./pages/ResetPassword"));
 const AcceptInvite      = lazy(() => import("./pages/AcceptInvite"));  // 2026-02 · Phase 1 team RBAC
 const TeamInviteAccept  = lazy(() => import("./pages/TeamInviteAccept"));  // Admin Team S3 (AT2)
@@ -54,6 +55,7 @@ const Verify            = lazy(() => import("./pages/Verify"));  // Track 3 (ite
 const Support           = lazy(() => import("./pages/Support"));  // 2026-02-12 — public token-verified support inbox
 const SupportThread     = lazy(() => import("./pages/SupportThread"));  // 2026-02-13 · Iter 388u — public HMAC-verified reply-thread view
 const WhyOra            = lazy(() => import("./pages/WhyOra"));
+const FaqPage           = lazy(() => import("./pages/FaqPage"));  // 2026-11-12 · AlsoAsked FAQ page (public)
 import { initTheme } from "./services/theme";
 
 // Iter 212m-52 — apply theme as early as possible (BEFORE React
@@ -72,6 +74,9 @@ const Tokens            = lazy(() => import("./pages/Tokens"));
 const Analytics         = lazy(() => import("./pages/Analytics"));
 const Projects          = lazy(() => import("./pages/Projects"));
 const FreeScanResults   = lazy(() => import("./pages/FreeScanResults"));
+const ProjectChanges    = lazy(() => import("./pages/ProjectChanges"));  // Part 2c B4 — Project Versions
+const HarnessPage       = lazy(() => import("./pages/HarnessPage"));  // Aurem Loop harness Phase B — public page, not PrivateRoute (handles signed-out itself)
+const DotPage           = lazy(() => import("./pages/DotPage"));  // ORA dot — public page, not PrivateRoute (handles signed-out itself)
 const Integrations      = lazy(() => import("./pages/Integrations")); // Iter 212m-174
 const Admin             = lazy(() => import("./pages/Admin"));
 // Feb 2026 · AdminOverview no longer imported here — /admin/overview
@@ -219,6 +224,15 @@ function SessionExpiredListener() {
 }
 
 export default function App() {
+  // 2026-11-15 — Nov 10 founder decision: the harness lives at
+  // loop.auremcto.com as its own homepage. On that host, "/" IS the
+  // harness page and "/harness" folds back to "/". On every other
+  // host (auremcto.com, localhost, Emergent preview) this is false
+  // and routing is byte-for-byte the old behaviour. The cross-domain
+  // redirect (auremcto.com/harness -> loop.auremcto.com) is STEP 2 —
+  // it ships only after the subdomain DNS resolves, never before,
+  // or /harness would point at a dead domain.
+  const isLoopHost = isLoopSubdomain();
   // Iter 101 — Capture `?ref=<uid>` on any landing, stash in localStorage
   // so Signup can attribute the referrer after account creation.
   // Also pings the public /referrals/track endpoint so the referrer
@@ -372,8 +386,17 @@ export default function App() {
             (semantic `<main>` was missing from the shell entirely). */}
         <main id="main-content" tabIndex={-1}>
         <Routes>
-          <Route path="/"                element={<Landing />} />
-          <Route path="/both"            element={<Both />} />
+          <Route path="/"                element={isLoopHost ? <HarnessPage /> : <Landing />} />  {/* 2026-11-15 — on loop.auremcto.com the harness page IS the homepage */}
+          {/* 2026-11-xx — /both retired: the Builder/Developer switcher
+              it hosted is replaced by the homepage chooser strip
+              (same harness_page flag, Landing.jsx). The real HTTP 301
+              lives in vite-plugins/aurem-prod-fixes.mjs's server
+              middleware (fires before React even loads, so curl/bots/
+              stale full-page bookmarks never see a blank SPA shell);
+              this client-side route is only a defensive fallback for
+              an in-app SPA transition that somehow lands here without
+              a full page load. */}
+          <Route path="/both"            element={<Navigate to="/" replace />} />
           <Route path="/dev/loop-live-feed" element={<LoopLiveFeedDemo />} />
           <Route path="/dev/shipped-row-harness" element={<ShippedRowHarness />} />
           {/* Iter 302 — Frontend QA Charter Layer 2 Batch 2 —
@@ -381,6 +404,7 @@ export default function App() {
               regression. See docs/visual_regression.md. */}
           <Route path="/dev/visual"         element={<VisualFixtures />} />
           <Route path="/why-ora"         element={<WhyOra />} />
+          <Route path="/faq"             element={<FaqPage />} />  {/* 2026-11-12 · AlsoAsked FAQ page (public) */}
           <Route path="/demo"            element={<Demo />} />
           <Route path="/login"           element={<Login />} />
           <Route path="/signup"          element={<Signup />} />
@@ -432,11 +456,16 @@ export default function App() {
           <Route path="/analytics"       element={<Navigate to="/dashboard" replace />} />
           <Route path="/projects"        element={<PrivateRoute><Projects /></PrivateRoute>} />
           <Route path="/projects/:projectId/free-scan" element={<PrivateRoute><FreeScanResults /></PrivateRoute>} />
+          <Route path="/projects/:projectId/changes"   element={<PrivateRoute><ProjectChanges /></PrivateRoute>} />  {/* Part 2c B4 — Project Versions */}
+          <Route path="/harness"                        element={<HarnessPage />} />  {/* Aurem Loop harness Phase B — public, handles signed-out state itself */}
+          <Route path="/dot"                           element={<DotPage />} />  {/* ORA dot — public, handles signed-out state itself */}
+          <Route path="/harness"                        element={isLoopHost ? <Navigate to="/" replace /> : <HarnessPage />} />  {/* Aurem Loop harness Phase B — public, handles signed-out state itself; on loop.auremcto.com /harness folds to the subdomain homepage */}
           <Route path="/admin"           element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/cockpit"   element={<AdminRoute><Admin initialTab="cockpit" /></AdminRoute>} />
           <Route path="/admin/dashboard" element={<AdminRoute><Admin initialTab="dash" /></AdminRoute>} />
           <Route path="/admin/users"       element={<AdminRoute><Admin initialTab="users" /></AdminRoute>} />
           <Route path="/admin/suggestions" element={<AdminRoute><Admin initialTab="suggestions" /></AdminRoute>} />
+          <Route path="/admin/dot-signups" element={<AdminRoute><Admin initialTab="dot_signups" /></AdminRoute>} />
           <Route path="/admin/self-bugs" element={<AdminRoute><Admin initialTab="self_bugs" /></AdminRoute>} />
           <Route path="/admin/overview"  element={<AdminRoute><Admin initialTab="overview" /></AdminRoute>} />
           {/* Feb 2026 · Sidebar Integrity fix — every in-shell sidebar

@@ -906,6 +906,14 @@ async def apply_security_fix(
     from services.finding_fix_applier import apply_finding_fix
     from services import ora_fix_learning as _ofl
     import time as _t
+    # ORA Brain Part 4, F2 — tag this fix attempt (reusing
+    # wallet_run_id, already minted above as this endpoint's own
+    # per-attempt identifier) so the LLM call inside apply_finding_fix
+    # stamps project_id + a task_id onto its brain_calls row.
+    from services.loop_token_ledger import tag_request_surface
+    tag_request_surface(
+        "security_scan", project_id=project_id, task_id=wallet_run_id,
+    )
     _t_start = _t.time()
     try:
         res = await apply_finding_fix(
@@ -915,8 +923,14 @@ async def apply_security_fix(
         logger.exception("apply_finding_fix raised")
         res = {"ok": False, "error": f"unhandled: {e}"}
     _dur_ms = int((_t.time() - _t_start) * 1000)
-    await finalize_hold(db, user_id=user_id, action="fix", run_id=wallet_run_id,
-                        ok=bool(res.get("ok")), reason=res.get("error") or "")
+    # FIX_one_branch_for_all_fixes, design item 12 — an idempotent
+    # re-run that found nothing new to commit is NOT charged.
+    await finalize_hold(
+        db, user_id=user_id, action="fix", run_id=wallet_run_id,
+        ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+           and not res.get("skipped_not_present"),
+        reason=res.get("error") or "",
+    )
 
     # Iter 212m-129 — Learning hook (single-finding security/vanguard fix).
     # Best-effort: never blocks or fails the user-visible response.
@@ -931,8 +945,25 @@ async def apply_security_fix(
     except Exception as _e:
         logger.debug("learning hook (security) soft-failed: %r", _e)
 
+    # ORA Brain Part 4, F2 — objective outcome signal. Same caveat as
+    # codebase_health.py: no independent verification step here, so
+    # only the objectively-knowable FAILURE signal is wired.
+    if not res.get("ok"):
+        try:
+            from services.brain_gateway import attach_outcome_for_task
+            await attach_outcome_for_task(
+                db, task_id=wallet_run_id,
+                outcome="tests_failed", user_id=user_id,
+            )
+        except Exception as _bge:                                # noqa: BLE001
+            logger.debug("brain outcome attach skipped: %r", _bge)
+
     # Iter 212m-190 — deduct exactly 1 task ONLY on success.
-    if res.get("ok") and not is_unlimited_user:
+    # FIX_one_branch_for_all_fixes, design item 12 — skipped_no_change
+    # is a real "already fixed" outcome but not a NEW commit, so it's
+    # not charged (same rule as the wallet hold above).
+    if res.get("ok") and not res.get("skipped_no_change") \
+            and not res.get("skipped_not_present") and not is_unlimited_user:
         try:
             await record_scan_fixes(user_id, "vanguard-scan", 1)
         except Exception as _e:

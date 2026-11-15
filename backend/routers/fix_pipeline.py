@@ -53,22 +53,29 @@ import difflib
 import json
 import logging
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.team_permissions import check_permission
 from services import fix_job_manager as fjm
-from services.finding_fix_applier import apply_finding_fix
 from services import ora_fix_learning
-from services.notifications import emit_notification
-from services.scan_fix_quota import (
-    ALL_FIX_TOOLS, assert_can_fix, get_fix_quota, record_scan_fixes,
+from services.finding_fix_applier import (
+    apply_file_fixes,
+    revert_batch,
+    revert_finding_fix,
 )
 from services.fixed_findings import record_fixed
+from services.notifications import emit_notification
+from services.rate_limiter import check_rate_limit_async
+from services.scan_fix_quota import (
+    ALL_FIX_TOOLS,
+    assert_can_fix,
+    get_fix_quota,
+    record_scan_fixes,
+)
+from services.team_permissions import check_permission
 
 logger = logging.getLogger("aurem-dev.fix_pipeline")
 router = APIRouter(prefix="/fix-pipeline", tags=["Fix Pipeline"])
@@ -87,6 +94,10 @@ _MAX_DIFF_LINES = 80
 
 
 def _compute_diff_lines(before: str, after: str) -> list[dict]:
+    # Part 2b R3 — this diff streams directly over SSE to the
+    # browser (the "fix-diff" event). A fix for a hardcoded secret
+    # would otherwise show the raw secret value in the "remove" line.
+    from services.secret_masking import redact_secrets_in_text
     if before == after:
         return []
     before_lines = before.splitlines(keepends=False)
@@ -104,15 +115,15 @@ def _compute_diff_lines(before: str, after: str) -> list[dict]:
             out.append({"type": "hunk", "line": line})
             continue
         if line.startswith("-"):
-            out.append({"type": "remove", "line": line[1:]})
+            out.append({"type": "remove", "line": redact_secrets_in_text(line[1:])})
         elif line.startswith("+"):
-            out.append({"type": "add", "line": line[1:]})
+            out.append({"type": "add", "line": redact_secrets_in_text(line[1:])})
         else:
             # Context line (no prefix marker after the unified_diff
             # strip).  Useful so the drawer can show a few lines of
             # surrounding code for orientation.
-            out.append({"type": "context",
-                        "line": line[1:] if line.startswith(" ") else line})
+            stripped = line.removeprefix(" ")
+            out.append({"type": "context", "line": redact_secrets_in_text(stripped)})
         if len(out) >= _MAX_DIFF_LINES:
             out.append({"type": "context",
                         "line": f"... diff truncated at {_MAX_DIFF_LINES} lines"})
@@ -177,7 +188,7 @@ _TERMINAL_ERROR_CODES     = frozenset({
 # `get_fix_quota()`/`assert_can_fix()` then resolve tier/is_unlimited
 # off THAT id, so a team member's fix draws from the shared account's
 # quota, not their own (usually free-tier) personal login.
-async def _gate(authorization: Optional[str], level: str, db=None) -> tuple[dict, dict]:
+async def _gate(authorization: str | None, level: str, db=None) -> tuple[dict, dict]:
     caller = await current_dev(authorization)
     ctx = await check_permission(caller, "loop", level, db=db)
     effective_user = {**caller, "user_id": ctx["effective_account_id"]}
@@ -187,7 +198,7 @@ async def _gate(authorization: Optional[str], level: str, db=None) -> tuple[dict
 # ─── Preview endpoint ──────────────────────────────────────────────────
 @router.post("/preview")
 async def preview_cost(body: dict,
-                       authorization: Optional[str] = Header(None)) -> dict:
+                       authorization: str | None = Header(None)) -> dict:
     """Cheap, no-side-effect cost preview for the bulk-fix confirm
     modal.  Returns total tokens + estimated USD + the caller's
     current balance + an `is_unlimited` flag the UI uses to swap the
@@ -248,7 +259,7 @@ async def preview_cost(body: dict,
 
 
 @router.get("/quota")
-async def fix_quota(authorization: Optional[str] = Header(None)) -> dict:
+async def fix_quota(authorization: str | None = Header(None)) -> dict:
     """Iter 212m-190 — task-quota snapshot for the fix UI. The frontend
     uses `fix_tools` to show/hide per-finding Fix buttons and
     `bulk_fix` to show/hide the bulk button (Team tier only)."""
@@ -260,16 +271,67 @@ async def fix_quota(authorization: Optional[str] = Header(None)) -> dict:
 # ─── Bulk fix kick-off ─────────────────────────────────────────────────
 @router.post("/bulk")
 async def start_bulk_fix(body: dict,
-                         authorization: Optional[str] = Header(None)) -> dict:
+                         authorization: str | None = Header(None)) -> dict:
     """Kick off a sequential bulk fix.  The HTTP response returns
     immediately with `{job_id}`; the client opens an SSE connection
     to `/fix-pipeline/stream/{job_id}` to watch progress."""
     _, effective = await _gate(authorization, "write")
     user_id   = effective["user_id"]
     project_id = (body or {}).get("project_id")
+    finding_ids = (body or {}).get("finding_ids") or []
     findings   = body.get("findings") or []
     if not project_id:
         raise HTTPException(400, "project_id required")
+    if not finding_ids and not findings:
+        raise HTTPException(400, "findings is empty")
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+    from services.finding_scope import (
+        drop_unverified_findings,
+        reconcile_findings_against_stored_rows,
+        resolve_findings_by_ids,
+    )
+    # Part 2c C4(a) — a Mongo outage during either reconciliation
+    # step must stop the request HERE, before any wallet hold, task-
+    # quota debit, or LLM work starts — never silently proceed with
+    # un-reconciled/unverified findings. Both helpers' OWN default
+    # (fail-open) contract is unchanged for every other caller; this
+    # is the one caller that opts into strict (re-raising) mode.
+    try:
+        if finding_ids:
+            # Part 2b F7 — the authoritative path: server loads the
+            # real rows itself (effective account + project +
+            # verified + open) instead of trusting whatever the
+            # client POSTed. Any id with no matching row (foreign,
+            # unverified, already closed, tampered) is silently
+            # dropped here, never fabricated.
+            findings = await resolve_findings_by_ids(
+                db, user_id=user_id, project_id=project_id, finding_ids=finding_ids,
+            )
+        else:
+            # Legacy path — never trust client-supplied severity/title/
+            # fix_hint for billing or LLM prompts; overwrite from the
+            # stored row wherever one matches.
+            findings = await reconcile_findings_against_stored_rows(
+                db, user_id=user_id, project_id=project_id, findings=findings,
+                strict=True,
+            )
+        # Robot Fix List B2 — real-only gate applies to bulk-fix input
+        # too, even when the caller POSTs findings directly instead of
+        # going through the (already-filtered) fix-list endpoint.
+        findings = await drop_unverified_findings(
+            db, user_id=user_id, project_id=project_id, findings=findings,
+            strict=True,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("bulk-fix input verification unavailable (failing closed): %r", e)
+        raise HTTPException(503, {
+            "error": "verification_unavailable", "retryable": True,
+            "message": "Could not verify these findings right now — no charge, no work started. Try again shortly.",
+        }) from e
     if not findings:
         raise HTTPException(400, "findings is empty")
     if len(findings) > _BULK_MAX_FINDINGS:
@@ -284,9 +346,6 @@ async def start_bulk_fix(body: dict,
                           "GitHub secondary rate-limit protection. Run the "
                           "rest as the next batch."),
         })
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "DB not connected")
 
     # Iter 212m-190 — task-quota gate: tool access by tier, bulk (count
     # > 1) is Team-only, and N fixes need N remaining tasks. Raises
@@ -394,8 +453,8 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
     # independently (one device's capture failing never blocks the
     # other's).
     proof_attempted = False
-    before_shots: dict[str, Optional[bytes]] = {"desktop": None, "mobile": None}
-    before_fail: dict[str, Optional[str]] = {"desktop": None, "mobile": None}
+    before_shots: dict[str, bytes | None] = {"desktop": None, "mobile": None}
+    before_fail: dict[str, str | None] = {"desktop": None, "mobile": None}
     proj_doc = await db.cto_projects.find_one({"project_id": project_id}, {"_id": 0, "preview_url": 1})
     preview_url = (proj_doc or {}).get("preview_url")
     if preview_url:
@@ -432,10 +491,126 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
         total_ok = 0
         total_failed = 0
         total_skipped = 0
+        # FIX_one_branch_for_all_fixes — every successful fix in this
+        # job now shares the SAME branch/PR (services/fix_batches.py).
+        # Captured from the first successful `res` so the final
+        # summary can surface ONE link instead of the old N separate
+        # per-fix PR links.
+        shared_fix_branch_info: dict = {}
         # Iter 212m-147 — Final-summary roll-up.  Collected per-fix so
         # the `all-done` event can replay the whole journey for the
         # drawer's terminal summary card.
         fixes_summary: list[dict] = []
+
+        # Part 2b F2 — real per-file fix. A whole-file pre-pass
+        # resolves EVERY file exactly once via apply_file_fixes (one
+        # LLM call + one commit per file, with its own retry loop at
+        # FILE granularity), building a finding_id -> result lookup.
+        # The existing per-finding loop below is UNCHANGED from this
+        # point on — it now reads from this lookup instead of calling
+        # apply_finding_fix, so every downstream behavior (SSE shape,
+        # learning hooks, brain outcomes, wallet hold/settle, task-
+        # quota) keeps working exactly as before, just fed from a
+        # real per-FILE commit instead of N per-finding ones.
+        file_groups: dict[str, list[dict]] = {}
+        file_order: list[str] = []
+        for f in ordered:
+            fpath = f.get("file") or f.get("path") or ""
+            if fpath not in file_groups:
+                file_groups[fpath] = []
+                file_order.append(fpath)
+            file_groups[fpath].append(f)
+
+        def _finding_lookup_key(f: dict) -> str:
+            return f.get("id") or f.get("finding_id") or f.get("rule_id") or f.get("rule") or ""
+
+        def _file_result_to_legacy_shape(file_res: dict, finding: dict) -> dict:
+            """Reshape one entry of apply_file_fixes's `results` list
+            (plus the whole-file result it came from) into the exact
+            dict shape apply_finding_fix used to return, so every
+            caller below this point needs zero changes."""
+            rid = finding.get("rule_id") or finding.get("rule") or ""
+            path = finding.get("file") or finding.get("path") or ""
+            key = _finding_lookup_key(finding)
+            match = None
+            for r in (file_res.get("results") or []):
+                if r.get("finding_id") == key or (rid and r.get("rule_id") == rid):
+                    match = r
+                    break
+            if match is None:
+                # The whole-file call itself never got far enough to
+                # produce per-finding results (batch_unavailable,
+                # github_push_failed, missing_required_args, ...) —
+                # every finding in the group shares that ONE reason.
+                return {"ok": False, "error": file_res.get("error") or "unknown",
+                        "file": path, "rule_id": rid}
+            status = match.get("status")
+            if status == "resolved":
+                return {
+                    "ok": True, "file": path, "rule_id": rid,
+                    "commit_sha": file_res.get("commit_sha"),
+                    "full_sha": file_res.get("full_sha"),
+                    "html_url": file_res.get("html_url"),
+                    "pr_url": file_res.get("pr_url"),
+                    "branch": file_res.get("branch"),
+                    "batch_id": file_res.get("batch_id"),
+                    "original_content": file_res.get("original_content"),
+                    "patched_content": file_res.get("patched_content"),
+                    # Part 2b R6 — needed by the frontend's "Undo this
+                    # fix" button.
+                    "fix_id": match.get("fix_id"),
+                    # Part 2c C1 — drives "Undo all N fixes in this
+                    # file" instead of a plain "Undo" when this
+                    # commit resolved more than one finding.
+                    "sibling_count": match.get("sibling_count"),
+                }
+            if status == "skipped_not_present":
+                return {
+                    "ok": True, "skipped_not_present": True,
+                    "file": path, "rule_id": rid,
+                    "branch": file_res.get("branch"), "pr_url": file_res.get("pr_url"),
+                    "batch_id": file_res.get("batch_id"),
+                }
+            if status == "remaining":
+                return {"ok": False, "error": "patch_did_not_resolve_finding",
+                        "file": path, "rule_id": rid}
+            # status == "error"
+            err = match.get("error") or "unknown"
+            return {"ok": False,
+                    "error": "llm_made_no_change" if err == "llm_made_no_change" else err,
+                    "file": path, "rule_id": rid,
+                    "retryable": err == "llm_made_no_change"}
+
+        _file_fixes_cache: dict[str, dict] = {}
+
+        async def _resolve_file_once(fpath: str) -> dict:
+            if fpath in _file_fixes_cache:
+                return _file_fixes_cache[fpath]
+            group = file_groups[fpath]
+            last_err = None
+            file_res: dict = {"ok": False, "error": "unknown", "results": []}
+            for attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
+                try:
+                    file_res = await apply_file_fixes(
+                        db=db, user=user, project_id=project_id,
+                        file=fpath, findings=group,
+                    )
+                except Exception as e:
+                    logger.exception("apply_file_fixes raised for file=%s attempt=%d",
+                                     fpath, attempt)
+                    file_res = {"ok": False, "error": f"unhandled: {e}", "results": []}
+                if file_res.get("ok"):
+                    break
+                last_err = file_res.get("error") or "unknown"
+                if last_err in _TERMINAL_ERROR_CODES or attempt >= _MAX_FIX_ATTEMPTS:
+                    break
+                backoff = _RETRY_BACKOFFS_S[min(attempt - 1, len(_RETRY_BACKOFFS_S) - 1)]
+                fjm.emit(job_id, "retrying", file=fpath, attempt=attempt + 1,
+                         of=_MAX_FIX_ATTEMPTS, last_error=last_err, backoff_s=backoff)
+                await asyncio.sleep(backoff)
+            _file_fixes_cache[fpath] = file_res
+            return file_res
+
         global_idx = 0
         for batch_no, batch in enumerate(batches, start=1):
             fjm.emit(job_id, "batch-start",
@@ -488,33 +663,38 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 last_err = None
                 attempts_used = 0
                 _t_fix_start = time.time()
-                for attempt in range(1, _MAX_FIX_ATTEMPTS + 1):
-                    attempts_used = attempt
+                # ORA Brain Part 4, F2 — tag this finding's own fix
+                # attempt so the LLM call inside apply_finding_fix
+                # stamps project_id + a per-finding task_id onto its
+                # brain_calls row (services/brain_gateway.py), letting
+                # the outcome hook below find it via
+                # attach_outcome_for_task. Uses llm_surface_context
+                # (properly scoped + reset), NOT tag_request_surface's
+                # set-and-forget — this is a sequential per-finding
+                # loop sharing ONE request Task across many findings,
+                # exactly the case tag_request_surface's own docstring
+                # says not to use it for.
+                from services.loop_token_ledger import llm_surface_context
+                async with llm_surface_context(
+                    project_id=project_id, task_id=f"fix:{finding_id}",
+                ):
+                    # Part 2b F2 — the real per-file fix: resolve this
+                    # finding's FILE exactly once (cached across every
+                    # other finding in the same file-group — one LLM
+                    # call, one commit, retried at FILE granularity
+                    # inside _resolve_file_once), then reshape that
+                    # file-level result into this finding's own `res`,
+                    # so every line below is unchanged.
                     try:
-                        res = await apply_finding_fix(
-                            db=db, user=user, project_id=project_id, finding=finding,
-                        )
-                    except Exception as e:                            # noqa: BLE001
-                        logger.exception("bulk fix raised for finding=%s "
-                                         "attempt=%d", finding_id, attempt)
-                        res = {"ok": False, "error": f"unhandled: {e}"}
-                    if res.get("ok"):
-                        break
-                    last_err = res.get("error") or "unknown"
-                    if last_err in _TERMINAL_ERROR_CODES:
-                        # No point retrying — surface the real reason.
-                        break
-                    if attempt >= _MAX_FIX_ATTEMPTS:
-                        break
-                    # Emit a retry event so the UI shows "Retry 2/3 …"
-                    # and the user has visible proof the system is still
-                    # working (instead of silently hanging on a fail).
-                    backoff = _RETRY_BACKOFFS_S[min(attempt - 1, len(_RETRY_BACKOFFS_S) - 1)]
-                    fjm.emit(job_id, "retrying",
-                             finding_id=finding_id, attempt=attempt + 1,
-                             of=_MAX_FIX_ATTEMPTS, last_error=last_err,
-                             backoff_s=backoff, file=path, rule_id=rule_id)
-                    await asyncio.sleep(backoff)
+                        file_res = await _resolve_file_once(path)
+                        attempts_used = 1
+                    except Exception as e:
+                        logger.exception("apply_file_fixes raised for finding=%s "
+                                         "file=%s", finding_id, path)
+                        file_res = {"ok": False, "error": f"unhandled: {e}", "results": []}
+                        attempts_used = 1
+                    res = _file_result_to_legacy_shape(file_res, finding)
+                    last_err = res.get("error") if not res.get("ok") else None
                 _fix_duration_ms = int((time.time() - _t_fix_start) * 1000)
 
                 # Master Prompt v2 Part 1.1 — settle this finding's own
@@ -522,10 +702,16 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # is its own billable unit; one finding's outcome never
                 # affects another's hold.
                 from services.wallet import finalize_hold as _finalize_wallet_hold
+                # FIX_one_branch_for_all_fixes, design item 12 — an
+                # idempotent skip (file already has this exact fix on
+                # the shared branch) is not charged, same rule as a
+                # real failure.
                 await _finalize_wallet_hold(
                     db, user_id=user_id, action="fix",
                     run_id=_wallet_run_id(job_id, finding),
-                    ok=bool(res.get("ok")), reason=last_err or "",
+                    ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+                       and not res.get("skipped_not_present"),
+                    reason=last_err or "",
                 )
 
                 if not res.get("ok"):
@@ -556,6 +742,40 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                         tokens_charged=0,   # never deducted (task-quota model)
                         scanner=finding.get("scanner"),
                     )
+                    # ORA Brain Part 4, F2 — objective outcome signal.
+                    # Best-effort: never blocks or fails the user-
+                    # visible response.
+                    try:
+                        from services.brain_gateway import attach_outcome_for_task
+                        await attach_outcome_for_task(
+                            db, task_id=f"fix:{finding_id}",
+                            outcome="tests_failed", user_id=user_id,
+                        )
+                    except Exception as _bge:                        # noqa: BLE001
+                        logger.debug("brain outcome attach skipped: %r", _bge)
+                    continue
+
+                if res.get("skipped_no_change") or res.get("skipped_not_present"):
+                    # Part 2b R1 — a skip is neither a real fix nor a
+                    # failure; count it separately so the bulk summary
+                    # never claims N findings were "fixed" when some
+                    # were only skipped (already-fixed / no-longer-
+                    # present). No commit happened, so no diff/verify.
+                    fjm.emit(job_id, "fix-done",
+                             ok=True, finding_id=finding_id,
+                             project_id=project_id,
+                             skipped_no_change=bool(res.get("skipped_no_change")),
+                             skipped_not_present=bool(res.get("skipped_not_present")),
+                             file=path, rule_id=rule_id,
+                             fix_index=global_idx, fix_total=len(ordered))
+                    await fjm.persist_event(db, job_id)
+                    total_skipped += 1
+                    fixes_summary.append({
+                        "index": global_idx, "file": path, "rule": rule_id,
+                        "status": "skipped_not_present" if res.get("skipped_not_present")
+                                  else "skipped_no_change",
+                        "commit_sha": None, "github_url": None,
+                    })
                     continue
 
                 # Iter 212m-147 — Emit the diff BEFORE the GitHub
@@ -603,6 +823,12 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 )
                 fjm.emit(job_id, "fix-done",
                          ok=True, finding_id=finding_id,
+                         # Robot Fix List B6/F2 — the frontend's
+                         # `aurem:finding-fixed` window event is built
+                         # straight from this payload; it needs
+                         # project_id so a listener can ignore a fix
+                         # that belongs to a DIFFERENT project (F3).
+                         project_id=project_id,
                          commit_sha=res.get("commit_sha"),
                          full_sha=res.get("full_sha"),
                          html_url=res.get("html_url"),
@@ -611,6 +837,12 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                          branch=res.get("branch"),
                          file=res.get("file"),
                          rule_id=res.get("rule_id"),
+                         # Part 2b R6 — needed by the frontend's
+                         # "Undo this fix" button.
+                         fix_id=res.get("fix_id"),
+                         # Part 2c C1 — "Undo all N fixes in this
+                         # file" vs plain "Undo".
+                         sibling_count=res.get("sibling_count"),
                          fix_index=global_idx,
                          fix_total=len(ordered),
                          # 2026-08-23 — tri-state, not a bool: True=
@@ -632,6 +864,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     "github_url": res.get("html_url"),
                     "pr_url":     res.get("pr_url"),
                     "verified":   verified,
+                    "fix_id":     res.get("fix_id"),
                 })
                 # Iter 212m-129 — Learning hook (success path).  The
                 # `verified` field carries the real GitHub-commit-
@@ -646,6 +879,25 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     tokens_charged=0,
                     scanner=finding.get("scanner"),
                 )
+                # ORA Brain Part 4, F2 — objective outcome signal. Only
+                # the real GitHub-commit-verified case counts as a
+                # strong positive signal; "ok but not (yet) verified"
+                # deliberately attaches nothing rather than inventing
+                # a confidence level record_fix_outcome doesn't claim.
+                if verified:
+                    try:
+                        from services.brain_gateway import attach_outcome_for_task
+                        await attach_outcome_for_task(
+                            db, task_id=f"fix:{finding_id}",
+                            outcome="verification_passed", user_id=user_id,
+                        )
+                    except Exception as _bge:                        # noqa: BLE001
+                        logger.debug("brain outcome attach skipped: %r", _bge)
+                if res.get("pr_url") and not shared_fix_branch_info:
+                    shared_fix_branch_info = {
+                        "pr_url": res.get("pr_url"), "branch": res.get("branch"),
+                        "batch_id": res.get("batch_id"),
+                    }
                 total_ok += 1
                 # Iter 212m-193 — persist the fixed state so a rescan
                 # doesn't resurrect this finding (fix lives on a draft
@@ -663,7 +915,12 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # Iter 212m-190 — deduct exactly 1 task PER successful
                 # fix (atomic $inc). Failed fixes above never reach
                 # this line, so a 12-selected / 2-failed run deducts 10.
-                if not is_unlim:
+                # FIX_one_branch_for_all_fixes, design item 12 — an
+                # idempotent skipped_no_change re-run is also excluded.
+                # Part 2b R1 — skipped_not_present (finding already
+                # gone before the LLM ever ran) is excluded the same way.
+                if not is_unlim and not res.get("skipped_no_change") \
+                        and not res.get("skipped_not_present"):
                     try:
                         await record_scan_fixes(user_id, tool, 1)
                         total_charged += 1
@@ -746,10 +1003,17 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 except Exception:
                     pass
 
+        if shared_fix_branch_info:
+            # FIX_one_branch_for_all_fixes, design item 5 — ONE link
+            # for the whole job, not N per-fix links.
+            fjm.emit(job_id, "batch-info", **shared_fix_branch_info,
+                     fix_count=total_ok)
+            await fjm.persist_event(db, job_id)
         await fjm.close(
             db, job_id, ok=True,
             message=f"Fixed {total_ok}/{len(ordered)} "
-                    f"({total_charged} tasks used · "
+                    + (f" · {total_skipped} already resolved" if total_skipped else "")
+                    + f" ({total_charged} tasks used · "
                     f"{len(batches)} batches of {_BULK_BATCH_SIZE})",
         )
         # P2-A (2026-08-28) — user-facing bell, "ship_done".
@@ -772,7 +1036,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
             message="Worker cancelled mid-flight. Click Restart to resume.",
         )
         raise
-    except Exception as e:                                  # noqa: BLE001
+    except Exception as e:
         # Top-level catch: a Mongo glitch, an upstream GitHub 5xx that
         # escaped the per-finding block, a programming bug — instead
         # of silently dying and leaving "running" forever, we emit a
@@ -867,7 +1131,7 @@ def _interleave_by_severity(findings: list[dict]) -> list[dict]:
     return out
 
 
-def _guardian_rescan(category: str, path: str, patched_content: str) -> Optional[dict]:
+def _guardian_rescan(category: str, path: str, patched_content: str) -> dict | None:
     """2026-10 — "Guardian re-scan" (founder spec, roadmap.sh "safe fix
     loop" criterion: verify the fix actually worked, not just that the
     LLM said so). `apply_finding_fix()` already re-validates the ONE
@@ -911,7 +1175,7 @@ def _guardian_rescan(category: str, path: str, patched_content: str) -> Optional
 
 
 async def _verify_commit_exists(*, db, user: dict, project_id: str,
-                                full_sha: Optional[str]) -> Optional[bool]:
+                                full_sha: str | None) -> bool | None:
     """Hit GET /repos/{owner}/{repo}/commits/{sha} to confirm the
     commit landed on GitHub.  No `True` shortcut without a real
     HTTP 200 + non-empty parents list — the user explicitly asked
@@ -943,6 +1207,7 @@ async def _verify_commit_exists(*, db, user: dict, project_id: str,
         if not (owner and repo and token):
             return None
         import httpx
+
         from services.http import ext_client
         async with ext_client("github", timeout=httpx.Timeout(10.0)) as cx:
             r = await cx.get(
@@ -966,8 +1231,8 @@ async def _verify_commit_exists(*, db, user: dict, project_id: str,
 # ─── SSE stream ────────────────────────────────────────────────────────
 @router.get("/stream/{job_id}")
 async def stream_fix(job_id: str,
-                     token: Optional[str] = None,
-                     authorization: Optional[str] = Header(None)):
+                     token: str | None = None,
+                     authorization: str | None = Header(None)):
     """Server-Sent Events.  Re-auth via the standard JWT; rejects
     cross-tenant subscriptions so one user can't tail another's
     fix job.
@@ -1008,8 +1273,10 @@ async def stream_fix(job_id: str,
     else:
         # Owner check — in-memory job must belong to the caller's
         # (team-resolved) account.
-        job = fjm._JOBS.get(job_id) or {}                 # noqa: SLF001
-        if job.get("user_id") and job["user_id"] != effective["user_id"] \
+        job = fjm._JOBS.get(job_id) or {}
+        # Part 2b R5 — fail CLOSED: a job with no recorded owner is
+        # denied to everyone, never implicitly granted.
+        if job.get("user_id") != effective["user_id"] \
                 and not user.get("is_admin"):
             raise HTTPException(404, "Job not found")
 
@@ -1023,7 +1290,7 @@ async def stream_fix(job_id: str,
 # ─── Polling fallback ──────────────────────────────────────────────────
 @router.get("/summary/{job_id}")
 async def get_job_summary(job_id: str,
-                           authorization: Optional[str] = Header(None)) -> dict:
+                           authorization: str | None = Header(None)) -> dict:
     user, effective = await _gate(authorization, "read")
     db = get_db()
     s = fjm.get_summary(job_id)
@@ -1034,8 +1301,9 @@ async def get_job_summary(job_id: str,
         if not persisted:
             raise HTTPException(404, "Job not found")
         return {"ok": True, "from_mongo": True, **persisted}
-    job = fjm._JOBS.get(job_id) or {}                         # noqa: SLF001
-    if job.get("user_id") and job["user_id"] != effective["user_id"] \
+    job = fjm._JOBS.get(job_id) or {}
+    # Part 2b R5 — fail CLOSED (see the identical note above).
+    if job.get("user_id") != effective["user_id"] \
             and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     return {"ok": True, **s}
@@ -1044,7 +1312,7 @@ async def get_job_summary(job_id: str,
 # ─── Ticket D (2026-02) — per-fix before/after live proof ─────────────
 @router.get("/proof/{job_id}/meta")
 async def get_fix_before_after_proof_meta(job_id: str,
-                                           authorization: Optional[str] = Header(None)) -> dict:
+                                           authorization: str | None = Header(None)) -> dict:
     """Ticket D-UI (2026-02) — a single cheap JSON call the drawer uses
     to decide which state to render (loading/empty/could-not-verify/
     success) BEFORE fetching any image bytes. Honest states:
@@ -1080,7 +1348,7 @@ async def get_fix_before_after_proof_meta(job_id: str,
 async def get_fix_before_after_proof(job_id: str,
                                       variant: str = "before",
                                       device: str = "desktop",
-                                      authorization: Optional[str] = Header(None)):
+                                      authorization: str | None = Header(None)):
     """Streams back one of the 3 receipt images (before/after/diff) for
     one device (desktop/mobile), same ownership check as /summary.
     Honest 404 when this job had no preview_url (no proof attempted)
@@ -1106,7 +1374,7 @@ async def get_fix_before_after_proof(job_id: str,
 # ─── 2026-08-23 — manual "Check now" retry for inconclusive verify ────
 @router.get("/verify-commit")
 async def retry_verify_commit(job_id: str, finding_id: str,
-                               authorization: Optional[str] = Header(None)) -> dict:
+                               authorization: str | None = Header(None)) -> dict:
     """The commit-exists check can itself fail (rate limit, network)
     independent of whether the fix succeeded. This lets the UI ask
     "check again" without re-running the whole fix."""
@@ -1115,7 +1383,8 @@ async def retry_verify_commit(job_id: str, finding_id: str,
     s = fjm.get_summary(job_id) or await fjm.get_persisted(db, job_id, effective["user_id"])
     if not s:
         raise HTTPException(404, "Job not found")
-    if s.get("user_id") and s["user_id"] != effective["user_id"] and not user.get("is_admin"):
+    # Part 2b R5 — fail CLOSED (see the identical note above).
+    if s.get("user_id") != effective["user_id"] and not user.get("is_admin"):
         raise HTTPException(404, "Job not found")
     project_id = s.get("project_id")
     row = next((r for r in (s.get("results") or [])
@@ -1132,9 +1401,9 @@ async def retry_verify_commit(job_id: str, finding_id: str,
 # ─── Iter 212m-128 — List user's recent jobs ──────────────────────────
 @router.get("/list")
 async def list_user_jobs(
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 20,
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
 ) -> dict:
     """Returns the account's recent fix jobs (newest first) — shared
     across every team member with "loop" access, not just whoever
@@ -1153,7 +1422,7 @@ async def list_user_jobs(
 # ─── Iter 212m-128 — Restart an orphaned / failed job ─────────────────
 @router.post("/restart/{job_id}")
 async def restart_job(job_id: str,
-                      authorization: Optional[str] = Header(None)) -> dict:
+                      authorization: str | None = Header(None)) -> dict:
     """Spin a fresh worker on the findings that were NOT yet
     completed by the original job.  Returns a NEW job_id (with a
     clean event stream) — the old row stays in Mongo as historical
@@ -1237,3 +1506,103 @@ async def restart_job(job_id: str,
         "skipped_terminal": len(fail_terminal),
         "stream":         f"/api/aurem-dev/fix-pipeline/stream/{new_job_id}",
     }
+
+
+# ─── Part 2b R6 — revert endpoints ───────────────────────────────────
+_REVERT_RATE_PER_MIN = 20
+
+
+@router.post("/fixes/{fix_id}/revert")
+async def revert_one_fix(
+    fix_id: str, authorization: str | None = Header(None),
+) -> dict:
+    """Undo ONE fix — restores that file to its pre-fix content via a
+    new commit on the shared batch branch; never touches the PR or
+    any other fix in the batch (H3). Idempotent — reverting an
+    already-reverted fix is a no-op success, not an error."""
+    _, effective = await _gate(authorization, "write")
+    user_id = effective["user_id"]
+    if not await check_rate_limit_async(f"fix-revert:{user_id}", _REVERT_RATE_PER_MIN):
+        raise HTTPException(429, "Too many revert requests — slow down.")
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+
+    # Resolve the fix's own project so we can fetch a real GitHub
+    # token for it — NEVER from the request (R6's explicit ask).
+    fix = await db.finding_fixes.find_one(
+        {"fix_id": fix_id, "user_id": user_id}, {"_id": 0, "project_id": 1},
+    )
+    if not fix:
+        raise HTTPException(404, "fix_not_found")
+    proj = await db.cto_projects.find_one(
+        {"project_id": fix["project_id"], "user_id": user_id},
+    )
+    if not proj:
+        raise HTTPException(404, "fix_not_found")
+    from services.pat_vault import get_repo_token_or_error
+    token, auth_err, auth_detail = await get_repo_token_or_error(proj)
+    if not token:
+        raise HTTPException(400, {"error": auth_err or "github_credentials_missing",
+                                   "detail": auth_detail or ""})
+
+    result = await revert_finding_fix(
+        db, fix_id=fix_id, token=token,
+        user_id=user_id, project_id=fix["project_id"],
+    )
+    if not result.get("ok"):
+        status = 404 if result.get("error") == "fix_not_found" else 400
+        raise HTTPException(status, result.get("error") or "revert_failed")
+    return result
+
+
+@router.post("/batches/{batch_id}/revert")
+async def revert_one_batch(
+    batch_id: str, body: dict | None = None,
+    authorization: str | None = Header(None),
+) -> dict:
+    """Undo an ENTIRE batch — closes the shared PR and reopens every
+    finding it resolved. Explicit, separate from a single-fix revert;
+    requires `{"confirm": true}` in the body (destructive — closes a
+    PR that may carry other, unrelated-looking fixes)."""
+    body = body or {}
+    if body.get("confirm") is not True:
+        raise HTTPException(400, {"error": "confirm_required",
+                                   "message": "Pass {\"confirm\": true} to revert the whole batch."})
+    _, effective = await _gate(authorization, "write")
+    user_id = effective["user_id"]
+    if not await check_rate_limit_async(f"batch-revert:{user_id}", _REVERT_RATE_PER_MIN):
+        raise HTTPException(429, "Too many revert requests — slow down.")
+    db = get_db()
+    if db is None:
+        raise HTTPException(503, "DB not connected")
+
+    from services.fix_batches import get_batch_by_id
+    project_id = (body or {}).get("project_id") or ""
+    if not project_id:
+        # The batch row itself carries project_id — look it up
+        # without trusting a client-supplied one for the FIRST read,
+        # but get_batch_by_id below still re-validates ownership.
+        any_batch = await db.fix_batches.find_one(
+            {"batch_id": batch_id, "user_id": user_id}, {"_id": 0, "project_id": 1},
+        )
+        project_id = (any_batch or {}).get("project_id") or ""
+    batch = await get_batch_by_id(db, batch_id=batch_id, user_id=user_id, project_id=project_id)
+    if not batch:
+        raise HTTPException(404, "batch_not_found")
+    proj = await db.cto_projects.find_one({"project_id": project_id, "user_id": user_id})
+    if not proj:
+        raise HTTPException(404, "batch_not_found")
+    from services.pat_vault import get_repo_token_or_error
+    token, auth_err, auth_detail = await get_repo_token_or_error(proj)
+    if not token:
+        raise HTTPException(400, {"error": auth_err or "github_credentials_missing",
+                                   "detail": auth_detail or ""})
+
+    result = await revert_batch(
+        db, batch_id=batch_id, user_id=user_id, project_id=project_id, token=token,
+    )
+    if not result.get("ok"):
+        status = 404 if result.get("error") == "batch_not_found" else 400
+        raise HTTPException(status, result.get("error") or "revert_failed")
+    return result

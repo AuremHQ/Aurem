@@ -204,6 +204,22 @@ async def execute_rollback_from_snapshot(
                       restored_commit_sha=restored_sha,
                       mismatches=mismatches,
                       skipped_additions=skipped_additions)
+        # ORA Brain Part 4, F2 — same negative-overrides-positive
+        # signal as services/loop_rollback.py::run_rollback. Only
+        # fires when the snapshot actually carries a loop_id (a
+        # manually-triggered snapshot with no associated loop run has
+        # no brain_calls rows to find anyway).
+        loop_id = snap.get("loop_id")
+        if loop_id:
+            try:
+                from services.brain_gateway import attach_outcome_for_task
+                await attach_outcome_for_task(
+                    db, task_id=loop_id, outcome="rolled_back",
+                    user_id=snap.get("user_id"),
+                )
+            except Exception as e:                          # noqa: BLE001
+                logger.debug("[rollback2 %s] brain outcome attach "
+                             "skipped: %r", attempt_id, e)
         return {"ok": True, "attempt_id": attempt_id,
                 "restored_commit_sha": restored_sha,
                 "verified": verified, "mismatches": mismatches,

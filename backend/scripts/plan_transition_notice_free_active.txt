@@ -1,0 +1,34 @@
+DRAFT — NOT SENT. For founder review only.
+Master Prompt v2 PART 6 / ITEM 9 — per-segment notice variant: free_active.
+
+Audience: free-tier users who logged in within the dormancy window
+(services/plan_transition.py's _FREE_DORMANT_AFTER_SECONDS, 90 days) —
+see classify_user's "free_active" branch. proposed_token_grant is
+always 0 for this segment (no paid history to convert).
+
+---
+
+Subject: A change to AUREM's free plan
+
+Hey {{FIRST_NAME}},
+
+We're switching AUREM's pricing from a flat task count to a token
+balance for paid plans. Here's what it means for your free account:
+
+- You keep your free full repo scan — that doesn't change.
+- Starting {{GRACE_END_DATE}}, fixing issues needs a paid plan —
+  scanning stays free either way.
+- No token balance applies to the free tier; if you upgrade, your new
+  plan's token allotment starts from the paid-plan rates shown on
+  /pricing.
+
+Questions? Reply to this email or reach us at the usual support
+channel.
+
+— The AUREM team
+
+---
+
+MISSING DECISIONS before this can actually be sent:
+  - The actual cutover date, which sets {{GRACE_END_DATE}}
+    (FREE_PLAN_GRACE_DAYS in config/plan_transition.py).

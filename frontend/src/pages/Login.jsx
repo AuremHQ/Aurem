@@ -13,16 +13,48 @@ import RobotGuide, { RobotGuideKeyframes, escapeHtml } from "../components/Robot
 import PasswordInput from "../components/PasswordInput";
 
 export default function Login() {
+  const [searchParams] = useSearchParams();
+  // Honour ?next=… for safe in-app paths only (must start with /, not
+  // // or a backslash — 2026-11-11, aligned with the backend's
+  // _safe_next() in routers/github_oauth.py).
+  const rawNext = searchParams.get("next") || "";
+  const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\"))
+    ? rawNext : "/dashboard";
+  // 2026-11-11 — Fix 8: a visitor arriving via ?next=/harness (the
+  // download button's redirect, HarnessPage.jsx `handleDownloadClick`)
+  // came from Aurem Loop, not ORA — the page must brand itself
+  // "Aurem Loop" throughout (no "ORA by Aurem" anywhere) so it doesn't
+  // look like a wrong-product redirect. Arriving with no `next=/harness`
+  // (i.e. from ORA itself) keeps the existing "ORA by Aurem" branding
+  // exactly as before — this is an ADDITIVE branding layer, same one
+  // account/credentials either way.
+  const isHarness = next === "/harness" || next.startsWith("/harness/")
+    || next.startsWith("/harness?") || next.startsWith("/harness#");
+  // 2026-11-14 — ORA dot: same pattern as isHarness above. A visitor
+  // arriving via ?next=/dot came from the ORA dot page, not ORA, so
+  // this page re-brands itself "ORA dot" throughout. Same
+  // account/credentials either way; after signin they land back on /dot.
+  const isDot = next === "/dot" || next.startsWith("/dot/")
+    || next.startsWith("/dot?") || next.startsWith("/dot#");
+  // 2026-11-11 testing-agent finding: the login<->signup cross-links
+  // were hardcoded to plain /signup and /login, dropping `next` — a
+  // harness visitor without an account who clicked "Get started"
+  // landed back on the plain ORA-branded /signup and, after signing
+  // up, on /dashboard instead of /harness. Append `?next=` whenever
+  // it isn't the default, so switching forms (or signing up from
+  // here) keeps both the branding AND the eventual redirect intact.
+  const crossLinkQuery = next !== "/dashboard" ? `?next=${encodeURIComponent(next)}` : "";
+
   usePageMeta({
-    title: "Sign in · ORA by Aurem",
-    description: "Sign in to your AUREM account and continue shipping features to your GitHub repo with an autonomous AI engineer.",
+    title: isDot ? "Sign in · ORA dot" : isHarness ? "Sign in · Aurem Loop" : "Sign in · ORA by Aurem",
+    description: isDot
+      ? "Sign in for ORA dot — the same free account also gives you access to ORA."
+      : isHarness
+        ? "Sign in to download Aurem Loop — the same free account also gives you access to ORA."
+        : "Sign in to your AUREM account and continue shipping features to your GitHub repo with an autonomous AI engineer.",
     canonical: (typeof window !== "undefined" ? window.location.origin : "") + "/login",
   });
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  // Honour ?next=… for safe in-app paths only (must start with /, not //)
-  const rawNext = searchParams.get("next") || "";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
   // Iter 113 — friendly banner when user cancelled the GitHub OAuth flow
   // and was sent back here.
   const cancelled = searchParams.get("github") === "cancelled";
@@ -161,8 +193,10 @@ export default function Login() {
 
   return (
     <AuthShell
+      brand={isDot ? "ORA dot" : isHarness ? "Aurem Loop" : "ORA by Aurem"}
+      homeHref={isDot ? "/dot" : isHarness ? "/harness" : "/"}
       secondaryCta={
-        <Link to="/signup" data-testid="auth-nav-signup" className="btn-primary" style={{ fontSize: 12 }}>
+        <Link to={`/signup${crossLinkQuery}`} data-testid="auth-nav-signup" className="btn-primary" style={{ fontSize: 12 }}>
           Get started
         </Link>
       }
@@ -203,12 +237,52 @@ export default function Login() {
         )}
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign in</span>
-          <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>Welcome back, builder.</h1>
-          <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Sign in to your <strong>AUREM</strong> account
-            <span style={{ color: "var(--text-dim)", opacity: 0.7 }}> — for developers</span>.
-          </p>
+          <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>
+            {isDot ? "Your AI workspace, on your own machine." : isHarness ? "Your code. Your PC. Your model." : "Welcome back, builder."}
+          </h1>
+          {isDot ? (
+            <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+              Chat, documents, coding and research — with open-source models on your PC.
+            </p>
+          ) : isHarness ? (
+            <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+              With weight-space refine loop. Your local model improves itself on each run.
+            </p>
+          ) : (
+            <p style={{ fontSize: 13, color: "var(--text-dim)" }}>
+              Sign in to your <strong>AUREM</strong> account
+              <span style={{ color: "var(--text-dim)", opacity: 0.7 }}> — for developers</span>.
+            </p>
+          )}
         </div>
+
+        {isHarness && (
+          <div
+            data-testid="login-harness-guidelines"
+            style={{
+              background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)",
+              borderRadius: 8, padding: "12px 14px", marginBottom: 20,
+              fontSize: 12.5, lineHeight: 1.6, color: "var(--text-dim)",
+            }}
+          >
+            One account, two things: sign in here, then you&rsquo;ll land back on the Aurem Loop
+            download page — it&rsquo;s free and runs on your own PC. This same login also works for ORA.
+          </div>
+        )}
+
+        {isDot && (
+          <div
+            data-testid="login-dot-guidelines"
+            style={{
+              background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)",
+              borderRadius: 8, padding: "12px 14px", marginBottom: 20,
+              fontSize: 12.5, lineHeight: 1.6, color: "var(--text-dim)",
+            }}
+          >
+            One account, two things: sign in here, then you&rsquo;ll land back on the ORA dot
+            page. This same login also works for ORA.
+          </div>
+        )}
 
         <div className="card" data-testid="login-card" style={{
           background: "rgba(20, 20, 28, 0.55)",
@@ -218,6 +292,7 @@ export default function Login() {
           <RobotGuideKeyframes />
           <RobotGuide
             testid="login-robot-guide"
+            brand={isDot ? "ORA DOT" : isHarness ? "AUREM LOOP" : "ORA"}
             kind={error ? "error" : "info"}
             message={
               error
@@ -228,7 +303,11 @@ export default function Login() {
                     ? `Looks good — hit <strong>Sign in</strong> when you&rsquo;re ready. <span class="ora-arrow">👇</span>`
                     : email
                       ? `Now enter your <strong>password</strong> and sign in. <span class="ora-arrow">👇</span>`
-                      : (welcomeMsg || `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — one tap, no password.`)
+                      : (welcomeMsg || (isDot
+                          ? `Sign in to pick up <strong>ORA dot</strong> <span class="ora-arrow">👇</span> — or use GitHub/Google above, one tap, no password.`
+                          : isHarness
+                            ? `Sign in to pick up your <strong>Aurem Loop</strong> download <span class="ora-arrow">👇</span> — or use GitHub/Google above, one tap, no password.`
+                            : `<strong>Fastest way:</strong> click <strong>Continue with GitHub</strong> below <span class="ora-arrow">👇</span> — one tap, no password.`))
             }
           />
           {/* Iter 113 — friendly banner when GitHub OAuth was cancelled */}
@@ -250,7 +329,7 @@ export default function Login() {
             data-testid="login-google-oauth"
             onClick={() => {
               const base = window.location.origin;
-              window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=login`;
+              window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=login&next=${encodeURIComponent(next)}`;
             }}
             style={{
               padding: "12px 14px", marginBottom: 12,
@@ -285,15 +364,18 @@ export default function Login() {
                 // Iter 113 — pass intent=login so backend redirects to
                 // /login (not /signup) if the user clicks Cancel on
                 // GitHub's consent screen.
+                // 2026-11-11 — Fix 7: carry ?next= through so a
+                // signup/login started from /harness returns there
+                // instead of always landing on /dashboard.
                 const url = withFunnelParams(
-                  `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login`,
+                  `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login&next=${encodeURIComponent(next)}`,
                   "login",
                 );
                 window.location.href = url;
               } catch {
                 // Telemetry lib failure MUST NOT block the OAuth flow.
                 const base = window.location.origin;
-                window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login`;
+                window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=login&next=${encodeURIComponent(next)}`;
               }
             }}
             style={{
@@ -551,14 +633,18 @@ export default function Login() {
             textAlign: "center", fontSize: 13, color: "var(--text-dim)",
           }}>
             No account yet?{" "}
-            <Link to="/signup" data-testid="login-to-signup">{loginFreeOfferCta()}</Link>
+            <Link to={`/signup${crossLinkQuery}`} data-testid="login-to-signup">{loginFreeOfferCta()}</Link>
           </div>
 
           <div
             data-testid="login-legal-line"
             style={{ marginTop: 12, textAlign: "center", fontSize: 10.5, color: "var(--text-faint)" }}
           >
-            © 2026 Polaris Built Inc. — ORA by Aurem, made by AUREM
+            {isDot
+              ? "© 2026 Polaris Built Inc. — ORA dot, made by AUREM"
+              : isHarness
+                ? "© 2026 Polaris Built Inc. — Aurem Loop, made by AUREM"
+                : "© 2026 Polaris Built Inc. — ORA by Aurem, made by AUREM"}
           </div>
         </div>
       </section>

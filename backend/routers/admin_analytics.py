@@ -58,6 +58,10 @@ from routers._admin_common import _require_admin  # noqa: E402
 from routers.admin import _bucket_label, _run_skill, _email_hint  # noqa: E402
 
 
+class _CleanupE2EBody(BaseModel):
+    pass
+
+
 @router.post("/qa/cleanup-e2e-sessions")
 async def cleanup_e2e_sessions(request: Request,
                                authorization: Optional[str] = Header(None)):
@@ -66,6 +70,10 @@ async def cleanup_e2e_sessions(request: Request,
     cl = request.headers.get("content-length")
     if cl and int(cl) > 1024:
         raise HTTPException(413, "Request body too large")
+async def cleanup_e2e_sessions(
+    body: _CleanupE2EBody,
+    authorization: Optional[str] = Header(None),
+):
     await _require_admin(authorization)
     db = get_db()
     if db is None:
@@ -267,3 +275,4 @@ async def admin_system_stats(
         {"$match": {"event": "aggregate", "status": "success",
                     "council": "A", "ts": {"$gte": cutoff}}},
         {"
+            gh_raw, gh

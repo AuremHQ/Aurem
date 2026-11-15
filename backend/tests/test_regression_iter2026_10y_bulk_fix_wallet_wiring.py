@@ -134,13 +134,22 @@ class TestBulkFixWalletWiring:
         monkeypatch.setenv("TOKEN_BILLING_MODE", "on")
         u = await _setup_user(db, "bulkpartial", balance=2 * FIX_PRICE)
 
-        async def fake_apply(*, db, user, project_id, finding):
-            if finding["id"] == "f1":
-                return {"ok": True, "commit_sha": "abc1234", "full_sha": "abc1234" * 5,
-                        "html_url": "https://x", "file": finding["file"],
-                        "rule_id": finding["rule_id"], "message": "Fixed"}
-            return {"ok": False, "error": "patch_did_not_resolve_finding"}
-        monkeypatch.setattr(fp, "apply_finding_fix", fake_apply)
+        # Part 2b F2 — the bulk job now resolves per FILE via
+        # apply_file_fixes (f1=a.py, f2=b.py are different files, so
+        # each gets its own call + its own per-finding result).
+        async def fake_apply_file(*, db, user, project_id, file, findings):
+            fid = findings[0]["id"]
+            if fid == "f1":
+                return {"ok": True, "file": file, "commit_sha": "abc1234",
+                        "full_sha": "abc1234" * 5, "html_url": "https://x",
+                        "pr_url": "https://x/pull/1", "branch": "aurem/fixes-x",
+                        "batch_id": "fb_1",
+                        "results": [{"finding_id": "f1", "rule_id": "r1",
+                                     "file": file, "status": "resolved"}]}
+            return {"ok": True, "file": file,
+                    "results": [{"finding_id": "f2", "rule_id": "r2", "file": file,
+                                 "status": "remaining"}]}
+        monkeypatch.setattr(fp, "apply_file_fixes", fake_apply_file)
 
         jid = await fjm.create_job(
             db=db, user_id=u, kind="bulk", total=2,

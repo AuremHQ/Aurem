@@ -162,6 +162,7 @@ async def _ask_jev_for_mode(message: str) -> Optional[dict]:
     """Real Jev Decisions API call. Returns {"mode", "confidence"} or
     None on any failure — mirrors services/ora_chat/intent_router.py's
     classify_intent_jev() calling convention exactly."""
+    from services.jev_observability import record_jev_call
     from services.llm.jev_client import ask_choice
     try:
         label, meta = await ask_choice(
@@ -175,12 +176,15 @@ async def _ask_jev_for_mode(message: str) -> Optional[dict]:
         )
     except Exception as e:  # noqa: BLE001 — classifier outage must never raise
         logger.warning("semantic_mode_router: Jev call raised — %r", e)
+        record_jev_call(ok=False, error=f"raised:{e!r}")
         return None
     if label not in _MODES:
         if label is not None:
             logger.warning("semantic_mode_router: unexpected Jev label %r", label)
+        record_jev_call(ok=False, error=meta.get("error") or "no_label")
         return None
     confidence = float((meta.get("probabilities") or {}).get(label, 0.0))
+    record_jev_call(ok=True, model=meta.get("model"))
     return {"mode": label, "confidence": confidence}
 
 

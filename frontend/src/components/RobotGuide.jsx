@@ -18,12 +18,20 @@
  *   - kind     : "info" (default amber) | "error" (red "HEADS UP")
  *                | "success" (green "ALL SET")
  *   - testid   : optional override for the root data-testid.
+ *   - brand    : (2026-11-11, Fix 8 gap) label prefix, defaults to
+ *                "ORA" so every existing caller is unaffected. Pass
+ *                "AUREM LOOP" from Login.jsx/Signup.jsx on a harness-
+ *                branded page — otherwise the mascot's own corner
+ *                label kept reading "ORA GUIDE" even when the rest of
+ *                the page (header, footer, headline) had already
+ *                switched to Aurem Loop, which is exactly the
+ *                founder-reported gap.
  */
 import React from "react";
 import DOMPurify from "dompurify";
 
-export default function RobotGuide({ message, kind = "info", testid = "robot-guide", children }) {
-  const palette = paletteFor(kind);
+export default function RobotGuide({ message, kind = "info", testid = "robot-guide", brand = "ORA", children }) {
+  const palette = paletteFor(kind, brand);
   // Iter 212m-227 — sanitize incoming HTML with DOMPurify.  Callers
   // pass small trusted snippets (`<strong>`, `<em>`, `<span class="ora-arrow">…</span>`)
   // but a future change could accidentally interpolate user data;
@@ -81,14 +89,14 @@ export default function RobotGuide({ message, kind = "info", testid = "robot-gui
   );
 }
 
-function paletteFor(kind) {
+function paletteFor(kind, brand = "ORA") {
   if (kind === "error") {
     return {
       bg: "rgba(255,107,107,0.06)",
       border: "rgba(255,107,107,0.3)",
       face: "#ef4444",
       label: "#ef4444",
-      labelText: "ORA · HEADS UP",
+      labelText: `${brand} · HEADS UP`,
     };
   }
   if (kind === "success") {
@@ -97,7 +105,7 @@ function paletteFor(kind) {
       border: "rgba(34,197,94,0.3)",
       face: "#22c55e",
       label: "#22c55e",
-      labelText: "ORA · ALL SET",
+      labelText: `${brand} · ALL SET`,
     };
   }
   return {
@@ -105,7 +113,7 @@ function paletteFor(kind) {
     border: "rgba(245,158,11,0.25)",
     face: "#f59e0b",
     label: "#f59e0b",
-    labelText: "ORA GUIDE",
+    labelText: `${brand} GUIDE`,
   };
 }
 

@@ -42,8 +42,16 @@ def test_aurem_cache_is_never_in_default_roots():
 def test_default_roots_are_backend_and_frontend_src_only():
     roots = _default_roots()
     assert len(roots) == 2
-    assert roots[0].endswith(os.path.join("app", "backend"))
-    assert roots[1].endswith(os.path.join("frontend", "src"))
+    # Roots are derived from the repo layout, never a hardcoded parent
+    # dir name: on Emergent pods the checkout is /app, on GitHub
+    # runners it is /home/runner/work/Aurem/Aurem — both are valid,
+    # and the old `endswith("app/backend")` assertion failed on every
+    # runner for that reason alone (2026-11-14).
+    test_dir = os.path.dirname(os.path.abspath(__file__))  # backend/tests/unit
+    backend = os.path.dirname(os.path.dirname(test_dir))   # backend
+    repo = os.path.dirname(backend)                        # repo root
+    assert roots[0] == backend
+    assert roots[1] == os.path.join(repo, "frontend", "src")
 
 
 # ── cache_key() format ────────────────────────────────────────────────

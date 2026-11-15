@@ -13,6 +13,7 @@ import { api, getToken } from "../lib/api";
 import { LLMCreditMonitor } from "./AdminLLMCredits";       // Iter 212m-171
 import { BoundaryProbesTile } from "../components/BoundaryProbesTile";  // Iter 212m-171
 import { DeployReadinessCard } from "../components/DeployReadinessCard"; // 2026-08-24 — Option A
+import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
 
 export default function AdminOverview() {
   const [health,  setHealth]  = useState(null);
@@ -1780,7 +1781,9 @@ function SystemMappingCard() {
         ["LLM · other roles", "DeepSeek (Council C) · GLM-5.2 (Council B + Advisor) · Claude Sonnet 4.5 (CEO judge) · Groq Llama-3.3-70B (free-tier rescue) · Emergent LLM key"],
         ["Code", "GitHub REST API — trees · blobs · commits · refs (atomic) · GitHub App installs"],
         ["Deploy", "Vercel webhooks · Emergent hosted MongoDB provisioner"],
-        ["Payments", "Stripe (flat-fee subscriptions, no token meters)"],
+        ["Payments", TOKEN_WORDING_ACTIVE
+          ? "Stripe (flat-fee subscriptions, token-metered usage — no per-action billing)"
+          : "Stripe (flat-fee subscriptions, no token meters)"],
         ["Search", "Tavily web search · Firecrawl JS-heavy scrape"],
         ["Observe", "Sentry crash · F12 browser-error custom capture · G17 circuit breakers (dependency strip above)"],
       ],

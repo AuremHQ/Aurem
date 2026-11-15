@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from calendar import monthrange
 
 import httpx
@@ -57,8 +57,28 @@ async def bill_maxx_overages(db) -> dict:
     month, post a Stripe InvoiceItem at $0.50/task and finalise an
     invoice that auto-charges their default payment method.
 
-    Returns: {processed, billed, failed, total_revenue_usd}
+    2026-10-25 (ITEM 4(a)/(b), independent review)
+    [DEFAULT-PENDING-FOUNDER, not yet final — see the Item 4 report]:
+    this had NO TOKEN_BILLING_MODE check at all. Under shadow/on, the
+    token-billing model replaces per-action overage charges, so
+    per-task $0.50 Stripe invoicing is OFF; `overage_count` keeps
+    accumulating for analytics only (see maxx_overage_preflight_report
+    below) and is never reset by this function in that case. At mode
+    "off" behavior, amounts, and descriptions are byte-identical to
+    before.
+
+    Returns: {processed, billed, failed, total_revenue_usd, mode}
     """
+    from services.wallet import billing_mode
+    mode = billing_mode()
+    if mode != "off":
+        return {
+            "processed": 0, "billed": 0, "failed": 0,
+            "total_revenue_usd": 0.0, "mode": mode,
+            "skipped_reason": f"billing_mode_{mode}",
+            "ran_at": datetime.now(UTC).isoformat(),
+        }
+
     stripe = _stripe_client()
     bucket = datetime.now(timezone.utc).strftime("%Y-%m")
     processed = billed = failed = 0
@@ -139,10 +159,36 @@ async def bill_maxx_overages(db) -> dict:
         "processed":         processed,
         "billed":            billed,
         "failed":            failed,
+        "mode":              mode,
         "total_revenue_usd": round(total_usd, 2),
         "bucket":            bucket,
         "ran_at":            datetime.now(timezone.utc).isoformat(),
     }
+
+
+async def maxx_overage_preflight_report(db) -> dict:
+    """ITEM 4(c) (independent review) — READ-ONLY. Lists every user
+    with Maxx overage_count > 0 in the current month and the USD
+    total at $0.50/task. Never invoices, never resets the counter —
+    for the founder to review what shadow/on mode's overage-invoicing
+    pause is deferring, before any future decision to resume
+    invoicing it (as a lump sum, a different price, or not at all —
+    not decided here)."""
+    bucket = datetime.now(UTC).strftime("%Y-%m")
+    overage_rows = await db.cto_maxx_usage.find({
+        "month": bucket, "overage_count": {"$gt": 0},
+    }).to_list(length=10_000)
+    rows = []
+    total_usd = 0.0
+    for row in overage_rows:
+        uid = row.get("user_id")
+        n = int(row.get("overage_count") or 0)
+        if not (uid and n > 0):
+            continue
+        amount = round(n * 0.50, 2)
+        total_usd += amount
+        rows.append({"user_id": uid, "overage_count": n, "amount_usd": amount})
+    return {"bucket": bucket, "rows": rows, "total_usd": round(total_usd, 2)}
 
 
 # ───────────────────────────────────────────────────────────────────────

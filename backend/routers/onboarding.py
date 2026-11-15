@@ -35,7 +35,8 @@ from services.onboarding_email import (
     CAMPAIGN, eligible_users, run_nudge_batch,
 )
 from services.signup_guards import emit_funnel_event
-from services.web_skills import _firecrawl_key, _is_blocked, FIRECRAWL_BASE
+from services.web_skills import _firecrawl_key, FIRECRAWL_BASE
+from services.url_guard import is_safe_public_http_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Onboarding"])
@@ -471,7 +472,7 @@ async def _scan_via_fallback(url: str) -> dict:
     """Plain HTTP fetch + our own static checks — runs whenever
     Firecrawl is unavailable (exhausted credits, down, no key), so a
     website scan NEVER comes back empty-handed."""
-    if _is_blocked(url):
+    if not is_safe_public_http_url(url):
         raise HTTPException(400, "That URL isn't allowed (internal/private address)")
     issues = []
     t0 = time.monotonic()
@@ -516,7 +517,7 @@ async def _scan_via_fallback(url: str) -> dict:
     broken = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=4.0, write=3.0, pool=3.0)) as c:
         for link in links:
-            if _is_blocked(link):
+            if not is_safe_public_http_url(link):
                 continue
             try:
                 lr = await c.head(link, follow_redirects=True)

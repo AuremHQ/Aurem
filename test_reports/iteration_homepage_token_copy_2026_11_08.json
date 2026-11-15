@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only copy verification of homepage token-mode wording on the live preview (Vite dev server, .env.development VITE_TOKEN_BILLING_MODE=on confirmed loaded). Most items pass: hero tagline 'Engineered for the lowest token usage.', CTA 'Start free — get your score' + pill 'A free full scan', PricingCards 900/1,900/4,900 tokens, comparison sub-headline + 'Flat pricing (no per-action billing)' row, '$9/Month. No Surprises.' card (900-token / no per-action billing, no Copilot/Devin %), FAQ 'How much does ORA cost?' (900 tokens/month, unused tokens carry forward). Signup/Login/Pricing spot-checks show token copy. No page errors, no horizontal overflow at 390px. FAIL: one hardcoded stale string is still visible on the homepage — the integrations marquee item 'Flat $9/mo · no token meter' (Landing.jsx:537). Static index.html head (og/twitter descriptions, JSON-LD FAQ/offers, noscript) still carries legacy task/no-token-meter claims.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Landing.jsx marquee array (~line 537)", "issue": "Hardcoded 'Flat $9/mo · no token meter' is rendered VISIBLY twice in the scrolling 'WHY TEAMS SHIP WITH ORA' marquee — directly violates the founder's 'no token meters' removal requirement. Not routed through billingCopy.js.", "selector": "text=Flat $9/mo · no token meter", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Homepage SEO/social head (frontend/index.html, served by dev server and not overwritten at runtime)", "issue": "og:description 'No IDE, no token meters. ... 55% cheaper than Copilot' (line 212), twitter:description 'No token meters' (231), static meta description 'No token billing ... 98% cheaper than Devin. 10 free tasks' (155, overwritten at runtime by usePageMeta but present in raw HTML), JSON-LD '10 tasks free' / 'no token metering' in description, Offer and FAQ answer (388, 403, 412, 423, 459), and noscript '10 free tasks on signup' (548). Social link previews and Google FAQ rich results will show legacy copy.", "affected_selectors": ["meta[property='og:description']", "meta[name='twitter:description']", "script[type='application/ld+json']"]}
+    ],
+    "design_issues": [
+      {"screen": "Homepage comparison table", "issues": ["'Flat pricing' row marks Claude Code '✗ Token-billed' as a negative while ORA itself is now token-billed — contradictory messaging"]},
+      {"screen": "Homepage hero stats", "issues": ["'55% cheaper than Copilot' stat still shown (not a pricing-card claim, so out of the explicit ask, but flag for founder review)"]},
+      {"screen": "/pricing page @1920", "issues": ["Plan grid renders 3 cards in row 1 and Team card alone on row 2 (left-aligned) — unbalanced layout; homepage #pricing shows 4-in-a-row correctly"]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Landing.jsx:537 — replace 'Flat $9/mo · no token meter' marquee item with a billingCopy.js-gated string (e.g. 'Flat $9/mo · 900 tokens' in token mode)",
+    "Update/gate frontend/index.html og:description, twitter:description, meta description, JSON-LD (description, Free/Starter offers, featureList, FAQ answer) and noscript block — or have seo-prerender.mjs / usePageMeta rewrite og/twitter tags in token mode",
+    "Optional: public/preview-landing.html:595 still has 'No IDE, no token meters.'",
+    "Optional: reconsider 'Token-billed' ✗ for Claude Code in COMPARE_ROWS; fix /pricing grid to 4 columns at desktop"
+  ],
+  "critical_code_review_comments": [
+    "billingCopy.js TOKEN_WORDING_ACTIVE is `_mode() !== 'off'` (so 'shadow' also activates token copy) — review request says `=== 'on'`; confirm intended",
+    "Grep of src/ for 'no token meter' should be part of Landing.tokenWording.test.jsx — the existing tolerant regex missed the marquee string",
+    "AdminOverview.jsx:1786 still says 'no token meters' (admin-only, low priority)"
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "~89% (8/9 checklist items pass; 'no visible No token meters anywhere on homepage' fails)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview runs `vite` dev server (supervisor yarn start) so .env.development applies. Verified via body innerText scan on '/', plus /signup, /login, /pricing. Only remaining visible homepage defect was Landing.jsx marquee line 537; head/meta/JSON-LD in index.html still legacy."
+}

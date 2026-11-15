@@ -4,6 +4,7 @@ Split from the former routers/chat.py god-file (4184 lines) on
 2026-09-08. See routers/chat/__init__.py for the split rationale.
 """
 from __future__ import annotations
+
 import logging
 import re
 import time
@@ -14,11 +15,13 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
 from services.chat_helpers import (
-    _build_failed_followup, _build_blocked_followup, _build_done_fallback,
+    _build_blocked_followup,
+    _build_done_fallback,
+    _build_failed_followup,
     _generate_done_followup,
 )
+from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
 
 from . import router
 
@@ -677,8 +680,9 @@ async def draft_support_email(
     only calls this on "No, contact support". The reply is a
     structured email payload the UI renders as a preview card with a
     `Send` button (mailto: handoff)."""
-    from services.llm import call_openrouter_model
     import datetime as _dt
+
+    from services.llm import call_openrouter_model
 
     user = await current_dev(authorization)
     user_id = user["user_id"]
@@ -794,13 +798,19 @@ async def draft_support_email(
     # founder's first-pass fix didn't work) now routes through
     # GLM-5.2 via OpenRouter — same model as Swift mode for a single
     # primary-LLM source of truth.
+    # ORA Brain Part 4, F5 — record-only; no routing change.
+    from services.brain_gateway import record_wrap
     from services.llm import _GLM_MODEL
-    email_body = await call_openrouter_model(
-        model=_GLM_MODEL,
-        system="You write concise support emails.",
-        user=prompt,
-        max_tokens=250,
-        temperature=0.3,
+    email_body = await record_wrap(
+        call_openrouter_model(
+            model=_GLM_MODEL,
+            system="You write concise support emails.",
+            user=prompt,
+            max_tokens=250,
+            temperature=0.3,
+        ),
+        user_id=user_id, task_type="support_email",
+        model=_GLM_MODEL, surface="chat_misc",
     )
 
     if not (email_body or "").strip():

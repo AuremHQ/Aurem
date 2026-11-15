@@ -29,7 +29,7 @@ from fastapi.responses import RedirectResponse
 from cto_services.auth import create_token
 from cto_services.db import get_db
 from routers.auth import _email_ci
-from routers.github_oauth import _request_origin, _frontend_url
+from routers.github_oauth import _request_origin, _frontend_url, _safe_next
 from services.google_oauth import auth_url, exchange, get_profile
 from services.usage import is_founder_email
 
@@ -38,7 +38,8 @@ router = APIRouter(prefix="/google/oauth", tags=["Google OAuth"])
 
 
 @router.get("/start")
-async def start(request: Request, intent: Optional[str] = Query(default=None)):
+async def start(request: Request, intent: Optional[str] = Query(default=None),
+                 next: Optional[str] = Query(default=None)):
     """Kick off direct Google sign-in. Identity-only — no user auth
     required to hit this (same as GitHub's signup/login branch)."""
     origin = _request_origin(request)
@@ -58,6 +59,8 @@ async def start(request: Request, intent: Optional[str] = Query(default=None)):
             "origin":       origin,
             "redirect_uri": redirect_uri,
             "created_at":   datetime.now(timezone.utc),
+            # 2026-11-11 — Fix 7: safe post-auth return path.
+            "next":         _safe_next(next),
         })
     return RedirectResponse(url=auth_url(state, redirect_uri))
 
@@ -81,19 +84,25 @@ async def callback(
                      error, bool(code))
         cancel_origin = None
         target_path = "/login"
+        cancel_next = None
         try:
             if state:
                 s_tmp = await db.oauth_states.find_one({"state": state})
                 if s_tmp:
                     cancel_origin = s_tmp.get("origin")
                     target_path = "/signup" if s_tmp.get("mode") == "signup" else "/login"
+                    cancel_next = s_tmp.get("next")
                 await db.oauth_states.delete_one({"state": state})
         except Exception:
             pass
         reason = error or "missing_code"
+        # 2026-11-11 — Fix 7: carry the return path through a
+        # cancelled attempt too (mirrors github_oauth.py).
+        cancel_query = f"google=cancelled&reason={reason}"
+        if cancel_next:
+            cancel_query += f"&next={quote_plus(cancel_next)}"
         return RedirectResponse(
-            url=_frontend_url(target_path, f"google=cancelled&reason={reason}",
-                               origin=cancel_origin)
+            url=_frontend_url(target_path, cancel_query, origin=cancel_origin)
         )
 
     if not state or ":" not in state:
@@ -113,6 +122,7 @@ async def callback(
     state_origin = s.get("origin")
     redirect_uri = s.get("redirect_uri")
     mode = s.get("mode") or "signup"
+    state_next = s.get("next")
     await db.oauth_states.delete_one({"state": state})
 
     try:
@@ -222,5 +232,8 @@ async def callback(
             # was structurally a Google sign-in. `provider=google`
             # lets the frontend label any failure correctly.
             f"&provider=google"
+            # 2026-11-11 — Fix 7: carry the validated return path
+            # through to OAuthFinish.jsx (mirrors github_oauth.py).
+            + (f"&next={quote_plus(state_next)}" if state_next else "")
         )
     )

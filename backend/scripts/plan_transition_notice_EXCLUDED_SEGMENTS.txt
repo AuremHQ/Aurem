@@ -1,0 +1,24 @@
+NOT A NOTICE — explains why there is no notice file for these segments.
+Master Prompt v2 PART 6 / ITEM 9 — independent review.
+
+No notice draft exists for: disputed, refunded, frozen, admin,
+test_user, no_email, duplicate_email, huge_allowance.
+
+Reason (same for all eight): every one of these is an `excluded: true`
+segment in services/plan_transition.py::classify_user — each already
+carries its own `exclude_reason` explaining why it needs manual
+review BEFORE any automated action, including outreach. Sending a
+cutover notice to a user mid-dispute, mid-refund, frozen, or flagged
+for duplicate/huge-allowance/test-account review would be premature —
+"no notice until resolved" (the task's own instruction, given
+explicitly for disputed/refunded/frozen, applied here consistently to
+every other `excluded` segment for the same underlying reason).
+
+admin/test_user accounts specifically also just don't need a customer
+notice at all (internal/QA accounts, not real paying customers).
+
+If/when a disputed, refunded, or frozen user's flag resolves, they
+re-classify into whichever REAL segment (paid_active, paid_cancelled,
+free_active, free_dormant) their account then matches — the four
+per-segment drafts in this directory cover that case already; no
+fifth "formerly disputed" variant is needed.

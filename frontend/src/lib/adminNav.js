@@ -38,6 +38,12 @@ export const ADMIN_NAV = [
   { id: "users",           label: "Users (Legacy)",       route: "/admin/users",          group: "USERS", screenKeys: ["users.all"] },
   { id: "support",         label: "Support",              route: "/admin/support",        group: "USERS", screenKeys: ["support.tickets"] },
   { id: "suggestions",     label: "Suggestions",          route: "/admin/suggestions",    group: "USERS", screenKeys: ["support.suggestions"] },
+  // 2026-11-14 · ORA dot signup list — the /dot page form (name + email)
+  // writes to Mongo `dot_signups`; this is the list Teji asked to see
+  // at /admin. screenKeys: [] on purpose, same as "team" /
+  // "pricing_panel" / "settings": owner-only, no screen key exists for
+  // it yet, so no team member can be granted it by accident.
+  { id: "dot_signups",    label: "ORA dot Signups",    route: "/admin/dot-signups", group: "USERS", screenKeys: [] },
   { id: "self_bugs",       label: "Self-Repair Log",      route: "/admin/self-bugs",       group: "USERS", screenKeys: ["ora.bugs"] },
   { id: "audit",           label: "Audit Log",            route: "/admin/audit",          group: "USERS", screenKeys: ["logs.activity", "logs.admin"] },
   // Admin Team S3 (AT2) — Owner-only invite/manage UI for
