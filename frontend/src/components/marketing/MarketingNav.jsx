@@ -106,6 +106,7 @@ export default function MarketingNav({ minimal = false, logoText = "ORA", logoSu
           <>
             <Link className="mn-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
             <Link className="mn-link" to="/#reviews" data-testid="nav-reviews">Reviews</Link>
+            <Link className="mn-link" to="/faq" data-testid="nav-faq">FAQ</Link>
             {(!getToken() || isAdminOrFounder(getUser())) && (
               <Link className="mn-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
             )}

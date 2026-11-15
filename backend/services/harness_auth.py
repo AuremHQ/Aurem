@@ -92,6 +92,41 @@ async def verify_harness_identity(db, *, bin: str, token: str) -> dict:
     return {"subscriber": True, "plan": tier_str}
 
 
+async def check_harness_token(db, *, bin: str, token: str) -> bool:
+    """Bool version of verify_harness_identity's identity check, for
+    endpoints that need "is this a real, live identity?" without a
+    subscriber/plan answer — `POST /api/harness/telemetry` uses it.
+
+    Same dual-match as verify (token_hash + user_id + revoked_at None)
+    and the same dev_users existence check, so a token whose user row
+    is gone is treated as invalid here exactly as verify treats it
+    (plan None). Free and paid identities both pass — tier is never
+    a reason to refuse. Fails closed on any error or ambiguity.
+    Deliberately separate from verify_harness_identity: verify's
+    response contract is unchanged (the brief forbids changing it)."""
+    if not bin or not isinstance(bin, str) or not token or not isinstance(token, str):
+        return False
+    if not bin.strip() or not token.strip():
+        return False
+    try:
+        row = await db.harness_tokens.find_one({
+            "token_hash": _hash_token(token),
+            "user_id": bin,
+            "revoked_at": None,
+        })
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("check_harness_token lookup failed (fail-closed): %r", e)
+        return False
+    if not row:
+        return False
+    try:
+        user = await db.dev_users.find_one({"user_id": bin})
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("check_harness_token user lookup failed (fail-closed): %r", e)
+        return False
+    return bool(user)
+
+
 async def revoke_harness_token(db, *, user_id: str, token: str | None = None) -> int:
     """Revoke one specific token (if given) or ALL active tokens for
     user_id. Idempotent — revoking an already-revoked or nonexistent

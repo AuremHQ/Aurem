@@ -16,9 +16,18 @@ Re-downloading issues a new, independent token; it never revokes an
 existing installation (see services.harness_auth.issue_harness_token).
 
 No release published yet -> a clean 409, never a fabricated package.
+
+Fix B: the response carries `X-Aurem-Package-SHA256` — the SHA-256
+(lowercase hex) of the EXACT bytes sent. The base zip's static hash
+can never match the delivered file, because inject_identity_into_zip
+rebuilds the zip with a per-user identity.json; the page shows the
+delivered hash (from this header) next to the relabelled base hash.
+The hash is computed over the bytes only — it is never stored
+against the token and the raw token never appears in a header or log.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
@@ -76,6 +85,11 @@ async def harness_download(authorization: str | None = Header(None)) -> Response
     token = await issue_harness_token(db, user_id=user_id)
     package = inject_identity_into_zip(artifact_bytes, bin=user_id, token=token)
 
+    # Fix B: hash the EXACT bytes being sent (per-user identity.json
+    # already baked in), so the browser can verify the file it got.
+    # Never logged, never stored — a digest of the bytes, not the token.
+    package_sha256 = hashlib.sha256(package).hexdigest()
+
     plan = user.get("tier") or "free"
     await db.harness_downloads.insert_one({
         "grant_id": f"dl_{uuid.uuid4().hex[:12]}",
@@ -90,5 +104,8 @@ async def harness_download(authorization: str | None = Header(None)) -> Response
     return Response(
         content=package,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Aurem-Package-SHA256": package_sha256,
+        },
     )

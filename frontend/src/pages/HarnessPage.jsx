@@ -28,6 +28,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, getToken, healthApi } from "../lib/api";
+import { isLoopSubdomain } from "../lib/loopSubdomain"; // 2026-11-15 — JSON-LD page URL differs on loop.auremcto.com (homepage there)
 import MarketingNav from "../components/marketing/MarketingNav";
 
 // 2026-11-11 — founder asked for the exact same background treatment
@@ -271,6 +272,11 @@ export default function HarnessPage() {
   const [releaseLoading, setReleaseLoading] = useState(true); // avoids a Phase-A-banner flash before this resolves
   const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
   const [downloadError, setDownloadError] = useState("");
+  // Fix B — SHA-256 of the DELIVERED zip, read from the download
+  // response header X-Aurem-Package-SHA256 (null until a download
+  // completes, or when the server sends no header).
+  const [deliveredSha256, setDeliveredSha256] = useState(null);
+  const [copiedSha, setCopiedSha] = useState(false);
 
   // Fix 3 (2026-11-11) — all 3 public GETs now fire together on mount
   // instead of page-status → (then) content+release. The old shape
@@ -343,8 +349,15 @@ export default function HarnessPage() {
     }
     setDownloadState("downloading");
     setDownloadError("");
+    setDeliveredSha256(null);
+    setCopiedSha(false);
     try {
       const resp = await api.post("/harness/download", {}, { responseType: "blob" });
+      // Fix B: the server hashes the EXACT bytes it sent (per-user
+      // identity.json already baked in). axios lowercases header
+      // names; an older server sends no header — show nothing then.
+      const delivered = resp.headers?.["x-aurem-package-sha256"] || null;
+      if (delivered) setDeliveredSha256(delivered);
       const url = URL.createObjectURL(resp.data);
       const a = document.createElement("a");
       a.href = url;
@@ -369,6 +382,13 @@ export default function HarnessPage() {
     if (!content) return;
     const prevTitle = document.title;
     document.title = content.title || "Aurem Loop";
+    // 2026-11-15 — loop.auremcto.com (Nov 10 decision): on the
+    // subdomain the harness page IS the homepage, so its own URL is
+    // the subdomain root, not /harness. Derive from
+    // window.location.origin so the output is byte-identical on
+    // auremcto.com and correct on the subdomain — no hardcoded host.
+    const origin = (typeof window !== "undefined" && window.location?.origin) || "https://auremcto.com";
+    const harnessUrl = isLoopSubdomain() ? `${origin}/` : `${origin}/harness`;
     const graph = [
       {
         "@type": "FAQPage",
@@ -381,8 +401,8 @@ export default function HarnessPage() {
       {
         "@type": "BreadcrumbList",
         itemListElement: [
-          { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
-          { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
+          { "@type": "ListItem", position: 1, name: "AUREM", item: `${origin}/` },
+          { "@type": "ListItem", position: 2, name: "Aurem Loop", item: harnessUrl },
         ],
       },
     ];
@@ -479,7 +499,7 @@ export default function HarnessPage() {
               <strong>Download available</strong> — v<span data-testid="harness-download-version">{release.version}</span>
               {release.mandatory && <span style={{ marginLeft: 8, ...badgeStyle }}>REQUIRED UPDATE</span>}
               <p style={{ ...pStyle, marginTop: 10 }}>
-                SHA-256: <span style={monoStyle} data-testid="harness-download-sha256">{release.sha256}</span>
+                Base package (before your personal identity file is added) — SHA-256: <span style={monoStyle} data-testid="harness-download-sha256">{release.sha256}</span>
               </p>
               {release.changelog?.length > 0 && (
                 <ul data-testid="harness-download-changelog">
@@ -497,6 +517,35 @@ export default function HarnessPage() {
               </button>
               {downloadState === "error" && (
                 <p style={errorTextStyle} data-testid="harness-download-error">{downloadError}</p>
+              )}
+              {deliveredSha256 && (
+                <div data-testid="harness-download-delivered">
+                  <p style={{ ...pStyle, marginTop: 10 }}>
+                    SHA-256 of YOUR downloaded package: <span style={monoStyle} data-testid="harness-download-delivered-sha256">{deliveredSha256}</span>
+                    <button
+                      type="button"
+                      data-testid="harness-download-copy-sha256"
+                      onClick={async () => {
+                        if (!navigator.clipboard?.writeText) return; // no clipboard API — the hash stays on screen to copy by hand
+                        try {
+                          await navigator.clipboard.writeText(deliveredSha256);
+                          setCopiedSha(true);
+                        } catch {
+                          // Clipboard denied — do not claim "Copied".
+                        }
+                      }}
+                      style={{ marginLeft: 8 }}
+                    >
+                      {copiedSha ? "Copied" : "Copy"}
+                    </button>
+                  </p>
+                  <p style={{ ...pStyle, fontSize: 12 }}>
+                    Check your file with PowerShell: <code data-testid="harness-download-verify-command">Get-FileHash aurem-loop-{release?.version || "latest"}.zip -Algorithm SHA256</code>
+                  </p>
+                  <p style={{ ...pStyle, fontSize: 12 }} data-testid="harness-download-hash-note">
+                    This hash comes from our server, so it detects a damaged download, not a compromised server.
+                  </p>
+                </div>
               )}
               <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
                 MIT licensed. Requires a free ORA account to sign in locally — no cloud account, no credit card.
