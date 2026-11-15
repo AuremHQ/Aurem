@@ -17,6 +17,7 @@ import ast
 import json
 import os
 import re
+import subprocess
 import sys
 import requests
 
@@ -90,7 +91,7 @@ def _call_name(func_node: ast.expr) -> tuple[str | None, str | None]:
     """Resolve a `Call.func` node to `(function_name, owner_name)`.
 
     `eval(x)`               -> ("eval", None)
-    `os.system(x)`          -> ("system", "os")
+    `subprocess.run(x)`     -> ("run", "subprocess")
     `ast.literal_eval(x)`   -> ("literal_eval", "ast")   — name is
                                "literal_eval", never matches a bare
                                "eval"/"exec" check.
