@@ -12,13 +12,19 @@ dedupe on (user_id, event hash), per-IP + per-user rate limits.
 
 Contract (client: aurem_loop/telemetry.py `_telemetry_send_batch`):
 request {"bin": str, "token": str, "harness_version": str,
-"events": [...]} -> 200 {"received": int} = events ACCEPTED from the
-START of the batch. The client requires an int > 0 to clear anything
-and clamps to the batch size; it deletes the FIRST N events of the
-batch. So acceptance is a PREFIX: validation stops at the first
-invalid event and `received` is the length of the valid prefix.
-Event-level problems therefore return 200 {"received": 0} (nothing
-stored); only envelope/batch-level problems return 422/413/401/429.
+"events": [...]} -> 200 {"received": int} = events CONSUMED from the
+START of the batch — valid ones stored, invalid ones dropped and
+counted. The client requires an int > 0 to clear anything and
+clamps to the batch size; it deletes the FIRST N events of the
+batch. So consumption is a PREFIX: the server deals with the batch
+in order and `received` is how many events from the start it dealt
+with. An invalid event is permanent junk (re-sending it would never
+make it valid), so it is dropped and counted instead of stopping
+the batch — the old "received 0 on a bad first event" is the poison
+pill: the client clears nothing and resends the same batch forever.
+Event-level problems therefore return 200 with received = consumed
+(the invalid events are never stored); only envelope/batch-level
+problems return 422/413/401/429.
 
 TDD: this file was written FIRST (red) against stub modules, then
 the service + router were implemented (green). See the final report.
@@ -285,25 +291,46 @@ class TestValidateEvent:
         assert clean2 is not None and "trigger" not in clean2
 
 
-class TestValidateBatchPrefix:
-    def test_valid_prefix_stops_at_the_first_invalid_event(self):
+class TestValidateBatch:
+    def test_invalid_events_are_skipped_valid_ones_after_still_accepted(self):
         from services import harness_telemetry as ht
         events = [_run_event(), _run_event(attempts=3),
                   _run_event(passed={"$ne": True}), _run_event()]
-        accepted = ht.validate_batch(events, user_id="u1")
-        assert len(accepted) == 2
+        accepted, consumed = ht.validate_batch(events, user_id="u1")
+        assert len(accepted) == 3
+        assert consumed == 4
 
-    def test_first_event_invalid_means_empty_prefix(self):
+    def test_first_event_invalid_means_nothing_accepted_but_one_consumed(self):
         from services import harness_telemetry as ht
-        assert ht.validate_batch([_run_event(model={"$ne": 1})], user_id="u1") == []
+        assert ht.validate_batch([_run_event(model={"$ne": 1})], user_id="u1") == ([], 1)
 
-    def test_empty_batch_is_an_empty_prefix(self):
+    def test_empty_batch_accepts_and_consumes_nothing(self):
         from services import harness_telemetry as ht
-        assert ht.validate_batch([], user_id="u1") == []
+        assert ht.validate_batch([], user_id="u1") == ([], 0)
 
     def test_non_list_batch_is_rejected(self):
         from services import harness_telemetry as ht
-        assert ht.validate_batch("not-a-list", user_id="u1") == []
+        assert ht.validate_batch("not-a-list", user_id="u1") == ([], 0)
+
+    def test_poison_pill_invalid_first_event_is_consumed_not_stuck(self):
+        """Poison pill (founder-found, reading the router): a batch
+        whose FIRST event is invalid must not stick the queue. The
+        invalid event is CONSUMED (counted in `consumed`, never
+        stored) and the valid events after it are still accepted —
+        so the client, which deletes the first `received` events,
+        clears the whole batch instead of resending it forever."""
+        from services import harness_telemetry as ht
+        accepted, consumed = ht.validate_batch(
+            [_run_event(passed={"$ne": True}), _run_event(attempts=3)],
+            user_id="u1")
+        assert len(accepted) == 1
+        assert accepted[0]["attempts"] == 3
+        assert consumed == 2
+        # All-invalid batch: nothing accepted, everything consumed.
+        accepted, consumed = ht.validate_batch(
+            [_run_event(passed={"$ne": True})], user_id="u1")
+        assert accepted == []
+        assert consumed == 1
 
 
 class TestEventHash:
@@ -324,7 +351,7 @@ class TestStoreEvents:
     async def test_stores_one_doc_per_event_with_the_right_user(self):
         from services import harness_telemetry as ht
         db = _FakeDB()
-        events = ht.validate_batch([_run_event(), _loop_c_event()], user_id="u1")
+        events, _consumed = ht.validate_batch([_run_event(), _loop_c_event()], user_id="u1")
         n = await ht.store_events(db, user_id="u1", events=events)
         assert n == 2
         assert len(db.harness_telemetry.docs) == 2
@@ -338,7 +365,7 @@ class TestStoreEvents:
     async def test_replayed_batch_does_not_double_store(self):
         from services import harness_telemetry as ht
         db = _FakeDB()
-        events = ht.validate_batch([_run_event(), _run_event(attempts=3)], user_id="u1")
+        events, _consumed = ht.validate_batch([_run_event(), _run_event(attempts=3)], user_id="u1")
         assert await ht.store_events(db, user_id="u1", events=events) == 2
         assert await ht.store_events(db, user_id="u1", events=events) == 2
         assert len(db.harness_telemetry.docs) == 2
@@ -346,7 +373,7 @@ class TestStoreEvents:
     async def test_duplicate_events_inside_one_batch_store_once(self):
         from services import harness_telemetry as ht
         db = _FakeDB()
-        events = ht.validate_batch([_run_event(), _run_event()], user_id="u1")
+        events, _consumed = ht.validate_batch([_run_event(), _run_event()], user_id="u1")
         assert await ht.store_events(db, user_id="u1", events=events) == 2
         assert len(db.harness_telemetry.docs) == 1
 
@@ -356,7 +383,7 @@ class TestStoreEvents:
         index + upsert makes this atomic in real Mongo)."""
         from services import harness_telemetry as ht
         db = _FakeDB()
-        events = ht.validate_batch([_run_event(), _loop_c_event()], user_id="u1")
+        events, _consumed = ht.validate_batch([_run_event(), _loop_c_event()], user_id="u1")
         results = await asyncio.gather(
             ht.store_events(db, user_id="u1", events=events),
             ht.store_events(db, user_id="u1", events=events),
@@ -520,13 +547,15 @@ class TestTelemetryEndpoint:
              patch.object(ht_mod, "check_rate_limit_async", AsyncMock(return_value=True)), \
              patch.object(ht_mod, "client_ip_from_request", lambda req: "203.0.113.7"):
             client = TestClient(app)
-            # A bad FIRST event -> received 0, nothing stored.
+            # A bad FIRST event -> received 1 (consumed, never
+            # stored), so the client clears it instead of resending
+            # it forever (the poison pill).
             for bad in bad_first_events:
                 resp = _post(client, {"bin": "u1", "token": token,
                                       "harness_version": "0.8.0",
                                       "events": [bad]})
                 assert resp.status_code == 200, bad
-                assert resp.json() == {"received": 0}, bad
+                assert resp.json() == {"received": 1}, bad
             assert db.harness_telemetry.docs == []
             # A 100 KiB string makes the whole BODY oversized — the
             # size check fires first (413), which is also a rejection:
@@ -536,14 +565,17 @@ class TestTelemetryEndpoint:
                                   "events": [_run_event(model="x" * 100_000)]})
             assert resp.status_code == 413
             assert db.harness_telemetry.docs == []
-            # A bad event AFTER a good one -> only the valid prefix.
+            # A bad event AFTER a good one -> all three consumed;
+            # the two valid ones are stored, the bad one is not.
+            # (The two valid events differ — attempts=3 — so the
+            # second is a new doc, not a dedupe replay.)
             resp = _post(client, {"bin": "u1", "token": token,
                                   "harness_version": "0.8.0",
                                   "events": [_run_event(),
                                              _run_event(passed={"$ne": True}),
-                                             _run_event()]})
-            assert resp.json() == {"received": 1}
-            assert len(db.harness_telemetry.docs) == 1
+                                             _run_event(attempts=3)]})
+            assert resp.json() == {"received": 3}
+            assert len(db.harness_telemetry.docs) == 2
 
     async def test_e5_smuggled_fields_never_reach_mongo(self):
         db = _FakeDB()
@@ -743,6 +775,38 @@ class TestTelemetryEndpoint:
                                   "events": [_run_event()]})
             assert resp.json() == {"received": 1}
 
+    async def test_e12_poison_pill_first_event_invalid_does_not_stick(self):
+        """Poison pill (founder-found, reading the router): a batch
+        whose FIRST event is invalid used to return {"received": 0},
+        so the client (which clears only when received > 0) resent
+        the same batch forever and the queue stuck at cap 500.
+        Invalid events are now CONSUMED — counted in `received`,
+        never stored — so the client clears the batch and the valid
+        events after the bad one are still stored."""
+        db = _FakeDB()
+        token = await _issue_token(db, "u1")
+        app, ht_mod = _telemetry_app(db)
+        with patch.object(ht_mod, "require_db", lambda: db), \
+             patch.object(ht_mod, "check_rate_limit_async", AsyncMock(return_value=True)), \
+             patch.object(ht_mod, "client_ip_from_request", lambda req: "203.0.113.7"):
+            client = TestClient(app)
+            # Bad first event (Mongo operator injection), then a valid one.
+            resp = _post(client, {"bin": "u1", "token": token,
+                                  "harness_version": "0.8.0",
+                                  "events": [_run_event(passed={"$ne": True}),
+                                             _run_event(attempts=3)]})
+            assert resp.status_code == 200
+            assert resp.json() == {"received": 2}
+            assert len(db.harness_telemetry.docs) == 1
+            assert db.harness_telemetry.docs[0]["attempts"] == 3
+            # All-invalid batch: consumed, nothing stored.
+            resp = _post(client, {"bin": "u1", "token": token,
+                                  "harness_version": "0.8.0",
+                                  "events": [_run_event(passed={"$ne": True})]})
+            assert resp.status_code == 200
+            assert resp.json() == {"received": 1}
+            assert len(db.harness_telemetry.docs) == 1
+
 
 # ------------------------------------------------- E10: real client contract
 # Runs only when the aurem-loop client files are attached via
@@ -813,17 +877,16 @@ class TestRealClientContract:
             assert outbox.read_text() == ""
             assert len(db.harness_telemetry.docs) == 2
 
-            # Prefix contract: [valid, invalid] -> client clears exactly
-            # 1, the invalid event stays queued for the next pass.
+            # Consumed contract: [valid, invalid] -> client clears
+            # exactly 2 (both consumed — the invalid one is dropped,
+            # never stored, and never resent), outbox empties.
             # (The valid event here differs from the first batch's —
             # attempts=3 — so it is a new doc, not a dedupe replay.)
             outbox.write_text(json.dumps(_run_event(attempts=3)) + "\n"
                               + json.dumps(_run_event(passed={"$ne": True})) + "\n")
             sent_count, err = client_telemetry._telemetry_send_batch()
-            assert (sent_count, err) == (1, None)
-            remaining = outbox.read_text().strip().splitlines()
-            assert len(remaining) == 1
-            assert json.loads(remaining[0])["passed"] == {"$ne": True}
+            assert (sent_count, err) == (2, None)
+            assert outbox.read_text() == ""
             assert len(db.harness_telemetry.docs) == 3
 
             # Auth failure (wrong token in identity) -> client keeps the

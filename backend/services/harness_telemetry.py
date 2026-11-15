@@ -23,14 +23,23 @@ belongs to another event type is dropped, not stored:
 bool is NEVER accepted where int/float is expected, and never the
 other way round (Python's bool is a subclass of int — checked first).
 
-Acceptance is a PREFIX: validate_batch walks the batch in order and
-stops at the first invalid event, returning the valid prefix. That
-is what the contract means by "ACCEPTED from the START of the batch"
-and what the client assumes when it deletes the FIRST N events of
-the batch. Unknown fields are DROPPED, never stored; a dict/list
-where a scalar belongs is rejected outright (that is how a Mongo
-operator injection like {"$ne": 1} is stopped — it can never reach
-the query or the document).
+Acceptance is CONSUMPTION, not a prefix of valid events:
+validate_batch walks the whole batch in order and returns
+(accepted, consumed). Accepted events are stored; invalid ones are
+DROPPED and counted in `consumed` — they are permanent junk (an
+event with a Mongo operator in a scalar field will never become
+valid by re-sending it), and dropping them is what keeps the client
+queue from sticking. `consumed` is always a prefix length, so the
+client can safely delete the FIRST `consumed` events of the batch:
+that is what the contract means by "CONSUMED from the START of the
+batch" and what the client assumes when it deletes the first N.
+Unknown fields are DROPPED, never stored; a dict/list where a
+scalar belongs is rejected outright (that is how a Mongo operator
+injection like {"$ne": 1} is stopped — it can never reach the query
+or the document). A batch whose first event is invalid therefore
+returns 200 {"received": N} with N > 0 (all N consumed) instead of
+{"received": 0} — the old 0 is the poison pill: the client clears
+nothing and resends the same batch forever.
 
 Dedupe: the dedupe key is (user_id, event_hash), where event_hash is
 the SHA-256 of the canonical JSON of the accepted fields + user_id.
@@ -140,6 +149,36 @@ _VALIDATORS = {
 }
 
 
+def _validate_event_fields(event, spec) -> dict | None:
+    """Check every spec field is present and kind-valid; return the
+    cleaned event (whitelisted fields only) or None. Per-field rule:
+    seconds is a duration, never negative (gate_gain /
+    weights_changed_pct may be negative — a loss)."""
+    clean = {}
+    for field, kind in spec.items():
+        value = event.get(field, None)
+        if value is None and field not in event:
+            return None  # required field missing
+        if not _VALIDATORS[kind](value, field):
+            return None
+        if field == "seconds" and value < 0:
+            return None
+        clean[field] = value
+    return clean
+
+
+def _validate_event_semantics(clean, *, user_id: str) -> bool:
+    """Cross-field rules on an otherwise valid event: `at` must look
+    like the client's timestamp, and the event's bin must be the
+    authenticated user — a bin from anyone else is not this user's
+    telemetry."""
+    if not _AT_RE.match(clean["at"]):
+        return False
+    if clean["bin"] != user_id:
+        return False
+    return True
+
+
 def validate_event(event, *, user_id: str) -> dict | None:
     """Validate one event against its type's whitelist.
 
@@ -154,41 +193,32 @@ def validate_event(event, *, user_id: str) -> dict | None:
     spec = TELEMETRY_EVENT_SPECS.get(event_type)
     if spec is None:
         return None
-    clean = {}
-    for field, kind in spec.items():
-        value = event.get(field, None)
-        if value is None and field not in event:
-            return None  # required field missing
-        if not _VALIDATORS[kind](value, field):
-            return None
-        # Per-field rule: seconds is a duration, never negative.
-        # (gate_gain / weights_changed_pct may be negative — a loss.)
-        if field == "seconds" and value < 0:
-            return None
-        clean[field] = value
-    # `at` must look like the client's timestamp, not just any string.
-    if not _AT_RE.match(clean["at"]):
+    clean = _validate_event_fields(event, spec)
+    if clean is None:
         return None
-    # The event's bin must be the authenticated user — a bin from
-    # anyone else is not this user's telemetry.
-    if clean["bin"] != user_id:
+    if not _validate_event_semantics(clean, user_id=user_id):
         return None
     return clean
 
 
-def validate_batch(events, *, user_id: str) -> list:
-    """Validate a batch in order; stop at the first invalid event and
-    return the valid prefix (possibly empty). A non-list batch has no
-    valid prefix."""
+def validate_batch(events, *, user_id: str) -> tuple:
+    """Validate a batch in order; return (accepted, consumed).
+
+    accepted = cleaned valid events (these are stored). consumed =
+    events dealt with from the START of the batch — valid ones stored,
+    invalid ones dropped. consumed is always a prefix length, so the
+    client can safely delete the first `consumed` events. A non-list
+    batch has nothing consumed."""
     if not isinstance(events, list):
-        return []
+        return [], 0
     accepted = []
+    consumed = 0
     for event in events:
         clean = validate_event(event, user_id=user_id)
-        if clean is None:
-            break
-        accepted.append(clean)
-    return accepted
+        consumed += 1
+        if clean is not None:
+            accepted.append(clean)
+    return accepted, consumed
 
 
 def event_hash(user_id: str, event: dict) -> str:
