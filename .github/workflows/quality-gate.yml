@@ -124,7 +124,12 @@ jobs:
   invariants:
     name: Fitness-function invariants (always green on main)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 2026-11-14 — raised 15 -> 20: the keyword-selected suite now
+    # takes ~16 min (15m52s / 16m3s on this PR, killed at the old cap
+    # before any verdict); the PR adds zero tests to this selection,
+    # so this is the job's steady-state runtime, not PR load. Matches
+    # ci.yml backend-tests and auto-qa (both 20).
+    timeout-minutes: 20
     services:
       # Iter 347 — the invariants subset includes DB-touching suites;
       # the job env already pointed MONGO_URL at localhost:27017 but

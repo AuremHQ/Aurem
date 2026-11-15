@@ -23,6 +23,7 @@ import NotificationBell from "../components/NotificationBell";   // Feb 2026 · 
 import AdminOverview from "./AdminOverview";
 import AdminCockpit from "./AdminCockpit";                        // Feb 2026 · sidebar-in-cockpit
 import AdminSuggestions from "./AdminSuggestions";              // Iter 212m-193
+import AdminDotSignups from "./AdminDotSignups";  // 2026-11-14 · ORA dot signup list
 import AgentTokenPanel from "../components/AgentTokenPanel";
 import AdminThinkingHints from "../components/AdminThinkingHints";
 import TwoFactorCard from "../components/TwoFactorCard";  // Iter 212m-20
@@ -2304,6 +2305,7 @@ const NAV_ICONS = {
   users: Users,
   support: Mail,
   suggestions: MessageCircle,   // Iter 212m-193
+  dot_signups: Users,  // 2026-11-14 · ORA dot signup list (Users already imported)
   self_bugs: Bug,               // Item 3 (2026-08-31)
   audit: ShieldAlert,
   team: UserPlus,
@@ -2546,6 +2548,7 @@ export default function Admin({ initialTab = "overview" }) {
       case "payments":       return <AdminFinancialsLazy />;
       case "support":        return <AdminSupportPageLazy />;
       case "suggestions":    return <AdminSuggestions />;
+      case "dot_signups":    return <AdminDotSignups />;
       case "self_bugs":      return <AdminSelfBugs />;
       case "audit":          return <AdminAuditPageLazy />;
       case "team":            return <AdminTeamPageLazy />;
