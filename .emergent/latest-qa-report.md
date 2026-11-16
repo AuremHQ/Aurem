@@ -1,12 +1,8 @@
-# QA Report — commit 81e571e (2026-11-15T03:02:55+00:00)
+# QA Report — commit 954977e (2026-11-16T00:02:23+00:00)
 
-**Commit message**: fix(tests): restore sys.modules cto_services.db + current_dev after phase1 team-permissions test
-
-test_read_write_satisfies_both_read_and_write_required replaced
-sys.modules['cto_services.db'] with a SimpleNamespace (only get_db) and
-overwrote tp.current_dev, never restoring either. Every test file 
-**Scope decided**: backend=False, ui=False, scenarios=[]
-**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
+**Commit message**: Merge branch 'main' into auremcto/ship-t_4a574cdc8d53
+**Scope decided**: backend=True, ui=True, scenarios=[]
+**Reasoning**: backend=True, ui=True, files_matched=['backend/routers/auth.py'], keywords_matched=['ship']
 
 ## Results
 | Scenario | Variant | Result | Detail |
