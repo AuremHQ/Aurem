@@ -43,6 +43,12 @@ from services.rate_limiter import check_rate_limit_async
 
 router = APIRouter(prefix="/loop", tags=["Loop Mode"])
 
+# 2026-11-09 — devil's-advocate audit: per-user ceiling on
+# POST /loop/start. Generous enough that no legitimate user starting/
+# cancelling a few loops in a minute ever sees it; low enough to bound
+# a rapid start/cancel abuse cycle instead of leaving it unbounded.
+_LOOP_START_RATE_PER_MIN = 10
+
 # Release It! Governor pattern — hard wall-clock ceiling on the SSE
 # generator (Iter 282). Module-scoped so the /_diagnostics endpoint
 # can inspect the ACTUAL runtime value, not a hardcoded echo.
@@ -151,6 +157,29 @@ async def start_loop(body: StartBody,
             "coming_soon": True,
             "tier":        user.get("tier"),
             "upgrade_url": "/pricing",
+        })
+    # 2026-11-09 — devil's-advocate audit: start_loop is almost
+    # certainly the single most LLM-expensive endpoint in the product
+    # (each call can drive a full Plan->Execute->Verify->Scan->Ship
+    # pipeline), yet had zero request-frequency limiting. The existing
+    # circuit breaker only trips after repeated FAILURES; the
+    # concurrency cap only bounds SIMULTANEOUS loops. Neither stops a
+    # start->cancel->start->cancel cycle, each incurring at least one
+    # real LLM call during Plan, repeated as fast as HTTP round-trips
+    # allow. Same check_rate_limit_async every other rate-limited
+    # route in this codebase uses (e.g. routers/fix_pipeline.py's
+    # revert endpoints) — its own Redis-outage fallback is the
+    # per-process in-memory limiter, not "unlimited", so this needs no
+    # separate backstop. Founders are NOT exempted here (unlike the
+    # tier gate above) — a leaked/compromised founder session is
+    # exactly the account an attacker would want unlimited LLM spend
+    # on.
+    if not await check_rate_limit_async(
+        f"loop-start:{user['user_id']}", _LOOP_START_RATE_PER_MIN,
+    ):
+        raise HTTPException(429, {
+            "error":   "loop_start_rate_limited",
+            "message": "Too many Loop starts — slow down and try again shortly.",
         })
     # ── Iter 349 · Read-only intent gate ──────────────────────────────
     # PROD P0: a simple read-only question ("what is the current CI

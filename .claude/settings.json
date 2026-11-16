@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/root/.venv/bin/ruff check *)",
+      "Bash(git stash *)",
+      "Read(//tmp/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_regression_iter2026_70_billing_route_fitness.py -v)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_regression_iter2026_71_wallet_shadow_mode_validation.py)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_regression_iter2026_71_wallet_shadow_mode_validation.py -v)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_regression_iter2026_10h_wallet_hold_settle_release.py tests/test_regression_iter2026_10p_wallet_wired_into_fix_run.py tests/test_regression_iter2026_11b_pricing_engine_and_fifo_batches.py tests/test_regression_iter2026_10y_bulk_fix_wallet_wiring.py tests/test_regression_iter2026_18a_assert_wallet_toctou_race.py tests/test_regression_iter2026_10x_wallet_wired_remaining_fix_paths.py)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_regression_iter2026_10l_enqueue_and_retry_entitlement_gate.py tests/test_regression_iter2026_10m_loop_start_entitlement_gate.py tests/test_regression_iter2026_11c_prestep_redteam_and_edge_cases.py)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_regression_iter2026_65_vanguard_destructive_file_ops.py tests/test_regression_iter2026_66_web_skills_ssrf_dns_resolution.py tests/test_regression_iter2026_67_scan_fix_quota_revert_divergence.py tests/test_regression_iter2026_68_ship_branch_identity_safety.py tests/test_regression_iter2026_69_loop_start_rate_limit.py tests/test_regression_iter2026_70_billing_route_fitness.py tests/test_regression_iter2026_71_wallet_shadow_mode_validation.py)",
+      "Bash(/root/.venv/bin/python -m pytest -q --collect-only tests/)",
+      "Bash(ps -p 17248 -o pid,etime,cmd)",
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_fabrication_learning_loop.py::test_record_defaults_project_id_to_home tests/test_iter212m120_vanguard_ci_live_http.py::test_live_post_no_auth_returns_503_or_401 tests/test_iter212m120_vanguard_ci_live_http.py::test_live_post_with_wrong_bearer_still_503_when_token_unset tests/test_iter212m131_loop_engine_rca.py::test_verify_self_heal_timeout_doesnt_hang tests/test_iter352_payments_truth.py::test_payments_page_has_reconcile_button tests/test_iter352_payments_truth.py::test_reconcile_endpoint_is_admin_gated tests/test_iter388y_admin_payments_accuracy.py::test_stripe_configured_reads_env_not_hardcoded tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_reports_real_revenue_from_paid_only tests/test_iter388y_admin_payments_accuracy.py::test_token_pnl_returns_zero_revenue_when_no_paid_rows tests/test_regression_iter2026_11b_pricing_engine_and_fifo_batches.py::TestMonthlyGrantRollover::test_checkout_instant_grant_key_matches_cron_key_same_month -v)"
+    ]
+  }
+}

@@ -880,6 +880,16 @@ async def assert_wallet(db, *, user_id: str, action: str, run_id: str, idempoten
                 "[wallet-shadow] user=%s action=%s would charge %s tokens "
                 "(balance=%s)", user_id, action, needed, bal["spendable"],
             )
+        # 2026-11-09 — devil's-advocate audit: durable, queryable
+        # counterpart to the log lines above, so shadow predictions
+        # can be systematically diffed against the real task-based
+        # gate (services.wallet_shadow::compare_shadow_vs_task_based_gate)
+        # before ever considering a TOKEN_BILLING_MODE flip to "on".
+        from services.wallet_shadow import log_shadow_decision
+        await log_shadow_decision(
+            db, user_id=user_id, action=action, needed_tokens=needed,
+            would_block=would_block, spendable_balance=bal["spendable"],
+        )
         return {"mode": "shadow", "held": False, "would_block": would_block, "balance": bal}
 
     # mode == "on"
