@@ -1,10 +1,13 @@
-# QA Report — commit fb95b02 (2026-11-16T00:06:40+00:00)
+# QA Report — commit b6258fd (2026-11-16T00:52:14+00:00)
 
-**Commit message**: Merge pull request #330 from AuremHQ/auremcto/ship-t_4a574cdc8d53
+**Commit message**: fix(harness): telemetry store treats DuplicateKeyError as a replay; log dropped-event count
 
-Auremcto/ship t 4a574cdc8d53
-**Scope decided**: backend=True, ui=True, scenarios=[]
-**Reasoning**: backend=True, ui=True, files_matched=[], keywords_matched=['ship']
+Review findings on PR #329 (Fix E):
+- store_events: a concurrent upsert race on the unique
+  (user_id, event_hash) index raises DuplicateKeyError in real Mongo.
+  The event is already stored, so count it as 
+**Scope decided**: backend=True, ui=False, scenarios=[]
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth', 'token']
 
 ## Results
 | Scenario | Variant | Result | Detail |
