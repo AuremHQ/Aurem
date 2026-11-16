@@ -62,6 +62,8 @@ import math
 import re
 from datetime import datetime, timezone
 
+from pymongo.errors import DuplicateKeyError
+
 logger = logging.getLogger("aurem-dev.harness_telemetry")
 
 MAX_EVENTS_PER_BATCH = 50
@@ -246,11 +248,18 @@ async def store_events(db, *, user_id: str, events: list) -> int:
             "received_at": datetime.now(timezone.utc),
             "event_hash": event_hash(user_id, event),
         }
-        await db.harness_telemetry.update_one(
-            {"user_id": user_id, "event_hash": doc["event_hash"]},
-            {"$setOnInsert": doc},
-            upsert=True,
-        )
+        try:
+            await db.harness_telemetry.update_one(
+                {"user_id": user_id, "event_hash": doc["event_hash"]},
+                {"$setOnInsert": doc},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            # Two concurrent upserts for the same NEW key can both miss
+            # the match in real Mongo; the loser gets E11000. The event
+            # is already stored, so this is a replay, not a failure —
+            # a 500 here would make the client re-send the whole batch.
+            continue
     return len(events)
 
 
