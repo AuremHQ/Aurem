@@ -1,13 +1,11 @@
-# QA Report — commit b6258fd (2026-11-16T00:52:14+00:00)
+# QA Report — commit d05d7d0 (2026-11-16T10:34:00+00:00)
 
-**Commit message**: fix(harness): telemetry store treats DuplicateKeyError as a replay; log dropped-event count
+**Commit message**: Merge remote-tracking branch 'origin/main' into m333
 
-Review findings on PR #329 (Fix E):
-- store_events: a concurrent upsert race on the unique
-  (user_id, event_hash) index raises DuplicateKeyError in real Mongo.
-  The event is already stored, so count it as 
+# Conflicts:
+#	.emergent/latest-qa-report.md
 **Scope decided**: backend=True, ui=False, scenarios=[]
-**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth', 'token']
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
