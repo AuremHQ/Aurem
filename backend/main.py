@@ -76,8 +76,11 @@ from routers.support import router as support_router
 from routers.payments import router as payments_router
 from routers.stripe_webhook_compat import router as stripe_webhook_compat_router  # Iter 388-ae — legacy /api/stripe/webhook alias (see Payments $0 root-cause memo)
 from routers.harness import router as harness_router  # Aurem Loop harness Phase A — /api/harness/verify (external client contract, no /aurem-dev segment)
+from routers.dot import router as dot_router  # ORA dot — /api/dot/signup (public signup list, 2026-11-14)
+from routers.harness_telemetry import router as harness_telemetry_router  # Aurem Loop harness Fix E — /api/harness/telemetry (external client contract, no /aurem-dev segment)
 from routers.harness_downloads import router as harness_downloads_router  # Aurem Loop harness Phase B — user-facing download
 from routers.admin_harness import router as admin_harness_router  # Aurem Loop harness Phase B — admin release/download-log view
+from routers.admin_dot import router as admin_dot_router  # ORA dot — admin signup-list view (2026-11-14)
 from routers.mcp import router as mcp_router, mcp_discovery_root
 from routers.mcp_ora_chat import router as mcp_ora_chat_router  # 2026-09-28 ORA Chat MCP (admin-only, Part A)
 from routers.admin_gateway import router as admin_gateway_router  # 2026-09-28 ORA Chat MCP/Gateway key admin API
@@ -1123,6 +1126,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:                                # noqa: BLE001
             logger.warning("project_memory index failed: %r", e)
     _asyncio.create_task(_ensure_project_memory_indexes())
+
+    # Aurem Loop harness Fix E — telemetry indexes: 90-day TTL on
+    # received_at + unique (user_id, event_hash) dedupe index.
+    async def _ensure_harness_telemetry_indexes():
+        try:
+            if app.state.db is None:
+                return
+            await _asyncio.sleep(38)
+            from services.harness_telemetry import ensure_indexes as _ht_idx
+            await _ht_idx(app.state.db)
+            logger.info("📚 harness_telemetry index ensured")
+        except Exception as e:                                # noqa: BLE001
+            logger.warning("harness_telemetry index failed: %r", e)
+    _asyncio.create_task(_ensure_harness_telemetry_indexes())
 
     # ORA Brain Part 3 — brain_calls indexes + the bounded-queue drain
     # worker (services/brain_gateway.py). The worker is started here,
@@ -2307,6 +2324,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    # Fix B: the browser must be allowed to READ the delivered-zip
+    # hash header on the /harness download response.
+    expose_headers=["X-Aurem-Package-SHA256"],
 )
 
 
@@ -4121,8 +4141,11 @@ app.include_router(payments_router,      prefix="/api/aurem-dev")
 # no dashboard change is required.
 app.include_router(stripe_webhook_compat_router, prefix="/api")
 app.include_router(harness_router, prefix="/api")  # /api/harness/verify — external harness client, matches its hardcoded URL exactly
+app.include_router(dot_router, prefix="/api")  # /api/dot/signup — ORA dot public signup list
+app.include_router(harness_telemetry_router, prefix="/api")  # /api/harness/telemetry — external harness client, matches its hardcoded URL exactly
 app.include_router(harness_downloads_router, prefix="/api/aurem-dev")  # /api/aurem-dev/harness/download — logged-in browser user
 app.include_router(admin_harness_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/harness/* — release + download-log admin view
+app.include_router(admin_dot_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/dot/* — ORA dot signup-list admin view
 app.include_router(usage_router,         prefix="/api/aurem-dev")
 app.include_router(lint_preview_router,  prefix="/api/aurem-dev")
 app.include_router(shipwall_router,      prefix="/api/aurem-dev")

@@ -161,7 +161,8 @@ MOCK_SEND_TEXT = (
 
 def _mock_send_response(body: ChatBody, user: dict) -> dict:
     """Canned /chat/send reply for MOCK_LLM — same shape as the real
-    return, provider='mock', never carries an aurem-handoff fence."""
+    return, provider is the branded "ORA" (sanitize_provider_for_user
+    maps any truthy provider), never carries an aurem-handoff fence."""
     return {
         "ok": True, "content": MOCK_SEND_TEXT, "provider": sanitize_provider_for_user("mock"),
         "watchdog": None, "mode": "A", "temperature": 0.0, "iterations": 0,

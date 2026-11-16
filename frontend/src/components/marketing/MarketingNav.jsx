@@ -75,11 +75,20 @@ const CSS = `
 }
 `;
 
-export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem" }) {
+// `homeHref`/`next`/`hidePricing` props (2026-11-14) — a page under a
+// different product name (e.g. /dot) must keep its visitors on that
+// product: the logo links to `homeHref` (default "/", ORA's homepage),
+// "Sign in"/"Start free" carry `?next=` so auth returns to the page
+// (Fix 7 gating), and `hidePricing` drops the ORA pricing link, which
+// would otherwise send a Dot visitor to ORA's homepage. Defaults keep
+// every existing page's behaviour exactly as before.
+export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem", homeHref = "/", next = "", hidePricing = false }) {
+  const loginHref = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
+  const signupHref = next ? `/signup?next=${encodeURIComponent(next)}` : "/signup";
   return (
     <nav className="aurem-marketing-nav" data-testid="ora-nav">
       <style>{CSS}</style>
-      <Link to="/" className="mn-left" data-testid="marketing-nav-logo">
+      <Link to={homeHref} className="mn-left" data-testid="marketing-nav-logo">
         <picture>
           <source srcSet="/ora-icon.webp 1x, /ora-icon@2x.webp 2x" type="image/webp" />
           <img src="/ora-icon.png" srcSet="/ora-icon.png 1x, /ora-icon@2x.png 2x" alt="ORA" className="mn-logo-img" width="38" height="38" decoding="async" />
@@ -90,18 +99,21 @@ export default function MarketingNav({ minimal = false, logoText = "ORA", logoSu
         {!minimal && (
           <Link className="mn-link" to="/#features" data-testid="nav-features">Features</Link>
         )}
-        <Link className="mn-link" to="/#pricing" data-testid="nav-pricing">Pricing</Link>
+        {!hidePricing && (
+          <Link className="mn-link" to="/#pricing" data-testid="nav-pricing">Pricing</Link>
+        )}
         {!minimal && (
           <>
             <Link className="mn-link" to="/integrations" data-testid="nav-integrations">Integrations</Link>
             <Link className="mn-link" to="/#reviews" data-testid="nav-reviews">Reviews</Link>
+            <Link className="mn-link" to="/faq" data-testid="nav-faq">FAQ</Link>
             {(!getToken() || isAdminOrFounder(getUser())) && (
               <Link className="mn-link" to="/bug-hunt" data-testid="nav-bughunt">Bug Hunt</Link>
             )}
           </>
         )}
-        <Link className="mn-link" to="/login" data-testid="nav-login">Sign in</Link>
-        <Link className="mn-cta" to="/signup" data-testid="nav-signup-cta">Start free</Link>
+        <Link className="mn-link" to={loginHref} data-testid="nav-login">Sign in</Link>
+        <Link className="mn-cta" to={signupHref} data-testid="nav-signup-cta">Start free</Link>
       </div>
     </nav>
   );
