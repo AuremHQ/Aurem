@@ -1,12 +1,6 @@
-# QA Report — commit 1906da9 (2026-11-16T10:35:10+00:00)
+# QA Report — commit 4302bd6 (2026-11-16T10:51:42+00:00)
 
-**Commit message**: Merge remote-tracking branch 'origin/main' into m332
-# QA Report — commit d05d7d0 (2026-11-16T10:34:00+00:00)
-
-**Commit message**: Merge remote-tracking branch 'origin/main' into m333
-
-# Conflicts:
-#	.emergent/latest-qa-report.md
+**Commit message**: Merge branch 'main' into fix/tool-specs-import-2026-11-15
 **Scope decided**: backend=True, ui=False, scenarios=[]
 **Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=[]
 
