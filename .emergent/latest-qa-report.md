@@ -1,13 +1,13 @@
-# QA Report — commit 62ed246 (2026-11-16T01:15:41+00:00)
+# QA Report — commit b6258fd (2026-11-16T00:52:14+00:00)
 
-**Commit message**: fix(backend): restore services/local_tools.py truncated by bad merge (4a8796a4)
+**Commit message**: fix(harness): telemetry store treats DuplicateKeyError as a replay; log dropped-event count
 
-The merge 4a8796a4 cut local_tools.py from 3172 to 1272 lines (it kept
-the 647-line truncated side of 08eddf29 and spliced a commit_files
-snippet into execute_bash). TOOL_SPECS, LOCAL_TOOLS, invoke_local_tool
-and search
+Review findings on PR #329 (Fix E):
+- store_events: a concurrent upsert race on the unique
+  (user_id, event_hash) index raises DuplicateKeyError in real Mongo.
+  The event is already stored, so count it as 
 **Scope decided**: backend=True, ui=False, scenarios=[]
-**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth', 'token']
 
 ## Results
 | Scenario | Variant | Result | Detail |
