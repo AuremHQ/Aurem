@@ -43,7 +43,14 @@
       "Bash(curl -sS -o /dev/null -w \"%{http_code}\\\\n\" -X POST http://localhost:8001/api/harness/telemetry -H \"Content-Type: application/json\" -d '{}')",
       "Bash(curl -sS -X POST http://localhost:8001/api/harness/telemetry -H \"Content-Type: application/json\" -d '{\"bin\":\"nope\",\"token\":\"hlt_bad\",\"harness_version\":\"0.8.0\",\"events\":[]}')",
       "Bash(curl -sS http://localhost:8001/api/harness/release-status)",
-      "Bash(curl -sS -o /dev/null -w \"page-status: %{http_code}\\\\n\" http://localhost:8001/api/harness/page-status)"
+      "Bash(curl -sS -o /dev/null -w \"page-status: %{http_code}\\\\n\" http://localhost:8001/api/harness/page-status)",
+      "Bash(npx vitest *)",
+      "Bash(yarn lint *)",
+      "Bash(yarn build *)",
+      "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser open http://localhost:3000/harness)",
+      "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser get text [data-testid=harness-download-section])",
+      "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser snapshot -i -c)",
+      "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser get url)"
     ]
   }
 }

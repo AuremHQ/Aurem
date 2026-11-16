@@ -217,7 +217,7 @@ describe("HarnessPage", () => {
       expect(screen.queryByTestId("harness-waitlist-form-hero")).not.toBeInTheDocument();
     });
 
-    it("a signed-out visitor clicking Download is redirected to signup, no API call made", async () => {
+    it("a signed-out visitor sees 'Sign in to download' and the sign-in note, and clicking redirects to signup with no API call", async () => {
       getToken.mockReturnValue(null);
       mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
       const originalLocation = window.location;
@@ -226,6 +226,8 @@ describe("HarnessPage", () => {
       try {
         renderPage();
         await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+        expect(screen.getByTestId("harness-download-button")).toHaveTextContent("Sign in to download");
+        expect(screen.getByTestId("harness-download-signin-note")).toBeInTheDocument();
         screen.getByTestId("harness-download-button").click();
         expect(window.location.href).toBe("/signup?next=/harness");
         expect(api.post).not.toHaveBeenCalled();
@@ -234,7 +236,7 @@ describe("HarnessPage", () => {
       }
     });
 
-    it("a signed-in visitor clicking Download calls the authenticated download endpoint and triggers a named file download", async () => {
+    it("a signed-in visitor sees 'Download for Windows' with no sign-in note; clicking downloads and shows the congratulations message", async () => {
       getToken.mockReturnValue("fake-jwt");
       api.post.mockResolvedValue({ data: new Blob(["zip-bytes"]) });
       const createObjectURL = vi.fn(() => "blob:mock-url");
@@ -244,6 +246,9 @@ describe("HarnessPage", () => {
       mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
       renderPage();
       await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-download-button")).toHaveTextContent("Download for Windows");
+      expect(screen.queryByTestId("harness-download-signin-note")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("harness-download-success")).not.toBeInTheDocument();
       screen.getByTestId("harness-download-button").click();
       await waitFor(() => expect(api.post).toHaveBeenCalledWith(
         "/harness/download", {}, { responseType: "blob" },
@@ -251,6 +256,19 @@ describe("HarnessPage", () => {
       await waitFor(() => expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob)));
       await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url"));
       await waitFor(() => expect(screen.getByTestId("harness-download-button")).not.toBeDisabled());
+      await waitFor(() => expect(screen.getByTestId("harness-download-success"))
+        .toHaveTextContent("🎊 Congratulations! Successfully downloaded"));
+    });
+
+    it("a failed download never shows the congratulations message", async () => {
+      getToken.mockReturnValue("fake-jwt");
+      api.post.mockRejectedValue({ response: { status: 409 } });
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
+      screen.getByTestId("harness-download-button").click();
+      await waitFor(() => expect(screen.getByTestId("harness-download-error")).toBeInTheDocument());
+      expect(screen.queryByTestId("harness-download-success")).not.toBeInTheDocument();
     });
 
     it("shows neither the Phase A banner nor the download section while release-status is still resolving (no flash)", async () => {

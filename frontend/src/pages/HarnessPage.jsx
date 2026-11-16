@@ -141,6 +141,14 @@ const monoStyle = {
   wordBreak: "break-all", color: "var(--text, #e8e3d3)",
 };
 const errorTextStyle = { fontSize: 12, color: "#e08a6a", marginTop: 8 };
+// 2026-11-16 — download success message (founder): after a download
+// completes, the card shows "🎊 Congratulations! Successfully
+// downloaded" in this green box. Same green family as the card.
+const downloadSuccessStyle = {
+  marginTop: 12, padding: "12px 16px", borderRadius: 8,
+  background: "rgba(120,200,140,0.12)", border: "1px solid rgba(120,200,140,0.45)",
+  fontSize: 14, fontWeight: 600, color: "var(--text, #e8e3d3)",
+};
 
 // Fix 3 (2026-11-11) — replaces the flat black "Loading…" text with a
 // lightweight pulsing skeleton (nav height + hero-shaped bars) so the
@@ -271,6 +279,10 @@ export default function HarnessPage() {
   const [releaseLoading, setReleaseLoading] = useState(true); // avoids a Phase-A-banner flash before this resolves
   const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
   const [downloadError, setDownloadError] = useState("");
+  // 2026-11-16 — download success message (founder): after a download
+  // completes, show "🎊 Congratulations! Successfully downloaded" on
+  // the download card. Cleared on the next click.
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   // Fix 3 (2026-11-11) — all 3 public GETs now fire together on mount
   // instead of page-status → (then) content+release. The old shape
@@ -343,6 +355,7 @@ export default function HarnessPage() {
     }
     setDownloadState("downloading");
     setDownloadError("");
+    setDownloadSuccess(false);
     try {
       const resp = await api.post("/harness/download", {}, { responseType: "blob" });
       const url = URL.createObjectURL(resp.data);
@@ -353,6 +366,7 @@ export default function HarnessPage() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      setDownloadSuccess(true);
       setDownloadState("idle");
     } catch (e) {
       const status = e?.response?.status;
@@ -452,6 +466,11 @@ export default function HarnessPage() {
   }
 
   const mailto = waitlistMailto(content);
+  // 2026-11-16 — download lock visibility (founder): when logged out
+  // the button says "Sign in to download" so nobody mistakes the page
+  // for a free-for-all download; the click guard in handleDownloadClick
+  // still redirects to /signup?next=/harness as the second check.
+  const isLoggedIn = !!getToken();
   const stars = liveStats?.stars;
   const forks = liveStats?.forks;
 
@@ -493,8 +512,18 @@ export default function HarnessPage() {
                 disabled={downloadState === "downloading"}
                 onClick={handleDownloadClick}
               >
-                {downloadState === "downloading" ? "Starting download…" : "Download for Windows"}
+                {downloadState === "downloading" ? "Starting download…" : isLoggedIn ? "Download for Windows" : "Sign in to download"}
               </button>
+              {!isLoggedIn && (
+                <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }} data-testid="harness-download-signin-note">
+                  A free ORA account is required to download — sign in or sign up, it takes a minute.
+                </p>
+              )}
+              {downloadSuccess && (
+                <div style={downloadSuccessStyle} data-testid="harness-download-success">
+                  🎊 Congratulations! Successfully downloaded
+                </div>
+              )}
               {downloadState === "error" && (
                 <p style={errorTextStyle} data-testid="harness-download-error">{downloadError}</p>
               )}
