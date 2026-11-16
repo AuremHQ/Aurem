@@ -1,8 +1,11 @@
-# QA Report — commit 78fd14d (2026-11-16T11:53:08+00:00)
+# QA Report — commit 25685ca (2026-11-16T13:13:13+00:00)
 
-**Commit message**: Merge pull request #337 from AuremHQ/fix/frontend-regress-again-2026-11-16
+**Commit message**: feat(admin): Aurem Loop releases page — publish a harness zip from the admin UI (no console needed)
 
-fix(frontend): Landing.jsx + billingCopy.js regressed again after #334 - restore + guard
+New /admin/harness-releases page (standalone, same pattern as
+AdminMaintenance): pick the release zip, create the draft, check the
+SHA-256 match in the browser, publish, verify live status. Adds the
+
 **Scope decided**: backend=False, ui=True, scenarios=[]
 **Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
 
