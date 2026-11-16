@@ -1,12 +1,8 @@
-# QA Report — commit 1906da9 (2026-11-16T10:35:10+00:00)
+# QA Report — commit 1da22b8 (2026-11-16T10:54:07+00:00)
 
-**Commit message**: Merge remote-tracking branch 'origin/main' into m332
-# QA Report — commit d05d7d0 (2026-11-16T10:34:00+00:00)
+**Commit message**: Merge pull request #336 from AuremHQ/fix/tool-specs-import-2026-11-15
 
-**Commit message**: Merge remote-tracking branch 'origin/main' into m333
-
-# Conflicts:
-#	.emergent/latest-qa-report.md
+Fix/tool specs import 2026 11 15
 **Scope decided**: backend=True, ui=False, scenarios=[]
 **Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=[]
 
