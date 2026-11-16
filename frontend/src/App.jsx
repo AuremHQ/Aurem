@@ -49,6 +49,7 @@ const ShippedRowHarness = lazy(() => import("./pages/ShippedRowHarness"));
 const VisualFixtures    = lazy(() => import("./pages/VisualFixtures"));
 const AdminQADashboard  = lazy(() => import("./pages/AdminQADashboard"));
 const AdminMaintenance  = lazy(() => import("./pages/AdminMaintenance"));  // 2026-08 — maintenance toggle + outage tracker
+const AdminHarnessReleases = lazy(() => import("./pages/AdminHarnessReleases"));  // 2026-11-16 — harness release publishing (admin UI, no console needed)
 const Login             = lazy(() => import("./pages/Login"));
 const Signup            = lazy(() => import("./pages/Signup"));
 const Verify            = lazy(() => import("./pages/Verify"));  // Track 3 (item #31) — email verification landing
@@ -527,6 +528,7 @@ export default function App() {
           <Route path="/admin/inspect-scope-drift"      element={<AdminRoute><AdminInspectScopeDriftAudit /></AdminRoute>} />
           <Route path="/admin/qa"           element={<AdminRoute><AdminQADashboard /></AdminRoute>} />{/* Iter 303 */}
           <Route path="/admin/maintenance"  element={<AdminRoute><AdminMaintenance /></AdminRoute>} />{/* 2026-08 */}
+          <Route path="/admin/harness-releases" element={<AdminRoute><AdminHarnessReleases /></AdminRoute>} />{/* 2026-11-16 */}
           <Route path="/admin/personal-track" element={<AdminRoute><PersonalTrackAdmin /></AdminRoute>} />
           <Route path="/admin/ora-chat"       element={<AdminRoute><OraChat /></AdminRoute>} />
           {/* Iter 212m-171 — direct URLs for new admin sections */}

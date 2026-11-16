@@ -23,6 +23,11 @@ export const ADMIN_NAV = [
   { id: "parliament_live", label: "Parliament Live",      route: "/admin/parliament-live",group: "MONITOR", screenKeys: ["ora.council"] },
   { id: "qa_health",       label: "QA Health",            route: "/admin/qa",             group: "MONITOR", screenKeys: ["ora.quality"] },
   { id: "maintenance",     label: "Maintenance",          route: "/admin/maintenance",    group: "MONITOR", screenKeys: ["system.maintenance"] },
+  // 2026-11-16 · Aurem Loop releases — publish a harness zip from the
+  // admin UI (no DevTools console needed). screenKeys: [] on purpose,
+  // same as "dot_signups" / "team": owner-only, no screen key exists
+  // for it yet, so no team member can be granted it by accident.
+  { id: "harness_releases", label: "Loop Releases",       route: "/admin/harness-releases", group: "MONITOR", screenKeys: [] },
   { id: "arch",            label: "Architecture",         route: "/admin/architecture",   group: "MONITOR", screenKeys: ["system.codehealth"] },
   { id: "onboarding_funnel", label: "Onboarding Funnel",  route: "/admin/onboarding-funnel", group: "USERS", screenKeys: ["growth.onboarding"] },
   // 2026-09-28 MASTER TASK "ACTIVATION FIRST" — the granular
