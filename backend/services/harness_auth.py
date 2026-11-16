@@ -92,6 +92,19 @@ async def verify_harness_identity(db, *, bin: str, token: str) -> dict:
     return {"subscriber": True, "plan": tier_str}
 
 
+async def check_harness_token(db, *, bin: str, token: str) -> bool:
+    """Plain validity check for a (bin, token) pair — any valid
+    identity (free or paid), unlike verify_harness_identity's
+    subscriber-only `subscriber` flag. Built on verify_harness_identity
+    rather than re-querying harness_tokens directly: `plan` already
+    disambiguates "valid free tier" (plan="free") from "invalid/
+    unknown/revoked" (plan=None) in its return shape, so no new query
+    logic is needed. Used by the telemetry endpoint, where any
+    authenticated harness — not just subscribers — may send."""
+    identity = await verify_harness_identity(db, bin=bin, token=token)
+    return identity["plan"] is not None
+
+
 async def revoke_harness_token(db, *, user_id: str, token: str | None = None) -> int:
     """Revoke one specific token (if given) or ALL active tokens for
     user_id. Idempotent — revoking an already-revoked or nonexistent

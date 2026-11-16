@@ -21,7 +21,29 @@
       "Bash(AGENT_BROWSER_SESSION=harness-verify-f53b52ad6d21 agent-browser snapshot -i -c)",
       "Bash(AGENT_BROWSER_SESSION=harness-verify-f53b52ad6d21 agent-browser get text body)",
       "Bash(AGENT_BROWSER_SESSION=harness-verify-f53b52ad6d21 agent-browser screenshot --full /tmp/claude-0/-app/6c0d8223-f5c8-485e-bb7f-a25efe618353/scratchpad/harness_releases_page.png)",
-      "Bash(AGENT_BROWSER_SESSION=harness-verify-f53b52ad6d21 agent-browser close)"
+      "Bash(AGENT_BROWSER_SESSION=harness-verify-f53b52ad6d21 agent-browser close)",
+      "Bash(curl -sS -o /tmp/claude-0/-app/6c0d8223-f5c8-485e-bb7f-a25efe618353/scratchpad/telemetry_resp.txt -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" https://auremcto.com/api/harness/telemetry)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(echo \"exit grep: $?\")",
+      "Bash(git log *)",
+      "Bash(echo \"grep exit: $?\")",
+      "Bash(curl -sS -o /dev/null -w \"github.com: %{http_code}\\\\n\" https://github.com --max-time 10)",
+      "Bash(curl -sS -o /dev/null -w \"api.github.com: %{http_code}\\\\n\" https://api.github.com --max-time 10)",
+      "Bash(curl -sS \"https://api.github.com/repos/AuremHQ/Aurem/pulls/329\" --max-time 15)",
+      "Bash(curl -sS -o /dev/null -w \"repo check: %{http_code}\\\\n\" \"https://api.github.com/repos/AuremHQ/Aurem\" --max-time 15)",
+      "Bash(curl -sS \"https://api.github.com/repos/polarisbuiltinc-wq/Aurem/pulls/329\" --max-time 15)",
+      "Bash(curl -sS \"https://api.github.com/repos/polarisbuiltinc-wq/Aurem/pulls/338\" --max-time 15)",
+      "Bash(curl -sS \"https://api.github.com/repos/polarisbuiltinc-wq/Aurem\" --max-time 15)",
+      "Bash(curl -sS -o /dev/null -w \"org polarisbuiltinc-wq: %{http_code}\\\\n\" \"https://api.github.com/orgs/polarisbuiltinc-wq\" --max-time 15)",
+      "Bash(curl -sS -o /dev/null -w \"user polarisbuiltinc-wq: %{http_code}\\\\n\" \"https://api.github.com/users/polarisbuiltinc-wq\" --max-time 15)",
+      "Bash(curl -sS -o /dev/null -w \"org AuremHQ: %{http_code}\\\\n\" \"https://api.github.com/orgs/AuremHQ\" --max-time 15)",
+      "Bash(curl -sS \"https://api.github.com/orgs/AuremHQ/repos?per_page=100\" --max-time 15)",
+      "Bash(ruff check *)",
+      "Bash(ruff --version)",
+      "Bash(curl -sS -o /dev/null -w \"%{http_code}\\\\n\" -X POST http://localhost:8001/api/harness/telemetry -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(curl -sS -X POST http://localhost:8001/api/harness/telemetry -H \"Content-Type: application/json\" -d '{\"bin\":\"nope\",\"token\":\"hlt_bad\",\"harness_version\":\"0.8.0\",\"events\":[]}')",
+      "Bash(curl -sS http://localhost:8001/api/harness/release-status)",
+      "Bash(curl -sS -o /dev/null -w \"page-status: %{http_code}\\\\n\" http://localhost:8001/api/harness/page-status)"
     ]
   }
 }
