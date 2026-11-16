@@ -1,12 +1,8 @@
-# QA Report — commit 2887602 (2026-11-16T01:28:55+00:00)
+# QA Report — commit b39fff6 (2026-11-16T01:34:32+00:00)
 
-**Commit message**: fix(frontend): restore Landing.jsx and billingCopy.js corrupted on main; add compile guard
-
-Landing.jsx on main had model output pasted into it (a "rest of the file
-remains exactly the same" block with loose JSX) and a CSS block replaced
-by a comment, so `vite build` failed at Landing.jsx:570 and Li
-**Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
+**Commit message**: Merge remote-tracking branch 'origin/lr' into fix/landing-jsx-restore-2026-11-15
+**Scope decided**: backend=False, ui=False, scenarios=[]
+**Reasoning**: backend=False, ui=False, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
