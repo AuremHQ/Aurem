@@ -1,10 +1,12 @@
-# QA Report — commit 1da22b8 (2026-11-16T10:54:07+00:00)
+# QA Report — commit 6417a62 (2026-11-16T11:29:01+00:00)
 
-**Commit message**: Merge pull request #336 from AuremHQ/fix/tool-specs-import-2026-11-15
+**Commit message**: fix(frontend): restore Landing.jsx + billingCopy.js and compile guard again (regressed after #334)
 
-Fix/tool specs import 2026 11 15
-**Scope decided**: backend=True, ui=False, scenarios=[]
-**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=[]
+PR #334 (0fcf7ac9) fixed these, but later merges (#335/#336 and the
+Emergent "Auto-generated changes" syncs) brought back the corrupted
+Landing.jsx (1597 lines, vite build fails at :570), the truncate
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
