@@ -4,7 +4,13 @@
       "Bash(git -C /app status --short frontend/src/lib/)",
       "Bash(git -C /app log --all --oneline -- \"*cloudbuild*\" \"*build-frontend*\")",
       "Bash(python3 -c ' *)",
-      "Bash(/root/.venv/bin/python -m pytest -q tests/test_iter212m130_loop_founder_gate.py tests/test_iter212m115_loop_safety_five_fixes.py tests/test_iter312_loop_start_async_repro.py tests/test_regression_iter2026_10m_loop_start_entitlement_gate.py)"
+      "Bash(/root/.venv/bin/python -m pytest -q tests/test_iter212m130_loop_founder_gate.py tests/test_iter212m115_loop_safety_five_fixes.py tests/test_iter312_loop_start_async_repro.py tests/test_regression_iter2026_10m_loop_start_entitlement_gate.py)",
+      "Bash(sudo supervisorctl status)",
+      "Bash(curl -s localhost:3000 -o /dev/null -w \"frontend status: %{http_code}\\\\n\")",
+      "Bash(curl -s localhost:8001/api/health -o /dev/null -w \"backend health: %{http_code}\\\\n\")",
+      "Bash(node verify_page.mjs)",
+      "Skill(agent-browser)",
+      "Skill(agent-browser:*)"
     ]
   }
 }

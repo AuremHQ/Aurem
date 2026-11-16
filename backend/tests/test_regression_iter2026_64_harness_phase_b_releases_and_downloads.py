@@ -595,6 +595,42 @@ class TestAdminReleaseManagement:
         finally:
             app.dependency_overrides.pop(ah_mod.require_admin_dep, None)
 
+    async def test_admin_ui_source_is_accepted_end_to_end(self):
+        """2026-11-16 — AdminHarnessReleases.jsx (the admin console's
+        release-publishing page) posts source="admin_ui" for a human
+        admin manually uploading a zip through the page. Distinct from
+        "test_fixture" (synthetic test bytes) and
+        "muse_fix_branch_approved" (the real fix-branch package once
+        D1 is approved) — this locks in that the provenance tag is
+        accepted by both the router's own closed-set check
+        (routers/admin_harness.py::_VALID_SOURCES) and the service
+        layer's independent check
+        (services/harness_releases.py::_VALID_SOURCES), and that the
+        created release carries the tag through to the stored doc."""
+        db = _FakeDB()
+        app, ah_mod = _app_with_admin_router(db)
+
+        async def _fake_admin(authorization=None):
+            return {"user_id": "admin1", "is_admin": True}
+
+        app.dependency_overrides[ah_mod.require_admin_dep] = _fake_admin
+        try:
+            with patch.object(ah_mod, "require_db", lambda: db):
+                client = TestClient(app)
+                resp = client.post("/api/aurem-dev/admin/harness/releases", json={
+                    "version": "0.8.0", "platform": "windows",
+                    "changelog": ["first public download"], "mandatory": False,
+                    "artifact_base64": base64.b64encode(_synthetic_zip()).decode(),
+                    "source": "admin_ui",
+                })
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["status"] == "draft"
+            stored = await db.harness_releases.find_one({"release_id": body["release_id"]})
+            assert stored["source"] == "admin_ui"
+        finally:
+            app.dependency_overrides.pop(ah_mod.require_admin_dep, None)
+
     async def test_release_list_never_includes_the_raw_artifact_bytes(self):
         from services import harness_releases
         db = _FakeDB()

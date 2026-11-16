@@ -6,11 +6,13 @@ downloadable Aurem Loop harness.
 
 D1 (hosting the real `fix/10of10` package) is NOT approved as of this
 writing. Every release created here carries an explicit `source` tag
-("test_fixture" vs "muse_fix_branch_approved") so a test artifact can
-never be confused with — or silently promoted to — a real one; nothing
-in this module reconstructs or re-derives content from the public
-`main` branch or any pre-resilience ZIP. A release only ever starts as
-a "draft"; publish_release() is a separate, explicit admin action.
+("test_fixture" / "muse_fix_branch_approved" / "admin_ui" — a human
+admin manually uploading a zip through the admin page) so a test
+artifact can never be confused with — or silently promoted to — a
+real one; nothing in this module reconstructs or re-derives content
+from the public `main` branch or any pre-resilience ZIP. A release
+only ever starts as a "draft"; publish_release() is a separate,
+explicit admin action.
 
 Signing: no Windows code-signing certificate exists yet (a separate
 procurement decision). Until one exists, "signed" here means an
@@ -41,7 +43,7 @@ import time
 import uuid
 import zipfile
 
-_VALID_SOURCES = frozenset({"test_fixture", "muse_fix_branch_approved"})
+_VALID_SOURCES = frozenset({"test_fixture", "muse_fix_branch_approved", "admin_ui"})
 _MAX_ARTIFACT_BYTES = 15 * 1024 * 1024
 _SIGNING_SECRET_ENV = "HARNESS_RELEASE_SIGNING_SECRET"
 

@@ -96,6 +96,7 @@ const AdminSystemHealth = lazy(() => import("./pages/AdminSystemHealth"));   // 
 const AdminInspectLoop  = lazy(() => import("./pages/AdminInspectLoop"));    // Iter 309 · Batch-2 aftermath
 const AdminInspectSpeedDiagnostic = lazy(() => import("./pages/AdminInspectSpeedDiagnostic")); // Iter 314
 const AdminInspectScopeDriftAudit = lazy(() => import("./pages/AdminInspectScopeDriftAudit")); // Iter 314
+const AdminHarnessReleases = lazy(() => import("./pages/AdminHarnessReleases"));
 const PersonalTrackAdmin = lazy(() => import("./pages/admin/PersonalTrackAdmin")); // Iter 212m-240
 const OraChat            = lazy(() => import("./pages/admin/OraChat"));            // Iter 212m-238
 const OraDirect          = lazy(() => import("./pages/OraDirect"));                 // Iter 212m-241 public PIN-gated
@@ -511,6 +512,7 @@ export default function App() {
           <Route path="/admin/inspect-scope-drift"      element={<AdminRoute><AdminInspectScopeDriftAudit /></AdminRoute>} />
           <Route path="/admin/qa"           element={<AdminRoute><AdminQADashboard /></AdminRoute>} />{/* Iter 303 */}
           <Route path="/admin/maintenance"  element={<AdminRoute><AdminMaintenance /></AdminRoute>} />{/* 2026-08 */}
+          <Route path="/admin/harness-releases" element={<AdminRoute><AdminHarnessReleases /></AdminRoute>} />
           <Route path="/admin/personal-track" element={<AdminRoute><PersonalTrackAdmin /></AdminRoute>} />
           <Route path="/admin/ora-chat"       element={<AdminRoute><OraChat /></AdminRoute>} />
           {/* Iter 212m-171 — direct URLs for new admin sections */}

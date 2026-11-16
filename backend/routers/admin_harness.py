@@ -15,9 +15,14 @@ request body is silently ignored by Pydantic's own field set, never
 reaching services.harness_releases.
 
 D1 (hosting the real fix-branch package) is not approved — the
-`source` field on every created release is one of exactly two values
-("test_fixture" / "muse_fix_branch_approved"), never free text, so the
-provenance of what's hosted is always visible in this admin view.
+`source` field on every created release is one of a known, closed set
+of values, never free text, so the provenance of what's hosted is
+always visible in this admin view. "admin_ui" (2026-11-16) is a human
+admin manually uploading a zip through this page — a real provenance
+distinct from "test_fixture" (synthetic bytes in a test) and
+"muse_fix_branch_approved" (the real fix-branch package, once D1 is
+approved); it carries the same weight as the others for audit
+purposes, not a bypass of the D1 gate.
 """
 from __future__ import annotations
 
@@ -36,7 +41,7 @@ logger = logging.getLogger("aurem-dev.admin_harness")
 
 router = APIRouter(dependencies=[Depends(require_admin_dep)])
 
-_VALID_SOURCES = ("test_fixture", "muse_fix_branch_approved")
+_VALID_SOURCES = ("test_fixture", "muse_fix_branch_approved", "admin_ui")
 _MAX_CHANGELOG_ITEMS = 50
 _MAX_CHANGELOG_ITEM_LEN = 500
 
