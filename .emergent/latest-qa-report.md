@@ -1,10 +1,12 @@
-# QA Report — commit fb95b02 (2026-11-16T00:06:40+00:00)
+# QA Report — commit 2887602 (2026-11-16T01:28:55+00:00)
 
-**Commit message**: Merge pull request #330 from AuremHQ/auremcto/ship-t_4a574cdc8d53
+**Commit message**: fix(frontend): restore Landing.jsx and billingCopy.js corrupted on main; add compile guard
 
-Auremcto/ship t 4a574cdc8d53
-**Scope decided**: backend=True, ui=True, scenarios=[]
-**Reasoning**: backend=True, ui=True, files_matched=[], keywords_matched=['ship']
+Landing.jsx on main had model output pasted into it (a "rest of the file
+remains exactly the same" block with loose JSX) and a CSS block replaced
+by a comment, so `vite build` failed at Landing.jsx:570 and Li
+**Scope decided**: backend=False, ui=True, scenarios=[]
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
