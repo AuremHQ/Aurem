@@ -160,4 +160,13 @@ async def harness_telemetry(request: Request) -> dict:
 
     accepted, consumed = validate_batch(events, user_id=bin_id)
     await store_events(db, user_id=bin_id, events=accepted)
+    dropped = consumed - len(accepted)
+    if dropped:
+        # Count only — never event content, the token or the bin. A
+        # sudden rise after a client release means schema drift: those
+        # events are consumed (the queue must not stick) but lost.
+        logger.warning(
+            "harness telemetry: dropped=%d of received=%d invalid events",
+            dropped, consumed,
+        )
     return {"received": consumed}
