@@ -1,12 +1,10 @@
-# QA Report — commit 6417a62 (2026-11-16T11:29:01+00:00)
+# QA Report — commit 78fd14d (2026-11-16T11:53:08+00:00)
 
-**Commit message**: fix(frontend): restore Landing.jsx + billingCopy.js and compile guard again (regressed after #334)
+**Commit message**: Merge pull request #337 from AuremHQ/fix/frontend-regress-again-2026-11-16
 
-PR #334 (0fcf7ac9) fixed these, but later merges (#335/#336 and the
-Emergent "Auto-generated changes" syncs) brought back the corrupted
-Landing.jsx (1597 lines, vite build fails at :570), the truncate
+fix(frontend): Landing.jsx + billingCopy.js regressed again after #334 - restore + guard
 **Scope decided**: backend=False, ui=True, scenarios=[]
-**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=False, ui=True, files_matched=[], keywords_matched=[]
 
 ## Results
 | Scenario | Variant | Result | Detail |
