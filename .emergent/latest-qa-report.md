@@ -1,10 +1,13 @@
-# QA Report — commit fb95b02 (2026-11-16T00:06:40+00:00)
+# QA Report — commit 62ed246 (2026-11-16T01:15:41+00:00)
 
-**Commit message**: Merge pull request #330 from AuremHQ/auremcto/ship-t_4a574cdc8d53
+**Commit message**: fix(backend): restore services/local_tools.py truncated by bad merge (4a8796a4)
 
-Auremcto/ship t 4a574cdc8d53
-**Scope decided**: backend=True, ui=True, scenarios=[]
-**Reasoning**: backend=True, ui=True, files_matched=[], keywords_matched=['ship']
+The merge 4a8796a4 cut local_tools.py from 3172 to 1272 lines (it kept
+the 647-line truncated side of 08eddf29 and spliced a commit_files
+snippet into execute_bash). TOOL_SPECS, LOCAL_TOOLS, invoke_local_tool
+and search
+**Scope decided**: backend=True, ui=False, scenarios=[]
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
