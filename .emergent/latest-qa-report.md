@@ -1,10 +1,12 @@
-# QA Report — commit fb95b02 (2026-11-16T00:06:40+00:00)
+# QA Report — commit 2c59b62 (2026-11-16T01:24:07+00:00)
 
-**Commit message**: Merge pull request #330 from AuremHQ/auremcto/ship-t_4a574cdc8d53
+**Commit message**: fix(backend): restore 7 corrupted modules to the live build's versions; add parse guard
 
-Auremcto/ship t 4a574cdc8d53
-**Scope decided**: backend=True, ui=True, scenarios=[]
-**Reasoning**: backend=True, ui=True, files_matched=[], keywords_matched=['ship']
+Seven backend files on main do not parse (truncated to fragments or with
+model chatter pasted into the source). routers/github_app.py is imported
+by main.py at module level, so a deploy from main cannot start th
+**Scope decided**: backend=True, ui=False, scenarios=[]
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth']
 
 ## Results
 | Scenario | Variant | Result | Detail |
