@@ -1,12 +1,13 @@
-# QA Report — commit 2c59b62 (2026-11-16T01:24:07+00:00)
+# QA Report — commit b6258fd (2026-11-16T00:52:14+00:00)
 
-**Commit message**: fix(backend): restore 7 corrupted modules to the live build's versions; add parse guard
+**Commit message**: fix(harness): telemetry store treats DuplicateKeyError as a replay; log dropped-event count
 
-Seven backend files on main do not parse (truncated to fragments or with
-model chatter pasted into the source). routers/github_app.py is imported
-by main.py at module level, so a deploy from main cannot start th
+Review findings on PR #329 (Fix E):
+- store_events: a concurrent upsert race on the unique
+  (user_id, event_hash) index raises DuplicateKeyError in real Mongo.
+  The event is already stored, so count it as 
 **Scope decided**: backend=True, ui=False, scenarios=[]
-**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth']
+**Reasoning**: backend=True, ui=False, files_matched=[], keywords_matched=['auth', 'token']
 
 ## Results
 | Scenario | Variant | Result | Detail |
