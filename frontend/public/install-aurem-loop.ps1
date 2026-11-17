@@ -13,29 +13,25 @@
 # AuremLoop. It ASKS before downloading the model — never silent.
 # Ollama is NEVER auto-installed — by design, message only.
 #
-# HOSTING — this file lives at https://auremcto.com/install-aurem-loop.ps1
-# (a static file, same mechanism as /llms.txt and /policies/*.md).
+# HOSTING (settled by the Emergent agent, Nov 16 — deployment still owed):
+# this file is served as a static file from frontend/public (same
+# mechanism as /llms.txt), and the zip comes from the new public
+# endpoint GET /api/harness/download-public/{version} (rate-limited
+# 5/min/IP; 404s if the version is not the latest published release,
+# 503 if the artifact is missing). The old default below —
+# https://auremcto.com/downloads/aurem-loop-0.8.0.zip — was WRONG:
+# any URL outside /api/* falls through to the SPA shell on this
+# domain, so that path could never serve a zip. The endpoint default
+# below is the correct one. Until the deployment lands, download
+# this script and run it with -ZipUrl pointing at a URL that serves
+# the zip.
 #
-# 2026-11-17 — the default $ZipUrl below is NOT the literal
-# https://auremcto.com/downloads/aurem-loop-0.8.0.zip path described
-# in an earlier draft of this script: any URL on this domain outside
-# /api/* falls through to the website's own single-page app, so a
-# literal static zip at that path can never be reached (confirmed
-# live: that exact path returns the website's HTML shell, not a
-# zip). The real endpoint below serves the SAME release artifact —
-# no identity.json injected (there's no per-user identity for an
-# anonymous one-liner caller; the harness runs in free/no-identity
-# mode) — and fails closed (404) if asked for a version that is not
-# the currently-published latest, so a stale pinned copy of this
-# script never silently re-installs a superseded build.
-#
-# GATED DOWNLOAD (optional): if you'd rather use the signed-in
-# download endpoint instead of the public one, pass your ORA token
-# and the script downloads through it:
+# GATED DOWNLOAD (optional): if the zip is served only through the
+# signed-in download endpoint, pass your ORA token and the script
+# downloads through it instead of the public URL:
 #   .\install-aurem-loop.ps1 -Token "<your ORA token>"
 # (A personalized one-line command with a short-lived token is a
-# separate, later step — the website can render it for signed-in
-# users.)
+# server step — the website can render it for signed-in users.)
 #
 # GATE NOTE: this script is public by nature — anyone who has the
 # command can install without an account. The sign-in gate applies
