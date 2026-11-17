@@ -2323,6 +2323,8 @@ const NAV_ICONS = {
   // "Element type is invalid" error — same failure class as the
   // `financials` icon gap fixed in 97e6aa3e.
   pricing_panel: Tag,
+  harness_releases: GitBranch,
+  harness_overview: Terminal,
   tokens: Cpu,
   dash: LayoutDashboard,
   projects: Folder,
