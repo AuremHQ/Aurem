@@ -1,10 +1,12 @@
 /**
- * HarnessPage.test.jsx — Aurem Loop harness, Phase A.
- * Two-stage fetch: GET /harness/page-status (visibility flag) then,
- * only if true, GET /harness/content (the actual copy, served from
- * the private AuremHQ/aurem-loop repo via the backend). Phase A rule:
- * there is NO download CTA anywhere — only a waitlist mailto link,
- * for every visitor regardless of login state.
+ * HarnessPage.test.jsx — Aurem Loop Midnight Gold homepage (2026-11-17).
+ *
+ * Replaces the prior content-doc-driven Phase A/B test suite — this
+ * page is now fully self-contained (hero + inline sign-up/sign-in
+ * card + features/FAQ/legal/footer), with only two real backend
+ * reads (page-status, release-status) and real auth calls (no
+ * simulation): /auth/signup, /auth/login, /auth/login/2fa-verify,
+ * /auth/forgot-password, plus the authenticated download endpoint.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -12,435 +14,339 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 vi.mock("../../lib/api", () => ({
-  healthApi: { get: vi.fn(), post: vi.fn() },
-  api: { post: vi.fn() },
+  healthApi: { get: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn() },
   getToken: vi.fn(() => null),
-  getUser: vi.fn(() => null),
-  isAdminOrFounder: vi.fn(() => false),
+  setToken: vi.fn(),
+  setUser: vi.fn(),
 }));
 
 import HarnessPage from "../HarnessPage.jsx";
-import { api, getToken, healthApi } from "../../lib/api";
-
-const CONTENT = {
-  available: true,
-  title: "Aurem Loop — local coding harness",
-  description: "desc",
-  canonical: "https://auremcto.com/harness",
-  badges: ["FREE", "LOCAL", "MIT LICENSED"],
-  hero: { headline: "Your code. Your PC. Your Accept.", subhead: "sub", body: "body" },
-  phaseA: {
-    banner: "Not available to download yet.",
-    waitlistEmail: "polarisbuiltinc@gmail.com",
-    waitlistSubject: "Aurem Loop waitlist",
-    waitlistBody: "Please add me.",
-  },
-  featureTags: ["$0 for local use"],
-  demoVideo: {
-    url: "https://example.com/demo.mp4",
-    caption: "Illustration of the flow, not a real recording — the harness is not downloadable yet.",
-  },
-  setApart: {
-    headline: "Refine your model.",
-    wspKit: { badge: "EXPERIMENTAL", body: "wsp body" },
-    phoneTunnel: { badge: "OPTIONAL", body: "tunnel body" },
-  },
-  githubStats: {
-    repoLabel: "wsp-kit",
-    note: "These numbers are for the wsp-kit research repo, not harness downloads — the harness itself hasn't shipped.",
-    clones: 939, views: 562, lastVerified: "10 Nov 2026",
-  },
-  whatItIsNot: ["Not a hosted service."],
-  compare: {
-    headline: "Compare",
-    body: "compare body",
-    auremRow: {
-      Price: "$0 (local)",
-      Evidence: "Tie with bare model (26/48 vs 27/48, false accepts 6)",
-      Model: "qwen2.5-coder:1.5b",
-    },
-    competitorNote: "will be filled in",
-  },
-  whoShouldNotPick: [
-    "You need frontier models.",
-    "You want the highest possible pass rate over local-first operation — the harness ties, not beats, the bare model on the bench above.",
-  ],
-  usersSay: { headline: "What users say", body: "no users yet" },
-  setup: {
-    headline: "Setup",
-    steps: [
-      "Download the release zip from this page (the link appears once Phase B goes live) and verify its SHA-256 checksum, shown here too.",
-      "Unzip it, then run install.bat.",
-      "The installer checks for Python and installs Ollama plus the qwen2.5-coder:1.5b model (about 1 GB) if they're missing.",
-    ],
-  },
-  troubleshooting: [{ q: "Stuck?", a: "Wait." }],
-  faq: [
-    { q: "Is it free?", a: "Yes." },
-    { q: "Does it send my code anywhere?", a: "No." },
-  ],
-  footer: {
-    tagline: "Aurem Loop tagline",
-    legal: "Polaris Built Inc.",
-    waitlistEmail: "polarisbuiltinc@gmail.com",
-    license: "MIT licensed",
-  },
-};
+import { api, healthApi, getToken } from "../../lib/api";
 
 const RELEASE = {
   available: true,
   version: "0.8.0",
   platform: "windows",
-  sha256: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
-  changelog: ["Initial public Windows build"],
-  mandatory: false,
-  size_bytes: 292519,
-  published_at: 1762819200,
+  sha256: "998abc0d46d9acc47de186519d211bf58fff9890ebed85476b58ce724d914543",
+  size_bytes: 332855,
 };
 
-function mockEndpoints({ flag, content, liveStats = { stars: 16, forks: 2 }, release = { available: false } }) {
+function mockEndpoints({ flag = true, release = { available: false } } = {}) {
   healthApi.get.mockImplementation((path) => {
-    if (path === "/harness/page-status") {
-      return Promise.resolve({ data: { harness_page_enabled: flag } });
-    }
-    if (path === "/harness/content") {
-      if (content === "error") return Promise.reject(new Error("network down"));
-      return Promise.resolve({ data: { content, live_stats: liveStats } });
-    }
-    if (path === "/harness/release-status") {
-      return Promise.resolve({ data: release });
-    }
-    return Promise.reject(new Error(`unexpected path ${path}`));
+    if (path === "/harness/page-status") return Promise.resolve({ data: { harness_page_enabled: flag } });
+    if (path === "/harness/release-status") return Promise.resolve({ data: release });
+    return Promise.reject(new Error(`unexpected healthApi path ${path}`));
   });
 }
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
 
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={["/harness"]}>
-      <Routes>
-        <Route path="/harness" element={<HarnessPage />} />
-      </Routes>
+      <Routes><Route path="/harness" element={<HarnessPage />} /></Routes>
     </MemoryRouter>,
   );
 }
 
-describe("HarnessPage", () => {
-  it("shows a loading state before the flag check resolves", () => {
-    healthApi.get.mockReturnValue(new Promise(() => {})); // never resolves
+beforeEach(() => {
+  vi.clearAllMocks();
+  getToken.mockReturnValue(null);
+  window.matchMedia = window.matchMedia || function matchMedia(query) {
+    return { matches: false, media: query, addListener: () => {}, removeListener: () => {} };
+  };
+});
+
+describe("HarnessPage — visibility + hero", () => {
+  it("shows nothing but the flag check while page-status is pending", () => {
+    healthApi.get.mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(screen.getByTestId("harness-page-loading")).toBeInTheDocument();
   });
 
   it("shows 'not available yet' when the flag is off", async () => {
-    mockEndpoints({ flag: false, content: CONTENT });
+    mockEndpoints({ flag: false });
     renderPage();
     await waitFor(() => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument());
     expect(screen.queryByTestId("harness-page")).not.toBeInTheDocument();
   });
 
-  it("a failed flag-status fetch retries once, then defaults to hidden, never shows the real page", async () => {
-    // 2026-11-11 — HarnessPage now retries page-status once (1.2s
-    // delay) before giving up, so a transient blip doesn't permanently
-    // hide the page; this mock rejects both the initial call AND the
-    // retry, so the test still exercises the ultimate "stays hidden"
-    // outcome, just with the expected extra delay.
-    healthApi.get.mockImplementation((path) => {
-      if (path === "/harness/page-status") return Promise.reject(new Error("network down"));
-      return Promise.reject(new Error("should not be called"));
-    });
+  it("renders the real hero, bench box, and sign-up form by default", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
     renderPage();
-    await waitFor(
-      () => expect(screen.getByTestId("harness-page-not-available")).toBeInTheDocument(),
-      { timeout: 3000 },
+    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+    expect(screen.getByText("YOUR MODEL.")).toBeInTheDocument();
+    expect(screen.getByTestId("harness-bench")).toHaveTextContent("46/48");
+    expect(screen.getByTestId("harness-bench")).toHaveTextContent("31/48");
+    expect(screen.getByTestId("harness-bench")).toHaveTextContent("0/48");
+    expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument();
+  });
+
+  it("shows the real version from release-status, never hardcoded, when a release is published", async () => {
+    mockEndpoints({ flag: true, release: RELEASE });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-release-line")).toHaveTextContent("v0.8.0"));
+  });
+
+  it("shows a 'not available yet' release line when no release is published", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-release-line")).toHaveTextContent("Download not available yet"));
+  });
+});
+
+describe("HarnessPage — real signup (source=harness_homepage, no simulation)", () => {
+  async function fillSignup({ name = "Ada Lovelace", email = "ada@example.com", password = "SuperStrongPass1!" } = {}) {
+    fireEvent.change(screen.getByTestId("harness-signup-name"), { target: { value: name } });
+    fireEvent.change(screen.getByTestId("harness-signup-email"), { target: { value: email } });
+    fireEvent.change(screen.getByTestId("harness-signup-password"), { target: { value: password } });
+    fireEvent.click(screen.getByTestId("harness-signup-submit"));
+  }
+
+  it("tags the real signup request with source=harness_homepage", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockResolvedValue({ data: { token: "jwt", user_id: "u1", email: "ada@example.com", name: "Ada Lovelace", tier: "free" } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await fillSignup();
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/auth/signup",
+      expect.objectContaining({ email: "ada@example.com", source: "harness_homepage" }),
+    ));
+  });
+
+  it("on success, stays on /harness and shows the real congratulations done-view (no navigation away)", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockResolvedValue({ data: { token: "jwt", user_id: "u1", email: "ada@example.com", name: "Ada Lovelace", tier: "free" } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await fillSignup();
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-done-title")).toHaveTextContent("Congratulations, Ada");
+  });
+
+  it("on a real backend error (e.g. duplicate email), shows the REAL error — never a fake success", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockRejectedValue({ response: { data: { detail: "Email already registered" } } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await fillSignup();
+    await waitFor(() => expect(screen.getByTestId("harness-form-msg")).toHaveTextContent("Email already registered"));
+    expect(screen.queryByTestId("harness-done-view")).not.toBeInTheDocument();
+  });
+
+  it("blocks submit client-side on an invalid email or weak password, with no API call", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await fillSignup({ email: "not-an-email", password: "weak" });
+    expect(api.post).not.toHaveBeenCalled();
+    expect(screen.getByTestId("harness-form-msg")).toHaveTextContent("Please fix the highlighted fields");
+  });
+});
+
+describe("HarnessPage — real signin", () => {
+  it("signs in with real credentials and shows the done-view, staying on /harness", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockResolvedValue({ data: { token: "jwt", user_id: "u1", email: "ada@example.com", name: "Ada Lovelace", tier: "free" } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-tab-signin")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-tab-signin"));
+    fireEvent.change(screen.getByTestId("harness-signin-email"), { target: { value: "ada@example.com" } });
+    fireEvent.change(screen.getByTestId("harness-signin-password"), { target: { value: "whatever" } });
+    fireEvent.click(screen.getByTestId("harness-signin-submit"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/login", { email: "ada@example.com", password: "whatever" }));
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-done-title")).toHaveTextContent("Welcome back, Ada");
+  });
+
+  it("routes to the real inline 2FA step when the backend requires it, never fakes success", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockResolvedValue({ data: { mfa_required: true, mfa_token: "mfa_tok", email: "ada@example.com" } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-tab-signin")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-tab-signin"));
+    fireEvent.change(screen.getByTestId("harness-signin-email"), { target: { value: "ada@example.com" } });
+    fireEvent.change(screen.getByTestId("harness-signin-password"), { target: { value: "whatever" } });
+    fireEvent.click(screen.getByTestId("harness-signin-submit"));
+    await waitFor(() => expect(screen.getByTestId("harness-mfa-code")).toBeInTheDocument());
+    expect(screen.queryByTestId("harness-done-view")).not.toBeInTheDocument();
+
+    api.post.mockResolvedValue({ data: { token: "jwt", user_id: "u1", email: "ada@example.com", name: "Ada Lovelace" } });
+    fireEvent.change(screen.getByTestId("harness-mfa-code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByTestId("harness-mfa-submit"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/login/2fa-verify", { mfa_token: "mfa_tok", code: "123456" }));
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+  });
+
+  it("shows the real sign-in error on bad credentials", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockRejectedValue({ response: { data: { detail: "Invalid email or password" } } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-tab-signin")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-tab-signin"));
+    fireEvent.change(screen.getByTestId("harness-signin-email"), { target: { value: "ada@example.com" } });
+    fireEvent.change(screen.getByTestId("harness-signin-password"), { target: { value: "wrong" } });
+    fireEvent.click(screen.getByTestId("harness-signin-submit"));
+    await waitFor(() => expect(screen.getByTestId("harness-form-msg")).toHaveTextContent("Invalid email or password"));
+  });
+
+  it("Google and GitHub buttons redirect with next=/harness, same-page return", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-tab-signin")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-tab-signin"));
+    const originalLocation = window.location;
+    delete window.location;
+    window.location = { href: "", origin: "http://localhost:3000" };
+    try {
+      fireEvent.click(screen.getByTestId("harness-oauth-google"));
+      expect(window.location.href).toBe(
+        "http://localhost:3000/api/aurem-dev/google/oauth/start?intent=signup&next=%2Fharness",
+      );
+    } finally {
+      window.location = originalLocation;
+    }
+  });
+});
+
+describe("HarnessPage — real forgot-password (no fake confirmation)", () => {
+  it("sends a real reset-link request and shows the real response message", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.post.mockResolvedValue({ data: { ok: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-tab-signin")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-tab-signin"));
+    fireEvent.click(screen.getByTestId("harness-forgot-btn"));
+    fireEvent.change(screen.getByTestId("harness-reset-email"), { target: { value: "ada@example.com" } });
+    fireEvent.click(screen.getByTestId("harness-reset-submit"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/forgot-password", { email: "ada@example.com" }));
+    await waitFor(() => expect(screen.getByTestId("harness-form-msg")).toHaveTextContent("reset link has been sent"));
+  });
+});
+
+describe("HarnessPage — already signed in on page load", () => {
+  it("skips the form and shows the done-view directly when a valid token already exists", async () => {
+    getToken.mockReturnValue("existing-jwt");
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.get.mockResolvedValue({ data: { user: { name: "Returning User" } } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-done-title")).toHaveTextContent("Welcome back, Returning");
+    expect(screen.queryByTestId("harness-signup-submit")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the sign-up form when the stored token is no longer valid", async () => {
+    getToken.mockReturnValue("expired-jwt");
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.get.mockRejectedValue({ response: { status: 401 } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+  });
+});
+
+describe("HarnessPage — real authenticated download + congratulations", () => {
+  async function signUpAndReachDone() {
+    api.post.mockResolvedValueOnce({ data: { token: "jwt", user_id: "u1", email: "ada@example.com", name: "Ada Lovelace" } });
+    fireEvent.change(screen.getByTestId("harness-signup-name"), { target: { value: "Ada Lovelace" } });
+    fireEvent.change(screen.getByTestId("harness-signup-email"), { target: { value: "ada@example.com" } });
+    fireEvent.change(screen.getByTestId("harness-signup-password"), { target: { value: "SuperStrongPass1!" } });
+    fireEvent.click(screen.getByTestId("harness-signup-submit"));
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+  }
+
+  it("downloads the real authenticated package and shows the congratulations box", async () => {
+    mockEndpoints({ flag: true, release: RELEASE });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await signUpAndReachDone();
+
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    global.URL.createObjectURL = createObjectURL;
+    global.URL.revokeObjectURL = revokeObjectURL;
+    api.post.mockResolvedValueOnce({
+      data: new Blob(["zip-bytes"]),
+      headers: { "x-aurem-package-sha256": RELEASE.sha256 },
+    });
+    fireEvent.click(screen.getByTestId("harness-download-btn"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/harness/download", {}, { responseType: "blob" }));
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob)));
+    await waitFor(() => expect(screen.getByTestId("harness-download-success")).toHaveTextContent(
+      "🎊 Congratulations! Successfully downloaded",
+    ));
+  });
+
+  it("shows the real error on a download failure, never a fake success", async () => {
+    mockEndpoints({ flag: true, release: RELEASE });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await signUpAndReachDone();
+
+    api.post.mockRejectedValueOnce({ response: { status: 409 } });
+    fireEvent.click(screen.getByTestId("harness-download-btn"));
+    await waitFor(() => expect(screen.getByTestId("harness-download-error")).toHaveTextContent("No release is published yet"));
+    expect(screen.queryByTestId("harness-download-success")).not.toBeInTheDocument();
+  });
+});
+
+describe("HarnessPage — sign out and show the form again", () => {
+  it("fires a real logout call, clears local session, and returns to the sign-in form", async () => {
+    getToken.mockReturnValue("existing-jwt");
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.get.mockResolvedValue({ data: { user: { name: "Returning User" } } });
+    api.post.mockResolvedValue({ data: { ok: true } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-signout-again"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/logout"));
+    await waitFor(() => expect(screen.getByTestId("harness-signin-submit")).toBeInTheDocument());
+  });
+});
+
+describe("HarnessPage — FAQ, Licensing & Policies, footer", () => {
+  it("expands exactly one FAQ item at a time", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-faq-0")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-faq-0"));
+    expect(screen.getByTestId("harness-faq-0")).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByTestId("harness-faq-1"));
+    expect(screen.getByTestId("harness-faq-0")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("harness-faq-1")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("renders all three Licensing & Policies articles (License, Privacy, Terms)", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-legal-license")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-legal-license")).toHaveTextContent("Software Licence");
+    expect(screen.getByTestId("harness-legal-privacy")).toHaveTextContent("Privacy Policy");
+    expect(screen.getByTestId("harness-legal-terms")).toHaveTextContent("Terms of Use");
+  });
+
+  it("renders the real footer with the exact copyright and trademark lines", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-footer")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-footer")).toHaveTextContent(
+      "© 2026 Polaris Built Inc — Aurem Loop, made by AUREM · Incorporated in Canada · All rights reserved.",
+    );
+    expect(screen.getByTestId("harness-footer")).toHaveTextContent(
+      "AUREM™ is a trademark of Polaris Built Inc. (Application No. 2492318, filed with the Canadian Intellectual Property Office).",
     );
   });
 
-  it("shows 'temporarily unavailable' when the flag is on but content isn't", async () => {
-    mockEndpoints({ flag: true, content: { available: false } });
+  it("'Cookie preferences' fires the real site-wide consent reopen — no separate fake panel", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
     renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page-content-unavailable")).toBeInTheDocument());
-  });
-
-  it("shows 'temporarily unavailable' when the content fetch errors", async () => {
-    mockEndpoints({ flag: true, content: "error" });
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page-content-unavailable")).toBeInTheDocument());
-  });
-
-  it("renders the full Phase A page with a real waitlist form and NO download button anywhere", async () => {
-    mockEndpoints({ flag: true, content: CONTENT });
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-    expect(screen.getByTestId("harness-waitlist-form-hero")).toBeInTheDocument();
-    expect(screen.getByTestId("harness-waitlist-email-hero")).toBeInTheDocument();
-    expect(screen.getByTestId("harness-waitlist-mailto-hero")).toHaveAttribute(
-      "href", expect.stringContaining("mailto:polarisbuiltinc@gmail.com"),
-    );
-    expect(screen.queryByTestId("harness-download-button")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /download/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
-  });
-
-  it("submitting the hero waitlist form posts the email and shows an on-page confirmation", async () => {
-    mockEndpoints({ flag: true, content: CONTENT });
-    healthApi.post.mockResolvedValue({ data: { ok: true } });
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-
-    fireEvent.change(screen.getByTestId("harness-waitlist-email-hero"), { target: { value: "dev@example.com" } });
-    fireEvent.click(screen.getByTestId("harness-waitlist-submit-hero"));
-
-    await waitFor(() => expect(screen.getByTestId("harness-waitlist-success-hero")).toBeInTheDocument());
-    expect(healthApi.post).toHaveBeenCalledWith("/harness/waitlist", { email: "dev@example.com" });
-  });
-
-  it("renders live GitHub stars/forks plus the static clones/views snapshot", async () => {
-    mockEndpoints({ flag: true, content: CONTENT, liveStats: { stars: 16, forks: 2 } });
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-    expect(screen.getByTestId("harness-stat-stars")).toHaveTextContent("16");
-    expect(screen.getByTestId("harness-stat-forks")).toHaveTextContent("2");
-    expect(screen.getByTestId("harness-stat-clones")).toHaveTextContent("939");
-    expect(screen.getByTestId("harness-stat-views")).toHaveTextContent("562");
-  });
-
-  it("renders exactly as many FAQ entries as the content provides", async () => {
-    mockEndpoints({ flag: true, content: CONTENT });
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-    expect(screen.getByTestId("harness-faq-0")).toBeInTheDocument();
-    expect(screen.getByTestId("harness-faq-1")).toBeInTheDocument();
-    expect(screen.queryByTestId("harness-faq-2")).not.toBeInTheDocument();
-  });
-
-  it("renders the site's real MarketingNav, not a bespoke one", async () => {
-    mockEndpoints({ flag: true, content: CONTENT });
-    renderPage();
-    await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-    expect(screen.getByTestId("ora-nav")).toBeInTheDocument();
-    expect(screen.getByTestId("harness-anchor-nav")).toBeInTheDocument();
-  });
-
-  describe("Phase B — only once a real release is published (release-status.available)", () => {
-    it("shows the download section with version/SHA-256/changelog and NO Phase A banner, once a release exists", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      await waitFor(() => expect(screen.getByTestId("harness-download-section")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-download-version")).toHaveTextContent("0.8.0");
-      expect(screen.getByTestId("harness-download-sha256")).toHaveTextContent(RELEASE.sha256);
-      expect(screen.getByTestId("harness-download-changelog")).toHaveTextContent("Initial public Windows build");
-      expect(screen.queryByTestId("harness-phase-a-banner")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("harness-waitlist-form-hero")).not.toBeInTheDocument();
-    });
-
-    it("a signed-out visitor sees 'Sign in to download' and the sign-in note, and clicking redirects to signup with no API call", async () => {
-      getToken.mockReturnValue(null);
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      const originalLocation = window.location;
-      delete window.location;
-      window.location = { href: "" };
-      try {
-        renderPage();
-        await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
-        expect(screen.getByTestId("harness-download-button")).toHaveTextContent("Sign in to download");
-        expect(screen.getByTestId("harness-download-signin-note")).toBeInTheDocument();
-        screen.getByTestId("harness-download-button").click();
-        expect(window.location.href).toBe("/signup?next=/harness");
-        expect(api.post).not.toHaveBeenCalled();
-      } finally {
-        window.location = originalLocation;
-      }
-    });
-
-    it("a signed-in visitor sees 'Download for Windows' with no sign-in note; clicking downloads and shows the congratulations message", async () => {
-      getToken.mockReturnValue("fake-jwt");
-      api.post.mockResolvedValue({ data: new Blob(["zip-bytes"]) });
-      const createObjectURL = vi.fn(() => "blob:mock-url");
-      const revokeObjectURL = vi.fn();
-      global.URL.createObjectURL = createObjectURL;
-      global.URL.revokeObjectURL = revokeObjectURL;
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-download-button")).toHaveTextContent("Download for Windows");
-      expect(screen.queryByTestId("harness-download-signin-note")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("harness-download-success")).not.toBeInTheDocument();
-      screen.getByTestId("harness-download-button").click();
-      await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-        "/harness/download", {}, { responseType: "blob" },
-      ));
-      await waitFor(() => expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob)));
-      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url"));
-      await waitFor(() => expect(screen.getByTestId("harness-download-button")).not.toBeDisabled());
-      await waitFor(() => expect(screen.getByTestId("harness-download-success"))
-        .toHaveTextContent("🎊 Congratulations! Successfully downloaded"));
-    });
-
-    it("a failed download never shows the congratulations message", async () => {
-      getToken.mockReturnValue("fake-jwt");
-      api.post.mockRejectedValue({ response: { status: 409 } });
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-download-button")).toBeInTheDocument());
-      screen.getByTestId("harness-download-button").click();
-      await waitFor(() => expect(screen.getByTestId("harness-download-error")).toBeInTheDocument());
-      expect(screen.queryByTestId("harness-download-success")).not.toBeInTheDocument();
-    });
-
-    it("shows neither the Phase A banner nor the download section while release-status is still resolving (no flash)", async () => {
-      healthApi.get.mockImplementation((path) => {
-        if (path === "/harness/page-status") return Promise.resolve({ data: { harness_page_enabled: true } });
-        if (path === "/harness/content") return Promise.resolve({ data: { content: CONTENT, live_stats: { stars: 16, forks: 2 } } });
-        if (path === "/harness/release-status") return new Promise(() => {}); // never resolves
-        return Promise.reject(new Error(`unexpected path ${path}`));
-      });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.queryByTestId("harness-phase-a-banner")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
-    });
-
-    it("stays on the Phase A waitlist banner when no release is published (current real state)", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-phase-a-banner")).toBeInTheDocument();
-      expect(screen.getByTestId("harness-waitlist-form-hero")).toBeInTheDocument();
-      expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
-    });
-
-    // 2026-11-16 — launch copy fix. content.usersSay.body comes from
-    // the canonical (un-editable-here) content doc and still says
-    // "has not shipped yet" — false once a release is published.
-    it("keeps the canonical 'has not shipped yet' stories copy unchanged when no release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-users-say")).toHaveTextContent(CONTENT.usersSay.body);
-    });
-
-    it("replaces the stale 'has not shipped yet' stories copy with an honest shipped message once a release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      const storiesSection = screen.getByTestId("harness-users-say");
-      expect(storiesSection).not.toHaveTextContent(CONTENT.usersSay.body);
-      expect(storiesSection).toHaveTextContent(
-        `Aurem Loop v${RELEASE.version} is out now — download it free and be one of the first to run it.`,
-      );
-      // Headline stays as-is per the launch copy fix instructions.
-      expect(storiesSection).toHaveTextContent(CONTENT.usersSay.headline);
-      // No invented testimonial or user quote.
-      expect(storiesSection.textContent).not.toMatch(/"[^"]{10,}"/);
-    });
-
-    // 2026-11-16 — launch copy fix. Setup step 1's canonical text
-    // ("the link appears once Phase B goes live") is stale once a
-    // release is actually published — the link really is on the page.
-    it("keeps the canonical 'Phase B goes live' setup copy unchanged when no release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-install-0")).toHaveTextContent(
-        "the link appears once Phase B goes live",
-      );
-    });
-
-    it("strips the stale 'Phase B goes live' parenthetical once a release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      const step0 = screen.getByTestId("harness-install-0");
-      expect(step0).not.toHaveTextContent("Phase B goes live");
-      expect(step0).toHaveTextContent(
-        "Download the release zip from this page and verify its SHA-256 checksum, shown here too.",
-      );
-    });
-
-    // 2026-11-17 — launch copy fix, round 2. These three strings were
-    // missed in round 1 because they live in fields (githubStats.note,
-    // demoVideo.caption) or a component (WaitlistForm) that weren't
-    // checked for the "has not shipped" claim specifically.
-    it("keeps the canonical github-stats note unchanged when no release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-github-stats-note")).toHaveTextContent(
-        "the harness itself hasn't shipped",
-      );
-    });
-
-    it("strips the stale 'harness itself hasn't shipped' clause from the github-stats note once a release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      const note = screen.getByTestId("harness-github-stats-note");
-      expect(note).not.toHaveTextContent("hasn't shipped");
-      expect(note).toHaveTextContent("These numbers are for the wsp-kit research repo, not harness downloads.");
-    });
-
-    it("strips the stale 'not downloadable yet' clause from the demo-video caption once a release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      const caption = screen.getByTestId("harness-demo-video-caption");
-      expect(caption).not.toHaveTextContent("not downloadable yet");
-      expect(caption).toHaveTextContent("Illustration of the flow, not a real recording.");
-    });
-
-    it("replaces the stories-section waitlist form with a download CTA once a release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.queryByTestId("harness-waitlist-form-stories")).not.toBeInTheDocument();
-      expect(screen.getByTestId("harness-stories-download-cta")).toBeInTheDocument();
-    });
-
-    it("keeps the stories-section waitlist form when no release is published", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-waitlist-form-stories")).toBeInTheDocument();
-      expect(screen.queryByTestId("harness-stories-download-cta")).not.toBeInTheDocument();
-    });
-
-    // 2026-11-17 — bench/model copy update (founder-confirmed,
-    // source: PC bench run 2026-11-15, 216/216 rows). Applied
-    // unconditionally — not gated on release.available, since this
-    // is a fact about the harness itself, not a Phase A/B toggle.
-    it("shows the updated bench evidence and PC model, not the canonical content doc's older numbers", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      expect(screen.getByTestId("harness-compare-evidence")).toHaveTextContent(
-        "Beats bare model (46/48 vs 31/48 and 33/48, false accepts 0)",
-      );
-      expect(screen.getByTestId("harness-compare-evidence")).not.toHaveTextContent("Tie with bare model");
-      expect(screen.getByTestId("harness-compare-model")).toHaveTextContent("qwen3:8b");
-      expect(screen.getByTestId("harness-compare-model")).not.toHaveTextContent("qwen2.5-coder");
-    });
-
-    it("rewrites the 'ties, not beats' who-should-not-pick bullet to say it beats the bare model", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      const bullet = screen.getByTestId("harness-who-not-1");
-      expect(bullet).not.toHaveTextContent("ties, not beats");
-      expect(bullet).toHaveTextContent("the harness beats the bare model");
-    });
-
-    it("corrects the setup step's PC model name to qwen3:8b", async () => {
-      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
-      renderPage();
-      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
-      const step2 = screen.getByTestId("harness-install-2");
-      expect(step2).toHaveTextContent("qwen3:8b");
-      expect(step2).not.toHaveTextContent("qwen2.5-coder");
-    });
+    await waitFor(() => expect(screen.getByTestId("harness-cookie-prefs")).toBeInTheDocument());
+    const handler = vi.fn();
+    window.addEventListener("aurem:reopen-consent", handler);
+    try {
+      fireEvent.click(screen.getByTestId("harness-cookie-prefs"));
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("aurem:reopen-consent", handler);
+    }
   });
 });

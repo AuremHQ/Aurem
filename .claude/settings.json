@@ -50,7 +50,8 @@
       "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser open http://localhost:3000/harness)",
       "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser get text [data-testid=harness-download-section])",
       "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser snapshot -i -c)",
-      "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser get url)"
+      "Bash(AGENT_BROWSER_SESSION=harness-dl-gate-verify agent-browser get url)",
+      "Bash(agent-browser --session harness-signup-flow find text 'not now' click)"
     ]
   }
 }

@@ -118,38 +118,34 @@ async function resolveHarnessPageMode() {
 }
 const HARNESS_PAGE_MODE = await resolveHarnessPageMode();
 
-// 2026-11-10 — Phase A content now lives in the private AuremHQ/aurem-loop
-// repo (services/harness_content_repo.py on the backend); this build-time
-// script fetches it through the SAME GET /api/harness/content a real
-// visitor's browser calls, so the static snapshot can never show
-// different copy than the live page. If the flag is on but the
-// content isn't available yet (nobody has pushed the content file to
-// the harness repo yet, or the fetch fails), no dedicated
-// dist/harness/index.html is written — same "stays hidden" fallback
-// as the flag being off.
-async function resolveHarnessContent() {
-  if (!HARNESS_PAGE_MODE) return null;
+// 2026-11-17 — the /harness page is now fully self-contained (the
+// Midnight Gold rebuild: hero + inline sign-up/sign-in card + FAQ +
+// Licensing & Policies + footer, all hardcoded in HarnessPage.jsx —
+// no more fetch to the private AuremHQ/aurem-loop content repo). The
+// ONLY thing that can still be real-vs-stale here is the release
+// itself (version/sha256/size_bytes), via the SAME public, no-auth
+// GET /api/harness/release-status the live page and the homepage
+// promo section both read. A fetch failure fails closed to
+// "unavailable" — same safe default as no release existing yet.
+async function resolveHarnessRelease() {
   const backendUrl =
     process.env.VITE_API_URL ||
     _loadedEnv.VITE_API_URL ||
     process.env.REACT_APP_BACKEND_URL ||
     _loadedEnv.REACT_APP_BACKEND_URL;
-  if (!backendUrl) return null;
+  if (!backendUrl) return { available: false };
   try {
-    const resp = await fetch(`${backendUrl}/api/harness/content`, {
+    const resp = await fetch(`${backendUrl}/api/harness/release-status`, {
       signal: AbortSignal.timeout(8000),
     });
-    if (!resp.ok) return null;
-    const body = await resp.json();
-    const content = body?.content;
-    if (!content || content.available === false) return null;
-    return { content, liveStats: body?.live_stats || null };
+    if (!resp.ok) return { available: false };
+    return await resp.json();
   } catch (e) {
-    console.warn(`[seo-prerender] harness/content fetch failed (${e.message}) — /harness snapshot skipped`);
-    return null;
+    console.warn(`[seo-prerender] harness/release-status fetch failed (${e.message}) — defaulting to unavailable`);
+    return { available: false };
   }
 }
-const HARNESS_CONTENT = await resolveHarnessContent();
+const HARNESS_RELEASE = HARNESS_PAGE_MODE ? await resolveHarnessRelease() : { available: false };
 
 // 2026-11-09 — bugfix: the comment above ("only the homepage snapshot
 // is gated") was wrong once /vs/*, /compare and /about started
@@ -391,8 +387,10 @@ function homeBody() {
     ? "One free full scan, no credit card. Starter: $9/month flat for 900 tokens \u2014 no per-action billing, unused tokens carry forward."
     : "Free: 10 tasks/month, no credit card. Starter: $9/month flat \u2014 no per-token billing."}</p>
 ${HARNESS_PAGE_MODE ? `<h2>Aurem Loop</h2>
-<p>A local coding harness that checks its own work. Not available to download yet.</p>
-<p><a href="/harness">Learn about Aurem Loop \u2192</a></p>
+<p>${HARNESS_RELEASE.available
+    ? `A local coding harness that checks its own work. Download available \u2014 v${esc(HARNESS_RELEASE.version)} (free, Windows).`
+    : "A local coding harness that checks its own work. Not available to download yet."}</p>
+${HARNESS_RELEASE.available ? `<p><a href="/harness">Download Aurem Loop</a></p>\n` : ""}<p><a href="/harness">Learn about Aurem Loop \u2192</a></p>
 ` : ""}<p><a href="/about">About AUREM</a> \u00b7 <a href="/compare">How ORA compares</a> \u00b7 <a href="/pricing">Pricing</a> \u00b7 <a href="/developers">Developers</a> \u00b7 <a href="/api/docs">API Docs</a> \u00b7 <a href="/signup">Start free</a></p>
 </main>`;
 }

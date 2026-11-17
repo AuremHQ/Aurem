@@ -1,372 +1,467 @@
 /**
- * pages/HarnessPage.jsx — Aurem Loop harness, Phase A.
+ * pages/HarnessPage.jsx — Aurem Loop harness, Midnight Gold homepage
+ * (2026-11-17, built from the attached harness-homepage-sign-in-
+ * preview.html design).
  *
- * Content ownership (2026-11-10 architecture decision): the page's
- * own copy lives in the separate, private harness repo
- * (AuremHQ/aurem-loop, file web/harness-page-content.json) — not in
- * this file, not in this app's git history — so the exact same
- * content can later move to the harness's own subdomain
- * (loop.auremcto.com) with zero rewrite. This component only ever
- * RENDERS what GET /api/harness/content (routers/harness.py ->
- * services/harness_content_repo.py) returns; it never hardcodes
- * marketing copy itself. Live GitHub stars/forks (wsp-kit repo)
- * overlay on top via the same response's `live_stats`
- * (services/wsp_kit_stats.py) — clones/views stay the dated snapshot
- * baked into the content doc, per the verified-facts rule that only
- * stars/forks are ever live.
+ * Replaces the prior content-doc-driven Phase A/B page. This one is
+ * fully self-contained — no fetch to the private AuremHQ/aurem-loop
+ * content repo — except for two real, live backend reads:
+ *   - GET /harness/page-status   — same kill-switch flag as before.
+ *   - GET /harness/release-status — version/sha256/size_bytes, never
+ *     hardcoded (the design mockup hardcodes "0.8.0" / the SHA / the
+ *     byte count as placeholder values; this reads the real ones).
  *
- * Visibility: gated by the public GET /api/harness/page-status, same
- * as before — flag off means "not available yet" for everyone, no
- * content fetch even attempted.
+ * The attached file's sign-up/sign-in forms were DEMO ONLY (an
+ * in-memory `accounts = {}` object, reset on every reload). Every
+ * form here calls the REAL ORA auth endpoints — the same
+ * /auth/signup, /auth/login, /auth/login/2fa-verify,
+ * /auth/forgot-password used by Signup.jsx/Login.jsx. Signups from
+ * this page are tagged `source: "harness_homepage"` (see
+ * routers/auth.py::_VALID_SIGNUP_SOURCES) so the admin Harness panel
+ * can tell them apart. No separate auth system, no new user table.
  *
- * Phase A rule (do not loosen without a matching backend change):
- * there is NO download CTA anywhere on this page. The only call to
- * action is the waitlist mailto. Phase B (real download,
- * routers/harness_downloads.py) is a separate, later change to both
- * this file and that router.
+ * Two deliberate deviations from the literal static mockup, flagged
+ * here rather than silently done:
+ *   1. Password strength reuses the REAL site-wide scorer
+ *      (lib/passwordStrength.js — the same one Signup.jsx's own
+ *      submit gate uses) instead of the mockup's simplified 3-rule
+ *      local scorer, so the minimum-acceptable-password bar is
+ *      identical everywhere on the site, not a second, looser one
+ *      just for this page.
+ *   2. The mockup's footer "Cookie preferences" button opens its own
+ *      static, non-functional toggle panel (Analytics/Preferences
+ *      switches that don't actually gate anything). This page instead
+ *      fires the SAME real, already-site-wide consent reopen used by
+ *      every other page's footer (`aurem:reopen-consent`, handled by
+ *      the globally-mounted <CookieConsentBanner/> in App.jsx) — a
+ *      fake toggle panel that doesn't control real tracking would be
+ *      exactly the kind of simulated UI this rebuild was asked to
+ *      remove, not add.
+ *
+ * All static copy (hero, features, FAQ, legal, footer) lives in
+ * src/data/harnessContent.mjs, imported by BOTH this component AND
+ * scripts/seo-prerender.mjs — same drift-proof pattern as
+ * competitors.mjs/companyInfo.mjs — so the crawler-facing static
+ * /harness snapshot can never show different copy than this live
+ * page. Fields named `*Html` there are pre-built, developer-authored
+ * HTML strings (bold/link markup only, no user input) rendered via
+ * dangerouslySetInnerHTML — the same pattern PolicyPage.jsx already
+ * uses for its own static markdown-derived content.
  */
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, getToken, healthApi } from "../lib/api";
-import MarketingNav from "../components/marketing/MarketingNav";
+import { api, healthApi, getToken, setToken, setUser } from "../lib/api";
+import { scorePassword, MIN_ACCEPTABLE_SCORE } from "../lib/passwordStrength";
+import {
+  HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, FAQ_ITEMS,
+  LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
+} from "../data/harnessContent.mjs";
 
-// 2026-11-11 — founder asked for the exact same background treatment
-// as the ORA homepage (Landing.jsx's `.ora-landing` class: layered
-// radial-gradient glows + `/aurem-bg.webp` hero image + mobile
-// variant). Extracted here as its own scoped class (not reusing
-// `.ora-landing` directly — that class also carries ~70 unrelated
-// homepage-specific rules this page doesn't want) so only the
-// background itself is shared, pixel-identical.
-const HARNESS_BG_CSS = `
-.aurem-harness-page {
-  background:
-    radial-gradient(900px 540px at 18% -8%,  rgba(245,158,11,0.20), transparent 70%),
-    radial-gradient(820px 480px at 86% 6%,   rgba(99,102,241,0.14), transparent 65%),
-    radial-gradient(700px 520px at 50% 110%, rgba(245,158,11,0.10), transparent 70%),
-    linear-gradient(180deg, rgba(10,14,26,0.78) 0%, rgba(5,8,17,0.92) 100%),
-    url('/aurem-bg.webp') center top / cover no-repeat,
-    #050811;
-  background-attachment: fixed, fixed, fixed, fixed, fixed, fixed;
-  min-height: 100vh;
+const CSS = `
+:root {
+  --bg: #101114;
+  --surface: #1a1c21;
+  --surface-2: #26282f;
+  --ink: #f6f1e2;
+  --ink-2: #cfc7ae;
+  --ink-3: #9a937f;
+  --line: #383b44;
+  --accent: #e3ac2f;
+  --accent-strong: #f2c14e;
+  --accent-ink: #1a1400;
+  --accent-soft: #33290e;
+  --ok-bg: #1d3320;
+  --ok-ink: #93e2a4;
+  --warn-bg: #372a0f;
+  --warn-ink: #f2d07c;
+  --warn-line: #5d4a1a;
+  --err: #ff9d94;
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+  --radius: 14px;
 }
-@media (max-width: 720px) {
-  .aurem-harness-page { background-image:
-    radial-gradient(700px 420px at 50% -4%, rgba(245,158,11,0.18), transparent 70%),
-    linear-gradient(180deg, rgba(10,14,26,0.82) 0%, rgba(5,8,17,0.94) 100%),
-    url('/aurem-bg-mobile.webp') center top / cover no-repeat; }
+.aurem-harness-v2 * { box-sizing: border-box; }
+.aurem-harness-v2 {
+  background: var(--bg); color: var(--ink);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.55; min-height: 100vh;
 }
+.aurem-harness-v2 h1, .aurem-harness-v2 h2, .aurem-harness-v2 .serif { font-family: "Playfair Display", Georgia, "Times New Roman", serif; }
+.aurem-harness-v2 button, .aurem-harness-v2 input, .aurem-harness-v2 select { font: inherit; }
+.aurem-harness-v2 button, .aurem-harness-v2 [role="button"], .aurem-harness-v2 select, .aurem-harness-v2 input:not([type="checkbox"]) { min-height: 2.75rem; }
+.aurem-harness-v2 a { color: var(--accent-strong); }
+.aurem-harness-v2 section, .aurem-harness-v2 footer, .aurem-harness-v2 .card { scroll-margin-top: 24px; }
+.aurem-harness-v2 .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 0; }
+.aurem-harness-v2 .split { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 44px; align-items: start; }
+@media (max-width: 860px) { .aurem-harness-v2 .split { grid-template-columns: 1fr; gap: 28px; } }
+.aurem-harness-v2 .brand-line { font-size: 0.85rem; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); margin: 6px 0 16px; }
+.aurem-harness-v2 h1 { font-size: clamp(2.3rem, 5.2vw, 3.6rem); line-height: 1.05; margin: 0 0 18px; font-weight: 800; }
+.aurem-harness-v2 h1 .gold { color: var(--accent-strong); }
+.aurem-harness-v2 .sub { font-size: 1.14rem; color: var(--ink-2); margin: 0 0 28px; max-width: 34rem; }
+.aurem-harness-v2 .points { list-style: none; margin: 0 0 28px; padding: 0; display: grid; gap: 16px; }
+.aurem-harness-v2 .points li { display: flex; gap: 12px; align-items: flex-start; }
+.aurem-harness-v2 .points .tick { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-strong); display: grid; place-items: center; margin-top: 1px; }
+.aurem-harness-v2 .points b { display: block; font-size: 1rem; }
+.aurem-harness-v2 .points span { color: var(--ink-2); font-size: 0.95rem; }
+.aurem-harness-v2 .score { background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--accent); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 18px; }
+.aurem-harness-v2 .score .row { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline; }
+.aurem-harness-v2 .score .big { font-size: 1.9rem; font-weight: 800; color: var(--accent-strong); }
+.aurem-harness-v2 .score .lbl { color: var(--ink-3); font-size: 0.85rem; }
+.aurem-harness-v2 .score p { margin: 8px 0 0; color: var(--ink-2); font-size: 0.92rem; }
+.aurem-harness-v2 .release { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; color: var(--ink-2); font-size: 0.95rem; }
+.aurem-harness-v2 .release .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 6px; }
+.aurem-harness-v2 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 26px 26px 22px; position: sticky; top: 20px; }
+@media (max-width: 860px) { .aurem-harness-v2 .card { position: static; } }
+.aurem-harness-v2 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--surface-2); border-radius: 10px; padding: 5px; margin-bottom: 22px; }
+.aurem-harness-v2 .tabs button { border: 0; background: transparent; color: var(--ink-2); border-radius: 7px; cursor: pointer; font-weight: 600; padding: 8px 6px; }
+.aurem-harness-v2 .tabs button[aria-selected="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+.aurem-harness-v2 .card h2 { font-size: 1.45rem; margin: 0 0 4px; }
+.aurem-harness-v2 .card .hint { color: var(--ink-2); font-size: 0.93rem; margin: 0 0 18px; }
+.aurem-harness-v2 .field { margin-bottom: 14px; }
+.aurem-harness-v2 .field label { display: block; font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; }
+.aurem-harness-v2 .field input { width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.aurem-harness-v2 .field input::placeholder { color: var(--ink-3); }
+.aurem-harness-v2 .field .err-msg { display: none; color: var(--err); font-size: 0.85rem; margin-top: 5px; }
+.aurem-harness-v2 .field.invalid input { border-color: var(--err); }
+.aurem-harness-v2 .field.invalid .err-msg { display: block; }
+.aurem-harness-v2 .pw-wrap { position: relative; }
+.aurem-harness-v2 .pw-wrap input { padding-right: 76px; }
+.aurem-harness-v2 .pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: var(--accent-strong); font-weight: 600; font-size: 0.88rem; cursor: pointer; padding: 6px 10px; min-height: 2.25rem; }
+.aurem-harness-v2 .strength { display: none; gap: 5px; margin-top: 8px; }
+.aurem-harness-v2 .strength.on { display: flex; }
+.aurem-harness-v2 .strength i { height: 5px; flex: 1; border-radius: 3px; background: var(--line); }
+.aurem-harness-v2 .strength i.f1 { background: #d9534f; }
+.aurem-harness-v2 .strength i.f2 { background: #e0a23c; }
+.aurem-harness-v2 .strength i.f3 { background: var(--accent); }
+.aurem-harness-v2 .strength-note { font-size: 0.82rem; color: var(--ink-3); margin-top: 5px; min-height: 1em; }
+.aurem-harness-v2 .submit { width: 100%; border: 0; border-radius: 10px; cursor: pointer; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 1.02rem; padding: 12px; margin-top: 4px; }
+.aurem-harness-v2 .submit:hover, .aurem-harness-v2 .dl-btn:hover { filter: brightness(1.08); }
+.aurem-harness-v2 .submit:disabled { opacity: 0.65; cursor: not-allowed; }
+.aurem-harness-v2 .legal-note { font-size: 0.82rem; color: var(--ink-3); margin: 12px 0 0; text-align: center; }
+.aurem-harness-v2 .alt-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; margin-top: 14px; font-size: 0.92rem; align-items: center; }
+.aurem-harness-v2 .alt-row button.link { background: none; border: 0; padding: 6px 2px; cursor: pointer; color: var(--accent-strong); font-weight: 600; min-height: 2.25rem; }
+.aurem-harness-v2 .divider { display: flex; align-items: center; gap: 12px; margin: 20px 0 14px; color: var(--ink-3); font-size: 0.85rem; }
+.aurem-harness-v2 .divider::before, .aurem-harness-v2 .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.aurem-harness-v2 .oauth { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.aurem-harness-v2 .oauth button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; cursor: pointer; font-weight: 600; padding: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.aurem-harness-v2 .oauth button:hover { border-color: var(--accent); }
+.aurem-harness-v2 .form-msg { display: none; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.94rem; }
+.aurem-harness-v2 .form-msg.show { display: block; }
+.aurem-harness-v2 .form-msg.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.aurem-harness-v2 .form-msg.bad { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid var(--warn-line); }
+.aurem-harness-v2 .done .check { width: 52px; height: 52px; border-radius: 50%; background: var(--ok-bg); color: var(--ok-ink); display: grid; place-items: center; margin-bottom: 14px; }
+.aurem-harness-v2 .done h2 { font-size: 1.5rem; margin: 0 0 6px; }
+.aurem-harness-v2 .done p { color: var(--ink-2); margin: 0 0 16px; }
+.aurem-harness-v2 .dl-btn { display: block; width: 100%; text-align: center; text-decoration: none; background: var(--accent); color: var(--accent-ink); font-weight: 700; border-radius: 10px; padding: 13px; font-size: 1.02rem; margin-bottom: 10px; border: 0; cursor: pointer; }
+.aurem-harness-v2 .dl-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.aurem-harness-v2 .done .meta { font-size: 0.86rem; color: var(--ink-3); word-break: break-all; margin-bottom: 16px; }
+.aurem-harness-v2 .done .again { background: none; border: 0; color: var(--accent-strong); font-weight: 600; cursor: pointer; padding: 8px 2px; }
+.aurem-harness-v2 section.below { margin-top: 64px; }
+.aurem-harness-v2 section.below > h2 { font-size: 1.8rem; margin: 0 0 8px; }
+.aurem-harness-v2 section.below .lede { color: var(--ink-2); margin: 0 0 24px; max-width: 46rem; }
+.aurem-harness-v2 .kicker { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); margin: 0 0 8px; }
+.aurem-harness-v2 .feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+@media (max-width: 900px) { .aurem-harness-v2 .feat-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .aurem-harness-v2 .feat-grid { grid-template-columns: 1fr; } }
+.aurem-harness-v2 .feat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+.aurem-harness-v2 .feat .ic { width: 42px; height: 42px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-strong); display: grid; place-items: center; margin-bottom: 12px; }
+.aurem-harness-v2 .feat b { display: block; font-size: 1.02rem; margin-bottom: 5px; }
+.aurem-harness-v2 .feat p { margin: 0; color: var(--ink-2); font-size: 0.93rem; }
+.aurem-harness-v2 .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+@media (max-width: 860px) { .aurem-harness-v2 .flow { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .aurem-harness-v2 .flow { grid-template-columns: 1fr; } }
+.aurem-harness-v2 .flow .step { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+.aurem-harness-v2 .flow .num { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.1em; color: var(--accent); text-transform: uppercase; margin: 0 0 6px; }
+.aurem-harness-v2 .flow b { display: block; margin-bottom: 4px; }
+.aurem-harness-v2 .flow p { margin: 0; color: var(--ink-2); font-size: 0.9rem; }
+.aurem-harness-v2 .req { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; }
+.aurem-harness-v2 .req ul { margin: 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 7px; }
+.aurem-harness-v2 .req b { color: var(--ink); }
+.aurem-harness-v2 .faq { display: grid; gap: 10px; }
+.aurem-harness-v2 .faq-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.aurem-harness-v2 .faq-q { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 14px; background: none; border: 0; color: var(--ink); text-align: left; cursor: pointer; font-weight: 700; font-size: 1rem; padding: 16px 20px; min-height: 3.4rem; }
+.aurem-harness-v2 .faq-q .chev { flex: 0 0 auto; color: var(--accent-strong); transition: transform .25s ease; display: grid; place-items: center; }
+.aurem-harness-v2 .faq-q[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.aurem-harness-v2 .faq-a { max-height: 0; overflow: hidden; transition: max-height .3s ease; }
+.aurem-harness-v2 .faq-a .inner { padding: 0 20px 18px; color: var(--ink-2); font-size: 0.95rem; }
+.aurem-harness-v2 .faq-a p { margin: 0 0 10px; }
+.aurem-harness-v2 .faq-a p:last-child { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .aurem-harness-v2 .faq-a, .aurem-harness-v2 .faq-q .chev { transition: none; } }
+.aurem-harness-v2 .legal-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.aurem-harness-v2 .legal { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 26px; }
+.aurem-harness-v2 .legal h3 { font-family: "Playfair Display", Georgia, serif; font-size: 1.35rem; margin: 0 0 4px; }
+.aurem-harness-v2 .legal .updated { color: var(--ink-3); font-size: 0.85rem; margin: 0 0 14px; }
+.aurem-harness-v2 .legal h4 { margin: 16px 0 5px; font-size: 0.98rem; color: var(--accent-strong); }
+.aurem-harness-v2 .legal p, .aurem-harness-v2 .legal li { color: var(--ink-2); font-size: 0.94rem; }
+.aurem-harness-v2 .legal p { margin: 0 0 10px; }
+.aurem-harness-v2 .legal ul { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 6px; }
+.aurem-harness-v2 .legal b { color: var(--ink); }
+.aurem-harness-v2 footer.site { margin-top: 72px; border-top: 1px solid var(--line); background: #0b0c0e; color: var(--ink-2); }
+.aurem-harness-v2 .foot-wrap { max-width: 1180px; margin: 0 auto; padding: 44px 20px 30px; }
+.aurem-harness-v2 .foot-header { margin: 0 0 32px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.aurem-harness-v2 .foot-header p { margin: 0; font-size: 1.02rem; font-weight: 600; color: var(--ink); letter-spacing: 0.01em; }
+.aurem-harness-v2 .foot-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 28px; }
+@media (max-width: 960px) { .aurem-harness-v2 .foot-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 640px) { .aurem-harness-v2 .foot-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 420px) { .aurem-harness-v2 .foot-grid { grid-template-columns: 1fr; } }
+.aurem-harness-v2 .foot-col h3 { font-size: 0.8rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); margin: 0 0 14px; font-family: "Inter", sans-serif; font-weight: 700; }
+.aurem-harness-v2 .foot-col ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.aurem-harness-v2 .foot-col a { color: var(--ink-2); text-decoration: none; font-size: 0.93rem; overflow-wrap: anywhere; }
+.aurem-harness-v2 .foot-col a:hover { color: var(--accent-strong); text-decoration: underline; }
+.aurem-harness-v2 .foot-bottom { margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px 24px; align-items: start; font-size: 0.84rem; color: var(--ink-3); line-height: 1.5; }
+.aurem-harness-v2 .foot-bottom .foot-copy { text-align: left; }
+.aurem-harness-v2 .foot-bottom .foot-trademark { text-align: center; max-width: 34rem; }
+.aurem-harness-v2 .foot-bottom .foot-action { text-align: right; justify-self: end; }
+@media (max-width: 860px) {
+  .aurem-harness-v2 .foot-bottom { grid-template-columns: 1fr; }
+  .aurem-harness-v2 .foot-bottom .foot-copy, .aurem-harness-v2 .foot-bottom .foot-trademark, .aurem-harness-v2 .foot-bottom .foot-action { text-align: left; justify-self: start; max-width: none; }
+}
+.aurem-harness-v2 .cookie-btn { border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 8px; cursor: pointer; font-size: 0.86rem; font-weight: 600; padding: 8px 14px; min-height: 2.5rem; white-space: nowrap; }
+.aurem-harness-v2 .cookie-btn:hover { border-color: var(--accent); color: var(--accent-strong); }
 `;
 
-const ANCHORS = [
-  ["what-it-is", "What it is"],
-  ["control", "Control"],
-  ["honest-numbers", "Honest numbers"],
-  ["compare", "Compare"],
-  ["stories", "Stories"],
-  ["setup", "Setup"],
-  ["faq", "FAQ"],
-];
+const CHECK_PATH = "M20 6 9 17l-5-5";
+const CHEVRON_PATH = "m6 9 6 6 6-6";
 
-const pageStyle = {
-  maxWidth: 820, margin: "0 auto", padding: "40px 24px 80px",
-  color: "var(--text, #e8e3d3)",
-  fontFamily: "Inter, system-ui, -apple-system, sans-serif",
-  lineHeight: 1.65,
-};
-const anchorNavStyle = {
-  display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 32,
-  paddingBottom: 16, borderBottom: "1px solid var(--border, rgba(255,200,120,0.16))",
-};
-const anchorLinkStyle = { color: "var(--text-dim, #a39d8a)", fontSize: 13, textDecoration: "none" };
-const sectionStyle = { marginBottom: 48 };
-const h1Style = { fontSize: 32, fontWeight: 500, letterSpacing: "-0.02em", margin: "16px 0 12px" };
-const h2Style = { fontSize: 20, fontWeight: 500, margin: "0 0 12px" };
-const pStyle = { fontSize: 14, color: "var(--text-dim, #a39d8a)", margin: "0 0 12px" };
-const buttonStyle = {
-  display: "inline-block", marginTop: 16, padding: "10px 20px",
-  background: "var(--accent, #ff8a2a)", color: "#1a1208",
-  border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600,
-  cursor: "pointer", textDecoration: "none",
-};
-const smallButtonStyle = {
-  marginTop: 8, padding: "6px 14px", background: "transparent",
-  color: "var(--text-dim, #a39d8a)", border: "1px solid var(--border, rgba(255,200,120,0.16))",
-  borderRadius: 6, fontSize: 12, cursor: "pointer",
-};
-const badgeRowStyle = { display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" };
-const badgeStyle = {
-  display: "inline-block", padding: "4px 10px", borderRadius: 999,
-  background: "rgba(255,138,42,0.14)", color: "var(--accent, #ff8a2a)",
-  fontSize: 11, fontWeight: 600, letterSpacing: "0.04em",
-};
-const tagRowStyle = { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 20 };
-const tagStyle = {
-  padding: "6px 12px", borderRadius: 6, fontSize: 12,
-  background: "rgba(255,255,255,0.05)", border: "1px solid var(--border, rgba(255,200,120,0.16))",
-  color: "var(--text-dim, #a39d8a)",
-};
-const phaseABannerStyle = {
-  marginTop: 20, padding: "12px 16px", borderRadius: 8,
-  background: "rgba(255,138,42,0.08)", border: "1px solid rgba(255,138,42,0.3)",
-  fontSize: 13, color: "var(--text-dim, #a39d8a)",
-};
-const subCardStyle = {
-  padding: 16, borderRadius: 8, border: "1px solid var(--border, rgba(255,200,120,0.16))",
-  marginBottom: 16,
-};
-const statRowStyle = { display: "flex", gap: 16, flexWrap: "wrap", margin: "16px 0" };
-const statBoxStyle = {
-  flex: "1 1 120px", padding: 16, borderRadius: 8,
-  border: "1px solid var(--border, rgba(255,200,120,0.16))", textAlign: "center",
-};
-const statNumStyle = { fontSize: 24, fontWeight: 600 };
-const statLabelStyle = { fontSize: 11, color: "var(--text-dim, #a39d8a)", marginTop: 4 };
-const tableStyle = { width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 8 };
-const tdStyle = { padding: "8px 12px", borderBottom: "1px solid var(--border, rgba(255,200,120,0.16))" };
-const summaryStyle = { cursor: "pointer", fontSize: 14, fontWeight: 500 };
-const footerStyle = {
-  marginTop: 60, paddingTop: 20,
-  borderTop: "1px solid var(--border, rgba(255,200,120,0.16))",
-  fontSize: 11, color: "var(--text-faint, #7a7462)",
-};
-// Phase B — download section (2026-11-10). Only ever rendered when
-// GET /api/harness/release-status returns `available: true`, i.e. an
-// admin has actually published a real release. See routers/harness.py.
-const downloadCardStyle = {
-  marginTop: 20, padding: "16px 20px", borderRadius: 8,
-  background: "rgba(120,200,140,0.06)", border: "1px solid rgba(120,200,140,0.28)",
-};
-const monoStyle = {
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12,
-  wordBreak: "break-all", color: "var(--text, #e8e3d3)",
-};
-const errorTextStyle = { fontSize: 12, color: "#e08a6a", marginTop: 8 };
-// 2026-11-16 — download success message (founder): after a download
-// completes, the card shows "🎊 Congratulations! Successfully
-// downloaded" in this green box. Same green family as the card.
-const downloadSuccessStyle = {
-  marginTop: 12, padding: "12px 16px", borderRadius: 8,
-  background: "rgba(120,200,140,0.12)", border: "1px solid rgba(120,200,140,0.45)",
-  fontSize: 14, fontWeight: 600, color: "var(--text, #e8e3d3)",
-};
-
-// 2026-11-17 — launch copy fix (bench update, founder-confirmed,
-// source: PC bench run 2026-11-15, 216/216 rows). The canonical
-// content doc (AuremHQ/aurem-loop, this workspace can't edit) still
-// shows an older run (26/48 vs 27/48, qwen2.5-coder:1.5b). Applied
-// unconditionally — a fact about the harness's own accuracy and PC
-// model, not a Phase A/B release-availability toggle.
-const REAL_BENCH_EVIDENCE = "Beats bare model (46/48 vs 31/48 and 33/48, false accepts 0)";
-const REAL_BENCH_MODEL = "qwen3:8b";
-
-// Fix 3 (2026-11-11) — replaces the flat black "Loading…" text with a
-// lightweight pulsing skeleton (nav height + hero-shaped bars) so the
-// first paint looks like "the real page is arriving" instead of "the
-// page is broken/blank". Pure CSS, no extra request.
-const SKELETON_CSS = `
-@keyframes aurem-skel-pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.12; } }
-.aurem-harness-skel-bar {
-  background: var(--text, #e8e3d3);
-  border-radius: 6px;
-  animation: aurem-skel-pulse 1.6s ease-in-out infinite;
-}
-`;
-
-function HarnessSkeleton() {
+function Tick() {
   return (
-    <div style={pageStyle} data-testid="harness-page-skeleton">
-      <style>{SKELETON_CSS}</style>
-      <div className="aurem-harness-skel-bar" style={{ width: 160, height: 28, marginBottom: 24 }} />
-      <div className="aurem-harness-skel-bar" style={{ width: "70%", height: 40, marginBottom: 16 }} />
-      <div className="aurem-harness-skel-bar" style={{ width: "90%", height: 16, marginBottom: 10 }} />
-      <div className="aurem-harness-skel-bar" style={{ width: "55%", height: 16, marginBottom: 32 }} />
-      <div className="aurem-harness-skel-bar" style={{ width: 140, height: 40 }} />
-    </div>
+    <span className="tick" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d={CHECK_PATH} /></svg>
+    </span>
   );
 }
 
-const waitlistInputStyle = {
-  padding: "10px 14px", borderRadius: 8, fontSize: 14, height: 40, boxSizing: "border-box",
-  background: "rgba(255,255,255,0.05)", border: "1px solid var(--border, rgba(255,200,120,0.16))",
-  color: "var(--text, #e8e3d3)", minWidth: 240,
-};
-const waitlistFormRowStyle = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16, alignItems: "center" };
-const waitlistSuccessStyle = {
-  marginTop: 16, padding: "10px 16px", borderRadius: 8, fontSize: 13,
-  background: "rgba(120,200,140,0.1)", border: "1px solid rgba(120,200,140,0.32)",
-  color: "var(--text, #e8e3d3)",
-};
-
-// Fix 2 (2026-11-11) — real on-page waitlist form. Previously the
-// only CTA was a `mailto:` link, which does nothing visible in a
-// browser with no mail client configured (most automated/clean-
-// machine test environments, and plenty of real browsers) — looked
-// broken even though it "worked" for someone with Outlook/Mail.app
-// set up. Posts to POST /api/harness/waitlist (routers/harness.py,
-// public, per-IP rate-limited). The mailto is kept as a small
-// secondary fallback link, not the primary action.
-function WaitlistForm({ idSuffix, mailto, ctaLabel }) {
-  const [email, setEmail] = useState("");
-  const [status, setStatus] = useState("idle"); // idle|submitting|success|error
-  const [error, setError] = useState("");
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    const trimmed = email.trim();
-    if (!trimmed) return;
-    setStatus("submitting");
-    setError("");
-    try {
-      await healthApi.post("/harness/waitlist", { email: trimmed });
-      setStatus("success");
-    } catch (err) {
-      const msg = err?.response?.data?.detail || "Could not join the waitlist — try again.";
-      setError(msg);
-      setStatus("error");
-    }
-  }
-
-  if (status === "success") {
-    return (
-      <div style={waitlistSuccessStyle} data-testid={`harness-waitlist-success-${idSuffix}`}>
-        You&apos;re on the waitlist — one email when the download goes live, nothing else.
-      </div>
-    );
-  }
-
+function FeatIcon({ iconHtml }) {
   return (
-    <form onSubmit={handleSubmit} data-testid={`harness-waitlist-form-${idSuffix}`}>
-      <div style={waitlistFormRowStyle}>
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@example.com"
-          style={waitlistInputStyle}
-          data-testid={`harness-waitlist-email-${idSuffix}`}
-          disabled={status === "submitting"}
-        />
-        <button
-          type="submit"
-          style={{ ...buttonStyle, marginTop: 0, height: 40, boxSizing: "border-box", display: "inline-flex", alignItems: "center" }}
-          data-testid={`harness-waitlist-submit-${idSuffix}`}
-          disabled={status === "submitting"}
-        >
-          {status === "submitting" ? "Joining…" : ctaLabel}
-        </button>
-      </div>
-      {status === "error" && (
-        <p style={errorTextStyle} data-testid={`harness-waitlist-error-${idSuffix}`}>{error}</p>
-      )}
-      <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
-        One email when the download goes live, nothing else. Prefer email?{" "}
-        <a href={mailto} data-testid={`harness-waitlist-mailto-${idSuffix}`} style={{ color: "inherit" }}>
-          Send it directly instead
-        </a>.
-      </p>
-    </form>
+    <span
+      className="ic"
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{
+        __html: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconHtml}</svg>`,
+      }}
+    />
   );
 }
 
-function waitlistMailto(content) {
-  const email = content?.phaseA?.waitlistEmail || "polarisbuiltinc@gmail.com";
-  const subject = encodeURIComponent(content?.phaseA?.waitlistSubject || "Aurem Loop waitlist");
-  const body = encodeURIComponent(
-    content?.phaseA?.waitlistBody ||
-    "Please add me to the Aurem Loop waitlist. One email when the download goes live, nothing else.",
-  );
-  return `mailto:${email}?subject=${subject}&body=${body}`;
+function emailOk(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+
+function fmtBytes(n) {
+  if (!n) return null;
+  return n.toLocaleString();
 }
 
 export default function HarnessPage() {
-  const [flagEnabled, setFlagEnabled] = useState(null); // null = loading
-  const [content, setContent] = useState(null);
-  const [liveStats, setLiveStats] = useState(null);
-  const [contentState, setContentState] = useState("loading"); // loading|ready|unavailable|error
-  const [release, setRelease] = useState(null); // Phase B readiness — {available:false} until a real release is published
-  const [releaseLoading, setReleaseLoading] = useState(true); // avoids a Phase-A-banner flash before this resolves
-  const [downloadState, setDownloadState] = useState("idle"); // idle|downloading|error
+  const [flagEnabled, setFlagEnabled] = useState(null);
+  const [release, setRelease] = useState({ available: false });
+  const [authChecked, setAuthChecked] = useState(false);
+
+  const [view, setView] = useState("signup"); // signup | signin | reset | done
+  const [formMsg, setFormMsg] = useState(null); // { text, kind }
+  const [busy, setBusy] = useState(false);
+
+  const [suName, setSuName] = useState("");
+  const [suEmail, setSuEmail] = useState("");
+  const [suPhone, setSuPhone] = useState("");
+  const [suPass, setSuPass] = useState("");
+  const [suShowPw, setSuShowPw] = useState(false);
+  const [suErrors, setSuErrors] = useState({});
+
+  const [siEmail, setSiEmail] = useState("");
+  const [siPass, setSiPass] = useState("");
+  const [siShowPw, setSiShowPw] = useState(false);
+  const [siErrors, setSiErrors] = useState({});
+  const [mfaState, setMfaState] = useState(null);
+  const [mfaCode, setMfaCode] = useState("");
+
+  const [rsEmail, setRsEmail] = useState("");
+  const [rsErrors, setRsErrors] = useState({});
+
+  const [doneTitle, setDoneTitle] = useState("");
+  const [doneText, setDoneText] = useState("");
+  const [downloadState, setDownloadState] = useState("idle"); // idle | downloading | error
   const [downloadError, setDownloadError] = useState("");
-  // 2026-11-16 — download success message (founder): after a download
-  // completes, show "🎊 Congratulations! Successfully downloaded" on
-  // the download card. Cleared on the next click.
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [deliveredSha256, setDeliveredSha256] = useState(null);
 
-  // Fix 3 (2026-11-11) — all 3 public GETs now fire together on mount
-  // instead of page-status → (then) content+release. The old shape
-  // added one full network round-trip to the critical path before the
-  // content fetch even started; this one costs nothing extra (content/
-  // release are discarded harmlessly in the rare case the flag turns
-  // out to be off) and the page now shows real content in max(3
-  // requests) time instead of page-status + max(2 requests).
-  //
-  // loadContent() is pulled out as its own function (not inlined in
-  // the effect below) so the "Refresh now" live-stats button further
-  // down the page can re-run the same content+release fetch on demand
-  // without re-checking page-status (which never changes mid-session).
-  //
-  // 2026-11-11 testing-agent finding: a failed REFRESH (content
-  // already loaded once) must never wipe the whole page back to the
-  // "temporarily unavailable" screen — that would also discard any
-  // in-progress/just-submitted waitlist form state. Only the initial
-  // load (no content yet) is allowed to flip to the full-page error;
-  // a refresh failure instead just leaves the existing content on
-  // screen and logs quietly (the stats simply stay at their last-known
-  // values until the next successful refresh).
-  function loadContent() {
-    healthApi.get("/harness/content")
-      .then((r) => {
-        const c = r.data?.content;
-        if (!c || c.available === false) { setContentState("unavailable"); return; }
-        setContent(c);
-        setLiveStats(r.data?.live_stats || null);
-        setContentState("ready");
-      })
-      .catch(() => {
-        setContentState((prev) => (prev === "ready" ? prev : "error"));
-      });
-
-    healthApi.get("/harness/release-status")
-      .then((r) => setRelease(r.data || { available: false }))
-      .catch(() => setRelease({ available: false }))
-      .finally(() => setReleaseLoading(false));
-  }
+  const [faqOpen, setFaqOpen] = useState(null);
 
   useEffect(() => {
-    let active = true;
-    // 2026-11-11 testing-agent finding: a transient network error here
-    // (e.g. a brief rate-limit hit) was being treated identically to a
-    // real "flag is off" — bouncing straight to the permanent "Aurem
-    // Loop isn't available yet" screen with no retry. One silent retry
-    // after a short delay before giving up distinguishes a one-off
-    // blip from an actual flag-off/misconfigured state.
-    function fetchPageStatus(isRetry) {
-      healthApi.get("/harness/page-status")
-        .then((r) => { if (active) setFlagEnabled(r.data?.harness_page_enabled === true); })
-        .catch(() => {
-          if (!active) return;
-          if (!isRetry) { setTimeout(() => fetchPageStatus(true), 1200); return; }
-          setFlagEnabled(false);
-        });
-    }
-    fetchPageStatus(false);
-
-    loadContent();
-
-    return () => { active = false; };
+    healthApi.get("/harness/page-status")
+      .then((r) => setFlagEnabled(r.data?.harness_page_enabled === true))
+      .catch(() => setFlagEnabled(false));
+    healthApi.get("/harness/release-status")
+      .then((r) => setRelease(r.data || { available: false }))
+      .catch(() => setRelease({ available: false }));
   }, []);
 
-  async function handleDownloadClick() {
-    if (!getToken()) {
-      window.location.href = "/signup?next=/harness";
+  useEffect(() => {
+    const token = getToken();
+    if (!token) { setAuthChecked(true); return; }
+    api.get("/auth/me")
+      .then((r) => {
+        const u = r.data?.user;
+        const first = (u?.name || "").split(" ")[0];
+        setDoneTitle(`Welcome back${first ? ", " + first : ""}!`);
+        setDoneText("You are signed in and still on the same page — your download is unlocked below, exactly as it should be.");
+        setView("done");
+      })
+      .catch(() => { /* no valid session — stay on the sign-up/sign-in form */ })
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  function switchView(v) {
+    setView(v);
+    setFormMsg(null);
+    setMfaState(null);
+    setSuErrors({});
+    setSiErrors({});
+    setRsErrors({});
+  }
+
+  async function handleSignup(e) {
+    e.preventDefault();
+    const name = suName.trim();
+    const email = suEmail.trim();
+    const errors = {};
+    if (name.length < 2) errors.suName = true;
+    if (!emailOk(email)) errors.suEmail = true;
+    const strength = scorePassword(suPass);
+    if (strength.score < MIN_ACCEPTABLE_SCORE) errors.suPass = true;
+    setSuErrors(errors);
+    if (Object.keys(errors).length) {
+      setFormMsg({ text: "Please fix the highlighted fields above and try again.", kind: "bad" });
       return;
     }
-    setDownloadState("downloading");
-    setDownloadError("");
-    setDownloadSuccess(false);
+    setBusy(true); setFormMsg(null);
+    try {
+      const r = await api.post("/auth/signup", {
+        email, password: suPass, name,
+        phone: suPhone.trim() || undefined,
+        source: "harness_homepage",
+      });
+      setToken(r.data.token);
+      setUser({
+        user_id: r.data.user_id, email: r.data.email, name: r.data.name,
+        tier: r.data.tier, tokens_remaining: r.data.tokens_remaining,
+        created_at: r.data.created_at,
+      });
+      const first = (r.data.name || "there").split(" ")[0];
+      setDoneTitle(`Congratulations, ${first} — your account is ready.`);
+      setDoneText("Your free account has been created in the ORA account system and your download is unlocked below. The same sign-in works across ORA and Aurem Loop.");
+      setView("done");
+    } catch (err) {
+      setFormMsg({ text: err?.response?.data?.detail || "Sign up failed. Try again.", kind: "bad" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSignin(e) {
+    e.preventDefault();
+    const email = siEmail.trim();
+    const errors = {};
+    if (!emailOk(email)) errors.siEmail = true;
+    if (!siPass) errors.siPass = true;
+    setSiErrors(errors);
+    if (Object.keys(errors).length) {
+      setFormMsg({ text: "Please check your email and password.", kind: "bad" });
+      return;
+    }
+    setBusy(true); setFormMsg(null);
+    try {
+      const r = await api.post("/auth/login", { email, password: siPass });
+      if (r.data?.mfa_required && r.data?.mfa_token) {
+        setMfaState({ mfa_token: r.data.mfa_token, email: r.data.email || email });
+        setBusy(false);
+        return;
+      }
+      setToken(r.data.token);
+      setUser({
+        user_id: r.data.user_id, email: r.data.email, name: r.data.name,
+        tier: r.data.tier, tokens_remaining: r.data.tokens_remaining,
+      });
+      const first = (r.data.name || "").split(" ")[0];
+      setDoneTitle(`Welcome back${first ? ", " + first : ""}!`);
+      setDoneText("You are signed in and still on the same page — your download is unlocked below, exactly as it should be.");
+      setView("done");
+    } catch (err) {
+      setFormMsg({ text: err?.response?.data?.detail || "Sign in failed. Try again.", kind: "bad" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMfaSubmit(e) {
+    e.preventDefault();
+    setBusy(true); setFormMsg(null);
+    try {
+      const r = await api.post("/auth/login/2fa-verify", {
+        mfa_token: mfaState.mfa_token,
+        code: mfaCode.replace(/\D/g, ""),
+      });
+      setToken(r.data.token);
+      setUser({
+        user_id: r.data.user_id, email: r.data.email, name: r.data.name,
+        tier: r.data.tier, tokens_remaining: r.data.tokens_remaining,
+      });
+      const first = (r.data.name || "").split(" ")[0];
+      setDoneTitle(`Welcome back${first ? ", " + first : ""}!`);
+      setDoneText("You are signed in and still on the same page — your download is unlocked below, exactly as it should be.");
+      setView("done");
+      setMfaState(null);
+    } catch (err) {
+      setFormMsg({ text: err?.response?.data?.detail || "Invalid 2FA code. Try again.", kind: "bad" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReset(e) {
+    e.preventDefault();
+    const email = rsEmail.trim();
+    if (!emailOk(email)) {
+      setRsErrors({ rsEmail: true });
+      setFormMsg({ text: "Please enter the email address you signed up with.", kind: "bad" });
+      return;
+    }
+    setRsErrors({});
+    setBusy(true); setFormMsg(null);
+    try {
+      await api.post("/auth/forgot-password", { email });
+      setFormMsg({ text: `If that email exists, a reset link has been sent to ${email}. The link expires in 30 minutes.`, kind: "ok" });
+    } catch (err) {
+      setFormMsg({ text: err?.response?.data?.detail || "Could not send reset link. Try again.", kind: "bad" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startOAuth(provider) {
+    const base = window.location.origin;
+    const next = encodeURIComponent("/harness");
+    if (provider === "google") {
+      window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=signup&next=${next}`;
+      return;
+    }
+    import("../lib/githubFunnel")
+      .then(({ trackFunnel, withFunnelParams }) =>
+        trackFunnel("cta_click", "harness_homepage", { intent: "signup" })
+          .catch(() => {})
+          .then(() => {
+            window.location.href = withFunnelParams(
+              `${base}/api/aurem-dev/github/oauth/connect?signup=1&next=${next}`,
+              "harness_homepage",
+            );
+          }))
+      .catch(() => {
+        window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&next=${next}`;
+      });
+  }
+
+  async function handleDownload() {
+    setDownloadState("downloading"); setDownloadError(""); setDownloadSuccess(false); setDeliveredSha256(null);
     try {
       const resp = await api.post("/harness/download", {}, { responseType: "blob" });
+      const delivered = resp.headers?.["x-aurem-package-sha256"] || null;
+      if (delivered) setDeliveredSha256(delivered);
       const url = URL.createObjectURL(resp.data);
       const a = document.createElement("a");
       a.href = url;
@@ -377,8 +472,8 @@ export default function HarnessPage() {
       URL.revokeObjectURL(url);
       setDownloadSuccess(true);
       setDownloadState("idle");
-    } catch (e) {
-      const status = e?.response?.status;
+    } catch (err) {
+      const status = err?.response?.status;
       let msg = "Could not start the download — try again.";
       if (status === 401) msg = "You're not logged in — please sign in again.";
       else if (status === 409) msg = "No release is published yet — check back shortly.";
@@ -388,371 +483,368 @@ export default function HarnessPage() {
     }
   }
 
-  useEffect(() => {
-    if (!content) return;
-    const prevTitle = document.title;
-    document.title = content.title || "Aurem Loop";
-    const graph = [
-      {
-        "@type": "FAQPage",
-        mainEntity: (content.faq || []).map(({ q, a }) => ({
-          "@type": "Question",
-          name: q,
-          acceptedAnswer: { "@type": "Answer", text: a },
-        })),
-      },
-      {
-        "@type": "BreadcrumbList",
-        itemListElement: [
-          { "@type": "ListItem", position: 1, name: "AUREM", item: "https://auremcto.com/" },
-          { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
-        ],
-      },
-    ];
-    // Phase B — only added once a real release exists (release.available),
-    // never speculatively. No "HowTo" block per the Phase A spec even here;
-    // this is a plain SoftwareApplication fact sheet.
-    if (release?.available) {
-      graph.push({
-        "@type": "SoftwareApplication",
-        name: "Aurem Loop",
-        operatingSystem: "Windows",
-        applicationCategory: "DeveloperApplication",
-        softwareVersion: release.version,
-        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-        license: "https://opensource.org/licenses/MIT",
-      });
+  async function signOutAndShowForm() {
+    const tok = getToken();
+    if (tok) {
+      try {
+        await api.post("/auth/logout");
+      } catch {
+        // best-effort — the local token clear below is what actually matters.
+      }
     }
-    const ld = document.createElement("script");
-    ld.type = "application/ld+json";
-    ld.id = "ld-harness";
-    ld.text = JSON.stringify({ "@context": "https://schema.org", "@graph": graph });
-    document.head.appendChild(ld);
-    return () => {
-      document.title = prevTitle;
-      document.getElementById("ld-harness")?.remove();
-    };
-  }, [content, release]);
+    setToken(null);
+    setUser(null);
+    setDownloadSuccess(false);
+    setDeliveredSha256(null);
+    switchView("signin");
+  }
+
+  function openCookiePreferences() {
+    try { localStorage.removeItem("aurem_consent"); } catch { /* private mode */ }
+    window.dispatchEvent(new CustomEvent("aurem:reopen-consent"));
+  }
 
   if (flagEnabled === null) {
     return (
-      <div data-testid="harness-page-loading" className="aurem-harness-page">
-        <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
-        <HarnessSkeleton />
+      <div className="aurem-harness-v2" data-testid="harness-page-loading">
+        <style>{CSS}</style>
       </div>
     );
   }
-
   if (!flagEnabled) {
     return (
-      <div data-testid="harness-page-not-available" className="aurem-harness-page">
-        <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
-        <div style={pageStyle}>Aurem Loop isn&apos;t available yet.</div>
+      <div className="aurem-harness-v2" data-testid="harness-page-not-available">
+        <style>{CSS}</style>
+        <div className="wrap"><p style={{ padding: "60px 0" }}>Aurem Loop isn&apos;t available yet.</p></div>
       </div>
     );
   }
-
-  if (contentState === "loading") {
-    return (
-      <div data-testid="harness-page-content-loading" className="aurem-harness-page">
-        <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
-        <HarnessSkeleton />
-      </div>
-    );
-  }
-
-  if (contentState !== "ready" || !content) {
-    return (
-      <div data-testid="harness-page-content-unavailable" className="aurem-harness-page">
-        <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
-        <div style={pageStyle}>Aurem Loop&apos;s page content is temporarily unavailable — check back shortly.</div>
-      </div>
-    );
-  }
-
-  const mailto = waitlistMailto(content);
-  // 2026-11-16 — download lock visibility (founder): when logged out
-  // the button says "Sign in to download" so nobody mistakes the page
-  // for a free-for-all download; the click guard in handleDownloadClick
-  // still redirects to /signup?next=/harness as the second check.
-  const isLoggedIn = !!getToken();
-  const stars = liveStats?.stars;
-  const forks = liveStats?.forks;
 
   return (
-    <div data-testid="harness-page" className="aurem-harness-page">
-      <style>{HARNESS_BG_CSS}</style>
-      <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
-      <div style={pageStyle}>
-        <nav data-testid="harness-anchor-nav" style={anchorNavStyle} aria-label="Page sections">
-          {ANCHORS.map(([id, label]) => (
-            <a key={id} href={`#${id}`} style={anchorLinkStyle} data-testid={`harness-anchor-${id}`}>{label}</a>
-          ))}
-        </nav>
-
-        <section id="what-it-is" data-testid="harness-hero" style={sectionStyle}>
-          <div style={badgeRowStyle}>
-            {(content.badges || []).map((b) => (<span key={b} style={badgeStyle}>{b}</span>))}
-          </div>
-          <h1 data-testid="harness-h1" style={h1Style}>{content.hero?.headline}</h1>
-          <p style={pStyle}>{content.hero?.subhead}</p>
-          <p style={pStyle}>{content.hero?.body}</p>
-
-          {releaseLoading ? null : release?.available ? (
-            <div style={downloadCardStyle} data-testid="harness-download-section">
-              <strong>Download available</strong> — v<span data-testid="harness-download-version">{release.version}</span>
-              {release.mandatory && <span style={{ marginLeft: 8, ...badgeStyle }}>REQUIRED UPDATE</span>}
-              <p style={{ ...pStyle, marginTop: 10 }}>
-                SHA-256: <span style={monoStyle} data-testid="harness-download-sha256">{release.sha256}</span>
-              </p>
-              {release.changelog?.length > 0 && (
-                <ul data-testid="harness-download-changelog">
-                  {release.changelog.map((item, i) => (<li key={i} style={pStyle}>{item}</li>))}
-                </ul>
-              )}
-              <button
-                type="button"
-                data-testid="harness-download-button"
-                style={buttonStyle}
-                disabled={downloadState === "downloading"}
-                onClick={handleDownloadClick}
-              >
-                {downloadState === "downloading" ? "Starting download…" : isLoggedIn ? "Download for Windows" : "Sign in to download"}
-              </button>
-              {!isLoggedIn && (
-                <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }} data-testid="harness-download-signin-note">
-                  A free ORA account is required to download — sign in or sign up, it takes a minute.
-                </p>
-              )}
-              {downloadSuccess && (
-                <div style={downloadSuccessStyle} data-testid="harness-download-success">
-                  🎊 Congratulations! Successfully downloaded
-                </div>
-              )}
-              {downloadState === "error" && (
-                <p style={errorTextStyle} data-testid="harness-download-error">{downloadError}</p>
-              )}
-              <p style={{ ...pStyle, fontSize: 12, marginTop: 8 }}>
-                MIT licensed. Requires a free ORA account to sign in locally — no cloud account, no credit card.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div style={phaseABannerStyle} data-testid="harness-phase-a-banner">
-                <strong>PHASE A</strong> — {content.phaseA?.banner}
+    <div className="aurem-harness-v2" data-testid="harness-page">
+      <style>{CSS}</style>
+      <div className="wrap">
+        <div className="split">
+          <div>
+            <p className="brand-line">Aurem Loop</p>
+            <h1>YOUR CODE.<br />YOUR PC.<br /><span className="gold">YOUR MODEL.</span></h1>
+            <p className="sub">Aurem Loop is a coding harness that runs entirely on your own computer. Its built-in weight-space refine loop makes your local model better at your work with every run — no cloud, no per-run charges, no code leaving your machine.</p>
+            <ul className="points">
+              {POINTS.map((pt) => (
+                <li key={pt.b}><Tick /><div><b>{pt.b}</b><span>{pt.t}</span></div></li>
+              ))}
+            </ul>
+            <div className="score" id="bench" data-testid="harness-bench">
+              <div className="row">
+                <div><span className="big">46/48</span> <span className="lbl">tasks passed with Aurem Loop</span></div>
+                <div><span className="lbl">same model without the harness:</span> <b>31/48</b></div>
+                <div><span className="lbl">false accepts:</span> <b>0/48</b></div>
               </div>
-
-              <WaitlistForm idSuffix="hero" mailto={mailto} ctaLabel="Join the waitlist" />
-            </>
-          )}
-
-          <div style={tagRowStyle}>
-            {(content.featureTags || []).map((t) => (
-              <span key={t} data-testid="harness-feature-tag" style={tagStyle}>{t}</span>
-            ))}
-          </div>
-        </section>
-
-        {content.demoVideo?.url && (
-          <section data-testid="harness-demo-video" style={sectionStyle}>
-            <video
-              data-testid="harness-demo-video-el"
-              src={content.demoVideo.url}
-              controls
-              muted
-              loop
-              playsInline
-              style={{ width: "100%", borderRadius: 8, border: "1px solid var(--border, rgba(255,200,120,0.16))" }}
-            />
-            <p style={pStyle} data-testid="harness-demo-video-caption">
-              {// 2026-11-17 — launch copy fix. Canonical caption ends
-              // "— the harness is not downloadable yet", false once a
-              // release is published; "illustration, not a real
-              // recording" stays true either way.
-              release?.available
-                ? (content.demoVideo.caption || "").replace(/\s*—\s*the harness is not downloadable yet\.?$/, ".")
-                : content.demoVideo.caption}
+              <p>On our 48-task coding benchmark, the harness lifts the same local model from 31 to 46 correct tasks — and it never waves through broken work: zero false accepts.</p>
+            </div>
+            <p className="release" data-testid="harness-release-line">
+              {release?.available ? (
+                <>
+                  <span><span className="dot" aria-hidden="true"></span>Download available — v{release.version}</span>
+                  <span>For {release.platform === "windows" ? "Windows" : release.platform}</span>
+                  <span>Free with your account</span>
+                </>
+              ) : (
+                <span>Download not available yet — check back shortly.</span>
+              )}
             </p>
-          </section>
-        )}
-
-        <section id="control" data-testid="harness-set-apart" style={sectionStyle}>
-          <h2 style={h2Style}>{content.setApart?.headline}</h2>
-          <div style={subCardStyle} data-testid="harness-wsp-kit">
-            <span style={badgeStyle}>{content.setApart?.wspKit?.badge}</span>
-            <p style={{ ...pStyle, marginTop: 12 }}>{content.setApart?.wspKit?.body}</p>
           </div>
-          <div style={subCardStyle} data-testid="harness-phone-tunnel">
-            <span style={badgeStyle}>{content.setApart?.phoneTunnel?.badge}</span>
-            <p style={{ ...pStyle, marginTop: 12 }}>{content.setApart?.phoneTunnel?.body}</p>
-          </div>
-        </section>
 
-        <section id="honest-numbers" data-testid="harness-github-stats" style={sectionStyle}>
-          <h2 style={h2Style}>{content.githubStats?.repoLabel}</h2>
-          <p style={pStyle} data-testid="harness-github-stats-note">
-            {// 2026-11-17 — launch copy fix. This note's canonical text
-            // (from the content doc this workspace can't edit) ends
-            // "— the harness itself hasn't shipped" — true only before
-            // a real release existed. Strip that clause once one is
-            // published; the rest of the note (these numbers are for a
-            // different repo) stays accurate either way.
-            release?.available
-              ? (content.githubStats?.note || "").replace(/\s*—\s*the harness itself hasn't shipped\.?$/, ".")
-              : content.githubStats?.note}
-          </p>
-          <div style={statRowStyle}>
-            <div data-testid="harness-stat-stars" style={statBoxStyle}>
-              <div style={statNumStyle}>{stars ?? "—"}</div>
-              <div style={statLabelStyle}>GitHub stars · live</div>
-            </div>
-            <div data-testid="harness-stat-forks" style={statBoxStyle}>
-              <div style={statNumStyle}>{forks ?? "—"}</div>
-              <div style={statLabelStyle}>GitHub forks · live</div>
-            </div>
-            <div data-testid="harness-stat-clones" style={statBoxStyle}>
-              <div style={statNumStyle}>{content.githubStats?.clones}</div>
-              <div style={statLabelStyle}>clones — last verified {content.githubStats?.lastVerified}</div>
-            </div>
-            <div data-testid="harness-stat-views" style={statBoxStyle}>
-              <div style={statNumStyle}>{content.githubStats?.views}</div>
-              <div style={statLabelStyle}>views — last verified {content.githubStats?.lastVerified}</div>
-            </div>
-          </div>
-          <button type="button" data-testid="harness-refresh-stats" style={smallButtonStyle} onClick={loadContent}>
-            Refresh now
-          </button>
-        </section>
+          <div className="card" id="download">
+            {view !== "done" ? (
+              <div id="formView">
+                {view !== "reset" && (
+                  <div className="tabs" role="tablist" aria-label="Sign up or sign in">
+                    <button type="button" role="tab" aria-selected={view === "signup"} data-testid="harness-tab-signup" onClick={() => switchView("signup")}>New user — Sign up</button>
+                    <button type="button" role="tab" aria-selected={view === "signin"} data-testid="harness-tab-signin" onClick={() => switchView("signin")}>Existing user — Sign in</button>
+                  </div>
+                )}
+                {formMsg && <div className={`form-msg show ${formMsg.kind}`} role="status" data-testid="harness-form-msg">{formMsg.text}</div>}
 
-        <section data-testid="harness-what-it-is-not" style={sectionStyle}>
-          <h2 style={h2Style}>What it is not</h2>
-          <ul>
-            {(content.whatItIsNot || []).map((s, i) => (
-              <li key={i} data-testid={`harness-not-${i}`} style={pStyle}>{s}</li>
+                {view === "signup" && (
+                  <form onSubmit={handleSignup} noValidate>
+                    <h2>Create your free account</h2>
+                    <p className="hint">One account for ORA and the Aurem Loop download. It takes less than a minute.</p>
+                    <div className={`field${suErrors.suName ? " invalid" : ""}`}>
+                      <label htmlFor="suName">Full name</label>
+                      <input id="suName" data-testid="harness-signup-name" type="text" autoComplete="name" placeholder="Your name" value={suName} onChange={(e) => setSuName(e.target.value)} />
+                      <p className="err-msg">Please enter your name.</p>
+                    </div>
+                    <div className={`field${suErrors.suEmail ? " invalid" : ""}`}>
+                      <label htmlFor="suEmail">Email</label>
+                      <input id="suEmail" data-testid="harness-signup-email" type="email" autoComplete="email" placeholder="you@example.com" value={suEmail} onChange={(e) => setSuEmail(e.target.value)} />
+                      <p className="err-msg">Please enter a valid email address, like you@example.com.</p>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="suPhone">Phone <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>(optional)</span></label>
+                      <input id="suPhone" data-testid="harness-signup-phone" type="tel" autoComplete="tel" placeholder="+1 …" value={suPhone} onChange={(e) => setSuPhone(e.target.value)} />
+                    </div>
+                    <div className={`field${suErrors.suPass ? " invalid" : ""}`}>
+                      <label htmlFor="suPass">Password</label>
+                      <div className="pw-wrap">
+                        <input id="suPass" data-testid="harness-signup-password" type={suShowPw ? "text" : "password"} autoComplete="new-password" placeholder="At least 8 characters" value={suPass} onChange={(e) => setSuPass(e.target.value)} />
+                        <button type="button" className="pw-toggle" onClick={() => setSuShowPw((v) => !v)}>{suShowPw ? "Hide" : "Show"}</button>
+                      </div>
+                      {suPass && (
+                        <div className="strength on" aria-hidden="true">
+                          {[1, 2, 3].map((i) => <i key={i} className={i <= Math.min(3, Math.max(1, scorePassword(suPass).score - 1)) ? `f${i}` : ""} />)}
+                        </div>
+                      )}
+                      <p className="strength-note">{suPass ? scorePassword(suPass).label : ""}</p>
+                      <p className="err-msg">Your password must be at least 8 characters long.</p>
+                    </div>
+                    <button className="submit" type="submit" data-testid="harness-signup-submit" disabled={busy}>{busy ? "Creating account…" : "Create account & get the download"}</button>
+                    <p className="legal-note">By creating an account you agree to the <a href="#terms">Terms of Use</a> and <a href="#privacy">Privacy Policy</a>.</p>
+                    <div className="alt-row">
+                      <span style={{ color: "var(--ink-2)" }}>Already have an account?</span>
+                      <button type="button" className="link" onClick={() => switchView("signin")}>Sign in →</button>
+                    </div>
+                  </form>
+                )}
+
+                {view === "signin" && !mfaState && (
+                  <form onSubmit={handleSignin} noValidate>
+                    <h2>Welcome back</h2>
+                    <p className="hint">Sign in and the download unlocks right here on this page — you will not be sent anywhere else.</p>
+                    <div className={`field${siErrors.siEmail ? " invalid" : ""}`}>
+                      <label htmlFor="siEmail">Email</label>
+                      <input id="siEmail" data-testid="harness-signin-email" type="email" autoComplete="email" placeholder="you@example.com" value={siEmail} onChange={(e) => setSiEmail(e.target.value)} />
+                      <p className="err-msg">Please enter a valid email address, like you@example.com.</p>
+                    </div>
+                    <div className={`field${siErrors.siPass ? " invalid" : ""}`}>
+                      <label htmlFor="siPass">Password</label>
+                      <div className="pw-wrap">
+                        <input id="siPass" data-testid="harness-signin-password" type={siShowPw ? "text" : "password"} autoComplete="current-password" placeholder="Your password" value={siPass} onChange={(e) => setSiPass(e.target.value)} />
+                        <button type="button" className="pw-toggle" onClick={() => setSiShowPw((v) => !v)}>{siShowPw ? "Hide" : "Show"}</button>
+                      </div>
+                      <p className="err-msg">Please enter your password.</p>
+                    </div>
+                    <button className="submit" type="submit" data-testid="harness-signin-submit" disabled={busy}>{busy ? "Signing in…" : "Sign in & get the download"}</button>
+                    <div className="alt-row">
+                      <button type="button" className="link" data-testid="harness-forgot-btn" onClick={() => switchView("reset")}>Forgot your password?</button>
+                      <button type="button" className="link" onClick={() => switchView("signup")}>Create an account →</button>
+                    </div>
+                    <div className="divider">or</div>
+                    <div className="oauth">
+                      <button type="button" data-testid="harness-oauth-google" onClick={() => startOAuth("google")}>Continue with Google</button>
+                      <button type="button" data-testid="harness-oauth-github" onClick={() => startOAuth("github")}>Continue with GitHub</button>
+                    </div>
+                  </form>
+                )}
+
+                {view === "signin" && mfaState && (
+                  <form onSubmit={handleMfaSubmit} noValidate>
+                    <h2>Two-factor code</h2>
+                    <p className="hint">Enter the 6-digit code from your authenticator app for {mfaState.email}.</p>
+                    <div className="field">
+                      <label htmlFor="mfaCode">Code</label>
+                      <input id="mfaCode" data-testid="harness-mfa-code" type="text" inputMode="numeric" placeholder="123456" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} />
+                    </div>
+                    <button className="submit" type="submit" data-testid="harness-mfa-submit" disabled={busy}>{busy ? "Verifying…" : "Verify & sign in"}</button>
+                    <div className="alt-row">
+                      <button type="button" className="link" onClick={() => setMfaState(null)}>← Back</button>
+                    </div>
+                  </form>
+                )}
+
+                {view === "reset" && (
+                  <form onSubmit={handleReset} noValidate>
+                    <h2>Reset your password</h2>
+                    <p className="hint">Enter the email you signed up with and we will send you a secure reset link.</p>
+                    <div className={`field${rsErrors.rsEmail ? " invalid" : ""}`}>
+                      <label htmlFor="rsEmail">Email</label>
+                      <input id="rsEmail" data-testid="harness-reset-email" type="email" autoComplete="email" placeholder="you@example.com" value={rsEmail} onChange={(e) => setRsEmail(e.target.value)} />
+                      <p className="err-msg">Please enter a valid email address, like you@example.com.</p>
+                    </div>
+                    <button className="submit" type="submit" data-testid="harness-reset-submit" disabled={busy}>{busy ? "Sending…" : "Send reset link"}</button>
+                    <div className="alt-row">
+                      <button type="button" className="link" data-testid="harness-back-to-signin" onClick={() => switchView("signin")}>← Back to sign in</button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            ) : (
+              <div className="done show" data-testid="harness-done-view">
+                <div className="check" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d={CHECK_PATH} /></svg></div>
+                <h2 data-testid="harness-done-title">{doneTitle}</h2>
+                <p data-testid="harness-done-text">{doneText}</p>
+                {release?.available ? (
+                  <button type="button" className="dl-btn" data-testid="harness-download-btn" onClick={handleDownload} disabled={downloadState === "downloading"}>
+                    {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version}`}
+                  </button>
+                ) : (
+                  <p style={{ color: "var(--ink-3)", fontSize: "0.9rem" }}>No release is published yet — check back shortly.</p>
+                )}
+                {release?.available && (
+                  <p className="meta">
+                    File size: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256}<br />
+                    Verify the SHA-256 after downloading — it must match exactly before you run the installer.
+                  </p>
+                )}
+                {downloadSuccess && (
+                  <div className="form-msg show ok" data-testid="harness-download-success">
+                    🎊 Congratulations! Successfully downloaded
+                    {deliveredSha256 && <><br /><span style={{ fontSize: "0.82rem", wordBreak: "break-all" }}>Delivered file SHA-256: {deliveredSha256}</span></>}
+                  </div>
+                )}
+                {downloadState === "error" && (
+                  <div className="form-msg show bad" data-testid="harness-download-error">{downloadError}</div>
+                )}
+                <button type="button" className="again" data-testid="harness-signout-again" onClick={signOutAndShowForm}>← Sign out and show the form again</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <section className="below" id="features" aria-labelledby="featH">
+          <p className="kicker">Why Aurem Loop</p>
+          <h2 id="featH">Built to do real work, on your machine</h2>
+          <p className="lede">Most AI coding tools rent you a model in the cloud and send your code to it. Aurem Loop works the other way round: the model lives on your PC, learns from your tasks, and gets measurably better — while your code stays exactly where it belongs.</p>
+          <div className="feat-grid">
+            {FEAT_ITEMS.map((f) => (
+              <div className="feat" key={f.b}>
+                <FeatIcon>{f.icon}</FeatIcon>
+                <b>{f.b}</b>
+                <p>{f.p}</p>
+              </div>
             ))}
-          </ul>
-        </section>
-
-        <section id="compare" data-testid="harness-compare" style={sectionStyle}>
-          <h2 style={h2Style}>{content.compare?.headline}</h2>
-          <p style={pStyle}>{content.compare?.body}</p>
-          <table style={tableStyle}>
-            <tbody>
-              {Object.entries(content.compare?.auremRow || {}).map(([k, v]) => {
-                const display = k === "Evidence" ? REAL_BENCH_EVIDENCE
-                  : k === "Model" ? REAL_BENCH_MODEL
-                  : v;
-                return (
-                  <tr key={k}>
-                    <td style={tdStyle}>{k}</td>
-                    <td style={tdStyle} data-testid={`harness-compare-${k.replace(/\s+/g, "-").toLowerCase()}`}>{display}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <p style={{ ...pStyle, fontSize: 12, marginTop: 12 }} data-testid="harness-competitor-note">
-            {content.compare?.competitorNote}
-          </p>
-        </section>
-
-        <section data-testid="harness-who-not" style={sectionStyle}>
-          <h2 style={h2Style}>Who should not pick Aurem Loop</h2>
-          <ul>
-            {(content.whoShouldNotPick || []).map((s, i) => (
-              <li key={i} data-testid={`harness-who-not-${i}`} style={pStyle}>
-                {s.includes("ties, not beats")
-                  ? s.replace(
-                      /the harness ties, not beats, the bare model on the bench above\.?/,
-                      "the harness beats the bare model on the bench above, but a frontier cloud tool may still outperform it on hard, multi-file tasks.",
-                    )
-                  : s}
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section id="stories" data-testid="harness-users-say" style={sectionStyle}>
-          <h2 style={h2Style}>{content.usersSay?.headline}</h2>
-          <p style={pStyle}>
-            {release?.available
-              // 2026-11-16 — launch copy fix. content.usersSay.body
-              // (from the canonical AuremHQ/aurem-loop content doc,
-              // which this workspace cannot edit) still says "has not
-              // shipped yet" — false once a release is published. No
-              // invented testimonial; just an honest "no quotes yet".
-              ? `Aurem Loop v${release.version} is out now — download it free and be one of the first to run it. No user quotes yet: this section will show real words from real users once they've run it.`
-              : content.usersSay?.body}
-          </p>
-          {release?.available ? (
-            // 2026-11-17 — launch copy fix. The waitlist CTA ("one
-            // email when the download goes live") is stale once a
-            // release is actually live — point at the real download
-            // section instead of collecting another waitlist email.
-            <a href="#what-it-is" data-testid="harness-stories-download-cta" style={buttonStyle}>
-              Download Aurem Loop →
-            </a>
-          ) : (
-            <WaitlistForm idSuffix="stories" mailto={mailto} ctaLabel="Be one of the first — join the waitlist" />
-          )}
-        </section>
-
-        <section id="setup" data-testid="harness-install-steps" style={sectionStyle}>
-          <h2 style={h2Style}>{content.setup?.headline}</h2>
-          <ol>
-            {(content.setup?.steps || []).map((s, i) => {
-              let text = s;
-              // 2026-11-16 — launch copy fix. Step 1's canonical text
-              // says "the link appears once Phase B goes live" — true
-              // only while there's no real release yet.
-              if (i === 0 && release?.available) {
-                text = text.replace(/\s*\(the link appears once Phase B goes live\)/, "");
-              }
-              // 2026-11-17 — bench/model update (see REAL_BENCH_MODEL).
-              text = text.replace(/qwen2\.5-coder:1\.5b model \(about 1 GB\)/, `${REAL_BENCH_MODEL} model`);
-              return (
-                <li key={i} data-testid={`harness-install-${i}`} style={pStyle}>{text}</li>
-              );
-            })}
-          </ol>
-        </section>
-
-        <section data-testid="harness-troubleshooting" style={sectionStyle}>
-          <h2 style={h2Style}>Troubleshooting</h2>
-          {(content.troubleshooting || []).map((t, i) => (
-            <details key={i} data-testid={`harness-trouble-${i}`} style={{ marginBottom: 8 }}>
-              <summary style={summaryStyle}>{t.q}</summary>
-              <p style={pStyle}>{t.a}</p>
-            </details>
-          ))}
-        </section>
-
-        <section id="faq" data-testid="harness-faq" style={sectionStyle}>
-          <h2 style={h2Style}>FAQ</h2>
-          {(content.faq || []).map((item, i) => (
-            <details key={i} data-testid={`harness-faq-${i}`} style={{ marginBottom: 8 }}>
-              <summary style={summaryStyle}>{item.q}</summary>
-              <p style={pStyle}>{item.a}</p>
-            </details>
-          ))}
-        </section>
-
-        <footer style={footerStyle} data-testid="harness-footer">
-          <p>{content.footer?.tagline}</p>
-          <p>{content.footer?.legal}</p>
-          <p>Waitlist: <a href={mailto} style={{ color: "inherit" }}>{content.footer?.waitlistEmail}</a></p>
-          <p>{content.footer?.license}</p>
-          <div style={{ marginTop: 12 }}>
-            <Link to="/about" style={{ color: "inherit", marginRight: 16 }}>About</Link>
-            <Link to="/contact" style={{ color: "inherit", marginRight: 16 }}>Contact</Link>
-            <Link to="/privacy" style={{ color: "inherit" }}>Privacy</Link>
           </div>
-        </footer>
+        </section>
+
+        <section className="below" id="how" aria-labelledby="howH">
+          <p className="kicker">Getting started</p>
+          <h2 id="howH">From sign-up to first run in four steps</h2>
+          <p className="lede">Your account is created in the same ORA account system used across Aurem products, so one sign-in works everywhere — and your download unlocks on this page the moment you sign in.</p>
+          <div className="flow">
+            {FLOW_STEPS.map((s) => (
+              <div className="step" key={s.num}><p className="num">{s.num}</p><b>{s.b}</b><p>{s.p}</p></div>
+            ))}
+          </div>
+        </section>
+
+        <section className="below" id="requirements" aria-labelledby="reqH">
+          <p className="kicker">Before you download</p>
+          <h2 id="reqH">System requirements</h2>
+          <div className="req">
+            <ul>
+              <li><b>Operating system:</b> Windows (the harness is PC-only; there is no native mobile version).</li>
+              <li><b>Installer includes:</b> Python, Ollama and the qwen3:8b local model — no separate setup needed.</li>
+              <li><b>Internet:</b> needed once to download the installer and the model; after that, Aurem Loop runs fully offline.</li>
+              <li><b>Account:</b> a free ORA account (created on this page) is required to download.</li>
+              <li><b>Phone access (optional):</b> you can open the harness front screen from your phone&apos;s browser through a secure Cloudflare Tunnel while your PC stays on — sign-in is protected by your account.</li>
+            </ul>
+          </div>
+        </section>
+
+        <section className="below" id="faq" aria-labelledby="faqH">
+          <p className="kicker">Questions</p>
+          <h2 id="faqH">Frequently asked questions</h2>
+          <p className="lede">Everything most people ask before downloading. Tap a question to open the answer.</p>
+          <div className="faq">
+            {FAQ_ITEMS.map((item, i) => (
+              <div className="faq-item" key={item.q}>
+                <button type="button" className="faq-q" aria-expanded={faqOpen === i} data-testid={`harness-faq-${i}`} onClick={() => setFaqOpen(faqOpen === i ? null : i)}>
+                  {item.q}
+                  <span className="chev" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d={CHEVRON_PATH} /></svg></span>
+                </button>
+                <div className="faq-a" style={{ maxHeight: faqOpen === i ? "420px" : "0px" }}>
+                  <div className="inner"><p>{item.aNode || item.a}</p></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="below" id="legal" aria-labelledby="legalH">
+          <p className="kicker">The fine print, in plain English</p>
+          <h2 id="legalH">Licensing &amp; policies</h2>
+          <p className="lede">Short, readable summaries of the rules that govern Aurem Loop. They are written to be understood, not to hide anything.</p>
+          <div className="legal-grid">
+            <article className="legal" id="license" data-testid="harness-legal-license">
+              <h3>Software Licence</h3>
+              <p className="updated">Applies to Aurem Loop v0.8.0 · Last updated 16 November 2026</p>
+              <h4>Aurem Loop</h4>
+              <p>Aurem Loop is proprietary software owned by Aurem. With a free ORA account you are granted a personal, non-exclusive, non-transferable licence to:</p>
+              <ul>
+                <li>Download, install and run Aurem Loop on Windows PCs that you own or control.</li>
+                <li>Use it for personal and commercial coding work, including work you sell to clients.</li>
+                <li>Keep and use every model copy the refine loop creates on your machine, for as long as you use Aurem Loop.</li>
+              </ul>
+              <p>You may not redistribute, resell, sublicense or reverse-engineer the Aurem Loop software itself, or remove its licence and attribution notices. The software is provided &ldquo;as is&rdquo;, without warranties of any kind, to the maximum extent permitted by law.</p>
+              <h4>wsp-kit (open source)</h4>
+              <p>The weight-space programming kit behind the refine loop is free and open source under the <b>MIT Licence</b> — you may use, copy, modify and distribute it, including commercially, provided the copyright and licence notices are kept. Source: <a href="https://github.com/AuremHQ/weight-space-programming" target="_blank" rel="noopener noreferrer">github.com/AuremHQ/weight-space-programming</a>.</p>
+              <h4>Models and third-party components</h4>
+              <p>The qwen3:8b model is an open-weight model used under its own licence terms, and Ollama is used under its open-source licence. Those licences travel with the components and are included in the installer.</p>
+            </article>
+            <article className="legal" id="privacy" data-testid="harness-legal-privacy">
+              <h3>Privacy Policy</h3>
+              <p className="updated">Last updated 16 November 2026</p>
+              <h4>What we collect</h4>
+              <ul>
+                <li><b>Account details</b> — your name, email address and, if you provide it, phone number, so we can create and secure your account.</li>
+                <li><b>Download records</b> — which release you downloaded and when, so we can support you and measure adoption.</li>
+              </ul>
+              <h4>What never leaves your PC</h4>
+              <p>Your code, prompts, project files and local models stay on your machine. Aurem Loop&apos;s local mode works fully offline and sends none of this data anywhere.</p>
+              <h4>Telemetry (opt-in only)</h4>
+              <p>Telemetry is <b>off by default</b>. If you switch it on, the harness sends anonymous usage summaries — such as run counts and pass/fail results — to help us improve reliability. It never sends code, prompts or file names, and you can switch it off at any time.</p>
+              <h4>How we use your information</h4>
+              <p>We use account information only to operate your account, provide downloads and support, and send service messages. <b>We do not sell your personal information.</b> Account data is stored in the same ORA account system used by auremcto.com and is handled in line with Canada&apos;s PIPEDA and, where applicable, the GDPR.</p>
+              <h4>Your choices</h4>
+              <p>You can ask us to export or delete your account data at any time through the contact options on <a href="https://auremcto.com" target="_blank" rel="noopener noreferrer">auremcto.com</a>. Deleting your account removes your sign-in and download access but does not affect software already installed on your PC.</p>
+            </article>
+            <article className="legal" id="terms" data-testid="harness-legal-terms">
+              <h3>Terms of Use</h3>
+              <p className="updated">Last updated 16 November 2026</p>
+              <h4>Your account</h4>
+              <ul>
+                <li>You are responsible for keeping your password secure and for activity under your account.</li>
+                <li>One account per person; do not share accounts or create accounts for others without their consent.</li>
+                <li>You must provide accurate information when you sign up.</li>
+              </ul>
+              <h4>Acceptable use</h4>
+              <ul>
+                <li>Use Aurem Loop only for lawful work. Do not use it to build malware, infringe intellectual-property rights, or break the terms of third-party services you connect to it.</li>
+                <li>Code the harness produces is yours to use; you are responsible for reviewing it before you ship it, just as with any tool.</li>
+              </ul>
+              <h4>Subscriptions</h4>
+              <p>The local harness is free. Paid ORA plans are optional, are billed through ORA, and unlock cloud extras only — cancelling a plan never removes your free local harness or your local models.</p>
+              <h4>Availability and liability</h4>
+              <p>Aurem Loop is provided &ldquo;as is&rdquo;. We work hard to keep releases stable and gated, but we do not guarantee uninterrupted operation, and our liability is limited to the maximum extent permitted by law. These terms are governed by the laws of Ontario, Canada.</p>
+            </article>
+          </div>
+        </section>
       </div>
+
+      <footer className="site" data-testid="harness-footer">
+        <div className="foot-wrap">
+          <div className="foot-header"><p>Aurem Loop — Built for developers · MIT extension</p></div>
+          <div className="foot-grid">
+            {FOOTER_COLS.map((col) => (
+              <nav className="foot-col" aria-label={col.label} key={col.label}>
+                <h3>{col.label}</h3>
+                <ul>
+                  {col.links.map((l) => (
+                    <li key={l.t}><a href={l.href}>{l.t}</a></li>
+                  ))}
+                </ul>
+              </nav>
+            ))}
+          </div>
+          <div className="foot-bottom">
+            <span className="foot-copy">© 2026 Polaris Built Inc — Aurem Loop, made by AUREM · Incorporated in Canada · All rights reserved.</span>
+            <span className="foot-trademark">AUREM™ is a trademark of Polaris Built Inc. (Application No. 2492318, filed with the Canadian Intellectual Property Office).</span>
+            <span className="foot-action">
+              <button type="button" className="cookie-btn" data-testid="harness-cookie-prefs" onClick={openCookiePreferences}>Cookie preferences</button>
+            </span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
