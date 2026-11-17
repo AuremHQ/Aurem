@@ -526,9 +526,9 @@ export default function HarnessPage() {
       <div className="wrap">
         <div className="split">
           <div>
-            <p className="brand-line">Aurem Loop</p>
-            <h1>YOUR CODE.<br />YOUR PC.<br /><span className="gold">YOUR MODEL.</span></h1>
-            <p className="sub">Aurem Loop is a coding harness that runs entirely on your own computer. Its built-in weight-space refine loop makes your local model better at your work with every run — no cloud, no per-run charges, no code leaving your machine.</p>
+            <p className="brand-line">{HERO.brandLine}</p>
+            <h1>{HERO.headlineLines.map((line) => <React.Fragment key={line}>{line}<br /></React.Fragment>)}<span className="gold">{HERO.headlineGold}</span></h1>
+            <p className="sub">{HERO.sub}</p>
             <ul className="points">
               {POINTS.map((pt) => (
                 <li key={pt.b}><Tick /><div><b>{pt.b}</b><span>{pt.t}</span></div></li>
@@ -536,11 +536,11 @@ export default function HarnessPage() {
             </ul>
             <div className="score" id="bench" data-testid="harness-bench">
               <div className="row">
-                <div><span className="big">46/48</span> <span className="lbl">tasks passed with Aurem Loop</span></div>
-                <div><span className="lbl">same model without the harness:</span> <b>31/48</b></div>
-                <div><span className="lbl">false accepts:</span> <b>0/48</b></div>
+                <div><span className="big">{BENCH.passed}</span> <span className="lbl">{BENCH.passedLabel}</span></div>
+                <div><span className="lbl">{BENCH.bareLabel}</span> <b>{BENCH.bare}</b></div>
+                <div><span className="lbl">{BENCH.falseAcceptsLabel}</span> <b>{BENCH.falseAccepts}</b></div>
               </div>
-              <p>On our 48-task coding benchmark, the harness lifts the same local model from 31 to 46 correct tasks — and it never waves through broken work: zero false accepts.</p>
+              <p>{BENCH.note}</p>
             </div>
             <p className="release" data-testid="harness-release-line">
               {release?.available ? (
@@ -708,7 +708,7 @@ export default function HarnessPage() {
           <div className="feat-grid">
             {FEAT_ITEMS.map((f) => (
               <div className="feat" key={f.b}>
-                <FeatIcon>{f.icon}</FeatIcon>
+                <FeatIcon iconHtml={f.iconHtml} />
                 <b>{f.b}</b>
                 <p>{f.p}</p>
               </div>
@@ -732,11 +732,9 @@ export default function HarnessPage() {
           <h2 id="reqH">System requirements</h2>
           <div className="req">
             <ul>
-              <li><b>Operating system:</b> Windows (the harness is PC-only; there is no native mobile version).</li>
-              <li><b>Installer includes:</b> Python, Ollama and the qwen3:8b local model — no separate setup needed.</li>
-              <li><b>Internet:</b> needed once to download the installer and the model; after that, Aurem Loop runs fully offline.</li>
-              <li><b>Account:</b> a free ORA account (created on this page) is required to download.</li>
-              <li><b>Phone access (optional):</b> you can open the harness front screen from your phone&apos;s browser through a secure Cloudflare Tunnel while your PC stays on — sign-in is protected by your account.</li>
+              {REQUIREMENTS.map((itemHtml, i) => (
+                <li key={i} dangerouslySetInnerHTML={{ __html: itemHtml }} />
+              ))}
             </ul>
           </div>
         </section>
@@ -753,7 +751,7 @@ export default function HarnessPage() {
                   <span className="chev" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d={CHEVRON_PATH} /></svg></span>
                 </button>
                 <div className="faq-a" style={{ maxHeight: faqOpen === i ? "420px" : "0px" }}>
-                  <div className="inner"><p>{item.aNode || item.a}</p></div>
+                  <div className="inner"><p dangerouslySetInnerHTML={{ __html: item.aHtml }} /></div>
                 </div>
               </div>
             ))}
@@ -765,65 +763,20 @@ export default function HarnessPage() {
           <h2 id="legalH">Licensing &amp; policies</h2>
           <p className="lede">Short, readable summaries of the rules that govern Aurem Loop. They are written to be understood, not to hide anything.</p>
           <div className="legal-grid">
-            <article className="legal" id="license" data-testid="harness-legal-license">
-              <h3>Software Licence</h3>
-              <p className="updated">Applies to Aurem Loop v0.8.0 · Last updated 16 November 2026</p>
-              <h4>Aurem Loop</h4>
-              <p>Aurem Loop is proprietary software owned by Aurem. With a free ORA account you are granted a personal, non-exclusive, non-transferable licence to:</p>
-              <ul>
-                <li>Download, install and run Aurem Loop on Windows PCs that you own or control.</li>
-                <li>Use it for personal and commercial coding work, including work you sell to clients.</li>
-                <li>Keep and use every model copy the refine loop creates on your machine, for as long as you use Aurem Loop.</li>
-              </ul>
-              <p>You may not redistribute, resell, sublicense or reverse-engineer the Aurem Loop software itself, or remove its licence and attribution notices. The software is provided &ldquo;as is&rdquo;, without warranties of any kind, to the maximum extent permitted by law.</p>
-              <h4>wsp-kit (open source)</h4>
-              <p>The weight-space programming kit behind the refine loop is free and open source under the <b>MIT Licence</b> — you may use, copy, modify and distribute it, including commercially, provided the copyright and licence notices are kept. Source: <a href="https://github.com/AuremHQ/weight-space-programming" target="_blank" rel="noopener noreferrer">github.com/AuremHQ/weight-space-programming</a>.</p>
-              <h4>Models and third-party components</h4>
-              <p>The qwen3:8b model is an open-weight model used under its own licence terms, and Ollama is used under its open-source licence. Those licences travel with the components and are included in the installer.</p>
-            </article>
-            <article className="legal" id="privacy" data-testid="harness-legal-privacy">
-              <h3>Privacy Policy</h3>
-              <p className="updated">Last updated 16 November 2026</p>
-              <h4>What we collect</h4>
-              <ul>
-                <li><b>Account details</b> — your name, email address and, if you provide it, phone number, so we can create and secure your account.</li>
-                <li><b>Download records</b> — which release you downloaded and when, so we can support you and measure adoption.</li>
-              </ul>
-              <h4>What never leaves your PC</h4>
-              <p>Your code, prompts, project files and local models stay on your machine. Aurem Loop&apos;s local mode works fully offline and sends none of this data anywhere.</p>
-              <h4>Telemetry (opt-in only)</h4>
-              <p>Telemetry is <b>off by default</b>. If you switch it on, the harness sends anonymous usage summaries — such as run counts and pass/fail results — to help us improve reliability. It never sends code, prompts or file names, and you can switch it off at any time.</p>
-              <h4>How we use your information</h4>
-              <p>We use account information only to operate your account, provide downloads and support, and send service messages. <b>We do not sell your personal information.</b> Account data is stored in the same ORA account system used by auremcto.com and is handled in line with Canada&apos;s PIPEDA and, where applicable, the GDPR.</p>
-              <h4>Your choices</h4>
-              <p>You can ask us to export or delete your account data at any time through the contact options on <a href="https://auremcto.com" target="_blank" rel="noopener noreferrer">auremcto.com</a>. Deleting your account removes your sign-in and download access but does not affect software already installed on your PC.</p>
-            </article>
-            <article className="legal" id="terms" data-testid="harness-legal-terms">
-              <h3>Terms of Use</h3>
-              <p className="updated">Last updated 16 November 2026</p>
-              <h4>Your account</h4>
-              <ul>
-                <li>You are responsible for keeping your password secure and for activity under your account.</li>
-                <li>One account per person; do not share accounts or create accounts for others without their consent.</li>
-                <li>You must provide accurate information when you sign up.</li>
-              </ul>
-              <h4>Acceptable use</h4>
-              <ul>
-                <li>Use Aurem Loop only for lawful work. Do not use it to build malware, infringe intellectual-property rights, or break the terms of third-party services you connect to it.</li>
-                <li>Code the harness produces is yours to use; you are responsible for reviewing it before you ship it, just as with any tool.</li>
-              </ul>
-              <h4>Subscriptions</h4>
-              <p>The local harness is free. Paid ORA plans are optional, are billed through ORA, and unlock cloud extras only — cancelling a plan never removes your free local harness or your local models.</p>
-              <h4>Availability and liability</h4>
-              <p>Aurem Loop is provided &ldquo;as is&rdquo;. We work hard to keep releases stable and gated, but we do not guarantee uninterrupted operation, and our liability is limited to the maximum extent permitted by law. These terms are governed by the laws of Ontario, Canada.</p>
-            </article>
+            {LEGAL_ARTICLES.map((art) => (
+              <article className="legal" id={art.id} data-testid={`harness-legal-${art.id}`} key={art.id}>
+                <h3>{art.title}</h3>
+                <p className="updated">{art.updated}</p>
+                <div dangerouslySetInnerHTML={{ __html: art.bodyHtml }} />
+              </article>
+            ))}
           </div>
         </section>
       </div>
 
       <footer className="site" data-testid="harness-footer">
         <div className="foot-wrap">
-          <div className="foot-header"><p>Aurem Loop — Built for developers · MIT extension</p></div>
+          <div className="foot-header"><p>{FOOTER_TAGLINE}</p></div>
           <div className="foot-grid">
             {FOOTER_COLS.map((col) => (
               <nav className="foot-col" aria-label={col.label} key={col.label}>
@@ -837,8 +790,8 @@ export default function HarnessPage() {
             ))}
           </div>
           <div className="foot-bottom">
-            <span className="foot-copy">© 2026 Polaris Built Inc — Aurem Loop, made by AUREM · Incorporated in Canada · All rights reserved.</span>
-            <span className="foot-trademark">AUREM™ is a trademark of Polaris Built Inc. (Application No. 2492318, filed with the Canadian Intellectual Property Office).</span>
+            <span className="foot-copy">{FOOTER_COPY}</span>
+            <span className="foot-trademark">{FOOTER_TRADEMARK}</span>
             <span className="foot-action">
               <button type="button" className="cookie-btn" data-testid="harness-cookie-prefs" onClick={openCookiePreferences}>Cookie preferences</button>
             </span>
