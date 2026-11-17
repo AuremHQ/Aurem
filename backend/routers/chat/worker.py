@@ -896,11 +896,9 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
                     f"P0={_ctx['findings'].get('p0')}  P1={_ctx['findings'].get('p1')}  P2={_ctx['findings'].get('p2')}"
                     + (f"  (err: {_ctx['findings'].get('error')})" if _ctx['findings'].get('error') else "")
                 ),
-                (
-                    f"Quota: used={_ctx['quota'].get('tokens_used')}  "
-                    f"limit={_ctx['quota'].get('tokens_limit')}  "
-                    f"period={_ctx['quota'].get('period')}"
-                ),
+                # No Quota line: the endpoint removed `quota` (C5,
+                # 2026-10 — dead read). Token usage comes from the
+                # Token breakdown block below.
             ]
             # Iter 388j — Recent tasks block (Bug 3 fix).
             _rt = (_ctx.get("recent_tasks") or {})
@@ -941,10 +939,11 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
             # Iter 388j — Token breakdown block (Bug 5 fix).
             _tb = (_ctx.get("token_breakdown") or {})
             _rtok = _tb.get("recent_task_tokens") or []
-            if _rtok or _tb.get("project_month_total"):
+            if _rtok or _tb.get("project_month_total") or _tb.get("user_total_all_time"):
                 _lines.append(
                     f"Tokens (this month): project={_tb.get('project_month_total')}, "
-                    f"user_all_projects={_tb.get('user_month_total')}"
+                    f"user_all_projects={_tb.get('user_month_total')}, "
+                    f"user_total_all_time={_tb.get('user_total_all_time')}"
                 )
                 if _rtok:
                     _lines.append("Tokens per recent task:")
@@ -983,7 +982,7 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
             _rules = [
                 "RULES:",
                 f"1. EVERY response MUST mention the project name '{_ctx.get('project_name')}' explicitly.",
-                "2. If any field above is null/None/error, respond 'yeh data abhi available nahi hai' — NEVER guess.",
+                "2. If any field above is null/None/error, respond 'This data is not available right now' — NEVER guess.",
                 "3. Only cite numbers that appear in this block. Do not extrapolate.",
             ]
             if not _is_founder_view:
@@ -997,7 +996,7 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
                 )
             _ctx_block = "\n".join(_lines) + "\n" + "\n".join(_rules)
         except Exception as _cxe:
-            _ctx_block = f"\n\n[Advisor context fetch failed: {str(_cxe)[:80]}] — reply with 'yeh data abhi available nahi hai' for any data-dependent question."
+            _ctx_block = f"\n\n[Advisor context fetch failed: {str(_cxe)[:80]}] — reply with 'This data is not available right now' for any data-dependent question."
 
     # Iter 212m-212 — Optional client-side screenshot.
     # Isolated from the main text path: any failure here
@@ -1114,8 +1113,8 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
         "from earlier failed loops."
         "\n2. If the required structured field is "
         "empty, null, or carries an `error:` note, "
-        "reply exactly: 'yeh data abhi available "
-        "nahi hai — <field name>' and stop.  Do NOT "
+        "reply exactly: 'This data is not available "
+        "right now — <field name>' and stop.  Do NOT "
         "extrapolate."
         "\n3. When you name the project, use the "
         "'Project:' line from ADVISOR CONTEXT verbatim.  "
