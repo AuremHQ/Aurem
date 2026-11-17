@@ -209,6 +209,22 @@ _REDIS_HOST_REDACTED: str | None = None  # "host:port" only, no user:pass
 # attempts for this long after a failure.
 _REDIS_RETRY_COOLDOWN_S = 30.0
 
+# 2026-11-17 · production logs showed Upstash returning a DIFFERENT
+# ResponseError than the 2026-08-19 incident — not "max requests limit
+# exceeded" (quota) but "Your database has been temporarily rate-
+# limited, please contact support@upstash.com for further details."
+# That message is Upstash's own backoff signal: it is asking callers to
+# slow down, not to keep polling. The flat 30s cooldown above re-dials
+# it roughly twice a minute regardless, which neither helps it recover
+# sooner nor meaningfully restores shared-counter coverage — it just
+# keeps adding load to an endpoint that already asked us to stop. Give
+# this specific response a longer, separate cooldown. Ordinary network
+# blips (timeout, connection refused) are unaffected and keep retrying
+# on the short cooldown above.
+_REDIS_RATE_LIMITED_COOLDOWN_S = 300.0
+_REDIS_RATE_LIMITED_SNIPPET = "rate-limited"
+_REDIS_LAST_ERROR_WAS_RATE_LIMITED: bool = False
+
 # Iter 388-noise · rate_limiter warning throttle.  When Redis is
 # sustained-unhealthy (e.g. Upstash monthly quota exhausted with the
 # same "max requests limit exceeded" ResponseError on every attempt),
@@ -244,6 +260,7 @@ async def _ensure_redis():
     Redis outage falls back to in-memory silently."""
     global _REDIS_CLIENT, _REDIS_TRIED, _REDIS_LUA_SHA, _REDIS_BACKEND_ACTIVE
     global _REDIS_LAST_ERROR, _REDIS_LAST_ATTEMPT_TS, _REDIS_HOST_REDACTED
+    global _REDIS_LAST_ERROR_WAS_RATE_LIMITED
     if not _ENABLED:
         return None
     url = (os.getenv("REDIS_URL") or "").strip()
@@ -259,8 +276,16 @@ async def _ensure_redis():
         return _REDIS_CLIENT
     # Cooldown gate — don't hammer a Redis that just rejected us
     # (quota exhaustion, sustained outage) on every single request.
+    # An explicit "rate-limited" response from Upstash gets the longer
+    # cooldown (see _REDIS_RATE_LIMITED_COOLDOWN_S above); anything
+    # else (timeout, connection refused, generic quota error) keeps
+    # the original short one.
+    _effective_cooldown = (
+        _REDIS_RATE_LIMITED_COOLDOWN_S if _REDIS_LAST_ERROR_WAS_RATE_LIMITED
+        else _REDIS_RETRY_COOLDOWN_S
+    )
     if (_REDIS_LAST_ATTEMPT_TS is not None and _REDIS_LAST_ERROR is not None
-            and (time.time() - _REDIS_LAST_ATTEMPT_TS) < _REDIS_RETRY_COOLDOWN_S):
+            and (time.time() - _REDIS_LAST_ATTEMPT_TS) < _effective_cooldown):
         return None
     _REDIS_LAST_ATTEMPT_TS = time.time()
     _REDIS_HOST_REDACTED = _redact_redis_url(url)
@@ -278,6 +303,7 @@ async def _ensure_redis():
         _REDIS_CLIENT = client
         _REDIS_BACKEND_ACTIVE = True
         _REDIS_LAST_ERROR = None
+        _REDIS_LAST_ERROR_WAS_RATE_LIMITED = False
         if not _REDIS_TRIED:
             logger.info(
                 "rate_limiter: Redis backend LIVE — cross-pod shared "
@@ -292,6 +318,9 @@ async def _ensure_redis():
         # probe can surface WHY the connection failed. Truncated to
         # 300 chars so a huge traceback doesn't blow up the JSON.
         _REDIS_LAST_ERROR = f"{type(e).__name__}: {str(e)[:250]}"
+        _REDIS_LAST_ERROR_WAS_RATE_LIMITED = (
+            _REDIS_RATE_LIMITED_SNIPPET in str(e).lower()
+        )
         # Iter 388-noise · throttle policy:
         #   · NEW error signature       → log immediately (flap visible)
         #   · SAME signature, new minute → log once with a suppression tally
@@ -400,6 +429,11 @@ def redis_diag() -> dict:
         "last_error":        _REDIS_LAST_ERROR,
         "last_attempt_ts":   _REDIS_LAST_ATTEMPT_TS,
         "backend_active":    _REDIS_BACKEND_ACTIVE,
+        "rate_limited_by_provider": _REDIS_LAST_ERROR_WAS_RATE_LIMITED,
+        "retry_cooldown_s": (
+            _REDIS_RATE_LIMITED_COOLDOWN_S if _REDIS_LAST_ERROR_WAS_RATE_LIMITED
+            else _REDIS_RETRY_COOLDOWN_S
+        ),
     }
 
 
