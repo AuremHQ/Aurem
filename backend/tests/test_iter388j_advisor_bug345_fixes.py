@@ -12,8 +12,8 @@ Advisor chip buttons ("Diagnose failed run" / "Summarize open PRs" /
 Fix shape:
   1. `advisor_context.py` gets three new blocks: `recent_tasks`,
      `open_prs`, `token_breakdown`.  Every block carries an `error:`
-     field so the LLM can honestly say "yeh data abhi available nahi
-     hai" without falling back on vision.
+     field so the LLM can honestly say "This data is not available
+     right now" without falling back on vision.
   2. `chat.py::_adv_directive` gets a HARD DATA HONESTY section that
      wins over the visual-context rule for data claims.
   3. `chat.py` SKIPS screenshot vision entirely when the prompt is
@@ -112,7 +112,7 @@ def test_data_honesty_rule_present_in_advisor_directive():
     assert "DATA HONESTY (highest priority):" in src
     # Anti-fabrication essentials — these three phrases must appear.
     assert "NEVER derive" in src
-    assert "yeh data abhi available" in src
+    assert "This data is not available right now" in src
     assert "Project:" in src  # project name pinning
 
 

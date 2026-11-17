@@ -26,8 +26,8 @@ Design contract
 • Pure read.  No side effects, no LLM calls, no tool loop.
 • Project scoped — 404 if the caller doesn't own the project.
 • EVERY tier-1 field can be `None`; consumers (LLM + morning brief)
-  must handle missing data by saying "yeh data abhi available nahi
-  hai" and MUST NOT guess.
+  must handle missing data by saying "This data is not available
+  right now" and MUST NOT guess.
 • Sub-second by design: 2–4 count/find operations, no aggregation
   pipelines.
 
@@ -233,7 +233,8 @@ async def get_advisor_context(
     # numbers to answer with.
     token_breakdown: dict = {
         "recent_task_tokens": [], "project_month_total": 0,
-        "user_month_total": None, "error": None,
+        "user_month_total": None, "user_total_all_time": None,
+        "error": None,
     }
     try:
         _month_start_dt = datetime.now(timezone.utc).replace(
@@ -272,6 +273,47 @@ async def get_advisor_context(
         ], maxTimeMS=1500).to_list(1)
         if agg2:
             token_breakdown["user_month_total"] = int(agg2[0].get("total") or 0)
+        # Real LLM ledger (services/usage.py `get_usage`) — the same
+        # source Settings shows. The legacy `cto_tasks.tokens_used`
+        # writer covers only one call path, so on its own these month
+        # totals read ~0 while Settings shows the real burn. Add the
+        # `real_llm_usage` sums (legacy + real, exactly like
+        # `get_usage`) so the Advisor quotes real numbers.
+        _real_proj = await db["real_llm_usage"].aggregate([
+            {"$match": {
+                "project_id": project_id,
+                "user_id":    user_id,
+                "created_at": {"$gte": _month_start},
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$total_tokens"}}},
+        ], maxTimeMS=1500).to_list(1)
+        if _real_proj:
+            token_breakdown["project_month_total"] += int(_real_proj[0].get("total") or 0)
+        _real_user_month = await db["real_llm_usage"].aggregate([
+            {"$match": {
+                "user_id":    user_id,
+                "created_at": {"$gte": _month_start},
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$total_tokens"}}},
+        ], maxTimeMS=1500).to_list(1)
+        if _real_user_month:
+            _um = token_breakdown["user_month_total"] or 0
+            token_breakdown["user_month_total"] = _um + int(_real_user_month[0].get("total") or 0)
+        # All-time user total — the exact number Settings shows
+        # (`get_usage`: legacy all-time done sum + real all-time sum).
+        _legacy_all = await db["cto_tasks"].aggregate([
+            {"$match": {"user_id": user_id, "status": "done"}},
+            {"$group": {"_id": None, "total": {"$sum": "$tokens_used"}}},
+        ], maxTimeMS=1500).to_list(1)
+        _real_all = await db["real_llm_usage"].aggregate([
+            {"$match": {"user_id": user_id}},
+            {"$group": {"_id": None, "total": {"$sum": "$total_tokens"}}},
+        ], maxTimeMS=1500).to_list(1)
+        token_breakdown["user_total_all_time"] = (
+            int(_legacy_all[0].get("total") or 0) if _legacy_all else 0
+        ) + (
+            int(_real_all[0].get("total") or 0) if _real_all else 0
+        )
     except Exception as e:
         token_breakdown["error"] = str(e)[:80]
 
@@ -283,7 +325,7 @@ async def get_advisor_context(
         "quota":        None,
         # Iter 388j — three new blocks for the Advisor chip buttons.
         # Each block carries an `error` field so the LLM can honestly
-        # say "yeh data abhi available nahi hai" when a source is
+        # say "This data is not available right now" when a source is
         # unreachable, rather than fabricating from the screenshot.
         "recent_tasks":    recent_tasks,
         "open_prs":        open_prs,
