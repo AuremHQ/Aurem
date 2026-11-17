@@ -239,6 +239,13 @@ async def robot_guide_public() -> dict:
     }
 
 
+# 2026-11-16 — closed set of recognized signup-attribution sources.
+# An unrecognized value is dropped (stored as None), never stored as
+# free text — same provenance-tagging discipline as
+# services/harness_releases.py's own _VALID_SOURCES.
+_VALID_SIGNUP_SOURCES = frozenset({"harness_homepage"})
+
+
 class SignupBody(BaseModel):
     email: str
     password: str
@@ -255,6 +262,13 @@ class SignupBody(BaseModel):
     # between page-render and form-submit — scripts submit in <2s.
     honeypot:    Optional[str] = None
     form_age_ms: Optional[int] = None
+    # 2026-11-16 — attribution tag for signups originating from a
+    # specific marketing surface (currently only the /harness page's
+    # own form, via Signup.jsx's isHarness flag). Closed set
+    # (_VALID_SIGNUP_SOURCES below) — an unrecognized value is
+    # silently dropped rather than stored as free text, same
+    # provenance-tagging pattern as harness release `source`.
+    source: Optional[str] = None
 
 
 class LoginBody(BaseModel):
@@ -366,6 +380,10 @@ async def signup(body: SignupBody, request: Request) -> dict:
         # safety net for any null rows that predate this default.
         "track":              "developer",
         "track_updated_at":   _now_ts,
+        # 2026-11-16 — harness-homepage attribution (see
+        # _VALID_SIGNUP_SOURCES above). None for every other signup
+        # path, unchanged from before this field existed.
+        "signup_source": body.source if body.source in _VALID_SIGNUP_SOURCES else None,
     })
     # Track 3 — fire verification email as a background task so the
     # signup response returns immediately. Skipped for founders (they

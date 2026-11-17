@@ -55,15 +55,24 @@ function Card({ children, style }) {
     </div>
   );
 }
-function ago(iso) {
-  if (!iso) return "—";
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "—";
-  const s = Math.floor((Date.now() - t) / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+const _MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// 2026-11-16 — the CREATED column showed "20752d ago": created_at/
+// published_at are SECONDS since epoch (Python time.time()), but
+// `new Date(iso)` treats a raw number as MILLISECONDS, landing the
+// computed date ~57 years off. Fixed the unit (* 1000) and switched
+// to an absolute date — a publish date doesn't need re-computing on
+// every render, and "Xd ago" hid exactly this kind of unit bug.
+function ago(seconds) {
+  if (!seconds) return "—";
+  const d = new Date(seconds * 1000);
+  if (isNaN(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getDate()} ${_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
 }
 function cleanErr(e, fallback) {
   return e?.response?.data?.detail || e?.message || fallback;

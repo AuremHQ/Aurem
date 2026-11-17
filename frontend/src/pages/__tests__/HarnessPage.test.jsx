@@ -52,7 +52,13 @@ const CONTENT = {
   },
   whoShouldNotPick: ["You need frontier models."],
   usersSay: { headline: "What users say", body: "no users yet" },
-  setup: { headline: "Setup", steps: ["step one"] },
+  setup: {
+    headline: "Setup",
+    steps: [
+      "Download the release zip from this page (the link appears once Phase B goes live) and verify its SHA-256 checksum, shown here too.",
+      "Unzip it, then run install.bat.",
+    ],
+  },
   troubleshooting: [{ q: "Stuck?", a: "Wait." }],
   faq: [
     { q: "Is it free?", a: "Yes." },
@@ -291,6 +297,54 @@ describe("HarnessPage", () => {
       expect(screen.getByTestId("harness-phase-a-banner")).toBeInTheDocument();
       expect(screen.getByTestId("harness-waitlist-form-hero")).toBeInTheDocument();
       expect(screen.queryByTestId("harness-download-section")).not.toBeInTheDocument();
+    });
+
+    // 2026-11-16 — launch copy fix. content.usersSay.body comes from
+    // the canonical (un-editable-here) content doc and still says
+    // "has not shipped yet" — false once a release is published.
+    it("keeps the canonical 'has not shipped yet' stories copy unchanged when no release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-users-say")).toHaveTextContent(CONTENT.usersSay.body);
+    });
+
+    it("replaces the stale 'has not shipped yet' stories copy with an honest shipped message once a release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const storiesSection = screen.getByTestId("harness-users-say");
+      expect(storiesSection).not.toHaveTextContent(CONTENT.usersSay.body);
+      expect(storiesSection).toHaveTextContent(
+        `Aurem Loop v${RELEASE.version} is out now — download it free and be one of the first to run it.`,
+      );
+      // Headline stays as-is per the launch copy fix instructions.
+      expect(storiesSection).toHaveTextContent(CONTENT.usersSay.headline);
+      // No invented testimonial or user quote.
+      expect(storiesSection.textContent).not.toMatch(/"[^"]{10,}"/);
+    });
+
+    // 2026-11-16 — launch copy fix. Setup step 1's canonical text
+    // ("the link appears once Phase B goes live") is stale once a
+    // release is actually published — the link really is on the page.
+    it("keeps the canonical 'Phase B goes live' setup copy unchanged when no release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-install-0")).toHaveTextContent(
+        "the link appears once Phase B goes live",
+      );
+    });
+
+    it("strips the stale 'Phase B goes live' parenthetical once a release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const step0 = screen.getByTestId("harness-install-0");
+      expect(step0).not.toHaveTextContent("Phase B goes live");
+      expect(step0).toHaveTextContent(
+        "Download the release zip from this page and verify its SHA-256 checksum, shown here too.",
+      );
     });
   });
 });

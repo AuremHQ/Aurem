@@ -34,11 +34,36 @@ describe("Landing.jsx — Aurem Loop promo section", () => {
     expect(SRC).toMatch(/\{harnessPageEnabled && \(/);
   });
 
-  it("uses the exact founder-approved heading, line, and CTA copy, linking to /harness", () => {
+  it("uses the exact founder-approved heading and CTA copy, linking to /harness", () => {
     expect(SRC).toMatch(/data-testid="aurem-loop-promo-heading">Aurem Loop</);
-    expect(SRC).toMatch(/data-testid="aurem-loop-promo-line">A local coding harness that checks its own work\. Not available to download yet\./);
     expect(SRC).toMatch(/data-testid="aurem-loop-promo-cta">Learn about Aurem Loop →/);
     expect(SRC).toMatch(/<Link className="btn-ghost" to="\/harness" data-testid="aurem-loop-promo-cta">/);
+  });
+
+  // 2026-11-16 — launch copy fix. The line used to be a static
+  // "Not available to download yet." even after v0.8.0 shipped —
+  // contradicting the live, downloadable /harness page. It now reads
+  // the same /harness/release-status the /harness page itself uses.
+  describe("release-aware promo line (launch copy fix, 2026-11-16)", () => {
+    it("fetches /harness/release-status and never hardcodes a version number", () => {
+      expect(SRC).toMatch(/healthApi\.get\(["']\/harness\/release-status["']\)/);
+      expect(SRC).not.toMatch(/v0\.8\.0/);
+    });
+
+    it("shows the stale 'not available yet' line when no release is published", () => {
+      expect(SRC).toMatch(/"A local coding harness that checks its own work\. Not available to download yet\."/);
+    });
+
+    it("shows a download-available line with the live version when a release is published", () => {
+      expect(SRC).toMatch(/harnessRelease\.available/);
+      expect(SRC).toMatch(/Download available — v\$\{harnessRelease\.version\}/);
+    });
+
+    it("renders a 'Download Aurem Loop' CTA to /harness only when a release is available", () => {
+      expect(SRC).toMatch(/data-testid="aurem-loop-promo-download-cta"/);
+      const downloadCtaBlock = SRC.match(/\{harnessRelease\.available && \([\s\S]*?aurem-loop-promo-download-cta[\s\S]*?\)\}/);
+      expect(downloadCtaBlock, "download CTA is not conditionally gated on harnessRelease.available").toBeTruthy();
+    });
   });
 
   it("the promo copy makes no Ollama/local-mode claim, benchmark numbers, Loop C edit claim, or working-cloud-option claim", () => {

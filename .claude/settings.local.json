@@ -10,7 +10,20 @@
       "Bash(curl -s localhost:8001/api/health -o /dev/null -w \"backend health: %{http_code}\\\\n\")",
       "Bash(node verify_page.mjs)",
       "Skill(agent-browser)",
-      "Skill(agent-browser:*)"
+      "Skill(agent-browser:*)",
+      "Bash(curl -sS http://localhost:8001/api/harness/content)",
+      "Bash(curl -sS http://localhost:8001/api/harness/release-status)",
+      "Bash(sed -i 's#/api/aurem-dev/auth/signup#/api/aurem-dev/auth/signup#' /dev/null)",
+      "Bash(sed -i 's#\"/api/aurem-dev/auth/signup\"#\"/api/aurem-dev/auth/signup\"#' tests/test_regression_iter2026_75_harness_homepage_signup_source.py)",
+      "Bash(git stash *)",
+      "Bash(ruff check *)",
+      "Read(//tmp/**)",
+      "Bash(npx vitest *)",
+      "Bash(yarn lint *)",
+      "Bash(awk '/data-testid=\"ora-footer\"/,/<\\\\/footer>/' src/pages/Landing.jsx)",
+      "Bash(grep -n '\\\\$9\\\\b\\\\|price.*9\\\\b' src/pages/Pricing.jsx)",
+      "Bash(grep -n '\"\\\\$[0-9]' src/components/PricingCards.jsx)",
+      "Bash(yarn build *)"
     ]
   }
 }

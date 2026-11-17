@@ -25,6 +25,7 @@ export const ADMIN_NAV = [
   { id: "maintenance",     label: "Maintenance",          route: "/admin/maintenance",    group: "MONITOR", screenKeys: ["system.maintenance"] },
   { id: "arch",            label: "Architecture",         route: "/admin/architecture",   group: "MONITOR", screenKeys: ["system.codehealth"] },
   { id: "harness_releases", label: "Loop Releases", route: "/admin/harness-releases", group: "MONITOR", screenKeys: [] },
+  { id: "harness_overview", label: "Harness", route: "/admin/harness", group: "MONITOR", screenKeys: [] },
   { id: "onboarding_funnel", label: "Onboarding Funnel",  route: "/admin/onboarding-funnel", group: "USERS", screenKeys: ["growth.onboarding"] },
   // 2026-09-28 MASTER TASK "ACTIVATION FIRST" — the granular
   // signed-up→...→came-back-another-day dashboard w/ drop reasons +

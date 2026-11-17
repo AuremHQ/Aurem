@@ -716,6 +716,17 @@ export default function Landing() {
       .catch(() => {});
   }, []);
 
+  // 2026-11-16 — launch copy fix. Same /harness/release-status the
+  // /harness page itself reads, so the homepage promo stops claiming
+  // "Not available to download yet" once a real release ships. Never
+  // hardcode the version — read it from the response.
+  const [harnessRelease, setHarnessRelease] = useState({ available: false });
+  useEffect(() => {
+    healthApi.get("/harness/release-status")
+      .then((r) => { if (r.data) setHarnessRelease(r.data); })
+      .catch(() => {});
+  }, []);
+
   // 2026-09-29 · Lighthouse TBT fix (docs/performance_budget.md budget
   // TBT <= 200ms; CI measured 236-323ms). Root cause per a real trace
   // at 6x CPU slowdown: everything below the hero mounts in the SAME
@@ -1427,7 +1438,14 @@ export default function Landing() {
         {harnessPageEnabled && (
           <section className="section harness-promo" data-testid="aurem-loop-promo-section">
             <h2 className="section-title" data-testid="aurem-loop-promo-heading">Aurem Loop</h2>
-            <p className="section-sub" data-testid="aurem-loop-promo-line">A local coding harness that checks its own work. Not available to download yet.</p>
+            <p className="section-sub" data-testid="aurem-loop-promo-line">
+              {harnessRelease.available
+                ? `A local coding harness that checks its own work. Download available — v${harnessRelease.version} (free, Windows).`
+                : "A local coding harness that checks its own work. Not available to download yet."}
+            </p>
+            {harnessRelease.available && (
+              <Link className="btn-ghost" to="/harness" data-testid="aurem-loop-promo-download-cta" style={{ marginRight: 16 }}>Download Aurem Loop</Link>
+            )}
             <Link className="btn-ghost" to="/harness" data-testid="aurem-loop-promo-cta">Learn about Aurem Loop →</Link>
           </section>
         )}

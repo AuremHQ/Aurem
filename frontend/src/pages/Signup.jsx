@@ -101,6 +101,10 @@ export default function Signup() {
         password: form.password,
         name: form.name.trim() || undefined,
         phone: phone || undefined,
+        // 2026-11-16 — tag harness-attributed signups so the admin
+        // Harness panel can tell these users apart from any other
+        // signup source. Only set for the one flow this applies to.
+        source: isHarness ? "harness_homepage" : undefined,
       });
       setToken(r.data.token);
       setUser({

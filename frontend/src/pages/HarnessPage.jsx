@@ -639,7 +639,16 @@ export default function HarnessPage() {
 
         <section id="stories" data-testid="harness-users-say" style={sectionStyle}>
           <h2 style={h2Style}>{content.usersSay?.headline}</h2>
-          <p style={pStyle}>{content.usersSay?.body}</p>
+          <p style={pStyle}>
+            {release?.available
+              // 2026-11-16 — launch copy fix. content.usersSay.body
+              // (from the canonical AuremHQ/aurem-loop content doc,
+              // which this workspace cannot edit) still says "has not
+              // shipped yet" — false once a release is published. No
+              // invented testimonial; just an honest "no quotes yet".
+              ? `Aurem Loop v${release.version} is out now — download it free and be one of the first to run it. No user quotes yet: this section will show real words from real users once they've run it.`
+              : content.usersSay?.body}
+          </p>
           <WaitlistForm idSuffix="stories" mailto={mailto} ctaLabel="Be one of the first — join the waitlist" />
         </section>
 
@@ -647,7 +656,17 @@ export default function HarnessPage() {
           <h2 style={h2Style}>{content.setup?.headline}</h2>
           <ol>
             {(content.setup?.steps || []).map((s, i) => (
-              <li key={i} data-testid={`harness-install-${i}`} style={pStyle}>{s}</li>
+              <li key={i} data-testid={`harness-install-${i}`} style={pStyle}>
+                {// 2026-11-16 — launch copy fix. Step 1's canonical text
+                // (from the content doc this workspace can't edit) says
+                // "the link appears once Phase B goes live" — true only
+                // while there's no real release yet. Once one is
+                // published, the parenthetical is stale; strip it
+                // rather than touching the rest of the sentence.
+                i === 0 && release?.available
+                  ? s.replace(/\s*\(the link appears once Phase B goes live\)/, "")
+                  : s}
+              </li>
             ))}
           </ol>
         </section>

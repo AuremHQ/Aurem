@@ -129,3 +129,44 @@ async def admin_list_downloads(
         "downloads": rows, "total": total,
         "free_count": free_count, "paid_count": paid_count,
     }
+
+
+# 2026-11-16 — admin Harness side-panel section. Signups + telemetry
+# status, both real backend reads, never hardcoded. Downloads and
+# releases are deliberately NOT duplicated here — the admin page
+# calls the existing /admin/harness/downloads and links to the
+# existing /admin/harness-releases page instead.
+@router.get("/admin/harness/signups")
+async def admin_list_harness_signups(source: str | None = None) -> dict:
+    """Recent signups with their attribution `signup_source`, so the
+    admin can tell harness_homepage-sourced accounts apart from every
+    other signup path. `source` optionally filters to one value;
+    omitted shows everything (most rows will have signup_source=None
+    — every signup path that predates this field, or any path other
+    than the harness page)."""
+    db = require_db()
+    filt: dict = {}
+    if source:
+        filt["signup_source"] = source
+    rows = await db.dev_users.find(
+        filt, {"_id": 0, "email": 1, "created_at": 1, "signup_source": 1},
+    ).sort("created_at", -1).limit(200).to_list(200)
+    harness_count = await db.dev_users.count_documents({"signup_source": "harness_homepage"})
+    return {"signups": rows, "total": len(rows), "harness_homepage_count": harness_count}
+
+
+@router.get("/admin/harness/telemetry-status")
+async def admin_harness_telemetry_status() -> dict:
+    """Real status of the telemetry pipeline (services/harness_telemetry.py
+    + POST /api/harness/telemetry) — event count and most recent
+    received_at, never a hardcoded "it works" claim."""
+    db = require_db()
+    total = await db.harness_telemetry.count_documents({})
+    latest = await db.harness_telemetry.find_one(
+        {}, {"_id": 0, "received_at": 1}, sort=[("received_at", -1)],
+    )
+    return {
+        "endpoint": "/api/harness/telemetry",
+        "total_events": total,
+        "last_received_at": latest["received_at"].isoformat() if latest and latest.get("received_at") else None,
+    }
