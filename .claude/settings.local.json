@@ -23,7 +23,28 @@
       "Bash(awk '/data-testid=\"ora-footer\"/,/<\\\\/footer>/' src/pages/Landing.jsx)",
       "Bash(grep -n '\\\\$9\\\\b\\\\|price.*9\\\\b' src/pages/Pricing.jsx)",
       "Bash(grep -n '\"\\\\$[0-9]' src/components/PricingCards.jsx)",
-      "Bash(yarn build *)"
+      "Bash(yarn build *)",
+      "Bash(curl -sS \"https://auremcto.com/api/harness/release-status\")",
+      "Bash(curl -sS \"https://auremcto.com/api/harness/content\")",
+      "Bash(curl -sS \"https://auremcto.com/api/health\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('build_hash:', d.get\\('build_hash'\\), '| built_at:', d.get\\('built_at'\\)\\)\")",
+      "Bash(agent-browser --session docs-verify-__CMDSUB_OUTPUT__ open https://auremcto.com/api/docs)",
+      "Bash(curl -sS \"https://auremcto.com/api/docs\")",
+      "Bash(curl -sS -o /dev/null -w \"%{http_code}\\\\n\" \"https://auremcto.com/api/docs\")",
+      "Bash(curl -sS -o /dev/null -w \"swagger-ui-bundle.js: %{http_code}\\\\n\" \"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js\")",
+      "Bash(curl -sS -D - -o /dev/null \"https://auremcto.com/api/docs\")",
+      "Bash(curl -sS -D - -o /dev/null \"http://localhost:8001/api/docs\")",
+      "Bash(curl -sS -D - -o /dev/null \"http://localhost:8001/api/health\")",
+      "Bash(agent-browser --session docs-local-verify-__CMDSUB_OUTPUT__ open http://localhost:8001/api/docs)",
+      "Bash(find /etc/nginx /app -maxdepth 3 -iname \"*.conf\" 2>/dev/null | grep -v node_modules | head -10 *)",
+      "Read(//etc/nginx/**)",
+      "Read(//etc/supervisor/conf.d/**)",
+      "Bash(curl -sS -D - -o /tmp/claude-0/-app/6c0d8223-f5c8-485e-bb7f-a25efe618353/scratchpad/r1.txt \"https://auremcto.com/api/nonexistent-xyz123\")",
+      "Bash(curl -sS -D - -o /tmp/claude-0/-app/6c0d8223-f5c8-485e-bb7f-a25efe618353/scratchpad/r2.txt \"https://auremcto.com/downloads/nonexistent-xyz123.zip\")",
+      "Bash(curl -sS -D - -o /dev/null \"https://auremcto.com/llms.txt\")",
+      "Bash(curl -sS -D - -o /tmp/claude-0/-app/6c0d8223-f5c8-485e-bb7f-a25efe618353/scratchpad/dl.zip \"http://localhost:8001/api/harness/download-public/0.8.0-e2e\")",
+      "Bash(curl -sS -o /dev/null -w \"%{http_code}\\\\n\" \"http://localhost:8001/api/harness/download-public/0.7.9\")",
+      "Bash(curl -sS -D - -o /tmp/claude-0/-app/6c0d8223-f5c8-485e-bb7f-a25efe618353/scratchpad/installer.ps1 \"http://localhost:3000/install-aurem-loop.ps1\")"
     ]
   }
 }

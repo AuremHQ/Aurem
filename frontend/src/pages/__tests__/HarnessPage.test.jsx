@@ -36,27 +36,42 @@ const CONTENT = {
     waitlistBody: "Please add me.",
   },
   featureTags: ["$0 for local use"],
-  demoVideo: { url: "https://example.com/demo.mp4", caption: "Illustration" },
+  demoVideo: {
+    url: "https://example.com/demo.mp4",
+    caption: "Illustration of the flow, not a real recording — the harness is not downloadable yet.",
+  },
   setApart: {
     headline: "Refine your model.",
     wspKit: { badge: "EXPERIMENTAL", body: "wsp body" },
     phoneTunnel: { badge: "OPTIONAL", body: "tunnel body" },
   },
-  githubStats: { repoLabel: "wsp-kit", note: "note", clones: 939, views: 562, lastVerified: "10 Nov 2026" },
+  githubStats: {
+    repoLabel: "wsp-kit",
+    note: "These numbers are for the wsp-kit research repo, not harness downloads — the harness itself hasn't shipped.",
+    clones: 939, views: 562, lastVerified: "10 Nov 2026",
+  },
   whatItIsNot: ["Not a hosted service."],
   compare: {
     headline: "Compare",
     body: "compare body",
-    auremRow: { Price: "$0 (local)" },
+    auremRow: {
+      Price: "$0 (local)",
+      Evidence: "Tie with bare model (26/48 vs 27/48, false accepts 6)",
+      Model: "qwen2.5-coder:1.5b",
+    },
     competitorNote: "will be filled in",
   },
-  whoShouldNotPick: ["You need frontier models."],
+  whoShouldNotPick: [
+    "You need frontier models.",
+    "You want the highest possible pass rate over local-first operation — the harness ties, not beats, the bare model on the bench above.",
+  ],
   usersSay: { headline: "What users say", body: "no users yet" },
   setup: {
     headline: "Setup",
     steps: [
       "Download the release zip from this page (the link appears once Phase B goes live) and verify its SHA-256 checksum, shown here too.",
       "Unzip it, then run install.bat.",
+      "The installer checks for Python and installs Ollama plus the qwen2.5-coder:1.5b model (about 1 GB) if they're missing.",
     ],
   },
   troubleshooting: [{ q: "Stuck?", a: "Wait." }],
@@ -345,6 +360,87 @@ describe("HarnessPage", () => {
       expect(step0).toHaveTextContent(
         "Download the release zip from this page and verify its SHA-256 checksum, shown here too.",
       );
+    });
+
+    // 2026-11-17 — launch copy fix, round 2. These three strings were
+    // missed in round 1 because they live in fields (githubStats.note,
+    // demoVideo.caption) or a component (WaitlistForm) that weren't
+    // checked for the "has not shipped" claim specifically.
+    it("keeps the canonical github-stats note unchanged when no release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-github-stats-note")).toHaveTextContent(
+        "the harness itself hasn't shipped",
+      );
+    });
+
+    it("strips the stale 'harness itself hasn't shipped' clause from the github-stats note once a release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const note = screen.getByTestId("harness-github-stats-note");
+      expect(note).not.toHaveTextContent("hasn't shipped");
+      expect(note).toHaveTextContent("These numbers are for the wsp-kit research repo, not harness downloads.");
+    });
+
+    it("strips the stale 'not downloadable yet' clause from the demo-video caption once a release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const caption = screen.getByTestId("harness-demo-video-caption");
+      expect(caption).not.toHaveTextContent("not downloadable yet");
+      expect(caption).toHaveTextContent("Illustration of the flow, not a real recording.");
+    });
+
+    it("replaces the stories-section waitlist form with a download CTA once a release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: RELEASE });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.queryByTestId("harness-waitlist-form-stories")).not.toBeInTheDocument();
+      expect(screen.getByTestId("harness-stories-download-cta")).toBeInTheDocument();
+    });
+
+    it("keeps the stories-section waitlist form when no release is published", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-waitlist-form-stories")).toBeInTheDocument();
+      expect(screen.queryByTestId("harness-stories-download-cta")).not.toBeInTheDocument();
+    });
+
+    // 2026-11-17 — bench/model copy update (founder-confirmed,
+    // source: PC bench run 2026-11-15, 216/216 rows). Applied
+    // unconditionally — not gated on release.available, since this
+    // is a fact about the harness itself, not a Phase A/B toggle.
+    it("shows the updated bench evidence and PC model, not the canonical content doc's older numbers", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      expect(screen.getByTestId("harness-compare-evidence")).toHaveTextContent(
+        "Beats bare model (46/48 vs 31/48 and 33/48, false accepts 0)",
+      );
+      expect(screen.getByTestId("harness-compare-evidence")).not.toHaveTextContent("Tie with bare model");
+      expect(screen.getByTestId("harness-compare-model")).toHaveTextContent("qwen3:8b");
+      expect(screen.getByTestId("harness-compare-model")).not.toHaveTextContent("qwen2.5-coder");
+    });
+
+    it("rewrites the 'ties, not beats' who-should-not-pick bullet to say it beats the bare model", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const bullet = screen.getByTestId("harness-who-not-1");
+      expect(bullet).not.toHaveTextContent("ties, not beats");
+      expect(bullet).toHaveTextContent("the harness beats the bare model");
+    });
+
+    it("corrects the setup step's PC model name to qwen3:8b", async () => {
+      mockEndpoints({ flag: true, content: CONTENT, release: { available: false } });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId("harness-page")).toBeInTheDocument());
+      const step2 = screen.getByTestId("harness-install-2");
+      expect(step2).toHaveTextContent("qwen3:8b");
+      expect(step2).not.toHaveTextContent("qwen2.5-coder");
     });
   });
 });

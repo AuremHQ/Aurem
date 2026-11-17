@@ -2766,10 +2766,27 @@ async def _security_headers(request, call_next):
     # 'unsafe-inline' kept for style+script because lucide-react and our
     # markdown renderer inject inline CSS; we'll tighten with nonces in a
     # later iteration once the chat preview pane is on its own iframe.
+    # 2026-11-17 — real bug found live: FastAPI's /api/docs (Swagger
+    # UI) and /api/redoc load their JS/CSS from cdn.jsdelivr.net, which
+    # the CSP's script-src/style-src never allowed — the script was
+    # silently blocked, window.SwaggerUIBundle stayed undefined, and
+    # #swagger-ui never rendered (blank white page; curl's 200 and the
+    # page's own <title> both look fine, so this only shows up in a
+    # real browser). Scoped to ONLY these two doc routes rather than
+    # loosening the site-wide CSP for every page.
+    _is_api_docs_route = request.url.path in ("/api/docs", "/api/redoc")
+    _csp_script_src = (
+        "script-src 'self' 'unsafe-inline' https://auremcto.com https://bzrcdn.openai.com"
+        + (" https://cdn.jsdelivr.net" if _is_api_docs_route else "") + "; "
+    )
+    _csp_style_src = (
+        "style-src 'self' 'unsafe-inline'"
+        + (" https://cdn.jsdelivr.net" if _is_api_docs_route else "") + "; "
+    )
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://auremcto.com https://bzrcdn.openai.com; "
-        "style-src 'self' 'unsafe-inline'; "
+        + _csp_script_src
+        + _csp_style_src +
         "img-src 'self' data: https:; "
         "connect-src 'self' https://auremcto.com wss://auremcto.com "
         "https://openrouter.ai https://api.github.com "

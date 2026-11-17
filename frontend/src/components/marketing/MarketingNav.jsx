@@ -32,6 +32,17 @@
  * "ORA"/"by Aurem" wordmark for a page under a different name, e.g.
  * `<MarketingNav logoText="Aurem Loop" logoSubtext="Harness" />` on
  * /harness. Same orange accent + muted-subtext styling either way.
+ *
+ * `returnTo` prop (2026-11-17 — real bug, proven by a screen
+ * recording: a visitor who clicked this top-nav "Sign in" from
+ * /harness, not the page's own download-gate button, landed in the
+ * ORA app after signing in instead of back on /harness. Root cause:
+ * this component's own Sign in / Start free links were hardcoded to
+ * plain /login and /signup with no `?next=` at all — the download
+ * gate's redirect was never the broken part. Pass
+ * `<MarketingNav returnTo="/harness" />` on any page that wants its
+ * nav's auth links to come back to that page afterward; omitted
+ * (every other page) keeps today's exact hrefs, unchanged.
  */
 import React from "react";
 import { Link } from "react-router-dom";
@@ -75,7 +86,8 @@ const CSS = `
 }
 `;
 
-export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem" }) {
+export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem", returnTo = "" }) {
+  const nextQuery = returnTo ? `?next=${encodeURIComponent(returnTo)}` : "";
   return (
     <nav className="aurem-marketing-nav" data-testid="ora-nav">
       <style>{CSS}</style>
@@ -100,8 +112,8 @@ export default function MarketingNav({ minimal = false, logoText = "ORA", logoSu
             )}
           </>
         )}
-        <Link className="mn-link" to="/login" data-testid="nav-login">Sign in</Link>
-        <Link className="mn-cta" to="/signup" data-testid="nav-signup-cta">Start free</Link>
+        <Link className="mn-link" to={`/login${nextQuery}`} data-testid="nav-login">Sign in</Link>
+        <Link className="mn-cta" to={`/signup${nextQuery}`} data-testid="nav-signup-cta">Start free</Link>
       </div>
     </nav>
   );

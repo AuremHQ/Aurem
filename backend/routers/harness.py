@@ -32,13 +32,14 @@ import re
 import time
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from cto_services.db import require_db
 from services.feature_flags import is_enabled
 from services.harness_auth import verify_harness_identity
 from services.harness_content_repo import fetch_harness_page_content
-from services.harness_releases import get_latest_release
+from services.harness_releases import get_latest_release, get_release_artifact_bytes
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 from services.wsp_kit_stats import fetch_wsp_kit_live_stats
 
@@ -104,10 +105,14 @@ async def harness_content() -> dict:
 # feature flag for it. D1 (hosting a real package) is not approved as
 # of this writing (see routers/admin_harness.py's own docstring), so
 # get_latest_release() correctly returns None and `available` stays
-# false until an admin explicitly publishes a real release. Never
-# returns the artifact bytes themselves — only POST /aurem-dev/
-# harness/download (routers/harness_downloads.py, login required)
-# does that.
+# false until an admin explicitly publishes a real release. This
+# endpoint itself never returns artifact bytes — two separate routes
+# do: POST /aurem-dev/harness/download (routers/harness_downloads.py,
+# login required, per-user identity.json injected into the zip) for
+# the website's own download button, and GET /harness/download-public
+# below (no login, no identity injection) for the one-line installer
+# script — a deliberate, acknowledged trade-off documented in the
+# installer script's own header comment, not an oversight.
 _RELEASE_PLATFORM = "windows"
 
 
@@ -127,6 +132,54 @@ async def harness_release_status() -> dict:
         "size_bytes": release.get("size_bytes"),
         "published_at": release.get("published_at"),
     }
+
+
+_INSTALLER_DOWNLOAD_RATE_PER_MINUTE = 5
+
+
+# 2026-11-17 — the one-line PowerShell installer
+# (frontend/public/install-aurem-loop.ps1) runs as `irm ... | iex`
+# with no Authorization header by design (a public one-liner can't
+# carry a secret), so it can't call the authenticated
+# /aurem-dev/harness/download route. This serves the SAME base
+# artifact bytes get_latest_release() already points at — no
+# identity.json injection (there's no per-user identity for an
+# anonymous caller; the harness runs in free/no-identity mode, same
+# as a /harness/verify call with no bin/token). `{version}` in the
+# path must match the ACTUALLY-latest published release — this never
+# serves an older, possibly-superseded version just because the
+# caller's URL asked for one, so a stale pinned installer script
+# fails closed (404) instead of silently re-installing an old build.
+@router.get("/harness/download-public/{version}")
+async def harness_download_public(version: str, request: Request) -> Response:
+    client_ip = client_ip_from_request(request)
+    if not await check_rate_limit_async(
+        f"harness_download_public:{client_ip}", _INSTALLER_DOWNLOAD_RATE_PER_MINUTE,
+    ):
+        raise HTTPException(429, "Too many download attempts, try again shortly")
+
+    db = require_db()
+    release = await get_latest_release(db, platform=_RELEASE_PLATFORM)
+    if not release or release["version"] != version:
+        raise HTTPException(404, "No matching published release")
+
+    artifact_bytes = await get_release_artifact_bytes(db, release_id=release["release_id"])
+    if not artifact_bytes:
+        logger.error(
+            "harness_download_public: release %s has no stored artifact",
+            release["release_id"],
+        )
+        raise HTTPException(503, "Release artifact temporarily unavailable")
+
+    filename = f"aurem-loop-{release['version']}.zip"
+    return Response(
+        content=artifact_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Aurem-Package-SHA256": release["artifact_sha256"],
+        },
+    )
 
 
 class HarnessWaitlistRequest(BaseModel):

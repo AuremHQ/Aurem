@@ -150,6 +150,15 @@ const downloadSuccessStyle = {
   fontSize: 14, fontWeight: 600, color: "var(--text, #e8e3d3)",
 };
 
+// 2026-11-17 — launch copy fix (bench update, founder-confirmed,
+// source: PC bench run 2026-11-15, 216/216 rows). The canonical
+// content doc (AuremHQ/aurem-loop, this workspace can't edit) still
+// shows an older run (26/48 vs 27/48, qwen2.5-coder:1.5b). Applied
+// unconditionally — a fact about the harness's own accuracy and PC
+// model, not a Phase A/B release-availability toggle.
+const REAL_BENCH_EVIDENCE = "Beats bare model (46/48 vs 31/48 and 33/48, false accepts 0)";
+const REAL_BENCH_MODEL = "qwen3:8b";
+
 // Fix 3 (2026-11-11) — replaces the flat black "Loading…" text with a
 // lightweight pulsing skeleton (nav height + hero-shaped bars) so the
 // first paint looks like "the real page is arriving" instead of "the
@@ -429,7 +438,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-loading" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
         <HarnessSkeleton />
       </div>
     );
@@ -439,7 +448,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-not-available" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
         <div style={pageStyle}>Aurem Loop isn&apos;t available yet.</div>
       </div>
     );
@@ -449,7 +458,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-content-loading" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
         <HarnessSkeleton />
       </div>
     );
@@ -459,7 +468,7 @@ export default function HarnessPage() {
     return (
       <div data-testid="harness-page-content-unavailable" className="aurem-harness-page">
         <style>{HARNESS_BG_CSS}</style>
-        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+        <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
         <div style={pageStyle}>Aurem Loop&apos;s page content is temporarily unavailable — check back shortly.</div>
       </div>
     );
@@ -477,7 +486,7 @@ export default function HarnessPage() {
   return (
     <div data-testid="harness-page" className="aurem-harness-page">
       <style>{HARNESS_BG_CSS}</style>
-      <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" />
+      <MarketingNav minimal logoText="Aurem Loop" logoSubtext="Harness" returnTo="/harness" />
       <div style={pageStyle}>
         <nav data-testid="harness-anchor-nav" style={anchorNavStyle} aria-label="Page sections">
           {ANCHORS.map(([id, label]) => (
@@ -559,7 +568,15 @@ export default function HarnessPage() {
               playsInline
               style={{ width: "100%", borderRadius: 8, border: "1px solid var(--border, rgba(255,200,120,0.16))" }}
             />
-            <p style={pStyle}>{content.demoVideo.caption}</p>
+            <p style={pStyle} data-testid="harness-demo-video-caption">
+              {// 2026-11-17 — launch copy fix. Canonical caption ends
+              // "— the harness is not downloadable yet", false once a
+              // release is published; "illustration, not a real
+              // recording" stays true either way.
+              release?.available
+                ? (content.demoVideo.caption || "").replace(/\s*—\s*the harness is not downloadable yet\.?$/, ".")
+                : content.demoVideo.caption}
+            </p>
           </section>
         )}
 
@@ -577,7 +594,17 @@ export default function HarnessPage() {
 
         <section id="honest-numbers" data-testid="harness-github-stats" style={sectionStyle}>
           <h2 style={h2Style}>{content.githubStats?.repoLabel}</h2>
-          <p style={pStyle}>{content.githubStats?.note}</p>
+          <p style={pStyle} data-testid="harness-github-stats-note">
+            {// 2026-11-17 — launch copy fix. This note's canonical text
+            // (from the content doc this workspace can't edit) ends
+            // "— the harness itself hasn't shipped" — true only before
+            // a real release existed. Strip that clause once one is
+            // published; the rest of the note (these numbers are for a
+            // different repo) stays accurate either way.
+            release?.available
+              ? (content.githubStats?.note || "").replace(/\s*—\s*the harness itself hasn't shipped\.?$/, ".")
+              : content.githubStats?.note}
+          </p>
           <div style={statRowStyle}>
             <div data-testid="harness-stat-stars" style={statBoxStyle}>
               <div style={statNumStyle}>{stars ?? "—"}</div>
@@ -615,12 +642,17 @@ export default function HarnessPage() {
           <p style={pStyle}>{content.compare?.body}</p>
           <table style={tableStyle}>
             <tbody>
-              {Object.entries(content.compare?.auremRow || {}).map(([k, v]) => (
-                <tr key={k}>
-                  <td style={tdStyle}>{k}</td>
-                  <td style={tdStyle} data-testid={`harness-compare-${k.replace(/\s+/g, "-").toLowerCase()}`}>{v}</td>
-                </tr>
-              ))}
+              {Object.entries(content.compare?.auremRow || {}).map(([k, v]) => {
+                const display = k === "Evidence" ? REAL_BENCH_EVIDENCE
+                  : k === "Model" ? REAL_BENCH_MODEL
+                  : v;
+                return (
+                  <tr key={k}>
+                    <td style={tdStyle}>{k}</td>
+                    <td style={tdStyle} data-testid={`harness-compare-${k.replace(/\s+/g, "-").toLowerCase()}`}>{display}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <p style={{ ...pStyle, fontSize: 12, marginTop: 12 }} data-testid="harness-competitor-note">
@@ -632,7 +664,14 @@ export default function HarnessPage() {
           <h2 style={h2Style}>Who should not pick Aurem Loop</h2>
           <ul>
             {(content.whoShouldNotPick || []).map((s, i) => (
-              <li key={i} data-testid={`harness-who-not-${i}`} style={pStyle}>{s}</li>
+              <li key={i} data-testid={`harness-who-not-${i}`} style={pStyle}>
+                {s.includes("ties, not beats")
+                  ? s.replace(
+                      /the harness ties, not beats, the bare model on the bench above\.?/,
+                      "the harness beats the bare model on the bench above, but a frontier cloud tool may still outperform it on hard, multi-file tasks.",
+                    )
+                  : s}
+              </li>
             ))}
           </ul>
         </section>
@@ -649,25 +688,36 @@ export default function HarnessPage() {
               ? `Aurem Loop v${release.version} is out now — download it free and be one of the first to run it. No user quotes yet: this section will show real words from real users once they've run it.`
               : content.usersSay?.body}
           </p>
-          <WaitlistForm idSuffix="stories" mailto={mailto} ctaLabel="Be one of the first — join the waitlist" />
+          {release?.available ? (
+            // 2026-11-17 — launch copy fix. The waitlist CTA ("one
+            // email when the download goes live") is stale once a
+            // release is actually live — point at the real download
+            // section instead of collecting another waitlist email.
+            <a href="#what-it-is" data-testid="harness-stories-download-cta" style={buttonStyle}>
+              Download Aurem Loop →
+            </a>
+          ) : (
+            <WaitlistForm idSuffix="stories" mailto={mailto} ctaLabel="Be one of the first — join the waitlist" />
+          )}
         </section>
 
         <section id="setup" data-testid="harness-install-steps" style={sectionStyle}>
           <h2 style={h2Style}>{content.setup?.headline}</h2>
           <ol>
-            {(content.setup?.steps || []).map((s, i) => (
-              <li key={i} data-testid={`harness-install-${i}`} style={pStyle}>
-                {// 2026-11-16 — launch copy fix. Step 1's canonical text
-                // (from the content doc this workspace can't edit) says
-                // "the link appears once Phase B goes live" — true only
-                // while there's no real release yet. Once one is
-                // published, the parenthetical is stale; strip it
-                // rather than touching the rest of the sentence.
-                i === 0 && release?.available
-                  ? s.replace(/\s*\(the link appears once Phase B goes live\)/, "")
-                  : s}
-              </li>
-            ))}
+            {(content.setup?.steps || []).map((s, i) => {
+              let text = s;
+              // 2026-11-16 — launch copy fix. Step 1's canonical text
+              // says "the link appears once Phase B goes live" — true
+              // only while there's no real release yet.
+              if (i === 0 && release?.available) {
+                text = text.replace(/\s*\(the link appears once Phase B goes live\)/, "");
+              }
+              // 2026-11-17 — bench/model update (see REAL_BENCH_MODEL).
+              text = text.replace(/qwen2\.5-coder:1\.5b model \(about 1 GB\)/, `${REAL_BENCH_MODEL} model`);
+              return (
+                <li key={i} data-testid={`harness-install-${i}`} style={pStyle}>{text}</li>
+              );
+            })}
           </ol>
         </section>
 
