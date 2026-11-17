@@ -67,7 +67,7 @@ function ProjectRow({ p }) {
   );
 }
 
-function BINDetail({ bin, onClose, onTierChange }) {
+function BINDetail({ bin, onTierChange }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {

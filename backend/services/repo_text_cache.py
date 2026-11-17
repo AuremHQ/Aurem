@@ -74,7 +74,6 @@ async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
     _hit  = False
     _files = 0
 
-    _timeout = httpx.Timeout(45.0, connect=6.0, read=15.0)
     async with ext_client("github", timeout=httpx.Timeout(45.0, connect=6.0, read=15.0)) as client:
         blobs, tree_sha = await _list_repo_tree_with_sha(
             client, owner, repo, pat,

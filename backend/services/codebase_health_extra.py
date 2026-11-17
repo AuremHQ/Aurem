@@ -352,7 +352,6 @@ def _scan_git_hygiene(text_cache: dict[str, str]) -> list[dict]:
 # ──────────────────────────────────────────────────────────────────────
 _BARE_EXCEPT_PY = re.compile(r'except\s*:\s*\n\s*pass\b', re.IGNORECASE)
 _EMPTY_CATCH_JS = re.compile(r'catch\s*\([^)]*\)\s*\{\s*\}')
-_FETCH_NO_CATCH = re.compile(r'fetch\([^)]*\)(?!\s*\.then[^;]*\.catch)(?:\s*\.then\([^;]*\));', re.IGNORECASE)
 
 
 def _scan_error_handling(text_cache: dict[str, str]) -> list[dict]:

@@ -34,7 +34,7 @@ function Toggle({ enabled, onChange, disabled, testid }) {
   );
 }
 
-function FlagRow({ flag, onToggle, onDelete }) {
+function FlagRow({ flag, onToggle }) {
   const overrides = Object.entries(flag.user_overrides || {});
   const [busy, setBusy] = useState(false);
   const rolloutPct = flag.rollout_pct ?? 100;

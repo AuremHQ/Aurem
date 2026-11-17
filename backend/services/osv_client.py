@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 from cvss import CVSS2, CVSS3
 

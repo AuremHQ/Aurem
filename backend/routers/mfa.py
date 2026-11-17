@@ -35,7 +35,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin, require_admin_dep
+from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import get_db
 from services.mfa import (
     generate_secret,

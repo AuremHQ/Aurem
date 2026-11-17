@@ -636,11 +636,6 @@ const styles = {
     marginRight: 8,
   },
 
-  installBtn: {
-    display: "inline-block", background: "#38bdf8", color: "#0f172a",
-    padding: "10px 20px", borderRadius: 6, textDecoration: "none",
-    fontWeight: 600, fontSize: 14, marginRight: 12,
-  },
   primaryBtn: {
     background: "#38bdf8", color: "#0f172a", border: "none",
     padding: "10px 20px", borderRadius: 6, fontWeight: 600,

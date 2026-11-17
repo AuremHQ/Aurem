@@ -34,7 +34,7 @@ _LEVEL_RANK = {
 # until the Owner explicitly assigns screen levels via the Team screen
 # (AT2/S3) or a per-person override.
 DEFAULT_ROLES: dict[str, dict] = {
-    "developer": {"role_key": "developer", "screens": {}, "sensitive_data": {}},
+    "developer": {"role_key": "developer", "screens": {}},
 }
 
 
@@ -60,7 +60,7 @@ async def get_role(role_key: str) -> dict:
         row = await db.admin_roles.find_one({"role_key": role_key})
         if row:
             return row
-    return DEFAULT_ROLES.get(role_key, {"screens": {}, "sensitive_data": {}})
+    return DEFAULT_ROLES.get(role_key, {"screens": {}})
 
 
 async def effective_level(member: dict, screen_key: str) -> int:

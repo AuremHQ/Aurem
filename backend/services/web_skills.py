@@ -39,8 +39,6 @@ TAVILY_TIMEOUT = 15.0     # per playbook hard cap
 FIRECRAWL_SCRAPE_TIMEOUT = 60.0
 FIRECRAWL_CRAWL_POLL_MAX = 90.0   # total seconds we'll wait for /crawl
 
-URL_RE = re.compile(r"https?://[^\s\"'<>]+")
-
 
 # 2026-11-09 — devil's-advocate audit: this used to be a hand-rolled,
 # hostname-STRING-only blocklist (no DNS resolution at all), despite

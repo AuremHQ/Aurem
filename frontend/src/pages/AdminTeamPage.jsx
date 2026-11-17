@@ -17,7 +17,7 @@ import { toast } from "../components/Toast";
 
 const LEVELS = ["off", "view", "work", "manage"];
 
-function CreateInviteDialog({ screens, onCreated, onClose }) {
+function CreateInviteDialog({ onCreated, onClose }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");

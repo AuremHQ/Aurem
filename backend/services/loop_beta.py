@@ -6,7 +6,6 @@ logging, and Maxx-mode cost/quota tracking so we don't scatter these
 concerns across routers/services.
 
 Public API:
-  is_kill_switch_on() -> bool
   set_kill_switch(on: bool, reason: str) -> None
   is_user_allowed(user_doc) -> tuple[bool, str]
         # (allowed, reject_reason)
@@ -65,20 +64,6 @@ _ACTIVE_STATES = {
 # ── Kill-switch (env-driven + in-DB override) ────────────────────────
 # Env var is the source of truth for boot; DB flag allows runtime flip
 # without a restart (auto-trip writes here, admin can flip via API).
-
-def is_kill_switch_on(db=None) -> bool:
-    """True if Loop Mode should be OFF for everyone regardless of
-    tier / beta flag. Env wins if set; else DB flag."""
-    if _env_bool("LOOP_MODE_KILL_SWITCH", "false"):
-        return True
-    if db is None:
-        return False
-    try:
-        # Sync guard for callers that can't await (rare — most paths
-        # should use is_kill_switch_on_async).
-        return False
-    except Exception:
-        return False
 
 
 async def is_kill_switch_on_async(db) -> bool:
@@ -399,24 +384,6 @@ async def auto_trip_kill_switch_if_stuck(db) -> Optional[dict]:
             **trip,
             "created_at": datetime.now(timezone.utc),
         })
-    except Exception:
-        pass
-    # Best-effort incident log entry so it also shows up in Guard-20 UI.
-    try:
-        from services.incident_log import upsert_incident
-        await upsert_incident(
-            db,
-            guard="loop_beta",
-            severity="critical",
-            title=f"Loop kill-switch auto-tripped ({n} stuck)",
-            detail=reason,
-            source_key="loop_beta:auto_trip",
-            follow_up=(
-                "Investigate loop_sessions.resume_reason distribution "
-                "in the last 10 min; once fixed, POST "
-                "/api/aurem-dev/admin/loop-beta/kill-switch {enabled:false}."
-            ),
-        )
     except Exception:
         pass
     logger.error("[loop_beta] kill-switch AUTO-TRIPPED: %s", reason)

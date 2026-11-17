@@ -11,7 +11,6 @@ Mounted under /api/aurem-dev/admin/* by main.py.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -19,8 +18,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin_dep, require_admin
-from cto_services.db import get_db, require_db
+from cto_services.auth import require_admin_dep, require_admin
+from cto_services.db import require_db
 # Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
 # (activation funnel, dev_users buckets, etc.). Founders click around
 # the admin panel rapidly; without this every click fires 5+ heavy
@@ -848,9 +847,6 @@ async def _compute_activation_funnel() -> dict:
 # ── Iter 212m-187 — Robot Guide messages (admin-editable ORA welcome) ─
 # Lets the admin change the ORA robot welcome wording shown on the
 # /signup and /login windows. Public read lives at GET /auth/robot-guide.
-
-
-_SCRIPT_RE = re.compile(r"<\s*/?\s*script[^>]*>", re.IGNORECASE)
 
 
 # Iter 212m-28c — Admin debug endpoint for the repo_context timings

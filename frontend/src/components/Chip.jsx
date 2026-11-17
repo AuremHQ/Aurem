@@ -80,37 +80,3 @@ export function ChipRow({ children, max = 4, statusRow = false, testId }) {
   );
 }
 
-/**
- * <GroupChip> — E3 group-merge rule. Collapses N related same-family
- * result chips (e.g. verify's regex/ai-review/sandbox sub-checks) into
- * ONE expandable chip. Click/hover reveals the sub-results inline.
- */
-export function GroupChip({ label, passCount, total, tone = "success",
-                             icon: Icon, items, testId }) {
-  const [open, setOpen] = React.useState(false);
-  return (
-    <span style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
-      <Chip
-        size="sm" tone={tone} icon={Icon} interactive
-        testId={testId}
-        onClick={() => setOpen((o) => !o)}
-        title={items?.map((i) => i.label).join(", ")}
-      >
-        {label} {passCount}/{total} · details{open ? "▾" : "▸"}
-      </Chip>
-      {open && Array.isArray(items) && (
-        <span
-          className="chip-row"
-          data-testid={testId ? `${testId}-detail` : undefined}
-          style={{ paddingLeft: 4 }}
-        >
-          {items.map((it, i) => (
-            <Chip key={i} size="sm" tone={it.tone || "neutral"}>
-              {it.label}
-            </Chip>
-          ))}
-        </span>
-      )}
-    </span>
-  );
-}

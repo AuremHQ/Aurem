@@ -134,7 +134,6 @@ export default function OraGuideMascot() {
   const [open, setOpen] = useState(false);
   const [autoGroup, setAutoGroup] = useState(null);  // stage-triggered bubble
   const [panelMode, setPanelMode] = useState("stage"); // "stage" | "external" | "first_scan" | "general" | "suggestions" | "escalating" | "escalated"
-  const pollRef = useRef(null);
   // UI-fix D4 — the bubble isn't a true modal (role="status", no
   // focus trap needed), but Escape should still close it and return
   // focus to the toggle button that opened it.
@@ -337,7 +336,6 @@ export default function OraGuideMascot() {
     }
     tick();
     const intervalId = setInterval(tick, POLL_MS);
-    pollRef.current = intervalId;
     // 2026-09-09 — bug fix (founder-reported, screenshot): a user who
     // connects a repo DIRECTLY (no skip) still saw the stale
     // "One step left — pick a repo…" bubble for up to POLL_MS

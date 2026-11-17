@@ -269,19 +269,6 @@ async def build_repo_index(
 
 
 # ── Internals ────────────────────────────────────────────────────────
-async def _maybe_decrypt(user_id: str, token: Optional[str]) -> Optional[str]:
-    """Pass-through if `token` is None or already plaintext; otherwise
-    use the vault to decrypt. Never raises — returns None on failure."""
-    if not token:
-        return None
-    if not token.startswith("v1:"):
-        return token
-    try:
-        from services.vault import decrypt
-        return await decrypt(user_id, token, kind="github_token")
-    except Exception as e:
-        logger.warning("repo_indexing: PAT decrypt failed: %r", e)
-        return None
 
 
 def _analyse_tree(tree: list[dict]) -> dict:

@@ -40,24 +40,3 @@ export const shipFiles = [
 
 export const previewMeta = { url: "aurem.vercel.app", buildTime: "1.2s" };
 
-export const graphNodes = [
-  { id: "mw",      label: "middleware.ts", kind: "active", x: 50, y: 20 },
-  { id: "auth",    label: "auth.ts",       kind: "active", x: 30, y: 42 },
-  { id: "redis",   label: "redis.ts",      kind: "active", x: 68, y: 42 },
-  { id: "session", label: "session.ts",    kind: "module", x: 22, y: 64 },
-  { id: "jwt",     label: "jwt.ts",        kind: "lib",    x: 46, y: 64 },
-  { id: "db",      label: "db.ts",         kind: "module", x: 74, y: 64 },
-  { id: "utils",   label: "utils.ts",      kind: "lib",    x: 18, y: 82 },
-  { id: "types",   label: "types.ts",      kind: "lib",    x: 55, y: 82 },
-];
-
-export const graphEdges = [
-  { from: "mw",      to: "auth" },
-  { from: "mw",      to: "redis" },
-  { from: "auth",    to: "session" },
-  { from: "auth",    to: "jwt" },
-  { from: "redis",   to: "db" },
-  { from: "session", to: "utils" },
-  { from: "jwt",     to: "types" },
-  { from: "db",      to: "types" },
-];

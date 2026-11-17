@@ -470,7 +470,6 @@ def format_recall_block(recalled: list[dict]) -> str:
         return ""
     lines = ["--- PAST SUCCESSFUL FIXES FOR THIS RULE (precedent) ---"]
     for i, r in enumerate(recalled, 1):
-        ts  = r.get("created_at") or 0
         sev = r.get("severity") or "?"
         sha = (r.get("commit_sha") or "")[:8]
         f   = r.get("file") or "?"

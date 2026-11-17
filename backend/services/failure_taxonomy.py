@@ -81,11 +81,3 @@ def classify_failure_reason_from_text(error: str) -> str:
 # `_run_syntax_gate`'s auto-retry-with-feedback) before this code is
 # ever recorded, so by the time it reaches here, that budget is
 # already spent — no further blind retry.
-RETRY_POLICY: dict[str, dict] = {
-    FailureReason.TIMEOUT:             {"retry": True,  "backoff_s": 2},
-    FailureReason.CONTEXT_NOT_FOUND:   {"retry": True,  "backoff_s": 0.5},
-    FailureReason.HALLUCINATION_GATE:  {"retry": False, "backoff_s": None},
-    FailureReason.POLICY_BLOCKED:      {"retry": False, "backoff_s": None},
-    FailureReason.USER_CANCELLED:      {"retry": False, "backoff_s": None},
-    FailureReason.UNKNOWN:             {"retry": False, "backoff_s": None},
-}

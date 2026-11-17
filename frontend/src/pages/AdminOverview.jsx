@@ -1382,25 +1382,6 @@ function FeatureRow({ name, status, note }) {
   );
 }
 
-function ActionRow({ title, detail, urgent }) {
-  return (
-    <div style={{
-      padding: "9px 12px", borderRadius: 8,
-      background: urgent ? "rgba(239,159,39,0.08)" : "rgba(255,255,255,0.03)",
-      border: `1px solid ${urgent ? "rgba(239,159,39,0.2)" : "rgba(255,255,255,0.07)"}`,
-    }}>
-      <div style={{
-        fontSize: 12, fontWeight: 500,
-        color: urgent ? "#EF9F27" : "var(--text)",
-        marginBottom: 3,
-      }}>
-        {urgent ? "⚡ " : ""}{title}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>{detail}</div>
-    </div>
-  );
-}
-
 
 // ── Iter 63 — Cache & refresh panel ──────────────────────────────────
 //

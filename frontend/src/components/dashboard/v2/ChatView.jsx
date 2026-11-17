@@ -12,7 +12,7 @@ import {
   Loader2, RefreshCw, ShieldAlert, GitBranch, Paperclip, BarChart2, Zap,
 } from "lucide-react";
 import ScanStatusStrip, { markScanJustCompleted } from "../../ScanStatusStrip";
-import SlashCommandMenu, { matchSlashCommands, SLASH_COMMANDS } from "../../SlashCommandMenu";
+import SlashCommandMenu, { matchSlashCommands } from "../../SlashCommandMenu";
 import { getActiveProjectId, useActiveProject } from "../../TabBar";
 import { api } from "../../../lib/api";
 import { preventSmartPunctuation } from "../../../utils/chatTextUtils";

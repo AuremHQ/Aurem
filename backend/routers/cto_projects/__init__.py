@@ -17,28 +17,17 @@ submodule with its own separate globals.
 """
 # arch: allow-http — GitHub repo API for project setup (iter 212m-225)
 from __future__ import annotations
-import asyncio
-import json
 import logging
 import os
-import re
 import shutil
-import subprocess
-import time
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db, require_db
-from core.errors import PushFailedError
 from services.llm import call_llm
-from services.usage import assert_has_budget, assert_has_task_budget, get_usage, is_founder_email
+from services.usage import assert_has_budget, assert_has_task_budget
 from services.github_api_writer import (
     commit_files as gh_api_commit,
     revert_commit as gh_api_revert,
@@ -105,7 +94,6 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 # can never drift from the Loop Mode equivalent (`routers/loop.py::
 # start_loop`) — formalized 2026-08-26 once Loop Mode's own gap (zero
 # ambiguity protection despite being live for Pro/Team) was closed.
-from services.ambiguity_gate import is_ambiguous_task as _is_ambiguous_task
 
 
 # ── Submodules — each attaches its routes onto the shared `router`
