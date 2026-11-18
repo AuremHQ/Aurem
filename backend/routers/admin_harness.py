@@ -35,7 +35,11 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db
-from services.harness_releases import create_draft_release, publish_release
+from services.harness_releases import (
+    attach_exe_to_release,
+    create_draft_release,
+    publish_release,
+)
 
 logger = logging.getLogger("aurem-dev.admin_harness")
 
@@ -52,6 +56,9 @@ class HarnessReleaseCreate(BaseModel):
     changelog: list[str] = Field(default_factory=list, max_length=_MAX_CHANGELOG_ITEMS)
     mandatory: bool = False
     artifact_base64: str = Field(..., min_length=1)
+    # Optional .exe installer for the same release, base64-encoded
+    # like artifact_base64. Absent for zip-only releases.
+    exe_base64: str | None = Field(default=None)
     source: str = Field(...)
 
     def validated_changelog(self) -> list[str]:
@@ -63,6 +70,29 @@ class HarnessReleaseCreate(BaseModel):
             return base64.b64decode(self.artifact_base64, validate=True)
         except (binascii.Error, ValueError) as e:
             raise HTTPException(400, "artifact_base64 is not valid base64") from e
+
+    @property
+    def exe_bytes(self) -> bytes | None:
+        if not self.exe_base64:
+            return None
+        try:
+            return base64.b64decode(self.exe_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(400, "exe_base64 is not valid base64") from e
+
+
+class HarnessReleaseExeAttach(BaseModel):
+    """Attach a .exe installer to an already-created release (e.g.
+    the already-published v0.8.0). Body: {"exe_base64": "<base64>"}."""
+
+    exe_base64: str = Field(..., min_length=1)
+
+    @property
+    def exe_bytes(self) -> bytes:
+        try:
+            return base64.b64decode(self.exe_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(400, "exe_base64 is not valid base64") from e
 
 
 @router.post("/admin/harness/releases")
@@ -84,10 +114,26 @@ async def admin_create_release(
             changelog=body.changelog, mandatory=body.mandatory,
             artifact_bytes=body.artifact_bytes, source=body.source,
             created_by=admin.get("user_id", "unknown-admin"),
+            exe_bytes=body.exe_bytes,
         )
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return result
+
+
+@router.post("/admin/harness/releases/{release_id}/exe")
+async def admin_attach_exe(release_id: str, body: HarnessReleaseExeAttach) -> dict:
+    """Attach a .exe installer to an existing release. Used for the
+    already-published v0.8.0 (its zip was published before the .exe
+    existed). Does not change the release's status or published_at.
+    """
+    db = require_db()
+    try:
+        return await attach_exe_to_release(
+            db, release_id=release_id, exe_bytes=body.exe_bytes,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.post("/admin/harness/releases/{release_id}/publish")

@@ -483,6 +483,36 @@ export default function HarnessPage() {
     }
   }
 
+  async function handleDownloadExe() {
+    // .exe installer — same gate as the zip, but the file is served
+    // byte-for-byte (no identity injection), so its delivered SHA-256
+    // always matches the release's exe_sha256 exactly.
+    setDownloadState("downloading"); setDownloadError(""); setDownloadSuccess(false); setDeliveredSha256(null);
+    try {
+      const resp = await api.post("/harness/download-exe", {}, { responseType: "blob" });
+      const delivered = resp.headers?.["x-aurem-package-sha256"] || null;
+      if (delivered) setDeliveredSha256(delivered);
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = release?.exe_filename || `AuremLoop-Setup-${release?.version || "latest"}.exe`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setDownloadSuccess(true);
+      setDownloadState("idle");
+    } catch (err) {
+      const status = err?.response?.status;
+      let msg = "Could not start the download — try again.";
+      if (status === 401) msg = "You're not logged in — please sign in again.";
+      else if (status === 409) msg = "No .exe installer has been attached to this release yet — try the .zip below.";
+      else if (status === 429) msg = "Too many download attempts — try again in a minute.";
+      setDownloadError(msg);
+      setDownloadState("error");
+    }
+  }
+
   async function signOutAndShowForm() {
     const tok = getToken();
     if (tok) {
@@ -674,15 +704,32 @@ export default function HarnessPage() {
                 <h2 data-testid="harness-done-title">{doneTitle}</h2>
                 <p data-testid="harness-done-text">{doneText}</p>
                 {release?.available ? (
-                  <button type="button" className="dl-btn" data-testid="harness-download-btn" onClick={handleDownload} disabled={downloadState === "downloading"}>
-                    {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version}`}
-                  </button>
+                  release?.exe_sha256 ? (
+                    <>
+                      <button type="button" className="dl-btn" data-testid="harness-download-exe-btn" onClick={handleDownloadExe} disabled={downloadState === "downloading"}>
+                        {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version} (.exe)`}
+                      </button>
+                      <p>
+                        <button type="button" className="link" data-testid="harness-download-zip-link" onClick={handleDownload} disabled={downloadState === "downloading"}>
+                          Advanced: download the .zip instead
+                        </button>
+                      </p>
+                    </>
+                  ) : (
+                    <button type="button" className="dl-btn" data-testid="harness-download-btn" onClick={handleDownload} disabled={downloadState === "downloading"}>
+                      {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version}`}
+                    </button>
+                  )
                 ) : (
                   <p style={{ color: "var(--ink-3)", fontSize: "0.9rem" }}>No release is published yet — check back shortly.</p>
                 )}
                 {release?.available && (
                   <p className="meta">
-                    File size: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256}<br />
+                    {release?.exe_sha256 ? (
+                      <>File size: {fmtBytes(release.exe_size_bytes)} bytes · SHA-256: {release.exe_sha256}<br /></>
+                    ) : (
+                      <>File size: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256}<br /></>
+                    )}
                     Verify the SHA-256 after downloading — it must match exactly before you run the installer.
                   </p>
                 )}

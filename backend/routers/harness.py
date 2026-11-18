@@ -131,6 +131,13 @@ async def harness_release_status() -> dict:
         "mandatory": release.get("mandatory", False),
         "size_bytes": release.get("size_bytes"),
         "published_at": release.get("published_at"),
+        # .exe installer for the same release — None until an .exe has
+        # been attached (see services.harness_releases.attach_exe_to_release).
+        # The frontend shows the .exe as the primary download only when
+        # exe_sha256 is present, and falls back to the zip otherwise.
+        "exe_size_bytes": release.get("exe_size_bytes"),
+        "exe_sha256": release.get("exe_sha256"),
+        "exe_filename": release.get("exe_filename"),
     }
 
 

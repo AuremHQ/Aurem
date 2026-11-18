@@ -45,7 +45,15 @@ import zipfile
 
 _VALID_SOURCES = frozenset({"test_fixture", "muse_fix_branch_approved", "admin_ui"})
 _MAX_ARTIFACT_BYTES = 15 * 1024 * 1024
+# Same inline-storage cap as the zip artifact — the .exe installer
+# (542,532 bytes for v0.8.0) is far below it.
+_MAX_EXE_BYTES = 15 * 1024 * 1024
 _SIGNING_SECRET_ENV = "HARNESS_RELEASE_SIGNING_SECRET"
+
+
+def exe_filename_for_version(version: str) -> str:
+    """The .exe installer filename for a release version."""
+    return f"AuremLoop-Setup-{version}.exe"
 
 
 def _signing_secret() -> bytes:
@@ -89,9 +97,20 @@ def verify_manifest_signature(signature: str, *, version, platform,
 async def create_draft_release(
     db, *, version: str, platform: str, changelog: list, mandatory: bool,
     artifact_bytes: bytes, source: str, created_by: str,
+    exe_bytes: bytes | None = None,
 ) -> dict:
     """Always creates a DRAFT — never published, never "latest". That
-    is a separate, explicit publish_release() call."""
+    is a separate, explicit publish_release() call.
+
+    `exe_bytes` is optional: the Windows .exe installer for the same
+    release (same version). When provided it is stored alongside the
+    zip artifact (same artifact document, `exe_bytes` field) and its
+    SHA-256/size/filename are recorded on the release document, so
+    release-status can advertise it and the gated .exe download can
+    serve it. The .exe is served byte-for-byte — unlike the zip, no
+    identity.json is injected into it, so its delivered SHA-256
+    always matches `exe_sha256` exactly.
+    """
     if source not in _VALID_SOURCES:
         raise ValueError(f"unknown release source: {source!r}")
     if not artifact_bytes:
@@ -101,6 +120,20 @@ async def create_draft_release(
             f"artifact is {len(artifact_bytes)} bytes, over the "
             f"{_MAX_ARTIFACT_BYTES}-byte v1 inline-storage cap",
         )
+    exe_sha256: str | None = None
+    exe_size_bytes: int | None = None
+    exe_filename: str | None = None
+    if exe_bytes is not None:
+        if not exe_bytes:
+            raise ValueError("exe_bytes must not be empty when provided")
+        if len(exe_bytes) > _MAX_EXE_BYTES:
+            raise ValueError(
+                f"exe installer is {len(exe_bytes)} bytes, over the "
+                f"{_MAX_EXE_BYTES}-byte v1 inline-storage cap",
+            )
+        exe_sha256 = hashlib.sha256(exe_bytes).hexdigest()
+        exe_size_bytes = len(exe_bytes)
+        exe_filename = exe_filename_for_version(version)
 
     artifact_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
     signature = sign_manifest(
@@ -125,15 +158,24 @@ async def create_draft_release(
         "created_by": created_by,
         "size_bytes": len(artifact_bytes),
         "source": source,
+        "exe_sha256": exe_sha256,
+        "exe_size_bytes": exe_size_bytes,
+        "exe_filename": exe_filename,
     })
-    await db.harness_release_artifacts.insert_one({
+    artifact_doc: dict = {
         "release_id": release_id,
         "artifact_bytes": artifact_bytes,
-    })
+    }
+    if exe_bytes is not None:
+        artifact_doc["exe_bytes"] = exe_bytes
+    await db.harness_release_artifacts.insert_one(artifact_doc)
     return {
         "release_id": release_id, "version": version,
         "artifact_sha256": artifact_sha256, "signature": signature,
         "status": "draft",
+        "exe_sha256": exe_sha256,
+        "exe_size_bytes": exe_size_bytes,
+        "exe_filename": exe_filename,
     }
 
 
@@ -168,6 +210,59 @@ async def get_latest_release(db, *, platform: str) -> dict | None:
 async def get_release_artifact_bytes(db, *, release_id: str) -> bytes | None:
     doc = await db.harness_release_artifacts.find_one({"release_id": release_id})
     return doc["artifact_bytes"] if doc else None
+
+
+async def attach_exe_to_release(db, *, release_id: str, exe_bytes: bytes) -> dict:
+    """Attach (or replace) the Windows .exe installer on an EXISTING
+    release — used for a release that was already published before
+    the .exe existed (e.g. v0.8.0). Does not change the release's
+    status, is_latest, or published_at, and never touches the zip
+    artifact bytes or the zip's manifest signature. The manifest HMAC
+    continues to cover the zip artifact only (unchanged, so existing
+    release signatures still verify); the .exe is identified by its
+    SHA-256, exposed via release-status and returned in the download's
+    X-Aurem-Package-SHA256 header for the user to verify.
+    """
+    if not exe_bytes:
+        raise ValueError("exe_bytes must not be empty")
+    if len(exe_bytes) > _MAX_EXE_BYTES:
+        raise ValueError(
+            f"exe installer is {len(exe_bytes)} bytes, over the "
+            f"{_MAX_EXE_BYTES}-byte v1 inline-storage cap",
+        )
+    release = await db.harness_releases.find_one({"release_id": release_id})
+    if not release:
+        raise ValueError(f"release not found: {release_id!r}")
+    artifact_doc = await db.harness_release_artifacts.find_one({"release_id": release_id})
+    if not artifact_doc:
+        raise ValueError(f"release {release_id!r} has no stored artifact")
+
+    exe_sha256 = hashlib.sha256(exe_bytes).hexdigest()
+    exe_filename = exe_filename_for_version(release["version"])
+    await db.harness_releases.update_one(
+        {"release_id": release_id},
+        {"$set": {
+            "exe_sha256": exe_sha256,
+            "exe_size_bytes": len(exe_bytes),
+            "exe_filename": exe_filename,
+        }},
+    )
+    await db.harness_release_artifacts.update_one(
+        {"release_id": release_id},
+        {"$set": {"exe_bytes": exe_bytes}},
+    )
+    return {
+        "release_id": release_id, "version": release["version"],
+        "exe_sha256": exe_sha256, "exe_size_bytes": len(exe_bytes),
+        "exe_filename": exe_filename,
+    }
+
+
+async def get_release_exe_bytes(db, *, release_id: str) -> bytes | None:
+    """The .exe installer bytes for a release, or None when no .exe
+    has been attached to it yet."""
+    doc = await db.harness_release_artifacts.find_one({"release_id": release_id})
+    return doc.get("exe_bytes") if doc else None
 
 
 def inject_identity_into_zip(artifact_zip_bytes: bytes, *, bin: str, token: str) -> bytes:
