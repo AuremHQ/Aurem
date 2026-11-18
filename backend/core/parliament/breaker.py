@@ -6,7 +6,6 @@ verbatim out of the single core/parliament.py (zero logic change).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import deque
@@ -42,7 +41,6 @@ class ParliamentCircuitBreaker:
         self._opened_at        = 0.0
         self._half_open_probe  = False   # True while a probe is in flight
         self._window: deque    = deque(maxlen=128)   # (ts, ok, latency_ms)
-        self._lock             = asyncio.Lock()
 
     # ── State machine ─────────────────────────────────────────────
     @property

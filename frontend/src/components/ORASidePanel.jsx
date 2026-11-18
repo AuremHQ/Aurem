@@ -677,10 +677,6 @@ export default function ORASidePanel({
           from { transform: translateX(110%); opacity: 0; }
           to   { transform: translateX(0);    opacity: 1; }
         }
-        @keyframes ora-fade-in {
-          from { opacity: 0; }
-          to   { opacity: 1; }
-        }
         @keyframes ora-pulse {
           0%, 100% { opacity: 1; }
           50%      { opacity: 0.3; }

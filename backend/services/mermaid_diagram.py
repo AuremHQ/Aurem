@@ -59,7 +59,6 @@ PRIMARY_MODEL      = os.environ.get("MERMAID_DIAGRAM_MODEL",
 FAILOVER_MODEL     = os.environ.get("MERMAID_DIAGRAM_FAILOVER",
                                      "openai/gpt-5-mini")
 _HTTP_TIMEOUT_S    = 25.0
-_MAX_NODES         = 40
 
 # ── Recently-modified detection ─────────────────────────────────────
 

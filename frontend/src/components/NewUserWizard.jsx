@@ -1388,7 +1388,6 @@ function buildRobotMessage({ ghStatus, busy, err, repoUrl }) {
     if (!repoUrl) return `Your GitHub repos are loaded! <strong>Pick a repo</strong> from the dropdown — or paste a URL. <span class="ora-arrow">👇</span>`;
     return `Nice — <strong>${escapeHtml(repoUrl.replace(/^https?:\/\/github\.com\//, ""))}</strong> looks good. Click <strong>Continue</strong> to connect it. <span class="ora-arrow">👇</span>`;
   }
-  return "";
 }
 
 const githubBtnStyle = {

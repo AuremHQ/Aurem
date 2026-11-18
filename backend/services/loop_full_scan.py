@@ -42,10 +42,6 @@ logger = logging.getLogger(__name__)
 MAX_SCAN_HEALS = 3
 
 # ── Latency guard on the Full Scan itself ─────────────────────────────
-# The scanners are pure regex + AST work and are fast — but if a
-# pathological repo takes > 30 s we abandon the retry loop and surface
-# to the user honestly rather than looping forever.
-FULL_SCAN_MAX_SECONDS = 30.0
 
 
 # ══════════════════════════════════════════════════════════════════════

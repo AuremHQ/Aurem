@@ -17,15 +17,12 @@ import { api, getCachedAdminAccess, fetchMyAdminAccess, isAdminOrFounder } from 
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
 import { toast } from "../components/Toast";
 import { buildGroupedAdminNav, visibleAdminNav } from "../lib/adminNav";
-import AuremAdminPanel from "../components/AuremAdminPanel";
 import OraChatDrawer from "../components/OraChatDrawer";        // Iter 212m-238
 import NotificationBell from "../components/NotificationBell";   // Feb 2026 · cockpit bell
 import AdminOverview from "./AdminOverview";
 import AdminCockpit from "./AdminCockpit";                        // Feb 2026 · sidebar-in-cockpit
 import AdminSuggestions from "./AdminSuggestions";              // Iter 212m-193
 import AgentTokenPanel from "../components/AgentTokenPanel";
-import AdminThinkingHints from "../components/AdminThinkingHints";
-import TwoFactorCard from "../components/TwoFactorCard";  // Iter 212m-20
 import AdminHouseRules from "../components/AdminHouseRules";  // Iter 212m-24
 import AdminRobotGuide from "../components/AdminRobotGuide";  // Iter 212m-187
 import AdminBINTracker from "./AdminBINTracker";               // Iter 212m-171
@@ -1520,16 +1517,6 @@ function TokenPnL() {
   );
 }
 
-function ComingSoon({ title, note }) {
-  return (
-    <div style={{ padding: 24 }}>
-      <Card style={{ padding: 24, textAlign: "center", color: "var(--text-faint)" }}>
-        <h3 style={{ fontSize: 14, marginBottom: 8 }}>{title}</h3>
-        <div style={{ fontSize: 12 }}>{note}</div>
-      </Card>
-    </div>
-  );
-}
 
 // ── Iter 188 — new admin sections ──────────────────────────────────────
 // Each section maps 1:1 to a backend endpoint added in the same iter:

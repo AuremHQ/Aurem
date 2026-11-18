@@ -62,15 +62,3 @@ async def record_and_check(db, *, project_id: str, signature: str) -> dict:
     except Exception as e:                                    # noqa: BLE001
         logger.warning("failure_signature record_and_check best-effort failure: %r", e)
         return {"repeat_count": 1}
-
-
-async def reset(db, *, project_id: str, signature: str) -> None:
-    """Best-effort clear on a successful retry with the same shape (not
-    currently wired — reserved for when checkpointed-retry lands)."""
-    if db is None:
-        return
-    try:
-        await db.task_failure_signatures.delete_one(
-            {"project_id": project_id, "signature": signature})
-    except Exception as e:                                    # noqa: BLE001
-        logger.warning("failure_signature reset best-effort failure: %r", e)

@@ -83,32 +83,6 @@ _VERIFY_RESCUE_MODEL = os.environ.get(
     _SSOT_DEEPSEEK,
 )
 
-# Iter 212m-41 — env-tunable severity threshold + kill-switch.
-_BLOCK_LEVEL = (
-    os.environ.get("VANGUARD_VERIFY_BLOCK_LEVEL", "CRITICAL") or "CRITICAL"
-).upper()
-_ENABLED = (
-    os.environ.get("VANGUARD_VERIFY_ENABLED", "1").lower()
-    in ("1", "true", "yes", "on")
-)
-
-
-def _severity_blocks(severity: str) -> bool:
-    """Should this finding actually block the commit?
-    Honours VANGUARD_VERIFY_BLOCK_LEVEL.
-
-      OFF       → never blocks
-      CRITICAL  → only CRITICAL findings block
-      HIGH      → CRITICAL or HIGH findings block
-    """
-    sev = (severity or "").upper()
-    if _BLOCK_LEVEL == "OFF":
-        return False
-    if _BLOCK_LEVEL == "HIGH":
-        return sev in ("CRITICAL", "HIGH")
-    return sev == "CRITICAL"
-
-
 # ──────────────────────────────────────────────────────────────────
 # Iter 212m-132 — Diff-based scanning.
 # ──────────────────────────────────────────────────────────────────
@@ -502,7 +476,6 @@ async def _e2b_smoke(file_blocks: dict) -> dict:
     # NameError, etc., without actually running side-effects.
     probe_lines: list[str] = ["import os, sys"]
     for i, (path, content) in enumerate(py_files.items()):
-        safe = path.replace("/", "_").replace(".py", "")
         probe_lines.append(f"os.makedirs(os.path.dirname({path!r}) or '.', exist_ok=True)")
         probe_lines.append(f"open({path!r}, 'w').write({content!r})")
         probe_lines.append(f"sys.path.insert(0, os.path.dirname({path!r}) or '.')")

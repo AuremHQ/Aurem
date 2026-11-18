@@ -188,29 +188,6 @@ def _price_id_for(plan: str) -> str:
     return price_id_for(plan)
 
 
-# Iter 212m-15 — boot-time price config audit.
-def _audit_price_config_at_boot() -> None:
-    """Log which Stripe price IDs are configured. We deliberately log
-    only the suffix (last 4 chars) so the log line is searchable but
-    the actual price ID isn't leaked. Triggered on first call to
-    `_require_stripe`; logs once per process."""
-    rows = []
-    for plan, getter in STRIPE_PRICES.items():
-        pid = getter() or ""
-        if not pid:
-            rows.append(f"{plan}=MISSING")
-            continue
-        # Sanity: live keys must pair with live prices and vice versa.
-        # Stripe live price IDs typically don't carry a `_test_` infix
-        # the way checkout sessions do, but we surface the prefix for
-        # the human eye.
-        rows.append(f"{plan}=…{pid[-6:]}")
-    logger.info("payments.price_config %s", " ".join(rows))
-
-
-_BOOT_AUDIT_DONE = False
-
-
 # ── Iter 335 — self-healing price resolution ─────────────────────────
 # Prod deploy logs showed 404 `No such price` on the three MONTHLY
 # price IDs (old-account `..2XYZ7cJIy2..` values still in the prod env

@@ -31,7 +31,6 @@ def should_parallelize(task_description: str, file_tree: list[str]) -> bool:
 
     has_frontend = any(k in desc for k in ["react", "component", "ui", "page", "css", "frontend", "jsx", "tsx"])
     has_backend  = any(k in desc for k in ["api", "route", "endpoint", "fastapi", "service", "model", "schema"])
-    has_tests    = any(k in desc for k in ["test", "pytest", "spec", "coverage"])
     has_full     = any(k in desc for k in ["full", "complete", "entire", "whole", "both", "all"])
 
     return (has_frontend and has_backend) or has_full or (len(file_tree) > 8)

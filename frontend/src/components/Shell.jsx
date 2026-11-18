@@ -121,7 +121,7 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
   const location = useLocation();
   const user = getUser();
   const token = getToken();
-  const [health, setHealth] = useState({ ok: true, _initial: true });
+  const [health, setHealth] = useState({ ok: true });
   const [sessionId, setSessionIdState] = useState(null);
   const [sessions, setSessions] = useState([]);
   // Round-2 PR follow-up (2026-08-28, testing_agent finding, MED) —

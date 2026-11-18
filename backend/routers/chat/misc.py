@@ -60,8 +60,6 @@ async def chat_opened(body: ChatOpenedBody, authorization: str = Header(None)) -
 
 
 # Heuristic: prompt mentions build/create/fix/write code/etc → bump cap
-_CODE_HINTS = ("```", "build", "create", "fix", "write", "implement",
-               "function", "class", "refactor", "debug", "snippet", "code")
 
 
 # Iter 185 → Iter 212m-22 — Ask Advisor system tone.

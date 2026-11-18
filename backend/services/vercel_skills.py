@@ -45,7 +45,6 @@ from cto_services.db import get_db
 logger = logging.getLogger(__name__)
 
 VERCEL_API = "https://api.vercel.com"
-DEFAULT_TIMEOUT = 15.0
 
 
 def _token() -> Optional[str]:

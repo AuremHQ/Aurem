@@ -184,7 +184,6 @@ def build_unified_diff_hunks(
             if current is None:
                 # Only trailing context of the previous hunk needed —
                 # but we haven't opened one yet.
-                lead = old_lines[max(i1, i2 - context): i2]
                 lead_j = new_lines[max(j1, j2 - context): j2]
                 # Track for the NEXT hunk's leading context.
                 current = None  # noqa: F841 — clarity

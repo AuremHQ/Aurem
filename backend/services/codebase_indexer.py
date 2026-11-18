@@ -39,7 +39,6 @@ router = APIRouter(prefix="/codebase", tags=["AUREM Codebase"])
 
 
 GITHUB_API = "https://api.github.com"
-INDEX_TTL_SECONDS = 600           # don't hammer GitHub
 MAX_FILES = 80                    # LLM context budget cap
 MAX_BYTES_PER_FILE = 12_000       # only first chunk goes into the index
 

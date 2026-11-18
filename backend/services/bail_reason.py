@@ -104,11 +104,6 @@ _SOFT_CLARIFIER_RE = re.compile(
 # asks a specific clarifying question runs far longer than this.
 _SOFT_CLARIFIER_MAX_WORDS = 25
 
-# Kept for any external importer — the union of both tiers.
-_BANNED_FALLBACK_RE = re.compile(
-    _HARD_DEADEND_RE.pattern + "|" + _SOFT_CLARIFIER_RE.pattern,
-    re.IGNORECASE,
-)
 
 # Everyday content-edit verbs a user uses when asking to PLACE a value
 # on their site. A bare mention of a data-topic word (price/cost/

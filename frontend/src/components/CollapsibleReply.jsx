@@ -8,11 +8,6 @@ import { ChevronRight, ChevronDown } from "lucide-react";
 
 const PREVIEW_CHARS = 110;
 
-// Long enough to be worth collapsing.
-export function isCollapsibleReply(text) {
-  if (!text) return false;
-  return text.length > 280 || text.split("\n").length > 6;
-}
 
 function firstLinePreview(text) {
   // Iter 388p — Bug 17/19 follow-up.  The previous approach stripped

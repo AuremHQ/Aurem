@@ -51,7 +51,6 @@ async def run_dry_run_audit(db) -> dict[str, Any]:
     ).limit(MAX_CANDIDATES).to_list(MAX_CANDIDATES)
 
     matches: list[dict[str, Any]] = []
-    scanned_dormant_excluded = 0
     for u in candidates:
         user_id = u.get("user_id")
         if not user_id:

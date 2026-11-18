@@ -442,12 +442,6 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
   })();
 
   const realBlocks = blocks || [];
-  const onlyLiveOrPlaceholder = realBlocks.length === 0 || realBlocks.every(
-    (b) => {
-      const l = (b?.lang || "").toLowerCase();
-      return l === "live_url" || l === "text";
-    }
-  );
 
   // Iter 212m-110 (BUG 10) — When the project has a deployed
   // `preview_url` but the chat hasn't emitted a live_url block yet,
@@ -489,9 +483,9 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
 
   // Iter 212m-206 — Founder request: `</> Code` mode should ALWAYS
   // surface the live repo file tree, not just when the chat is empty.
-  // Previously the codebase blocks were only merged in when
-  // `onlyLiveOrPlaceholder` was true, so any chat with even one code
-  // block hid the repo browser entirely.  Now: in Code view mode we
+  // Previously the codebase blocks were only merged in when the chat had
+  // no code blocks, so any chat with even one hid the repo browser
+  // entirely.  Now: in Code view mode we
   // ALWAYS append the codebase tabs (once loaded) alongside whatever
   // the chat produced, so the user can toggle between "what ORA just
   // wrote" and "what's in the repo" without leaving Preview.

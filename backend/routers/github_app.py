@@ -63,8 +63,6 @@ router = APIRouter(prefix="/github/app", tags=["GitHub App"])
 # State row TTL — user must complete the install within this window.
 _STATE_TTL_SECONDS = 15 * 60
 
-# Webhook delivery dedupe collection retention.
-_WEBHOOK_DELIVERY_TTL_SECONDS = 7 * 24 * 60 * 60
 
 # Frontend deep-links (relative — the caller's browser resolves against
 # the domain they're currently on, so multi-domain deploys just work).
