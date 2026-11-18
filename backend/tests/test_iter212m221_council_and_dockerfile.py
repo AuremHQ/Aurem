@@ -51,8 +51,8 @@ def test_is_dockerfile_exists_and_matches_real_manifests():
 
 def test_is_dockerfile_is_referenced_by_scan_pipeline():
     """Static assertion — every call site referenced in
-    `_build_text_cache` must remain hooked to the restored helper."""
-    src = open("/app/backend/routers/codebase_health.py").read()
+    `build_text_cache` must remain hooked to the restored helper."""
+    src = (Path(__file__).resolve().parents[1] / "services" / "repo_text_cache.py").read_text()
     # There are two documented call sites (candidate filter + cache
     # re-filter). Keep them both — a regression that drops one would
     # let un-scanned Dockerfiles slip through the scanner. We count
