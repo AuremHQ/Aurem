@@ -502,14 +502,14 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         path, body, _db = None, None, None
         ws = None
         from services.llm_file_parser import parse_file_blocks
+        def _scrub(s: str) -> str:
+            # Defence-in-depth: clone URLs, stderr, and Python tracebacks can
+            # all leak the PAT. Scrub every error string before it lands in
+            # Mongo or the user's task feed.
+            if not s:
+                return s
+            return s.replace(user_token or "", "***PAT***") if user_token else s
         if commit_mode == 'git':
-            def _scrub(s: str) -> str:
-                # Defence-in-depth: clone URLs, stderr, and Python tracebacks can
-                # all leak the PAT. Scrub every error string before it lands in
-                # Mongo or the user's task feed.
-                if not s:
-                    return s
-                return s.replace(user_token or "", "***PAT***") if user_token else s
             ws = _pkg.WORKSPACE / task_id
             ws.mkdir(parents=True, exist_ok=True)
             repo_path = ws / "repo"
@@ -1255,7 +1255,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             from services.loop_safety import open_or_reuse_pr, resolve_ship_target
             _cloned_owner, _cloned_repo = owner, repo
             owner, repo, ship_branch, _branch_err = await resolve_ship_target(
-                _guard_db, task_id=task_id, owner=owner, repo=repo,
+                _pkg.get_db(), task_id=task_id, owner=owner, repo=repo,
                 base_branch=branch, token=user_token,
             )
             if _branch_err:
@@ -1790,7 +1790,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 logger.warning("brain v2 update skipped: %r", _bv2e)
     except Exception as e:
         logger.exception(f"[cto-task-api {task_id}] failed")
-        safe = str(e).replace(user_token or "", "***PAT***")
+        safe = _scrub(str(e))
         # 2026-08-25 — root-cause fix (customer-reported raw Python
         # error exposed in chat: "'str' object has no attribute
         # 'get'"). `safe` (the real exception text) is kept ONLY in

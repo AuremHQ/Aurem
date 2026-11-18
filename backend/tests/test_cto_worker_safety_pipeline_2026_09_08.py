@@ -267,10 +267,11 @@ class TestGitWorkerSafetyPipeline:
              patch.object(pipeline_mod, "_syntax_errors", syntax_spy), \
              patch("services.design_linter.lint_file_blocks", lint_spy), \
             patch.object(pipeline_mod, "call_llm", AsyncMock(return_value="")), \
+            patch("services.loop_safety.resolve_ship_target", AsyncMock(return_value=("acme", "widgets", "main", None))), \
              patch("services.vanguard_verify_agent.verify_patch",
                    AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})) as vg_mock:
             await router_mod._run_task_with_git(
-                task_id, PROJ, "add a helper function", [], "",
+                task_id, PROJ, "add a helper function in feature.py", [], "",
                 "ghp_faketoken_safety1", resume_edits=resume_edits,
             )
 
@@ -318,7 +319,7 @@ class TestGitWorkerSafetyPipeline:
              patch.object(pipeline_mod, "call_llm", AsyncMock(return_value=BAD_REPLY)), \
              patch("asyncio.sleep", AsyncMock(return_value=None)):
             await router_mod._run_task_with_git(
-                task_id, PROJ, "add a broken helper", [], "",
+                task_id, PROJ, "add a broken helper in broken.py", [], "",
                 "ghp_faketoken_safety2",
             )
 
