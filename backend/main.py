@@ -309,6 +309,214 @@ if not JWT_SECRET:
 START_TIME = time.time()
 
 
+async def _lifespan_start_core_cron_tasks(app):
+    app.state.digest_task = _supervise(
+        schedule_daily_digest(),
+        name="daily_digest",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # Iter 328 · #5 — periodic integration_health cron. Runs every
+    # INTEGRATION_HEALTH_INTERVAL_SEC (default 600s) so breakages
+    # (Stripe/Tavily/Firecrawl/DeepSeek) surface within ~10 min, not
+    # 24h. Env-gated ENABLE_INTEGRATION_HEALTH_CRON default ON.
+    app.state.integration_health_cron_task = _supervise(
+        schedule_integration_health_cron(),
+        name="integration_health_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # Ticket A (2026-02) — opt-in per-project scheduled auto-scan +
+    # digest email. Same supervised shape as the digest cron above.
+    app.state.project_auto_scan_task = _supervise(
+        schedule_project_auto_scan(),
+        name="project_auto_scan",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # 2026-08-26 — SLO breach founder-alert cron. Checks the same two
+    # declared SLOs (chat_response, ship_completion) the admin
+    # dashboard already computes, every 30 min by default, and emails
+    # the founder (existing G10 Resend channel, 6h dedup) if either
+    # is in breach — closes the "you'd only know if you looked at the
+    # dashboard" gap.
+    app.state.slo_alert_cron_task = _supervise(
+        schedule_slo_alert_cron(),
+        name="slo_alert_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # 2026-08-27 — Live Cost Alert. Watches AI cost vs customer revenue
+    # (aggregate + per-paying-customer) every 30 min; real email is
+    # gated behind ENABLE_COST_REVENUE_ALERT_EMAIL (default OFF in
+    # preview per founder decision — log-only until confirmed).
+    app.state.cost_revenue_alert_cron_task = _supervise(
+        schedule_cost_revenue_alert_cron(),
+        name="cost_revenue_alert_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # 2026-08-27 — P2 audit-spine alert ("Show the Outcome, Never the
+    # Engine"). Alerts the founder when the leak-strip safety net
+    # fires more than LEAK_ALERT_THRESHOLD times in 24h — reuses the
+    # existing ora_audit collection + G10 founder-alert channel.
+    app.state.leak_alert_cron_task = _supervise(
+        schedule_leak_alert_cron(),
+        name="leak_alert_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    # 2026-08-27 — P3b Quiet Leak Digest. Weekly (not daily) plain-
+    # English roll-up of the same audit-spine counters leak_alert_cron
+    # watches, reusing daily_digest.py's Resend send helper.
+    app.state.leak_digest_cron_task = _supervise(
+        schedule_leak_digest_cron(),
+        name="leak_digest_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+
+async def _lifespan_start_billing_and_health_tasks(app):
+    from services.billing_cron import schedule_maxx_overage_billing
+    app.state.maxx_overage_billing_task = _supervise(
+        schedule_maxx_overage_billing(lambda: app.state.db),
+        name="maxx_overage_billing",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # Session 4 · P1 — Hallucination pattern-classifier cron.
+    # Before this, `ora_hallucination_log` grew forever unless a
+    # founder clicked `POST .../classify-now`. Now polled every
+    # `HALLUCINATION_CLASSIFY_INTERVAL_S` (default 4h, 15-min floor).
+    from services.ora_chat.hallucination_classifier import (
+        schedule_hallucination_classify_batch,
+    )
+    app.state.hallucination_classify_task = _supervise(
+        schedule_hallucination_classify_batch(),
+        name="hallucination_classify",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # Feb 2026 — Cockpit Bell notifier. Long-lived poller diffing
+    # health_registry state and firing founder alerts on real red-
+    # transitions. See services/health_notifier.py.
+    from services.health_notifier import notifier_loop
+    app.state.health_notifier_task = _supervise(
+        notifier_loop(),
+        name="health_notifier",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+
+async def _lifespan_start_journey_and_ledger_tasks(app):
+    from services.journey_watch import journey_watch_loop, schedule_funnel_digest_cron
+    app.state.journey_watch_task = _supervise(
+        journey_watch_loop(),
+        name="journey_watch",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+    app.state.funnel_digest_task = _supervise(
+        schedule_funnel_digest_cron(),
+        name="funnel_digest_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-22 · INTERACTION_CONTRACT_V1 P1 — chat_request_ledger
+    # stale-`started`-row reconciler (see services/chat_reliability.py's
+    # module comment above chat_ledger_reconciler_loop for why this
+    # exists: a real client TCP disconnect while a turn is still
+    # waiting on the worker does not reliably raise CancelledError
+    # into the SSE generator in every ASGI/uvicorn environment, which
+    # would otherwise leave a `started` ledger row unresolved forever).
+    from services.chat_reliability import chat_ledger_reconciler_loop
+    app.state.chat_ledger_reconciler_task = _supervise(
+        chat_ledger_reconciler_loop(),
+        name="chat_ledger_reconciler",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+
+async def _lifespan_start_trust_payment_casl_tasks(app):
+    from services.trust_calibration_cron import trust_calibration_cron
+    app.state.trust_calibration_cron_task = _supervise(
+        trust_calibration_cron(),
+        name="trust_calibration_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-08-19 · G7 guards-audit fix — `run_reconciliation()` existed
+    # since it was written but was never actually scheduled anywhere,
+    # so the Stripe-vs-local payment guard sat gray forever. Wired in
+    # now — hourly tick, same _supervise pattern as its siblings above.
+    from services.payment_reconciliation import schedule_payment_reconciliation
+    app.state.payment_reconciliation_task = _supervise(
+        schedule_payment_reconciliation(lambda: app.state.db),
+        name="payment_reconciliation",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-22 · Revenue Recovery — weekly CASL consent-expiry digest.
+    # Same weekday/hour scheduler shape as funnel_digest_cron above;
+    # makes the excluded-count visible every week without anyone having
+    # to remember to hit the read-only casl-screen admin endpoint first.
+    from services.casl_consent import schedule_casl_weekly_digest
+    app.state.casl_digest_task = _supervise(
+        schedule_casl_weekly_digest(),
+        name="casl_weekly_digest",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+
+async def _lifespan_start_spend_github_reaper_tasks(app):
+    from services.g22_idle_spend_guard import schedule_idle_spend_guard
+    app.state.idle_spend_guard_task = _supervise(
+        schedule_idle_spend_guard(lambda: app.state.db),
+        name="idle_spend_guard",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-16 · founder-reported incident (rebecca@millingtonstudio.com
+    # — GitHub-side App install + repo selection succeeded, confirmed
+    # live against GitHub's own API, but Aurem's DB had zero record of
+    # it, and GitHub's push-only webhook had no poll-based fallback).
+    # Every 30 min, cross-checks GitHub's own `GET /app/installations`
+    # (ground truth) against `github_installations` and backfills any
+    # installation the webhook + callback both missed as an unlinked
+    # ghost row — see services/github_app.py::reconcile_installations.
+    from services.github_app import schedule_github_installation_reconcile
+    app.state.github_reconcile_task = _supervise(
+        schedule_github_installation_reconcile(lambda: app.state.db),
+        name="github_installation_reconcile",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+    # 2026-09-17 · Bug 1 fix — runaway duplicate bot PRs (389 open on
+    # one connected repo). Safety-net reaper: closes superseded
+    # Aurem-fix PRs hourly and tracks `bot_open_prs_count` with a
+    # founder alert above 10. The root fix (deterministic branch
+    # names + check-before-create) stops NEW duplicates; this catches
+    # the existing backlog and anything that slips through a race.
+    from services.bot_pr_reaper import schedule_bot_pr_reaper_cron
+    app.state.bot_pr_reaper_task = _supervise(
+        schedule_bot_pr_reaper_cron(lambda: app.state.db),
+        name="bot_pr_reaper",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("AUREM starting...")
@@ -393,71 +601,7 @@ async def lifespan(app: FastAPI):
 
     # Iter 25 — daily digest scheduler (runs forever, fires at DIGEST_HOUR_UTC)
     # Session F — supervised so silent death → Guard 20 incident.
-    app.state.digest_task = _supervise(
-        schedule_daily_digest(),
-        name="daily_digest",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    # Iter 328 · #5 — periodic integration_health cron. Runs every
-    # INTEGRATION_HEALTH_INTERVAL_SEC (default 600s) so breakages
-    # (Stripe/Tavily/Firecrawl/DeepSeek) surface within ~10 min, not
-    # 24h. Env-gated ENABLE_INTEGRATION_HEALTH_CRON default ON.
-    app.state.integration_health_cron_task = _supervise(
-        schedule_integration_health_cron(),
-        name="integration_health_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    # Ticket A (2026-02) — opt-in per-project scheduled auto-scan +
-    # digest email. Same supervised shape as the digest cron above.
-    app.state.project_auto_scan_task = _supervise(
-        schedule_project_auto_scan(),
-        name="project_auto_scan",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    # 2026-08-26 — SLO breach founder-alert cron. Checks the same two
-    # declared SLOs (chat_response, ship_completion) the admin
-    # dashboard already computes, every 30 min by default, and emails
-    # the founder (existing G10 Resend channel, 6h dedup) if either
-    # is in breach — closes the "you'd only know if you looked at the
-    # dashboard" gap.
-    app.state.slo_alert_cron_task = _supervise(
-        schedule_slo_alert_cron(),
-        name="slo_alert_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    # 2026-08-27 — Live Cost Alert. Watches AI cost vs customer revenue
-    # (aggregate + per-paying-customer) every 30 min; real email is
-    # gated behind ENABLE_COST_REVENUE_ALERT_EMAIL (default OFF in
-    # preview per founder decision — log-only until confirmed).
-    app.state.cost_revenue_alert_cron_task = _supervise(
-        schedule_cost_revenue_alert_cron(),
-        name="cost_revenue_alert_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    # 2026-08-27 — P2 audit-spine alert ("Show the Outcome, Never the
-    # Engine"). Alerts the founder when the leak-strip safety net
-    # fires more than LEAK_ALERT_THRESHOLD times in 24h — reuses the
-    # existing ora_audit collection + G10 founder-alert channel.
-    app.state.leak_alert_cron_task = _supervise(
-        schedule_leak_alert_cron(),
-        name="leak_alert_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    # 2026-08-27 — P3b Quiet Leak Digest. Weekly (not daily) plain-
-    # English roll-up of the same audit-spine counters leak_alert_cron
-    # watches, reusing daily_digest.py's Resend send helper.
-    app.state.leak_digest_cron_task = _supervise(
-        schedule_leak_digest_cron(),
-        name="leak_digest_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+    await _lifespan_start_core_cron_tasks(app)
 
     # Iter 367 (Item C) — Correction rule 14-day auto-graduation.
     # Every CORRECTION_RULES_GRADUATION_INTERVAL_SEC (default 6h) we
@@ -498,150 +642,26 @@ async def lifespan(app: FastAPI):
     # BILLING_CRON_HOUR (default 0 UTC) — real revenue guardrail so
     # overages are never left un-billed by a founder-forgetting-to-click.
     # Idempotent within a month via `billing_cron_runs` bucket record.
-    from services.billing_cron import schedule_maxx_overage_billing
-    app.state.maxx_overage_billing_task = _supervise(
-        schedule_maxx_overage_billing(lambda: app.state.db),
-        name="maxx_overage_billing",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # Session 4 · P1 — Hallucination pattern-classifier cron.
-    # Before this, `ora_hallucination_log` grew forever unless a
-    # founder clicked `POST .../classify-now`. Now polled every
-    # `HALLUCINATION_CLASSIFY_INTERVAL_S` (default 4h, 15-min floor).
-    from services.ora_chat.hallucination_classifier import (
-        schedule_hallucination_classify_batch,
-    )
-    app.state.hallucination_classify_task = _supervise(
-        schedule_hallucination_classify_batch(),
-        name="hallucination_classify",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # Feb 2026 — Cockpit Bell notifier. Long-lived poller diffing
-    # health_registry state and firing founder alerts on real red-
-    # transitions. See services/health_notifier.py.
-    from services.health_notifier import notifier_loop
-    app.state.health_notifier_task = _supervise(
-        notifier_loop(),
-        name="health_notifier",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+    await _lifespan_start_billing_and_health_tasks(app)
 
     # 2026-08-27 · Journey Watch (Phase 3) — 5-minute signup-funnel
     # stall watchdog. Writes to the SAME health_notifications/
     # health_check_state collections as health_notifier above, so the
     # existing cockpit bell renders it with no frontend change.
-    from services.journey_watch import journey_watch_loop, schedule_funnel_digest_cron
-    app.state.journey_watch_task = _supervise(
-        journey_watch_loop(),
-        name="journey_watch",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-    app.state.funnel_digest_task = _supervise(
-        schedule_funnel_digest_cron(),
-        name="funnel_digest_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # 2026-09-22 · INTERACTION_CONTRACT_V1 P1 — chat_request_ledger
-    # stale-`started`-row reconciler (see services/chat_reliability.py's
-    # module comment above chat_ledger_reconciler_loop for why this
-    # exists: a real client TCP disconnect while a turn is still
-    # waiting on the worker does not reliably raise CancelledError
-    # into the SSE generator in every ASGI/uvicorn environment, which
-    # would otherwise leave a `started` ledger row unresolved forever).
-    from services.chat_reliability import chat_ledger_reconciler_loop
-    app.state.chat_ledger_reconciler_task = _supervise(
-        chat_ledger_reconciler_loop(),
-        name="chat_ledger_reconciler",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+    await _lifespan_start_journey_and_ledger_tasks(app)
 
     # 2026-09 — Trust & Verification round, Enhancement 4 (trust-
     # calibration metric). Idempotent scheduled snapshot; a missed
     # tick just means the next one recomputes the window from
     # scratch off the durable task_verifications ledger.
-    from services.trust_calibration_cron import trust_calibration_cron
-    app.state.trust_calibration_cron_task = _supervise(
-        trust_calibration_cron(),
-        name="trust_calibration_cron",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # 2026-08-19 · G7 guards-audit fix — `run_reconciliation()` existed
-    # since it was written but was never actually scheduled anywhere,
-    # so the Stripe-vs-local payment guard sat gray forever. Wired in
-    # now — hourly tick, same _supervise pattern as its siblings above.
-    from services.payment_reconciliation import schedule_payment_reconciliation
-    app.state.payment_reconciliation_task = _supervise(
-        schedule_payment_reconciliation(lambda: app.state.db),
-        name="payment_reconciliation",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # 2026-09-22 · Revenue Recovery — weekly CASL consent-expiry digest.
-    # Same weekday/hour scheduler shape as funnel_digest_cron above;
-    # makes the excluded-count visible every week without anyone having
-    # to remember to hit the read-only casl-screen admin endpoint first.
-    from services.casl_consent import schedule_casl_weekly_digest
-    app.state.casl_digest_task = _supervise(
-        schedule_casl_weekly_digest(),
-        name="casl_weekly_digest",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+    await _lifespan_start_trust_payment_casl_tasks(app)
 
     # 2026-08-19 · G22 — idle-window LLM spend guard. Founder-requested
     # standing safety net after the LongCat/integration-health cost-leak
     # investigation: alerts if LLM spend is logged during an hour with
     # zero real user activity, above the known/reviewed background
     # actors' tiny ceiling. See services/g22_idle_spend_guard.py.
-    from services.g22_idle_spend_guard import schedule_idle_spend_guard
-    app.state.idle_spend_guard_task = _supervise(
-        schedule_idle_spend_guard(lambda: app.state.db),
-        name="idle_spend_guard",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # 2026-09-16 · founder-reported incident (rebecca@millingtonstudio.com
-    # — GitHub-side App install + repo selection succeeded, confirmed
-    # live against GitHub's own API, but Aurem's DB had zero record of
-    # it, and GitHub's push-only webhook had no poll-based fallback).
-    # Every 30 min, cross-checks GitHub's own `GET /app/installations`
-    # (ground truth) against `github_installations` and backfills any
-    # installation the webhook + callback both missed as an unlinked
-    # ghost row — see services/github_app.py::reconcile_installations.
-    from services.github_app import schedule_github_installation_reconcile
-    app.state.github_reconcile_task = _supervise(
-        schedule_github_installation_reconcile(lambda: app.state.db),
-        name="github_installation_reconcile",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
-
-    # 2026-09-17 · Bug 1 fix — runaway duplicate bot PRs (389 open on
-    # one connected repo). Safety-net reaper: closes superseded
-    # Aurem-fix PRs hourly and tracks `bot_open_prs_count` with a
-    # founder alert above 10. The root fix (deterministic branch
-    # names + check-before-create) stops NEW duplicates; this catches
-    # the existing backlog and anything that slips through a race.
-    from services.bot_pr_reaper import schedule_bot_pr_reaper_cron
-    app.state.bot_pr_reaper_task = _supervise(
-        schedule_bot_pr_reaper_cron(lambda: app.state.db),
-        name="bot_pr_reaper",
-        db_getter=lambda: app.state.db,
-        long_lived=True,
-    )
+    await _lifespan_start_spend_github_reaper_tasks(app)
 
     # Iter 309 · Phase 0.1 — Merged housekeeping loop.
     # Previously two independent `while True` background tasks:

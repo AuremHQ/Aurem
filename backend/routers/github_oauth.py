@@ -19,7 +19,7 @@ from services.http import ext_client
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
-from cto_services.auth import create_token, current_dev
+from cto_services.auth import LINK_TOKEN_TTL_SECONDS, create_link_token, create_token, current_dev, resolve_github_nav_user
 from cto_services.db import get_db
 import services.github_app as _ga
 from services.github_oauth import auth_url, exchange, gh_user, gh_repos, IDENTITY_SCOPES
@@ -34,43 +34,123 @@ router = APIRouter(prefix="/github/oauth", tags=["GitHub OAuth"])
 _GHA_STATE_TTL_SECONDS = 15 * 60
 
 
-def _request_origin(req: Request) -> Optional[str]:
-    """Derive the live origin (scheme + host) the user is sitting on so
-    the OAuth callback can redirect back to that same domain instead of
-    a hardcoded APP_URL. Handles preview pods, auremcto.com, aurem.dev,
-    and any custom domain in one shot.
+# ---------------------------------------------------------------------------
+# FIX #2 (2026-11-18) -- OAuth open redirect (session-token theft).
+# The OAuth callbacks redirect to {origin}/oauth-finish with the session
+# JWT in the URL fragment. The origin used to come straight from the
+# Origin / Referer / X-Forwarded-Host request headers, so an attacker site
+# could have the token delivered to its own origin. Only origins the app
+# itself trusts may now be used for a redirect; anything else falls back
+# to the app own default URL. Trusted origins come from the app own
+# configuration: APP_URL / FRONTEND_URL (the app public URL -- in the
+# Emergent preview this is the preview pod own URL) and ALLOWED_ORIGINS
+# (the same setting backend/main.py uses for CORS), plus the production
+# site https://auremcto.com (and www) and localhost for local development
+# (http://localhost:3000 and :5173) -- the same defaults main.py uses for
+# its CORS allowlist. X-Forwarded-Host is never trusted: it is
+# attacker-controlled.
+_TRUSTED_REDIRECT_ORIGIN_DEFAULTS = (
+    "https://auremcto.com",
+    "https://www.auremcto.com",
+    "http://localhost:3000",
+    "http://localhost:5173",
+)
 
-    Precedence:
-      1. Origin header (set by the browser on the /connect navigation)
-      2. Referer header (parsed for scheme + host)
-      3. X-Forwarded-Proto + X-Forwarded-Host (Kubernetes ingress)
-      4. None → callback falls back to APP_URL.
-    """
+
+def _trusted_redirect_origins():
+    """Origins the app trusts for OAuth redirects, from its own config."""
+    origins = set(_TRUSTED_REDIRECT_ORIGIN_DEFAULTS)
+    for env_name in ("APP_URL", "FRONTEND_URL", "ALLOWED_ORIGINS"):
+        for value in (os.getenv(env_name) or "").split(","):
+            normalised = _normalize_origin(value)
+            if normalised:
+                origins.add(normalised)
+    return origins
+
+
+def _normalize_origin(value):
+    """Normalise an origin string to scheme://host[:port], or None."""
     try:
-        origin = req.headers.get("origin")
-        if origin and origin.startswith(("http://", "https://")):
-            return origin.rstrip("/")
-        ref = req.headers.get("referer") or req.headers.get("referrer")
-        if ref:
-            from urllib.parse import urlparse
-            p = urlparse(ref)
-            if p.scheme and p.netloc:
-                return f"{p.scheme}://{p.netloc}"
-        proto = req.headers.get("x-forwarded-proto") or "https"
-        host = req.headers.get("x-forwarded-host") or req.headers.get("host")
-        if host:
-            return f"{proto}://{host}".rstrip("/")
+        from urllib.parse import urlparse
+        parsed = urlparse(str(value).strip())
+        if parsed.scheme.lower() not in ("http", "https"):
+            return None
+        if not parsed.netloc or parsed.username or parsed.password:
+            return None
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            return None
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return None
+        netloc = host
+        if parsed.port:
+            netloc = f"{host}:{parsed.port}"
+        return f"{parsed.scheme.lower()}://{netloc}"
     except Exception:
-        pass
+        return None
+
+
+def _is_trusted_redirect_origin(value):
+    """True when value is exactly one of the trusted redirect origins."""
+    normalised = _normalize_origin(value)
+    return normalised is not None and normalised in _trusted_redirect_origins()
+
+
+def _default_frontend_url():
+    """The app own default frontend URL (no trusted origin presented)."""
+    for env_name in ("APP_URL", "FRONTEND_URL"):
+        default = _normalize_origin(os.getenv(env_name) or "")
+        if default:
+            return default
+    return "https://auremcto.com"
+
+
+def _safe_redirect_origin(value):
+    """Return value when it is a trusted origin, else the app default."""
+    normalised = _normalize_origin(value)
+    if normalised and normalised in _trusted_redirect_origins():
+        return normalised
+    return _default_frontend_url()
+
+
+def _request_origin(req: Request) -> Optional[str]:
+    """Return the request origin, but only when it is a trusted origin.
+
+    FIX #2 (OAuth open redirect): Origin / Referer headers are
+    attacker-controlled, so they are only honoured when they name one of
+    the app own trusted redirect origins (see _trusted_redirect_origins).
+    X-Forwarded-Host is never trusted. Returns None when no trusted origin
+    was presented; callers fall back to the app own default URL.
+    """
+    candidates = []
+    origin = req.headers.get("origin")
+    if origin:
+        candidates.append(origin)
+    ref = req.headers.get("referer") or req.headers.get("referrer")
+    if ref:
+        from urllib.parse import urlparse
+        parsed = urlparse(ref)
+        if parsed.scheme and parsed.netloc:
+            candidates.append(f"{parsed.scheme}://{parsed.netloc}")
+    for candidate in candidates:
+        trusted = _normalize_origin(candidate)
+        if trusted and trusted in _trusted_redirect_origins():
+            return trusted
     return None
 
 
 def _frontend_url(path: str, query: str, origin: Optional[str] = None) -> str:
-    # Prefer the origin captured at /connect time (multi-domain support).
-    # Falls back to APP_URL env for legacy callers that didn't store one.
-    base = (origin or os.getenv("APP_URL") or "").rstrip("/")
+    """Build a frontend URL for an OAuth redirect.
+
+    FIX #2: origin is only honoured when it is a trusted redirect origin
+    (see _safe_redirect_origin); anything else falls back to the app own
+    default URL, so a forged Origin / Referer / X-Forwarded-Host header
+    can never steer the redirect (and the session token in its fragment)
+    to an attacker site.
+    """
+    base = _safe_redirect_origin(origin)
     if not base:
-        raise HTTPException(500, "APP_URL not configured on this deployment")
+        raise HTTPException(500, "APP_URL not configured")
     return f"{base}{path}?{query}"
 
 
@@ -126,6 +206,27 @@ async def _gh_primary_email(token: str) -> Optional[str]:
     except Exception as e:
         logger.warning(f"[oauth] /user/emails fetch failed: {e!r}")
     return None
+
+
+@router.post("/link-token")
+async def mint_github_link_token(authorization: Optional[str] = Header(None)):
+    """FIX #1 (2026-11-17) -- mint a single-use GitHub navigation link token.
+
+    The frontend calls this with the session JWT in the Authorization
+    header (the axios interceptor attaches it) and opens the popup with
+    the returned token instead of the JWT, because a `window.open` /
+    `<a href>` navigation cannot send an Authorization header and a
+    session JWT must never appear in a URL (browser history, server
+    logs, Referer). The token is a 5-minute, single-purpose, single-use
+    JWT accepted only by the `?auth=` parameter of /github/oauth/connect
+    and /github/app/install; it is rejected as a session token
+    everywhere else.
+    """
+    user = await current_dev(authorization)
+    return {
+        "link_token": create_link_token(user["user_id"], user.get("email") or ""),
+        "expires_in": LINK_TOKEN_TTL_SECONDS,
+    }
 
 
 @router.get("/connect")
@@ -229,9 +330,11 @@ async def connect(
             url=auth_url(state, force_reauth=fr, scopes=IDENTITY_SCOPES))
 
     # Connect mode — must be authenticated.
-    if not authorization and auth:
-        authorization = f"Bearer {auth}"
-    user = await current_dev(authorization)
+    # FIX #1 (2026-11-17) -- `auth` may carry a single-use link token
+    # (minted via POST /github/oauth/link-token) instead of the session
+    # JWT, which must never appear in a URL. Legacy session JWTs are
+    # still accepted here until the remaining callers are migrated.
+    user = await resolve_github_nav_user(authorization, auth)
     state = f"{user['user_id']}:{uuid.uuid4().hex}"
     mode = "app_install_switch" if is_app_install else "connect"
     if db is not None:
@@ -609,7 +712,7 @@ async def callback(
         # Iter 212m-99 — use the origin captured at /connect time so
         # the JWT lands on the same domain the user started on
         # (auremcto.com vs aurem.dev vs preview pod).
-        base = (state_origin or os.getenv("APP_URL") or "").rstrip("/")
+        base = _safe_redirect_origin(state_origin)
         if not base:
             raise HTTPException(500, "APP_URL not configured")
         # 2026-11-11 — Fix 7: carry the validated return path through

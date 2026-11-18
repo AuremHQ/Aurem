@@ -120,6 +120,12 @@ _MAX_SANE_COST_USD = 1_000_000.0
 # (via `_apply_micro_refund`) is always exact, never rounded.
 WALLET_MICRO_PER_TOKEN = 1000
 
+# Single source of truth for the monthly token allotment per paid plan
+# (fix list Tier 2 #17, C3). Both the Stripe webhook
+# (routers/payments.py::stripe_webhook) and run_monthly_grant_job below
+# use this mapping; do not duplicate these values elsewhere.
+plan_token_grants = {"starter": 900, "pro": 1900, "team": 4900}
+
 
 def _require_str(name: str, value) -> None:
     """PRE-STEP (a) self-red-team hardening — every one of these
@@ -218,7 +224,11 @@ async def get_balance(db, user_id: str) -> dict:
     }
 
 
-async def _atomic_bucket_spend(db, user_id: str, amount: int) -> dict | None:
+async def _atomic_bucket_spend(
+    db, user_id: str, amount: int, *, pending_key: str | None = None,
+    pending_action: str | None = None, pending_run_id: str | None = None,
+    pending_intent: dict | None = None,
+) -> dict:
     """Atomically deduct `amount` tokens across buckets in SPEND_ORDER.
     Returns the post-update wallet doc (with `_ok`/`_take_*` debug
     fields) on success, or a doc with `_ok: False` and ZERO deduction
@@ -256,6 +266,46 @@ async def _atomic_bucket_spend(db, user_id: str, amount: int) -> dict | None:
             "updated_at": _now(),
         }},
     ]
+    if pending_key is not None:
+        # Record the spend in the pending record in the SAME atomic
+        # pipeline update that debits the buckets (Aurem Tier 1 #5).
+        # The spend is conditional on _ok, so a failed spend leaves
+        # the intent record untouched (the $cond else branch), and a
+        # successful spend can never be recorded without the matching
+        # pending entry: a crash after this update always leaves
+        # status spent with the real breakdown, and a crash before it
+        # always leaves status intent, so recovery can tell the two
+        # apart and never refunds money that never moved, nor loses
+        # money that did.
+        intent = pending_intent or {}
+        pipeline.append(
+            {
+                "$set": {
+                    f"pending_finalizations.{pending_key}": {
+                        "$cond": [
+                            "$_ok",
+                            {
+                                "kind": "hold",
+                                "status": "spent",
+                                "action": pending_action,
+                                "run_id": pending_run_id,
+                                "amount": amount,
+                                "breakdown": {
+                                    "promo": "$_take_promo",
+                                    "plan": "$_take_plan",
+                                    "purchased": "$_take_purchased",
+                                },
+                                "batch_breakdown": {},
+                                "created_at": intent.get("created_at"),
+                                "claimed_at": intent.get("claimed_at"),
+                            },
+                            intent,
+                        ]
+                    }
+                }
+            }
+        )
+
     doc = await db.wallets.find_one_and_update(
         {"_id": user_id}, pipeline,
         upsert=True, return_document=ReturnDocument.AFTER,
@@ -386,6 +436,19 @@ async def _apply_micro_refund(db, user_id: str, refund_micro: dict[str, int]) ->
     moves whole tokens only and never touches it, which is exactly why
     none of those existing, already-tested code paths needed to
     change for this fix."""
+    # A refund is a credit: it must never be negative. A negative
+    # micro-token value here would flow straight into the Mongo
+    # $mod / $floor arithmetic below, producing a NEGATIVE
+    # micro_remainder (Mongo $mod keeps the dividend sign)
+    # and debiting whole tokens from buckets -- the exact opposite
+    # of a refund, breaking the ledger invariant that a refund only
+    # ever credits tokens back. Reject it loudly, before ANY bucket
+    # is touched, instead of writing a negative amount.
+    for bucket, micro in refund_micro.items():
+        if micro < 0:
+            raise ValueError(
+                f"micro refund must not be negative: bucket={bucket!r} micro={micro}"
+            )
     nonzero = {b: v for b, v in refund_micro.items() if v}
     if not nonzero:
         return
@@ -469,59 +532,159 @@ async def hold(
     _require_str("user_id", user_id)
     _require_str("run_id", run_id)
     _require_str("idempotency_key", idempotency_key)
+
     existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
     if existing:
-        return {"ok": True, "idempotent_replay": True, "run_id": run_id,
-                 "held": existing.get("amount"), "breakdown": existing.get("breakdown")}
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            "run_id": run_id,
+            "held": existing.get("amount"),
+            "breakdown": existing.get("breakdown"),
+        }
+
+    # Crash recovery, part 1 (Aurem Tier 1 #5): a previous attempt with
+    # this same idempotency_key may have died after spending but before
+    # its ledger row was written. Its pending record (see below) is
+    # enough to finish that hold instead of spending the tokens a
+    # second time. A result here means the hold is already complete;
+    # None means nothing half-done exists and a fresh hold is safe.
+    recovered = await _recover_interrupted_hold(
+        db, user_id=user_id, idempotency_key=idempotency_key
+    )
+    if recovered is not None:
+        return recovered
 
     est_tokens = tokens_for(action)
-    doc = await _atomic_bucket_spend(db, user_id, est_tokens)
+    now = _now()
+    # Crash recovery, part 2: record the pending hold DURABLY BEFORE
+    # any money moves. The record carries the full intent (action,
+    # run_id, estimated amount) and is only created when no pending
+    # record for this key exists yet, so resuming a crashed attempt
+    # can never overwrite a record that already knows the spend
+    # happened. _atomic_bucket_spend then flips this same record to
+    # status spent (with the real breakdown) in the SAME atomic
+    # pipeline update that debits the buckets, so the record can
+    # never claim the spend did not happen after it did, and can
+    # never claim it did before it did.
+    pending_intent = {
+        "kind": "hold",
+        "status": "intent",
+        "action": action,
+        "run_id": run_id,
+        "amount": est_tokens,
+        "breakdown": {},
+        "batch_breakdown": {},
+        "created_at": now,
+        "claimed_at": now,
+    }
+    await db.wallets.update_one(
+        {
+            "_id": user_id,
+            f"pending_finalizations.{idempotency_key}": {"$exists": False},
+        },
+        {"$set": {f"pending_finalizations.{idempotency_key}": pending_intent}},
+    )
+    doc = await _atomic_bucket_spend(
+        db, user_id, est_tokens,
+        pending_key=idempotency_key,
+        pending_action=action,
+        pending_run_id=run_id,
+        pending_intent=pending_intent,
+    )
     if doc is None or not doc.get("_ok"):
+        # Nothing was debited (the spend is conditional on _ok),
+        # so the intent record is simply no longer needed.
+        await _clear_pending_finalization(db, user_id, idempotency_key)
         bal = await get_balance(db, user_id)
         raise InsufficientTokens(user_id=user_id, needed=est_tokens, balance=bal["spendable"])
-
     breakdown = {
-        "promo": doc["_take_promo"], "plan": doc["_take_plan"],
+        "promo": doc["_take_promo"],
+        "plan": doc["_take_plan"],
         "purchased": doc["_take_purchased"],
     }
-    # FIFO batch-level attribution (Part 2) — best-effort, see module
-    # docstring. The aggregate spend above is what actually enforces
-    # "never negative"; this only records WHICH batch(es) a refund/
-    # clawback should later target.
+    # FIFO batch-level attribution (Part 2) -- see _consume_batches_fifo.
     batch_breakdown: dict[str, int] = {}
     for b, amt in breakdown.items():
         if amt > 0:
             batch_breakdown.update(await _consume_batches_fifo(db, user_id, b, amt))
-    now = _now()
+    # The hold entry and the pending record move to held together,
+    # in one atomic update on the wallet document: a crash after
+    # this point leaves a hold that reconcile_stale_holds can
+    # complete from the pending record, and a crash before it leaves
+    # a spent pending record it can roll back.
     await db.wallets.update_one(
         {"_id": user_id},
-        {"$set": {f"holds.{run_id}": {
-            "amount": est_tokens, "breakdown": breakdown,
-            "batch_breakdown": batch_breakdown,
-            "action": action, "created_at": now,
-        }}},
+        {
+            "$set": {
+                f"holds.{run_id}": {
+                    "amount": est_tokens,
+                    "breakdown": breakdown,
+                    "batch_breakdown": batch_breakdown,
+                    "action": action,
+                    "created_at": now,
+                },
+                f"pending_finalizations.{idempotency_key}": {
+                    **pending_intent,
+                    "status": "held",
+                    "breakdown": breakdown,
+                    "batch_breakdown": batch_breakdown,
+                },
+            }
+        },
     )
     ledger_row = {
-        "_id": idempotency_key, "user_id": user_id, "kind": "hold",
-        "action": action, "run_id": run_id, "amount": est_tokens,
-        "breakdown": breakdown, "created_at": now,
+        "_id": idempotency_key,
+        "user_id": user_id,
+        "kind": "hold",
+        "action": action,
+        "run_id": run_id,
+        "amount": est_tokens,
+        "breakdown": breakdown,
+        "created_at": now,
     }
     try:
         await db.wallet_ledger.insert_one(dict(ledger_row))
     except DuplicateKeyError:
-        # Compensate: give the tokens back AND remove the holds-field
-        # entry we just spuriously wrote, then defer to the winner.
+        # A duplicate (concurrent retry or resumed attempt) already
+        # won this idempotency_key and owns the hold. Give back ONLY
+        # this attempt spend: the winning hold entry must stay, or
+        # the winner ledger row would point at a hold that no longer
+        # exists.
         await db.wallets.update_one(
             {"_id": user_id},
-            {"$inc": {f"buckets.{k}": v for k, v in breakdown.items()},
-             "$unset": {f"holds.{run_id}": ""}},
+            {"$inc": {f"buckets.{k}": v for k, v in breakdown.items()}},
         )
         await _restore_batches(db, user_id, batch_breakdown)
+        await _clear_pending_finalization(db, user_id, idempotency_key)
         existing = await db.wallet_ledger.find_one({"_id": idempotency_key})
-        return {"ok": True, "idempotent_replay": True, "run_id": run_id,
-                 "held": existing.get("amount"), "breakdown": existing.get("breakdown")}
-    return {"ok": True, "idempotent_replay": False, "run_id": run_id,
-             "held": est_tokens, "breakdown": breakdown}
+        if existing is None:
+            await db.wallets.update_one(
+                {"_id": user_id},
+                {"$unset": {f"holds.{run_id}": ""}},
+            )
+            return {
+                "ok": True,
+                "idempotent_replay": True,
+                "run_id": run_id,
+                "held": est_tokens,
+                "breakdown": breakdown,
+            }
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            "run_id": run_id,
+            "held": existing.get("amount"),
+            "breakdown": existing.get("breakdown"),
+        }
+    await _clear_pending_finalization(db, user_id, idempotency_key)
+    return {
+        "ok": True,
+        "idempotent_replay": False,
+        "run_id": run_id,
+        "held": est_tokens,
+        "breakdown": breakdown,
+    }
 
 
 async def _claim_hold(db, user_id: str, run_id: str, *,
@@ -608,6 +771,142 @@ async def _clear_pending_finalization(db, user_id: str, idempotency_key: str) ->
     await db.wallets.update_one(
         {"_id": user_id}, {"$unset": {f"pending_finalizations.{idempotency_key}": ""}},
     )
+
+
+async def _recover_interrupted_hold(db, *, user_id: str, idempotency_key: str) -> dict | None:
+    """Finish a hold() that died after spending but before its ledger
+    row was written, using only the pending record hold() wrote
+    before any money moved (Aurem Tier 1 #5).
+
+    Returns the completed hold result when the pending record shows
+    a hold that can be finished, or None when there is nothing to
+    finish (no pending record, an intent whose spend never happened,
+    or a record that is not a hold at all), in which case the caller
+    goes on with a fresh hold. This function never refunds and never
+    spends: it only completes work the crashed attempt had already
+    paid for, so calling it twice, or racing the original attempt,
+    can only ever produce the one hold and the one ledger row the
+    idempotency_key names. A stale record that cannot be completed
+    is left for reconcile_stale_holds, which rolls it back after the
+    grace period instead of completing it.
+    """
+    wallet = await db.wallets.find_one(
+        {"_id": user_id}, {"pending_finalizations": 1, "holds": 1}
+    )
+    if wallet is None:
+        return None
+    pf = (wallet.get("pending_finalizations") or {}).get(idempotency_key)
+    if not pf or pf.get("kind") != "hold":
+        return None
+    run_id = pf.get("run_id")
+    if not run_id:
+        return None
+    ledger = await db.wallet_ledger.find_one({"_id": idempotency_key})
+    if ledger is not None:
+        await _clear_pending_finalization(db, user_id, idempotency_key)
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            "run_id": run_id,
+            "held": ledger.get("amount"),
+            "breakdown": ledger.get("breakdown"),
+        }
+    held = (wallet.get("holds") or {}).get(run_id)
+    if held is not None:
+        held_amount = int(held.get("amount") or 0)
+        held_breakdown = held.get("breakdown") or pf.get("breakdown") or {}
+        ledger_row = {
+            "_id": idempotency_key,
+            "user_id": user_id,
+            "kind": "hold",
+            "action": held.get("action") or pf.get("action"),
+            "run_id": run_id,
+            "amount": held_amount,
+            "breakdown": held_breakdown,
+            "created_at": held.get("created_at") or _now(),
+        }
+        try:
+            await db.wallet_ledger.insert_one(dict(ledger_row))
+        except DuplicateKeyError:
+            ledger = await db.wallet_ledger.find_one({"_id": idempotency_key})
+            await _clear_pending_finalization(db, user_id, idempotency_key)
+            return {
+                "ok": True,
+                "idempotent_replay": True,
+                "run_id": run_id,
+                "held": ledger.get("amount") if ledger else held_amount,
+                "breakdown": ledger.get("breakdown") if ledger else held_breakdown,
+            }
+        await _clear_pending_finalization(db, user_id, idempotency_key)
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            "run_id": run_id,
+            "held": held_amount,
+            "breakdown": held_breakdown,
+        }
+    if pf.get("status") not in ("spent", "held"):
+        # Intent only: the spend is recorded atomically with the
+        # status change to spent, so an intent record means the
+        # spend never happened and a fresh hold is safe.
+        return None
+    amount = int(pf.get("amount") or 0)
+    if amount <= 0:
+        await _clear_pending_finalization(db, user_id, idempotency_key)
+        return None
+    breakdown = pf.get("breakdown") or {}
+    batch_breakdown = pf.get("batch_breakdown") or {}
+    created_at = pf.get("created_at") or _now()
+    await db.wallets.update_one(
+        {"_id": user_id},
+        {
+            "$set": {
+                f"holds.{run_id}": {
+                    "amount": amount,
+                    "breakdown": breakdown,
+                    "batch_breakdown": batch_breakdown,
+                    "action": pf.get("action"),
+                    "created_at": created_at,
+                },
+                f"pending_finalizations.{idempotency_key}": {
+                    **pf,
+                    "status": "held",
+                    "breakdown": breakdown,
+                    "batch_breakdown": batch_breakdown,
+                },
+            }
+        },
+    )
+    ledger_row = {
+        "_id": idempotency_key,
+        "user_id": user_id,
+        "kind": "hold",
+        "action": pf.get("action"),
+        "run_id": run_id,
+        "amount": amount,
+        "breakdown": breakdown,
+        "created_at": created_at,
+    }
+    try:
+        await db.wallet_ledger.insert_one(dict(ledger_row))
+    except DuplicateKeyError:
+        ledger = await db.wallet_ledger.find_one({"_id": idempotency_key})
+        await _clear_pending_finalization(db, user_id, idempotency_key)
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            "run_id": run_id,
+            "held": ledger.get("amount") if ledger else amount,
+            "breakdown": ledger.get("breakdown") if ledger else breakdown,
+        }
+    await _clear_pending_finalization(db, user_id, idempotency_key)
+    return {
+        "ok": True,
+        "idempotent_replay": True,
+        "run_id": run_id,
+        "held": amount,
+        "breakdown": breakdown,
+    }
 
 
 async def settle(
@@ -1137,7 +1436,6 @@ async def run_monthly_grant_job(db, *, dry_run: bool = False) -> dict:
         {"tier": {"$in": ["starter", "pro", "team"]}},
         {"_id": 0, "user_id": 1, "tier": 1},
     )
-    plan_token_grants = {"starter": 900, "pro": 1900, "team": 4900}
     planned: list[dict] = []
     applied: list[dict] = []
     async for u in db_cursor:
@@ -1244,6 +1542,68 @@ async def check_thresholds(db, user_id: str) -> dict:
 # `grace_seconds` with no matching `wallet_ledger` row (i.e. genuinely
 # interrupted, not just "still running") and finishes them.
 
+async def _reconcile_stale_hold(db, *, user_id: str, key: str, pf: dict) -> dict:
+    """Resolve one stale hold pending record (Aurem Tier 1 #5).
+
+    This is the recovery half of the hold crash window: a pending
+    hold record that is older than the grace period belongs to an
+    attempt that is not coming back, so reconcile_stale_holds
+    finishes it one way or the other instead of leaving the money
+    in limbo. The outcome depends on how far the attempt got:
+
+    - the hold entry exists but its ledger row does not: complete
+      the hold by writing the missing ledger row from the hold
+      entry itself, so the hold and the ledger agree again;
+    - only an intent was ever recorded: the spend is recorded
+      atomically with the status change to spent, so an intent
+      means the spend never happened and the record is dropped
+      with nothing to refund;
+    - the spend happened (status spent or held) but no hold entry
+      exists: roll the spend back in full (buckets by breakdown,
+      batches by batch_breakdown) and write no ledger row, so a
+      later retry with the same idempotency_key is a fresh hold.
+    """
+    run_id = pf.get("run_id")
+    amount = int(pf.get("amount") or 0)
+    breakdown = dict(pf.get("breakdown") or {})
+    batch_breakdown = dict(pf.get("batch_breakdown") or {})
+    status = pf.get("status")
+    base = {"user_id": user_id, "run_id": run_id, "amount": amount}
+    wallet = await db.wallets.find_one({"_id": user_id}, {"holds": 1})
+    held = ((wallet or {}).get("holds") or {}).get(run_id) if run_id else None
+    if held is not None:
+        held_amount = int(held.get("amount") or amount)
+        held_breakdown = held.get("breakdown") or breakdown
+        ledger_row = {
+            "_id": key,
+            "user_id": user_id,
+            "kind": "hold",
+            "action": held.get("action") or pf.get("action"),
+            "run_id": run_id,
+            "amount": held_amount,
+            "breakdown": held_breakdown,
+            "created_at": held.get("created_at") or _now(),
+        }
+        try:
+            await db.wallet_ledger.insert_one(dict(ledger_row))
+        except DuplicateKeyError:
+            pass
+        await _clear_pending_finalization(db, user_id, key)
+        return {**base, "amount": held_amount, "note": "completed_hold"}
+    if status == "intent" or amount <= 0:
+        await _clear_pending_finalization(db, user_id, key)
+        return {**base, "note": "discarded_unspent_hold_intent"}
+    if breakdown:
+        await db.wallets.update_one(
+            {"_id": user_id},
+            {"$inc": {f"buckets.{k}": v for k, v in breakdown.items()}},
+        )
+    if batch_breakdown:
+        await _restore_batches(db, user_id, batch_breakdown)
+    await _clear_pending_finalization(db, user_id, key)
+    return {**base, "note": "rolled_back_interrupted_hold"}
+
+
 async def reconcile_stale_holds(db, *, grace_seconds: int = 300) -> dict:
     """Completes any settle()/release() that claimed its hold but
     never finished writing its `wallet_ledger` row (the process died
@@ -1298,6 +1658,11 @@ async def reconcile_stale_holds(db, *, grace_seconds: int = 300) -> dict:
                 resolved.append({"user_id": user_id, "idempotency_key": key, "note": "cleanup_only"})
                 continue
 
+            if pf.get("kind") == "hold":
+                resolved.append(
+                    await _reconcile_stale_hold(db, user_id=user_id, key=key, pf=pf)
+                )
+                continue
             run_id = pf.get("run_id")
             breakdown = pf.get("breakdown") or {}
             batch_breakdown = pf.get("batch_breakdown") or {}

@@ -61,6 +61,27 @@ export function dismissToast(id) {
     new CustomEvent("aurem:toast-dismiss", { detail: { id } })
   );
 }
+// Kind helpers, mirroring lib/toastApi.js so callers importing toast
+// directly from "./Toast" (e.g. RepoCleanupBanner) get the same API:
+// toast.success(...) / toast.error(...) instead of a TypeError.
+// warning maps to the renderer warn kind, as in toastApi.
+const KIND_MAP = { info: "info", success: "success", error: "error", warning: "warn" };
+
+function emitKind(kind, message, opts) {
+  // Accept the object form toast({ message, duration, ... }) too, so the
+  // helpers stay consistent with toast() itself.
+  if (message && typeof message === "object") {
+    return toast({ ...message, kind: KIND_MAP[kind] });
+  }
+  return toast({ message, kind: KIND_MAP[kind], ...(opts || {}) });
+}
+
+toast.info = (message, opts) => emitKind("info", message, opts);
+toast.success = (message, opts) => emitKind("success", message, opts);
+toast.error = (message, opts) => emitKind("error", message, opts);
+toast.warning = (message, opts) => emitKind("warning", message, opts);
+toast.dismiss = (id) => dismissToast(id);
+
 
 export default function Toaster() {
   const [list, setList] = useState([]);

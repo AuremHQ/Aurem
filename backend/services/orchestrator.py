@@ -2021,10 +2021,33 @@ async def chat_with_tools(
     # server-side (belt-and-braces) so a hallucinated tool call from
     # a non-founder LLM still refuses at dispatch.
     if not is_founder:
-        _LOCAL_ONLY_TOOLS = {"execute_bash"}
+        # Fix #10 (Tier 1) - Vercel admin gate. The 13 Vercel tools
+        # (services.vercel_skills.VERCEL_TOOLS) are admin operations:
+        # they read and mutate the connected Vercel account (projects,
+        # deployments, env vars, domains). Non-admin sessions must
+        # never see them, just like execute_bash above.
+        # local_tools.invoke_local_tool and each Vercel tool function
+        # also gate server-side (belt-and-braces), so a hallucinated
+        # tool call from a non-admin LLM still refuses at dispatch.
+        _ADMIN_ONLY_TOOLS = {
+            "execute_bash",
+            "vercel_account_info",
+            "vercel_list_projects",
+            "vercel_get_project_details",
+            "vercel_list_deployments",
+            "vercel_get_deployment_logs",
+            "vercel_list_env_vars",
+            "vercel_list_domains",
+            "vercel_trigger_deploy_hook",
+            "vercel_create_project",
+            "vercel_pause_project",
+            "vercel_resume_project",
+            "vercel_add_domain",
+            "vercel_delete_project",
+        }
         tools = [
             t for t in tools
-            if (t.get("name") not in _LOCAL_ONLY_TOOLS)
+            if (t.get("name") not in _ADMIN_ONLY_TOOLS)
         ]
 
     # Iter 212m-152 — TOOL NAMESPACE REDUCTION (Fix 1).

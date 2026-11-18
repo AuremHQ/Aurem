@@ -52,12 +52,12 @@ def test_spoofed_header_does_not_change_the_trusted_value():
                         "1.1.1.1, 2.2.2.2, 3.3.3.3, 4.4.4.4, 5.5.5.5"):
         spoofed_chain = f"{fake_prefix},{genuine_chain}"
         req = _fake_request(spoofed_chain)
-        naive = client_ip_from_request(req)
+        effective = client_ip_from_request(req)
         trusted = client_ip_trusted_from_request(req)
-        assert naive == fake_prefix.split(",")[0].strip(), (
-            "sanity check: the naive function should still be fooled "
-            "(that's the documented, unfixed gap) — if this fails, "
-            "the test setup itself is wrong")
+        # FIX 2 step 2b: client_ip_from_request() now returns the
+        # trusted value too, so a spoofed first entry must not move it.
+        assert effective == real_client_ip, (
+            "client_ip_from_request() moved under spoofing")
         assert trusted == real_client_ip, (
             f"trusted value moved under spoofing: prefix={fake_prefix!r} "
             f"-> trusted={trusted!r}, expected {real_client_ip!r}")
@@ -72,7 +72,7 @@ def test_normal_request_still_gets_its_real_ip():
     chain = f"{real_client_ip},172.70.126.116,34.160.159.238"
     req = _fake_request(chain)
     assert client_ip_trusted_from_request(req) == real_client_ip
-    assert client_ip_from_request(req) == real_client_ip  # naive agrees too, absent spoofing
+    assert client_ip_from_request(req) == real_client_ip  # also returns the real IP, absent spoofing
 
 
 def test_trusted_value_falls_back_gracefully_with_no_xff_header():

@@ -8,4 +8,5 @@ export PREV_URL="https://bin-context-pat.preview.emergentagent.com"
 export PROD_EMAIL="${PROD_EMAIL:-}"
 export PROD_PASS="${PROD_PASS:-}"
 export PREV_EMAIL="test@aurem.dev"
-export PREV_PASS="AuremTest2026!"
+# Preview test account password - set it in your shell or in an untracked qa_run/env.local.sh; it is never committed with a value here.
+export PREV_PASS="${PREV_PASS:-}"

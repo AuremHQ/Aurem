@@ -122,10 +122,10 @@ def test_flow_a_add_endpoint_still_exists():
     assert "async def add_project" in src
 
 
-def test_flow_a_encrypts_pat_before_storing():
-    """Regression: PAT is HKDF-Fernet encrypted at rest, never plain."""
+def test_flow_a_stores_pat_in_plaintext():
+    """Regression: PAT is stored in plaintext (crypto removed 2026-11-17), never encrypted."""
     src = cto_projects_src()
-    assert "_encrypt_pat" in src
+    assert "_encrypt_pat" not in src
     assert 'auth_method": "pat"' in src
 
 

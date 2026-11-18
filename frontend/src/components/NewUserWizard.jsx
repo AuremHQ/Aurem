@@ -378,15 +378,18 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
     trackFunnel("cta_click", "wizard", { has_token: true });
     trackFunnel("connect_repo_click", "wizard", {});
     setOauthStuck(false); setErr("");
-    const url = withFunnelParams(
-      `${API_BASE}/github/oauth/connect?auth=${encodeURIComponent(token)}`,
-      "wizard",
-    );
+    // FIX #1 (2026-11-17) -- the session JWT must never appear in a URL
+    // (browser history, server logs, Referer). A `window.open` navigation
+    // cannot send an Authorization header, so mint a single-use,
+    // 5-minute link token with the JWT in the header (POST
+    // /github/oauth/link-token) and navigate the popup with that token
+    // (below, after the blocked-popup check). The popup is opened blank
+    // first so the browser still treats it as a user-gesture popup.
     const w = 560, h = 720;
     const left = Math.max(0, window.screenX + (window.outerWidth  - w) / 2);
     const top  = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
     popupRef.current = window.open(
-      url, "aurem_github_oauth",
+      "", "aurem_github_oauth",
       `width=${w},height=${h},left=${left},top=${top}`,
     );
     // Rule 6 — no silent failures. Same window.open() null-return gap
@@ -395,6 +398,33 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       setErr("Popup blocked — please allow popups for this site and try again.");
       return;
     }
+    // FIX #1 (2026-11-17) -- navigate the blank popup with a minted link
+    // token (see above), keeping the funnel params; a failed mint closes
+    // the popup and stops the poller below.
+    api.post("/github/oauth/link-token", {})
+      .then(({ data }) => {
+        const linkToken = data?.link_token;
+        if (!linkToken) throw new Error("empty link token");
+        if (!popupRef.current.closed) {
+          popupRef.current.location.href = withFunnelParams(
+            `${API_BASE}/github/oauth/connect?auth=${encodeURIComponent(linkToken)}`,
+            "wizard",
+          );
+        }
+      })
+      .catch(() => {
+        try {
+          popupRef.current?.close();
+        } catch {
+          /* already closed */
+        }
+        if (pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+        setErr("Could not open the GitHub connect page. Please try again.");
+      });
+
     // Poll status every 2 s until either: connected, popup closed by
     // user, or timeout. 2026-02 — was 90s with NO failure feedback at
     // all on either branch (see `oauthStuck` comment above); now 3 min

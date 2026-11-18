@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from services import llm_config_store as store
+from services import llm_config as store
 from services.ora_chat_v2 import llm_client
 
 
@@ -106,9 +106,9 @@ def db():
 
 
 @pytest.fixture(autouse=True)
-def _fernet_key(monkeypatch):
-    from cryptography.fernet import Fernet
-    monkeypatch.setenv("LLM_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode())
+def _fresh_cache():
+    # No encryption any more (crypto removed 2026-11-17) — just keep the
+    # per-role active-config cache fresh between tests.
     store._bump_cache()
     yield
     store._bump_cache()
@@ -129,8 +129,8 @@ async def test_t_config_roundtrip(db):
     assert "api_key_enc" not in listed[0]
 
     raw = db.llm_configs.rows[0]
-    assert raw["api_key_enc"] != b"sk-realsecret-abcdef"
-    assert store.decrypt_key(raw["api_key_enc"]) == "sk-realsecret-abcdef"
+    assert raw["api_key_enc"] == "sk-realsecret-abcdef"
+    assert raw["api_key_enc"] == "sk-realsecret-abcdef"
 
 
 # ── t_key_never_in_logs ───────────────────────────────────────────────
@@ -161,12 +161,12 @@ async def test_t_keep_current_key(db):
         model="m", api_key="sk-original-key111")
     await store.update_config(db, cfg["config_id"], label="X renamed", api_key=None)
     raw = db.llm_configs.rows[0]
-    assert store.decrypt_key(raw["api_key_enc"]) == "sk-original-key111"
+    assert raw["api_key_enc"] == "sk-original-key111"
     assert raw["label"] == "X renamed"
 
     await store.update_config(db, cfg["config_id"], api_key="")
     raw = db.llm_configs.rows[0]
-    assert store.decrypt_key(raw["api_key_enc"]) == "sk-original-key111"
+    assert raw["api_key_enc"] == "sk-original-key111"
 
 
 # ── t_rekey ───────────────────────────────────────────────────────────
@@ -177,12 +177,11 @@ async def test_t_rekey(db):
         model="m", api_key="sk-old-key222")
     await store.update_config(db, cfg["config_id"], api_key="sk-new-key333")
     raw = db.llm_configs.rows[0]
-    assert store.decrypt_key(raw["api_key_enc"]) == "sk-new-key333"
+    assert raw["api_key_enc"] == "sk-new-key333"
     assert raw["key_hint"] == "…y333"
-    with pytest.raises(Exception):
-        # old ciphertext (if it were reused) would fail against the new
-        # plaintext — assert the stored ciphertext is NOT the old one
-        assert store.decrypt_key(raw["api_key_enc"]) == "sk-old-key222"
+    # The old key is gone — the stored value is the new key, not the old one.
+    assert raw["api_key_enc"] == "sk-new-key333"
+    assert raw["api_key_enc"] != "sk-old-key222"
 
 
 # ── t_active_per_role ────────────────────────────────────────────────

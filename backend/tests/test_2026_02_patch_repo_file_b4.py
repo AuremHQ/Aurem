@@ -94,3 +94,64 @@ async def test_patch_repo_file_only_changes_the_matched_spot_delegates_to_write(
 async def test_patch_repo_file_rejects_empty_old_value():
     res = await patch_repo_file({}, {"path": "x.py", "old_value": "", "new_value": "y"})
     assert res["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_patch_repo_file_re_fetches_full_file_when_read_is_truncated(monkeypatch):
+    # Fix #13 (Tier 1): read_repo_file truncates large files to a
+    # 200-line preview. Patching that preview would silently drop the
+    # tail of the file; patch must write back the complete file.
+    tail = "".join(f"line {i}\n" for i in range(300))
+    full = "import Foo from 'foo';\ntext=\"old\"\n" + tail
+    preview = "import Foo from 'foo';\ntext=\"old\"\n"
+    captured = {}
+
+    async def fake_read(_ctx, _args):
+        return {"ok": True, "content": preview, "truncated": True, "total_lines": 302}
+
+    async def fake_full(_ctx, _path):
+        return full, None
+
+    async def fake_write(_ctx, args):
+        captured["content"] = args["content"]
+        return {"ok": True, "path": args["path"], "sha": "abc123"}
+
+    monkeypatch.setattr(lt, "read_repo_file", fake_read)
+    monkeypatch.setattr(lt, "_read_repo_file_full", fake_full)
+    monkeypatch.setattr(lt, "write_repo_file", fake_write)
+
+    res = await patch_repo_file({}, {
+        "path": "App.jsx", "old_value": 'text="old"', "new_value": 'text="new"',
+    })
+    assert res["ok"] is True
+    assert captured["content"] == full.replace('text="old"', 'text="new"', 1)
+    assert "line 299\n" in captured["content"]
+    assert res["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_patch_repo_file_refuses_truncated_read_when_full_file_unavailable(monkeypatch):
+    # Fix #13 (Tier 1): if the full file cannot be re-fetched, patch
+    # must refuse and write nothing, never the truncated preview.
+    captured = {"calls": 0}
+
+    async def fake_read(_ctx, _args):
+        return {"ok": True, "content": 'text="old"\n', "truncated": True}
+
+    async def fake_full(_ctx, _path):
+        return None, {"ok": False, "error": "repo_context_unavailable", "gate": "repo_context_unavailable"}
+
+    async def fake_write(_ctx, args):
+        captured["calls"] += 1
+        return {"ok": True, "path": args["path"], "sha": "abc123"}
+
+    monkeypatch.setattr(lt, "read_repo_file", fake_read)
+    monkeypatch.setattr(lt, "_read_repo_file_full", fake_full)
+    monkeypatch.setattr(lt, "write_repo_file", fake_write)
+
+    res = await patch_repo_file({}, {
+        "path": "App.jsx", "old_value": 'text="old"', "new_value": 'text="new"',
+    })
+    assert res["ok"] is False
+    assert res["gate"] == "patch_truncated"
+    assert captured["calls"] == 0

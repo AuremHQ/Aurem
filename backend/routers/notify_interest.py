@@ -33,6 +33,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from cto_services.db import get_db
+from services.rate_limiter import client_ip_from_request
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Notify Interest"])
@@ -87,11 +88,11 @@ async def notify_interest(
         if not isinstance(repo, str) or len(repo) > 120:
             raise HTTPException(400, "invalid repo")
 
-    # Best-effort IP — frontend sits behind ingress so we read the
-    # forwarded chain when present.
-    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-          or (request.client.host if request.client else "")
-          or "unknown")
+    # FIX 2 step 2b: rate-limit on the trusted client IP -- see
+    # services/rate_limiter.py client_ip_from_request. The first
+    # X-Forwarded-For entry is caller-controlled and must not be
+    # used as the rate-limit key.
+    ip = client_ip_from_request(request)
     if not _rate_check(ip):
         raise HTTPException(429, "Slow down — try again in a minute")
 

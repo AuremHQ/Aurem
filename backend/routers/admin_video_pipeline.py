@@ -29,7 +29,6 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev, require_admin_dep
 from cto_services.db import get_db
-from services.llm_config_store import EncryptionNotConfigured
 from services.video_pipeline import house_rules, house_rules_check, pipeline, secrets_store, storage
 
 router = APIRouter(
@@ -70,12 +69,9 @@ async def update_secrets(body: UpdateSecretsBody,
         raise HTTPException(400, "Provide a Deepgram key and/or a fal.ai key to update")
     db = get_db()
     user = await current_dev(authorization)
-    try:
-        return await secrets_store.set_secrets(
-            db, deepgram_api_key=body.deepgram_api_key, fal_api_key=body.fal_api_key,
-            updated_by=user.get("user_id"))
-    except EncryptionNotConfigured as e:
-        raise HTTPException(503, str(e))
+    return await secrets_store.set_secrets(
+        db, deepgram_api_key=body.deepgram_api_key, fal_api_key=body.fal_api_key,
+        updated_by=user.get("user_id"))
 
 
 @router.delete("/secrets/fal-key")

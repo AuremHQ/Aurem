@@ -1,5 +1,5 @@
 """
-services/llm_config_store.py — Admin self-serve LLM provider settings.
+services/llm_config.py — Admin self-serve LLM provider settings.
 
 Any model/vendor (Qwen, Qwen-VL, Gemini, OpenAI, ...) becomes a data
 entry the admin manages in Settings — zero code, zero deploy, zero
@@ -11,10 +11,10 @@ restart. Resolution priority (per role) lives in
   else env fallback (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL, or the
        LLM_VISION_* equivalents)
 
-Secrets are Fernet-encrypted at rest (`LLM_KEY_ENCRYPTION_KEY`, base64
-32-byte key). If that env var is unset, every write/decrypt fails
-closed with a clear admin-facing message — a plaintext key is never
-persisted or run as a fallback.
+Keys are stored in plaintext in Mongo (crypto was removed from the
+codebase on 2026-11-17 by decision, so there is no encryption key and
+no fail-closed behaviour — the field is still named 'api_key_enc' for
+backwards compatibility with existing documents).
 """
 from __future__ import annotations
 
@@ -32,36 +32,11 @@ _CACHE_TTL_S = 60
 _cache: dict = {"chat": None, "vision": None, "ts": 0.0}
 
 
-class EncryptionNotConfigured(Exception):
-    pass
-
-
-def _fernet():
-    import os
-    from cryptography.fernet import Fernet
-    key = (os.getenv("LLM_KEY_ENCRYPTION_KEY") or "").strip()
-    if not key:
-        raise EncryptionNotConfigured(
-            "LLM_KEY_ENCRYPTION_KEY is not set on the server — admin-managed "
-            "LLM keys are disabled until this exists (base64, 32 bytes; "
-            "generate with `Fernet.generate_key()`). Env-based LLM_* vars "
-            "still work as the fallback."
-        )
-    try:
-        return Fernet(key.encode() if isinstance(key, str) else key)
-    except Exception as e:                                        # noqa: BLE001
-        raise EncryptionNotConfigured(
-            f"LLM_KEY_ENCRYPTION_KEY is set but invalid: {type(e).__name__}"
-        ) from e
-
-
-def encrypt_key(plaintext: str) -> bytes:
-    return _fernet().encrypt(plaintext.encode())
-
-
-def decrypt_key(ciphertext) -> str:
-    raw = bytes(ciphertext) if not isinstance(ciphertext, bytes) else ciphertext
-    return _fernet().decrypt(raw).decode()
+def _as_str(value) -> str:
+    """Stored keys are plaintext strings; decode bytes defensively."""
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
 
 
 def key_hint(plaintext: str) -> str:
@@ -107,7 +82,7 @@ async def create_config(db, *, label: str, role: str, base_url: str,
     doc = {
         "config_id": uuid.uuid4().hex,
         "label": label, "role": role, "base_url": base_url, "model": model,
-        "api_key_enc": encrypt_key(api_key), "key_hint": key_hint(api_key),
+        "api_key_enc": api_key, "key_hint": key_hint(api_key),
         "params": params or {},
         "created_at": time.time(), "updated_at": time.time(),
     }
@@ -137,7 +112,7 @@ async def update_config(db, config_id: str, *, label=None, role=None,
     # Empty/None api_key = KEEP CURRENT KEY. Only a non-empty new value
     # rotates it — never blow away a working key on a blank edit.
     if api_key:
-        updates["api_key_enc"] = encrypt_key(api_key)
+        updates["api_key_enc"] = api_key
         updates["key_hint"] = key_hint(api_key)
     await db.llm_configs.update_one({"config_id": config_id}, {"$set": updates})
     _bump_cache()
@@ -180,7 +155,7 @@ async def set_active(db, config_id: str, role: str) -> dict:
 
 
 async def get_active_config(db, role: str) -> Optional[dict]:
-    """Cached ~60s. Returns a decrypted-ready dict or None (env fallback
+    """Cached ~60s. Returns a dict or None (env fallback
     applies at the call site)."""
     now = time.time()
     if now - _cache.get("ts", 0.0) < _CACHE_TTL_S and role in ("chat", "vision"):
@@ -193,15 +168,14 @@ async def get_active_config(db, role: str) -> Optional[dict]:
     if cid:
         cfg = await db.llm_configs.find_one({"config_id": cid})
         if cfg:
-            try:
-                result = {
-                    "config_id": cfg["config_id"], "label": cfg["label"],
-                    "base_url": cfg["base_url"], "model": cfg["model"],
-                    "api_key": decrypt_key(cfg["api_key_enc"]),
-                    "params": cfg.get("params") or {},
-                }
-            except EncryptionNotConfigured as e:
-                logger.error("llm_config_store: decrypt failed, falling back to env: %s", e)
+            result = {
+                "config_id": cfg["config_id"],
+                "label": cfg["label"],
+                "base_url": cfg["base_url"],
+                "model": cfg["model"],
+                "api_key": _as_str(cfg["api_key_enc"]),
+                "params": cfg.get("params") or {},
+            }
     _cache[role] = result
     _cache["ts"] = now
     return result

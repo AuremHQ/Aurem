@@ -23,22 +23,25 @@ R5 read-modify-write — same convention as robots.py/schema.py).
 """
 from __future__ import annotations
 
+import html
+from urllib.parse import quote
+
 _START = "<!-- AUREM Visibility Kit — auremcto.com (managed block: preferred-sources) -->"
 _END = "<!-- end AUREM Visibility Kit: preferred-sources -->"
 SDK_SCRIPT_SRC = "https://news.google.com/swg/js/v1/publisher.js"
 
 
 def render_badge_block(domain: str, site_name: str | None = None) -> str:
-    """`domain` — bare domain (e.g. "example.com"), used verbatim in the
+    """`domain` — bare domain (e.g. "example.com"), URL-quoted for the
     deeplink's `?q=` param per Google's docs."""
     label = site_name or domain
-    deeplink = f"https://www.google.com/preferences/source?q={domain}"
+    deeplink = f"https://www.google.com/preferences/source?q={quote(domain, safe='')}"
     return (
         f"{_START}\n"
         f'<script async src="{SDK_SCRIPT_SRC}"></script>\n'
         f'<div google-add-preferred-source-btn data-theme="light" data-lang="en"></div>\n'
-        f'<a href="{deeplink}" target="_blank" rel="noopener">'
-        f"Prefer {label} in AI answers \u2197</a>\n"
+        f'<a href="{html.escape(deeplink, quote=True)}" target="_blank" rel="noopener">'
+        f"Prefer {html.escape(label)} in AI answers \u2197</a>\n"
         f"{_END}\n"
     )
 

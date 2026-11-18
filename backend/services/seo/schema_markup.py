@@ -5,6 +5,12 @@ services/seo/schema_markup.py — Inject a JSON-LD <script> into the
 from __future__ import annotations
 
 import json
+
+def _json_ld_script(payload):
+    # Escape <, > and & (and U+2028/U+2029, left literal by ensure_ascii=False) so a value containing </script>
+    # cannot close the JSON-LD block and run as HTML. JSON decodes the escapes back to the original characters.
+    return json.dumps(payload, indent=2, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
 from typing import Optional
 
 from bs4 import BeautifulSoup
@@ -102,7 +108,7 @@ def patch_schema_markup(
         date_published=date_published,
     )
     tag = soup.new_tag("script", attrs={"type": "application/ld+json"})
-    tag.string = json.dumps(schema, indent=2, ensure_ascii=False)
+    tag.string = _json_ld_script(schema)
     head.append(tag)
     return SeoPatch(
         path=path,

@@ -633,16 +633,16 @@ async def _run_secret_leak_scan() -> list:
     Auth resolution (Section 0 ready, Iter 338b):
       1. If QA_BOT_SESSION_TOKEN is set → use it directly as the Bearer
          (prod-CI path: the dedicated qa-bot session, no password in CI).
-      2. Else log in with QA_SCAN_EMAIL / QA_SCAN_PASSWORD (defaults to
+      2. Else log in with QA_SCAN_EMAIL (defaults to
          the seeded preview admin `test@aurem.dev` — a SEPARATE synthetic
-         account, user_id test_admin_001, never the human founder's).
+         account, user_id test_admin_001, never the human founder's). QA_SCAN_PASSWORD is required and has no default.
     Never touches the founder's real account/session either way."""
     import httpx as _hx
     base = os.environ.get("QA_API_BASE",
                           "http://localhost:8001/api/aurem-dev")
     bot_token = os.environ.get("QA_BOT_SESSION_TOKEN", "").strip()
     email = os.environ.get("QA_SCAN_EMAIL", "test@aurem.dev")
-    pw = os.environ.get("QA_SCAN_PASSWORD", "AuremTest2026!")
+    pw = os.environ.get("QA_SCAN_PASSWORD", "").strip()
     rows = []
     try:
         async with _hx.AsyncClient(timeout=25.0) as c:
@@ -650,6 +650,8 @@ async def _run_secret_leak_scan() -> list:
                 tok = bot_token
                 auth_via = "QA_BOT_SESSION_TOKEN"
             else:
+                if not pw:
+                    return [{"variant": "login", "result": "INCONCLUSIVE", "detail": "no QA_BOT_SESSION_TOKEN and QA_SCAN_PASSWORD is not set - set QA_SCAN_PASSWORD (no default password is used)"}]
                 login = await c.post(f"{base}/auth/login",
                                      json={"email": email, "password": pw})
                 if login.status_code != 200 or not login.json().get("token"):

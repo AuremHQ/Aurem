@@ -27,7 +27,6 @@ PROTECTED_PATH_PATTERNS = tuple(re.compile(p) for p in (
     r"backend/routers/payments\.py$",
     r"backend/routers/auth\.py$",
     r"backend/routers/mcp\.py$",
-    r"backend/services/vault.*\.py$",
     r"backend/services/stripe.*\.py$",
     r"backend/services/founder_alerts\.py$",
     r"backend/services/llm_cost_breaker\.py$",

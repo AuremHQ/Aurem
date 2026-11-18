@@ -79,6 +79,56 @@ async def _audit(ctx: dict, tool: str, args: dict, status: str,
     except Exception as e:                                  # noqa: BLE001
         logger.debug("vercel audit insert failed: %r", e)
 
+def _is_vercel_admin(ctx: dict) -> bool:
+    """Return True when the caller is an admin for Vercel tools.
+
+    Fix #10 (Tier 1) - Vercel admin-gate bypass. This is the same
+    admin mechanism the rest of the admin-gated tool code uses
+    (cf. ``execute_bash`` in services.local_tools): the tool
+    context carries the JWT-derived founder/admin flag as
+    ``ctx["is_founder"]`` (``is_admin`` on the user record / JWT;
+    auth sets ``is_admin=is_founder``), and project-scoped chats
+    also carry the locked ``bin_ctx`` object, whose ``is_founder``
+    flag must agree. ``ctx["is_admin"]`` is accepted as well for
+    callers that pass the user-record flag directly. When a
+    ``bin_ctx`` is present we defer to the stricter of the two,
+    so a founder JWT scoped to a non-founder project cannot
+    bypass the gate.
+    """
+    if not isinstance(ctx, dict):
+        return False
+    if not (bool(ctx.get("is_admin")) or bool(ctx.get("is_founder"))):
+        return False
+    _bc = ctx.get("bin_ctx")
+    if _bc is not None and not (
+        bool(getattr(_bc, "is_admin", False))
+        or bool(getattr(_bc, "is_founder", False))
+    ):
+        return False
+    return True
+
+
+async def _require_vercel_admin(ctx: dict, tool: str, args: dict):
+    """Admin gate for one Vercel tool call.
+
+    Returns None when the caller is an admin (gate passes, the
+    tool proceeds unchanged). Otherwise audits the denied attempt
+    in ``vercel_tool_audit`` with status ``denied`` and returns
+    the standard ``{"ok": False, ...}`` refusal envelope, so no
+    Vercel API call is made and no Vercel data is returned.
+    """
+    if _is_vercel_admin(ctx):
+        return None
+    _error = (
+        f"{tool} is restricted to admin accounts. "
+        "Vercel admin operations require an admin (founder) session; "
+        "non-admin users cannot list, inspect, create, modify or "
+        "delete Vercel projects, deployments, environment variables "
+        "or domains."
+    )
+    await _audit(ctx, tool, args, "denied", _error)
+    return {"ok": False, "error": _error, "error_class": "admin_required"}
+
 
 def _map_vercel_status_error(r) -> Optional[dict]:
     """Non-2xx outcomes worth a distinct message; None means treat as ok."""
@@ -158,6 +208,10 @@ async def _vercel_delete(path: str) -> dict:
 
 async def vercel_list_projects(ctx: dict, args: dict) -> dict:
     """List Vercel projects in the connected account."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_list_projects", args)
+    if _denied is not None:
+        return _denied
     limit = max(1, min(int(args.get("limit") or 10), 25))
     res = await _vercel_get("/v9/projects", params={"limit": limit})
     if not res["ok"]:
@@ -180,6 +234,10 @@ async def vercel_list_projects(ctx: dict, args: dict) -> dict:
 
 async def vercel_list_deployments(ctx: dict, args: dict) -> dict:
     """Recent deployments — optionally filter by project name/id."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_list_deployments", args)
+    if _denied is not None:
+        return _denied
     project = (args.get("project") or "").strip()
     limit   = max(1, min(int(args.get("limit") or 10), 25))
     params: dict = {"limit": limit}
@@ -209,6 +267,10 @@ async def vercel_list_deployments(ctx: dict, args: dict) -> dict:
 
 async def vercel_get_deployment_logs(ctx: dict, args: dict) -> dict:
     """Fetch build events for a deployment uid. Returns last ~60 events."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_get_deployment_logs", args)
+    if _denied is not None:
+        return _denied
     uid = (args.get("deployment_id") or "").strip()
     if not uid:
         return {"ok": False, "error": "deployment_id is required"}
@@ -236,6 +298,10 @@ async def vercel_get_deployment_logs(ctx: dict, args: dict) -> dict:
 async def vercel_get_project_details(ctx: dict, args: dict) -> dict:
     """Full project info — framework, build settings, environment, git
     integration, latest production deployment."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_get_project_details", args)
+    if _denied is not None:
+        return _denied
     name = (args.get("project") or "").strip()
     if not name:
         return {"ok": False, "error": "project name or id is required"}
@@ -272,6 +338,10 @@ async def vercel_list_env_vars(ctx: dict, args: dict) -> dict:
     """List env var KEYS for a project (values NEVER returned — even to
     ORA — for security; if user wants the value, they must look at the
     Vercel dashboard directly)."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_list_env_vars", args)
+    if _denied is not None:
+        return _denied
     name = (args.get("project") or "").strip()
     if not name:
         return {"ok": False, "error": "project name or id is required"}
@@ -297,6 +367,10 @@ async def vercel_list_env_vars(ctx: dict, args: dict) -> dict:
 
 async def vercel_list_domains(ctx: dict, args: dict) -> dict:
     """All custom domains across the connected account."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_list_domains", args)
+    if _denied is not None:
+        return _denied
     res = await _vercel_get("/v5/domains", params={"limit": 25})
     if not res["ok"]:
         await _audit(ctx, "vercel_list_domains", args, "failed", res["error"])
@@ -324,6 +398,10 @@ async def vercel_trigger_deploy_hook(ctx: dict, args: dict) -> dict:
     the connected production project out-of-the-box. Hooks are not
     listable through the REST API.
     """
+
+    _denied = await _require_vercel_admin(ctx, "vercel_trigger_deploy_hook", args)
+    if _denied is not None:
+        return _denied
     url = (args.get("hook_url") or os.environ.get("VERCEL_DEPLOY_HOOK_URL") or "").strip()
     if not url.startswith("https://api.vercel.com/v1/integrations/deploy/"):
         return {"ok": False, "error": "hook_url must be a vercel.com deploy hook URL"}
@@ -348,6 +426,10 @@ async def vercel_trigger_deploy_hook(ctx: dict, args: dict) -> dict:
 
 async def vercel_account_info(ctx: dict, args: dict) -> dict:
     """Who am I — verifies the connected Vercel account."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_account_info", args)
+    if _denied is not None:
+        return _denied
     res = await _vercel_get("/v2/user")
     if not res["ok"]:
         await _audit(ctx, "vercel_account_info", args, "failed", res["error"])
@@ -370,6 +452,10 @@ async def vercel_account_info(ctx: dict, args: dict) -> dict:
 
 async def vercel_create_project(ctx: dict, args: dict) -> dict:
     """Create a new Vercel project, optionally linking a Git repo."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_create_project", args)
+    if _denied is not None:
+        return _denied
     name = (args.get("name") or "").strip()
     if not name:
         return {"ok": False, "error": "name is required"}
@@ -401,6 +487,10 @@ async def vercel_pause_project(ctx: dict, args: dict) -> dict:
     """Pause a Vercel project — production deployments stop serving
     traffic (return 503 DEPLOYMENT_PAUSED). Useful for halting spend on
     a runaway project or temporarily disabling a service."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_pause_project", args)
+    if _denied is not None:
+        return _denied
     pid = (args.get("project_id") or "").strip()
     if not pid:
         return {"ok": False, "error": "project_id is required"}
@@ -420,6 +510,10 @@ async def vercel_pause_project(ctx: dict, args: dict) -> dict:
 async def vercel_resume_project(ctx: dict, args: dict) -> dict:
     """Resume a previously paused Vercel project — production deployments
     serve traffic again. Counterpart to vercel_pause_project."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_resume_project", args)
+    if _denied is not None:
+        return _denied
     pid = (args.get("project_id") or "").strip()
     if not pid:
         return {"ok": False, "error": "project_id is required"}
@@ -440,6 +534,10 @@ async def vercel_add_domain(ctx: dict, args: dict) -> dict:
     """Add a custom domain to a Vercel project. After this call, the user
     must update their DNS records to point to Vercel; an SSL cert is
     provisioned automatically once DNS is verified."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_add_domain", args)
+    if _denied is not None:
+        return _denied
     pid    = (args.get("project_id") or "").strip()
     domain = (args.get("domain") or "").strip()
     if not pid or not domain:
@@ -464,6 +562,10 @@ async def vercel_delete_project(ctx: dict, args: dict) -> dict:
     """⚠ DESTRUCTIVE — permanently delete a Vercel project, including
     deployments, env vars, and (non-transferred) domains. Requires
     explicit `confirm: true` flag to prevent accidental loss."""
+
+    _denied = await _require_vercel_admin(ctx, "vercel_delete_project", args)
+    if _denied is not None:
+        return _denied
     pid = (args.get("project_id") or "").strip()
     if not pid:
         return {"ok": False, "error": "project_id is required"}

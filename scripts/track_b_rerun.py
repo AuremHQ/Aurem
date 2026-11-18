@@ -19,11 +19,12 @@ substitute for a rerun against the founder's actual repo/tasks.
 Usage:
   python3 scripts/track_b_rerun.py \\
       --base-url https://<pod>.preview.emergentagent.com \\
-      --email test@aurem.dev --password AuremTest2026! \\
+      --email test@aurem.dev --password "$QA_SCAN_PASSWORD" \\
       --project-id p_418e5fa6b8 [--timeout 90]
 """
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -133,8 +134,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", required=True)
     ap.add_argument("--email", required=True)
-    ap.add_argument("--password", required=True)
+    ap.add_argument("--password", default=os.environ.get("QA_SCAN_PASSWORD"))
     ap.add_argument("--project-id", required=True)
     ap.add_argument("--timeout", type=int, default=90)
     args = ap.parse_args()
+    if not args.password:
+        ap.error("--password is required (or set QA_SCAN_PASSWORD); no default password is used")
     run(args.base_url, args.email, args.password, args.project_id, args.timeout)

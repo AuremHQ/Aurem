@@ -6,6 +6,7 @@ import contextvars
 import logging
 import os
 import time
+import uuid
 import jwt
 from fastapi import HTTPException, Header, Request
 from typing import Optional
@@ -110,6 +111,13 @@ async def current_dev(authorization: Optional[str] = None) -> dict:
         # to the client. Log the real exception server-side only.
         logger.info("current_dev: invalid token rejected: %r", e)
         raise HTTPException(status_code=401, detail="Invalid token")
+    # FIX #1 (2026-11-17) -- a link token (see create_link_token below)
+    # is a short-lived, single-purpose JWT for GitHub popup navigations.
+    # It is not a session token and must never be accepted as one.
+    if payload.get("link_token"):
+        raise HTTPException(
+            status_code=401, detail="Link tokens cannot be used as session tokens"
+        )
     # Iter 307 — JWT revocation gate. Two orthogonal checks, both cheap
     # (one indexed find_one each, sub-3ms combined on preview):
     #   1. jti in `revoked_tokens` collection → user hit /auth/logout
@@ -374,3 +382,92 @@ def consume_mfa_pending_token(token: str) -> dict:
     if not payload.get("user_id"):
         raise HTTPException(401, "Malformed 2FA token")
     return payload
+
+
+# FIX #1 (2026-11-17) -- single-use GitHub navigation link tokens.
+# A browser popup (window.open) or plain <a href> navigation cannot send
+# an Authorization header, so the session JWT used to be appended to the
+# URL as ?auth=<jwt> (browser history, server logs, Referer). A link
+# token is a short-lived (5 min), single-purpose, single-use JWT: it only
+# proves "this user may start one GitHub connect/install flow" and is
+# rejected as a session token by current_dev above. Minted via
+# POST /github/oauth/link-token (JWT in the Authorization header);
+# consumed by the ?auth= parameter of /github/oauth/connect and
+# /github/app/install. Mirrors the create/consume_mfa_pending_token
+# pattern (purpose claim + short expiry).
+LINK_TOKEN_TTL_SECONDS = 5 * 60
+
+
+def create_link_token(user_id: str, email: str) -> str:
+    """Mint a link token for user_id."""
+    return jwt.encode(
+        {
+            "user_id": user_id,
+            "email": email,
+            "link_token": True,
+            "jti": uuid.uuid4().hex,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + LINK_TOKEN_TTL_SECONDS,
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
+async def consume_link_token(token: str):
+    """Validate a link token and mark it used. Returns the payload, or
+    None if token is not a link token at all (callers fall back to
+    treating it as a session JWT). Raises 401 if it IS a link token
+    but expired or already used. Single-use is enforced through the
+    existing revoked_tokens store (see services/token_revocation)."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+    if not payload.get("link_token"):
+        return None
+    if not payload.get("user_id"):
+        raise HTTPException(status_code=401, detail="Invalid link token")
+    exp = payload.get("exp")
+    if not exp:
+        raise HTTPException(status_code=401, detail="Invalid link token")
+    try:
+        from cto_services.db import get_db
+        from services import token_revocation as _rev
+
+        db = get_db()
+        jti = payload.get("jti")
+        if jti and await _rev.is_jti_revoked(db, jti):
+            raise HTTPException(status_code=401, detail="Link token already used")
+        if jti:
+            await _rev.revoke_jti(
+                db,
+                jti,
+                int(exp),
+                user_id=payload["user_id"],
+                reason="link_token",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # DB unavailable -- fail-open on the single-use check, matching
+        # the revocation-gate rationale in current_dev. The token is
+        # still 5-minute, purpose-limited, and rejected as a session
+        # token, so the exposure window stays tiny.
+        pass
+    return payload
+
+
+async def resolve_github_nav_user(authorization=None, auth=None) -> dict:
+    """Resolve the user for a GitHub popup navigation
+    (/github/oauth/connect or /github/app/install). Prefers the
+    Authorization header; a ?auth= value may be a single-use link
+    token, or -- for legacy callers not yet migrated -- a session JWT."""
+    if authorization:
+        return await current_dev(authorization)
+    if auth:
+        link = await consume_link_token(auth)
+        if link is not None:
+            return {"user_id": link["user_id"], "email": link.get("email") or ""}
+        return await current_dev(f"Bearer {auth}")
+    return await current_dev(None)

@@ -18,7 +18,7 @@ the same "/admin" prefix so paths compose naturally.
 
 Reuse:
   • cto_services.auth._require_admin  — every endpoint is admin-gated
-  • services.vault._decrypt_pat        — for PAT-validity check
+  • services.pat_vault.get_repo_token_or_error        — for PAT-validity check
   • services.house_rules               — for advisor_llm slugs
   • routers.cto_projects._decrypt_pat, _user_gh_token — via local import
 """

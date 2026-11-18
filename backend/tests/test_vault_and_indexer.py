@@ -2,18 +2,13 @@
 test_vault_and_indexer.py — Iter 31 smoke tests for the imported
 modules.
 
-vault.py tests run only when AUREM_MASTER_KEY is set; otherwise we
-assert the fail-closed contract.
+_maybe_decrypt tests: tokens are stored in plaintext (crypto removed 2026-11-17), so there is no vault and no fail-closed contract.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 
-from services.vault import (
-    encrypt, decrypt, is_vault_available, _derive_customer_key,
-)
+from services.repo_indexing import _maybe_decrypt
 from services.codebase_indexer import (
     _detect_lang, _detect_role, _parse_repo_url, _format_context_block,
 )
@@ -90,45 +85,27 @@ def test_format_context_block_trims_and_groups():
     assert len(short) <= 100 + len("\n…(context trimmed)")
 
 
-# ─── vault — fail-closed + roundtrip ─────────────────────────────────
-
-def test_is_vault_available_returns_bool():
-    assert isinstance(is_vault_available(), bool)
+# ——— repo_indexing._maybe_decrypt (plaintext passthrough) ———
 
 
-@pytest.mark.skipif(is_vault_available(),
-                    reason="vault is configured — skip fail-closed test")
 @pytest.mark.asyncio
-async def test_encrypt_raises_when_no_master_key():
-    with pytest.raises(RuntimeError, match="AUREM_MASTER_KEY"):
-        await encrypt("user-1", "secret value")
+async def test_maybe_decrypt_returns_plaintext_token():
+    """Tokens are stored without encryption — passthrough unchanged."""
+    assert await _maybe_decrypt("user-1", "ghp_plaintexttoken") == "ghp_plaintexttoken"
 
 
-@pytest.mark.skipif(not is_vault_available(),
-                    reason="vault not configured")
-def test_per_user_keys_differ():
-    """HKDF must give two users genuinely different keys."""
-    k1 = _derive_customer_key("alice")
-    k2 = _derive_customer_key("bob")
-    assert k1 != k2
-
-
-@pytest.mark.skipif(not is_vault_available(),
-                    reason="vault not configured")
 @pytest.mark.asyncio
-async def test_encrypt_decrypt_roundtrip():
-    ct = await encrypt("user-1", "my-github-pat-abc")
-    assert ct.startswith("v1:")
-    pt = await decrypt("user-1", ct)
-    assert pt == "my-github-pat-abc"
+async def test_maybe_decrypt_returns_none_for_empty():
+    assert await _maybe_decrypt("user-1", None) is None
+    assert await _maybe_decrypt("user-1", "") is None
 
 
-@pytest.mark.skipif(not is_vault_available(),
-                    reason="vault not configured")
 @pytest.mark.asyncio
-async def test_decrypt_with_wrong_user_fails():
-    """A leaked ciphertext from user-1 must not decrypt under user-2."""
-    from cryptography.fernet import InvalidToken
-    ct = await encrypt("user-1", "secret")
-    with pytest.raises(InvalidToken):
-        await decrypt("user-2", ct)
+async def test_maybe_decrypt_rejects_legacy_v1_ciphertext():
+    """A legacy 'v1:' Fernet ciphertext can no longer be decrypted."""
+    assert await _maybe_decrypt("user-1", "v1:gAAAAABlegacy-ciphertext") is None
+
+
+@pytest.mark.asyncio
+async def test_maybe_decrypt_never_raises():
+    assert await _maybe_decrypt("user-1", "ghp_x") == "ghp_x"

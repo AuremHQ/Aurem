@@ -51,7 +51,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev
+from cto_services.auth import current_dev, resolve_github_nav_user
 from cto_services.db import get_db, require_db  # noqa: F401 — get_db is a test patch target
 from services import github_app as _ga
 from services.github_app_config import is_configured as _app_configured
@@ -217,9 +217,11 @@ async def install_kickoff(
         if not await ensure_configured_from_db(require_db()):
             raise HTTPException(503, "github_app_not_configured")
 
-    if not authorization and auth:
-        authorization = f"Bearer {auth}"
-    user = await current_dev(authorization)
+    # FIX #1 (2026-11-17) -- `auth` may carry a single-use link token
+    # (minted via POST /github/oauth/link-token) instead of the session
+    # JWT, which must never appear in a URL. Legacy session JWTs are
+    # still accepted here until the remaining callers are migrated.
+    user = await resolve_github_nav_user(authorization, auth)
 
     state = f"gha:{user['user_id']}:{secrets.token_urlsafe(24)}"
     db = require_db()

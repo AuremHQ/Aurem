@@ -419,6 +419,31 @@ def _verify_ctx(ctx: dict):
         return None
     return bc
 
+def _is_admin_ctx(ctx: dict) -> bool:
+    """Return True when a tool-call context belongs to an admin.
+
+    Fix #10 (Tier 1) - Vercel admin-gate bypass. Same admin
+    mechanism as ``execute_bash`` in this module: the tool context
+    carries the JWT-derived founder/admin flag as
+    ``ctx["is_founder"]`` (``is_admin`` on the user record / JWT;
+    auth sets ``is_admin=is_founder``), and project-scoped chats
+    also carry the locked ``bin_ctx`` object, whose ``is_founder``
+    flag must agree. ``ctx["is_admin"]`` is accepted as well for
+    callers that pass the user-record flag directly. When a
+    ``bin_ctx`` is present we defer to the stricter of the two.
+    """
+    if not isinstance(ctx, dict):
+        return False
+    if not (bool(ctx.get("is_admin")) or bool(ctx.get("is_founder"))):
+        return False
+    _bc = ctx.get("bin_ctx")
+    if _bc is not None and not (
+        bool(getattr(_bc, "is_admin", False))
+        or bool(getattr(_bc, "is_founder", False))
+    ):
+        return False
+    return True
+
 
 def _slice_content(content: str, lines: list | None, max_chars: int) -> tuple[str, bool]:
     """Apply optional line-range slice, then hard-truncate. Returns (content, truncated)."""
@@ -1091,6 +1116,33 @@ async def write_repo_file(ctx: dict, args: dict) -> dict:
     }
 
 
+async def _read_repo_file_full(ctx: dict, path: str):
+    """Fetch the complete, unchunked content of a repo file.
+
+    `read_repo_file` deliberately truncates large files for the model
+    (first 200 lines / 12,000 chars via `_apply_chunking`), so its
+    `content` must never be written back as if it were the whole file.
+    This helper re-fetches the file through the same `_gh_fetch_file`
+    call `read_repo_file` itself uses, bypassing chunking, and returns
+    the exact full content. Returns `(content, None)` on success, or
+    `(None, error_dict)` on failure.
+    """
+    repo = _repo_ctx_from(ctx)
+    if repo is None:
+        return None, {"ok": False, "error": "repo_context_unavailable", "gate": "repo_context_unavailable"}
+    owner = repo["owner"]
+    repo_name = repo["repo"]
+    branch = repo["branch"]
+    token = repo["token"]
+    try:
+        content = await _gh_fetch_file(owner, repo_name, path, branch, token)
+    except Exception as exc:
+        return None, {"ok": False, "error": str(exc), "gate": "read_failed"}
+    if content is None:
+        return None, {"ok": False, "error": f"File not found: {path}", "gate": "read_not_found"}
+    return content, None
+
+
 # ── TOOL 2b: patch_repo_file (Part B4 — minimal-diff default) ────────────────
 
 async def patch_repo_file(ctx: dict, args: dict) -> dict:
@@ -1144,6 +1196,27 @@ async def patch_repo_file(ctx: dict, args: dict) -> dict:
                                        f"{read_res.get('error', 'unknown error')}",
                 "gate": "patch_read_failed", "path": path}
     current = read_res.get("content") or ""
+    # Fix #13 (Tier 1): `read_repo_file` truncates large files to a
+    # 200-line / 12,000-char preview (`truncated=True`). Patching that
+    # preview and writing it back would silently drop the rest of the
+    # file. Never patch a truncated read: re-fetch the complete file
+    # first, and refuse the patch (without writing anything) if the
+    # full file cannot be obtained.
+    if read_res.get("truncated"):
+        full_content, full_error = await _read_repo_file_full(ctx, path)
+        if full_error is not None:
+            return {
+                "ok": False,
+                "error": "patch_truncated",
+                "gate": "patch_truncated",
+                "detail": (
+                    "Refusing to patch: the file is larger than the "
+                    "read preview and the full file could not be "
+                    f"re-fetched ({full_error.get('error')}). "
+                    "Nothing was written."
+                ),
+            }
+        current = full_content
     occurrences = current.count(old_value)
     if occurrences == 0:
         return {
@@ -1176,8 +1249,15 @@ async def patch_repo_file(ctx: dict, args: dict) -> dict:
     # Read-back verification — same CBR-5/8 standard as
     # pending_action.py::_execute_edit: never claim success without
     # independently re-reading the committed content.
-    verify_res = await read_repo_file(ctx, {"path": path})
-    verified = bool(verify_res.get("ok")) and new_value in (verify_res.get("content") or "")
+    if read_res.get("truncated"):
+        # The chunked read-back would only see the first 200 lines, so
+        # a patch landing later in a large file would wrongly report
+        # verified=False. Verify against the full file instead.
+        _verify_content, _verify_error = await _read_repo_file_full(ctx, path)
+        verified = _verify_error is None and new_value in (_verify_content or "")
+    else:
+        verify_res = await read_repo_file(ctx, {"path": path})
+        verified = bool(verify_res.get("ok")) and new_value in (verify_res.get("content") or "")
     write_res["verified"] = verified
     return write_res
 
@@ -3067,6 +3147,34 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
     fn = LOCAL_TOOLS.get(name)
     if not fn:
         return None
+    # Fix #10 (Tier 1) - Vercel admin gate. The Vercel tools
+    # (services.vercel_skills.VERCEL_TOOLS) are admin operations:
+    # they read and mutate the connected Vercel account (projects,
+    # deployments, env vars, domains). Refuse non-admin calls here,
+    # in the central dispatcher, before any Vercel API call and
+    # before the write / scope gates below. Each Vercel tool
+    # function also gates itself (belt-and-braces), using the
+    # same is_admin / is_founder mechanism as execute_bash.
+    if name in _VERCEL_TOOLS and not _is_admin_ctx(ctx):
+        _denied = {
+            "ok": False,
+            "error": (
+                f"{name} is restricted to admin accounts. "
+                "Vercel admin operations require an admin (founder) session; "
+                "non-admin users cannot list, inspect, create, modify or "
+                "delete Vercel projects, deployments, environment variables "
+                "or domains."
+            ),
+            "error_class": "admin_required",
+        }
+        try:
+            if isinstance(ctx, dict):
+                ctx.setdefault("tool_calls", []).append(
+                    {"tool": name, "args": args or {}, **_denied}
+                )
+        except Exception:  # noqa: BLE001 - refusal must never raise
+            pass
+        return _denied
 
     if name in _WRITE_TOOLS:
         # 2026-09-29 · admin-errors autofix hardening. `ctx["force_read_only"]`

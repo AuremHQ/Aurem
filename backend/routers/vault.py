@@ -1,9 +1,11 @@
 """
 aurem_cto.routers.vault — P7 audit-log surface.
 
-The encryption itself lives in services/crypto.py. This router only
-exposes a read-only audit-log endpoint so the customer (and AUREM
-admin) can see every encrypt/decrypt event against their account.
+Crypto was removed from the codebase on 2026-11-17, so no new
+encrypt/decrypt events are recorded. This router only exposes a
+read-only audit-log endpoint over the historical log (rows written
+before removal) so the customer (and AUREM admin) can review past
+events against their account.
 """
 from __future__ import annotations
 

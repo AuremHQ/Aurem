@@ -26,6 +26,16 @@ from typing import Optional
 import httpx
 
 from services.http import ext_client
+from services.repo_fetch_guard import (
+    GITHUB_API_HOST,
+    github_api_url,
+    github_commit_url,
+    github_contents_url,
+    github_git_commit_url,
+    github_ref_url,
+    github_tree_url,
+    validate_branch,
+)
 from services.loop_safety import github_request_with_retry
 from core.errors import BinaryFileError, UnsupportedEncodingError, PushFailedError
 
@@ -117,10 +127,13 @@ async def fetch_file(owner: str, repo: str,
     repro. Now raises a typed `BinaryFileError`/`UnsupportedEncodingError`
     instead so callers refuse the file instead of corrupting it.
     """
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}?ref={ref}"
     try:
+        # Fix #11: a bad owner/repo/path/ref fails closed here (None)
+        # instead of being interpolated into a GitHub API URL.
+        url = github_contents_url(owner, repo, path, ref)
         async with ext_client(
             "github",
+            allowed_hosts={GITHUB_API_HOST},
             timeout=httpx.Timeout(60.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
         ) as client:
@@ -166,7 +179,11 @@ async def find_html_entry_path(owner: str, repo: str, ref: str, token: str) -> O
     frameworks like Next.js app router) — callers still conflict in
     that case, correctly, since there's nothing safe to inject into.
     """
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/git/trees/{ref}?recursive=1"
+    try:
+        url = github_tree_url(owner, repo, ref)
+    except ValueError as exc:
+        logger.debug(f"find_html_entry_path invalid ref {ref!r}: {exc}")
+        return None
     _SKIP_DIRS = ("node_modules/", "dist/", "build/", ".next/", "out/")
 
     def _is_hidden(path: str) -> bool:
@@ -177,6 +194,7 @@ async def find_html_entry_path(owner: str, repo: str, ref: str, token: str) -> O
     try:
         async with ext_client(
             "github",
+            allowed_hosts={GITHUB_API_HOST},
             timeout=httpx.Timeout(60.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
         ) as client:
@@ -210,17 +228,18 @@ async def _get_branch_head(owner: str, repo: str,
     """
     async with ext_client(
         "github",
+        allowed_hosts={GITHUB_API_HOST},
         timeout=httpx.Timeout(60.0),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
     ) as client:
         r = await client.get(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}",
+            github_api_url(owner, repo, "git", "ref", "heads", *validate_branch(branch).split("/")),
             headers=_headers(token),
         )
         r.raise_for_status()
         head_sha = r.json()["object"]["sha"]
         r2 = await client.get(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/commits/{head_sha}",
+            github_git_commit_url(owner, repo, head_sha),
             headers=_headers(token),
         )
         r2.raise_for_status()
@@ -239,11 +258,12 @@ async def _get_commit_details(owner: str, repo: str,
     """
     async with ext_client(
         "github",
+        allowed_hosts={GITHUB_API_HOST},
         timeout=httpx.Timeout(60.0),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
     ) as client:
         r = await client.get(
-            f"{GITHUB_API}/repos/{owner}/{repo}/commits/{commit_sha}",
+            github_commit_url(owner, repo, commit_sha),
             headers=_headers(token),
         )
         r.raise_for_status()
@@ -310,6 +330,7 @@ async def commit_files(
     # ────────────────────────────────────────────────────────────────────
     async with ext_client(
         "github",
+        allowed_hosts={GITHUB_API_HOST},
         timeout=httpx.Timeout(60.0),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
     ) as client:
@@ -331,7 +352,7 @@ async def commit_files(
             # Retry-After / x-ratelimit-reset, capped) instead of a
             # bare client.post + raise_for_status.
             r = await github_request_with_retry(
-                "POST", f"{GITHUB_API}/repos/{owner}/{repo}/git/blobs",
+                "POST", github_api_url(owner, repo, "git", "blobs"),
                 headers=_headers(token),
                 json={
                     "content": base64.b64encode(
@@ -358,7 +379,7 @@ async def commit_files(
         # 2. Build a new tree based on the previous head's tree
         await _p("🌳 Building tree…")
         r = await github_request_with_retry(
-            "POST", f"{GITHUB_API}/repos/{owner}/{repo}/git/trees",
+            "POST", github_api_url(owner, repo, "git", "trees"),
             headers=_headers(token),
             json={
                 "base_tree": head["tree_sha"],
@@ -373,7 +394,7 @@ async def commit_files(
         # 3. Create the commit object pointing at the new tree
         await _p("🧾 Creating commit…")
         r = await github_request_with_retry(
-            "POST", f"{GITHUB_API}/repos/{owner}/{repo}/git/commits",
+            "POST", github_api_url(owner, repo, "git", "commits"),
             headers=_headers(token),
             json={
                 "message": commit_message,
@@ -390,7 +411,7 @@ async def commit_files(
         # we set it to a descendant of HEAD)
         await _p("🚀 Pushing ref…")
         r = await client.patch(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/refs/heads/{branch}",
+            github_ref_url(owner, repo, branch),
             headers=_headers(token),
             json={"sha": new_commit_sha, "force": False},
         )
@@ -518,6 +539,7 @@ async def revert_commit(
     # ────────────────────────────────────────────────────────────────────
     async with ext_client(
         "github",
+        allowed_hosts={GITHUB_API_HOST},
         timeout=httpx.Timeout(60.0),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
     ) as client:
@@ -565,7 +587,7 @@ async def revert_commit(
                 return {"path": path, "mode": "100644",
                         "type": "blob", "sha": None}
             r = await client.post(
-                f"{GITHUB_API}/repos/{owner}/{repo}/git/blobs",
+                github_api_url(owner, repo, "git", "blobs"),
                 headers=_headers(token),
                 json={
                     "content": base64.b64encode(
@@ -584,7 +606,7 @@ async def revert_commit(
 
         # Build the revert tree based on current HEAD
         r = await client.post(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/trees",
+            github_api_url(owner, repo, "git", "trees"),
             headers=_headers(token),
             json={
                 "base_tree": head["tree_sha"],
@@ -600,7 +622,7 @@ async def revert_commit(
             f"Co-authored-by: ORA by Aurem <cto@auremcto.com>"
         )
         r = await client.post(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/commits",
+            github_api_url(owner, repo, "git", "commits"),
             headers=_headers(token),
             json={
                 "message": msg,
@@ -613,7 +635,7 @@ async def revert_commit(
         new_commit_sha = r.json()["sha"]
 
         r = await client.patch(
-            f"{GITHUB_API}/repos/{owner}/{repo}/git/refs/heads/{branch}",
+            github_ref_url(owner, repo, branch),
             headers=_headers(token),
             json={"sha": new_commit_sha, "force": False},
         )

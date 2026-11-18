@@ -182,17 +182,19 @@ class TestGlobalInheritance:
         """Global limit is per-IP, not global-global. Two IPs each get
         their own 3-req allowance."""
         client = TestClient(app_with_low_global_limit)
-        # IP A exhausts its bucket.
+        # IP A exhausts its bucket. FIX 2 step 2b: a full trusted chain
+    # (real IP + Cloudflare + ingress) is needed -- a single XFF entry
+    # no longer gives a distinct bucket.
         for _ in range(3):
             r = client.get("/api/newly-added-thing",
-                           headers={"X-Forwarded-For": "1.1.1.1"})
+                           headers={"X-Forwarded-For": "1.1.1.1, 104.22.62.82, 34.160.159.238"})
             assert r.status_code == 200
         r = client.get("/api/newly-added-thing",
-                       headers={"X-Forwarded-For": "1.1.1.1"})
+                       headers={"X-Forwarded-For": "1.1.1.1, 104.22.62.82, 34.160.159.238"})
         assert r.status_code == 429
         # IP B is unaffected.
         r = client.get("/api/newly-added-thing",
-                       headers={"X-Forwarded-For": "2.2.2.2"})
+                       headers={"X-Forwarded-For": "2.2.2.2, 104.22.62.82, 34.160.159.238"})
         assert r.status_code == 200
 
     def test_health_endpoint_never_throttled(

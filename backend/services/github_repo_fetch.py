@@ -12,6 +12,12 @@ import logging
 
 import httpx
 from fastapi import HTTPException
+from services.repo_fetch_guard import (
+    github_api_url,
+    github_contents_url,
+    github_tree_url,
+    validate_github_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,14 @@ async def _gh_get(client: httpx.AsyncClient, url: str, pat: str):
     failures surface 401/403 with the real GitHub reason.  Only
     genuine upstream 5xx bubbles as 502.
     """
+    # Fix #11 (SSRF): refuse any URL outside the GitHub API allowlist
+    # before a request is made. A redirect is surfaced as an error by
+    # the status branches below (callers create the client with
+    # follow_redirects=False via allowed_hosts).
+    try:
+        validate_github_url(url)
+    except ValueError as exc:
+        raise HTTPException(400, f"github_invalid_url: {exc}") from exc
     try:
         r = await client.get(url, headers=_gh_headers(pat), timeout=_GH_TIMEOUT)
     except httpx.TimeoutException as e:
@@ -144,13 +158,17 @@ async def _list_repo_tree_with_sha(
 ) -> tuple[list[dict], str]:
     """Same as `_list_repo_tree` but also returns the GitHub tree SHA
     so callers can key a content-addressed cache.  Iter 212m-79."""
-    repo_meta = await _gh_get(client, f"{_GH_API}/repos/{owner}/{repo}", pat)
+    try:
+        repo_url = github_api_url(owner, repo)
+    except ValueError as exc:
+        raise HTTPException(400, f"github_invalid_url: {exc}") from exc
+    repo_meta = await _gh_get(client, repo_url, pat)
     branch = repo_meta.get("default_branch") or "main"
-    tree = await _gh_get(
-        client,
-        f"{_GH_API}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1",
-        pat,
-    )
+    try:
+        tree_url = github_tree_url(owner, repo, branch)
+    except ValueError as exc:
+        raise HTTPException(400, f"github_invalid_url: {exc}") from exc
+    tree = await _gh_get(client, tree_url, pat)
     sha = tree.get("sha") or ""
     blobs = [t for t in (tree.get("tree") or []) if t.get("type") == "blob"]
     return blobs, sha
@@ -163,7 +181,7 @@ async def _fetch_file(
     scan keeps going for the rest of the repo."""
     try:
         r = await client.get(
-            f"{_GH_API}/repos/{owner}/{repo}/contents/{path}",
+            github_contents_url(owner, repo, path),
             headers=_gh_headers(pat), timeout=_GH_TIMEOUT,
         )
         if r.status_code != 200:

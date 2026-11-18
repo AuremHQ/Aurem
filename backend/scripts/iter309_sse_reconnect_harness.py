@@ -54,7 +54,7 @@ import httpx
 # ── Config ────────────────────────────────────────────────────────
 API_BASE = os.environ.get("AUREM_API_BASE", "http://localhost:8001/api/aurem-dev")
 EMAIL    = os.environ.get("AUREM_TEST_EMAIL",    "test@aurem.dev")
-PASSWORD = os.environ.get("AUREM_TEST_PASSWORD", "AuremTest2026!")
+PASSWORD = os.environ.get("AUREM_TEST_PASSWORD", "").strip()
 
 OUT_DIR = Path("/app/test_reports/iter309_reconnect")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,6 +69,8 @@ def _log(msg: str) -> None:
 
 
 async def _login() -> str:
+    if not PASSWORD:
+        raise SystemExit("AUREM_TEST_PASSWORD is not set - set it to the seeded test account password (no default password is used)")
     async with httpx.AsyncClient(timeout=30.0) as c:
         r = await c.post(
             f"{API_BASE}/auth/login",

@@ -52,8 +52,8 @@ async def _resolve(db, role: str) -> dict:
         env_base, env_key, env_model = "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"
     if db is not None:
         try:
-            from services import llm_config_store
-            active = await llm_config_store.get_active_config(db, role)
+            from services import llm_config
+            active = await llm_config.get_active_config(db, role)
             if active:
                 return {"base_url": active["base_url"], "api_key": active["api_key"],
                         "model": active["model"], "label": active["label"], "source": "db"}

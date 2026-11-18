@@ -17,12 +17,26 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, "/app/backend")
 
-# ── Import every scanner exactly like the router does ─────────
-from routers.codebase_health import (   # noqa: E402
-    SCANNERS,                            # 5 core + bug_hunt + docker
-    _SKIP_DIRS, _SCAN_EXTS, _is_dockerfile,
-    _MAX_BYTES_PER_FILE, _MAX_FILES,
+# - Import the scanners from where they live now -
+# Iter arch-2a moved SCANNERS and _is_dockerfile out of
+# routers/codebase_health into services/codebase_health_core, and
+# the router no longer exports the other four names either. Those
+# four live in services/github_repo_fetch, but importing that
+# module would pull httpx/fastapi into this stdlib-only dogfood
+# script, so they are defined here with the exact values from
+# that module (keep in sync with services/github_repo_fetch.py).
+from services.codebase_health_core import (  # noqa: E402
+    SCANNERS,
+    _is_dockerfile,
 )
+
+_SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "venv", ".venv", "__pycache__", ".cache", "coverage"}
+_SCAN_EXTS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".env", ".env.example",
+    ".yml", ".yaml", ".json", ".sh", ".sql", ".php", ".rb", ".go",
+}
+_MAX_BYTES_PER_FILE = 256_000
+_MAX_FILES = 600
 
 REPO_ROOT = Path("/app")
 OUT_MD    = Path("/app/test_reports/self_scan.md")

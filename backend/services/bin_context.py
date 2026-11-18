@@ -9,18 +9,17 @@ information downstream code needs to talk to the user's connected repo:
     repo_owner  — GitHub owner (from cto_projects)
     repo_name   — GitHub repo  (from cto_projects)
     branch      — target branch (from cto_projects.branch, default "main")
-    pat         — decrypted GitHub PAT (in-memory only, never persisted)
+    pat         — GitHub PAT (stored in plaintext) (in-memory only, never persisted)
     is_founder  — JWT-derived founder/admin flag (gates execute_bash)
 
 Design principles:
   1. Build ONCE per request at the entry point (chat/send, chat/stream,
      cto/tasks/submit, loop/start).
   2. Pass through as a locked object — never rebuild inside tools.
-  3. If ownership check fails OR PAT decryption fails → HARD 403.
+  3. If ownership check fails OR PAT lookup fails → HARD 403.
   4. If project_id is null/missing → HARD 400 "No project selected".
      No silent auto-infer.
-  5. All existing crypto (services/vault.py HKDF-Fernet) is reused
-     verbatim — this module NEVER changes the encryption contract.
+  5. Secrets are stored without encryption (crypto removed 2026-11-17) — this module never encrypts or decrypts; it reads the plaintext PAT via services.pat_vault.
   6. Frozen dataclass so accidental mutation raises FrozenInstanceError.
 
 Why not just pass the raw project dict?
@@ -122,7 +121,7 @@ async def build_bin_context(
     db,
     is_founder:  bool = False,
 ) -> BINContext:
-    """Factory — verify ownership, decrypt PAT, return locked BINContext.
+    """Factory — verify ownership, fetch PAT, return locked BINContext.
 
     Raises:
       HTTPException(400) — project_id missing/blank/"home".  There is
@@ -134,9 +133,8 @@ async def build_bin_context(
                            doesn't exist, or it belongs to a different
                            user).  Same message for both — never leak
                            existence.
-      HTTPException(403) — PAT ciphertext could not be decrypted with
-                           this user's HKDF key (tamper / wrong user /
-                           legacy plaintext with vault turned on).
+        HTTPException(403) — PAT could not be resolved for this user
+            (tamper / wrong user / legacy ciphertext that can no longer be decrypted).
       HTTPException(400) — project row is missing github_owner/repo/PAT
                            (never happens under the current add-project
                            flow which requires a PAT, but a legacy row
@@ -178,7 +176,7 @@ async def build_bin_context(
     branch = (proj.get("branch") or "main").strip() or "main"
 
     # 2026-02-11 · Phase 3b (Bug 2 fix) — dual-auth credential resolution.
-    # Legacy PAT rows: `github_token` is the encrypted ciphertext.
+    # Legacy PAT rows: `github_token` may hold a pre-removal 'v1:' ciphertext, which can no longer be decrypted.
     # App-installed rows: `github_token` is None; `installation_id` set
     # and `get_repo_token()` mints a fresh installation access token.
     # `get_repo_token` returns str|None and never raises — matches the
@@ -224,7 +222,7 @@ async def build_bin_context_optional(
     blank/"home".  Used at chat entry points that also serve Home-page
     casual chat (no project = OK, no repo tools).
 
-    ANY OTHER failure (wrong user, decrypt fail, missing repo cols) is
+    ANY OTHER failure (wrong user, token lookup fail, missing repo cols) is
     STILL a hard exception — this helper only softens the "no project
     selected" case, not the security-critical ones.
     """

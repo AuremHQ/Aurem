@@ -218,6 +218,325 @@ from services.cto_pipeline_steps import (
 )
 
 
+async def _run_task_via_api_prepare_context(task_id, owner, repo, branch, files, task, context, user_token, proj, path, body, _db):
+    await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+    await _emit(task_id, "Reading repository files…", kind="phase_read", pct=10)
+    await _pkg._log(task_id, f"📡 Reading {owner}/{repo}@{branch} via API…")
+
+    # 1) Read target files (or auto-pick a few likely ones) IN PARALLEL
+    await _pkg._set_status(task_id, status="reading")
+    target_files = list(files or [])
+    if not target_files:
+        # Iter 212m-177 — P0-4a: the task text usually NAMES the file
+        # ("…in backend/utils/auth.py"). Read THOSE files first —
+        # guessing main.py/README.md fed the model zero real context
+        # and it hallucinated file content from thin air.
+        _mentioned = re.findall(
+            r"[\w./\\-]+\.(?:py|jsx?|tsx?|css|json|md|html|yml|yaml|toml|go|rs|java|rb)",
+            f"{task}\n{context or ''}",
+        )
+        target_files = list(dict.fromkeys(_mentioned))
+    if not target_files:
+        target_files = [
+            "main.py", "app.py", "server.py", "index.html",
+            "src/App.jsx", "src/main.jsx", "pages/index.js",
+            "README.md",
+        ]
+    fetched = await asyncio.gather(*[
+        _pkg.gh_api_fetch_file(owner, repo, f, branch, user_token)
+        for f in target_files[:8]
+    ])
+    contents: dict = {}
+    # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug).
+    # Was `body[:10000]` — for a real, feature-ful frontend entry
+    # file (many imports/providers/routes) that's well under the
+    # file's real size, so the model never saw large chunks of
+    # the file yet was still told to return a COMPLETE new file
+    # body. Shared helper raises the budget + explicitly warns
+    # the model off a full-file rewrite for anything still too
+    # big to fit, instead of letting it silently guess.
+    from services.cto_projects_helpers import _context_with_truncation_marker
+    truncated_files: dict[str, int] = {}   # path -> real size
+    for path, body in zip(target_files[:8], fetched):
+        if body is not None:
+            contents[path], _was_trunc = _context_with_truncation_marker(body)
+            if _was_trunc:
+                truncated_files[path] = len(body)
+            await _pkg._log(task_id, f"📄 read {path}")
+            # When user didn't specify files, keep first 4 hits
+            if not files and len(contents) >= 4:
+                break
+    if truncated_files:
+        await _pkg._log(
+            task_id,
+            "⚠️ " + ", ".join(
+                f"{p} ({n:,} chars)" for p, n in truncated_files.items()
+            ) + " exceeded the context budget — AUREM was told NOT "
+                "to rewrite these files whole",
+            "warning",
+        )
+    # iter 114 — persist files_read for the live popup
+    try:
+        from services.task_diff import build_files_read
+        await _pkg._set_status(task_id, files_read=build_files_read(contents))
+    except Exception:
+        pass
+
+    # 2) AI codegen — augment the user message with the cached
+    # repo index so AUREM sees the project's overall shape, not
+    # just the 4-8 explicitly-fetched files. Falls back silently
+    # if no index has been built yet for this project.
+    await _pkg._set_status(task_id, status="fixing")
+    try:
+        from services.codebase_indexer import build_context_block
+        repo_block = await build_context_block(
+            proj.get("user_id", ""), proj.get("project_id", ""),
+            max_chars=4500,
+        )
+        if repo_block:
+            await _pkg._log(task_id, "🗂️ injected cached repo index")
+    except Exception as _e:
+        repo_block = None
+    # iter 41 — Brain + Issues context (zero LLM cost, ~350 tokens)
+    # iter 169 — switched from V1 (project_brains) to V2
+    # (project_brains_v2). V1 retired — same call shape, denser
+    # context format via format_brain_for_agent().
+    brain_ctx = ""
+    issues_ctx = ""
+    try:
+        from services.project_brain import (
+            get_brain_v2, format_brain_for_agent,
+        )
+        _db = _pkg.get_db()
+        if _db is not None:
+            _brain = await get_brain_v2(
+                _db, proj.get("project_id", ""), proj.get("user_id"),
+            )
+            if _brain:
+                brain_ctx = format_brain_for_agent(_brain)
+    except Exception as _e:
+        brain_ctx = ""
+    try:
+        from services.github_issues_context import get_relevant_issues_context
+        _db = _pkg.get_db()
+        if _db is not None and user_token:
+            issues_ctx = await get_relevant_issues_context(
+                db=_db, repo_owner=owner, repo_name=repo,
+                github_pat=user_token, task_description=task,
+            )
+    except Exception:
+        issues_ctx = ""
+    if brain_ctx:
+        await _pkg._log(task_id, "🧠 injected project memory")
+    if issues_ctx:
+        await _pkg._log(task_id, "📋 injected relevant GitHub issues")
+
+    await _emit(task_id, "ORA thinking…", kind="phase_think", pct=30)
+    await _pkg._log(task_id, "🧠 DeepSeek thinking…")
+    files_blob = "\n\n".join(
+        f"FILE: {p}\n```\n{c}\n```" for p, c in contents.items()
+    )
+    extra_context_block = ""
+    if brain_ctx:
+        extra_context_block += f"\n\n[PROJECT MEMORY]\n{brain_ctx}"
+    if issues_ctx:
+        extra_context_block += f"\n\n[OPEN ISSUES]\n{issues_ctx}"
+    # iter 44 — Vanguard skill injection. Pre-warms the AI with
+    # battle-tested security patterns matching the task type
+    # (auth/api/payments/react/backend). Zero LLM cost.
+    try:
+        from services.skill_context_injector import build_skill_context
+        sk_ctx = build_skill_context(task)
+        if sk_ctx:
+            extra_context_block += f"\n\n{sk_ctx}"
+            await _pkg._log(task_id, "🛡️ Applying security best practices for this task")
+    except Exception:
+        pass
+    # Multi-file task detection — tells ORA to ship everything in
+    # one turn instead of stopping after file 1 with "Next:".  Keyword
+    # heuristic; the persona itself handles the ≥3-file checklist.
+    _multi_file_keywords = (
+        "all ", "every ", "each ", "multiple", "scaffold",
+        "workers", "pillar", "4 files", "5 files", "3 files",
+        "all files", "complete", "full implementation",
+    )
+    _is_multi = any(kw in task.lower() for kw in _multi_file_keywords)
+    _multi_file_instruction = ""
+    _promised_files: set[str] = set()
+    if _is_multi:
+        _multi_file_instruction = (
+            "\n\nMULTI-FILE TASK DETECTED: You MUST generate ALL required "
+            "files in this single response. Do NOT stop after the first "
+            "file. Do NOT say 'Next:' or 'Reply to continue'. Use the "
+            "checklist format: [ ] file → [x] done. Ship the complete "
+            "implementation in one commit."
+        )
+        # Structural multi-file contract — extract every concrete file
+        # path mentioned in the task/context.  If the LLM later returns
+        # an `edits` dict missing any of these, we auto-retry with a
+        # very specific "you promised N files, only M arrived" nudge.
+        import re as _refm
+        _promised_files = set(_refm.findall(
+            r"[\w./-]+\.(?:py|jsx?|tsx?|css|json|md|html|yml|yaml)",
+            f"{task}\n{context or ''}",
+        ))
+        if _promised_files:
+            db_for_plan = _pkg.get_db()
+            if db_for_plan is not None:
+                _plan = [{"file": f, "status": "pending"}
+                         for f in sorted(_promised_files)[:12]]
+                await db_for_plan.cto_tasks.update_one(
+                    {"task_id": task_id},
+                    {"$set": {"task_plan": _plan}},
+                )
+                await _emit(task_id, f"Plan: {len(_plan)} files",
+                            kind="task_plan", plan=_plan, pct=18)
+
+    user_msg = (
+        f"TASK: {task}\n"
+        f"{('CONTEXT: ' + context) if context else ''}\n\n"
+        f"Tech: {proj.get('tech_stack','auto')}\n\n"
+        f"{repo_block or ''}{extra_context_block}\n\n{files_blob}"
+        f"{_multi_file_instruction}"
+    )
+
+    # iter 43 — Parallel multi-agent codegen for big tasks.
+    # `should_parallelize()` decides automatically based on task scope
+    # AND file tree. Single-file or small tasks fall through to the
+    # existing single-call path below (which keeps SUMMARY parsing).
+    edits: dict[str, str] = {}
+    summary = "AI changes"
+    parallelized = False
+    return contents, path, body, _db, _is_multi, _promised_files, user_msg, edits, summary, parallelized
+
+
+async def _run_task_via_api_reject_suspect_edits(edits, bad, task_id, _truncation_reasons, parse_file_blocks, user_msg):
+    if (not edits) or (bad and len(bad) == len(edits)):
+        # No edits OR every edit was rejected — try once more with a
+        # nudge. This is in-task auto-regenerate; the user has not
+        # clicked Retry. If THIS also fails we surface an actionable
+        # error rather than silently looping.
+        await _pkg._log(task_id,
+                   "no usable file edits — auto-regenerating with explicit guidance",
+                   "warning")
+        # Iter 212m-6 — include the exact paths that failed and WHY
+        # so the model can target its retry. Previously the generic
+        # nudge didn't tell the model which files it screwed up, so
+        # it often produced the same broken output.
+        _path_feedback = ""
+        if bad:
+            _path_feedback = (
+                "\n\nPRIOR ATTEMPT FAILED ON THESE FILES — fix each one:\n"
+                + "\n".join(f"  - {b}" for b in bad[:10])
+            )
+        nudge = (
+            "Your previous response contained no usable file changes "
+            "(empty file body or no FILE blocks).\n"
+            "You MUST output complete file content using this exact format:\n"
+            "FILE: <path>\n```\n<complete file body — real code, not "
+            "a docstring or `pass`>\n```\n"
+            "Do NOT just describe what you would do. Write the actual code."
+            + _path_feedback
+        )
+        reply2 = await _retry(
+            lambda: _pkg.call_llm(
+                messages=[{"role": "user", "content": user_msg + "\n\n" + nudge}],
+                system=_AI_SYS, max_tokens=12000, temperature=0.0,
+            ),
+            what="AI codegen auto-retry", task_id=task_id,
+        )
+        edits = {}
+        # Iter 212m-33 — tolerant FILE-block parser (see above).
+        from services.llm_file_parser import parse_file_blocks
+        edits.update(parse_file_blocks(reply2))
+        bad = await _truncation_reasons(edits)
+    return edits, parse_file_blocks, bad
+
+
+async def _run_task_via_api_check_multi_file_and_syntax(task_id, edits, _is_multi, _promised_files, user_msg):
+    await _pkg._log(task_id, f"✅ {len(edits)} file{'' if len(edits) == 1 else 's'} "
+                         f"generated cleanly", "success")
+
+    # ── Multi-file contract — verify every file the user promised
+    # actually arrived. If something is missing we ask the LLM to
+    # fill the gap in one targeted retry and merge the result.
+    if _is_multi and _promised_files:
+        _delivered = {p.lstrip("./") for p in edits.keys()}
+        _missing = {f for f in _promised_files
+                    if f.lstrip("./") not in _delivered}
+        if _missing and len(_missing) <= 4:
+            await _emit(task_id,
+                        f"Missing files — regenerating ({len(_missing)})…",
+                        pct=77)
+            await _pkg._log(task_id,
+                       f"⚠️ Multi-file contract: missing "
+                       f"{', '.join(sorted(_missing))}", "warning")
+            _miss_nudge = (
+                "Your previous response was missing these files that "
+                "the task explicitly references:\n  - "
+                + "\n  - ".join(sorted(_missing))
+                + "\n\nGenerate the COMPLETE content for every missing "
+                  "file now, in the same FILE: <path>\n```\n…\n``` format. "
+                  "Output every missing file in one response — no "
+                  "'Next:', no 'Reply to continue'."
+            )
+            try:
+                fill = await _retry(
+                    lambda: _pkg.call_llm(
+                        messages=[{"role": "user",
+                                   "content": user_msg + "\n\n" + _miss_nudge}],
+                        system=_AI_SYS, max_tokens=12000, temperature=0.0,
+                    ),
+                    what="multi-file contract retry", task_id=task_id,
+                )
+                # Iter 212m-33 — tolerant FILE-block parser.
+                from services.llm_file_parser import parse_file_blocks
+                edits.update(parse_file_blocks(fill))
+            except Exception as _fe:
+                logger.warning("multi-file contract retry soft-failed: %r", _fe)
+
+    # ── Syntax validation — catch broken code before it reaches
+    # GitHub. Shared gate — see `_run_syntax_gate` above (also
+    # called by `_run_task_with_git`, 2026-09-08 Phase 2 fix).
+    edits, _syntax_err = await _run_syntax_gate(task_id, edits, user_msg, _AI_SYS)
+    return edits, _syntax_err
+
+
+async def _run_task_via_api_run_lint_gate(edits, task, task_id):
+    try:
+        from services.sandbox_runner import validate_generated_files
+        _sandbox = await validate_generated_files(edits, task)
+        if not _sandbox.get("skipped"):
+            if _sandbox.get("ok"):
+                _passed = (
+                    _sandbox.get("checks", {})
+                             .get("tests", {})
+                             .get("passed", 0)
+                )
+                if _passed > 0:
+                    await _emit(task_id, f"Sandbox tests passed: {_passed} ✓",
+                                pct=80)
+                    await _pkg._log(task_id, f"Sandbox: {_passed} tests passed",
+                               "success")
+            else:
+                _tout = ""
+                for _cn, _cr in (_sandbox.get("checks") or {}).items():
+                    if not _cr.get("ok"):
+                        _tout += (_cr.get("output") or _cr.get("stderr") or "")[:500]
+                if _tout:
+                    await _pkg._log(task_id,
+                               f"⚠️ Sandbox flagged failures:\n{_tout[:300]}",
+                               "warning")
+    except Exception as _se:
+        logger.warning("sandbox validation soft-failed: %r", _se)
+
+    # iter 41 — Design Linter (zero LLM cost, pure regex). Shared
+    # gate — see `_run_lint_gate` above (also called by
+    # `_run_task_with_git`, 2026-09-08 Phase 2 fix).
+    edits, lint_result, _lint_err = await _run_lint_gate(task_id, edits)
+    return edits, lint_result, _lint_err
+
+
 async def _run_task_via_api(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
                             resume_edits: Optional[dict] = None):
     """API-only worker — no `git` binary needed. Reads target files from
@@ -257,194 +576,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         pass
 
     try:
-        await _pkg._set_status(task_id, status="pulling", started_at=time.time())
-        await _emit(task_id, "Reading repository files…", kind="phase_read", pct=10)
-        await _pkg._log(task_id, f"📡 Reading {owner}/{repo}@{branch} via API…")
-
-        # 1) Read target files (or auto-pick a few likely ones) IN PARALLEL
-        await _pkg._set_status(task_id, status="reading")
-        target_files = list(files or [])
-        if not target_files:
-            # Iter 212m-177 — P0-4a: the task text usually NAMES the file
-            # ("…in backend/utils/auth.py"). Read THOSE files first —
-            # guessing main.py/README.md fed the model zero real context
-            # and it hallucinated file content from thin air.
-            _mentioned = re.findall(
-                r"[\w./\\-]+\.(?:py|jsx?|tsx?|css|json|md|html|yml|yaml|toml|go|rs|java|rb)",
-                f"{task}\n{context or ''}",
-            )
-            target_files = list(dict.fromkeys(_mentioned))
-        if not target_files:
-            target_files = [
-                "main.py", "app.py", "server.py", "index.html",
-                "src/App.jsx", "src/main.jsx", "pages/index.js",
-                "README.md",
-            ]
-        fetched = await asyncio.gather(*[
-            _pkg.gh_api_fetch_file(owner, repo, f, branch, user_token)
-            for f in target_files[:8]
-        ])
-        contents: dict = {}
-        # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug).
-        # Was `body[:10000]` — for a real, feature-ful frontend entry
-        # file (many imports/providers/routes) that's well under the
-        # file's real size, so the model never saw large chunks of
-        # the file yet was still told to return a COMPLETE new file
-        # body. Shared helper raises the budget + explicitly warns
-        # the model off a full-file rewrite for anything still too
-        # big to fit, instead of letting it silently guess.
-        from services.cto_projects_helpers import _context_with_truncation_marker
-        truncated_files: dict[str, int] = {}   # path -> real size
-        for path, body in zip(target_files[:8], fetched):
-            if body is not None:
-                contents[path], _was_trunc = _context_with_truncation_marker(body)
-                if _was_trunc:
-                    truncated_files[path] = len(body)
-                await _pkg._log(task_id, f"📄 read {path}")
-                # When user didn't specify files, keep first 4 hits
-                if not files and len(contents) >= 4:
-                    break
-        if truncated_files:
-            await _pkg._log(
-                task_id,
-                "⚠️ " + ", ".join(
-                    f"{p} ({n:,} chars)" for p, n in truncated_files.items()
-                ) + " exceeded the context budget — AUREM was told NOT "
-                    "to rewrite these files whole",
-                "warning",
-            )
-        # iter 114 — persist files_read for the live popup
-        try:
-            from services.task_diff import build_files_read
-            await _pkg._set_status(task_id, files_read=build_files_read(contents))
-        except Exception:
-            pass
-
-        # 2) AI codegen — augment the user message with the cached
-        # repo index so AUREM sees the project's overall shape, not
-        # just the 4-8 explicitly-fetched files. Falls back silently
-        # if no index has been built yet for this project.
-        await _pkg._set_status(task_id, status="fixing")
-        try:
-            from services.codebase_indexer import build_context_block
-            repo_block = await build_context_block(
-                proj.get("user_id", ""), proj.get("project_id", ""),
-                max_chars=4500,
-            )
-            if repo_block:
-                await _pkg._log(task_id, "🗂️ injected cached repo index")
-        except Exception as _e:
-            repo_block = None
-        # iter 41 — Brain + Issues context (zero LLM cost, ~350 tokens)
-        # iter 169 — switched from V1 (project_brains) to V2
-        # (project_brains_v2). V1 retired — same call shape, denser
-        # context format via format_brain_for_agent().
-        brain_ctx = ""
-        issues_ctx = ""
-        try:
-            from services.project_brain import (
-                get_brain_v2, format_brain_for_agent,
-            )
-            _db = _pkg.get_db()
-            if _db is not None:
-                _brain = await get_brain_v2(
-                    _db, proj.get("project_id", ""), proj.get("user_id"),
-                )
-                if _brain:
-                    brain_ctx = format_brain_for_agent(_brain)
-        except Exception as _e:
-            brain_ctx = ""
-        try:
-            from services.github_issues_context import get_relevant_issues_context
-            _db = _pkg.get_db()
-            if _db is not None and user_token:
-                issues_ctx = await get_relevant_issues_context(
-                    db=_db, repo_owner=owner, repo_name=repo,
-                    github_pat=user_token, task_description=task,
-                )
-        except Exception:
-            issues_ctx = ""
-        if brain_ctx:
-            await _pkg._log(task_id, "🧠 injected project memory")
-        if issues_ctx:
-            await _pkg._log(task_id, "📋 injected relevant GitHub issues")
-
-        await _emit(task_id, "ORA thinking…", kind="phase_think", pct=30)
-        await _pkg._log(task_id, "🧠 DeepSeek thinking…")
-        files_blob = "\n\n".join(
-            f"FILE: {p}\n```\n{c}\n```" for p, c in contents.items()
-        )
-        extra_context_block = ""
-        if brain_ctx:
-            extra_context_block += f"\n\n[PROJECT MEMORY]\n{brain_ctx}"
-        if issues_ctx:
-            extra_context_block += f"\n\n[OPEN ISSUES]\n{issues_ctx}"
-        # iter 44 — Vanguard skill injection. Pre-warms the AI with
-        # battle-tested security patterns matching the task type
-        # (auth/api/payments/react/backend). Zero LLM cost.
-        try:
-            from services.skill_context_injector import build_skill_context
-            sk_ctx = build_skill_context(task)
-            if sk_ctx:
-                extra_context_block += f"\n\n{sk_ctx}"
-                await _pkg._log(task_id, "🛡️ Applying security best practices for this task")
-        except Exception:
-            pass
-        # Multi-file task detection — tells ORA to ship everything in
-        # one turn instead of stopping after file 1 with "Next:".  Keyword
-        # heuristic; the persona itself handles the ≥3-file checklist.
-        _multi_file_keywords = (
-            "all ", "every ", "each ", "multiple", "scaffold",
-            "workers", "pillar", "4 files", "5 files", "3 files",
-            "all files", "complete", "full implementation",
-        )
-        _is_multi = any(kw in task.lower() for kw in _multi_file_keywords)
-        _multi_file_instruction = ""
-        _promised_files: set[str] = set()
-        if _is_multi:
-            _multi_file_instruction = (
-                "\n\nMULTI-FILE TASK DETECTED: You MUST generate ALL required "
-                "files in this single response. Do NOT stop after the first "
-                "file. Do NOT say 'Next:' or 'Reply to continue'. Use the "
-                "checklist format: [ ] file → [x] done. Ship the complete "
-                "implementation in one commit."
-            )
-            # Structural multi-file contract — extract every concrete file
-            # path mentioned in the task/context.  If the LLM later returns
-            # an `edits` dict missing any of these, we auto-retry with a
-            # very specific "you promised N files, only M arrived" nudge.
-            import re as _refm
-            _promised_files = set(_refm.findall(
-                r"[\w./-]+\.(?:py|jsx?|tsx?|css|json|md|html|yml|yaml)",
-                f"{task}\n{context or ''}",
-            ))
-            if _promised_files:
-                db_for_plan = _pkg.get_db()
-                if db_for_plan is not None:
-                    _plan = [{"file": f, "status": "pending"}
-                             for f in sorted(_promised_files)[:12]]
-                    await db_for_plan.cto_tasks.update_one(
-                        {"task_id": task_id},
-                        {"$set": {"task_plan": _plan}},
-                    )
-                    await _emit(task_id, f"Plan: {len(_plan)} files",
-                                kind="task_plan", plan=_plan, pct=18)
-
-        user_msg = (
-            f"TASK: {task}\n"
-            f"{('CONTEXT: ' + context) if context else ''}\n\n"
-            f"Tech: {proj.get('tech_stack','auto')}\n\n"
-            f"{repo_block or ''}{extra_context_block}\n\n{files_blob}"
-            f"{_multi_file_instruction}"
-        )
-
-        # iter 43 — Parallel multi-agent codegen for big tasks.
-        # `should_parallelize()` decides automatically based on task scope
-        # AND file tree. Single-file or small tasks fall through to the
-        # existing single-call path below (which keeps SUMMARY parsing).
-        edits: dict[str, str] = {}
-        summary = "AI changes"
-        parallelized = False
+        contents, path, body, _db, _is_multi, _promised_files, user_msg, edits, summary, parallelized = await _run_task_via_api_prepare_context(task_id, owner, repo, branch, files, task, context, user_token, proj, path, body, _db)
         agents_count = 1
         if resume_edits and resume_edits.get("edits"):
             # 2026-08-27 — checkpoint/resume Phase 2: skip regeneration,
@@ -577,45 +709,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             return out
 
         bad: list[str] = await _truncation_reasons(edits)
-        if (not edits) or (bad and len(bad) == len(edits)):
-            # No edits OR every edit was rejected — try once more with a
-            # nudge. This is in-task auto-regenerate; the user has not
-            # clicked Retry. If THIS also fails we surface an actionable
-            # error rather than silently looping.
-            await _pkg._log(task_id,
-                       "no usable file edits — auto-regenerating with explicit guidance",
-                       "warning")
-            # Iter 212m-6 — include the exact paths that failed and WHY
-            # so the model can target its retry. Previously the generic
-            # nudge didn't tell the model which files it screwed up, so
-            # it often produced the same broken output.
-            _path_feedback = ""
-            if bad:
-                _path_feedback = (
-                    "\n\nPRIOR ATTEMPT FAILED ON THESE FILES — fix each one:\n"
-                    + "\n".join(f"  - {b}" for b in bad[:10])
-                )
-            nudge = (
-                "Your previous response contained no usable file changes "
-                "(empty file body or no FILE blocks).\n"
-                "You MUST output complete file content using this exact format:\n"
-                "FILE: <path>\n```\n<complete file body — real code, not "
-                "a docstring or `pass`>\n```\n"
-                "Do NOT just describe what you would do. Write the actual code."
-                + _path_feedback
-            )
-            reply2 = await _retry(
-                lambda: _pkg.call_llm(
-                    messages=[{"role": "user", "content": user_msg + "\n\n" + nudge}],
-                    system=_AI_SYS, max_tokens=12000, temperature=0.0,
-                ),
-                what="AI codegen auto-retry", task_id=task_id,
-            )
-            edits = {}
-            # Iter 212m-33 — tolerant FILE-block parser (see above).
-            from services.llm_file_parser import parse_file_blocks
-            edits.update(parse_file_blocks(reply2))
-            bad = await _truncation_reasons(edits)
+        edits, parse_file_blocks, bad = await _run_task_via_api_reject_suspect_edits(edits, bad, task_id, _truncation_reasons, parse_file_blocks, user_msg)
 
         if bad:
             err = ("AI returned suspect edits (refusing to push):\n  - "
@@ -677,51 +771,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             return
 
         await _emit(task_id, "Running linter…", kind="phase_verify", pct=75)
-        await _pkg._log(task_id, f"✅ {len(edits)} file{'' if len(edits) == 1 else 's'} "
-                             f"generated cleanly", "success")
-
-        # ── Multi-file contract — verify every file the user promised
-        # actually arrived. If something is missing we ask the LLM to
-        # fill the gap in one targeted retry and merge the result.
-        if _is_multi and _promised_files:
-            _delivered = {p.lstrip("./") for p in edits.keys()}
-            _missing = {f for f in _promised_files
-                        if f.lstrip("./") not in _delivered}
-            if _missing and len(_missing) <= 4:
-                await _emit(task_id,
-                            f"Missing files — regenerating ({len(_missing)})…",
-                            pct=77)
-                await _pkg._log(task_id,
-                           f"⚠️ Multi-file contract: missing "
-                           f"{', '.join(sorted(_missing))}", "warning")
-                _miss_nudge = (
-                    "Your previous response was missing these files that "
-                    "the task explicitly references:\n  - "
-                    + "\n  - ".join(sorted(_missing))
-                    + "\n\nGenerate the COMPLETE content for every missing "
-                      "file now, in the same FILE: <path>\n```\n…\n``` format. "
-                      "Output every missing file in one response — no "
-                      "'Next:', no 'Reply to continue'."
-                )
-                try:
-                    fill = await _retry(
-                        lambda: _pkg.call_llm(
-                            messages=[{"role": "user",
-                                       "content": user_msg + "\n\n" + _miss_nudge}],
-                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
-                        ),
-                        what="multi-file contract retry", task_id=task_id,
-                    )
-                    # Iter 212m-33 — tolerant FILE-block parser.
-                    from services.llm_file_parser import parse_file_blocks
-                    edits.update(parse_file_blocks(fill))
-                except Exception as _fe:
-                    logger.warning("multi-file contract retry soft-failed: %r", _fe)
-
-        # ── Syntax validation — catch broken code before it reaches
-        # GitHub. Shared gate — see `_run_syntax_gate` above (also
-        # called by `_run_task_with_git`, 2026-09-08 Phase 2 fix).
-        edits, _syntax_err = await _run_syntax_gate(task_id, edits, user_msg, _AI_SYS)
+        edits, _syntax_err = await _run_task_via_api_check_multi_file_and_syntax(task_id, edits, _is_multi, _promised_files, user_msg)
         if _syntax_err:
             await _pkg._log(task_id, f"🚫 {_syntax_err}", "error")
             await _pkg._set_status(task_id, status="failed", error=_syntax_err[:2000],
@@ -733,37 +783,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         # ── Sandbox validation (e2b) — runs generated Python in an
         # isolated container so ORA can verify its own code before
         # committing. Silently skipped if E2B_API_KEY isn't set.
-        try:
-            from services.sandbox_runner import validate_generated_files
-            _sandbox = await validate_generated_files(edits, task)
-            if not _sandbox.get("skipped"):
-                if _sandbox.get("ok"):
-                    _passed = (
-                        _sandbox.get("checks", {})
-                                 .get("tests", {})
-                                 .get("passed", 0)
-                    )
-                    if _passed > 0:
-                        await _emit(task_id, f"Sandbox tests passed: {_passed} ✓",
-                                    pct=80)
-                        await _pkg._log(task_id, f"Sandbox: {_passed} tests passed",
-                                   "success")
-                else:
-                    _tout = ""
-                    for _cn, _cr in (_sandbox.get("checks") or {}).items():
-                        if not _cr.get("ok"):
-                            _tout += (_cr.get("output") or _cr.get("stderr") or "")[:500]
-                    if _tout:
-                        await _pkg._log(task_id,
-                                   f"⚠️ Sandbox flagged failures:\n{_tout[:300]}",
-                                   "warning")
-        except Exception as _se:
-            logger.warning("sandbox validation soft-failed: %r", _se)
-
-        # iter 41 — Design Linter (zero LLM cost, pure regex). Shared
-        # gate — see `_run_lint_gate` above (also called by
-        # `_run_task_with_git`, 2026-09-08 Phase 2 fix).
-        edits, lint_result, _lint_err = await _run_lint_gate(task_id, edits)
+        edits, lint_result, _lint_err = await _run_task_via_api_run_lint_gate(edits, task, task_id)
         if _lint_err:
             await _pkg._set_status(task_id, status="failed", error=_lint_err[:2000],
                               completed_at=time.time())

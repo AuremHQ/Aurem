@@ -9,7 +9,7 @@ change it and no relation to the $ balance shown at the top of that
 chat panel — so hitting "Stream error: daily_token_cap" while the $
 balance still had plenty of room looked like a bug/inconsistency.
 Same DB-override-wins-over-env-var pattern already used for LLM
-provider configs (services/llm_config_store.py) and USD caps
+provider configs (services/llm_config.py) and USD caps
 (services/llm_usd_cap.py): a saved value here wins over the env var,
 no restart needed; if nothing's been saved yet, the env var default
 applies exactly as before — zero behavior change until an admin

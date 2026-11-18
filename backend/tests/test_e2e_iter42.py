@@ -92,30 +92,26 @@ def test_parallel_agents_single_path_for_tiny_task():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. PAT encryption — per-user round-trip + cross-user rejection
+# 4. PAT storage — plaintext round-trip + legacy ciphertext rejection
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_pat_encryption_round_trip():
-    if not os.environ.get("AUREM_MASTER_KEY"):
-        pytest.skip("AUREM_MASTER_KEY not set in this test env")
-    from services.vault import encrypt, decrypt
+async def test_pat_plaintext_round_trip():
+    # Crypto removed 2026-11-17: PATs are stored in plaintext, so the
+    # stored token is used as-is — no envelope, no master key.
+    from services.repo_indexing import _maybe_decrypt
     pat = "ghp_e2e_test_token_for_iter43_xyz"
-    ct = await encrypt("user_alpha", pat, kind="github_token")
-    assert ct.startswith("v1:")
-    pt = await decrypt("user_alpha", ct, kind="github_token")
+    assert not pat.startswith("v1:")
+    pt = await _maybe_decrypt("user_alpha", pat)
     assert pt == pat
 
 
 @pytest.mark.asyncio
-async def test_pat_encryption_rejects_cross_user():
-    if not os.environ.get("AUREM_MASTER_KEY"):
-        pytest.skip("AUREM_MASTER_KEY not set in this test env")
-    from cryptography.fernet import InvalidToken
-    from services.vault import encrypt, decrypt
-    ct = await encrypt("user_alpha", "secret_token", kind="github_token")
-    with pytest.raises(InvalidToken):
-        await decrypt("user_beta", ct, kind="github_token")
+async def test_pat_legacy_ciphertext_rejected():
+    # Crypto removed 2026-11-17: a legacy 'v1:' ciphertext can no longer
+    # be decrypted, so it is treated as unusable (None), never raised.
+    from services.repo_indexing import _maybe_decrypt
+    assert await _maybe_decrypt("user_alpha", "v1:gAAAAABlegacy-ciphertext") is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

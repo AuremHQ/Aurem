@@ -36,6 +36,7 @@ from cto_services.db import require_db
 from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 from services.subscription_tiers import TIER_LIMITS, _coerce
 from services.team_permissions import check_permission
+from services.wallet import plan_token_grants
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Payments"])
@@ -594,6 +595,663 @@ async def payment_status(
 
 
 # ── /payments/webhook — Stripe → us, source of truth for subscription state
+async def _stripe_webhook_handle_checkout_completed(event, db):
+    obj      = event["data"]["object"]
+    user_id  = (obj.get("metadata") or {}).get("user_id")
+    plan     = (obj.get("metadata") or {}).get("plan")
+    sub_id   = obj.get("subscription")
+    cust_id  = obj.get("customer")
+    session_id = obj.get("id")
+
+    # ── Iter 386 · Error-Handling-Item-3 · Stripe post-signature alert
+    #
+    # Signature is already verified above; from here down every
+    # failure means "user paid Stripe, but our DB didn't record
+    # the upgrade" — the WORST possible silent failure mode for
+    # billing. Historically these went to logger.warning only and
+    # never surfaced to Sentry with a distinct tag, so on-call had
+    # no way to grep for "paid users stuck on free tier". We now
+    # wrap each DB write with a dedicated try/except that:
+    #   • Sets scope tags `event=stripe_upgrade_failed`, `stage=…`
+    #     so a single Sentry search catches every variant.
+    #   • Attaches the Stripe session_id + user_id + plan as
+    #     context (no PII beyond the internal ids).
+    #   • RE-RAISES so Stripe's own retry machinery kicks in
+    #     (webhooks are idempotent thanks to session_id keying).
+    def _alert_upgrade_failure(exc: Exception, stage: str) -> None:
+        try:
+            import sentry_sdk
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("event", "stripe_upgrade_failed")
+                scope.set_tag("stage", stage)
+                if user_id:
+                    scope.set_tag("user_id", user_id)
+                if plan:
+                    scope.set_tag("plan", plan)
+                scope.set_context("stripe_session", {
+                    "session_id": session_id,
+                    "subscription": sub_id,
+                    "customer": cust_id,
+                })
+                sentry_sdk.capture_exception(exc)
+        except Exception:  # noqa: BLE001
+            # Sentry init failure MUST NOT mask the underlying
+            # billing error — swallow this alert-side exception
+            # only. The outer re-raise still fires below.
+            pass
+
+    # Iter 352 — the webhook NEVER updated the cto_payments ledger
+    # row (only /payments/status did, and only when the user's
+    # browser survived to the success-redirect poll). Result: paid
+    # sessions could sit "pending" forever in the admin ledger.
+    # The webhook is the source of truth — sync the row here.
+    try:
+        await db.cto_payments.update_one(
+            {"session_id": session_id},
+            {"$set": {
+                "payment_status": "paid",
+                "status":         "complete",
+                "amount":         round((obj.get("amount_total") or 0) / 100, 2),
+                "subscription":   sub_id,
+                "paid_at":        time.time(),
+                "updated_at":     time.time(),
+                "updated_via":    "webhook",
+            }},
+        )
+    except Exception as e:                              # noqa: BLE001
+        logger.exception(
+            "[webhook] cto_payments sync failed for session=%s user=%s",
+            session_id, user_id,
+        )
+        _alert_upgrade_failure(e, stage="ledger_writeback")
+        # Ledger write is best-effort — the tier update below is
+        # the SOURCE OF TRUTH for customer-visible state, so we
+        # don't re-raise here. The Sentry tag is enough for
+        # on-call to reconcile the ledger manually.
+
+    # Master Prompt Step C3 — one-time top-up pack (mode="payment",
+    # NOT a subscription — see /payments/topup-checkout). Grants
+    # `purchased` tokens (never expire), no tier/fix_entitlement
+    # change — a top-up alone doesn't unlock Fix if the user has
+    # no plan; it only adds spendable balance for when they do.
+    kind = (obj.get("metadata") or {}).get("kind")
+    if user_id and kind == "topup":
+        try:
+            amount_usd = float((obj.get("metadata") or {}).get("amount_usd") or 0)
+            from config.token_pricing import usd_to_tokens
+            from services import wallet
+            tokens = usd_to_tokens(amount_usd)
+            # Master Prompt v2 Part 2 — the batch_id minted at
+            # /payments/topup-checkout time (see create_topup_checkout)
+            # becomes this grant's own wallet batch id, so a later
+            # refund can target this exact payment's batch. Falls
+            # back to the old event-id-keyed grant id only for a
+            # checkout session created before this field existed.
+            grant_key = (obj.get("metadata") or {}).get("batch_id") \
+                or f"stripe_topup_grant:{event.get('id')}"
+            if tokens > 0:
+                await wallet.grant(
+                    db, user_id=user_id, bucket="purchased", amount=tokens,
+                    idempotency_key=grant_key,
+                    source="stripe_webhook:topup",
+                )
+        except Exception as e:
+            logger.exception(
+                "[webhook] topup token grant FAILED for user=%s "
+                "session=%s — user paid but tokens not credited.",
+                user_id, session_id,
+            )
+            _alert_upgrade_failure(e, stage="topup_grant")
+            raise HTTPException(500, "topup_grant_failed")
+
+    if user_id and plan:
+        try:
+            await db.dev_users.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "tier":               plan,
+                    "usage_tier":         plan,
+                    "stripe_sub_id":      sub_id,
+                    "stripe_customer_id": cust_id,
+                    "tier_updated_at":    datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+        except Exception as e:                          # noqa: BLE001
+            logger.exception(
+                "[webhook] tier upgrade FAILED for user=%s plan=%s "
+                "session=%s — user paid but was not upgraded",
+                user_id, plan, session_id,
+            )
+            _alert_upgrade_failure(e, stage="tier_update")
+            # RE-RAISE so Stripe retries this webhook. Idempotent
+            # on session_id — no double-charge risk.
+            raise HTTPException(500, "tier_update_failed")
+
+        # Master Prompt Step C1/C3 — token-billing: grant this
+        # plan's monthly token allotment to the `plan` bucket and
+        # flip fix_entitlement True. This is the ONLY place
+        # fix_entitlement is ever set to True — never from a
+        # redirect/success_url/frontend value (see
+        # services/fix_entitlement.py's module docstring).
+        #
+        # Master Prompt v2 Part 2 — keyed as `monthly_grant:{user}:{ym}`,
+        # the SAME idempotency key services.wallet.run_monthly_grant_job
+        # uses, not the old event-id-based key. This both gives the
+        # grant a stable, discoverable batch id (so a refund of THIS
+        # charge can target THIS month's exact plan batch) and closes
+        # a latent gap: before this change, a user who subscribed
+        # mid-month got this instant grant under a DIFFERENT key than
+        # the monthly cron's, so the SAME month's cron run would not
+        # see it as "already granted" and would double-grant a second
+        # month's allotment in the signup month.
+        try:
+            tokens = plan_token_grants.get(plan)
+            if tokens:
+                from services import wallet
+                from services.fix_entitlement import grant_fix_entitlement
+                ym = datetime.now(timezone.utc).strftime("%Y-%m")
+                await wallet.grant(
+                    db, user_id=user_id, bucket="plan", amount=tokens,
+                    idempotency_key=f"monthly_grant:{user_id}:{ym}",
+                    source=f"stripe_webhook:{plan}",
+                )
+                await grant_fix_entitlement(db, user_id, source=f"stripe_webhook:{plan}")
+        except Exception as e:
+            logger.exception(
+                "[webhook] token grant / fix_entitlement FAILED for "
+                "user=%s plan=%s session=%s — tier already upgraded, "
+                "but tokens/entitlement are not. Re-raising so Stripe "
+                "retries (idempotent on event id).",
+                user_id, plan, session_id,
+            )
+            _alert_upgrade_failure(e, stage="token_grant")
+            raise HTTPException(500, "token_grant_failed")
+
+        # Iter 102 — referral reward on paid conversion.
+        try:
+            from services.billing_cron import grant_referral_reward
+            grant = await grant_referral_reward(db, user_id)
+            if grant.get("granted"):
+                logger.info(f"[webhook] referral reward granted to {grant.get('referrer')}")
+        except Exception as e:
+            logger.warning(f"[webhook] referral reward failed: {e!r}")
+            # Referral is a side-benefit — surface to Sentry with
+            # the same tag family so on-call can spot systemic
+            # failures, but don't re-raise (user is already
+            # upgraded correctly at this point).
+            _alert_upgrade_failure(e, stage="referral_reward")
+    return (user_id, plan, sub_id, cust_id, session_id)
+
+
+async def _stripe_webhook_handle_checkout_expired(event, db):
+    obj = event["data"]["object"]
+    try:
+        await db.cto_payments.update_one(
+            {"session_id": obj.get("id"), "status": {"$ne": "complete"}},
+            {"$set": {
+                "payment_status": "expired",
+                "status":         "expired",
+                "updated_at":     time.time(),
+                "updated_via":    "webhook",
+            }},
+        )
+    except Exception as e:                              # noqa: BLE001
+        logger.warning("[webhook] expired-session sync failed: %r", e)
+
+
+async def _stripe_webhook_handle_invoice_payment_failed(event, db):
+    obj = event["data"]["object"]
+    sub_id = obj.get("subscription")
+    cust_id = obj.get("customer")
+    invoice_id = obj.get("id")
+    attempt_count = obj.get("attempt_count")
+    next_attempt = obj.get("next_payment_attempt")
+    amount_due = round((obj.get("amount_due") or 0) / 100, 2)
+    if sub_id:
+        try:
+            await db.dev_users.update_one(
+                {"stripe_sub_id": sub_id},
+                {"$set": {
+                    "payment_failed": True,
+                    "payment_failed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                 "$inc": {"payment_failure_count": 1}},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[webhook] invoice.payment_failed dev_users flag failed: %r", e)
+        user_row = await db.dev_users.find_one(
+            {"stripe_sub_id": sub_id},
+            {"_id": 0, "user_id": 1, "email": 1, "name": 1, "tier": 1},
+        ) or {}
+        if user_row.get("user_id"):
+            from services.notifications import emit_notification
+            await emit_notification(
+                db, user_id=user_row["user_id"], type="payment_failed",
+                text=f"Your last payment (${amount_due}) failed — update your card to keep your plan active.")
+        try:
+            from services.founder_alerts import send_founder_alert
+            await send_founder_alert(
+                db,
+                source_key=f"stripe_invoice_failed:{sub_id}",
+                title=f"Payment failed — {user_row.get('email', '?')} "
+                      f"({user_row.get('tier', '?')} plan, ${amount_due})",
+                detail=(
+                    f"subscription={sub_id} customer={cust_id} "
+                    f"attempt_count={attempt_count} "
+                    f"next_payment_attempt="
+                    f"{datetime.fromtimestamp(next_attempt, tz=timezone.utc).isoformat() if next_attempt else 'none (retries exhausted)'}"
+                ),
+                level="critical",
+                guard="stripe_dunning",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[webhook] invoice.payment_failed founder alert failed: %r", e)
+        # 2026-08-22 — founder ask (priority 1 of 3): the CUSTOMER
+        # must also know their own card failed, not just the
+        # founder. Generates a fresh Stripe-hosted portal link
+        # directly (no authenticated session available inside a
+        # webhook) and fires ONE email, deduped per invoice id.
+        if cust_id and invoice_id:
+            try:
+                portal = await _stripe_call(
+                    stripe.billing_portal.Session.create,
+                    customer=cust_id,
+                    return_url=(_frontend_url() or "https://auremcto.com") + "/settings",
+                )
+                from services.payment_recovery_email import send_payment_recovery_email
+                await send_payment_recovery_email(
+                    db, user_row,
+                    invoice_id=invoice_id,
+                    plan=user_row.get("tier", "?"),
+                    amount_due=amount_due,
+                    portal_url=portal.url,
+                    # 2026-08-22 — Grace Period Copy: the ONE date
+                    # we can state with 100% certainty (straight
+                    # from Stripe for THIS invoice), not a guessed
+                    # total dunning window.
+                    next_attempt_at=(
+                        datetime.fromtimestamp(next_attempt, tz=timezone.utc)
+                        if next_attempt else None
+                    ),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[webhook] invoice.payment_failed customer email failed: %r", e)
+    else:
+        logger.warning("[webhook] invoice.payment_failed with no subscription id: %s", obj.get("id"))
+
+
+async def _stripe_webhook_handle_invoice_paid(event, db):
+    obj = event["data"]["object"]
+    sub_id = obj.get("subscription")
+    invoice_id = obj.get("id")
+    if sub_id:
+        try:
+            prior = await db.dev_users.find_one_and_update(
+                {"stripe_sub_id": sub_id, "payment_failed": True},
+                {"$set": {"payment_failed": False}},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[webhook] invoice.paid clear-flag failed: %r", e)
+            prior = None
+        if prior and invoice_id:
+            try:
+                from services.payment_recovery_email import send_payment_recovered_email
+                await send_payment_recovered_email(
+                    db, prior,
+                    invoice_id=invoice_id,
+                    plan=prior.get("tier", "?"),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[webhook] invoice.paid recovery confirmation email failed: %r", e)
+
+
+async def _stripe_webhook_handle_subscription_ended(event, db, etype):
+    sub_id = event["data"]["object"]["id"]
+    # Find the user first so we know whose Supabase projects to downgrade.
+    user_row = await db.dev_users.find_one(
+        {"stripe_sub_id": sub_id},
+        {"user_id": 1, "_id": 0},
+    )
+    await db.dev_users.update_one(
+        {"stripe_sub_id": sub_id},
+        {"$set": {
+            "tier":            "free",
+            "usage_tier":      "free",
+            "stripe_sub_id":   None,
+            "tier_updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    # Closing-the-bypass-doors audit (Step 6) — this branch already
+    # downgraded `tier` to "free" but never touched
+    # `fix_entitlement`, so a cancelled/paused subscriber kept Fix
+    # access forever (the field stays True until something sets it
+    # False — nothing did).
+    # 2026-10-25 (ITEM 1, independent review) — this call used to be
+    # gated on `billing_mode() != "off"`, under the theory that an
+    # account outside the token-billing rollout shouldn't get a new
+    # field written at mode "off". That reasoning didn't hold: the
+    # GRANT path (grant_fix_entitlement, ~line 777 above) and the
+    # refund/dispute revoke paths already write fix_entitlement
+    # unconditionally, with no mode check at all — only this one
+    # revoke was asymmetric. The result: a user who cancelled while
+    # mode was "off" kept fix_entitlement=True forever, and if the
+    # founder later flips TOKEN_BILLING_MODE to "shadow"/"on", that
+    # stale True passes the Fix gate for free. Revoke unconditionally
+    # now, matching every other write path. (Rows already poisoned
+    # by the old gated behavior, before this fix, are self-healed by
+    # services/fix_entitlement.py::is_fix_entitled's own narrow
+    # stale-shape check, and listed by the Item 1(c) pre-flight
+    # report for the founder's real-revoke decision.)
+    if user_row and user_row.get("user_id"):
+        from services.fix_entitlement import revoke_fix_entitlement
+        try:
+            await revoke_fix_entitlement(
+                db, user_row["user_id"],
+                reason=f"stripe_webhook:{etype}",
+            )
+        except Exception as e:                          # noqa: BLE001
+            logger.warning(
+                "[webhook] fix_entitlement revoke failed for "
+                "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
+            )
+    # Iter 212m-240 — Tier 3: paid → free means any dedicated Supabase
+    # Postgres projects the user has must enter the downgrade grace
+    # window using the configured policy (default = migrate_back,
+    # which copies data BACK into shared Mongo first). The sweeper
+    # cron finalises after the grace expires.
+    if user_row and user_row.get("user_id"):
+        try:
+            from services import supabase_provisioner as _sp
+            if _sp.is_configured():
+                rows = db[_sp.PROJECTS_COLLECTION].find(
+                    {"user_id": user_row["user_id"],
+                     "downgrade_status": {"$exists": False}},
+                    {"app_id": 1, "user_id": 1, "_id": 0},
+                )
+                async for r in rows:
+                    try:
+                        await _sp.apply_downgrade(
+                            db, r["app_id"], r["user_id"], policy=None,
+                        )
+                        logger.info(
+                            "[webhook] Supabase downgrade queued for %s (user=%s)",
+                            r["app_id"], r["user_id"],
+                        )
+                    except Exception as ie:  # noqa: BLE001
+                        logger.warning(
+                            "[webhook] supabase downgrade failed for %s: %r",
+                            r["app_id"], ie,
+                        )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[webhook] supabase downgrade sweep errored: %r", e)
+
+
+async def _stripe_webhook_handle_charge_refunded(event, db):
+    obj = event["data"]["object"]
+    event_id = event.get("id")
+    charge_id = obj.get("id")
+    metadata = obj.get("metadata") or {}
+    user_id = metadata.get("user_id")
+    kind = metadata.get("kind")
+    plan = metadata.get("plan")
+    amount_total = obj.get("amount") or 0
+    amount_refunded = obj.get("amount_refunded") or 0
+    is_full_refund = amount_total > 0 and amount_refunded >= amount_total
+    refunded_usd = round(amount_refunded / 100, 2)
+
+    if not user_id:
+        logger.info(
+            "[webhook] charge.refunded with no identifiable user_id "
+            "in metadata (charge=%s) — fail-safe no-op", charge_id,
+        )
+    elif kind == "topup":
+        try:
+            from config.token_pricing import usd_to_tokens
+            from services import billing_flags, wallet
+            batch_id = metadata.get("batch_id")
+            tokens_to_claw = usd_to_tokens(refunded_usd)
+            if not batch_id:
+                await billing_flags.flag(
+                    db, flag_type="refund_shortfall", user_id=user_id,
+                    idempotency_key=f"stripe_refund_flag:{event_id}",
+                    detail={
+                        "charge_id": charge_id,
+                        "shortfall_tokens": tokens_to_claw,
+                        "refunded_usd": refunded_usd,
+                        "reason": "no_batch_id_predates_part2",
+                    },
+                )
+            elif tokens_to_claw > 0:
+                res = await wallet.claw_back_batch(
+                    db, user_id=user_id, batch_id=batch_id,
+                    amount=tokens_to_claw,
+                    idempotency_key=f"stripe_refund_clawback:{event_id}",
+                    source="stripe_webhook:charge.refunded:topup",
+                )
+                if res.get("shortfall"):
+                    await billing_flags.flag(
+                        db, flag_type="refund_shortfall", user_id=user_id,
+                        idempotency_key=f"stripe_refund_flag:{event_id}",
+                        detail={
+                            "charge_id": charge_id, "batch_id": batch_id,
+                            "shortfall_tokens": res["shortfall"],
+                            "refunded_usd": refunded_usd,
+                        },
+                    )
+        except Exception as e:                              # noqa: BLE001
+            logger.exception(
+                "[webhook] topup refund clawback failed user=%s "
+                "charge=%s: %r", user_id, charge_id, e,
+            )
+    elif plan:
+        from services import billing_flags
+        if is_full_refund:
+            try:
+                from config.token_pricing import usd_to_tokens
+                from services import wallet
+                from services.fix_entitlement import revoke_fix_entitlement
+                charge_ym = datetime.fromtimestamp(
+                    obj.get("created") or time.time(), tz=timezone.utc,
+                ).strftime("%Y-%m")
+                batch_id = f"monthly_grant:{user_id}:{charge_ym}"
+                tokens_to_claw = usd_to_tokens(refunded_usd)
+                res = {"shortfall": 0}
+                if tokens_to_claw > 0:
+                    res = await wallet.claw_back_batch(
+                        db, user_id=user_id, batch_id=batch_id,
+                        amount=tokens_to_claw,
+                        idempotency_key=f"stripe_refund_clawback:{event_id}",
+                        source="stripe_webhook:charge.refunded:subscription",
+                    )
+                if res.get("shortfall"):
+                    await billing_flags.flag(
+                        db, flag_type="refund_shortfall", user_id=user_id,
+                        idempotency_key=f"stripe_refund_flag:{event_id}",
+                        detail={
+                            "charge_id": charge_id, "batch_id": batch_id,
+                            "shortfall_tokens": res["shortfall"],
+                            "refunded_usd": refunded_usd,
+                        },
+                    )
+                row = await db.dev_users.find_one(
+                    {"user_id": user_id}, {"_id": 0, "stripe_sub_id": 1},
+                )
+                if not (row or {}).get("stripe_sub_id"):
+                    await revoke_fix_entitlement(
+                        db, user_id,
+                        reason=f"stripe_webhook:charge.refunded:{charge_id}",
+                    )
+            except Exception as e:                          # noqa: BLE001
+                logger.exception(
+                    "[webhook] subscription full-refund handling "
+                    "failed user=%s charge=%s: %r",
+                    user_id, charge_id, e,
+                )
+        else:
+            # Partial refund of a subscription-ish charge — log
+            # only per the founder-approved default, no token or
+            # entitlement change.
+            await billing_flags.flag(
+                db, flag_type="partial_sub_refund", user_id=user_id,
+                idempotency_key=f"stripe_refund_flag:{event_id}",
+                detail={
+                    "charge_id": charge_id,
+                    "refunded_usd": refunded_usd,
+                },
+            )
+    else:
+        logger.info(
+            "[webhook] charge.refunded with unidentifiable payment "
+            "kind (charge=%s user=%s) — fail-safe no-op",
+            charge_id, user_id,
+        )
+
+
+async def _stripe_webhook_handle_charge_dispute_created(event, db):
+    obj = event["data"]["object"]
+    event_id = event.get("id")
+    dispute_id = obj.get("id")
+    charge_id = obj.get("charge")
+    metadata: dict = {}
+    if charge_id:
+        try:
+            charge_obj = await _stripe_call(stripe.Charge.retrieve, charge_id)
+            metadata = dict(getattr(charge_obj, "metadata", None) or {})
+        except Exception as e:                              # noqa: BLE001
+            logger.warning(
+                "[webhook] charge.dispute.created — could not "
+                "retrieve charge=%s metadata for dispute=%s: %r",
+                charge_id, dispute_id, e,
+            )
+    user_id = metadata.get("user_id")
+    if not user_id:
+        logger.info(
+            "[webhook] charge.dispute.created with no identifiable "
+            "user_id (dispute=%s charge=%s) — fail-safe no-op",
+            dispute_id, charge_id,
+        )
+    else:
+        try:
+            from services import billing_flags
+            from services.fix_entitlement import freeze_fix_entitlement
+            await freeze_fix_entitlement(
+                db, user_id, reason=f"stripe_dispute:{dispute_id}",
+            )
+            await billing_flags.flag(
+                db, flag_type="dispute_freeze", user_id=user_id,
+                idempotency_key=f"stripe_dispute_flag:{event_id}",
+                detail={
+                    "charge_id": charge_id, "dispute_id": dispute_id,
+                    "reason": obj.get("reason"),
+                },
+            )
+        except Exception as e:                              # noqa: BLE001
+            logger.exception(
+                "[webhook] dispute freeze failed user=%s dispute=%s: %r",
+                user_id, dispute_id, e,
+            )
+
+
+async def _stripe_webhook_handle_charge_dispute_closed(event, db):
+    obj = event["data"]["object"]
+    event_id = event.get("id")
+    dispute_id = obj.get("id")
+    charge_id = obj.get("charge")
+    dispute_status = obj.get("status")
+    metadata: dict = {}
+    if charge_id:
+        try:
+            charge_obj = await _stripe_call(stripe.Charge.retrieve, charge_id)
+            metadata = dict(getattr(charge_obj, "metadata", None) or {})
+        except Exception as e:                              # noqa: BLE001
+            logger.warning(
+                "[webhook] charge.dispute.closed — could not "
+                "retrieve charge=%s metadata for dispute=%s: %r",
+                charge_id, dispute_id, e,
+            )
+    user_id = metadata.get("user_id")
+    if not user_id:
+        logger.info(
+            "[webhook] charge.dispute.closed with no identifiable "
+            "user_id (dispute=%s charge=%s status=%s) — fail-safe "
+            "no-op", dispute_id, charge_id, dispute_status,
+        )
+    elif dispute_status == "won":
+        try:
+            from services import billing_flags
+            from services.fix_entitlement import unfreeze_fix_entitlement
+            await unfreeze_fix_entitlement(
+                db, user_id, reason=f"stripe_dispute_won:{dispute_id}",
+            )
+            await billing_flags.flag(
+                db, flag_type="dispute_won", user_id=user_id,
+                idempotency_key=f"stripe_dispute_flag:{event_id}",
+                detail={"charge_id": charge_id, "dispute_id": dispute_id},
+            )
+        except Exception as e:                              # noqa: BLE001
+            logger.exception(
+                "[webhook] dispute-won unfreeze failed user=%s "
+                "dispute=%s: %r", user_id, dispute_id, e,
+            )
+    elif dispute_status == "lost":
+        try:
+            from config.token_pricing import usd_to_tokens
+            from services import billing_flags, wallet
+            from services.fix_entitlement import revoke_fix_entitlement
+            kind = metadata.get("kind")
+            plan = metadata.get("plan")
+            # Part 2 — same batch-precise clawback as charge.refunded
+            # above: a top-up's batch_id rides in the charge metadata;
+            # a subscription charge's batch is computed from the
+            # charge's own `created` timestamp.
+            batch_id = None
+            if kind == "topup":
+                batch_id = metadata.get("batch_id")
+            elif plan:
+                charge_ym = datetime.fromtimestamp(
+                    getattr(charge_obj, "created", None) or time.time(), tz=timezone.utc,
+                ).strftime("%Y-%m")
+                batch_id = f"monthly_grant:{user_id}:{charge_ym}"
+            shortfall = 0
+            if batch_id:
+                disputed_usd = round((obj.get("amount") or 0) / 100, 2)
+                tokens_to_claw = usd_to_tokens(disputed_usd)
+                if tokens_to_claw > 0:
+                    res = await wallet.claw_back_batch(
+                        db, user_id=user_id, batch_id=batch_id,
+                        amount=tokens_to_claw,
+                        idempotency_key=f"stripe_dispute_clawback:{event_id}",
+                        source="stripe_webhook:charge.dispute.closed:lost",
+                    )
+                    shortfall = res.get("shortfall", 0)
+            row = await db.dev_users.find_one(
+                {"user_id": user_id}, {"_id": 0, "stripe_sub_id": 1},
+            )
+            if not (row or {}).get("stripe_sub_id"):
+                await revoke_fix_entitlement(
+                    db, user_id, reason=f"stripe_dispute_lost:{dispute_id}",
+                )
+            await billing_flags.flag(
+                db, flag_type="dispute_lost", user_id=user_id,
+                idempotency_key=f"stripe_dispute_flag:{event_id}",
+                detail={
+                    "charge_id": charge_id, "dispute_id": dispute_id,
+                    "shortfall_tokens": shortfall,
+                },
+            )
+        except Exception as e:                              # noqa: BLE001
+            logger.exception(
+                "[webhook] dispute-lost handling failed user=%s "
+                "dispute=%s: %r", user_id, dispute_id, e,
+            )
+    else:
+        logger.info(
+            "[webhook] charge.dispute.closed status=%s (dispute=%s "
+            "user=%s) — log only, no action",
+            dispute_status, dispute_id, user_id,
+        )
+
+
 @router.post("/payments/webhook")
 @router.post("/webhook/stripe")   # legacy path — keep for old config
 async def stripe_webhook(request: Request) -> dict:
@@ -615,191 +1273,7 @@ async def stripe_webhook(request: Request) -> dict:
     etype = event.get("type", "")
 
     if etype == "checkout.session.completed":
-        obj      = event["data"]["object"]
-        user_id  = (obj.get("metadata") or {}).get("user_id")
-        plan     = (obj.get("metadata") or {}).get("plan")
-        sub_id   = obj.get("subscription")
-        cust_id  = obj.get("customer")
-        session_id = obj.get("id")
-
-        # ── Iter 386 · Error-Handling-Item-3 · Stripe post-signature alert
-        #
-        # Signature is already verified above; from here down every
-        # failure means "user paid Stripe, but our DB didn't record
-        # the upgrade" — the WORST possible silent failure mode for
-        # billing. Historically these went to logger.warning only and
-        # never surfaced to Sentry with a distinct tag, so on-call had
-        # no way to grep for "paid users stuck on free tier". We now
-        # wrap each DB write with a dedicated try/except that:
-        #   • Sets scope tags `event=stripe_upgrade_failed`, `stage=…`
-        #     so a single Sentry search catches every variant.
-        #   • Attaches the Stripe session_id + user_id + plan as
-        #     context (no PII beyond the internal ids).
-        #   • RE-RAISES so Stripe's own retry machinery kicks in
-        #     (webhooks are idempotent thanks to session_id keying).
-        def _alert_upgrade_failure(exc: Exception, stage: str) -> None:
-            try:
-                import sentry_sdk
-                with sentry_sdk.push_scope() as scope:
-                    scope.set_tag("event", "stripe_upgrade_failed")
-                    scope.set_tag("stage", stage)
-                    if user_id:
-                        scope.set_tag("user_id", user_id)
-                    if plan:
-                        scope.set_tag("plan", plan)
-                    scope.set_context("stripe_session", {
-                        "session_id": session_id,
-                        "subscription": sub_id,
-                        "customer": cust_id,
-                    })
-                    sentry_sdk.capture_exception(exc)
-            except Exception:  # noqa: BLE001
-                # Sentry init failure MUST NOT mask the underlying
-                # billing error — swallow this alert-side exception
-                # only. The outer re-raise still fires below.
-                pass
-
-        # Iter 352 — the webhook NEVER updated the cto_payments ledger
-        # row (only /payments/status did, and only when the user's
-        # browser survived to the success-redirect poll). Result: paid
-        # sessions could sit "pending" forever in the admin ledger.
-        # The webhook is the source of truth — sync the row here.
-        try:
-            await db.cto_payments.update_one(
-                {"session_id": session_id},
-                {"$set": {
-                    "payment_status": "paid",
-                    "status":         "complete",
-                    "amount":         round((obj.get("amount_total") or 0) / 100, 2),
-                    "subscription":   sub_id,
-                    "paid_at":        time.time(),
-                    "updated_at":     time.time(),
-                    "updated_via":    "webhook",
-                }},
-            )
-        except Exception as e:                              # noqa: BLE001
-            logger.exception(
-                "[webhook] cto_payments sync failed for session=%s user=%s",
-                session_id, user_id,
-            )
-            _alert_upgrade_failure(e, stage="ledger_writeback")
-            # Ledger write is best-effort — the tier update below is
-            # the SOURCE OF TRUTH for customer-visible state, so we
-            # don't re-raise here. The Sentry tag is enough for
-            # on-call to reconcile the ledger manually.
-
-        # Master Prompt Step C3 — one-time top-up pack (mode="payment",
-        # NOT a subscription — see /payments/topup-checkout). Grants
-        # `purchased` tokens (never expire), no tier/fix_entitlement
-        # change — a top-up alone doesn't unlock Fix if the user has
-        # no plan; it only adds spendable balance for when they do.
-        kind = (obj.get("metadata") or {}).get("kind")
-        if user_id and kind == "topup":
-            try:
-                amount_usd = float((obj.get("metadata") or {}).get("amount_usd") or 0)
-                from config.token_pricing import usd_to_tokens
-                from services import wallet
-                tokens = usd_to_tokens(amount_usd)
-                # Master Prompt v2 Part 2 — the batch_id minted at
-                # /payments/topup-checkout time (see create_topup_checkout)
-                # becomes this grant's own wallet batch id, so a later
-                # refund can target this exact payment's batch. Falls
-                # back to the old event-id-keyed grant id only for a
-                # checkout session created before this field existed.
-                grant_key = (obj.get("metadata") or {}).get("batch_id") \
-                    or f"stripe_topup_grant:{event.get('id')}"
-                if tokens > 0:
-                    await wallet.grant(
-                        db, user_id=user_id, bucket="purchased", amount=tokens,
-                        idempotency_key=grant_key,
-                        source="stripe_webhook:topup",
-                    )
-            except Exception as e:
-                logger.exception(
-                    "[webhook] topup token grant FAILED for user=%s "
-                    "session=%s — user paid but tokens not credited.",
-                    user_id, session_id,
-                )
-                _alert_upgrade_failure(e, stage="topup_grant")
-                raise HTTPException(500, "topup_grant_failed")
-
-        if user_id and plan:
-            try:
-                await db.dev_users.update_one(
-                    {"user_id": user_id},
-                    {"$set": {
-                        "tier":               plan,
-                        "usage_tier":         plan,
-                        "stripe_sub_id":      sub_id,
-                        "stripe_customer_id": cust_id,
-                        "tier_updated_at":    datetime.now(timezone.utc).isoformat(),
-                    }},
-                )
-            except Exception as e:                          # noqa: BLE001
-                logger.exception(
-                    "[webhook] tier upgrade FAILED for user=%s plan=%s "
-                    "session=%s — user paid but was not upgraded",
-                    user_id, plan, session_id,
-                )
-                _alert_upgrade_failure(e, stage="tier_update")
-                # RE-RAISE so Stripe retries this webhook. Idempotent
-                # on session_id — no double-charge risk.
-                raise HTTPException(500, "tier_update_failed")
-
-            # Master Prompt Step C1/C3 — token-billing: grant this
-            # plan's monthly token allotment to the `plan` bucket and
-            # flip fix_entitlement True. This is the ONLY place
-            # fix_entitlement is ever set to True — never from a
-            # redirect/success_url/frontend value (see
-            # services/fix_entitlement.py's module docstring).
-            #
-            # Master Prompt v2 Part 2 — keyed as `monthly_grant:{user}:{ym}`,
-            # the SAME idempotency key services.wallet.run_monthly_grant_job
-            # uses, not the old event-id-based key. This both gives the
-            # grant a stable, discoverable batch id (so a refund of THIS
-            # charge can target THIS month's exact plan batch) and closes
-            # a latent gap: before this change, a user who subscribed
-            # mid-month got this instant grant under a DIFFERENT key than
-            # the monthly cron's, so the SAME month's cron run would not
-            # see it as "already granted" and would double-grant a second
-            # month's allotment in the signup month.
-            try:
-                plan_token_grants = {"starter": 900, "pro": 1900, "team": 4900}
-                tokens = plan_token_grants.get(plan)
-                if tokens:
-                    from services import wallet
-                    from services.fix_entitlement import grant_fix_entitlement
-                    ym = datetime.now(timezone.utc).strftime("%Y-%m")
-                    await wallet.grant(
-                        db, user_id=user_id, bucket="plan", amount=tokens,
-                        idempotency_key=f"monthly_grant:{user_id}:{ym}",
-                        source=f"stripe_webhook:{plan}",
-                    )
-                    await grant_fix_entitlement(db, user_id, source=f"stripe_webhook:{plan}")
-            except Exception as e:
-                logger.exception(
-                    "[webhook] token grant / fix_entitlement FAILED for "
-                    "user=%s plan=%s session=%s — tier already upgraded, "
-                    "but tokens/entitlement are not. Re-raising so Stripe "
-                    "retries (idempotent on event id).",
-                    user_id, plan, session_id,
-                )
-                _alert_upgrade_failure(e, stage="token_grant")
-                raise HTTPException(500, "token_grant_failed")
-
-            # Iter 102 — referral reward on paid conversion.
-            try:
-                from services.billing_cron import grant_referral_reward
-                grant = await grant_referral_reward(db, user_id)
-                if grant.get("granted"):
-                    logger.info(f"[webhook] referral reward granted to {grant.get('referrer')}")
-            except Exception as e:
-                logger.warning(f"[webhook] referral reward failed: {e!r}")
-                # Referral is a side-benefit — surface to Sentry with
-                # the same tag family so on-call can spot systemic
-                # failures, but don't re-raise (user is already
-                # upgraded correctly at this point).
-                _alert_upgrade_failure(e, stage="referral_reward")
+        user_id, plan, sub_id, cust_id, session_id = await _stripe_webhook_handle_checkout_completed(event, db)
     elif etype == "checkout.session.expired":
         # Iter 352 — abandoned checkouts previously stayed "pending"
         # forever (founder audit: 22 stuck rows, some 35 days old).
@@ -815,19 +1289,7 @@ async def stripe_webhook(request: Request) -> dict:
         # tokens are untouched (those come from the completed-event
         # branch above and are not re-read here). Explicit state rule
         # per the audit: complete → never downgrades to expired.
-        obj = event["data"]["object"]
-        try:
-            await db.cto_payments.update_one(
-                {"session_id": obj.get("id"), "status": {"$ne": "complete"}},
-                {"$set": {
-                    "payment_status": "expired",
-                    "status":         "expired",
-                    "updated_at":     time.time(),
-                    "updated_via":    "webhook",
-                }},
-            )
-        except Exception as e:                              # noqa: BLE001
-            logger.warning("[webhook] expired-session sync failed: %r", e)
+        await _stripe_webhook_handle_checkout_expired(event, db)
     elif etype == "invoice.payment_failed":
         # 2026-08-22 — founder ask (billing gap): Stripe already sends
         # us this event (confirmed live against the account's own
@@ -847,84 +1309,7 @@ async def stripe_webhook(request: Request) -> dict:
         # own Smart Retries run for up to ~2 weeks first; the existing
         # `customer.subscription.deleted` branch below still owns the
         # final downgrade if retries exhaust.
-        obj = event["data"]["object"]
-        sub_id = obj.get("subscription")
-        cust_id = obj.get("customer")
-        invoice_id = obj.get("id")
-        attempt_count = obj.get("attempt_count")
-        next_attempt = obj.get("next_payment_attempt")
-        amount_due = round((obj.get("amount_due") or 0) / 100, 2)
-        if sub_id:
-            try:
-                await db.dev_users.update_one(
-                    {"stripe_sub_id": sub_id},
-                    {"$set": {
-                        "payment_failed": True,
-                        "payment_failed_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                     "$inc": {"payment_failure_count": 1}},
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[webhook] invoice.payment_failed dev_users flag failed: %r", e)
-            user_row = await db.dev_users.find_one(
-                {"stripe_sub_id": sub_id},
-                {"_id": 0, "user_id": 1, "email": 1, "name": 1, "tier": 1},
-            ) or {}
-            if user_row.get("user_id"):
-                from services.notifications import emit_notification
-                await emit_notification(
-                    db, user_id=user_row["user_id"], type="payment_failed",
-                    text=f"Your last payment (${amount_due}) failed — update your card to keep your plan active.")
-            try:
-                from services.founder_alerts import send_founder_alert
-                await send_founder_alert(
-                    db,
-                    source_key=f"stripe_invoice_failed:{sub_id}",
-                    title=f"Payment failed — {user_row.get('email', '?')} "
-                          f"({user_row.get('tier', '?')} plan, ${amount_due})",
-                    detail=(
-                        f"subscription={sub_id} customer={cust_id} "
-                        f"attempt_count={attempt_count} "
-                        f"next_payment_attempt="
-                        f"{datetime.fromtimestamp(next_attempt, tz=timezone.utc).isoformat() if next_attempt else 'none (retries exhausted)'}"
-                    ),
-                    level="critical",
-                    guard="stripe_dunning",
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[webhook] invoice.payment_failed founder alert failed: %r", e)
-            # 2026-08-22 — founder ask (priority 1 of 3): the CUSTOMER
-            # must also know their own card failed, not just the
-            # founder. Generates a fresh Stripe-hosted portal link
-            # directly (no authenticated session available inside a
-            # webhook) and fires ONE email, deduped per invoice id.
-            if cust_id and invoice_id:
-                try:
-                    portal = await _stripe_call(
-                        stripe.billing_portal.Session.create,
-                        customer=cust_id,
-                        return_url=(_frontend_url() or "https://auremcto.com") + "/settings",
-                    )
-                    from services.payment_recovery_email import send_payment_recovery_email
-                    await send_payment_recovery_email(
-                        db, user_row,
-                        invoice_id=invoice_id,
-                        plan=user_row.get("tier", "?"),
-                        amount_due=amount_due,
-                        portal_url=portal.url,
-                        # 2026-08-22 — Grace Period Copy: the ONE date
-                        # we can state with 100% certainty (straight
-                        # from Stripe for THIS invoice), not a guessed
-                        # total dunning window.
-                        next_attempt_at=(
-                            datetime.fromtimestamp(next_attempt, tz=timezone.utc)
-                            if next_attempt else None
-                        ),
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("[webhook] invoice.payment_failed customer email failed: %r", e)
-        else:
-            logger.warning("[webhook] invoice.payment_failed with no subscription id: %s", obj.get("id"))
+        await _stripe_webhook_handle_invoice_payment_failed(event, db)
     elif etype == "invoice.paid":
         # Recovery path — a later retry (or the very next cycle)
         # succeeded, so clear the "update your card" flag. Only
@@ -933,107 +1318,9 @@ async def stripe_webhook(request: Request) -> dict:
         # set" email, but ONLY when this really was a recovery (i.e.
         # the sub was actually flagged `payment_failed` beforehand) —
         # a normal first-try renewal must never get this email.
-        obj = event["data"]["object"]
-        sub_id = obj.get("subscription")
-        invoice_id = obj.get("id")
-        if sub_id:
-            try:
-                prior = await db.dev_users.find_one_and_update(
-                    {"stripe_sub_id": sub_id, "payment_failed": True},
-                    {"$set": {"payment_failed": False}},
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[webhook] invoice.paid clear-flag failed: %r", e)
-                prior = None
-            if prior and invoice_id:
-                try:
-                    from services.payment_recovery_email import send_payment_recovered_email
-                    await send_payment_recovered_email(
-                        db, prior,
-                        invoice_id=invoice_id,
-                        plan=prior.get("tier", "?"),
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("[webhook] invoice.paid recovery confirmation email failed: %r", e)
+        await _stripe_webhook_handle_invoice_paid(event, db)
     elif etype in ("customer.subscription.deleted", "customer.subscription.paused"):
-        sub_id = event["data"]["object"]["id"]
-        # Find the user first so we know whose Supabase projects to downgrade.
-        user_row = await db.dev_users.find_one(
-            {"stripe_sub_id": sub_id},
-            {"user_id": 1, "_id": 0},
-        )
-        await db.dev_users.update_one(
-            {"stripe_sub_id": sub_id},
-            {"$set": {
-                "tier":            "free",
-                "usage_tier":      "free",
-                "stripe_sub_id":   None,
-                "tier_updated_at": datetime.now(timezone.utc).isoformat(),
-            }},
-        )
-        # Closing-the-bypass-doors audit (Step 6) — this branch already
-        # downgraded `tier` to "free" but never touched
-        # `fix_entitlement`, so a cancelled/paused subscriber kept Fix
-        # access forever (the field stays True until something sets it
-        # False — nothing did).
-        # 2026-10-25 (ITEM 1, independent review) — this call used to be
-        # gated on `billing_mode() != "off"`, under the theory that an
-        # account outside the token-billing rollout shouldn't get a new
-        # field written at mode "off". That reasoning didn't hold: the
-        # GRANT path (grant_fix_entitlement, ~line 777 above) and the
-        # refund/dispute revoke paths already write fix_entitlement
-        # unconditionally, with no mode check at all — only this one
-        # revoke was asymmetric. The result: a user who cancelled while
-        # mode was "off" kept fix_entitlement=True forever, and if the
-        # founder later flips TOKEN_BILLING_MODE to "shadow"/"on", that
-        # stale True passes the Fix gate for free. Revoke unconditionally
-        # now, matching every other write path. (Rows already poisoned
-        # by the old gated behavior, before this fix, are self-healed by
-        # services/fix_entitlement.py::is_fix_entitled's own narrow
-        # stale-shape check, and listed by the Item 1(c) pre-flight
-        # report for the founder's real-revoke decision.)
-        if user_row and user_row.get("user_id"):
-            from services.fix_entitlement import revoke_fix_entitlement
-            try:
-                await revoke_fix_entitlement(
-                    db, user_row["user_id"],
-                    reason=f"stripe_webhook:{etype}",
-                )
-            except Exception as e:                          # noqa: BLE001
-                logger.warning(
-                    "[webhook] fix_entitlement revoke failed for "
-                    "user=%s sub=%s: %r", user_row["user_id"], sub_id, e,
-                )
-        # Iter 212m-240 — Tier 3: paid → free means any dedicated Supabase
-        # Postgres projects the user has must enter the downgrade grace
-        # window using the configured policy (default = migrate_back,
-        # which copies data BACK into shared Mongo first). The sweeper
-        # cron finalises after the grace expires.
-        if user_row and user_row.get("user_id"):
-            try:
-                from services import supabase_provisioner as _sp
-                if _sp.is_configured():
-                    rows = db[_sp.PROJECTS_COLLECTION].find(
-                        {"user_id": user_row["user_id"],
-                         "downgrade_status": {"$exists": False}},
-                        {"app_id": 1, "user_id": 1, "_id": 0},
-                    )
-                    async for r in rows:
-                        try:
-                            await _sp.apply_downgrade(
-                                db, r["app_id"], r["user_id"], policy=None,
-                            )
-                            logger.info(
-                                "[webhook] Supabase downgrade queued for %s (user=%s)",
-                                r["app_id"], r["user_id"],
-                            )
-                        except Exception as ie:  # noqa: BLE001
-                            logger.warning(
-                                "[webhook] supabase downgrade failed for %s: %r",
-                                r["app_id"], ie,
-                            )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[webhook] supabase downgrade sweep errored: %r", e)
+        await _stripe_webhook_handle_subscription_ended(event, db, etype)
 
     # ── Master Prompt v2 Part 1.3/2 — refunds ─────────────────────────
     # Identify payment kind from the CHARGE's own stored metadata
@@ -1056,171 +1343,13 @@ async def stripe_webhook(request: Request) -> dict:
     # metadata) has no batch to target — fails safe (flag only, no
     # wallet mutation) rather than guessing an aggregate clawback.
     elif etype == "charge.refunded":
-        obj = event["data"]["object"]
-        event_id = event.get("id")
-        charge_id = obj.get("id")
-        metadata = obj.get("metadata") or {}
-        user_id = metadata.get("user_id")
-        kind = metadata.get("kind")
-        plan = metadata.get("plan")
-        amount_total = obj.get("amount") or 0
-        amount_refunded = obj.get("amount_refunded") or 0
-        is_full_refund = amount_total > 0 and amount_refunded >= amount_total
-        refunded_usd = round(amount_refunded / 100, 2)
-
-        if not user_id:
-            logger.info(
-                "[webhook] charge.refunded with no identifiable user_id "
-                "in metadata (charge=%s) — fail-safe no-op", charge_id,
-            )
-        elif kind == "topup":
-            try:
-                from config.token_pricing import usd_to_tokens
-                from services import billing_flags, wallet
-                batch_id = metadata.get("batch_id")
-                tokens_to_claw = usd_to_tokens(refunded_usd)
-                if not batch_id:
-                    await billing_flags.flag(
-                        db, flag_type="refund_shortfall", user_id=user_id,
-                        idempotency_key=f"stripe_refund_flag:{event_id}",
-                        detail={
-                            "charge_id": charge_id,
-                            "shortfall_tokens": tokens_to_claw,
-                            "refunded_usd": refunded_usd,
-                            "reason": "no_batch_id_predates_part2",
-                        },
-                    )
-                elif tokens_to_claw > 0:
-                    res = await wallet.claw_back_batch(
-                        db, user_id=user_id, batch_id=batch_id,
-                        amount=tokens_to_claw,
-                        idempotency_key=f"stripe_refund_clawback:{event_id}",
-                        source="stripe_webhook:charge.refunded:topup",
-                    )
-                    if res.get("shortfall"):
-                        await billing_flags.flag(
-                            db, flag_type="refund_shortfall", user_id=user_id,
-                            idempotency_key=f"stripe_refund_flag:{event_id}",
-                            detail={
-                                "charge_id": charge_id, "batch_id": batch_id,
-                                "shortfall_tokens": res["shortfall"],
-                                "refunded_usd": refunded_usd,
-                            },
-                        )
-            except Exception as e:                              # noqa: BLE001
-                logger.exception(
-                    "[webhook] topup refund clawback failed user=%s "
-                    "charge=%s: %r", user_id, charge_id, e,
-                )
-        elif plan:
-            from services import billing_flags
-            if is_full_refund:
-                try:
-                    from config.token_pricing import usd_to_tokens
-                    from services import wallet
-                    from services.fix_entitlement import revoke_fix_entitlement
-                    charge_ym = datetime.fromtimestamp(
-                        obj.get("created") or time.time(), tz=timezone.utc,
-                    ).strftime("%Y-%m")
-                    batch_id = f"monthly_grant:{user_id}:{charge_ym}"
-                    tokens_to_claw = usd_to_tokens(refunded_usd)
-                    res = {"shortfall": 0}
-                    if tokens_to_claw > 0:
-                        res = await wallet.claw_back_batch(
-                            db, user_id=user_id, batch_id=batch_id,
-                            amount=tokens_to_claw,
-                            idempotency_key=f"stripe_refund_clawback:{event_id}",
-                            source="stripe_webhook:charge.refunded:subscription",
-                        )
-                    if res.get("shortfall"):
-                        await billing_flags.flag(
-                            db, flag_type="refund_shortfall", user_id=user_id,
-                            idempotency_key=f"stripe_refund_flag:{event_id}",
-                            detail={
-                                "charge_id": charge_id, "batch_id": batch_id,
-                                "shortfall_tokens": res["shortfall"],
-                                "refunded_usd": refunded_usd,
-                            },
-                        )
-                    row = await db.dev_users.find_one(
-                        {"user_id": user_id}, {"_id": 0, "stripe_sub_id": 1},
-                    )
-                    if not (row or {}).get("stripe_sub_id"):
-                        await revoke_fix_entitlement(
-                            db, user_id,
-                            reason=f"stripe_webhook:charge.refunded:{charge_id}",
-                        )
-                except Exception as e:                          # noqa: BLE001
-                    logger.exception(
-                        "[webhook] subscription full-refund handling "
-                        "failed user=%s charge=%s: %r",
-                        user_id, charge_id, e,
-                    )
-            else:
-                # Partial refund of a subscription-ish charge — log
-                # only per the founder-approved default, no token or
-                # entitlement change.
-                await billing_flags.flag(
-                    db, flag_type="partial_sub_refund", user_id=user_id,
-                    idempotency_key=f"stripe_refund_flag:{event_id}",
-                    detail={
-                        "charge_id": charge_id,
-                        "refunded_usd": refunded_usd,
-                    },
-                )
-        else:
-            logger.info(
-                "[webhook] charge.refunded with unidentifiable payment "
-                "kind (charge=%s user=%s) — fail-safe no-op",
-                charge_id, user_id,
-            )
+        await _stripe_webhook_handle_charge_refunded(event, db)
     elif etype == "charge.dispute.created":
         # The Dispute object itself carries no useful metadata — the
         # metadata lives on the underlying Charge, so we retrieve it.
         # A failure to retrieve the charge is treated the same as an
         # unidentifiable payment: log and do nothing (fail safe).
-        obj = event["data"]["object"]
-        event_id = event.get("id")
-        dispute_id = obj.get("id")
-        charge_id = obj.get("charge")
-        metadata: dict = {}
-        if charge_id:
-            try:
-                charge_obj = await _stripe_call(stripe.Charge.retrieve, charge_id)
-                metadata = dict(getattr(charge_obj, "metadata", None) or {})
-            except Exception as e:                              # noqa: BLE001
-                logger.warning(
-                    "[webhook] charge.dispute.created — could not "
-                    "retrieve charge=%s metadata for dispute=%s: %r",
-                    charge_id, dispute_id, e,
-                )
-        user_id = metadata.get("user_id")
-        if not user_id:
-            logger.info(
-                "[webhook] charge.dispute.created with no identifiable "
-                "user_id (dispute=%s charge=%s) — fail-safe no-op",
-                dispute_id, charge_id,
-            )
-        else:
-            try:
-                from services import billing_flags
-                from services.fix_entitlement import freeze_fix_entitlement
-                await freeze_fix_entitlement(
-                    db, user_id, reason=f"stripe_dispute:{dispute_id}",
-                )
-                await billing_flags.flag(
-                    db, flag_type="dispute_freeze", user_id=user_id,
-                    idempotency_key=f"stripe_dispute_flag:{event_id}",
-                    detail={
-                        "charge_id": charge_id, "dispute_id": dispute_id,
-                        "reason": obj.get("reason"),
-                    },
-                )
-            except Exception as e:                              # noqa: BLE001
-                logger.exception(
-                    "[webhook] dispute freeze failed user=%s dispute=%s: %r",
-                    user_id, dispute_id, e,
-                )
+        await _stripe_webhook_handle_charge_dispute_created(event, db)
     elif etype == "charge.dispute.closed":
         # A dispute's resolution. "won" restores exactly what the user
         # had (unfreeze, non-destructive — see charge.dispute.created
@@ -1231,103 +1360,7 @@ async def stripe_webhook(request: Request) -> dict:
         # amount's unspent tokens are also clawed back. Any other
         # status (e.g. "warning_closed") is log-only. Fail-safe if the
         # charge/user can't be identified — same as dispute.created.
-        obj = event["data"]["object"]
-        event_id = event.get("id")
-        dispute_id = obj.get("id")
-        charge_id = obj.get("charge")
-        dispute_status = obj.get("status")
-        metadata: dict = {}
-        if charge_id:
-            try:
-                charge_obj = await _stripe_call(stripe.Charge.retrieve, charge_id)
-                metadata = dict(getattr(charge_obj, "metadata", None) or {})
-            except Exception as e:                              # noqa: BLE001
-                logger.warning(
-                    "[webhook] charge.dispute.closed — could not "
-                    "retrieve charge=%s metadata for dispute=%s: %r",
-                    charge_id, dispute_id, e,
-                )
-        user_id = metadata.get("user_id")
-        if not user_id:
-            logger.info(
-                "[webhook] charge.dispute.closed with no identifiable "
-                "user_id (dispute=%s charge=%s status=%s) — fail-safe "
-                "no-op", dispute_id, charge_id, dispute_status,
-            )
-        elif dispute_status == "won":
-            try:
-                from services import billing_flags
-                from services.fix_entitlement import unfreeze_fix_entitlement
-                await unfreeze_fix_entitlement(
-                    db, user_id, reason=f"stripe_dispute_won:{dispute_id}",
-                )
-                await billing_flags.flag(
-                    db, flag_type="dispute_won", user_id=user_id,
-                    idempotency_key=f"stripe_dispute_flag:{event_id}",
-                    detail={"charge_id": charge_id, "dispute_id": dispute_id},
-                )
-            except Exception as e:                              # noqa: BLE001
-                logger.exception(
-                    "[webhook] dispute-won unfreeze failed user=%s "
-                    "dispute=%s: %r", user_id, dispute_id, e,
-                )
-        elif dispute_status == "lost":
-            try:
-                from config.token_pricing import usd_to_tokens
-                from services import billing_flags, wallet
-                from services.fix_entitlement import revoke_fix_entitlement
-                kind = metadata.get("kind")
-                plan = metadata.get("plan")
-                # Part 2 — same batch-precise clawback as charge.refunded
-                # above: a top-up's batch_id rides in the charge metadata;
-                # a subscription charge's batch is computed from the
-                # charge's own `created` timestamp.
-                batch_id = None
-                if kind == "topup":
-                    batch_id = metadata.get("batch_id")
-                elif plan:
-                    charge_ym = datetime.fromtimestamp(
-                        getattr(charge_obj, "created", None) or time.time(), tz=timezone.utc,
-                    ).strftime("%Y-%m")
-                    batch_id = f"monthly_grant:{user_id}:{charge_ym}"
-                shortfall = 0
-                if batch_id:
-                    disputed_usd = round((obj.get("amount") or 0) / 100, 2)
-                    tokens_to_claw = usd_to_tokens(disputed_usd)
-                    if tokens_to_claw > 0:
-                        res = await wallet.claw_back_batch(
-                            db, user_id=user_id, batch_id=batch_id,
-                            amount=tokens_to_claw,
-                            idempotency_key=f"stripe_dispute_clawback:{event_id}",
-                            source="stripe_webhook:charge.dispute.closed:lost",
-                        )
-                        shortfall = res.get("shortfall", 0)
-                row = await db.dev_users.find_one(
-                    {"user_id": user_id}, {"_id": 0, "stripe_sub_id": 1},
-                )
-                if not (row or {}).get("stripe_sub_id"):
-                    await revoke_fix_entitlement(
-                        db, user_id, reason=f"stripe_dispute_lost:{dispute_id}",
-                    )
-                await billing_flags.flag(
-                    db, flag_type="dispute_lost", user_id=user_id,
-                    idempotency_key=f"stripe_dispute_flag:{event_id}",
-                    detail={
-                        "charge_id": charge_id, "dispute_id": dispute_id,
-                        "shortfall_tokens": shortfall,
-                    },
-                )
-            except Exception as e:                              # noqa: BLE001
-                logger.exception(
-                    "[webhook] dispute-lost handling failed user=%s "
-                    "dispute=%s: %r", user_id, dispute_id, e,
-                )
-        else:
-            logger.info(
-                "[webhook] charge.dispute.closed status=%s (dispute=%s "
-                "user=%s) — log only, no action",
-                dispute_status, dispute_id, user_id,
-            )
+        await _stripe_webhook_handle_charge_dispute_closed(event, db)
     return {"ok": True}
 
 

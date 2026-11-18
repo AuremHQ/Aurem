@@ -33,8 +33,18 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+from fastapi import HTTPException
 
 from services.http import ext_client
+from services.repo_fetch_guard import (
+    GITHUB_API_HOST,
+    github_contents_url,
+    github_tree_url,
+)
+from services.github_sandbox_links import (
+           has_package_json_in_tree,
+    sandbox_links_line,
+)
 
 from cto_services.db import get_db
 
@@ -113,6 +123,13 @@ def _gh_headers(token: Optional[str]) -> dict:
     return h
 
 
+def _reject_redirect(response: httpx.Response) -> None:
+    # Fix #11 (SSRF): with follow_redirects=False a 3xx is never followed;
+    # surface it as an error instead of treating the body as data.
+    if 300 <= response.status_code < 400:
+        raise HTTPException(502, f"github_redirect_refused: {response.status_code}")
+
+
 async def _fetch_tree(owner: str, repo: str, branch: str,
                        token: Optional[str]) -> tuple[list[dict], bool]:
     """Return (tree, gh_truncated).
@@ -134,15 +151,17 @@ async def _fetch_tree(owner: str, repo: str, branch: str,
     if cached is not None:
         return cached
 
-    url = (
-        f"https://api.github.com/repos/{owner}/{repo}/git/trees/"
-        f"{branch}?recursive=1"
-    )
+    try:
+        url = github_tree_url(owner, repo, branch)
+    except ValueError as exc:
+        raise HTTPException(400, f"github_invalid_url: {exc}") from exc
     async with ext_client(
         "github",
+        allowed_hosts={GITHUB_API_HOST},
         timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
     ) as client:
         r = await client.get(url, headers=_gh_headers(token))
+        _reject_redirect(r)
         r.raise_for_status()
         data = r.json()
         result = ((data.get("tree") or []), bool(data.get("truncated")))
@@ -166,16 +185,18 @@ async def _fetch_file(owner: str, repo: str, path: str, branch: str,
     if cached is not None:
         return cached
 
-    url = (
-        f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-        f"?ref={branch}"
-    )
+
     try:
+        # Fix #11: a bad owner/repo/branch/path fails closed here (None)
+        # instead of being interpolated into a GitHub API URL.
+        url = github_contents_url(owner, repo, path, branch)
         async with ext_client(
             "github",
+            allowed_hosts={GITHUB_API_HOST},
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
         ) as client:
             r = await client.get(url, headers=_gh_headers(token))
+            _reject_redirect(r)
             r.raise_for_status()
             data = r.json()
             # GitHub returns content base64-encoded
@@ -437,7 +458,15 @@ async def _build_blob(project: dict) -> str:
         len(inlined),
     )
 
-    return _wrap(owner, repo, branch, tree_text, inlined_text, truncation_note)
+    return _wrap(
+        owner,
+        repo,
+        branch,
+               tree_text,
+        inlined_text,
+        truncation_note,
+               has_package_json=has_package_json_in_tree(tree),
+    )
 
 
 async def _fetch_subtree_contents(owner: str, repo: str, branch: str,
@@ -455,17 +484,18 @@ async def _fetch_subtree_contents(owner: str, repo: str, branch: str,
     queue: list[tuple[str, int]] = [(path.strip("/"), 0)]
     async with ext_client(
         "github",
+        allowed_hosts={GITHUB_API_HOST},
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
     ) as client:
         while queue:
             current, depth = queue.pop(0)
             if depth > max_depth or len(out) >= 1000:
                 continue
-            url = (
-                f"https://api.github.com/repos/{owner}/{repo}/"
-                f"contents/{current}?ref={branch}"
-            )
+
             try:
+                # Fix #11: a bad owner/repo/branch/path (including a dir
+                # path taken from a tree response) fails closed here.
+                url = github_contents_url(owner, repo, current, branch)
                 r = await client.get(url, headers=headers)
                 if r.status_code != 200:
                     continue
@@ -485,7 +515,8 @@ async def _fetch_subtree_contents(owner: str, repo: str, branch: str,
 
 
 def _wrap(owner: str, repo: str, branch: str,
-           tree_text: str, inlined_text: str, note: str) -> str:
+           tree_text: str, inlined_text: str, note: str,
+           has_package_json: bool | None = None) -> str:
     """Compose the final system-prompt block."""
     parts = [
         "=== CONNECTED REPO CONTEXT ===",
@@ -525,6 +556,18 @@ def _wrap(owner: str, repo: str, branch: str,
     if inlined_text:
         parts.append("--- key file contents (inlined) ---")
         parts.append(inlined_text)
+    sandbox_line = sandbox_links_line(
+        f"https://github.com/{owner}/{repo}", has_package_json
+    )
+    if sandbox_line:
+        parts.append("")
+        parts.append(
+            "[SANDBOX LINKS - append this line verbatim at the end of your reply about "
+            "this repo, after your normal answer, on its own line. Do not add any other "
+            "sandbox link, do not change the links, and do not open anything automatically.]"
+        )
+        parts.append(sandbox_line)
+        parts.append("")
     parts.append("=== END REPO CONTEXT ===")
     return "\n".join(parts)
 

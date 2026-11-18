@@ -45,15 +45,15 @@ def _app_only_token_stub(monkeypatch):
     prove isolation, so resolve tokens from the row (keeping the
     per-project identity + the fail-closed behaviour when absent)."""
     from services.pat_vault import GithubAppAuthError
-    from services.vault import decrypt
     async def _tok(project):
         ct = (project or {}).get("github_token")
         if not ct:
             raise GithubAppAuthError("app_installation_missing", "no installation")
-        try:
-            return await decrypt(project.get("user_id"), ct, kind="github_token")
-        except Exception as e:
-            raise GithubAppAuthError("app_token_rejected", str(e)) from e
+        # Plaintext tokens (crypto removed 2026-11-17). A legacy
+        # 'v1:' ciphertext can no longer be decrypted, so it is unusable.
+        if isinstance(ct, str) and ct.startswith('v1:'):
+            raise GithubAppAuthError('app_token_rejected', 'legacy ciphertext is unusable')
+        return ct
     monkeypatch.setattr("services.pat_vault.get_repo_token", _tok)
 
 
@@ -81,15 +81,10 @@ async def db_and_scratch_users():
     pid_a2 = f"p_test_a2_{uuid.uuid4().hex[:6]}"
     pid_b1 = f"p_test_b1_{uuid.uuid4().hex[:6]}"
 
-    # Encrypt real PATs so the decrypt path is exercised.
-    from services.vault import encrypt, is_vault_available
-    assert is_vault_available(), "AUREM_MASTER_KEY must be set for BINContext tests"
-    enc_a1 = await encrypt(uid_a, "ghp_UserA_Project1_token_" + uuid.uuid4().hex[:8],
-                           kind="github_token")
-    enc_a2 = await encrypt(uid_a, "ghp_UserA_Project2_token_" + uuid.uuid4().hex[:8],
-                           kind="github_token")
-    enc_b1 = await encrypt(uid_b, "ghp_UserB_Project1_token_" + uuid.uuid4().hex[:8],
-                           kind="github_token")
+    # Plaintext PATs (crypto removed 2026-11-17); stored without encryption.
+    tok_a1 = "ghp_UserA_Project1_token_" + uuid.uuid4().hex[:8]
+    tok_a2 = "ghp_UserA_Project2_token_" + uuid.uuid4().hex[:8]
+    tok_b1 = "ghp_UserB_Project1_token_" + uuid.uuid4().hex[:8]
 
     await db.dev_users.insert_many([
         {"user_id": uid_a, "email": f"{uid_a}@test.aurem.dev",
@@ -100,15 +95,15 @@ async def db_and_scratch_users():
     await db.cto_projects.insert_many([
         {"project_id": pid_a1, "user_id": uid_a, "name": "A-Proj-1",
          "github_owner": "userA", "github_repo": "repo1",
-         "github_token": enc_a1, "branch": "main",
+         "github_token": tok_a1, "branch": "main",
          "auth_method": "pat", "status": "connected"},
         {"project_id": pid_a2, "user_id": uid_a, "name": "A-Proj-2",
          "github_owner": "userA", "github_repo": "repo2",
-         "github_token": enc_a2, "branch": "main",
+         "github_token": tok_a2, "branch": "main",
          "auth_method": "pat", "status": "connected"},
         {"project_id": pid_b1, "user_id": uid_b, "name": "B-Proj-1",
          "github_owner": "userB", "github_repo": "repo1",
-         "github_token": enc_b1, "branch": "main",
+         "github_token": tok_b1, "branch": "main",
          "auth_method": "pat", "status": "connected"},
     ])
 
@@ -180,19 +175,16 @@ async def test_3_build_bin_context_null_project(db_and_scratch_users):
 
 
 @pytest.mark.asyncio
-async def test_4_build_bin_context_pat_decrypt_fail(db_and_scratch_users):
-    """Test 4 — PAT decryption failure → 403.
+async def test_4_build_bin_context_legacy_ciphertext_pat_returns_403(db_and_scratch_users):
+    """Test 4 — Legacy ciphertext PAT → 403.
 
-    Simulate by inserting a project whose ciphertext was encrypted for
-    a DIFFERENT user_id.  HKDF re-derives per user, so the read-side
-    key can't decrypt.
+    Simulate by inserting a project whose stored token is a legacy 'v1:' ciphertext from before crypto was removed (2026-11-17). It can no longer be decrypted, so token resolution fails.
     """
     d = db_and_scratch_users
-    from services.vault import encrypt
     from services.bin_context import build_bin_context
 
     # Ciphertext bound to uid_b, but we'll try to read as uid_a.
-    poison_ct = await encrypt(d["uid_b"], "ghp_fake", kind="github_token")
+    poison_ct = "v1:gAAAAABlegacy-ciphertext"
     poison_pid = f"p_poison_{uuid.uuid4().hex[:6]}"
     await d["db"].cto_projects.insert_one({
         "project_id": poison_pid, "user_id": d["uid_a"],
@@ -205,7 +197,7 @@ async def test_4_build_bin_context_pat_decrypt_fail(db_and_scratch_users):
             await build_bin_context(
                 user_id=d["uid_a"], project_id=poison_pid, db=d["db"],
             )
-        # Vault decrypt returns None → OAuth fallback also None → 403.
+        # Legacy 'v1:' ciphertext is unusable → token resolution fails → 403.
         assert ei.value.status_code == 403
         assert "isn't available" in str(ei.value.detail).lower()  # user-safe App-only copy
     finally:

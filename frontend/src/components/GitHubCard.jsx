@@ -62,15 +62,26 @@ export default function GitHubCard() {
     }
   }, [refresh, refreshInstalls]);
 
-  function connect() {
+  async function connect() {
     const tok = getToken();
     // 2026-08-01 — funnel telemetry: cta_click on settings card.
     trackFunnel("cta_click", "settings_card", { has_token: !!tok });
-    // GitHub doesn't forward arbitrary headers, so we open the connect endpoint
-    // in the current window. JWT travels as an `?auth=` query param that the
-    // backend reads as a fallback (see github_oauth router).
+    // FIX #1 (2026-11-17) -- the session JWT must never appear in a URL
+    // (browser history, server logs, Referer). A full-page navigation
+    // cannot send an Authorization header, so mint a single-use,
+    // 5-minute link token with the JWT in the header (POST
+    // /github/oauth/link-token) and navigate with that token instead.
+    let linkToken;
+    try {
+      const { data } = await api.post("/github/oauth/link-token", {});
+      linkToken = data?.link_token;
+      if (!linkToken) throw new Error("empty link token");
+    } catch {
+      toast({ message: "Could not open the GitHub connect page. Please try again.", kind: "error" });
+      return;
+    }
     const url = withFunnelParams(
-      `${API_BASE}/github/oauth/connect?auth=${encodeURIComponent(tok || "")}`,
+      `${API_BASE}/github/oauth/connect?auth=${encodeURIComponent(linkToken)}`,
       "settings_card",
     );
     window.location.href = url;

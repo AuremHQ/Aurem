@@ -11,7 +11,7 @@ Regression coverage for:
   - Per-key rate limiting
 
 Known, pre-existing, out-of-scope gap (NOT part of this feature): ORA
-Chat's own dedicated LLM config (role="chat", services/llm_config_store.py)
+Chat's own dedicated LLM config (role="chat", services/llm_config.py)
 has no working API key in this environment, so `ask_ora_chat` cannot
 produce a real reply here — it correctly surfaces `llm_api_key_missing`
 as a tool_failed JSON-RPC error instead of silently succeeding. The

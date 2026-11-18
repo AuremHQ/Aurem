@@ -124,6 +124,7 @@ async def ext_client(
     timeout: Optional[httpx.Timeout] = None,
     limits: Optional[httpx.Limits] = None,
     follow_redirects: bool = True,
+    allowed_hosts=None,
 ):
     """Context-managed httpx.AsyncClient with policy defaults for `dep`.
 
@@ -156,6 +157,16 @@ async def ext_client(
     # with None, which is a TypeError. Omit the kwarg instead.
     # Same pattern for `base_url` — httpx 0.27 rejects `base_url=None`
     # with a TypeError, so omit the kwarg when the caller passed "".
+    # Fix #11 (SSRF): with an allowlist, refuse redirects outright (a
+    # 3xx to an untrusted host must never be followed with credentials
+    # in flight) and validate base_url against the allowlist.
+    if allowed_hosts is not None:
+        allowed = frozenset(str(h).lower() for h in allowed_hosts)
+        if base_url:
+            base_host = (httpx.URL(base_url).host or "").lower()
+            if base_host not in allowed:
+                raise ValueError(f"refusing base_url with untrusted host {base_host!r} (dep={dep})")
+        follow_redirects = False
     client_kwargs: dict = dict(
         headers=hdrs,
         timeout=to,
@@ -185,6 +196,7 @@ async def ext_request(
     max_retries: int = 2,
     retry_on_status: Iterable[int] = _RETRY_STATUS,
     raise_for_status: bool = True,
+    allowed_hosts=None,
 ) -> httpx.Response:
     """One-shot HTTP request through the retry_guard breaker for `dep`.
 
@@ -204,7 +216,16 @@ async def ext_request(
     hdrs.setdefault("User-Agent", "aurem-dev/1.0 (+https://auremcto.com)")
 
     async def _do() -> httpx.Response:
-        async with httpx.AsyncClient(timeout=to, follow_redirects=True) as c:
+        # Fix #11 (SSRF): with an allowlist, validate the URL first and
+        # refuse redirects outright (see ext_client above).
+        if allowed_hosts is not None:
+            allowed = frozenset(str(h).lower() for h in allowed_hosts)
+            parsed = httpx.URL(url)
+            if parsed.scheme != "https" or (parsed.host or "").lower() not in allowed:
+                raise ValueError(f"refusing fetch to untrusted URL {url!r} (dep={dep})")
+        async with httpx.AsyncClient(
+            timeout=to, follow_redirects=False if allowed_hosts is not None else True
+        ) as c:
             r = await c.request(
                 method.upper(), url,
                 headers=hdrs, params=params,

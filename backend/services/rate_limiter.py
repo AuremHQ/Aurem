@@ -86,31 +86,31 @@ def _sanitize_for_log(value: str) -> str:
 
 
 def client_ip_from_request(request) -> str:
-    """Extract the real client IP, honoring X-Forwarded-For when set by
-    the K8s ingress.
+    """Return the real client IP for rate limiting.
 
-    KNOWN GAP (FIX 2, step 2a, 2026-10-04): this takes the FIRST entry
-    in X-Forwarded-For, which is whatever the CALLER supplied — proven
-    live on Preview to be fully attacker-controlled (a made-up header
-    value changes this function's return value outright). See
-    `client_ip_trusted_from_request()` below for the hop-counted
-    alternative. Nothing switches to it yet (that's step 2b, pending
-    the user confirming production's own hop count) — this function's
-    return value and behavior are UNCHANGED in this turn; only a
-    side-by-side diagnostic log line was added so both values can be
-    compared on real traffic before any caller is switched over.
+    FIX 2, step 2b (2026-11-18): returns the trusted value from
+    client_ip_trusted_from_request() -- the hop-counted X-Forwarded-For
+    position appended by our own edge (Cloudflare + ingress), not the
+    first entry, which is caller-supplied and was proven live on
+    Preview to be fully attacker-controlled. A spoofed first entry
+    used to change this return value outright and get a fresh
+    rate-limit bucket. When the chain is too short, or the header is
+    missing, the trusted helper falls back to the raw socket peer
+    address, never to anything read from the header. Rate-limit keys
+    and limits are unchanged, so no existing limit is weakened.
     """
-    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    naive = fwd or (getattr(request.client, "host", "unknown") or "unknown")
+    raw_first = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    trusted = client_ip_trusted_from_request(request)
     try:
-        trusted = client_ip_trusted_from_request(request)
         logger.info(
-            "rate_limiter: ip_naive=%s ip_trusted=%s (side-by-side diagnostic, "
-            "FIX 2 step 2a — no behavior change, still keying on ip_naive)",
-            _sanitize_for_log(naive), _sanitize_for_log(trusted))
-    except Exception:                                          # noqa: BLE001
+            "rate_limiter: ip naive=%s ip_trusted=%s (FIX 2 step 2b -- "
+            "rate limiting now keys on ip_trusted; ip_naive shown "
+            "only for comparison, never for a bucket key)",
+            _sanitize_for_log(raw_first or "unknown"),
+            _sanitize_for_log(trusted))
+    except Exception:  # noqa: BLE001
         pass  # diagnostic-only; must never break the actual rate-limit path
-    return naive
+    return trusted
 
 
 # FIX 2, step 2a — number of hops OUR OWN edge appends to
@@ -121,6 +121,8 @@ def client_ip_from_request(request) -> str:
 # the FIX 2 step 2a report for the raw evidence. The genuine,
 # un-spoofable client IP is therefore the chain entry this many
 # positions plus one from the end.
+# FIX 2, step 2b: count unchanged; if an edge appends a different
+# number of hops in another deployment, change this single constant.
 _TRUSTED_HOP_COUNT = 2
 
 
@@ -138,8 +140,9 @@ def client_ip_trusted_from_request(request) -> str:
     goes straight to localhost) this falls back to the raw socket
     peer address, NEVER to anything read from the header.
 
-    NOT wired into any rate-limit caller yet (that's step 2b). Used
-    this turn only for the side-by-side log above and the admin-only
+    Wired into every rate-limit caller in step 2b via
+    client_ip_from_request(), which now delegates to this function.
+    Also used for the side-by-side log above and the admin-only
     diagnostic endpoint.
     """
     fwd_raw = request.headers.get("x-forwarded-for") or ""

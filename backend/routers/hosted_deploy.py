@@ -8,8 +8,7 @@ endpoint set is for **hosted** deploy providers that expose webhook URLs:
   * Netlify build hooks  (Site → Build & deploy → Build hooks)
 
 The user creates the hook once on the provider side and pastes the URL
-into AUREM. We store it encrypted (same HKDF-Fernet vault used for
-GitHub PATs) so a DB dump never leaks deploy access. From that point on
+into AUREM. We store it in plaintext (crypto was removed 2026-11-17; secrets are stored without encryption by decision). From that point on
 the "Ship to Live" button in the project view fires a `POST {hook_url}`
 which kicks a fresh build of the latest commit.
 
@@ -33,7 +32,6 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from cto_services.crypto import encrypt, decrypt
 from services.team_permissions import check_permission
 
 logger = logging.getLogger(__name__)
@@ -88,7 +86,7 @@ async def connect(body: ConnectBody,
     )
     if not proj:
         raise HTTPException(404, "Project not found")
-    enc = encrypt(body.hook_url.strip())
+    enc = body.hook_url.strip()  # plaintext — crypto removed 2026-11-17
     await db.cto_projects.update_one(
         {"project_id": body.project_id, "user_id": user_id},
         {"$set": {
@@ -169,11 +167,11 @@ async def ship(body: ShipBody,
             "No deploy hook connected. Click 'Connect deploy' in the "
             "project view and paste your Vercel or Netlify deploy hook URL.",
         )
-    try:
-        hook_url = decrypt(enc)
-    except Exception:
-        logger.exception("hosted-deploy/ship: hook decrypt failed")
+    if enc.startswith("v1:"):
+        # Legacy Fernet ciphertext — no longer decryptable (crypto removed
+        # 2026-11-17). Ask the user to reconnect the hook.
         raise HTTPException(500, "Deploy hook is corrupted — reconnect it.")
+    hook_url = enc
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as c:

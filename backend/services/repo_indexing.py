@@ -40,6 +40,7 @@ import httpx
 
 from cto_services.db import get_db
 from services.repo_context import _fetch_tree, _fetch_file
+from services.repo_fetch_guard import validate_repo_path
 from services.github_api_writer import commit_files
 
 logger = logging.getLogger(__name__)
@@ -270,24 +271,35 @@ async def build_repo_index(
 
 # ── Internals ────────────────────────────────────────────────────────
 async def _maybe_decrypt(user_id: str, token: Optional[str]) -> Optional[str]:
-    """Pass-through if `token` is None or already plaintext; otherwise
-    use the vault to decrypt. Never raises — returns None on failure."""
+    """Plaintext passthrough — tokens are stored without encryption
+    (crypto removed 2026-11-17). A legacy ``v1:`` ciphertext can no
+    longer be decrypted, so it is treated as unusable. Never raises —
+    returns None on failure."""
     if not token:
         return None
-    if not token.startswith("v1:"):
-        return token
-    try:
-        from services.vault import decrypt
-        return await decrypt(user_id, token, kind="github_token")
-    except Exception as e:
-        logger.warning("repo_indexing: PAT decrypt failed: %r", e)
+    if token.startswith("v1:"):
+        logger.warning("repo_indexing: legacy v1: token can no longer be decrypted; ignoring")
         return None
+    return token
 
+
+
+def _is_safe_repo_path(path: str) -> bool:
+    # Fix #11: tree entries are attacker-controlled repo data; a path
+    # that would escape the repo root is not safe to analyse.
+    try:
+        validate_repo_path(path)
+        return True
+    except ValueError:
+        return False
 
 def _analyse_tree(tree: list[dict]) -> dict:
     """Deterministic per-tree metrics. Pure function — no I/O."""
     paths = [n.get("path") or "" for n in tree if n.get("type") == "blob"]
     dir_paths = [n.get("path") or "" for n in tree if n.get("type") == "tree"]
+    # Fix #11: drop tree paths that would escape the repo root.
+    paths = [p for p in paths if _is_safe_repo_path(p)]
+    dir_paths = [p for p in dir_paths if _is_safe_repo_path(p)]
     # Also infer directories from blob paths so the static analysis works
     # even on tree responses that only contain blobs (some unit-test
     # fixtures + truncated trees).

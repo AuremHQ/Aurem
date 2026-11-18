@@ -752,16 +752,37 @@ function AddDialog({ onClose, onAdded, projects = [] }) {
     // Iter 212 — `force_reauth=1` appends `prompt=select_account` so
     // GitHub re-shows the authorize page (used by the Switch GitHub
     // account link).
+    // FIX #1 (2026-11-17) -- the session JWT must never appear in a URL
+    // (browser history, server logs, Referer). A `window.open` navigation
+    // cannot send an Authorization header, so mint a single-use,
+    // 5-minute link token with the JWT in the header (POST
+    // /github/oauth/link-token) and navigate the popup with that token
+    // (below, after the popup opens). The popup is opened blank first
+    // so the browser still treats it as a user-gesture popup.
     const base = window.location.origin;
-    const qs = `auth=${encodeURIComponent(token)}` + (forceReauth ? "&force_reauth=1" : "");
-    const url = `${base}/api/aurem-dev/github/oauth/connect?${qs}`;
     const w = 560, h = 720;
     const left = Math.max(0, window.screenX + (window.outerWidth  - w) / 2);
     const top  = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
     popupRef.current = window.open(
-      url, "aurem_github_oauth",
+      "", "aurem_github_oauth",
       `width=${w},height=${h},left=${left},top=${top}`,
     );
+    // FIX #1 -- mint a single-use link token with the session JWT in the
+    // Authorization header, then navigate the blank popup with it. If
+    // minting fails, close the popup and stop the OAuth flow.
+    api.post("/github/oauth/link-token", {}).then(({ data }) => {
+      const linkToken = data?.link_token;
+      if (!linkToken) throw new Error("empty link token");
+      const qs = `auth=${encodeURIComponent(linkToken)}` + (forceReauth ? "&force_reauth=1" : "");
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.location.href = `${base}/api/aurem-dev/github/oauth/connect?${qs}`;
+      }
+    }).catch(() => {
+      try { popupRef.current?.close(); } catch { /* already closed */ }
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      setOauthError("Could not open the GitHub connect page. Please try again.");
+      setOauthBusy(false);
+    });
     setOauthBusy(true);
 
     // Poll /github/oauth/status every 2 s until connected, popup closed,
@@ -1830,8 +1851,35 @@ export function PatModal({ project, onClose, onSaved }) {
       return;
     }
     // Popup must open synchronously in the click handler.
-    const url = `${API_BASE}/github/app/install?auth=${encodeURIComponent(token)}`;
-    window.open(url, "aurem_github_app_install", "width=720,height=800");
+    // FIX #1 (2026-11-17) -- the session JWT must never appear in a URL
+    // (browser history, server logs, Referer). A `window.open` navigation
+    // cannot send an Authorization header, so mint a single-use,
+    // 5-minute link token with the JWT in the header (POST
+    // /github/oauth/link-token) and navigate the popup with that token.
+    // The popup must open synchronously in the click handler, so it is
+    // opened blank first and navigated once the token is minted.
+    const popup = window.open("", "aurem_github_app_install", "width=720,height=800");
+    if (popup) {
+      api.post("/github/oauth/link-token", {})
+        .then(({ data }) => {
+          const linkToken = data?.link_token;
+          if (!linkToken) throw new Error("empty link token");
+          if (!popup.closed) {
+            popup.location.href = `${API_BASE}/github/app/install?auth=${encodeURIComponent(linkToken)}`;
+          }
+        })
+        .catch(() => {
+          try {
+            popup.close();
+          } catch {
+            /* already closed */
+          }
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        });
+    }
     const started = Date.now();
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {

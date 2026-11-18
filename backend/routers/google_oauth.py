@@ -29,7 +29,7 @@ from fastapi.responses import RedirectResponse
 from cto_services.auth import create_token
 from cto_services.db import get_db
 from routers.auth import _email_ci
-from routers.github_oauth import _request_origin, _frontend_url, _safe_next
+from routers.github_oauth import _default_frontend_url, _request_origin, _frontend_url, _safe_next, _safe_redirect_origin
 from services.google_oauth import auth_url, exchange, get_profile
 from services.usage import is_founder_email
 
@@ -42,9 +42,7 @@ async def start(request: Request, intent: Optional[str] = Query(default=None),
                  next: Optional[str] = Query(default=None)):
     """Kick off direct Google sign-in. Identity-only — no user auth
     required to hit this (same as GitHub's signup/login branch)."""
-    origin = _request_origin(request)
-    if not origin:
-        raise HTTPException(500, "Could not determine request origin")
+    origin = _request_origin(request) or _default_frontend_url()
     redirect_uri = f"{origin}/api/aurem-dev/google/oauth/callback"
     prefix = "login" if (intent or "").lower() == "login" else "signup"
     state = f"{prefix}:{uuid.uuid4().hex}"
@@ -215,7 +213,7 @@ async def callback(
                             result="success", extra={"via": "google_oauth", "new_account": is_new_account})
     except Exception as e:
         logger.warning("[google-oauth] audit log write failed: %r", e)
-    base = (state_origin or "").rstrip("/")
+    base = _safe_redirect_origin(state_origin)
     if not base:
         raise HTTPException(500, "Could not determine redirect origin")
     return RedirectResponse(

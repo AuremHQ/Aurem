@@ -8,8 +8,8 @@ routers/admin_llm_config.py — Admin self-serve LLM provider settings.
   POST   /admin/llm/configs/{id}/set-active
   POST   /admin/llm/configs/{id}/test
 
-All admin-guarded. Secrets are Fernet-encrypted at rest
-(services/llm_config_store.py) — never returned, logged, or included
+All admin-guarded. Secrets are stored in plaintext
+(services/llm_config.py) — never returned, logged, or included
 in any error body. See ROADMAP.md / CHANGELOG.md for the wiring into
 services/ora_chat_v2/llm_client.py's resolution priority.
 """
@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import require_admin, require_admin_dep
 from cto_services.db import get_db
-from services import llm_config_store as store
+from services import llm_config as store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -72,8 +72,6 @@ async def create_config(body: CreateConfigBody,
         cfg = await store.create_config(
             db, label=body.label, role=body.role, base_url=body.base_url,
             model=body.model, api_key=body.api_key, params=body.params)
-    except store.EncryptionNotConfigured as e:
-        raise HTTPException(503, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return {"ok": True, "config": cfg}
@@ -89,8 +87,6 @@ async def update_config(config_id: str, body: UpdateConfigBody,
             db, config_id, label=body.label, role=body.role,
             base_url=body.base_url, model=body.model,
             api_key=body.api_key, params=body.params)
-    except store.EncryptionNotConfigured as e:
-        raise HTTPException(503, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     if cfg is None:
@@ -130,11 +126,10 @@ async def test_config(config_id: str,
     row = await db.llm_configs.find_one({"config_id": config_id})
     if not row:
         raise HTTPException(404, "config not found")
-    try:
-        decrypted_key = store.decrypt_key(row["api_key_enc"])
-    except store.EncryptionNotConfigured as e:
-        raise HTTPException(503, str(e)) from e
+    api_key = row["api_key_enc"]
+    if isinstance(api_key, bytes):
+        api_key = api_key.decode()
     result = await store.test_config({
-        "base_url": row["base_url"], "model": row["model"], "api_key": decrypted_key,
+        "base_url": row["base_url"], "model": row["model"], "api_key": api_key,
     })
     return result

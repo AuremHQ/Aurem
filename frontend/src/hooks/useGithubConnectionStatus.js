@@ -79,12 +79,18 @@ export function useGithubConnectionStatus(activeProject) {
     if (!token) return;
     setPopupBlocked(false);
     setReconnecting(true);
-    const url = `${API_BASE}/github/app/install?auth=${encodeURIComponent(token)}`;
+    // FIX #1 (2026-11-17) -- the session JWT must never appear in a URL
+    // (browser history, server logs, Referer). A `window.open` navigation
+    // cannot send an Authorization header, so mint a single-use,
+    // 5-minute link token with the JWT in the header (POST
+    // /github/oauth/link-token) and navigate the popup with that token
+    // (below, after the blocked-popup check). The popup is opened blank
+    // first so the browser still treats it as a user-gesture popup.
     const w = 720, h = 800;
     const left = Math.max(0, window.screenX + (window.outerWidth  - w) / 2);
     const top  = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
     popupRef.current = window.open(
-      url, "aurem_github_app_reconnect",
+      "", "aurem_github_app_reconnect",
       `width=${w},height=${h},left=${left},top=${top}`,
     );
 
@@ -94,6 +100,26 @@ export function useGithubConnectionStatus(activeProject) {
     if (!popupRef.current) {
       setReconnecting(false);
       setPopupBlocked(true);
+      return;
+    }
+
+    // FIX #1 (2026-11-17) -- navigate the blank popup with a minted link
+    // token (see above); a failed mint closes the popup and ends the
+    // reconnect attempt before the poller starts.
+    try {
+      const { data } = await api.post("/github/oauth/link-token", {});
+      const linkToken = data?.link_token;
+      if (!linkToken) throw new Error("empty link token");
+      if (!popupRef.current.closed) {
+        popupRef.current.location.href = `${API_BASE}/github/app/install?auth=${encodeURIComponent(linkToken)}`;
+      }
+    } catch {
+      try {
+        popupRef.current?.close();
+      } catch {
+        /* already closed */
+      }
+      setReconnecting(false);
       return;
     }
 

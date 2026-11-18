@@ -18,6 +18,7 @@ from services.github_repo_fetch import (
 )
 from services.codebase_health_core import _is_dockerfile
 from services.http import ext_client
+from services.repo_fetch_guard import GITHUB_API_HOST, validate_owner_repo, validate_repo_path
 from services.scan_cache import (
     get_cached_text_cache, put_cached_text_cache,
 )
@@ -47,6 +48,15 @@ def _in_dotted_dir(path: str) -> bool:
     """
     return any(seg.startswith(".") for seg in path.split("/")[:-1])
 
+def _is_safe_repo_path(path: str) -> bool:
+    # Fix #11: tree entries are attacker-controlled repo data; a path
+    # that would escape the repo root is not safe to fetch.
+    try:
+        validate_repo_path(path)
+        return True
+    except ValueError:
+        return False
+
 
 async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
     """Walk the repo tree + fetch every scannable file.  Cached for the
@@ -75,7 +85,8 @@ async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
     _files = 0
 
     _timeout = httpx.Timeout(45.0, connect=6.0, read=15.0)
-    async with ext_client("github", timeout=httpx.Timeout(45.0, connect=6.0, read=15.0)) as client:
+    validate_owner_repo(owner, repo)
+    async with ext_client("github", timeout=httpx.Timeout(45.0, connect=6.0, read=15.0), allowed_hosts={GITHUB_API_HOST}) as client:
         blobs, tree_sha = await _list_repo_tree_with_sha(
             client, owner, repo, pat,
         )
@@ -90,6 +101,8 @@ async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
                 filtered: dict[str, str] = {}
                 for path, txt in cached.items():
                     if not path:
+                        continue
+                    if not _is_safe_repo_path(path):
                         continue
                     if any(p in _SKIP_DIRS for p in path.split("/")) or _in_dotted_dir(path):
                         continue
@@ -115,6 +128,8 @@ async def build_text_cache(owner: str, repo: str, pat: str) -> dict[str, str]:
         for b in blobs:
             path = b.get("path", "")
             if not path:
+                continue
+            if not _is_safe_repo_path(path):
                 continue
             if any(p in _SKIP_DIRS for p in path.split("/")) or _in_dotted_dir(path):
                 continue

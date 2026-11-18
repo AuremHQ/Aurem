@@ -60,7 +60,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
-from services.rate_limiter import check_rate_limit_async
+from services.rate_limiter import check_rate_limit_async, client_ip_from_request
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["OAuth"])
@@ -172,8 +172,10 @@ async def oauth_register(request: Request):
     self-register. This is intentionally UNTRUSTED at registration
     time — real access is still gated by a live admin login + consent
     at /oauth/authorize for admin-only resources like ORA Chat MCP."""
-    fwd = request.headers.get("x-forwarded-for")
-    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    # FIX 2 step 2b: rate-limit on the trusted client IP, not the
+    # caller-controlled first X-Forwarded-For entry (see
+    # services/rate_limiter.py client_ip_from_request).
+    ip = client_ip_from_request(request)
     if not await check_rate_limit_async(f"oauth_dcr:{ip}", DCR_RATE_LIMIT_PER_MIN):
         raise HTTPException(429, "Too many registration attempts. Try again shortly.")
     try:

@@ -29,6 +29,7 @@ import time
 import config.plan_transition as _cfg
 from services.plan_transition_write_guard import WriteGuardedDB
 from services.test_accounts import is_test_email
+from services.usage import is_founder_email
 
 # Fields that must NEVER appear in a CSV export or a collection
 # snapshot, regardless of what's requested — secrets/payment-method
@@ -209,11 +210,9 @@ def _apply_proposed_grant(base: dict, *, tier: str, remaining_tasks: int | None,
 
 
 def _is_founder_email(email: str) -> bool:
-    try:
-        from services.test_accounts import is_founder_email
-        return is_founder_email(email)
-    except ImportError:
-        return False
+    # is_founder_email is imported at module level from services.usage;
+    # a failed import must fail loudly at import time, never silently return False.
+    return is_founder_email(email)
 
 
 async def build_duplicate_email_index(db) -> dict[str, int]:

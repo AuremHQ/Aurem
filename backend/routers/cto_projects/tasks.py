@@ -188,7 +188,7 @@ async def submit_task(
     # Iter 212m-169 — Build BINContext at task entry.  This does ALL of:
     #   • ownership check (find_one {project_id, user_id})   → 403
     #   • repo_owner / repo_name / branch pull               → 400
-    #   • PAT decrypt via services/vault HKDF                → 403
+    #   • PAT resolution (plaintext)                         → 403
     # so the previous separate ownership guard + inline PAT decrypt are
     # now redundant.  We STILL fetch the full project doc for
     # downstream metadata (repo_index_summary etc. are excluded by

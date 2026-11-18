@@ -45,15 +45,15 @@ def _app_only_token_stub(monkeypatch):
     prove isolation, so resolve tokens from the row (keeping the
     per-project identity + the fail-closed behaviour when absent)."""
     from services.pat_vault import GithubAppAuthError
-    from services.vault import decrypt
     async def _tok(project):
         ct = (project or {}).get("github_token")
         if not ct:
             raise GithubAppAuthError("app_installation_missing", "no installation")
-        try:
-            return await decrypt(project.get("user_id"), ct, kind="github_token")
-        except Exception as e:
-            raise GithubAppAuthError("app_token_rejected", str(e)) from e
+        # Plaintext tokens (crypto removed 2026-11-17). A legacy
+        # 'v1:' ciphertext can no longer be decrypted, so it is unusable.
+        if isinstance(ct, str) and ct.startswith('v1:'):
+            raise GithubAppAuthError('app_token_rejected', 'legacy ciphertext is unusable')
+        return ct
     monkeypatch.setattr("services.pat_vault.get_repo_token", _tok)
 
 @pytest_asyncio.fixture(scope="function")
@@ -74,11 +74,9 @@ async def db_and_scratch_users():
     pid_a2 = f"p_test_a2_{uuid.uuid4().hex[:6]}"
     pid_b1 = f"p_test_b1_{uuid.uuid4().hex[:6]}"
 
-    from services.vault import encrypt, is_vault_available
-    assert is_vault_available(), "AUREM_MASTER_KEY must be set"
-    enc_a1 = await encrypt(uid_a, "ghp_A1_" + uuid.uuid4().hex[:8], kind="github_token")
-    enc_a2 = await encrypt(uid_a, "ghp_A2_" + uuid.uuid4().hex[:8], kind="github_token")
-    enc_b1 = await encrypt(uid_b, "ghp_B1_" + uuid.uuid4().hex[:8], kind="github_token")
+    tok_a1 = "ghp_A1_" + uuid.uuid4().hex[:8]
+    tok_a2 = "ghp_A2_" + uuid.uuid4().hex[:8]
+    tok_b1 = "ghp_B1_" + uuid.uuid4().hex[:8]
 
     await db.dev_users.insert_many([
         {"user_id": uid_a, "email": f"{uid_a}@test.aurem.dev",
@@ -89,13 +87,13 @@ async def db_and_scratch_users():
     await db.cto_projects.insert_many([
         {"project_id": pid_a1, "user_id": uid_a, "name": "A-Proj-1",
          "github_owner": "userA", "github_repo": "repo1",
-         "github_token": enc_a1, "branch": "main"},
+         "github_token": tok_a1, "branch": "main"},
         {"project_id": pid_a2, "user_id": uid_a, "name": "A-Proj-2",
          "github_owner": "userA", "github_repo": "repo2",
-         "github_token": enc_a2, "branch": "main"},
+         "github_token": tok_a2, "branch": "main"},
         {"project_id": pid_b1, "user_id": uid_b, "name": "B-Proj-1",
          "github_owner": "userB", "github_repo": "repo1",
-         "github_token": enc_b1, "branch": "main"},
+         "github_token": tok_b1, "branch": "main"},
     ])
 
     yield {
@@ -166,13 +164,12 @@ async def test_3_null_project_returns_400(db_and_scratch_users):
 
 
 @pytest.mark.asyncio
-async def test_4_pat_decrypt_fail_returns_403(db_and_scratch_users):
-    """Test 4 — PAT ciphertext bound to different user → 403."""
+async def test_4_legacy_ciphertext_pat_returns_403(db_and_scratch_users):
+    """Test 4 — Legacy ciphertext PAT → 403."""
     d = db_and_scratch_users
-    from services.vault import encrypt
     from services.ora_context import build_ora_context
 
-    poison_ct = await encrypt(d["uid_b"], "ghp_fake", kind="github_token")
+    poison_ct = "v1:gAAAAABlegacy-ciphertext"
     poison_pid = f"p_poison_{uuid.uuid4().hex[:6]}"
     await d["db"].cto_projects.insert_one({
         "project_id": poison_pid, "user_id": d["uid_a"],
@@ -276,8 +273,8 @@ async def test_7_cross_user_zero_bleed(db_and_scratch_users):
 
 @pytest.mark.asyncio
 async def test_8_cross_project_pat_distinct(db_and_scratch_users):
-    """Test 8 — Two of User A's projects yield DIFFERENT decrypted
-    PATs (crypto binds ciphertexts to user_id+random Fernet salt)."""
+    """Test 8 — Two of User A's projects yield DIFFERENT plaintext
+    PATs (each token has a different random suffix)."""
     d = db_and_scratch_users
     from services.ora_context import build_ora_context
 

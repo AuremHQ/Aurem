@@ -555,7 +555,9 @@ async def verify_audit_chain(db) -> dict:
 
 def _preview_secret() -> bytes:
     from cto_services.auth import JWT_SECRET
-    return (JWT_SECRET or "dev-fallback-secret-change-me").encode()
+    if not JWT_SECRET:
+        raise RuntimeError("JWT_SECRET must be set: refusing to sign preview tokens without a configured secret")
+    return JWT_SECRET.encode()
 
 
 def make_preview_token(payload: dict) -> dict:

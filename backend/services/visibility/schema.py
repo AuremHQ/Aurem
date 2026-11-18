@@ -19,6 +19,12 @@ from __future__ import annotations
 
 import json
 
+def _json_ld_script(payload):
+    # Escape <, > and & so a value containing </script> cannot close the JSON-LD block and run as HTML.
+    # JSON decodes the escapes back to the original characters, so the schema data is unchanged.
+    return json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
 _START = "<!-- AUREM Visibility Kit — auremcto.com (managed block) -->"
 _END = "<!-- end AUREM Visibility Kit -->"
 
@@ -62,7 +68,7 @@ def render_json_ld(site: dict) -> str:
         blocks.append(person)
 
     scripts = "\n".join(
-        f'<script type="application/ld+json">{json.dumps(b)}</script>' for b in blocks
+        f'<script type="application/ld+json">{_json_ld_script(b)}</script>' for b in blocks
     )
     return f"{_START}\n{scripts}\n{_END}\n"
 

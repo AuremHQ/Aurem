@@ -45,6 +45,7 @@ from cto_services.auth import current_dev, require_admin
 from cto_services.db import get_db
 from services.feature_flags import is_enabled
 from services.team_permissions import check_permission
+from services.repo_fetch_guard import validate_repo_path
 
 router = APIRouter(prefix="/codebase-health", tags=["Codebase Health"])
 
@@ -799,6 +800,13 @@ async def request_fix(
     finding_id  = (body or {}).get("finding_id") or ""
     title       = (body or {}).get("title") or "security_issue"
     file_path   = (body or {}).get("file") or ""
+    # Fix #11: the file comes from the request body; reject a path
+    # that would escape the repo root before it reaches the fix pipeline.
+    if file_path:
+        try:
+            validate_repo_path(file_path)
+        except ValueError:
+            raise HTTPException(400, "Invalid file path")
     line        = int((body or {}).get("line") or 0)
     message     = (body or {}).get("message") or ""
     fix_hint    = (body or {}).get("fix_hint") or ""

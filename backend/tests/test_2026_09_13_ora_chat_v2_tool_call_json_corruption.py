@@ -154,8 +154,8 @@ async def test_5_live_multi_round_tool_call_on_fresh_conversation_no_length_need
 
     active = None
     try:
-        from services import llm_config_store
-        active = await llm_config_store.get_active_config(db, "chat")
+        from services import llm_config
+        active = await llm_config.get_active_config(db, "chat")
     except Exception as e:
         pytest.skip(f"could not resolve active chat config: {e!r}")
     if not active:

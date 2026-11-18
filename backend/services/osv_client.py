@@ -34,12 +34,12 @@ from typing import Optional
 from cvss import CVSS2, CVSS3
 
 from services.http import ext_request
+from services.repo_fetch_guard import OSV_API_HOST, osv_vuln_url
 from services.http.client import ExternalCallError
 
 logger = logging.getLogger(__name__)
 
 OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
-OSV_VULN_URL_TMPL = "https://api.osv.dev/v1/vulns/{}"
 
 MAX_NEW_VULN_LOOKUPS = 50
 VULN_LOOKUP_CONCURRENCY = 8
@@ -100,11 +100,11 @@ def _extract_severity(vuln_detail: dict) -> str:
 async def _fetch_vuln_detail(vuln_id: str, sem: asyncio.Semaphore) -> dict:
     async with sem:
         try:
-            r = await ext_request("osv", "GET", OSV_VULN_URL_TMPL.format(vuln_id))
+            r = await ext_request("osv", "GET", osv_vuln_url(vuln_id), allowed_hosts={OSV_API_HOST})
             data = r.json() or {}
             return {"id": vuln_id, "severity": _extract_severity(data),
                     "summary": (data.get("summary") or "")[:200], "fetch_ok": True}
-        except ExternalCallError as e:
+        except (ExternalCallError, ValueError) as e:
             logger.info("[osv] detail fetch failed for %s (non-fatal, retried next scan): %s", vuln_id, e)
             return {"id": vuln_id, "severity": None, "summary": "", "fetch_ok": False}
 
@@ -132,7 +132,7 @@ async def query_osv_batch(pkgs: list[tuple[str, str, str]]) -> dict[str, list[di
             for eco, pkg, ver in pkgs
         ]
     }
-    r = await ext_request("osv", "POST", OSV_BATCH_URL, json=payload)
+    r = await ext_request("osv", "POST", OSV_BATCH_URL, json=payload, allowed_hosts={OSV_API_HOST})
     body = r.json() or {}
     raw_results = body.get("results") or []
 

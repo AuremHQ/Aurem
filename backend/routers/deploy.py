@@ -22,7 +22,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev
-from cto_services.crypto import encrypt, decrypt, is_vault_available
 from cto_services.db import require_db
 from services.http.client import ext_client
 
@@ -34,6 +33,13 @@ DEPLOY_TIMEOUT_SECONDS = 8 * 60
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _as_str(value: object) -> str:
+    """Stored secrets are plaintext strings; decode bytes defensively."""
+    if isinstance(value, bytes):
+        return value.decode()
+    return value or ""
 
 
 def _scrub(text: str) -> str:
@@ -178,14 +184,14 @@ async def save_config(body: DeployConfigBody,
         if len(pk) < 4:
             raise HTTPException(400, "ftp_password_too_short")
         # For FTP, the 'private_key' field carries the FTP password —
-        # encrypted under a distinct vault kind so we never mix key
-        # material with passwords in the same envelope.
+        # stored under a distinct kind so we never mix key material
+        # with passwords in the same field.
         secret_kind = "ftp_password"
     if body.target == "ftp" and not body.remote_dir.strip():
         raise HTTPException(
             400, "remote_dir_required_for_ftp",
         )
-    enc = await encrypt(me["user_id"], pk, kind=secret_kind)
+    enc = pk  # plaintext — crypto removed 2026-11-17; stored without encryption
     pid = (body.project_id or "").strip() or None
     await db.aurem_cto_deploy_configs.update_one(
         {"user_id": me["user_id"], "project_id": pid},
@@ -392,17 +398,7 @@ async def _run_deploy_remote(user_id: str, run_id: str,
     import asyncssh
     db = require_db()
 
-    try:
-        private_key = await decrypt(user_id, cfg.get("private_key_enc", ""),
-                                     kind="ssh_private_key")
-    except Exception as e:
-        await db.aurem_cto_deploy_runs.update_one(
-            {"run_id": run_id},
-            {"$set": {"status": "failed",
-                       "error": f"vault_decrypt_failed: {type(e).__name__}",
-                       "finished_at": _now_iso()}},
-        )
-        return
+    private_key = _as_str(cfg.get("private_key_enc", ""))
 
     async def _append(line: str) -> None:
         await db.aurem_cto_deploy_runs.update_one(
@@ -497,17 +493,7 @@ async def _run_deploy_ftp_or_sftp(
              "$set":  {"last_update": _now_iso()}},
         )
 
-    try:
-        secret = await decrypt(user_id, cfg.get("private_key_enc", ""),
-                                kind=kind)
-    except Exception as e:
-        await db.aurem_cto_deploy_runs.update_one(
-            {"run_id": run_id},
-            {"$set": {"status": "failed",
-                       "error": f"vault_decrypt_failed: {type(e).__name__}",
-                       "finished_at": _now_iso()}},
-        )
-        return
+    secret = _as_str(cfg.get("private_key_enc", ""))
 
     # Normalize files: accept bytes OR str OR {content_b64: ...}
     normalized: dict[str, bytes] = {}

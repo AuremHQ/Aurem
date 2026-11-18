@@ -176,13 +176,7 @@ def _mock_send_response(body: ChatBody, user: dict) -> dict:
     }
 
 
-@router.post("/send")
-async def chat_send(
-    body: ChatBody,
-    authorization: Optional[str] = Header(None),
-) -> dict:
-    """Non-streaming chat — returns full response, persists turn.
-    If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
+async def _chat_send_authenticate_and_tag_request(authorization, body):
     user = await current_dev(authorization)
     from services.loop_token_ledger import tag_request_surface
     tag_request_surface("cto_chat", session_id=body.session_id or None,
@@ -200,39 +194,10 @@ async def chat_send(
     # guard. Sits BEFORE budget/pre-LLM/orchestrator so no provider,
     # intent-escalation, watchdog or council call can ever fire in mock.
     from services.ora_chat_v2.llm_client import is_mock as _mock_llm_on
-    if _mock_llm_on():
-        return _mock_send_response(body, user)
-    # Iter 364 · Phase 3 · Token hard-stop enforcement.
-    # BEFORE any LLM provider call, refuse the request if the user has
-    # exhausted their effective token budget OR blown their monthly
-    # task cap. Founders / unlimited accounts short-circuit inside
-    # assert_has_budget so this is a no-op for them. Doing this at the
-    # very top of the handler ensures we NEVER pay OpenRouter/DeepSeek/
-    # Claude for a request we then reject. Iter 364 RCA:
-    #   Old code did an atomic $max: [0, remaining - cost] clamp AFTER
-    #   the LLM call — wallet floored at zero but chat kept working,
-    #   silently burning tokens with no server-side stop. The banner
-    #   at 100% was purely cosmetic. This is the fix.
-    # 2026-09 · D3 freemium fix — the task/fix-ship monthly cap is now
-    # gated INSIDE resolve_pre_llm (only fires for an actual agentic
-    # fix/ship attempt, never plain chat). Only the token budget is
-    # checked unconditionally here — "chat is unlimited, token-capped
-    # only" per founder decision.
-    from services.usage import assert_has_budget
-    await assert_has_budget(user["user_id"])
-    jwt_token = authorization.split(" ", 1)[1] if authorization else ""
-    # Iter 212m-15 — parallelise the two pre-flight context fetches AND
-    # log the cumulative timing for each stage so the next time a
-    # founder reports "even 'hi' takes 20s", we can pinpoint whether
-    # the cost is in repo_ctx, url_ctx, LLM dispatch, or persist. The
-    # chat_stream endpoint was parallelised in iter 157 — chat_send
-    # was left sequential, which is why founder's first message hit
-    # 20s on prod (testing agent finding iter 212m-14).
-    t_start = time.time()
-    # Iter 212m-169/170 — ORAContext hardening.  Build the request-
-    # scoped ORAContext at the entry point when the user is chatting
-    # AGAINST a project.  Home-page casual chat (no project) still
-    # works with bin_ctx=None; downstream repo tools will refuse cleanly.
+    return (user, finalize, interaction_request_id, _mock_llm_on)
+
+
+async def _chat_send_resolve_project_context(body, user):
     pid = (body.project_id or "").strip()
     _db = get_db()
     bin_ctx = None
@@ -240,7 +205,7 @@ async def chat_send(
         # build_ora_context does ALL of:
         #   • ownership check (find_one {project_id, user_id})     → 403
         #   • repo_owner / repo_name / branch pull                 → 400
-        #   • PAT decrypt via services/vault HKDF                  → 403
+        #   • PAT resolution (plaintext)                           → 403
         #   • OAuth fallback for legacy OAuth-only projects        → 403
         #   • wraps into ORAContext with ora_boundary_active=True  (170)
         from services.ora_context import build_ora_context
@@ -267,10 +232,10 @@ async def chat_send(
             repo_ctx = ""
     else:
         repo_ctx = ""
-    # 2026-08-30 — Issue C fix: single-surface-drift. /chat/send never
-    # fetched project_brain context at all (chat_stream's equivalent
-    # block below, ~line 1402, does) — confirmed via source read, not
-    # a guess. Same brain-context fetch, mirrored for this surface.
+    return (pid, _db, bin_ctx, repo_ctx)
+
+
+async def _chat_send_define_safe_send():
     async def _safe_send(coro, label, timeout_s=12.0):
         try:
             return await asyncio.wait_for(coro, timeout=timeout_s)
@@ -279,40 +244,10 @@ async def chat_send(
             return ""
 
     brain_ctx = ""
-    if pid and pid != "home":
-        try:
-            _proj = await asyncio.wait_for(_db.cto_projects.find_one(
-                {"project_id": pid, "user_id": user["user_id"]},
-                {"_id": 0, "github_owner": 1, "github_repo": 1,
-                 "github_token": 1, "auth_method": 1,
-                 "installation_id": 1, "user_id": 1},
-            ), timeout=10.0)
-            owner = (_proj or {}).get("github_owner") or ""
-            repo = (_proj or {}).get("github_repo") or ""
-            repo_full = f"{owner}/{repo}" if owner and repo else pid
-            from services.project_brain import get_brain_context
-            _pat = None
-            try:
-                from services.pat_vault import get_repo_token_or_error
-                async def _pat_lookup():
-                    t, _e, _d = await get_repo_token_or_error(_proj or {})
-                    return t
-                _pat = await asyncio.wait_for(_pat_lookup(), timeout=10.0)
-            except Exception:
-                _pat = None
-            brain_ctx = await _safe_send(
-                get_brain_context(_db, pid, repo_full, github_token=_pat),
-                "brain_context",
-            )
-            if brain_ctx:
-                brain_ctx = "[PROJECT MEMORY]\n" + brain_ctx
-        except Exception:
-            logger.exception("chat_send: brain context fetch failed (continuing)")
-            brain_ctx = ""
-    # Iter 212m-23 — URL context is NO LONGER eagerly stuffed here.
-    # The orchestrator force-invokes the `fetch_url` tool when the
-    # prompt contains an http(s) URL, which surfaces a proper step
-    # card + web_sources chip in the UI and logs into tool_invocations.
+    return (_safe_send, brain_ctx)
+
+
+async def _chat_send_prepare_preflight_context(repo_ctx, brain_ctx, body, user):
     t_preflight = time.time()
     extra_sys = "\n\n".join(s for s in (repo_ctx, brain_ctx) if s)
     # Iter 212m-77/78 — ORA Council self-learning ACTIVATED.
@@ -362,26 +297,10 @@ async def chat_send(
                          + ("\n\n" + extra_sys if extra_sys else ""))
     except Exception as _kce:
         logger.debug("knowledge context skipped (chat/send): %r", _kce)
+    return (t_preflight, extra_sys, _council_recalled, _council_block, _recall_mode_send)
 
-    # 2026-08-27 · Plain-English Output Contract (Phase 1, flag-gated).
-    # Only for explain/advisory turns (council mode "A") on the main
-    # chat surface (never Ask Advisor, never a mutation-shaped B/C/D/E/F
-    # turn) — see PLAIN_ENGLISH_EXPLAIN_CONTRACT for the full rule set.
-    _plain_english_active = False
-    try:
-        if not body.ora_panel and _recall_mode_send == "A":
-            from services.feature_flags import is_enabled as _pee_enabled
-            if await _pee_enabled(
-                "explain_plain_english_v1",
-                user_id=user.get("user_id"), tier=user.get("tier"),
-            ):
-                extra_sys = (extra_sys + "\n\n" + PLAIN_ENGLISH_EXPLAIN_CONTRACT).strip()
-                _plain_english_active = True
-    except Exception as _pee_exc:
-        logger.debug("plain_english_contract skipped (chat/send): %r", _pee_exc)
 
-    # 2026-08-31 · Business-Owner Voice Contract — every non-ora_panel
-    # turn, not flag-gated (see BUSINESS_OWNER_VOICE_CONTRACT docstring).
+async def _chat_send_prepare_panel_and_resolve_mode(body, user, _db, extra_sys):
     if not body.ora_panel:
         extra_sys = (extra_sys + "\n\n" + BUSINESS_OWNER_VOICE_CONTRACT).strip()
     # Iter 212m-24 — Admin House Rules (HIGHEST PRIORITY).
@@ -430,6 +349,404 @@ async def chat_send(
     if _wants_maxx:
         from services.loop_beta import assert_maxx_daily_budget
         await assert_maxx_daily_budget(_db, user["user_id"])
+    return (extra_sys, _allowed, req_mode, _wants_maxx)
+
+
+async def _chat_send_extract_result_fields(result, _intent_result, _tier, body):
+    if isinstance(result, dict):
+        # Pre-existing gap fix (2026-08-31, confirmed via
+        # test_intent_gateway_casual_boundary_2026_01.py) — chat_stream
+        # always stamps result["tier"]/["intent"] (see ~line 3010); the
+        # sync /chat/send endpoint never did, for ANY branch, so every
+        # response silently lost tier/intent info. Mirrors chat_stream's
+        # own convention exactly.
+        result.setdefault("intent", _intent_result)
+        result.setdefault("tier", _tier)
+    t_llm = time.time()
+    content = result.get("content", "") or ""
+    provider = result.get("provider", "") or ""
+    mode = _detect_mode(body.prompt)
+    from services.llm import temperature_for
+    temperature = temperature_for(mode)
+
+    # 2026-08-21 — cold-start / recall-mismatch mitigation. See
+    # services/response_confidence.py. A response that proposes an
+    # unsolicited code-ship for a message with zero fix/bug intent is
+    # swapped for a friendly fallback BEFORE the user ever sees it —
+    # this also strips the aurem-handoff fence so Approve the fix can
+    # never render for it. 2026-08-22 — hardened with a quiet auto-
+    # retry (layer d) and verbose real-log observation (founder ask)
+    # before falling back to the canned message.
+    _low_confidence = False
+    _ship_suppressed = False
+    _bail_reason = None
+    return (t_llm, content, provider, mode, temperature, _low_confidence, _ship_suppressed, _bail_reason)
+
+
+async def _chat_send_run_output_guards(body, content, _prior_fix_signal, _council_recalled, user, jwt_token, extra_sys, _council_block, req_mode, _is_fnd, bin_ctx, provider, _ship_suppressed, _bail_reason, _low_confidence):
+    try:
+        from services.response_confidence import (
+            response_seems_mismatched, has_ship_suggestion,
+        )
+        from services.bail_reason import classify_bail
+        _mismatch = response_seems_mismatched(body.prompt or "", content, _prior_fix_signal)
+        logger.info(
+            "chat.confidence_check surface=chat_send turn=1 prompt=%r "
+            "council_recalled=%s mismatch=%s content_preview=%r",
+            (body.prompt or "")[:160], _council_recalled, _mismatch,
+            (content or "")[:220],
+        )
+        from services.response_confidence import persist_confidence_check
+        await persist_confidence_check(
+            get_db(), surface="chat_send", turn=1,
+            prompt_preview=(body.prompt or "")[:160],
+            content_preview=(content or "")[:220],
+            council_recalled=_council_recalled, mismatch=_mismatch,
+            user_id=user.get("user_id"), session_id=body.session_id,
+            project_id=body.project_id,
+        )
+        if _mismatch:
+            logger.warning(
+                "chat_send: mismatch detected on first response — retrying "
+                "once without the ORA-Council recall block before showing "
+                "anything to the user",
+            )
+            _retry_content, _retry_provider = await _regenerate_without_recall(
+                prompt=body.prompt, jwt_token=jwt_token,
+                extra_sys_no_council=_strip_council_block(extra_sys, _council_block),
+                max_iters=min(body.max_tool_iters, 4),
+                session_id=body.session_id, user_id=user["user_id"],
+                project_id=body.project_id, mode=req_mode,
+                task_type=body.task_type or _infer_task_type(body.prompt),
+                is_founder=_is_fnd, bin_ctx=bin_ctx,
+            )
+            _retry_mismatch = response_seems_mismatched(body.prompt or "", _retry_content, _prior_fix_signal)
+            logger.info(
+                "chat.confidence_check surface=chat_send turn=2(retry) "
+                "prompt=%r mismatch=%s content_preview=%r",
+                (body.prompt or "")[:160], _retry_mismatch,
+                (_retry_content or "")[:220],
+            )
+            await persist_confidence_check(
+                get_db(), surface="chat_send", turn=2,
+                prompt_preview=(body.prompt or "")[:160],
+                content_preview=(_retry_content or "")[:220],
+                mismatch=_retry_mismatch,
+                user_id=user.get("user_id"), session_id=body.session_id,
+                project_id=body.project_id,
+            )
+            if _retry_content.strip() and not _retry_mismatch:
+                content = _retry_content
+                provider = _retry_provider or provider
+                logger.info(
+                    "chat_send: retry resolved the mismatch — user never "
+                    "saw the bad first draft",
+                )
+            else:
+                _ship_suppressed = (
+                    has_ship_suggestion(content) or has_ship_suggestion(_retry_content)
+                )
+                # R2 (2026-08-31) — never the useless generic
+                # FALLBACK_MESSAGE ("try rephrasing, or ask again") to a
+                # business owner. classify_bail() is deterministic (no
+                # LLM) and always returns a CONCRETE next step:
+                # missing_data -> ask for that value in plain words,
+                # out_of_scope -> say what ORA can do instead,
+                # low_confidence -> ONE specific clarifying question.
+                _bail = classify_bail(body.prompt or "")
+                content = _bail["message"]
+                _bail_reason = _bail["reason"]
+                _low_confidence = True
+                logger.warning(
+                    "chat_send: retry ALSO mismatched (or came back empty) "
+                    "— showing reason-carrying bail (reason=%s), never the "
+                    "generic 'try rephrasing' fallback", _bail_reason,
+                )
+    except Exception as _rce:
+        logger.debug("response_confidence gate skipped (chat_send): %r", _rce)
+    return (content, provider, _ship_suppressed, _bail_reason, _low_confidence)
+
+
+async def _chat_send_render_and_guard_output(body, content, _prior_fix_signal, extra_sys, result, user, _plain_english_active, _pre):
+    _scan_ctx = await scan_findings_context_for_grounding(body.project_id)
+    content, _render_trace = await run_rendering_pipeline(
+        body.prompt or "", content, _prior_fix_signal,
+        retrieved_context_for_grounding(extra_sys, result) + "\n" + _scan_ctx,
+        skip=bool(result.get("_skip_output_guards")),
+        tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
+        session_id=body.session_id, user_id=user["user_id"],
+        plain_english_active=_plain_english_active,
+        ora_panel=getattr(body, "ora_panel", False),
+    )
+    _leak_stripped = _render_trace["leak_stripped"]
+    _length_capped = _render_trace["length_capped"]
+    _output_guard_ref_id = _render_trace["output_guard_ref_id"]
+
+
+    # Part B3 enforcement — deterministic override, placed as the
+    # ABSOLUTE LAST content-mutating step (after response_confidence/
+    # bail_reason, output_guard, AND business_voice_filter above —
+    # each of those can itself rewrite `content`, including back into
+    # the exact canned clarifying-question class this gate exists to
+    # prevent, e.g. bail_reason.py's _LOW_CONFIDENCE_MESSAGE, with
+    # zero awareness of required_read_gate). Whatever `content` is at
+    # this point, if it still looks like that failure, replace it
+    # with the guaranteed-correct fallback built straight from the
+    # real read result. This MUST be the true last word — moved here
+    # (was originally right after response_confidence, which turned
+    # out not to be last either) after confirming live that even THAT
+    # placement still got overwritten downstream.
+    if _pre.required_read_gate:
+        from services.required_tool_gate import enforce_required_read_gate
+        content = enforce_required_read_gate(_pre.required_read_gate, content)
+        # 2026-02 round-4 — this gate's read_repo_file call happens
+        # OUTSIDE the orchestrator's own tool-dispatch loop, so without
+        # this it was invisible to B1's persisted trace (log_task_chain
+        # below reads result["tool_calls"]) even though a real read
+        # happened. Append it so the trace matches reality.
+        _gate_tcr = _pre.required_read_gate.get("tool_call_record")
+        if _gate_tcr:
+            result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
+    return (content, _leak_stripped, _length_capped, _output_guard_ref_id)
+
+
+async def _chat_send_finalize_turn(body, content, provider, _wants_maxx, result, _db, user, req_mode, finalize, interaction_request_id, _low_confidence, _ship_suppressed, bin_ctx):
+    watchdog = None
+    is_new_maxx_pill = (body.mode or "").lower() == "maxx"
+    if body.maxx_mode and content.strip() and not is_new_maxx_pill:
+        watchdog = await call_emergent_watchdog(content)
+        provider = (provider or "deepseek") + "+emergent-watchdog"
+    # Iter 364 · Phase-3 — persist Maxx cost row. Best-effort accounting:
+    # LLM meta usually surfaces per-provider $ estimates; if not, we
+    # still log a 0-cost row so counts + daily-cap enforcement have
+    # ground truth. Any legacy or new Maxx invocation lands here.
+    if _wants_maxx and content.strip():
+        try:
+            from services.loop_beta import log_maxx_cost
+            meta = result.get("meta") or {}
+            deepseek_cost = float(meta.get("deepseek_cost_usd") or 0.0)
+            claude_cost   = float(meta.get("claude_cost_usd")   or 0.0)
+            await log_maxx_cost(
+                _db,
+                user_id=user["user_id"],
+                loop_id=None,
+                deepseek_cost_usd=deepseek_cost,
+                claude_cost_usd=claude_cost,
+                model_meta={
+                    "provider":         provider,
+                    "req_mode":         req_mode,
+                    "maxx_mode_legacy": bool(body.maxx_mode),
+                    "watchdog":         bool(watchdog),
+                    "surface":          "chat_send",
+                },
+            )
+        except Exception as _mce:
+            logger.debug("maxx_cost_log write failed (chat_send): %r", _mce)
+
+    interaction = finalize(result, content, prompt=body.prompt,
+                           session_id=body.session_id or "", request_id=interaction_request_id,
+                           low_confidence=_low_confidence)
+    if interaction:
+        result["turn_state"] = interaction["turn_state"]
+    await _persist_turn(user["user_id"], body.session_id or "",
+                        body.prompt, content, provider, watchdog=watchdog,
+                        project_id=body.project_id,
+                        low_confidence=_low_confidence,
+                        ship_suppressed=_ship_suppressed,
+                        bin_ctx=bin_ctx, interaction=interaction)
+    return (watchdog, provider, interaction)
+
+
+async def _chat_send_post_turn_bookkeeping(_db, user, body, result, content, provider, extra_sys, req_mode, t_preflight, t_start, t_llm, pid):
+    try:
+        from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
+        from services.tool_failure_evidence import turn_tool_calls
+        asyncio.create_task(log_task_chain(
+            _db, user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id, user_prompt=body.prompt or "",
+            tool_calls=turn_tool_calls(result), final_response=content,
+            turn_state=result.get("turn_state") or "success",
+            failure_mode=result.get("failure_mode") or result.get("error"),
+            sequential_thoughts=result.get("sequential_thoughts") or [],
+        ))
+        asyncio.create_task(log_unverified_tool_claims(
+            _db, user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id,
+            claims=result.get("unverified_tool_claims_blocked") or [],
+        ))
+    except Exception as _tc_exc:
+        logger.debug("task_chain logging skipped (chat_send): %r", _tc_exc)
+    if body.session_id:
+        asyncio.create_task(
+            _maybe_set_title(user["user_id"], body.session_id, body.prompt)
+        )
+    tokens_remaining = await _deduct_tokens(user["user_id"], content)
+    # 2026-08-19 P0 fix — this was the main customer chat path with
+    # ZERO cost tracking anywhere (confirmed: 0 of 2,739 real turns in
+    # a preview audit had a cost row). Best-effort, never blocks reply.
+    try:
+        from services.customer_cost_tracker import log_customer_chat_cost
+        await log_customer_chat_cost(
+            user_id=user["user_id"], session_id=body.session_id or "",
+            project_id=body.project_id, route="chat_send",
+            provider=provider, prompt_text=body.prompt,
+            system_text=extra_sys or "", output_text=content,
+        )
+    except Exception as e:
+        logger.warning("customer chat cost log skipped (chat_send): %r", e)
+    # Iter 365 · Phase 3 — funnel event: first_chat_sent (idempotent
+    # via one-shot flag on dev_users). Best-effort, non-blocking.
+    try:
+        from cto_services.db import get_db as _fn_db
+        from services.signup_guards import emit_funnel_event
+        _fdb = _fn_db()
+        if _fdb is not None:
+            _stamped = await _fdb.dev_users.find_one_and_update(
+                {"user_id": user["user_id"], "first_chat_at": {"$exists": False}},
+                {"$set": {"first_chat_at": time.time()}},
+                projection={"_id": 0, "user_id": 1},
+            )
+            if _stamped:
+                await emit_funnel_event(
+                    _fdb, user_id=user["user_id"],
+                    event_type="first_chat_sent",
+                    metadata={"provider": provider, "mode": req_mode},
+                )
+    except Exception as _fne:
+        logger.debug("first_chat_sent funnel emit failed: %r", _fne)
+    # Iter 212m-15 — stage timing instrumentation. Lets us spot whether
+    # a slow turn was the LLM (normal — 5-15s on cold OpenRouter), or
+    # one of the cheap pre-flight steps stalling (which would be a
+    # real bug). Format: chat_send.timing pre=<s> llm=<s> persist=<s>
+    # total=<s> prompt_len=<n> project_id=<pid|none>
+    try:
+        t_done = time.time()
+        logger.info(
+            "chat_send.timing pre=%.3f llm=%.3f persist=%.3f total=%.3f "
+            "prompt_len=%d project_id=%s",
+            t_preflight - t_start,
+            t_llm - t_preflight,
+            t_done - t_llm,
+            t_done - t_start,
+            len(body.prompt or ""),
+            pid or "none",
+        )
+    except Exception:
+        pass
+    return tokens_remaining
+
+
+async def _chat_send_detect_plain_english(body, _recall_mode_send, user, extra_sys):
+    _plain_english_active = False
+    try:
+        if not body.ora_panel and _recall_mode_send == "A":
+            from services.feature_flags import is_enabled as _pee_enabled
+            if await _pee_enabled(
+                "explain_plain_english_v1",
+                user_id=user.get("user_id"), tier=user.get("tier"),
+            ):
+                extra_sys = (extra_sys + "\n\n" + PLAIN_ENGLISH_EXPLAIN_CONTRACT).strip()
+                _plain_english_active = True
+    except Exception as _pee_exc:
+        logger.debug("plain_english_contract skipped (chat/send): %r", _pee_exc)
+    return (_plain_english_active, extra_sys)
+
+
+@router.post("/send")
+async def chat_send(
+    body: ChatBody,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Non-streaming chat — returns full response, persists turn.
+    If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
+    user, finalize, interaction_request_id, _mock_llm_on = await _chat_send_authenticate_and_tag_request(authorization, body)
+    # Fix #14 (2026-11-18): Ask Advisor (ora_panel=True or agent='ora') must never
+    # take the mock path -- it always goes to the real advisor in worker.py
+    # (_advisor_panel) or fails clearly there. The mock is only for non-advisor chat.
+    if _mock_llm_on() and not getattr(body, 'ora_panel', False) and (getattr(body, 'agent', None) or '').lower() != 'ora':
+        return _mock_send_response(body, user)
+    # Iter 364 · Phase 3 · Token hard-stop enforcement.
+    # BEFORE any LLM provider call, refuse the request if the user has
+    # exhausted their effective token budget OR blown their monthly
+    # task cap. Founders / unlimited accounts short-circuit inside
+    # assert_has_budget so this is a no-op for them. Doing this at the
+    # very top of the handler ensures we NEVER pay OpenRouter/DeepSeek/
+    # Claude for a request we then reject. Iter 364 RCA:
+    #   Old code did an atomic $max: [0, remaining - cost] clamp AFTER
+    #   the LLM call — wallet floored at zero but chat kept working,
+    #   silently burning tokens with no server-side stop. The banner
+    #   at 100% was purely cosmetic. This is the fix.
+    # 2026-09 · D3 freemium fix — the task/fix-ship monthly cap is now
+    # gated INSIDE resolve_pre_llm (only fires for an actual agentic
+    # fix/ship attempt, never plain chat). Only the token budget is
+    # checked unconditionally here — "chat is unlimited, token-capped
+    # only" per founder decision.
+    from services.usage import assert_has_budget
+    await assert_has_budget(user["user_id"])
+    jwt_token = authorization.split(" ", 1)[1] if authorization else ""
+    # Iter 212m-15 — parallelise the two pre-flight context fetches AND
+    # log the cumulative timing for each stage so the next time a
+    # founder reports "even 'hi' takes 20s", we can pinpoint whether
+    # the cost is in repo_ctx, url_ctx, LLM dispatch, or persist. The
+    # chat_stream endpoint was parallelised in iter 157 — chat_send
+    # was left sequential, which is why founder's first message hit
+    # 20s on prod (testing agent finding iter 212m-14).
+    t_start = time.time()
+    # Iter 212m-169/170 — ORAContext hardening.  Build the request-
+    # scoped ORAContext at the entry point when the user is chatting
+    # AGAINST a project.  Home-page casual chat (no project) still
+    # works with bin_ctx=None; downstream repo tools will refuse cleanly.
+    pid, _db, bin_ctx, repo_ctx = await _chat_send_resolve_project_context(body, user)
+    # 2026-08-30 — Issue C fix: single-surface-drift. /chat/send never
+    # fetched project_brain context at all (chat_stream's equivalent
+    # block below, ~line 1402, does) — confirmed via source read, not
+    # a guess. Same brain-context fetch, mirrored for this surface.
+    _safe_send, brain_ctx = await _chat_send_define_safe_send()
+    if pid and pid != "home":
+        try:
+            _proj = await asyncio.wait_for(_db.cto_projects.find_one(
+                {"project_id": pid, "user_id": user["user_id"]},
+                {"_id": 0, "github_owner": 1, "github_repo": 1,
+                 "github_token": 1, "auth_method": 1,
+                 "installation_id": 1, "user_id": 1},
+            ), timeout=10.0)
+            owner = (_proj or {}).get("github_owner") or ""
+            repo = (_proj or {}).get("github_repo") or ""
+            repo_full = f"{owner}/{repo}" if owner and repo else pid
+            from services.project_brain import get_brain_context
+            _pat = None
+            try:
+                from services.pat_vault import get_repo_token_or_error
+                async def _pat_lookup():
+                    t, _e, _d = await get_repo_token_or_error(_proj or {})
+                    return t
+                _pat = await asyncio.wait_for(_pat_lookup(), timeout=10.0)
+            except Exception:
+                _pat = None
+            brain_ctx = await _safe_send(
+                get_brain_context(_db, pid, repo_full, github_token=_pat),
+                "brain_context",
+            )
+            if brain_ctx:
+                brain_ctx = "[PROJECT MEMORY]\n" + brain_ctx
+        except Exception:
+            logger.exception("chat_send: brain context fetch failed (continuing)")
+            brain_ctx = ""
+    # Iter 212m-23 — URL context is NO LONGER eagerly stuffed here.
+    # The orchestrator force-invokes the `fetch_url` tool when the
+    # prompt contains an http(s) URL, which surfaces a proper step
+    # card + web_sources chip in the UI and logs into tool_invocations.
+    t_preflight, extra_sys, _council_recalled, _council_block, _recall_mode_send = await _chat_send_prepare_preflight_context(repo_ctx, brain_ctx, body, user)
+
+    # 2026-08-27 · Plain-English Output Contract (Phase 1, flag-gated).
+    # Only for explain/advisory turns (council mode "A") on the main
+    # chat surface (never Ask Advisor, never a mutation-shaped B/C/D/E/F
+    # turn) — see PLAIN_ENGLISH_EXPLAIN_CONTRACT for the full rule set.
+    _plain_english_active, extra_sys = await _chat_send_detect_plain_english(body, _recall_mode_send, user, extra_sys)
+
+    # 2026-08-31 · Business-Owner Voice Contract — every non-ora_panel
+    # turn, not flag-gated (see BUSINESS_OWNER_VOICE_CONTRACT docstring).
+    extra_sys, _allowed, req_mode, _wants_maxx = await _chat_send_prepare_panel_and_resolve_mode(body, user, _db, extra_sys)
     # Iter 212m-168 — surface founder/admin role to the orchestrator so
     # only these accounts see `execute_bash` (local pod filesystem).
     from services.usage import is_founder_email as _is_fnd_email
@@ -525,113 +842,8 @@ async def chat_send(
                 "task_type":        None,
                 "findings_saved_this_turn": [],
             }
-    if isinstance(result, dict):
-        # Pre-existing gap fix (2026-08-31, confirmed via
-        # test_intent_gateway_casual_boundary_2026_01.py) — chat_stream
-        # always stamps result["tier"]/["intent"] (see ~line 3010); the
-        # sync /chat/send endpoint never did, for ANY branch, so every
-        # response silently lost tier/intent info. Mirrors chat_stream's
-        # own convention exactly.
-        result.setdefault("intent", _intent_result)
-        result.setdefault("tier", _tier)
-    t_llm = time.time()
-    content = result.get("content", "") or ""
-    provider = result.get("provider", "") or ""
-    mode = _detect_mode(body.prompt)
-    from services.llm import temperature_for
-    temperature = temperature_for(mode)
-
-    # 2026-08-21 — cold-start / recall-mismatch mitigation. See
-    # services/response_confidence.py. A response that proposes an
-    # unsolicited code-ship for a message with zero fix/bug intent is
-    # swapped for a friendly fallback BEFORE the user ever sees it —
-    # this also strips the aurem-handoff fence so Approve the fix can
-    # never render for it. 2026-08-22 — hardened with a quiet auto-
-    # retry (layer d) and verbose real-log observation (founder ask)
-    # before falling back to the canned message.
-    _low_confidence = False
-    _ship_suppressed = False
-    _bail_reason = None
-    try:
-        from services.response_confidence import (
-            response_seems_mismatched, has_ship_suggestion,
-        )
-        from services.bail_reason import classify_bail
-        _mismatch = response_seems_mismatched(body.prompt or "", content, _prior_fix_signal)
-        logger.info(
-            "chat.confidence_check surface=chat_send turn=1 prompt=%r "
-            "council_recalled=%s mismatch=%s content_preview=%r",
-            (body.prompt or "")[:160], _council_recalled, _mismatch,
-            (content or "")[:220],
-        )
-        from services.response_confidence import persist_confidence_check
-        await persist_confidence_check(
-            get_db(), surface="chat_send", turn=1,
-            prompt_preview=(body.prompt or "")[:160],
-            content_preview=(content or "")[:220],
-            council_recalled=_council_recalled, mismatch=_mismatch,
-            user_id=user.get("user_id"), session_id=body.session_id,
-            project_id=body.project_id,
-        )
-        if _mismatch:
-            logger.warning(
-                "chat_send: mismatch detected on first response — retrying "
-                "once without the ORA-Council recall block before showing "
-                "anything to the user",
-            )
-            _retry_content, _retry_provider = await _regenerate_without_recall(
-                prompt=body.prompt, jwt_token=jwt_token,
-                extra_sys_no_council=_strip_council_block(extra_sys, _council_block),
-                max_iters=min(body.max_tool_iters, 4),
-                session_id=body.session_id, user_id=user["user_id"],
-                project_id=body.project_id, mode=req_mode,
-                task_type=body.task_type or _infer_task_type(body.prompt),
-                is_founder=_is_fnd, bin_ctx=bin_ctx,
-            )
-            _retry_mismatch = response_seems_mismatched(body.prompt or "", _retry_content, _prior_fix_signal)
-            logger.info(
-                "chat.confidence_check surface=chat_send turn=2(retry) "
-                "prompt=%r mismatch=%s content_preview=%r",
-                (body.prompt or "")[:160], _retry_mismatch,
-                (_retry_content or "")[:220],
-            )
-            await persist_confidence_check(
-                get_db(), surface="chat_send", turn=2,
-                prompt_preview=(body.prompt or "")[:160],
-                content_preview=(_retry_content or "")[:220],
-                mismatch=_retry_mismatch,
-                user_id=user.get("user_id"), session_id=body.session_id,
-                project_id=body.project_id,
-            )
-            if _retry_content.strip() and not _retry_mismatch:
-                content = _retry_content
-                provider = _retry_provider or provider
-                logger.info(
-                    "chat_send: retry resolved the mismatch — user never "
-                    "saw the bad first draft",
-                )
-            else:
-                _ship_suppressed = (
-                    has_ship_suggestion(content) or has_ship_suggestion(_retry_content)
-                )
-                # R2 (2026-08-31) — never the useless generic
-                # FALLBACK_MESSAGE ("try rephrasing, or ask again") to a
-                # business owner. classify_bail() is deterministic (no
-                # LLM) and always returns a CONCRETE next step:
-                # missing_data -> ask for that value in plain words,
-                # out_of_scope -> say what ORA can do instead,
-                # low_confidence -> ONE specific clarifying question.
-                _bail = classify_bail(body.prompt or "")
-                content = _bail["message"]
-                _bail_reason = _bail["reason"]
-                _low_confidence = True
-                logger.warning(
-                    "chat_send: retry ALSO mismatched (or came back empty) "
-                    "— showing reason-carrying bail (reason=%s), never the "
-                    "generic 'try rephrasing' fallback", _bail_reason,
-                )
-    except Exception as _rce:
-        logger.debug("response_confidence gate skipped (chat_send): %r", _rce)
+    t_llm, content, provider, mode, temperature, _low_confidence, _ship_suppressed, _bail_reason = await _chat_send_extract_result_fields(result, _intent_result, _tier, body)
+    content, provider, _ship_suppressed, _bail_reason, _low_confidence = await _chat_send_run_output_guards(body, content, _prior_fix_signal, _council_recalled, user, jwt_token, extra_sys, _council_block, req_mode, _is_fnd, bin_ctx, provider, _ship_suppressed, _bail_reason, _low_confidence)
 
     # 2026-08-28 · NEW P0 Task 2 — final defense-in-depth: no reply to
     # a bare confirmation may claim a ship/approve action already
@@ -654,169 +866,15 @@ async def chat_send(
     # the grounding text so the security-finding/CVE guard below has
     # a real "ground truth" to check casual-mode claims against, even
     # on a short follow-up with zero tool calls this turn.
-    _scan_ctx = await scan_findings_context_for_grounding(body.project_id)
-    content, _render_trace = await run_rendering_pipeline(
-        body.prompt or "", content, _prior_fix_signal,
-        retrieved_context_for_grounding(extra_sys, result) + "\n" + _scan_ctx,
-        skip=bool(result.get("_skip_output_guards")),
-        tool_calls_run=result.get("tool_calls_run", 0) if isinstance(result, dict) else 0,
-        session_id=body.session_id, user_id=user["user_id"],
-        plain_english_active=_plain_english_active,
-        ora_panel=getattr(body, "ora_panel", False),
-    )
-    _leak_stripped = _render_trace["leak_stripped"]
-    _length_capped = _render_trace["length_capped"]
-    _output_guard_ref_id = _render_trace["output_guard_ref_id"]
-
-
-    # Part B3 enforcement — deterministic override, placed as the
-    # ABSOLUTE LAST content-mutating step (after response_confidence/
-    # bail_reason, output_guard, AND business_voice_filter above —
-    # each of those can itself rewrite `content`, including back into
-    # the exact canned clarifying-question class this gate exists to
-    # prevent, e.g. bail_reason.py's _LOW_CONFIDENCE_MESSAGE, with
-    # zero awareness of required_read_gate). Whatever `content` is at
-    # this point, if it still looks like that failure, replace it
-    # with the guaranteed-correct fallback built straight from the
-    # real read result. This MUST be the true last word — moved here
-    # (was originally right after response_confidence, which turned
-    # out not to be last either) after confirming live that even THAT
-    # placement still got overwritten downstream.
-    if _pre.required_read_gate:
-        from services.required_tool_gate import enforce_required_read_gate
-        content = enforce_required_read_gate(_pre.required_read_gate, content)
-        # 2026-02 round-4 — this gate's read_repo_file call happens
-        # OUTSIDE the orchestrator's own tool-dispatch loop, so without
-        # this it was invisible to B1's persisted trace (log_task_chain
-        # below reads result["tool_calls"]) even though a real read
-        # happened. Append it so the trace matches reality.
-        _gate_tcr = _pre.required_read_gate.get("tool_call_record")
-        if _gate_tcr:
-            result["tool_calls"] = (result.get("tool_calls") or []) + [_gate_tcr]
+    content, _leak_stripped, _length_capped, _output_guard_ref_id = await _chat_send_render_and_guard_output(body, content, _prior_fix_signal, extra_sys, result, user, _plain_english_active, _pre)
 
     # Maxx mode: watchdog review (only if we have non-empty content)
     # Iter 161 — same legacy-only gating as the streaming path: skip
     # when the new mode="maxx" pill is set because Claude already wrote
     # the code via use_code_model.
-    watchdog = None
-    is_new_maxx_pill = (body.mode or "").lower() == "maxx"
-    if body.maxx_mode and content.strip() and not is_new_maxx_pill:
-        watchdog = await call_emergent_watchdog(content)
-        provider = (provider or "deepseek") + "+emergent-watchdog"
-    # Iter 364 · Phase-3 — persist Maxx cost row. Best-effort accounting:
-    # LLM meta usually surfaces per-provider $ estimates; if not, we
-    # still log a 0-cost row so counts + daily-cap enforcement have
-    # ground truth. Any legacy or new Maxx invocation lands here.
-    if _wants_maxx and content.strip():
-        try:
-            from services.loop_beta import log_maxx_cost
-            meta = result.get("meta") or {}
-            deepseek_cost = float(meta.get("deepseek_cost_usd") or 0.0)
-            claude_cost   = float(meta.get("claude_cost_usd")   or 0.0)
-            await log_maxx_cost(
-                _db,
-                user_id=user["user_id"],
-                loop_id=None,
-                deepseek_cost_usd=deepseek_cost,
-                claude_cost_usd=claude_cost,
-                model_meta={
-                    "provider":         provider,
-                    "req_mode":         req_mode,
-                    "maxx_mode_legacy": bool(body.maxx_mode),
-                    "watchdog":         bool(watchdog),
-                    "surface":          "chat_send",
-                },
-            )
-        except Exception as _mce:
-            logger.debug("maxx_cost_log write failed (chat_send): %r", _mce)
-
-    interaction = finalize(result, content, prompt=body.prompt,
-                           session_id=body.session_id or "", request_id=interaction_request_id,
-                           low_confidence=_low_confidence)
-    if interaction:
-        result["turn_state"] = interaction["turn_state"]
-    await _persist_turn(user["user_id"], body.session_id or "",
-                        body.prompt, content, provider, watchdog=watchdog,
-                        project_id=body.project_id,
-                        low_confidence=_low_confidence,
-                        ship_suppressed=_ship_suppressed,
-                        bin_ctx=bin_ctx, interaction=interaction)
+    watchdog, provider, interaction = await _chat_send_finalize_turn(body, content, provider, _wants_maxx, result, _db, user, req_mode, finalize, interaction_request_id, _low_confidence, _ship_suppressed, bin_ctx)
     # 2026-09-08 — task-chain logging (structured, not raw CoT).
-    try:
-        from services.task_chain_logging import log_task_chain, log_unverified_tool_claims
-        from services.tool_failure_evidence import turn_tool_calls
-        asyncio.create_task(log_task_chain(
-            _db, user_id=user["user_id"], session_id=body.session_id or "",
-            project_id=body.project_id, user_prompt=body.prompt or "",
-            tool_calls=turn_tool_calls(result), final_response=content,
-            turn_state=result.get("turn_state") or "success",
-            failure_mode=result.get("failure_mode") or result.get("error"),
-            sequential_thoughts=result.get("sequential_thoughts") or [],
-        ))
-        asyncio.create_task(log_unverified_tool_claims(
-            _db, user_id=user["user_id"], session_id=body.session_id or "",
-            project_id=body.project_id,
-            claims=result.get("unverified_tool_claims_blocked") or [],
-        ))
-    except Exception as _tc_exc:
-        logger.debug("task_chain logging skipped (chat_send): %r", _tc_exc)
-    if body.session_id:
-        asyncio.create_task(
-            _maybe_set_title(user["user_id"], body.session_id, body.prompt)
-        )
-    tokens_remaining = await _deduct_tokens(user["user_id"], content)
-    # 2026-08-19 P0 fix — this was the main customer chat path with
-    # ZERO cost tracking anywhere (confirmed: 0 of 2,739 real turns in
-    # a preview audit had a cost row). Best-effort, never blocks reply.
-    try:
-        from services.customer_cost_tracker import log_customer_chat_cost
-        await log_customer_chat_cost(
-            user_id=user["user_id"], session_id=body.session_id or "",
-            project_id=body.project_id, route="chat_send",
-            provider=provider, prompt_text=body.prompt,
-            system_text=extra_sys or "", output_text=content,
-        )
-    except Exception as e:
-        logger.warning("customer chat cost log skipped (chat_send): %r", e)
-    # Iter 365 · Phase 3 — funnel event: first_chat_sent (idempotent
-    # via one-shot flag on dev_users). Best-effort, non-blocking.
-    try:
-        from cto_services.db import get_db as _fn_db
-        from services.signup_guards import emit_funnel_event
-        _fdb = _fn_db()
-        if _fdb is not None:
-            _stamped = await _fdb.dev_users.find_one_and_update(
-                {"user_id": user["user_id"], "first_chat_at": {"$exists": False}},
-                {"$set": {"first_chat_at": time.time()}},
-                projection={"_id": 0, "user_id": 1},
-            )
-            if _stamped:
-                await emit_funnel_event(
-                    _fdb, user_id=user["user_id"],
-                    event_type="first_chat_sent",
-                    metadata={"provider": provider, "mode": req_mode},
-                )
-    except Exception as _fne:
-        logger.debug("first_chat_sent funnel emit failed: %r", _fne)
-    # Iter 212m-15 — stage timing instrumentation. Lets us spot whether
-    # a slow turn was the LLM (normal — 5-15s on cold OpenRouter), or
-    # one of the cheap pre-flight steps stalling (which would be a
-    # real bug). Format: chat_send.timing pre=<s> llm=<s> persist=<s>
-    # total=<s> prompt_len=<n> project_id=<pid|none>
-    try:
-        t_done = time.time()
-        logger.info(
-            "chat_send.timing pre=%.3f llm=%.3f persist=%.3f total=%.3f "
-            "prompt_len=%d project_id=%s",
-            t_preflight - t_start,
-            t_llm - t_preflight,
-            t_done - t_llm,
-            t_done - t_start,
-            len(body.prompt or ""),
-            pid or "none",
-        )
-    except Exception:
-        pass
+    tokens_remaining = await _chat_send_post_turn_bookkeeping(_db, user, body, result, content, provider, extra_sys, req_mode, t_preflight, t_start, t_llm, pid)
     return {
         "ok": result.get("ok", True),
         **({"interaction": interaction, "turn_state": interaction["turn_state"],

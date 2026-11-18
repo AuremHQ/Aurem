@@ -38,6 +38,9 @@ export default function useGitHubConnectStatus() {
   const [pending, setPending] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
   const [freshInstallIds, setFreshInstallIds] = useState([]);
+  // FIX #1 (2026-11-17) -- the fallback link URL, built from a minted link
+  // token (see mintInstallUrl). Null until the first mint resolves.
+  const [installUrl, setInstallUrl] = useState(null);
   const popupRef = useRef(null);
   const pollRef = useRef(null);
   const syncRef = useRef(null);
@@ -66,6 +69,37 @@ export default function useGitHubConnectStatus() {
   const stopSync = useCallback(() => {
     clearInterval(syncRef.current); syncRef.current = null;
   }, []);
+
+  // FIX #1 (2026-11-17) -- mint the single-use, 5-minute link token that
+  // the fallback `installUrl` carries. The session JWT goes in the
+  // Authorization header of this POST (via the api interceptor) and
+  // never in a URL.
+  const mintInstallUrl = useCallback(async () => {
+    try {
+      const { data } = await api.post("/github/oauth/link-token", {});
+      const linkToken = data?.link_token;
+      if (linkToken) {
+        setInstallUrl(`${API_BASE}/github/oauth/connect?app_install=1&auth=${encodeURIComponent(linkToken)}`);
+      }
+    } catch {
+      // A failed mint only hides the fallback link; the popup flow
+      // (startConnect) mints its own token on click.
+    }
+  }, []);
+
+  // FIX #1 (2026-11-17) -- keep the fallback link's token fresh: link
+  // tokens live 5 minutes and are single-use, so mint one on mount,
+  // refresh it before it expires, and mint a fresh one when the user
+  // returns to this tab (a token spent by an earlier click is gone).
+  useEffect(() => {
+    mintInstallUrl();
+    const refreshId = setInterval(mintInstallUrl, 4 * 60_000);
+    window.addEventListener("focus", mintInstallUrl);
+    return () => {
+      clearInterval(refreshId);
+      window.removeEventListener("focus", mintInstallUrl);
+    };
+  }, [mintInstallUrl]);
 
   // Readiness is per attempted installation, never the global `connected`
   // flag: an unrelated old project's repos cannot finish this synchronization.
@@ -142,8 +176,34 @@ export default function useGitHubConnectStatus() {
     // browser's own github.com session. See routers/github_oauth.py's
     // `app_install_switch` flow for the chained redirect into the real
     // install URL this used to open directly.
-    const url = `${API_BASE}/github/oauth/connect?app_install=1&auth=${encodeURIComponent(token)}`;
-    const popup = window.open(url, "aurem_github_app_install", "width=720,height=800");
+    // FIX #1 (2026-11-17) -- the session JWT must never appear in a URL
+    // (browser history, server logs, Referer). A `window.open` navigation
+    // cannot send an Authorization header, so mint a single-use,
+    // 5-minute link token with the JWT in the header (POST
+    // /github/oauth/link-token) and navigate the popup with that token.
+    // The popup is opened blank first so the browser still treats it
+    // as a user-gesture popup.
+    const popup = window.open("", "aurem_github_app_install", "width=720,height=800");
+    if (popup) {
+      api.post("/github/oauth/link-token", {})
+        .then(({ data }) => {
+          const linkToken = data?.link_token;
+          if (!linkToken) throw new Error("empty link token");
+          if (!popup.closed) {
+            popup.location.href = `${API_BASE}/github/oauth/connect?app_install=1&auth=${encodeURIComponent(linkToken)}`;
+          }
+        })
+        .catch(() => {
+          try {
+            popup.close();
+          } catch {
+            /* already closed */
+          }
+          stopPolling();
+          setConnectionError("Could not open the GitHub connect page. Please try again.");
+          setConnecting(false);
+        });
+    }
     trackFunnel("connect_repo_click", "wizard", { popup_blocked: !popup });
     if (!popup) return { ok: false, reason: "popup_blocked" };
     popupRef.current = popup;
@@ -252,8 +312,8 @@ export default function useGitHubConnectStatus() {
     if (confirmedRef.current.length) finishGrant(latest, confirmedRef.current);
     return latest;
   }, [fetchStatus, finishGrant]);
-  const token = getToken();
-  const installUrl = token ? `${API_BASE}/github/oauth/connect?app_install=1&auth=${encodeURIComponent(token)}` : null;
+  // installUrl is minted state now (see mintInstallUrl) -- the session JWT
+  // never goes in a URL (FIX #1).
   return {
     status, connecting, syncing, timedOut, denied, pending, connectionError,
     startConnect, retry: startConnect, refresh, installUrl, freshInstallIds,
