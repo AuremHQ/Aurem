@@ -12,7 +12,7 @@
  * live in Phase 2 per the spec.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, X, Send, RefreshCw, Zap, AlertTriangle,
+import { MessageSquare, X, Send, Zap, AlertTriangle,
           Settings, Clock, Plus, Square, ListChecks, Video } from "lucide-react";
 import { api } from "../lib/api";
 import { getToken } from "../lib/api";

@@ -14,7 +14,7 @@ import {
   Settings, LogOut, ChevronRight, MessageSquarePlus,
   ShieldCheck, Activity, Lock, Bug,
 } from "lucide-react";
-import { getToken, getUser, isAdminOrFounder } from "../../../lib/api";
+import { getToken, isAdminOrFounder } from "../../../lib/api";
 import SuggestionBoxModal from "../../SuggestionBoxModal";      // Iter 212m-193
 
 const API_BASE = `${(typeof process !== "undefined" ? process.env.REACT_APP_BACKEND_URL : "") || ""}/api/aurem-dev`;

@@ -18,7 +18,7 @@
  *   • Token counter top-right; -N animation on every spend
  *   • Empty state (pre-scan) with 5 category buttons + Full Scan CTA
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield, Zap, Code2, Package, Database, RefreshCw, Loader2,

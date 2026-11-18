@@ -108,7 +108,7 @@ export function orderFixListItems(items) {
 }
 // Robot Fix List F3 — same "tests/vendor last" rule, applied at the
 // FILE level (grouped rows) instead of per-issue.
-export function orderFixListFiles(files) {
+function orderFixListFiles(files) {
   const primary = [];
   const deprioritized = [];
   for (const f of files) (isLowPriorityFixFile(f.file) ? deprioritized : primary).push(f);

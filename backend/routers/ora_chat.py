@@ -89,24 +89,6 @@ def _needs_tree(query: str, labels: Optional[list] = None) -> bool:
     return bool(_TREE_TRIGGER_RE.search(query or ""))
 
 
-async def _codebase_context(query: str,
-                             labels: Optional[list] = None) -> tuple:
-    """Returns (block_for_prompt, highlights, tree). Highlights are
-    ALWAYS injected (curated ground truth); tree is conditional."""
-    try:
-        highlights = await ora_codebase.system_highlights()
-    except Exception:
-        highlights = ""
-    tree = ""
-    if _needs_tree(query, labels):
-        try:
-            tree = await ora_codebase.compact_tree(max_files=120)
-        except Exception:
-            tree = ""
-    block = f"{highlights}\n\n{tree}".strip() if (highlights or tree) else None
-    return block, highlights, tree
-
-
 class NewSessionBody(BaseModel):
     title: Optional[str] = Field(default="", max_length=80)
 
@@ -870,7 +852,6 @@ async def canary_runs(limit: int = 10,
     return {"ok": True, "runs": [row async for row in cursor]}
 
 
-
 # ── Phase 2 · srcdoc-sandbox preview (Iter 212m-264 · Feb 2026) ─────
 # Security contract enforced by this endpoint:
 #   1. 16MB hard cap on submitted code (reject 413 before scanning).
@@ -944,7 +925,6 @@ async def preview_scan(body: PreviewScanBody,
         "blockers": blockers,
         "warnings": warnings,
     }
-
 
 
 # ── Phase 3 · Two-layer intent classifier (Iter 212m-265 · Feb 2026) ──

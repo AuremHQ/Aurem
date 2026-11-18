@@ -29,7 +29,7 @@
  *      Any CRITICAL finding refuses render; HIGH findings surface
  *      as a warning banner but do not block.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { X, RefreshCw, ShieldCheck, ShieldAlert, Code2, Eye, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 

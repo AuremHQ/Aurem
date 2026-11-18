@@ -7,7 +7,7 @@
  * platform's file-size guard.
  */
 export const STORAGE_KEY = "aurem_consent";
-export const VERSION = 1;
+const VERSION = 1;
 
 export const DEFAULT_CATS = {
   necessary:  true,   // always on, non-toggleable
@@ -74,7 +74,7 @@ export function applyConsentToTrackers(cats) {
   } catch (_) { /* never break page for consent-plumbing */ }
 }
 
-export function loadMetaPixel() {
+function loadMetaPixel() {
   if (typeof window === "undefined") return;
   if (window.fbq && window.fbq.loaded) return;
   !(function (f, b, e, v, n, t, s) {

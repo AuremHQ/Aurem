@@ -23,10 +23,10 @@ import React from "react";
 import { RefreshCw, Lock } from "lucide-react";
 import HoverTip from "./HoverTip";
 
-export const EXEC_MODE_KEY = "ora_execution_mode";
-export const EXEC_MODES = { PROMPT: "prompt", LOOP: "loop" };
+const EXEC_MODE_KEY = "ora_execution_mode";
+const EXEC_MODES = { PROMPT: "prompt", LOOP: "loop" };
 
-export function loadExecMode() {
+function loadExecMode() {
   try {
     const v = localStorage.getItem(EXEC_MODE_KEY);
     return v === EXEC_MODES.LOOP ? EXEC_MODES.LOOP : EXEC_MODES.PROMPT;
@@ -35,7 +35,7 @@ export function loadExecMode() {
   }
 }
 
-export function saveExecMode(m) {
+function saveExecMode(m) {
   try { localStorage.setItem(EXEC_MODE_KEY, m); } catch { /* ignore */ }
 }
 

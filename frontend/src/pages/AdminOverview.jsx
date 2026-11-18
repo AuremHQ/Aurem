@@ -937,7 +937,7 @@ export default function AdminOverview() {
 // that the numbers may be days old.  Now surfaces `Δ days ago` when
 // the source is `build_manifest` so ops can see at a glance whether
 // the deploy pipeline is refreshing the manifest.
-export function QaCountsStrip() {
+function QaCountsStrip() {
   const [d, setD] = useState(null);
   useEffect(() => {
     api.get("/admin/qa/counts").then((r) => setD(r.data)).catch(() => {});

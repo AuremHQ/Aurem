@@ -314,7 +314,6 @@ function VideoRulesBody() {
     } finally { setBusy(false); }
   };
 
-  const over = text.length > MAX_LEN;
 
   if (!loaded) {
     return (
@@ -355,14 +354,14 @@ function VideoRulesBody() {
           width: "100%", boxSizing: "border-box",
           padding: 12,
           background: "rgba(255,255,255,0.03)",
-          border: `1px solid ${over ? "#f88" : "rgba(255,255,255,0.08)"}`,
+          border: "1px solid rgba(255,255,255,0.08)",
           borderRadius: 8, color: "#e8e3d3",
           fontFamily: "ui-monospace, monospace", fontSize: 12,
           lineHeight: 1.5, resize: "vertical",
           outline: "none",
         }}
       />
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6, fontSize: 11, color: over ? "#f88" : "#7a7466" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6, fontSize: 11, color: "#7a7466" }}>
         <span data-testid="video-hr-counter">{text.length} / {MAX_LEN}</span>
       </div>
 
@@ -386,11 +385,11 @@ function VideoRulesBody() {
       <input ref={fileInputRef} data-testid="video-house-rules-file-input" type="file"
              accept=".txt,.md,text/plain,text/markdown" onChange={onFileChosen} style={{ display: "none" }} />
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button data-testid="video-house-rules-save" onClick={save} disabled={over || busy || !dirty}
+        <button data-testid="video-house-rules-save" onClick={save} disabled={busy || !dirty}
                 style={{
                   padding: "10px 16px", border: "none", borderRadius: 6,
-                  background: (over || busy || !dirty) ? "#3a3428" : "#E07A5F",
-                  color: "#0a0a0a", cursor: (over || busy || !dirty) ? "not-allowed" : "pointer",
+                  background: (busy || !dirty) ? "#3a3428" : "#E07A5F",
+                  color: "#0a0a0a", cursor: (busy || !dirty) ? "not-allowed" : "pointer",
                   fontSize: 12, fontWeight: 600,
                 }}>
           {busy ? "Saving…" : "Save"}

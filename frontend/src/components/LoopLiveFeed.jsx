@@ -420,7 +420,6 @@ import {
   ChevronDown, ChevronUp, GitPullRequest, Info,
 } from "lucide-react";
 import { rollbackLoop, getLoopStatus } from "../lib/loopApi";
-import OperationHistory from "./OperationHistory";
 import RollbackConfirmModal from "./RollbackConfirmModal";
 import { PreferredSourceButton } from "./PreferredSourceButton";
 import { sanitizeErrorMessage } from "../lib/sanitizeError";

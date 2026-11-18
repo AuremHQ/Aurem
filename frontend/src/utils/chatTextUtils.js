@@ -63,7 +63,7 @@ export function getUnlockedModesSync() {
 // on what counts as "the user explicitly asked for Loop mode in
 // plain English/Hinglish". Used by ChatPanel's send() to actually
 // switch into Loop mode (if entitled) instead of ignoring the phrase.
-export const LOOP_OPT_IN_RE =
+const LOOP_OPT_IN_RE =
   /\b(as a loop|loop mode|run (this |it )?as a loop|loop chala|loop mein|loop me\b)/i;
 
 export function detectsLoopOptIn(text) {
@@ -75,7 +75,7 @@ export function detectsLoopOptIn(text) {
 // Finds every ```lang\n...``` block in a markdown body.  Returns
 // [{ lang, code }] with each lang lower-cased; falls back to "text"
 // when no language tag is given.
-export const CODE_BLOCK_RE = /```(\w+)?\n([\s\S]*?)```/g;
+const CODE_BLOCK_RE = /```(\w+)?\n([\s\S]*?)```/g;
 
 export function extractCodeBlocks(content) {
   if (!content) return [];
@@ -101,7 +101,7 @@ export function extractCodeBlocks(content) {
 // followed by an optional markdown wrapper (`**`, `*`, or backtick) and
 // a quoted literal.  Match window is 2-80 chars so we don't accidentally
 // chip out a paragraph and we don't chip out a single-character noise.
-export const SUGGESTION_RX = new RegExp(
+const SUGGESTION_RX = new RegExp(
   // intro verb
   "\\b(?:say|reply|respond(?:\\s+with)?|type)\\s+" +
   // optional opening md wrapper

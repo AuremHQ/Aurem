@@ -57,7 +57,6 @@ IMAGE_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/webp",
 # `_describe_image_via_vision` stays importable here for existing callers/tests.
 from services.vision_describe import (  # noqa: E402
     describe_image_via_vision as _describe_image_via_vision,
-    _PRIMARY_VISION_MODEL, _FALLBACK_VISION_MODEL, _VISION_PROMPT,  # noqa: F401
 )
 
 

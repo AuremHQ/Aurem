@@ -59,7 +59,6 @@ import { logout, getUser } from "../lib/api";
 // v2 chrome
 import { TopBar }       from "../components/dashboard/v2/TopBar";
 import TopBarStatusSlot from "../components/TopBarStatusSlot";
-import { Menu as MenuIcon } from "lucide-react";
 import SidebarV2Bound   from "../components/dashboard/v2/SidebarBound";
 import RailShell        from "../components/nav/RailShell";
 import AskAdvisorReal   from "../components/dashboard/v2/AskAdvisorReal";
@@ -147,7 +146,6 @@ function DashboardV2Body() {
   // Auto-close the mobile drawer when the user picks a repo OR when
   // the underlying route changes — otherwise it stays open over the
   // chat surface and feels broken.
-  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
   // Iter 212m-124 — "edge-trigger reveal" lives separately from the
   // intent-based hover state.  When the sidebar is fully translated
   // off-screen we can't hover the panel itself; we listen for the

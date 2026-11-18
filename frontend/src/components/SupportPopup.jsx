@@ -67,7 +67,7 @@ export function SupportButton({ source = "in_app", style = {},
   );
 }
 
-export function SupportPopup({ source = "in_app", onClose, initialBody = "" }) {
+function SupportPopup({ source = "in_app", onClose, initialBody = "" }) {
   const [body, setBody] = useState(initialBody);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null); // "ok" | "err" | null

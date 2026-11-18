@@ -27,7 +27,7 @@ import { cn } from "./cn";
 import { streamChat, api } from "../../../lib/api";
 import { getActiveProjectId } from "../../TabBar";
 import { Z_ADVISOR_TOGGLE } from "../../../lib/zIndex";
-import { CharCounter, formatTooLongError } from "../../CharCounter";
+import { CharCounter } from "../../CharCounter";
 import { preventSmartPunctuation } from "../../../utils/chatTextUtils";
 import {
   Lightbulb, ArrowUp, ChevronRight, Square,

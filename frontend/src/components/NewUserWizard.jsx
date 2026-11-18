@@ -29,19 +29,13 @@ import { Z_ACTIVE_MODAL } from "../lib/zIndex";
 const DISMISS_KEY = "aurem_wizard_dismissed";
 const REPO_RX = /^(https?:\/\/)?(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?$/i;
 
-export function isWizardDismissed() {
-  try { return localStorage.getItem(DISMISS_KEY) === "1"; }
-  catch { return true; }
-}
-export function dismissWizard() {
+function dismissWizard() {
   try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* private mode */ }
 }
 
 export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
-  const [step]         = useState(1);
   const [repoUrl, setRepoUrl]   = useState("");
   const [branch, setBranch]     = useState("main");
-  const [projectId, setProject] = useState(null);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState("");
   // 2026-09-01 — connect-flow refinement: standard SaaS pattern
@@ -522,7 +516,6 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
       // job here — land straight in the normal chat window, same as
       // any returning user, instead of steps 2/3 (task + shipping).
       const newProjectId = r.data?.project_id;
-      setProject(newProjectId);
       setActiveProjectId(newProjectId);
       fireGateCompleted(newProjectId);
       notifyProjectConnected();
@@ -731,7 +724,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
           ) : (<>
           {/* Robot Guide */}
           <RobotGuide message={robotMsg} kind={err ? "error" : "info"} testid="wizard-robot-guide" />
-          {step === 1 && (
+          {
             <form onSubmit={submitRepo} data-testid="wizard-step-1">
               <h2 id="wizard-title" style={hStyle}>
                 Connect your GitHub repo
@@ -1319,7 +1312,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
                 </>
               )}
             </form>
-          )}
+          }
           </>)}
         </div>
       </div>

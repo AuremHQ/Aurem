@@ -176,35 +176,6 @@ def _debit_days_from_ledger(ledger: list[dict]) -> set:
     return debit_days
 
 
-async def my_streak(authorization: str = Header(None)) -> dict[str, Any]:
-    """Reads onboarding_token_wallets.ledger and counts consecutive days
-    on which the user spent at least one cheap/frontier debit."""
-    me  = await current_dev(authorization)
-    db  = require_db()
-    uid = me["user_id"]
-    wallet = await db.onboarding_token_wallets.find_one(
-        {"user_id": uid}, {"_id": 0, "ledger": 1},
-    )
-    ledger = (wallet or {}).get("ledger") or []
-    debit_days = _debit_days_from_ledger(ledger)
-
-    # Walk back from today (UTC) and count consecutive days.
-    today = datetime.now(timezone.utc).date()
-    streak = 0
-    cursor = today
-    while cursor.isoformat() in debit_days:
-        streak += 1
-        cursor = cursor.fromordinal(cursor.toordinal() - 1)
-
-    return {
-        "user_id":        uid,
-        "current_streak": streak,
-        "total_build_days": len(debit_days),
-        "today_active":   today.isoformat() in debit_days,
-        "longest_streak": _longest_streak(debit_days),
-    }
-
-
 def _longest_streak(days: set[str]) -> int:
     if not days:
         return 0

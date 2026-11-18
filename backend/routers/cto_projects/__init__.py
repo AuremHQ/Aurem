@@ -26,7 +26,6 @@ from fastapi import APIRouter
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db, require_db
-from services.llm import call_llm
 from services.usage import assert_has_budget, assert_has_task_budget
 from services.github_api_writer import (
     commit_files as gh_api_commit,
@@ -135,7 +134,6 @@ from .preview import (             # noqa: E402,F401
     PreviewSessionBody, log_preview_session, get_pending_change,
     capture_preview_route, get_preview_receipt,
 )
-from .what_changed import get_what_changed   # noqa: E402,F401
 from .tasks import (               # noqa: E402,F401
     TaskBody, _enqueue_cto_task, submit_task, get_task, get_task_scan,
     retry_task, project_tasks, task_stream,
@@ -149,4 +147,3 @@ from .worker_api import (          # noqa: E402,F401
     _looks_truncated, _AI_SYS,
 )
 from .worker_git import _run_task_with_git   # noqa: E402,F401
-from .free_scan import get_free_scan         # noqa: E402,F401

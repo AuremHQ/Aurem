@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/api";
 import { toast } from "../components/Toast";
-import { Search, ChevronRight, ChevronDown, Loader2, Check, X, AlertTriangle } from "lucide-react";
+import { Search, ChevronRight, ChevronDown, Loader2 } from "lucide-react";
 
 const TIERS = ["free", "starter", "pro", "team", "founder"];
 

@@ -30,19 +30,8 @@ const _LABEL = {
   [SHIP_STATUS.FAILED]:       "Failed",
 };
 
-const _COLOR = {
-  [SHIP_STATUS.PENDING]:      "#8A8A8A",
-  [SHIP_STATUS.SHIPPING]:     "#FF6608",
-  [SHIP_STATUS.LIVE]:         "#22C55E",
-  [SHIP_STATUS.ROLLING_BACK]: "#FF6608",
-  [SHIP_STATUS.ROLLED_BACK]:  "#8A8A8A",
-  [SHIP_STATUS.FAILED]:       "#EF4444",
-};
 
 export function shipStatusLabel(status) {
   return _LABEL[status] || status;
 }
 
-export function shipStatusColor(status) {
-  return _COLOR[status] || "#8A8A8A";
-}

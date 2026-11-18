@@ -709,7 +709,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 await _finalize_wallet_hold(
                     db, user_id=user_id, action="fix",
                     run_id=_wallet_run_id(job_id, finding),
-                    ok=bool(res.get("ok")) and not res.get("skipped_no_change")
+                    ok=bool(res.get("ok"))
                        and not res.get("skipped_not_present"),
                     reason=last_err or "",
                 )
@@ -755,7 +755,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                         logger.debug("brain outcome attach skipped: %r", _bge)
                     continue
 
-                if res.get("skipped_no_change") or res.get("skipped_not_present"):
+                if res.get("skipped_not_present"):
                     # Part 2b R1 — a skip is neither a real fix nor a
                     # failure; count it separately so the bulk summary
                     # never claims N findings were "fixed" when some
@@ -764,7 +764,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     fjm.emit(job_id, "fix-done",
                              ok=True, finding_id=finding_id,
                              project_id=project_id,
-                             skipped_no_change=bool(res.get("skipped_no_change")),
+                             skipped_no_change=False,
                              skipped_not_present=bool(res.get("skipped_not_present")),
                              file=path, rule_id=rule_id,
                              fix_index=global_idx, fix_total=len(ordered))
@@ -772,8 +772,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                     total_skipped += 1
                     fixes_summary.append({
                         "index": global_idx, "file": path, "rule": rule_id,
-                        "status": "skipped_not_present" if res.get("skipped_not_present")
-                                  else "skipped_no_change",
+                        "status": "skipped_not_present",
                         "commit_sha": None, "github_url": None,
                     })
                     continue
@@ -919,8 +918,7 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # idempotent skipped_no_change re-run is also excluded.
                 # Part 2b R1 — skipped_not_present (finding already
                 # gone before the LLM ever ran) is excluded the same way.
-                if not is_unlim and not res.get("skipped_no_change") \
-                        and not res.get("skipped_not_present"):
+                if not is_unlim and not res.get("skipped_not_present"):
                     try:
                         await record_scan_fixes(user_id, tool, 1)
                         total_charged += 1

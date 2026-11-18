@@ -543,7 +543,7 @@ export function ReceiptCard({ verified, verifyNote, verifyUrl, receiptKey, fullp
         {verifyNote === "no_url_to_verify" ? (
           <>Deploy command finished, but no site URL is set to verify — set one in Edit to get a real receipt next time.</>
         ) : unreachable ? (
-          <>Deployed, but <b>{verifyUrl || "your site"}</b> isn&apos;t responding — <span style={{ textDecoration: "underline", cursor: "pointer" }} data-testid="deploy-receipt-check-again">Check again</span>.</>
+          <>Deployed, but <b>{verifyUrl || "your site"}</b> isn&apos;t responding — Check again.</>
         ) : (
           <>Deployed, but verification failed ({verifyNote || "unknown"}).</>
         )}

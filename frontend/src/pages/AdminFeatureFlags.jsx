@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/api";
 import { toast } from "../components/Toast";
-import { Loader2, Plus, X, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 
 function Toggle({ enabled, onChange, disabled, testid }) {
   return (

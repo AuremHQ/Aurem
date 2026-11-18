@@ -29,7 +29,6 @@ import IdleStartHelper from "./IdleStartHelper";
 
 import { useWarmStart } from "../hooks/useWarmStart";
 import GraphPanel from "./GraphPanel";
-import TemperatureBadge from "./TemperatureBadge";
 import { useF12Errors, detectMode, F12Badge, ModePill } from "./ChatPanelF12";
 import MessageBubble from "./MessageBubble";
 import PostTaskScan from "./PostTaskScan";
@@ -3277,7 +3276,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             const ready =
               finalContent.includes("[PLAN_READY]") ||
               finalContent.includes("PLAN_READY");
-            setLoopPhase(ready ? "plan_pending" : "plan_pending");
+            setLoopPhase("plan_pending");
           } else if (justSentPhase === "execute") {
             // Brief verify flash (Phase B will swap this for real
             // ruff/eslint), then auto-trigger the security scan.
