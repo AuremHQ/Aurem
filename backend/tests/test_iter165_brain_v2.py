@@ -208,7 +208,6 @@ def _extract_function_source(full_src: str, def_line: str) -> str:
 
 @pytest.mark.parametrize("def_line", [
     "async def _run_task_via_api(",
-    "async def _run_task_with_git(",
 ])
 def test_brain_v2_update_uses_correct_user_id_source(def_line):
     """AST-precision regression test: the `user_id=` keyword passed to

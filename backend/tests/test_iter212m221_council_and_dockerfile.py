@@ -17,12 +17,13 @@ Two contract tests:
 """
 
 from __future__ import annotations
+from pathlib import Path
 
 import pytest
 
 
 def test_is_dockerfile_exists_and_matches_real_manifests():
-    from routers.codebase_health import _is_dockerfile
+    from services.codebase_health_core import _is_dockerfile
 
     # Real Dockerfiles — MUST match.
     assert _is_dockerfile("dockerfile") is True

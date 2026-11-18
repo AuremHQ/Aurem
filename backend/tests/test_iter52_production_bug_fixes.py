@@ -38,7 +38,13 @@ def test_bug1_run_task_with_git_scrubs_pat():
         src, re.DOTALL,
     )
     assert git_section, "could not locate _run_task_with_git in source"
-    block = git_section.group(0)
+    assert "_run_task_via_api(" in git_section.group(0) and 'commit_mode="git"' in git_section.group(0), "git path must delegate to the unified _run_task_via_api with commit_mode git"
+    api_section = re.search(
+        r"async def _run_task_via_api\(.*?(?=\nasync def |\Z)",
+        src, re.DOTALL,
+    )
+    assert api_section, "could not locate _run_task_via_api in source"
+    block = api_section.group(0)
     assert "def _scrub" in block, "git path missing local _scrub helper"
     # The terminal except handler must use _scrub on str(e).
     assert "_scrub(str(e))" in block, (

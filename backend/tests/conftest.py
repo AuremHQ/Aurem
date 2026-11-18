@@ -16,6 +16,12 @@ file but does not affect runtime imports of the app.
 
 import os
 from pathlib import Path
+import sys
+
+# Tier 3 (2026-11-18): make backend/ importable no matter which directory pytest is run from. CI runs pytest with working-directory: backend, which puts backend/ on sys.path; running from the repo root (/app) does not, so import cto_services in the autouse fixture below failed with ModuleNotFoundError and errored every test at setup.
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
 
 # Load /app/backend/.env into the current process. We do this manually
 # (no dotenv dep needed) so it works even on a stripped CI image.
