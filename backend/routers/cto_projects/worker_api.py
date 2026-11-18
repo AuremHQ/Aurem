@@ -1,9 +1,14 @@
 """
 routers/cto_projects/worker_api.py — AUREM CTO Projects.
-API-only task worker: reads target files via GitHub REST, runs AI
-codegen (single or parallel agents), hallucination/syntax/lint gates,
-Vanguard verify (+ one auto-fix retry), commits atomically via the
-GitHub Data API, then post-push verifies + persists rich diff data.
+The ONE canonical CTO pipeline (Fix #15, 2026-11-18). _run_task_via_api
+runs every task through read, codegen, safety gates, then commit.
+commit_mode selects the commit mechanism only: api reads target files
+via GitHub REST and commits atomically via the GitHub Data API; git
+clones with the git binary, reads from disk, and commits with git
+commit / git push. The hallucination / syntax / lint gates, Vanguard
+verify, independent verifier, draft PR and done-status run identically
+on both paths. worker_git._run_task_with_git is a thin adapter that
+calls this with commit_mode set to git.
 
 Kept as ONE cohesive ~1200-line module per the founder's explicit
 2026-09 CTO-split ruling — this is a single linear pipeline, not
@@ -23,6 +28,7 @@ preview.py's module docstring for why.
 import asyncio
 import logging
 import re
+import shutil
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -219,6 +225,7 @@ from services.cto_pipeline_steps import (
 
 
 async def _run_task_via_api_prepare_context(task_id, owner, repo, branch, files, task, context, user_token, proj, path, body, _db):
+    path, body = None, None
     await _pkg._set_status(task_id, status="pulling", started_at=time.time())
     await _emit(task_id, "Reading repository files…", kind="phase_read", pct=10)
     await _pkg._log(task_id, f"📡 Reading {owner}/{repo}@{branch} via API…")
@@ -453,92 +460,8 @@ async def _run_task_via_api_reject_suspect_edits(edits, bad, task_id, _truncatio
     return edits, parse_file_blocks, bad
 
 
-async def _run_task_via_api_check_multi_file_and_syntax(task_id, edits, _is_multi, _promised_files, user_msg):
-    await _pkg._log(task_id, f"✅ {len(edits)} file{'' if len(edits) == 1 else 's'} "
-                         f"generated cleanly", "success")
-
-    # ── Multi-file contract — verify every file the user promised
-    # actually arrived. If something is missing we ask the LLM to
-    # fill the gap in one targeted retry and merge the result.
-    if _is_multi and _promised_files:
-        _delivered = {p.lstrip("./") for p in edits.keys()}
-        _missing = {f for f in _promised_files
-                    if f.lstrip("./") not in _delivered}
-        if _missing and len(_missing) <= 4:
-            await _emit(task_id,
-                        f"Missing files — regenerating ({len(_missing)})…",
-                        pct=77)
-            await _pkg._log(task_id,
-                       f"⚠️ Multi-file contract: missing "
-                       f"{', '.join(sorted(_missing))}", "warning")
-            _miss_nudge = (
-                "Your previous response was missing these files that "
-                "the task explicitly references:\n  - "
-                + "\n  - ".join(sorted(_missing))
-                + "\n\nGenerate the COMPLETE content for every missing "
-                  "file now, in the same FILE: <path>\n```\n…\n``` format. "
-                  "Output every missing file in one response — no "
-                  "'Next:', no 'Reply to continue'."
-            )
-            try:
-                fill = await _retry(
-                    lambda: _pkg.call_llm(
-                        messages=[{"role": "user",
-                                   "content": user_msg + "\n\n" + _miss_nudge}],
-                        system=_AI_SYS, max_tokens=12000, temperature=0.0,
-                    ),
-                    what="multi-file contract retry", task_id=task_id,
-                )
-                # Iter 212m-33 — tolerant FILE-block parser.
-                from services.llm_file_parser import parse_file_blocks
-                edits.update(parse_file_blocks(fill))
-            except Exception as _fe:
-                logger.warning("multi-file contract retry soft-failed: %r", _fe)
-
-    # ── Syntax validation — catch broken code before it reaches
-    # GitHub. Shared gate — see `_run_syntax_gate` above (also
-    # called by `_run_task_with_git`, 2026-09-08 Phase 2 fix).
-    edits, _syntax_err = await _run_syntax_gate(task_id, edits, user_msg, _AI_SYS)
-    return edits, _syntax_err
-
-
-async def _run_task_via_api_run_lint_gate(edits, task, task_id):
-    try:
-        from services.sandbox_runner import validate_generated_files
-        _sandbox = await validate_generated_files(edits, task)
-        if not _sandbox.get("skipped"):
-            if _sandbox.get("ok"):
-                _passed = (
-                    _sandbox.get("checks", {})
-                             .get("tests", {})
-                             .get("passed", 0)
-                )
-                if _passed > 0:
-                    await _emit(task_id, f"Sandbox tests passed: {_passed} ✓",
-                                pct=80)
-                    await _pkg._log(task_id, f"Sandbox: {_passed} tests passed",
-                               "success")
-            else:
-                _tout = ""
-                for _cn, _cr in (_sandbox.get("checks") or {}).items():
-                    if not _cr.get("ok"):
-                        _tout += (_cr.get("output") or _cr.get("stderr") or "")[:500]
-                if _tout:
-                    await _pkg._log(task_id,
-                               f"⚠️ Sandbox flagged failures:\n{_tout[:300]}",
-                               "warning")
-    except Exception as _se:
-        logger.warning("sandbox validation soft-failed: %r", _se)
-
-    # iter 41 — Design Linter (zero LLM cost, pure regex). Shared
-    # gate — see `_run_lint_gate` above (also called by
-    # `_run_task_with_git`, 2026-09-08 Phase 2 fix).
-    edits, lint_result, _lint_err = await _run_lint_gate(task_id, edits)
-    return edits, lint_result, _lint_err
-
-
 async def _run_task_via_api(task_id, proj, task, files, context, user_token, maxx_mode: bool = False,
-                            resume_edits: Optional[dict] = None):
+                            resume_edits: Optional[dict] = None, *, commit_mode: str = 'api'):
     """API-only worker — no `git` binary needed. Reads target files from
     GitHub, asks AUREM to generate edits, then commits everything as ONE
     atomic commit via the Git Data API."""
@@ -576,7 +499,132 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         pass
 
     try:
-        contents, path, body, _db, _is_multi, _promised_files, user_msg, edits, summary, parallelized = await _run_task_via_api_prepare_context(task_id, owner, repo, branch, files, task, context, user_token, proj, path, body, _db)
+        path, body, _db = None, None, None
+        ws = None
+        from services.llm_file_parser import parse_file_blocks
+        if commit_mode == 'git':
+            def _scrub(s: str) -> str:
+                # Defence-in-depth: clone URLs, stderr, and Python tracebacks can
+                # all leak the PAT. Scrub every error string before it lands in
+                # Mongo or the user's task feed.
+                if not s:
+                    return s
+                return s.replace(user_token or "", "***PAT***") if user_token else s
+            ws = _pkg.WORKSPACE / task_id
+            ws.mkdir(parents=True, exist_ok=True)
+            repo_path = ws / "repo"
+            # 2026-08-24 fix — see matching fix in _run_rollback_with_git above:
+            # GitHub App installation tokens are the HTTPS PASSWORD (username
+            # "x-access-token"), not a username-only PAT-style embed.
+            clone_url = (f"https://x-access-token:{user_token}@github.com/{owner}/{repo}.git"
+                     if user_token else f"https://github.com/{owner}/{repo}.git")
+
+            # 1) clone
+            await _pkg._set_status(task_id, status="pulling", started_at=time.time())
+            await _pkg._log(task_id, f"Cloning {owner}/{repo}@{branch}…")
+            # 2026-09-09 — offloaded to a thread: see matching fix + rationale
+            # in rollback.py (confirmed root cause of the nginx "/health
+            # upstream timed out" bursts that made K8s mark the pod unhealthy
+            # mid-deploy — a synchronous git clone/push here blocks the SAME
+            # event loop that serves every other request, including /health).
+            r = await asyncio.to_thread(
+                _pkg._sh, ["git", "clone", "--depth=1", "--branch", branch, clone_url, str(repo_path)],
+                cwd=ws, timeout=120)
+            if r.returncode != 0:
+                raise RuntimeError(f"git clone failed: {_scrub(r.stderr)[:300]}")
+            await _pkg._log(task_id, "✅ Cloned", "success")
+
+            # 2) read target files
+            await _pkg._set_status(task_id, status="reading")
+            contents = {}
+            # 2026-09-12 — Bug 1 fix (critical-diff hallucination bug) —
+            # see the matching fix + full rationale in worker_api.py.
+            from services.cto_projects_helpers import _context_with_truncation_marker
+            for f in (files or [])[:6]:
+                fp = repo_path / f
+                if fp.is_file():
+                    _body = fp.read_text(errors="replace")
+                    contents[f], _ = _context_with_truncation_marker(_body)
+                    await _pkg._log(task_id, f"📄 read {f}")
+            if not contents:
+                # auto-pick a few likely files
+                for cand in ["main.py", "app.py", "server.py", "index.html",
+                             "src/App.jsx", "src/main.jsx", "pages/index.js", "README.md"]:
+                    fp = repo_path / cand
+                    if fp.is_file():
+                        _body = fp.read_text(errors="replace")
+                        contents[cand], _ = _context_with_truncation_marker(_body)
+                        if len(contents) >= 4:
+                            break
+
+            # 3) ai fix
+            await _pkg._set_status(task_id, status="fixing")
+
+            # LOGIC FIX — mirror the API path: inject Project Brain, GitHub
+            # Issues, and Vanguard security skills here too. Without this, if
+            # `git` ever becomes available in production, Iter 41/42/44
+            # features silently vanish on every code task.
+            brain_ctx = ""
+            issues_ctx = ""
+            try:
+                from services.project_brain import (
+                    get_brain_v2, format_brain_for_agent,
+                )
+                _db = _pkg.get_db()
+                if _db is not None:
+                    _brain = await get_brain_v2(
+                        _db, proj.get("project_id", ""), proj.get("user_id"),
+                    )
+                    if _brain:
+                        brain_ctx = format_brain_for_agent(_brain)
+            except Exception:
+                brain_ctx = ""
+            try:
+                from services.github_issues_context import get_relevant_issues_context
+                _db = _pkg.get_db()
+                if _db is not None and user_token:
+                    issues_ctx = await get_relevant_issues_context(
+                        db=_db, repo_owner=owner, repo_name=repo,
+                        github_pat=user_token, task_description=task,
+                    )
+            except Exception:
+                issues_ctx = ""
+            if brain_ctx:
+                await _pkg._log(task_id, "🧠 injected project memory")
+            if issues_ctx:
+                await _pkg._log(task_id, "📋 injected relevant GitHub issues")
+
+            await _emit(task_id, "ORA thinking…", kind="phase_think", pct=30)
+            await _pkg._log(task_id, "🧠 DeepSeek thinking…")
+            files_blob = "\n\n".join(
+                f"FILE: {p}\n```\n{c}\n```" for p, c in contents.items()
+            )
+            extra_context_block = ""
+            if brain_ctx:
+                extra_context_block += f"\n\n[PROJECT MEMORY]\n{brain_ctx}"
+            if issues_ctx:
+                extra_context_block += f"\n\n[OPEN ISSUES]\n{issues_ctx}"
+            try:
+                from services.skill_context_injector import build_skill_context
+                sk_ctx = build_skill_context(task)
+                if sk_ctx:
+                    extra_context_block += f"\n\n{sk_ctx}"
+                    await _pkg._log(task_id, "🛡️ Applying security best practices for this task")
+            except Exception:
+                pass
+            user_msg = (
+                f"TASK: {task}\n"
+                f"{('CONTEXT: ' + context) if context else ''}\n\n"
+                f"Tech: {proj.get('tech_stack','auto')}\n\n"
+                f"{extra_context_block}\n\n{files_blob}"
+            )
+            path, body = None, None
+            _db = _pkg.get_db()
+            _is_multi = False
+            _promised_files = []
+            edits, summary, parallelized = {}, 'AI changes', False
+        else:
+            contents, path, body, _db, _is_multi, _promised_files, user_msg, edits, summary, parallelized = await _run_task_via_api_prepare_context(task_id, owner, repo, branch, files, task, context, user_token, proj, path, body, _db)
         agents_count = 1
         if resume_edits and resume_edits.get("edits"):
             # 2026-08-27 — checkpoint/resume Phase 2: skip regeneration,
@@ -602,7 +650,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 # Parallel agents are a Pro feature — Free / Starter fall
                 # through to the single-agent path (no error, just slower).
                 _parallel_allowed = can_use_feature(user_tier, "parallel_agents")
-                if should_parallelize(task, file_tree_hint) and _parallel_allowed:
+                if should_parallelize(task, file_tree_hint) and _parallel_allowed and commit_mode == 'api':
                     # Pre-decompose so we know which agents are about to fire
                     # — that lets the chat bubble render the badges + per-agent
                     # mini progress bars BEFORE the LLM round-trip resolves.
@@ -672,7 +720,6 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 # Iter 212m-33 — tolerant FILE-block parser (was a rigid
                 # single-line regex that silently dropped edits whenever
                 # the model deviated by even one whitespace).
-                from services.llm_file_parser import parse_file_blocks
                 edits.update(parse_file_blocks(reply))
             else:
                 # Parallel path produced edits — record token-equivalent + agent name
@@ -771,7 +818,52 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             return
 
         await _emit(task_id, "Running linter…", kind="phase_verify", pct=75)
-        edits, _syntax_err = await _run_task_via_api_check_multi_file_and_syntax(task_id, edits, _is_multi, _promised_files, user_msg)
+        await _pkg._log(task_id, f"✅ {len(edits)} file{'' if len(edits) == 1 else 's'} "
+                             f"generated cleanly", "success")
+
+        # ── Multi-file contract — verify every file the user promised
+        # actually arrived. If something is missing we ask the LLM to
+        # fill the gap in one targeted retry and merge the result.
+        if _is_multi and _promised_files:
+            _delivered = {p.lstrip("./") for p in edits.keys()}
+            _missing = {f for f in _promised_files
+                        if f.lstrip("./") not in _delivered}
+            if _missing and len(_missing) <= 4:
+                await _emit(task_id,
+                            f"Missing files — regenerating ({len(_missing)})…",
+                            pct=77)
+                await _pkg._log(task_id,
+                           f"⚠️ Multi-file contract: missing "
+                           f"{', '.join(sorted(_missing))}", "warning")
+                _miss_nudge = (
+                    "Your previous response was missing these files that "
+                    "the task explicitly references:\n  - "
+                    + "\n  - ".join(sorted(_missing))
+                    + "\n\nGenerate the COMPLETE content for every missing "
+                      "file now, in the same FILE: <path>\n```\n…\n``` format. "
+                      "Output every missing file in one response — no "
+                      "'Next:', no 'Reply to continue'."
+                )
+                try:
+                    fill = await _retry(
+                        lambda: _pkg.call_llm(
+                            messages=[{"role": "user",
+                                       "content": user_msg + "\n\n" + _miss_nudge}],
+                            system=_AI_SYS, max_tokens=12000, temperature=0.0,
+                        ),
+                        what="multi-file contract retry", task_id=task_id,
+                    )
+                    # Iter 212m-33 — tolerant FILE-block parser.
+                    edits.update(parse_file_blocks(fill))
+                except Exception as _fe:
+                    logger.warning("multi-file contract retry soft-failed: %r", _fe)
+
+        # ── Syntax validation — catch broken code before it reaches
+        # GitHub. Shared gate — see `_run_syntax_gate` above (also
+        # called by `_run_task_with_git`, 2026-09-08 Phase 2 fix).
+        edits, _syntax_err = await _run_syntax_gate(task_id, edits, user_msg, _AI_SYS)
+
+
         if _syntax_err:
             await _pkg._log(task_id, f"🚫 {_syntax_err}", "error")
             await _pkg._set_status(task_id, status="failed", error=_syntax_err[:2000],
@@ -783,7 +875,39 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         # ── Sandbox validation (e2b) — runs generated Python in an
         # isolated container so ORA can verify its own code before
         # committing. Silently skipped if E2B_API_KEY isn't set.
-        edits, lint_result, _lint_err = await _run_task_via_api_run_lint_gate(edits, task, task_id)
+        try:
+            from services.sandbox_runner import validate_generated_files
+            _sandbox = await validate_generated_files(edits, task)
+            if not _sandbox.get("skipped"):
+                if _sandbox.get("ok"):
+                    _passed = (
+                        _sandbox.get("checks", {})
+                                 .get("tests", {})
+                                 .get("passed", 0)
+                    )
+                    if _passed > 0:
+                        await _emit(task_id, f"Sandbox tests passed: {_passed} ✓",
+                                    pct=80)
+                        await _pkg._log(task_id, f"Sandbox: {_passed} tests passed",
+                                   "success")
+                else:
+                    _tout = ""
+                    for _cn, _cr in (_sandbox.get("checks") or {}).items():
+                        if not _cr.get("ok"):
+                            _tout += (_cr.get("output") or _cr.get("stderr") or "")[:500]
+                    if _tout:
+                        await _pkg._log(task_id,
+                                   f"⚠️ Sandbox flagged failures:\n{_tout[:300]}",
+                                   "warning")
+        except Exception as _se:
+            logger.warning("sandbox validation soft-failed: %r", _se)
+
+        # iter 41 — Design Linter (zero LLM cost, pure regex). Shared
+        # gate — see `_run_lint_gate` above (also called by
+        # `_run_task_with_git`, 2026-09-08 Phase 2 fix).
+        edits, lint_result, _lint_err = await _run_lint_gate(task_id, edits)
+
+
         if _lint_err:
             await _pkg._set_status(task_id, status="failed", error=_lint_err[:2000],
                               completed_at=time.time())
@@ -955,7 +1079,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         # Claude outage → defaults to PASS so the pipeline never blocks.
         deepseek_draft = dict(edits)   # snapshot for the council log
         review_result = {"pass": True, "corrected": None, "issues": []}
-        if maxx_mode:
+        if maxx_mode and commit_mode == 'api':
             try:
                 await _pkg._log(task_id, "🔍 Claude reviewing DeepSeek edits…")
                 from services.code_reviewer import review_code_with_claude
@@ -977,31 +1101,32 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 await _pkg._log(task_id, f"⚠️ reviewer error (committing original): {_re_safe}", "warning")
                 review_result = {"pass": True, "corrected": None, "issues": []}
 
-        # 2d) Council log — fire-and-forget; never blocks the commit.
-        try:
-            from services.ora_council_logger import log_code_task
-            _db = _pkg.get_db()
-            if _db is not None:
-                await log_code_task(
-                    db=_db,
-                    user_message=task,
-                    repo_context=f"{owner}/{repo}@{branch}",
-                    deepseek_draft=str(deepseek_draft)[:4000],
-                    final_output=str(edits)[:4000],
-                    correction_applied=not review_result["pass"],
-                    pass_result=bool(review_result["pass"]),
-                    claude_correction=str(review_result.get("corrected") or "") or None,
-                    lint_blocked=False,
-                    lint_issues=lint_result.get("issues", []),
-                    parallelized=parallelized,
-                    agents_used_count=agents_count,
-                    task_id=task_id,
-                    user_id=proj.get("user_id"),
-                    project_id=proj.get("project_id"),
-                    maxx_mode=maxx_mode,
-                )
-        except Exception:
-            pass
+        if commit_mode == 'api':
+            # 2d) Council log — fire-and-forget; never blocks the commit.
+            try:
+                from services.ora_council_logger import log_code_task
+                _db = _pkg.get_db()
+                if _db is not None:
+                    await log_code_task(
+                        db=_db,
+                        user_message=task,
+                        repo_context=f"{owner}/{repo}@{branch}",
+                        deepseek_draft=str(deepseek_draft)[:4000],
+                        final_output=str(edits)[:4000],
+                        correction_applied=not review_result["pass"],
+                        pass_result=bool(review_result["pass"]),
+                        claude_correction=str(review_result.get("corrected") or "") or None,
+                        lint_blocked=False,
+                        lint_issues=lint_result.get("issues", []),
+                        parallelized=parallelized,
+                        agents_used_count=agents_count,
+                        task_id=task_id,
+                        user_id=proj.get("user_id"),
+                        project_id=proj.get("project_id"),
+                        maxx_mode=maxx_mode,
+                    )
+            except Exception:
+                pass
 
         # 2026-08-27 — checkpoint/resume Phase 2: persist the final,
         # fully-vetted edits (post hallucination-gate + Vanguard + lint)
@@ -1038,7 +1163,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         # ship-gate for Loop Mode, generalized via
         # services/task_independent_verifier.py + the shared
         # services/verification.py ledger.
-        _executed_by = f"worker_api:{'deepseek+claude' if maxx_mode else 'deepseek'}"
+        _executed_by = "worker_git:codegen" if commit_mode == "git" else "worker_api:deepseek+claude" if maxx_mode else "worker_api:deepseek"
         try:
             from services.task_independent_verifier import verify_task_completion
             await _pkg._log(task_id, "🔎 Independent verifier checking the diff against your request…")
@@ -1071,287 +1196,381 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
             "success" if _iv_result.get("decision") == _v_mod.DECISION_PASS else "warning",
         )
 
-        # 3) Commit + push as one atomic API call
-        await _pkg._set_status(task_id, status="pushing")
-        # Per-file progress frames so the live tape can render the
-        # "Writing 2/4 files" mini bar. _pkg.gh_api_commit is atomic on the
-        # remote side, so we narrate the writes locally before firing it.
-        _file_list = list(edits.keys())
-        _total = len(_file_list)
-        _db_plan = _pkg.get_db()
-        for _i, _fp in enumerate(_file_list, 1):
-            await _emit(
-                task_id,
-                f"Writing file {_i} of {_total}: {_fp}",
-                kind="task_state",
-                files_done=_i,
-                files_total=_total,
-                pct=85 + int((_i / max(_total, 1)) * 5),
-            )
-            # Flip the matching task_plan row → done so the UI's
-            # TaskManagementPanel ticks off in real time.
-            if _promised_files and _db_plan is not None:
-                try:
-                    await _db_plan.cto_tasks.update_one(
-                        {"task_id": task_id, "task_plan.file": _fp},
-                        {"$set": {"task_plan.$.status": "done"}},
-                    )
-                except Exception:
-                    pass
-        await _emit(task_id, "Committing to GitHub…", kind="phase_commit", pct=90)
+        if commit_mode == 'git':
+            # Write-guard (2026-09-08 path-guard, Fix #15): git path
+            # bypasses ; check the SAME
+            # deny-list / warn-block behaviour before the first write.
+            from services.write_guard import RULE_PATH_GUARD as _WG_RULE, get_mode as _wg_mode_fn, matched_deny_pattern as _wg_denied
+            _wg_db = _pkg.get_db()
+            _wg_mode = await _wg_mode_fn(_wg_db, _WG_RULE) if _wg_db is not None else "warn"
+            _wg_denied_paths = [p for p in edits if _wg_denied(p)]
+            if _wg_denied_paths and _wg_mode == "block":
+                _wg_err = f"Blocked - write-guard deny-list: {_wg_denied_paths}"
+                await _pkg._set_status(task_id, status="failed", error=_wg_err, completed_at=time.time())
+                return
+            # 4) write
+            for path, content in edits.items():
+                fp = repo_path / path
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(content)
+                await _pkg._log(task_id, f"💾 {path}")
 
-        # ── Iter 286 (Track 0) — test-file lock ──────────────────────
-        # ship_code / Mode-C task path previously committed whatever
-        # the LLM generated, gated only by Vanguard secrets scan. The
-        # loop-pipeline test-file lock (services/loop_diff_classifier)
-        # was NOT applied — an MCP client could ship task=`fix the
-        # failing test` and the agent would rewrite test_*.py to
-        # satisfy the failing case. Same protection Loop mode has:
-        # block by default, allow only when the caller sets
-        # allow_test_file_change=true (that flag is human-approved
-        # in the Loop path; here it must never be self-grantable by
-        # the LLM — enforce by only reading it from the top-level
-        # task_meta, never from LLM-generated content).
-        try:
-            from services.loop_diff_classifier import is_test_or_fixture
-        except Exception:                        # noqa: BLE001
-            is_test_or_fixture = lambda _p: False   # noqa: E731
-        # 2026-08-25 · P0 hotfix (root cause of the "'str' object has
-        # no attribute 'get'" production crash, task t_4d07055adb99).
-        # `edits` is a {path: content} dict — iterating `for e in
-        # edits` already yields the path STRING, not a per-file dict.
-        # The old code then called .get("path") on that bare string,
-        # which is exactly the contract violation this resilience
-        # pass targets. Paths are the dict keys directly — no lookup
-        # needed at all.
-        _test_touched = [p for p in edits if is_test_or_fixture(p or "")]
-        # `allow_test_file_change` is read from the task record itself
-        # — never from LLM output — so the model cannot self-grant.
-        _task_row = await _db_plan.cto_tasks.find_one(
-            {"task_id": task_id},
-            {"allow_test_file_change": 1, "_id": 0},
-        ) or {}
-        _allow_tests = bool(_task_row.get("allow_test_file_change"))
-        if _test_touched and not _allow_tests:
-            _paths = list(_test_touched)
-            # 2026-08-27 · P5 (Journey/Intent-Grounding build round) —
-            # this used to read like an internal changelog entry
-            # ("Loop-pipeline test-file lock is enforced on this path
-            # (Iter 286)."). The LOCK BEHAVIOR is correct and unchanged
-            # — only the wording changes: one plain-English line, with
-            # the exact file paths still available in `blocked_paths`
-            # for the frontend to show on expand.
-            await _pkg._log(task_id,
-                       "⛔ Can't apply this change — "
-                       f"{'that file is' if len(_paths) == 1 else 'those files are'} "
-                       "locked (test file"
-                       f"{'' if len(_paths) == 1 else 's'}). Approve "
-                       "it in Loop mode and I'll make the change.",
-                       "error")
-            await _db_plan.cto_tasks.update_one(
-                {"task_id": task_id},
-                {"$set": {
-                    "status":          "blocked",
-                    "blocked_reason":  "test_file_lock",
-                    "blocked_paths":   _paths,
-                    "updated_at":      time.time(),
-                }},
-            )
-            return {"ok": False, "error": "test_file_lock",
-                    "blocked_paths": _paths}
-
-        async def _prog(step: str, status: str = "info"):
-            await _pkg._log(task_id, step, status)
-
-        # H3 hardening (2026-08-30, overnight-loop-2 P0) — re-fetch the
-        # project's LIVE GitHub binding right before the real commit and
-        # assert it still matches what was pinned when this worker
-        # started. Mismatch -> ABORT, zero writes, explicit user-visible
-        # error (never silently re-target). Same defence as
-        # loop_engine.py's confirm_ship() — see
-        # REPORT-x1-crossproject.md §W1/H3.
-        try:
-            _live_proj = await _db_plan.cto_projects.find_one(
-                {"project_id": _pin_project_id, "user_id": _pin_user_id},
-                {"_id": 0, "github_owner": 1, "github_repo": 1,
-                 "branch": 1, "github_branch": 1, "installation_id": 1},
-            )
-        except Exception as _pin_err:                                # noqa: BLE001
-            logger.warning("[%s] repo-pin re-fetch failed: %r", task_id, _pin_err)
-            _live_proj = None
-        if not _live_proj:
-            await _pkg._set_status(task_id, status="failed",
-                              error="Your project's GitHub connection could not be "
-                                    "verified right before shipping — re-link your "
-                                    "repo in Settings and try again. No commit was made.",
-                              completed_at=time.time())
-            return
-        _live_branch = _live_proj.get("branch") or _live_proj.get("github_branch") or "main"
-        if (_live_proj.get("github_owner") != _pin_owner
-                or _live_proj.get("github_repo") != _pin_repo
-                or _live_branch != _pin_branch
-                or (_pin_installation_id is not None
-                    and _live_proj.get("installation_id") != _pin_installation_id)):
-            logger.warning(
-                "[%s] SHIP REFUSED — repo pin mismatch. pinned=%s/%s@%s live=%s/%s@%s",
-                task_id, _pin_owner, _pin_repo, _pin_branch,
-                _live_proj.get("github_owner"), _live_proj.get("github_repo"), _live_branch)
-            try:
-                from services.trust_surface_events import log_trust_event
-                await log_trust_event(
-                    _db_plan, "loop_pin_mismatch", user_id=_pin_user_id or "unknown",
-                    task_id=task_id, project_id=_pin_project_id or "")
-            except Exception:
-                pass
-            await _pkg._set_status(task_id, status="failed",
-                              error="Your project's GitHub connection changed while "
-                                    "this task was running — refusing to write to a "
-                                    "repo/branch that no longer matches. No commit "
-                                    "was made. Re-run the task to ship against the "
-                                    "current connection.",
-                              completed_at=time.time())
-            return
-
-        # 2026-10 · Phase 1b fix — founder-reported 2026-10-21 incident
-        # (commit b58fa79, TJSNDHU/Aurem's `main`). Confirmed via the
-        # live "Creating commit… Pushing ref… Verifying… on remote"
-        # log lines that THIS worker (not worker_git.py) is the one
-        # that actually runs in production (`git` binary absent —
-        # see routers/cto_projects/__init__.py's `_GIT_AVAILABLE`).
-        #
-        # Part B — the user can now pick a repo/branch via the "Save
-        # to GitHub" modal (validated at /cto/tasks/submit, stored as
-        # `ship_target` on the task doc). `resolve_ship_target` reads
-        # that, or falls back to today's default (fresh
-        # `auremcto/ship-<task_id>` branch off `branch`) for older
-        # clients that never send it — same `create_or_reuse_branch`
-        # either way, no separate branch-creation code per case. If
-        # branch creation/validation fails, FAIL — no commit is
-        # attempted, no silent fallback to `branch`.
-        from services.loop_safety import open_or_reuse_pr, resolve_ship_target
-        owner, repo, ship_branch, _branch_err = await resolve_ship_target(
-            _db_plan, task_id=task_id, owner=owner, repo=repo,
-            base_branch=branch, token=user_token,
-        )
-        if _branch_err:
-            await _pkg._log(task_id, f"🚫 {_branch_err}", "error")
-            await _pkg._set_status(task_id, status="failed", error=_branch_err,
-                              completed_at=time.time())
-            return
-        await _pkg._log(task_id, f"🌿 shipping to {owner}/{repo}@{ship_branch}", "success")
-
-        # 2026-08-28 · P0 hotfix (root cause of the production
-        # "commit_files() missing 2 required positional arguments:
-        # 'author_email' and 'author_name'" crash). This is the ONLY
-        # commit_files() call site in the repo that never resolved a
-        # real developer identity first — every other caller (rollback,
-        # loop_engine, visibility kit, local_tools) does this same
-        # resolve_git_identity() call before committing.
-        from services.git_identity import resolve_git_identity
-        _author_name, _author_email = await resolve_git_identity(
-            _db_plan, proj.get("user_id") or "",
-        )
-        try:
-            # 2026-09-12 — content-fidelity fix, part 2. The commit
-            # message used to be `f"AUREM: {task[:60]}"` — a blind
-            # quote of the raw task text, which can describe an
-            # action ("append exactly <tag>") that the actual diff
-            # doesn't match (confirmed live: message claimed an exact
-            # append, the real diff was a full-file replace with no
-            # such tag). Lead with the FACTUAL, diff-derived file list
-            # so the message is always at least honest about WHAT was
-            # touched, with the task text as secondary context.
+            # 5) commit + push
+            await _pkg._set_status(task_id, status="pushing")
+            await asyncio.to_thread(_pkg._sh, ["git", "config", "user.email", "cto@auremcto.com"], repo_path)
+            await asyncio.to_thread(_pkg._sh, ["git", "config", "user.name", "AUREM"], repo_path)
+            await asyncio.to_thread(_pkg._sh, ["git", "add", "-A"], repo_path)
+            # 2026-09-12 — content-fidelity fix, part 2 (same as
+            # worker_api.py) — lead the commit message with the FACTUAL,
+            # diff-derived file list rather than blindly quoting the raw
+            # task text, which can describe an action the actual diff
+            # doesn't match.
             _changed = ", ".join(sorted(edits.keys())[:4])
             if len(edits) > 4:
                 _changed += f" (+{len(edits) - 4} more)"
             _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
-            result = await _retry(
-                lambda: _pkg.gh_api_commit(
-                    owner=owner, repo=repo, branch=ship_branch, token=user_token,
-                    files=edits,
-                    commit_message=_commit_msg,
-                    author_name=_author_name, author_email=_author_email,
-                    progress=_prog,
-                ),
-                what="GitHub commit", task_id=task_id, attempts=4, base_sleep=2.0,
+            cm = await asyncio.to_thread(_pkg._sh, ["git", "commit", "-m", _commit_msg], repo_path)
+            if "nothing to commit" in cm.stdout:
+                await _pkg._log(task_id, "ℹ️ no diff to commit", "info")
+                await _pkg._set_status(task_id, status="done", result=summary,
+                                  verification_status=_iv_result.get("decision"),
+                                  verification_level=_iv_result.get("verification_level"),
+                                  completed_at=time.time())
+                return
+            # 2026-10 · Phase 1 fix — founder-reported 2026-10-21 incident:
+            # "Approve the fix" pushed straight to `branch` (project default,
+            # typically `main`) with no branch choice, no PR, no warning —
+            # the UI promised a pull request and this worker never opened
+            # one.
+            #
+            # Part B — the user can now pick a repo/branch via the "Save
+            # to GitHub" modal (validated at /cto/tasks/submit, stored as
+            # `ship_target` on the task doc). `resolve_ship_target` reads
+            # that, or falls back to today's default (fresh
+            # `auremcto/ship-<task_id>` branch off `branch`) for older
+            # clients that never send it — same `create_or_reuse_branch`
+            # either way. If branch creation/validation fails, the task
+            # FAILS loudly — it never silently falls back to pushing
+            # `branch` directly.
+            from services.loop_safety import open_or_reuse_pr, resolve_ship_target
+            _cloned_owner, _cloned_repo = owner, repo
+            owner, repo, ship_branch, _branch_err = await resolve_ship_target(
+                _guard_db, task_id=task_id, owner=owner, repo=repo,
+                base_branch=branch, token=user_token,
             )
-        except PushFailedError as e:
-            # Ship/Commit Robustness · 2026-08-26 — the commit object
-            # exists (by SHA) but never reached `branch`'s history.
-            # This is NOT "nothing was committed" — surface the real
-            # SHA + `push_failed=True` so chat_helpers can render the
-            # truth instead of the generic failure message.
-            await _persist_push_failed(task_id, e)
-            return
-        sha = result["sha"]
-        commit_full_sha = result.get("full_sha") or sha
-        # B1-extend hardening (2026-08-30) — same fix as loop_engine.py's
-        # post-ship cache clear, applied here so the direct task-submit
-        # path can't leave a stale "disconnected" reading either.
-        try:
-            from routers.repo_status import invalidate as _invalidate_repo_status
-            _invalidate_repo_status(_pin_project_id or "")
-        except Exception as _inv_err:                                # noqa: BLE001
-            logger.debug("[%s] repo_status invalidate skipped: %r", task_id, _inv_err)
+            if _branch_err:
+                await _pkg._log(task_id, f"🚫 {_branch_err}", "error")
+                await _pkg._set_status(task_id, status="failed", error=_branch_err,
+                                  completed_at=time.time())
+                return
+            if (owner, repo) != (_cloned_owner, _cloned_repo):
+                # This worker already `git clone`d {_cloned_owner}/{_cloned_repo}
+                # locally — its `origin` remote can't retarget to a different
+                # repo without a fresh clone. Prod has no git binary (worker_api.py
+                # is the live path there), so a cross-repo ship_target never
+                # reaches this worker in prod; fail closed rather than silently
+                # pushing to the wrong repo on any host that DOES have git.
+                err = (f"Can't ship to {owner}/{repo} — this worker already "
+                       f"cloned {_cloned_owner}/{_cloned_repo} locally. "
+                       "Nothing was pushed.")
+                await _pkg._log(task_id, f"🚫 {err}", "error")
+                await _pkg._set_status(task_id, status="failed", error=err,
+                                  completed_at=time.time())
+                return
+            await _pkg._log(task_id, f"🌿 shipping to {owner}/{repo}@{ship_branch}", "success")
 
-        # POST-PUSH VERIFY — re-fetch every edited file at the new commit's
-        # SHA and confirm the remote content equals what we just pushed.
-        # This catches:
-        #   • branch protection that silently rejected the ref update
-        #   • partial / drift writes if a future GitHub API change ever
-        #     broke our blob/tree pipeline
-        #   • the original user complaint: "Claude says fix isn't in the
-        #     repo even though our UI says shipped"
-        # The verification proves on every task that the deployed code
-        # actually contains the AI's edits — no more silent successes.
-        await _pkg._log(task_id, f"🔎 Verifying {len(edits)} file(s) on remote @ {sha}…")
-
-        async def _verify_one(path: str, expected: str) -> tuple[str, bool, str]:
-            remote = await _pkg.gh_api_fetch_file(
-                owner, repo, path, commit_full_sha, user_token,
-            )
-            if remote is None:
-                return path, False, "remote returned 404"
-            # Iter 212m-6 — Normalise line endings (CRLF/CR → LF) and
-            # trailing whitespace BEFORE comparing. GitHub sometimes
-            # serves files with normalised newlines that differ from
-            # what we pushed even though the commit landed correctly.
-            # Without this, an otherwise-successful commit gets marked
-            # "failed" because the byte-for-byte comparison disagrees
-            # on whitespace-only differences.
-            def _norm(s: str) -> str:
-                return (s or "").replace("\r\n", "\n").replace("\r", "\n").rstrip()
-            if _norm(remote) != _norm(expected):
-                a, b = expected.splitlines(), remote.splitlines()
-                first_diff = next(
-                    (i for i in range(min(len(a), len(b))) if a[i] != b[i]),
-                    None,
+            push = await asyncio.to_thread(
+                _pkg._sh, ["git", "push", "origin", f"HEAD:refs/heads/{ship_branch}"],
+                repo_path, timeout=90)
+            if push.returncode != 0:
+                raise RuntimeError(f"git push failed: {_scrub(push.stderr)[:300]}")
+            sha_r = await asyncio.to_thread(_pkg._sh, ["git", "rev-parse", "--short", "HEAD"], repo_path)
+            sha = sha_r.stdout.strip()
+            commit_full_sha_r = await asyncio.to_thread(_pkg._sh, ["git", "rev-parse", "HEAD"], repo_path)
+            commit_full_sha = commit_full_sha_r.stdout.strip()
+            await _pkg._log(task_id, f"🚀 pushed — {sha} on {ship_branch}", "success")
+        else:
+            # 3) Commit + push as one atomic API call
+            await _pkg._set_status(task_id, status="pushing")
+            # Per-file progress frames so the live tape can render the
+            # "Writing 2/4 files" mini bar. _pkg.gh_api_commit is atomic on the
+            # remote side, so we narrate the writes locally before firing it.
+            _file_list = list(edits.keys())
+            _total = len(_file_list)
+            _db_plan = _pkg.get_db()
+            for _i, _fp in enumerate(_file_list, 1):
+                await _emit(
+                    task_id,
+                    f"Writing file {_i} of {_total}: {_fp}",
+                    kind="task_state",
+                    files_done=_i,
+                    files_total=_total,
+                    pct=85 + int((_i / max(_total, 1)) * 5),
                 )
-                hint = (f"differs from line {first_diff + 1}" if first_diff is not None
-                        else f"length local={len(expected)} remote={len(remote)}")
-                return path, False, hint
-            return path, True, "ok"
+                # Flip the matching task_plan row → done so the UI's
+                # TaskManagementPanel ticks off in real time.
+                if _promised_files and _db_plan is not None:
+                    try:
+                        await _db_plan.cto_tasks.update_one(
+                            {"task_id": task_id, "task_plan.file": _fp},
+                            {"$set": {"task_plan.$.status": "done"}},
+                        )
+                    except Exception:
+                        pass
+            await _emit(task_id, "Committing to GitHub…", kind="phase_commit", pct=90)
 
-        verify_results = await asyncio.gather(*[
-            _verify_one(p, c) for p, c in edits.items()
-        ])
-        failed = [(p, reason) for p, ok, reason in verify_results if not ok]
-        for p, ok, reason in verify_results:
-            await _pkg._log(task_id,
-                       f"   {'✅' if ok else '❌'} {p} ({reason})",
-                       "success" if ok else "error")
-        if failed:
-            err = "Post-push verification FAILED for: " + ", ".join(
-                f"{p} ({r})" for p, r in failed
+            # ── Iter 286 (Track 0) — test-file lock ──────────────────────
+            # ship_code / Mode-C task path previously committed whatever
+            # the LLM generated, gated only by Vanguard secrets scan. The
+            # loop-pipeline test-file lock (services/loop_diff_classifier)
+            # was NOT applied — an MCP client could ship task=`fix the
+            # failing test` and the agent would rewrite test_*.py to
+            # satisfy the failing case. Same protection Loop mode has:
+            # block by default, allow only when the caller sets
+            # allow_test_file_change=true (that flag is human-approved
+            # in the Loop path; here it must never be self-grantable by
+            # the LLM — enforce by only reading it from the top-level
+            # task_meta, never from LLM-generated content).
+            try:
+                from services.loop_diff_classifier import is_test_or_fixture
+            except Exception:                        # noqa: BLE001
+                is_test_or_fixture = lambda _p: False   # noqa: E731
+            # 2026-08-25 · P0 hotfix (root cause of the "'str' object has
+            # no attribute 'get'" production crash, task t_4d07055adb99).
+            # `edits` is a {path: content} dict — iterating `for e in
+            # edits` already yields the path STRING, not a per-file dict.
+            # The old code then called .get("path") on that bare string,
+            # which is exactly the contract violation this resilience
+            # pass targets. Paths are the dict keys directly — no lookup
+            # needed at all.
+            _test_touched = [p for p in edits if is_test_or_fixture(p or "")]
+            # `allow_test_file_change` is read from the task record itself
+            # — never from LLM output — so the model cannot self-grant.
+            _task_row = await _db_plan.cto_tasks.find_one(
+                {"task_id": task_id},
+                {"allow_test_file_change": 1, "_id": 0},
+            ) or {}
+            _allow_tests = bool(_task_row.get("allow_test_file_change"))
+            if _test_touched and not _allow_tests:
+                _paths = list(_test_touched)
+                # 2026-08-27 · P5 (Journey/Intent-Grounding build round) —
+                # this used to read like an internal changelog entry
+                # ("Loop-pipeline test-file lock is enforced on this path
+                # (Iter 286)."). The LOCK BEHAVIOR is correct and unchanged
+                # — only the wording changes: one plain-English line, with
+                # the exact file paths still available in `blocked_paths`
+                # for the frontend to show on expand.
+                await _pkg._log(task_id,
+                           "⛔ Can't apply this change — "
+                           f"{'that file is' if len(_paths) == 1 else 'those files are'} "
+                           "locked (test file"
+                           f"{'' if len(_paths) == 1 else 's'}). Approve "
+                           "it in Loop mode and I'll make the change.",
+                           "error")
+                await _db_plan.cto_tasks.update_one(
+                    {"task_id": task_id},
+                    {"$set": {
+                        "status":          "blocked",
+                        "blocked_reason":  "test_file_lock",
+                        "blocked_paths":   _paths,
+                        "updated_at":      time.time(),
+                    }},
+                )
+                return {"ok": False, "error": "test_file_lock",
+                        "blocked_paths": _paths}
+
+            async def _prog(step: str, status: str = "info"):
+                await _pkg._log(task_id, step, status)
+
+            # H3 hardening (2026-08-30, overnight-loop-2 P0) — re-fetch the
+            # project's LIVE GitHub binding right before the real commit and
+            # assert it still matches what was pinned when this worker
+            # started. Mismatch -> ABORT, zero writes, explicit user-visible
+            # error (never silently re-target). Same defence as
+            # loop_engine.py's confirm_ship() — see
+            # REPORT-x1-crossproject.md §W1/H3.
+            try:
+                _live_proj = await _db_plan.cto_projects.find_one(
+                    {"project_id": _pin_project_id, "user_id": _pin_user_id},
+                    {"_id": 0, "github_owner": 1, "github_repo": 1,
+                     "branch": 1, "github_branch": 1, "installation_id": 1},
+                )
+            except Exception as _pin_err:                                # noqa: BLE001
+                logger.warning("[%s] repo-pin re-fetch failed: %r", task_id, _pin_err)
+                _live_proj = None
+            if not _live_proj:
+                await _pkg._set_status(task_id, status="failed",
+                                  error="Your project's GitHub connection could not be "
+                                        "verified right before shipping — re-link your "
+                                        "repo in Settings and try again. No commit was made.",
+                                  completed_at=time.time())
+                return
+            _live_branch = _live_proj.get("branch") or _live_proj.get("github_branch") or "main"
+            if (_live_proj.get("github_owner") != _pin_owner
+                    or _live_proj.get("github_repo") != _pin_repo
+                    or _live_branch != _pin_branch
+                    or (_pin_installation_id is not None
+                        and _live_proj.get("installation_id") != _pin_installation_id)):
+                logger.warning(
+                    "[%s] SHIP REFUSED — repo pin mismatch. pinned=%s/%s@%s live=%s/%s@%s",
+                    task_id, _pin_owner, _pin_repo, _pin_branch,
+                    _live_proj.get("github_owner"), _live_proj.get("github_repo"), _live_branch)
+                try:
+                    from services.trust_surface_events import log_trust_event
+                    await log_trust_event(
+                        _db_plan, "loop_pin_mismatch", user_id=_pin_user_id or "unknown",
+                        task_id=task_id, project_id=_pin_project_id or "")
+                except Exception:
+                    pass
+                await _pkg._set_status(task_id, status="failed",
+                                  error="Your project's GitHub connection changed while "
+                                        "this task was running — refusing to write to a "
+                                        "repo/branch that no longer matches. No commit "
+                                        "was made. Re-run the task to ship against the "
+                                        "current connection.",
+                                  completed_at=time.time())
+                return
+
+            # 2026-10 · Phase 1b fix — founder-reported 2026-10-21 incident
+            # (commit b58fa79, TJSNDHU/Aurem's `main`). Confirmed via the
+            # live "Creating commit… Pushing ref… Verifying… on remote"
+            # log lines that THIS worker (not worker_git.py) is the one
+            # that actually runs in production (`git` binary absent —
+            # see routers/cto_projects/__init__.py's `_GIT_AVAILABLE`).
+            #
+            # Part B — the user can now pick a repo/branch via the "Save
+            # to GitHub" modal (validated at /cto/tasks/submit, stored as
+            # `ship_target` on the task doc). `resolve_ship_target` reads
+            # that, or falls back to today's default (fresh
+            # `auremcto/ship-<task_id>` branch off `branch`) for older
+            # clients that never send it — same `create_or_reuse_branch`
+            # either way, no separate branch-creation code per case. If
+            # branch creation/validation fails, FAIL — no commit is
+            # attempted, no silent fallback to `branch`.
+            from services.loop_safety import open_or_reuse_pr, resolve_ship_target
+            owner, repo, ship_branch, _branch_err = await resolve_ship_target(
+                _db_plan, task_id=task_id, owner=owner, repo=repo,
+                base_branch=branch, token=user_token,
             )
-            await _pkg._log(task_id, f"🚫 {err}", "error")
-            await _pkg._set_status(task_id, status="failed", error=err[:2000],
-                              commit_sha=sha, verify_failed=True,
-                              completed_at=time.time())
-            return
-        await _pkg._log(task_id,
-                   f"✅ Verified {len(edits)} file(s) live on {ship_branch}@{sha}",
-                   "success")
+            if _branch_err:
+                await _pkg._log(task_id, f"🚫 {_branch_err}", "error")
+                await _pkg._set_status(task_id, status="failed", error=_branch_err,
+                                  completed_at=time.time())
+                return
+            await _pkg._log(task_id, f"🌿 shipping to {owner}/{repo}@{ship_branch}", "success")
+
+            # 2026-08-28 · P0 hotfix (root cause of the production
+            # "commit_files() missing 2 required positional arguments:
+            # 'author_email' and 'author_name'" crash). This is the ONLY
+            # commit_files() call site in the repo that never resolved a
+            # real developer identity first — every other caller (rollback,
+            # loop_engine, visibility kit, local_tools) does this same
+            # resolve_git_identity() call before committing.
+            from services.git_identity import resolve_git_identity
+            _author_name, _author_email = await resolve_git_identity(
+                _db_plan, proj.get("user_id") or "",
+            )
+            try:
+                # 2026-09-12 — content-fidelity fix, part 2. The commit
+                # message used to be `f"AUREM: {task[:60]}"` — a blind
+                # quote of the raw task text, which can describe an
+                # action ("append exactly <tag>") that the actual diff
+                # doesn't match (confirmed live: message claimed an exact
+                # append, the real diff was a full-file replace with no
+                # such tag). Lead with the FACTUAL, diff-derived file list
+                # so the message is always at least honest about WHAT was
+                # touched, with the task text as secondary context.
+                _changed = ", ".join(sorted(edits.keys())[:4])
+                if len(edits) > 4:
+                    _changed += f" (+{len(edits) - 4} more)"
+                _commit_msg = f"AUREM: update {_changed} — {task}"[:120]
+                result = await _retry(
+                    lambda: _pkg.gh_api_commit(
+                        owner=owner, repo=repo, branch=ship_branch, token=user_token,
+                        files=edits,
+                        commit_message=_commit_msg,
+                        author_name=_author_name, author_email=_author_email,
+                        progress=_prog,
+                    ),
+                    what="GitHub commit", task_id=task_id, attempts=4, base_sleep=2.0,
+                )
+            except PushFailedError as e:
+                # Ship/Commit Robustness · 2026-08-26 — the commit object
+                # exists (by SHA) but never reached `branch`'s history.
+                # This is NOT "nothing was committed" — surface the real
+                # SHA + `push_failed=True` so chat_helpers can render the
+                # truth instead of the generic failure message.
+                await _persist_push_failed(task_id, e)
+                return
+            sha = result["sha"]
+            commit_full_sha = result.get("full_sha") or sha
+            # B1-extend hardening (2026-08-30) — same fix as loop_engine.py's
+            # post-ship cache clear, applied here so the direct task-submit
+            # path can't leave a stale "disconnected" reading either.
+            try:
+                from routers.repo_status import invalidate as _invalidate_repo_status
+                _invalidate_repo_status(_pin_project_id or "")
+            except Exception as _inv_err:                                # noqa: BLE001
+                logger.debug("[%s] repo_status invalidate skipped: %r", task_id, _inv_err)
+
+            # POST-PUSH VERIFY — re-fetch every edited file at the new commit's
+            # SHA and confirm the remote content equals what we just pushed.
+            # This catches:
+            #   • branch protection that silently rejected the ref update
+            #   • partial / drift writes if a future GitHub API change ever
+            #     broke our blob/tree pipeline
+            #   • the original user complaint: "Claude says fix isn't in the
+            #     repo even though our UI says shipped"
+            # The verification proves on every task that the deployed code
+            # actually contains the AI's edits — no more silent successes.
+            await _pkg._log(task_id, f"🔎 Verifying {len(edits)} file(s) on remote @ {sha}…")
+
+            async def _verify_one(path: str, expected: str) -> tuple[str, bool, str]:
+                remote = await _pkg.gh_api_fetch_file(
+                    owner, repo, path, commit_full_sha, user_token,
+                )
+                if remote is None:
+                    return path, False, "remote returned 404"
+                # Iter 212m-6 — Normalise line endings (CRLF/CR → LF) and
+                # trailing whitespace BEFORE comparing. GitHub sometimes
+                # serves files with normalised newlines that differ from
+                # what we pushed even though the commit landed correctly.
+                # Without this, an otherwise-successful commit gets marked
+                # "failed" because the byte-for-byte comparison disagrees
+                # on whitespace-only differences.
+                def _norm(s: str) -> str:
+                    return (s or "").replace("\r\n", "\n").replace("\r", "\n").rstrip()
+                if _norm(remote) != _norm(expected):
+                    a, b = expected.splitlines(), remote.splitlines()
+                    first_diff = next(
+                        (i for i in range(min(len(a), len(b))) if a[i] != b[i]),
+                        None,
+                    )
+                    hint = (f"differs from line {first_diff + 1}" if first_diff is not None
+                            else f"length local={len(expected)} remote={len(remote)}")
+                    return path, False, hint
+                return path, True, "ok"
+
+            verify_results = await asyncio.gather(*[
+                _verify_one(p, c) for p, c in edits.items()
+            ])
+            failed = [(p, reason) for p, ok, reason in verify_results if not ok]
+            for p, ok, reason in verify_results:
+                await _pkg._log(task_id,
+                           f"   {'✅' if ok else '❌'} {p} ({reason})",
+                           "success" if ok else "error")
+            if failed:
+                err = "Post-push verification FAILED for: " + ", ".join(
+                    f"{p} ({r})" for p, r in failed
+                )
+                await _pkg._log(task_id, f"🚫 {err}", "error")
+                await _pkg._set_status(task_id, status="failed", error=err[:2000],
+                                  commit_sha=sha, verify_failed=True,
+                                  completed_at=time.time())
+                return
+            await _pkg._log(task_id,
+                       f"✅ Verified {len(edits)} file(s) live on {ship_branch}@{sha}",
+                       "success")
 
         # Best-effort draft PR via the EXISTING dedup-aware helper
         # (services/loop_safety.py::open_or_reuse_pr) — no new PR
@@ -1398,6 +1617,7 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                           files_changed_simple=list(edits.keys()),
                           edits=_frontend_subset(edits),
                           verified=True, commit_full_sha=commit_full_sha,
+            push_confirmed=True,
                           # Trust & Verification round — DISTINCT from
                           # `verified` above (which only means "the
                           # content GitHub returned matches what we
@@ -1608,3 +1828,6 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
         except Exception:
             pass
 
+    finally:
+        if commit_mode == 'git' and ws is not None:
+            shutil.rmtree(ws, ignore_errors=True)

@@ -503,11 +503,11 @@ async def open_or_reuse_pr(
     original round-1 fix (deterministic `aurem_branch_name` +
     "look before you create") only landed inside
     `finding_fix_applier.py` itself — nothing stopped a 2nd, 3rd, 4th
-    call site (`loop_engine.py` ship-via-PR, `services/visibility/
+    call site (`loop_engine.py` ship-via-PR, `services/seo/visibility_apply.py
     apply.py`, `services/visual_bugfix_pr.py`) from independently
     calling `open_draft_pr()` with no reuse check at all, which is
     exactly how the 371 real duplicate PRs (confirmed: "Visibility
-    Kit x5" traced to `visibility/apply.py`'s branch name including a
+    Kit x5" traced to `seo/visibility_apply.py`'s branch name including a
     live timestamp) kept accumulating even after round 1 shipped.
     Centralizing here means a FUTURE 5th call site gets the dedup
     behaviour for free instead of needing its own copy-pasted guard

@@ -45,7 +45,7 @@ AUREM_FIX_MARKER = "AUREM auto-fix"
 # to clean up.
 AUREM_BOT_MARKERS = (
     AUREM_FIX_MARKER,                          # finding_fix_applier.py
-    "Visibility Kit (",                        # services/visibility/apply.py
+    "Visibility Kit (",                        # services/seo/visibility_apply.py
     "Opened by ORA (Loop ",                    # loop_engine.py ship-via-PR
     "AUREM's Visual Bug-Fix pipeline",          # services/visual_bugfix_pr.py
 )

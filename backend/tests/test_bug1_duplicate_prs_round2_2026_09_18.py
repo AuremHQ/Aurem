@@ -6,7 +6,7 @@ repo AFTER the 2026-09-17 round-1 fix had already shipped.
 Root cause: round 1 only fixed ONE of (at least) four independent
 PR-opening call sites — `services/finding_fix_applier.py`. The other
 three (`services/loop_engine.py`'s ship-via-PR path,
-`services/visibility/apply.py` — Visibility Kit, and
+`services/seo/visibility_apply.py` — Visibility Kit, and
 `services/visual_bugfix_pr.py`) each called `open_draft_pr()`
 directly with either (a) a still-timestamped `ship_branch_name()`
 (so `create_or_reuse_branch`'s "already exists -> ok" never got a
@@ -26,7 +26,7 @@ Covers:
   - `ship_branch_name` determinism (was the literal root cause).
   - `open_or_reuse_pr` — 2nd call with the same head_branch reuses,
     never calls create-PR twice.
-  - `services/visibility/apply.py` — running the SAME Kit apply
+  - `services/seo/visibility_apply.py` — running the SAME Kit apply
     twice for the SAME project lands on the SAME branch and reuses
     the SAME PR (the exact "Visibility Kit x5" repro).
   - `services/visual_bugfix_pr.py` — a retry no longer 422s.
@@ -128,7 +128,7 @@ async def test_visibility_kit_rerun_same_project_reuses_pr_not_duplicate(monkeyp
     the SAME project (e.g. a second scan later that day, or the next
     day) and confirm it lands on the SAME branch and reuses the SAME
     PR instead of opening a second one."""
-    from services.visibility import apply as kit_apply
+    from services.seo import visibility_apply as kit_apply
 
     monkeypatch.setattr(kit_apply, "fetch_file", AsyncMock(return_value=None))
     monkeypatch.setattr(kit_apply, "commit_files", AsyncMock(return_value={"sha": "abc"}))

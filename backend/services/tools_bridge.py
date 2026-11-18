@@ -256,44 +256,18 @@ def extract_tool_calls(text: str) -> list[dict]:
     # ORA sometimes emits this when DeepSeek mimics
     # Python REPL style instead of JSON fence.
     import re as _re
-    _KNOWN_TOOLS = {
-        "read_repo_file", "read_repo_files", "write_repo_file",
-        "patch_repo_file",
-        "get_repo_structure",
-        "list_repo_files",
-        "search_repo", "semantic_search_repo", "get_commit_diff",
-        "get_repo_info", "find_usages", "get_dependencies",
-        "get_env_vars", "detect_framework", "get_commit_history",
-        "list_issues", "get_pr_comments", "find_package_docs",
-        "validate_syntax", "e2b_run_code", "execute_bash",
-        "web_search", "fetch_url", "web_search_and_summarize",
-        "firecrawl_scrape", "firecrawl_crawl_site",
-        "browser",
-        # Session G · Batch 4c (Feb 2026) — 13 Vercel tools were
-        # registered in LOCAL_TOOLS (services/local_tools.py) but
-        # NEVER added to this gate. DeepSeek's Python-style
-        # emissions (`vercel_list_projects()`) got silently dropped
-        # → user saw "cannot access Vercel" replies even with a
-        # valid Vercel token. Real production bug caught by the
-        # test_iter212m6_wiring_audit contract test.
-        "vercel_account_info", "vercel_list_projects",
-        "vercel_get_project_details", "vercel_list_deployments",
-        "vercel_get_deployment_logs", "vercel_list_env_vars",
-        "vercel_list_domains", "vercel_trigger_deploy_hook",
-        "vercel_create_project", "vercel_pause_project",
-        "vercel_resume_project", "vercel_add_domain",
-        "vercel_delete_project",
-        # 2026-08-22 — save_finding (see local_tools.py) registered
-        # in LOCAL_TOOLS but must ALSO be listed here, same lesson as
-        # the Vercel batch above.
-        "save_finding",
-        # 2026-09-07 · Master Plan S1 — get_library_docs (Context7)
-        # registered in LOCAL_TOOLS, same lesson again: must be here
-        # too or DeepSeek/GLM's Python-style emissions silently drop.
-        "get_library_docs",
-        # 2026-09-07 · Master Plan S2 — sequential_thinking, same lesson.
-        "sequential_thinking",
-    }
+    # Fix #19 -- single source of truth. The gate is derived from
+    # LOCAL_TOOLS (services/local_tools.py) instead of being a second
+    # hand-maintained copy of the same names. This set drifted four
+    # times before (13 Vercel tools, Feb 2026; save_finding,
+    # 2026-08-22; get_library_docs, 2026-09-07; sequential_thinking,
+    # 2026-09-07): each time a tool was registered in LOCAL_TOOLS but
+    # silently dropped by this parser. Imported lazily, like the
+    # `import re as _re` above, so importing this module never pulls
+    # in the local-tools tree.
+    from services.local_tools import LOCAL_TOOLS as _LOCAL_TOOLS
+
+    _KNOWN_TOOLS = frozenset(_LOCAL_TOOLS)
     # Hoisted so both Shape-4 and Shape-6 (XML block below) share it
     # without redefining per-iteration.
     kw_re = _re.compile(

@@ -972,7 +972,7 @@ async def update_project(
             raise HTTPException(status, {"error": err_code, "message": err_msg})
         updates["auth_method"]         = "github_app"
         updates["installation_active"] = True
-    # 2026-09 — Visibility Kit domain fix. `services/visibility/apply.py`
+    # 2026-09 — Visibility Kit domain fix. `services/seo/visibility_apply.py`
     # reads `site_meta.domain` to build the Preferred Sources deeplink
     # and had NO writer anywhere in the codebase — every real "Apply"
     # failed with "no site URL/domain on file" even for a fully
@@ -981,7 +981,7 @@ async def update_project(
     # so mirror it into site_meta.domain here instead of adding a
     # second URL field the user would have to fill in twice.
     if "preview_url" in updates:
-        from services.visibility.apply import _domain_from_url
+        from services.seo.visibility_apply import _domain_from_url
         domain = _domain_from_url(updates["preview_url"])
         if domain:
             updates["site_meta.domain"] = domain

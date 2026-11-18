@@ -1,6 +1,6 @@
 """
 tests/test_visibility_domain_field_2026_09_07.py — Visibility Kit
-domain fix (2026-09-07). `services/visibility/apply.py` reads
+domain fix (2026-09-07). `services/seo/visibility_apply.py` reads
 `project.site_meta.domain` to build the Preferred Sources deeplink,
 but nothing in the codebase ever wrote it — every "Apply" failed
 with "no site URL/domain on file" even on a fully connected project
@@ -148,7 +148,7 @@ class TestPreviewUrlSetsSiteMetaDomain:
         """The other half of the fix — apply.py's own domain
         resolution now succeeds once site_meta.domain is populated
         the way the PATCH handler above writes it."""
-        from services.visibility.apply import _domain_from_url
+        from services.seo.visibility_apply import _domain_from_url
         site_meta = {"domain": _domain_from_url("https://my-app.vercel.app/dashboard")}
         domain = site_meta.get("domain") or _domain_from_url(
             (site_meta.get("schema") or {}).get("url")

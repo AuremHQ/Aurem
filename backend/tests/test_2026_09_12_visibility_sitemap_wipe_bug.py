@@ -11,7 +11,7 @@ Caught in time only because the PR stayed in Draft — this test locks
 in the real fix: existing real entries must always survive a re-apply,
 even when the fresh scan is empty or full of placeholder junk.
 """
-from services.visibility import sitemap as sitemap_gen
+from services.seo import sitemap as sitemap_gen
 
 
 def _existing_sitemap_with(n: int) -> str:

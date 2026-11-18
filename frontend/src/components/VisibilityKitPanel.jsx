@@ -1,7 +1,7 @@
 /**
  * VisibilityKitPanel.jsx — the AI-Visibility Kit visual panel (spec §6).
  *
- * Backend already existed (services/visibility/*, routers/visibility.py,
+ * Backend already existed (services/seo/*, routers/visibility.py,
  * migrations/003_visibility_kit.py) — this file is the missing visual
  * layer the spec called for 20+ rounds ago. Reuses the existing
  * GET /visibility/projects/{id}/state + POST .../apply endpoints as-is.
@@ -81,7 +81,7 @@ function ApplyConfirmModal({ item, projectId, onClose, onApplied }) {
   };
   // 2026-09-20 — this preview text used to show a made-up branch name
   // (`auremcto/visibility-kit-{today's date}`) that never matched
-  // what the backend actually creates — services/visibility/apply.py
+  // what the backend actually creates — services/seo/visibility_apply.py
   // calls the CENTRALIZED `ship_branch_name(f"visibility-kit-
   // {project_id}")` (services/loop_safety.py), which always resolves
   // to `auremcto/ship-visibility-kit-{project_id}`. Harmless-looking,

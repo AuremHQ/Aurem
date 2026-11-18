@@ -34,7 +34,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.visibility.apply import apply_visibility_kit
+from services.seo.visibility_apply import apply_visibility_kit
 
 
 def _fake_fetch_factory(index_html="<html><head><title>x</title></head><body></body></html>"):
@@ -59,11 +59,11 @@ async def test_structured_data_no_longer_crashes_when_site_meta_schema_is_absent
         "github_owner": "o", "github_repo": "r", "branch": "main",
         "preview_url": "https://aurem-demo.example.com",
     }
-    with patch("services.visibility.apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
-         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
+         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         # site_meta={} — no "schema" key, no "domain" key. This is the
@@ -95,11 +95,11 @@ async def test_structured_data_uses_project_preview_url_and_name_as_schema_fallb
         captured["files"] = kwargs.get("files") if "files" in kwargs else args[4]
         return {"ok": True}
 
-    with patch("services.visibility.apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
-         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.visibility.apply.commit_files", new=AsyncMock(side_effect=capture_commit)), \
-         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
+         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(side_effect=capture_commit)), \
+         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
@@ -123,9 +123,9 @@ async def test_structured_data_gracefully_conflicts_when_truly_no_url_anywhere()
     db.visibility_applications.insert_one = AsyncMock()
     project = {"project_id": "p1", "user_id": "u1",
                "github_owner": "o", "github_repo": "r", "branch": "main"}
-    with patch("services.visibility.apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
-         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))):
+    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
+         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["structured_data"],
             token="t", scan_urls=[], site_meta={}, bot_policy={},
@@ -148,11 +148,11 @@ async def test_bulk_apply_all_five_items_no_longer_aborted_by_structured_data_cr
         "github_owner": "o", "github_repo": "r", "branch": "main",
         "preview_url": "https://aurem-demo.example.com",
     }
-    with patch("services.visibility.apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
-         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=_fake_fetch_factory())), \
+         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(

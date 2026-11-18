@@ -2774,7 +2774,7 @@ async def execute_bash(ctx: dict, args: dict) -> dict:
 
 # ── Catalog ───────────────────────────────────────────────────────────────────
 
-TOOL_SPECS: list[dict] = [
+_ALL_TOOL_SPECS: list[dict] = [
     {
         "name": "read_repo_file",
         "description": (
@@ -3021,6 +3021,40 @@ LOCAL_TOOLS: dict[str, callable] = {
     **_CONTEXT7_TOOLS,
     **_SEQUENTIAL_THINKING_TOOLS,
 }
+
+# Fix #19 -- single source of truth. TOOL_SPECS is derived from
+# LOCAL_TOOLS (the dispatch table above): a tool is advertised if
+# and only if it has an implementation here. The schema dicts
+# themselves still live where they are written -- the core literal
+# (_ALL_TOOL_SPECS, above) and the per-domain *_TOOL_SPECS lists --
+# because a callable carries no description or parameters; what
+# LOCAL_TOOLS decides is WHICH specs are published. Any drift in
+# either direction fails loudly at import instead of silently
+# dropping a tool (the four past incidents: 13 Vercel tools, Feb
+# 2026; save_finding, 2026-08-22; get_library_docs, 2026-09-07;
+# sequential_thinking, 2026-09-07). Order is deliberately the
+# assembled spec order, not the LOCAL_TOOLS order: the two differ
+# today only in that the core literal lists patch_repo_file before
+# write_repo_file while LOCAL_TOOLS lists them the other way round,
+# and reordering the model-facing tools payload is out of scope
+# for this structural fix.
+_SPECS_BY_NAME = {spec["name"]: spec for spec in _ALL_TOOL_SPECS}
+if len(_SPECS_BY_NAME) != len(_ALL_TOOL_SPECS):
+    raise RuntimeError(
+        "Fix #19: duplicate tool name(s) in the assembled TOOL_SPECS "
+        f"({len(_ALL_TOOL_SPECS)} specs, {len(_SPECS_BY_NAME)} unique names)"
+    )
+_missing_specs = [name for name in LOCAL_TOOLS if name not in _SPECS_BY_NAME]
+_orphan_specs = [name for name in _SPECS_BY_NAME if name not in LOCAL_TOOLS]
+if _missing_specs or _orphan_specs:
+    raise RuntimeError(
+        "Fix #19: tool registration drift between LOCAL_TOOLS and "
+        f"TOOL_SPECS -- tools without a spec: {_missing_specs}; "
+        f"specs without an implementation: {_orphan_specs}"
+    )
+TOOL_SPECS: list[dict] = [
+    spec for spec in _ALL_TOOL_SPECS if spec["name"] in LOCAL_TOOLS
+]
 
 
 _WRITE_TOOLS = frozenset({"write_repo_file", "patch_repo_file"})

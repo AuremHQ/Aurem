@@ -1,8 +1,17 @@
 """
 services/billing_flags.py — Master Prompt v2 Part 1.3.
 
-A thin, append-only log of refund/dispute events the (not yet built)
-Part 3 admin dashboard will surface for human review:
+A thin, append-only log of refund/dispute/cost events for human
+review in the admin dashboard (routers/admin_pricing.py):
+
+This is NOT a feature-flag / feature-toggle system, and it must not
+be merged with services/feature_flags.py. The two modules share only
+the word "flag": feature_flags answers "is this feature on for this
+user?" (Mongo-backed toggles, 60s cache, rollout bucketing), while
+this module only records that a billing event happened — it never
+gates a feature. Fix #21 (2026-11-18): both systems are live and
+serve different purposes, so neither was removed; this note exists
+so the next audit does not try to merge them again.):
 
   - "refund_shortfall"   — a top-up refund asked for more tokens back
                             than the user's wallet still had (some/all
@@ -17,10 +26,19 @@ Part 3 admin dashboard will surface for human review:
                             unfreeze path is built yet — see the
                             module docstring in routers/payments.py's
                             webhook handler for why).
+- "dispute_won"        — a charge dispute closed in the merchant's
+                         favour (charge.dispute.closed:won).
+- "dispute_lost"       — a charge dispute closed in the customer's
+                         favour; the entitlement is revoked and any
+                         clawback shortfall is recorded
+                         (charge.dispute.closed:lost).
+- "cost_spike"         — an LLM cost spike tripped the cost breaker
+                         (services/llm_cost_breaker.py).
 
 Every row's `_id` is the idempotency_key (the Stripe event id) so a
-redelivered webhook never double-logs. Read-only for every other part
-of the app — only the webhook handler writes here.
+redelivered webhook never double-logs. Writers are the Stripe
+webhook handler in routers/payments.py and the LLM cost breaker;
+every other part of the app is read-only via list_flags / resolve_flag.
 """
 from __future__ import annotations
 

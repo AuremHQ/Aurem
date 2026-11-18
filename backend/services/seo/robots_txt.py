@@ -62,3 +62,40 @@ def patch_robots_txt(
             else "updated robots.txt with sitemap + disallows"
         ),
     )
+# --- Merged from former visibility kit (robots) (Fix #20) ---
+# Managed AI-crawler block: idempotent read-modify-write of an existing
+# robots.txt (markers preserved, other lines untouched). Kept alongside
+# render_robots_txt / patch_robots_txt above, which generate a whole file.
+_START = "# --- AI crawlers (managed by AUREM) ---"
+_END = "# --- end AUREM block ---"
+
+RETRIEVAL_BOTS = ["OAI-SearchBot", "Claude-SearchBot", "PerplexityBot"]
+TRAINING_BOTS = ["GPTBot", "ClaudeBot", "Google-Extended", "CCBot"]
+
+
+def render_managed_block(bot_policy: dict) -> str:
+    lines = [_START]
+    for bot in RETRIEVAL_BOTS:
+        lines.append(f"User-agent: {bot}\nAllow: /")
+    for bot in TRAINING_BOTS:
+        decision = (bot_policy or {}).get(bot, "deny")  # D1 default: DENY
+        verb = "Allow" if decision == "allow" else "Disallow"
+        lines.append(f"User-agent: {bot}\n{verb}: /")
+    lines.append(_END)
+    return "\n".join(lines) + "\n"
+
+
+def apply_managed_block(existing_content: str | None, bot_policy: dict) -> str:
+    """R5/R6/R7 — merge the managed block into `existing_content` without
+    touching any other line. `existing_content=None` (no robots.txt yet)
+    produces a fresh file with just the managed block."""
+    block = render_managed_block(bot_policy)
+    if not existing_content:
+        return block
+    if _START in existing_content and _END in existing_content:
+        pre, rest = existing_content.split(_START, 1)
+        _, post = rest.split(_END, 1)
+        return pre.rstrip("\n") + ("\n\n" if pre.strip() else "") + block + post.lstrip("\n")
+    # No existing managed block — append ours, preserve everything else.
+    sep = "\n\n" if existing_content and not existing_content.endswith("\n\n") else ""
+    return existing_content.rstrip("\n") + "\n" + sep + block

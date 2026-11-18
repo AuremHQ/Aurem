@@ -1,5 +1,5 @@
 """
-services/visibility/preferred_sources.py — Preferred Sources badge (spec §5/§6.1).
+services/seo/preferred_sources.py — Preferred Sources badge (spec §5/§6.1).
 
 Google's official Preferred Sources button (confirmed via Google's
 current docs, 2026-08-30 — developers.google.com/search/docs/appearance/

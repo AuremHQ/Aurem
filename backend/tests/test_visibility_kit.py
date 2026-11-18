@@ -18,10 +18,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.visibility import robots as robots_gen
-from services.visibility import schema as schema_gen
-from services.visibility import sitemap as sitemap_gen
-from services.visibility.detect import detect_framework
+from services.seo import robots_txt as robots_gen
+from services.seo import schema_markup as schema_gen
+from services.seo import sitemap as sitemap_gen
+from services.seo.framework_detect import detect_framework
 
 
 def test_detect_frameworks():
@@ -128,17 +128,17 @@ async def test_billing_gate_free_plan_returns_402():
 async def test_apply_no_copy_edit_only_writes_managed_paths():
     """t_apply_no_copy_edit — apply() must only ever produce robots.txt,
     sitemap.xml, or the html-head path; never a prose/content file (R3)."""
-    from services.visibility.apply import apply_visibility_kit
+    from services.seo.visibility_apply import apply_visibility_kit
     db = MagicMock()
     db.visibility_state.update_one = AsyncMock()
     db.visibility_applications.insert_one = AsyncMock()
     project = {"project_id": "p1", "user_id": "u1", "github_owner": "o",
                "github_repo": "r", "branch": "main"}
-    with patch("services.visibility.apply.fetch_file", new=AsyncMock(return_value=None)), \
-         patch("services.visibility.apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.visibility.apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.visibility.apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
-         patch("services.visibility.apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(return_value=None)), \
+         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
+         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(

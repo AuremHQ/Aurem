@@ -1,5 +1,5 @@
 """
-services/visibility/detect.py — framework detection (spec §5 detect.py).
+services/seo/framework_detect.py — framework detection (spec §5 detect.py).
 
 next    → package.json deps has "next"
 react   → package.json deps has "react", no SSR (no "next")

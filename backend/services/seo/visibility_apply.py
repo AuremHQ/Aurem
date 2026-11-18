@@ -1,5 +1,5 @@
 """
-services/visibility/apply.py — Visibility Kit apply orchestrator (spec §5).
+services/seo/visibility_apply.py — Visibility Kit apply orchestrator (spec §5).
 
 detect → generate (R6/R7 checks) → REUSE the P6 branch+open-PR
 mechanism verbatim (services/loop_safety.py + services/github_api_writer.py,
@@ -19,12 +19,12 @@ import time
 from services.github_api_writer import commit_files, fetch_file, find_html_entry_path
 from services.git_identity import resolve_git_identity
 from services.loop_safety import create_or_reuse_branch, open_or_reuse_pr, ship_branch_name
-from services.visibility import robots as robots_gen
-from services.visibility import schema as schema_gen
-from services.visibility import sitemap as sitemap_gen
-from services.visibility import preferred_sources as badge_gen
-from services.visibility import llms_txt as llms_gen
-from services.visibility.detect import detect_framework
+from services.seo import robots_txt as robots_gen
+from services.seo import schema_markup as schema_gen
+from services.seo import sitemap as sitemap_gen
+from services.seo import preferred_sources as badge_gen
+from services.seo import llms_txt as llms_gen
+from services.seo.framework_detect import detect_framework
 
 IMPLEMENTED_AUTO_ITEMS = {
     "ai_crawler_policy", "structured_data", "sitemap_auto",

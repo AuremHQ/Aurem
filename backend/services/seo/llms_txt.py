@@ -1,5 +1,5 @@
 """
-services/visibility/llms_txt.py — /llms.txt + /llms-full.txt (spec §5/§6.3).
+services/seo/llms_txt.py — /llms.txt + /llms-full.txt (spec §5/§6.3).
 
 Deterministic, 0 LLM tokens (R9/R15) — the llmstxt.org-style curated
 site index that AI assistants (Claude, Perplexity — per the catalog

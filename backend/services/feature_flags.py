@@ -17,7 +17,7 @@ live in the `feature_flags` collection:
 Usage at a call site:
 
     from services.feature_flags import is_enabled
-    if await is_enabled("new_analytics_v2", user_id=uid, tier="pro"):
+    if await is_enabled("workcard_loop_receipts", user_id=uid, tier="pro"):
         # show new feature
 
 A 60s process-local cache avoids hitting Mongo on every check; the
@@ -28,6 +28,11 @@ the next read repopulates.
 `rollout_pct` (0-100) adds a deterministic per-user bucket on top of
 the existing tier/user allowlists, reusing this SAME collection/cache
 — no new schema, no new admin surface beyond one numeric field.
+
+2026-11-18 — Fix #21: not to be confused with
+services/billing_flags.py, which is a billing incident log
+(refund/dispute/cost events for admin review), not a toggle system.
+The two modules share only the word "flag" and must not be merged.
 """
 from __future__ import annotations
 

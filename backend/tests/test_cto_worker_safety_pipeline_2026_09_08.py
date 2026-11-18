@@ -167,61 +167,56 @@ class TestStep1BeforeSnapshotNowClosed:
         assert "gh_api_commit(" in fn
 
     def test_git_worker_was_missing_now_has_hallucination_syntax_lint(self):
-        """BEFORE this round: zero references to `_run_hallucination_gate`,
-        `_run_syntax_gate`, or `_run_lint_gate` existed anywhere in this
-        function (those functions themselves didn't exist yet — the
-        git worker had no equivalent inline code either). AFTER: all
-        three now present, calling the SAME shared functions the API
-        worker calls (not a re-implementation) — this is the safety
-        hole closing."""
+        """Fix #15 (2026-11-18): the git worker is now a thin adapter.
+        The git path gets every gate by delegating to the ONE pipeline
+        (_run_task_via_api) with commit_mode set to git — so this pins
+        the delegation, the gates in the shared pipeline, and the git
+        commit mechanism (git binary, not the GitHub Data API)."""
         src = _cto_worker_src()
-        fn = _extract_fn(src, "_run_task_with_git")
-        assert "_run_hallucination_gate(" in fn, (
-            "safety hole NOT closed: git worker still missing the "
-            "hallucination gate"
-        )
-        assert "_run_syntax_gate(" in fn, (
-            "safety hole NOT closed: git worker still missing the "
-            "syntax gate"
-        )
-        assert "_run_lint_gate(" in fn, (
-            "safety hole NOT closed: git worker still missing the "
-            "lint gate"
-        )
-        # Pre-existing gates must still be there too (regression guard).
-        assert "verify_patch(" in fn
-        assert "find_sensitive_paths(" in fn
-        # Commit MECHANISM must stay the git binary — only the safety
-        # STAGES were unified, not how each worker actually commits.
-        assert '"git", "commit"' in fn
-        assert '"git", "push"' in fn
-        assert "gh_api_commit(" not in fn
+        git_fn = _extract_fn(src, "_run_task_with_git")
+        api_fn = _extract_fn(src, "_run_task_via_api")
+        # Thin adapter: delegates, and holds no pipeline of its own.
+        assert "_run_task_via_api(" in git_fn
+        assert 'commit_mode="git"' in git_fn
+        assert "_run_hallucination_gate(" not in git_fn
+        assert "_run_syntax_gate(" not in git_fn
+        assert "_run_lint_gate(" not in git_fn
+        assert "verify_patch(" not in git_fn
+        # The shared pipeline it delegates to has every gate.
+        assert "_run_hallucination_gate(" in api_fn
+        assert "_run_syntax_gate(" in api_fn
+        assert "_run_lint_gate(" in api_fn
+        assert "verify_patch(" in api_fn
+        assert "find_sensitive_paths(" in api_fn
+        # Commit MECHANISM stays the git binary for the git path.
+        git_branch = api_fn[api_fn.index("# 4) write"):api_fn.index("# 3) Commit + push as one atomic API call")]
+        assert '"git", "commit"' in git_branch
+        assert '"git", "push"' in git_branch
+        assert "gh_api_commit(" not in git_branch
 
     def test_shared_gates_are_called_in_the_same_relative_order_both_workers(self):
-        """The 3 new gates must sit between the sensitive-path guard
-        and Vanguard verify on BOTH workers — a subtle reorder here
-        (e.g. syntax-check after commit) would be the single highest-
-        risk regression this round could introduce."""
+        """Fix #15 (2026-11-18): there is ONE pipeline now, so the gate
+        order is pinned once in _run_task_via_api — and the git path
+        inherits it by delegating with commit_mode set to git (no second
+        ordering to drift)."""
         src = _cto_worker_src()
-        for header in ("_run_task_via_api", "_run_task_with_git"):
-            fn = _extract_fn(src, header)
-            idx_sensitive = fn.find("find_sensitive_paths(")
-            idx_hallu = fn.find("_run_hallucination_gate(")
-            idx_syntax = fn.find("_run_syntax_gate(")
-            idx_lint = fn.find("_run_lint_gate(")
-            idx_vanguard = fn.find("verify_patch(")
-            for label, idx in (("sensitive-path-guard", idx_sensitive),
-                                ("hallucination-gate", idx_hallu),
-                                ("syntax-gate", idx_syntax),
-                                ("lint-gate", idx_lint),
-                                ("vanguard-verify", idx_vanguard)):
-                assert idx != -1, f"{header}: {label} call not found"
-            assert idx_sensitive < idx_hallu < idx_syntax < idx_lint < idx_vanguard, (
-                f"{header}: safety stages are OUT OF ORDER — "
-                f"sensitive={idx_sensitive} hallu={idx_hallu} "
-                f"syntax={idx_syntax} lint={idx_lint} vanguard={idx_vanguard}"
-            )
-
+        api_fn = _extract_fn(src, "_run_task_via_api")
+        git_fn = _extract_fn(src, "_run_task_with_git")
+        # The git adapter delegates to the shared pipeline.
+        assert "_run_task_via_api(" in git_fn
+        assert 'commit_mode="git"' in git_fn
+        # Gate order in the one pipeline: sensitive-path guard, then
+        # hallucination, syntax, lint, then Vanguard verify.
+        idx_sensitive = api_fn.find("find_sensitive_paths(")
+        idx_hallu = api_fn.find("_run_hallucination_gate(")
+        idx_syntax = api_fn.find("_run_syntax_gate(")
+        idx_lint = api_fn.find("_run_lint_gate(")
+        idx_vanguard = api_fn.find("verify_patch(")
+        assert 0 <= idx_sensitive < idx_hallu < idx_syntax < idx_lint < idx_vanguard, (
+            "safety stages are OUT OF ORDER in the unified pipeline — "
+            f"sensitive={idx_sensitive} hallu={idx_hallu} "
+            f"syntax={idx_syntax} lint={idx_lint} vanguard={idx_vanguard}"
+        )
 
 # ═════════════════════════════════════════════════════════════════════
 # Load-bearing tests — git worker
@@ -257,7 +252,7 @@ class TestGitWorkerSafetyPipeline:
         await fake_db.dev_users.insert_one({"user_id": "u_saf", "tier": "pro"})
         await fake_db.cto_projects.insert_one(dict(PROJ))
 
-        resume_edits = {"edits": {"feature.py": "def add(a, b):\n    return a + b\n"},
+        resume_edits = {"edits": {"feature.py": "def add(a, b):\n    total = a + b\n    return total\n"},
                         "summary": "add helper"}
 
         # 2026-09-08 follow-up: the 3 gates now live in
@@ -271,6 +266,7 @@ class TestGitWorkerSafetyPipeline:
              patch.object(pipeline_mod, "_hallucination_reasons", hallu_spy), \
              patch.object(pipeline_mod, "_syntax_errors", syntax_spy), \
              patch("services.design_linter.lint_file_blocks", lint_spy), \
+            patch.object(pipeline_mod, "call_llm", AsyncMock(return_value="")), \
              patch("services.vanguard_verify_agent.verify_patch",
                    AsyncMock(return_value={"pass": True, "summary": "clean", "findings": []})) as vg_mock:
             await router_mod._run_task_with_git(
@@ -314,7 +310,7 @@ class TestGitWorkerSafetyPipeline:
 
         BAD_REPLY = (
             "SUMMARY: add broken helper\n\nFILE: broken.py\n```\n"
-            "def broken(:\n    pass\n```\n"
+            "def broken(:\n    x = 1\n    y = 2\n    pass\n```\n"
         )
 
         with patch.object(router_mod, "_sh", side_effect=_fake_sh), \

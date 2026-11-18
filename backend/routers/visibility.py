@@ -166,7 +166,7 @@ async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Heade
     )
     bot_policy = (policy_doc or {}).get("training_choice", {})
 
-    from services.visibility.apply import apply_visibility_kit
+    from services.seo.visibility_apply import apply_visibility_kit
     result = await apply_visibility_kit(
         db, project=proj, requested_items=body.items, token=token,
         scan_urls=proj.get("scan_urls") or [], site_meta=proj.get("site_meta") or {},
