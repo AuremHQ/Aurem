@@ -33,66 +33,32 @@ import { isShipViaPrEnabled } from "../lib/pageFlags";
 
 const SEEN_KEY = "aurem_pr_mini_guide_seen_v1";
 
-export default function PrMiniGuide({ mode = "auto" }) {
-  const [dismissed, setDismissed] = useState(() => {
-    try { return !!localStorage.getItem(SEEN_KEY); } catch { return false; }
-  });
+// The three "What happens next" step lists for the mini-guide. The card
+// shell (icon, heading, dismiss button) is identical for every variant;
+// only the steps and the icon differ.
+const GUIDE_STEPS = {
+  branchPr: [
+    "ORA commits to a new branch by default, ready for you to review.",
+    "It tries to open a draft PR for you to review. If GitHub won't let it open one, you'll still get the branch, ready to review yourself.",
+    "Want it live right away instead? You can choose to commit straight to your main branch — you'll be asked to confirm first.",
+  ],
+  pr: [
+    "We'll open a pull request on your GitHub.",
+    "Review it there if you like, or just click Merge.",
+    "Done — it's live on your site.",
+  ],
+  direct: [
+    "ORA commits directly to your main branch.",
+    "No PR to review first — it's live right away.",
+    "Changed your mind? You can roll back anytime.",
+  ],
+};
 
-  if (dismissed) return null;
+const GUIDE_ICON_STYLE = { flexShrink: 0, marginTop: 1, color: "#FF6608" };
 
-  function dismiss() {
-    try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* quota — ignore */ }
-    setDismissed(true);
-  }
-
-  if (mode === "branch_and_pr") {
-    return (
-      <div
-        data-testid="pr-mini-guide"
-        style={{
-          display: "flex", alignItems: "flex-start", gap: 10,
-          padding: "10px 12px", marginBottom: 8,
-          background: "rgba(255,102,8,0.06)",
-          border: "1px solid rgba(255,102,8,0.25)",
-          borderRadius: 8, fontSize: 12, color: "var(--text, #F5F5F5)",
-          maxWidth: 420,
-        }}
-      >
-        <GitPullRequest size={16} style={{ flexShrink: 0, marginTop: 1, color: "#FF6608" }} />
-        <div style={{ flex: 1, lineHeight: 1.55 }}>
-          <strong>What happens next:</strong>
-          <ol data-testid="pr-mini-guide-branch-pr-copy" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            <li>ORA commits to a new branch by default, ready for you to review.</li>
-            <li>It tries to open a draft PR for you to review. If GitHub
-              won't let it open one, you'll still get the branch, ready
-              to review yourself.</li>
-            <li>Want it live right away instead? You can choose to commit
-              straight to your main branch — you'll be asked to confirm first.</li>
-          </ol>
-        </div>
-        <button
-          type="button"
-          data-testid="pr-mini-guide-dismiss"
-          onClick={dismiss}
-          aria-label="Dismiss"
-          style={{
-            background: "none", border: "none", padding: 2,
-            color: "var(--text-faint, #8A8A8A)", cursor: "pointer", flexShrink: 0,
-          }}
-        >
-          <X size={13} />
-        </button>
-      </div>
-    );
-  }
-
-  // 2026-10 — C4 fix. This used to hard-code the pull-request story
-  // regardless of whether ship_via_pr was actually on — false in
-  // production, where every ship commits straight to the base
-  // branch. Reads the SAME flag the real ship path checks (see
-  // lib/pageFlags.js), so the copy can't drift from reality again.
-  const prMode = isShipViaPrEnabled();
-
+// One shared card for the mini-guide: icon, "What happens next" steps and
+// dismiss button. Callers pass the icon, the steps list and its test id.
+function GuideCard({ icon, stepsTestId, steps, onDismiss }) {
   return (
     <div
       data-testid="pr-mini-guide"
@@ -105,29 +71,19 @@ export default function PrMiniGuide({ mode = "auto" }) {
         maxWidth: 420,
       }}
     >
-      {prMode
-        ? <GitPullRequest size={16} style={{ flexShrink: 0, marginTop: 1, color: "#FF6608" }} />
-        : <GitCommitHorizontal size={16} style={{ flexShrink: 0, marginTop: 1, color: "#FF6608" }} />}
+      {icon}
       <div style={{ flex: 1, lineHeight: 1.55 }}>
         <strong>What happens next:</strong>
-        {prMode ? (
-          <ol data-testid="pr-mini-guide-pr-copy" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            <li>We'll open a pull request on your GitHub.</li>
-            <li>Review it there if you like, or just click Merge.</li>
-            <li>Done — it's live on your site.</li>
-          </ol>
-        ) : (
-          <ol data-testid="pr-mini-guide-direct-copy" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            <li>ORA commits directly to your main branch.</li>
-            <li>No PR to review first — it's live right away.</li>
-            <li>Changed your mind? You can roll back anytime.</li>
-          </ol>
-        )}
+        <ol data-testid={stepsTestId} style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+          {steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
       </div>
       <button
         type="button"
         data-testid="pr-mini-guide-dismiss"
-        onClick={dismiss}
+        onClick={onDismiss}
         aria-label="Dismiss"
         style={{
           background: "none", border: "none", padding: 2,
@@ -137,5 +93,49 @@ export default function PrMiniGuide({ mode = "auto" }) {
         <X size={13} />
       </button>
     </div>
+  );
+}
+
+export default function PrMiniGuide({ mode = "auto" }) {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return !!localStorage.getItem(SEEN_KEY); } catch { return false; }
+  });
+
+  if (dismissed) return null;
+
+  function dismiss() {
+    try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* quota — ignore */ }
+    setDismissed(true);
+  }
+
+    if (mode === "branch_and_pr") {
+    return (
+      <GuideCard
+        icon={<GitPullRequest size={16} style={GUIDE_ICON_STYLE} />}
+        stepsTestId="pr-mini-guide-branch-pr-copy"
+        steps={GUIDE_STEPS.branchPr}
+        onDismiss={dismiss}
+      />
+    );
+  }
+
+  // 2026-10 — C4 fix. This used to hard-code the pull-request story
+  // regardless of whether ship_via_pr was actually on — false in
+  // production, where every ship commits straight to the base
+  // branch. Reads the SAME flag the real ship path checks (see
+  // lib/pageFlags.js), so the copy can't drift from reality again.
+  const prMode = isShipViaPrEnabled();
+
+  return (
+    <GuideCard
+      icon={
+        prMode
+          ? <GitPullRequest size={16} style={GUIDE_ICON_STYLE} />
+          : <GitCommitHorizontal size={16} style={GUIDE_ICON_STYLE} />
+      }
+      stepsTestId={prMode ? "pr-mini-guide-pr-copy" : "pr-mini-guide-direct-copy"}
+      steps={prMode ? GUIDE_STEPS.pr : GUIDE_STEPS.direct}
+      onDismiss={dismiss}
+    />
   );
 }

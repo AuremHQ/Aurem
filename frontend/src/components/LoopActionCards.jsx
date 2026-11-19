@@ -171,12 +171,12 @@ export function UserActionCard({ phase, message, errors,
         preColor="#86efac"
         preMaxHeight={120}
         preShown={Array.isArray(testsTouched) && testsTouched.length > 0}
-        preText={testsTouched.slice(0, 10).join("\n") + (testsTouched.length > 10 ? "\n...and " + (testsTouched.length - 10) + " more" : "")}
+        preText={Array.isArray(testsTouched) ? testsTouched.slice(0, 10).join("\n") + (testsTouched.length > 10 ? "\n...and " + (testsTouched.length - 10) + " more" : "") : ""}
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <ActionBtn
             testid="loop-approve-ship-btn"
-            icon={Rocket}
+            Icon={Rocket}
             label={busy ? "Approving…" : "Approve & Ship"}
             tone="primary"
             disabled={busy || expired}
@@ -184,7 +184,7 @@ export function UserActionCard({ phase, message, errors,
           />
           <ActionBtn
             testid="loop-cancel-ship-btn"
-            icon={X}
+            Icon={X}
             label="Cancel ship"
             tone="danger"
             disabled={busy || expired}
@@ -210,7 +210,7 @@ export function UserActionCard({ phase, message, errors,
       preColor="#fda4af"
       preMaxHeight={140}
       preShown={Array.isArray(errors) && errors.length > 0}
-      preText={errors.slice(0, 12).join("\n") + (errors.length > 12 ? "\n...and " + (errors.length - 12) + " more" : "")}
+      preText={Array.isArray(errors) ? errors.slice(0, 12).join("\n") + (errors.length > 12 ? "\n...and " + (errors.length - 12) + " more" : "") : ""}
     >
       <textarea
         data-testid="user-action-feedback"
@@ -224,7 +224,7 @@ export function UserActionCard({ phase, message, errors,
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <ActionBtn
           testid="loop-retry-btn"
-          icon={Play}
+          Icon={Play}
           label={busy ? "Retrying…" : "Try a different approach"}
           tone="primary"
           disabled={busy || expired}
@@ -232,7 +232,7 @@ export function UserActionCard({ phase, message, errors,
         />
         <ActionBtn
           testid="loop-skip-btn"
-          icon={SkipForward}
+          Icon={SkipForward}
           label="Skip this step"
           tone="warn"
           disabled={busy || expired}
@@ -240,7 +240,7 @@ export function UserActionCard({ phase, message, errors,
         />
         <ActionBtn
           testid="loop-abort-btn"
-          icon={X}
+          Icon={X}
           label="Abort loop"
           tone="danger"
           disabled={busy || expired}
