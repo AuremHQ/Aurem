@@ -88,7 +88,7 @@ const SEV_META = {
 // (Ticket C backend), handled states: idle, generating (disabled +
 // spinner), error (401/403/404/other — named honestly, never silent).
 export function DownloadPdfButton({ projectId }) {
-  const [state, setState] = useState("idle"); // idle | generating | error
+  const [state, setState] = useState("idle"); // idle | generating | downloaded | error
   const [errMsg, setErrMsg] = useState("");
 
   async function handleDownload() {
@@ -104,7 +104,8 @@ export function DownloadPdfButton({ projectId }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      setState("idle");
+      setState("downloaded");
+      window.setTimeout(() => setState("idle"), 5000);
     } catch (e) {
       const status = e?.response?.status;
       let msg = "Could not generate the report — try again.";
@@ -133,13 +134,18 @@ export function DownloadPdfButton({ projectId }) {
       >
         {state === "generating"
           ? <><Loader2 size={13} className="anim-spin" aria-hidden="true" /> Generating…</>
-          : <><FileText size={13} aria-hidden="true" /> Download PDF</>}
+          : state === "downloaded" ? <><FileText size={13} aria-hidden="true" /> Downloaded - check your downloads</> : <><FileText size={13} aria-hidden="true" /> Download PDF</>}
       </button>
       {state === "error" && (
         <div data-testid="health-pdf-download-error" role="alert" style={{ fontSize: 11, color: "#fca5a5" }}>
           {errMsg}
         </div>
       )}
+  {state === "downloaded" && (
+    <div data-testid="health-pdf-download-success" role="status" style={{ fontSize: 11, color: "#6ee7b7" }}>
+      PDF downloaded - check your downloads folder.
+    </div>
+  )}
     </div>
   );
 }

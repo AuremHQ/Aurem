@@ -46,7 +46,7 @@ export function UserNotificationBell() {
     api.get("/notifications")
       .then((r) => {
         setItems(r.data?.items || []);
-        setUnread(r.data?.unread_count || 0);
+    setUnread(Math.max(r.data?.unread_count || 0, (r.data?.items || []).filter((n) => !n.read_at).length));
       })
       .catch(() => { /* keep last-known state on a transient blip */ });
   }, []);

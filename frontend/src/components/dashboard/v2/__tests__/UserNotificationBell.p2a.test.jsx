@@ -39,6 +39,14 @@ describe("UserNotificationBell — P2-A", () => {
     expect(screen.getByTestId("user-notification-bell-count").textContent).toBe("2");
   });
 
+  it("t_bell badge matches listed unread items when the server count is stale", async () => {
+    const items = [...ITEMS, { notif_id: "n3", type: "scan_done", text: "Third scan.", persistent: false, read_at: null, created_at: Date.now() / 1000 }, { notif_id: "n4", type: "scan_done", text: "Already read.", persistent: false, read_at: 123, created_at: Date.now() / 1000 }];
+    get.mockResolvedValue({ data: { items, unread_count: 1 } });
+    render(<UserNotificationBell />);
+    await waitFor(() => expect(screen.getByTestId("user-notification-bell-count")).toBeInTheDocument());
+    expect(screen.getByTestId("user-notification-bell-count").textContent).toBe("3");
+  });
+
   it("t_bell_persistent_error_not_auto_cleared: a persistent item stays listed with a warning marker", async () => {
     get.mockResolvedValue({ data: { items: ITEMS, unread_count: 2 } });
     render(<UserNotificationBell />);

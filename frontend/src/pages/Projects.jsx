@@ -1460,12 +1460,23 @@ function HealthTrendSection({ projectId, bordered = true }) {
     return () => { gone = true; };
   }, [projectId]);
 
-  const series = (snapshots || [])
-    .filter((s) => s.score !== null && s.score !== undefined)
-    .map((s) => ({
-      date: new Date(s.snapshot_at * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      score: s.score,
-    }));
+  const series = (() => {
+    const pts = (snapshots || []).filter((s) => s.score !== null && s.score !== undefined);
+    const years = new Set(pts.map((s) => new Date(s.snapshot_at * 1000).getFullYear()));
+    const addYear = years.size > 1 || pts.some((s) => new Date(s.snapshot_at * 1000).getFullYear() !== new Date().getFullYear());
+    const dayCount = {};
+    pts.forEach((s) => { const k = new Date(s.snapshot_at * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }); dayCount[k] = (dayCount[k] || 0) + 1; });
+    const seen = {};
+    return pts.map((s) => {
+      const d = new Date(s.snapshot_at * 1000);
+      const base = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      let label = base;
+      if (addYear) label += ", " + d.getFullYear();
+      if (dayCount[base] > 1) label += ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      if (seen[label]) { seen[label] += 1; label += " (" + seen[label] + ")"; } else { seen[label] = 1; }
+      return { date: label, score: s.score };
+    });
+  })();
 
   return (
     <div style={bordered ? { borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 } : {}}>

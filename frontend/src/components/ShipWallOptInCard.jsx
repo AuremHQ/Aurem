@@ -26,19 +26,18 @@ export default function ShipWallOptInCard({ me, onChange }) {
         <Trophy size={14} /> Public Ship Wall
       </h3>
       <p style={{ fontSize: 12, color: "var(--text-dim)", margin: 0, marginBottom: 14, lineHeight: 1.5 }}>
-        Show your shipped tasks (repo name + AI summary) on the public{" "}
-        <code>/wall</code> showcase. Off by default — nothing is shared
-        until you turn this on.
+    {optedIn ? "Your shipped tasks (repo name + AI summary) are currently shown on the public /wall showcase." : "Show your shipped tasks (repo name + AI summary) on the public /wall showcase. Off by default - nothing is shared until you turn this on."}
       </p>
       <button
         type="button"
         data-testid="ship-wall-opt-toggle"
         onClick={toggle}
         disabled={busy}
+    aria-pressed={optedIn}
         className={optedIn ? "btn-secondary" : "btn-primary"}
         style={{ justifyContent: "center", width: "fit-content" }}
       >
-        {busy ? "Saving…" : optedIn ? "Public — click to hide" : "Show my ships on the wall"}
+        {busy ? "Saving…" : optedIn ? "On - Public (click to hide)" : "Off - show my ships on the wall"}
       </button>
     </section>
   );

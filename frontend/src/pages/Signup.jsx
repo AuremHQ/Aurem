@@ -329,7 +329,7 @@ export default function Signup() {
                   type="tel"
                   value={form.phone}
                   onChange={(e) => u("phone", e.target.value)}
-                  placeholder="415 555 2671"
+                  placeholder="Enter your phone number"
                   style={{ flex: 1 }}
                 />
               </div>

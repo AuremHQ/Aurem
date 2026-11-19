@@ -210,7 +210,7 @@ def _validate_phone_optional(phone: Optional[str]) -> Optional[str]:
         raise HTTPException(
             400,
             "That phone number doesn't look valid — please include the "
-            "country code (e.g. +1 415 555 2671), or leave it blank.",
+            "country code, or leave it blank.",
         )
     if not phonenumbers.is_valid_number(parsed):
         raise HTTPException(

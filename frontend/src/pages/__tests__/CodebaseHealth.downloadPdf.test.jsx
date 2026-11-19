@@ -38,6 +38,18 @@ describe("Ticket C-UI · DownloadPdfButton", () => {
     clickSpy.mockRestore();
   });
 
+  it("shows visible success feedback after a successful download", async () => {
+    api.get.mockResolvedValue({ data: new Blob(["fake-pdf"], { type: "application/pdf" }) });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const user = userEvent.setup();
+    render(<DownloadPdfButton projectId="proj_1" />);
+    const btn = screen.getByTestId("health-pdf-download-btn");
+    await user.click(btn);
+    expect(await screen.findByTestId("health-pdf-download-success")).toBeInTheDocument();
+    expect(btn).toHaveTextContent(/downloaded/i);
+    clickSpy.mockRestore();
+  });
+
   it("disables the button and shows a spinner while generating", async () => {
     let resolveFn;
     api.get.mockReturnValue(new Promise((res) => { resolveFn = res; }));

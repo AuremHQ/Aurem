@@ -21,7 +21,7 @@ export default function PhoneNumberCard({ me, onChange }) {
     setOk(false);
     const trimmed = value.trim();
     if (trimmed && !isValidPhoneNumber(trimmed)) {
-      setError("That phone number doesn't look valid — include the country code (e.g. +1 415 555 2671), or leave it blank.");
+      setError("That phone number doesn't look valid — include the country code (e.g. Enter your phone number), or leave it blank.");
       return;
     }
     setBusy(true);
@@ -53,7 +53,7 @@ export default function PhoneNumberCard({ me, onChange }) {
             type="tel"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="+1 415 555 2671"
+            placeholder="Enter your phone number"
           />
         </label>
         {error && (
