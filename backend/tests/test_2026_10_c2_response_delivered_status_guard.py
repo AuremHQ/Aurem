@@ -64,3 +64,29 @@ def test_normal_reply_with_no_tag_and_zero_tool_calls_is_still_success():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+def test_illegal_function_call_marker_with_zero_tool_calls_is_never_success():
+    """2026-11-19 — the exact prod shape: the reply is only the plain-text
+    '[ILLEGAL FUNCTION CALL]' marker and no tool ran. Must never close as
+    a successful 'Response delivered' turn."""
+    content = "[ILLEGAL FUNCTION CALL]"
+    result = {"ok": True, "tool_calls_run": 0}
+    out = finalize(result, content, prompt="read main.py", session_id="s1", request_id="r5")
+    assert out["turn_state"] != "success"
+    assert out["completion_basis"] != "response_delivered"
+
+
+def test_mixed_prose_plus_marker_with_zero_tool_calls_is_never_success():
+    content = "Let me check that file.\n[ILLEGAL FUNCTION CALL]"
+    result = {"ok": True, "tool_calls_run": 0}
+    out = finalize(result, content, prompt="read main.py", session_id="s1", request_id="r6")
+    assert out["turn_state"] != "success"
+    assert out["completion_basis"] != "response_delivered"
+
+
+def test_plain_words_illegal_function_call_without_brackets_is_still_success():
+    """No brackets, no tag — an ordinary sentence mentioning the words must
+    not trip the guard."""
+    content = "That was an illegal function call, so I stopped and did it by hand instead."
+    result = {"ok": True, "tool_calls_run": 0}
+    out = finalize(result, content, prompt="fix it", session_id="s1", request_id="r7")
+    assert out["turn_state"] == "success"

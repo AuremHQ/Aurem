@@ -277,6 +277,24 @@ def _strip_tool_call_xml_len(raw: str) -> int:
     out = _TAG_ORPHAN_RE.sub("", out)
     return len(out.strip())
 
+# 2026-11-19 — bracket-marker variant of the same leak. LongCat (and
+# occasionally the GLM fallback path) can emit the plain-text marker
+# "[ILLEGAL FUNCTION CALL]" when it attempts a function call the
+# deployment cannot execute. It is NOT an XML tag, so
+# `_strip_tool_call_xml_len` cannot see it and the raw marker used to
+# reach the bubble as a "successful" reply ("Response delivered").
+# Treat any detected marker exactly like a leaked tag.
+_ILLEGAL_FUNCTION_CALL_RE = _re.compile(r"\[\s*ILLEGAL\s+FUNCTION\s+CALL\s*\]", _re.IGNORECASE)
+
+
+def _has_illegal_function_call_marker(text: str) -> bool:
+    """True iff `text` contains the provider's plain-text
+    '[ILLEGAL FUNCTION CALL]' marker — a function call the model
+    attempted but the pipeline never ran."""
+    if not text:
+        return False
+    return bool(_ILLEGAL_FUNCTION_CALL_RE.search(text))
+
 
 # ── LongCat-2.0 path (Iter 212m-159 — Council A primary) ─────
 
@@ -384,23 +402,28 @@ async def _call_longcat(system: str, user: str,
     # just the no-prose-left case.
     _raw_len = len((content or "").strip())
     _stripped_len = _strip_tool_call_xml_len(content or "")
-    if _raw_len and _stripped_len < _raw_len:
-        if _p.LONGCAT_LIVE and _stripped_len == 0:
+    _marker_present = _has_illegal_function_call_marker(content or "")
+    # Prose left after removing BOTH the XML tags and the bracket
+    # marker — drives the "mixed with prose" log flag and the
+    # LONGCAT_LIVE flip, so a marker-only reply counts as "no prose".
+    _prose_len = _strip_tool_call_xml_len(_ILLEGAL_FUNCTION_CALL_RE.sub("", content or ""))
+    if _raw_len and (_stripped_len < _raw_len or _marker_present):
+        if _p.LONGCAT_LIVE and _prose_len == 0:
             # Only flip the live flag off for the pure-tool-call-only
             # shape — that one means LongCat gave up on prose entirely
             # for this turn. A mixed reply still had real prose; one
             # leaked tag alongside it isn't proof the model is down.
             _p.set_longcat_live(False)
         logger.warning(
-            "_call_longcat: %s returned a tool-call tag the pipeline "
+            "_call_longcat: %s returned a tool-call tag or marker the pipeline "
             "can't execute (len_raw=%d, len_after_strip=%d, "
             "mixed_with_prose=%s) — falling back to GLM-5.2 so the "
-            "turn resolves with a real answer instead of a leaked tag.",
-            _LONGCAT_MODEL, len(content or ""), _stripped_len,
-            _stripped_len > 0,
+            "turn resolves with a real answer instead of a leaked tag or marker.",
+            _LONGCAT_MODEL, len(content or ""), _prose_len,
+            _prose_len > 0,
         )
         await _record_longcat_tool_call_fallback(
-            mixed_with_prose=_stripped_len > 0, feature=feature,
+            mixed_with_prose=_prose_len > 0, feature=feature,
         )
         try:
             return await _call_glm(

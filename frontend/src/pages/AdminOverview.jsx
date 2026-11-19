@@ -43,6 +43,11 @@ export default function AdminOverview() {
   const [refreshingAll, setRefreshingAll] = useState(false); // 2026-08-27 · Admin Compact M1
   const [loading, setLoading] = useState(true);
 
+  // 2026-11-19 — every overview call carries its own 15s timeout:
+  // Promise.allSettled waits for the SLOWEST call, and with only the
+  // 60s axios default the page sat on 'Loading system overview…' for
+  // up to a minute when one admin endpoint hung. The page now always
+  // renders within ~15s with whatever data arrived.
   const load = useCallback(async () => {
     const h = { Authorization: `Bearer ${getToken()}` };
     const HEALTH_URL = `${process.env.REACT_APP_BACKEND_URL}/api/health`;
@@ -52,26 +57,26 @@ export default function AdminOverview() {
           fetch(HEALTH_URL, { signal: AbortSignal.timeout(10000) }).then((r) => r.json()),
           api.get("/usage/public/stats"),
           api.get("/wall/stats"),
-          api.get("/admin/council/stats",   { headers: h }),
-          api.get("/admin/mode-telemetry",  { headers: h }),
-          api.get("/admin/db-health",       { headers: h }),
-          api.get("/admin/overview-metrics", { headers: h }),
-          api.get("/admin/insights/user-patterns", { headers: h }),
-          api.get("/admin/insights/activation-funnel", { headers: h }),
-          api.get("/admin/alerts", { headers: h }),
-          api.get("/admin/council/health", { headers: h }),  // Iter 212m-192
-          api.get("/admin/github-sync", { headers: h }),     // Iter 357 — Guard 8
-          api.get("/admin/qa/guard17-breakers", { headers: h }), // Iter 360 — Guard 17
-          api.get("/admin/qa/vscode-marketplace-status", { headers: h }), // Session 6 · Item 1
-          api.get("/funnel/github/stats?days=7", { headers: h }),         // 2026-08-01 — GitHub Connect funnel
-          api.get("/admin/funnel", { headers: h }),          // 2026-08-20 — stage-aware nudge stats
-          api.get("/admin/backups/status", { headers: h }),        // 2026-08-20 — backup health
-          api.get("/admin/backups/drill-history", { headers: h }), // 2026-08-20 — restore-drill health
-          api.get("/admin/deploy-readiness", { headers: h }),      // 2026-08-24 — Option A advisory card
-          api.get("/admin/insights/dora", { headers: h }),         // 2026-08-24 — Guard 22 DORA metrics
-          api.get("/admin/insights/slo", { headers: h }),          // 2026-08-26 — Phase 5.3 SLO compliance
-          api.get("/admin/insights/cost-alert", { headers: h }),   // 2026-08-27 — Live Cost Alert
-          api.get("/admin/insights/journey-watch", { headers: h }), // 2026-08-27 — P7 Journey Watch card
+          api.get("/admin/council/stats",   { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/mode-telemetry",  { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/db-health",       { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/overview-metrics", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/insights/user-patterns", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/insights/activation-funnel", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/alerts", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/council/health", { headers: h, signal: AbortSignal.timeout(15000) }),  // Iter 212m-192
+          api.get("/admin/github-sync", { headers: h, signal: AbortSignal.timeout(15000) }),     // Iter 357 — Guard 8
+          api.get("/admin/qa/guard17-breakers", { headers: h, signal: AbortSignal.timeout(15000) }), // Iter 360 — Guard 17
+          api.get("/admin/qa/vscode-marketplace-status", { headers: h, signal: AbortSignal.timeout(15000) }), // Session 6 · Item 1
+          api.get("/funnel/github/stats?days=7", { headers: h, signal: AbortSignal.timeout(15000) }),         // 2026-08-01 — GitHub Connect funnel
+          api.get("/admin/funnel", { headers: h, signal: AbortSignal.timeout(15000) }),          // 2026-08-20 — stage-aware nudge stats
+          api.get("/admin/backups/status", { headers: h, signal: AbortSignal.timeout(15000) }),        // 2026-08-20 — backup health
+          api.get("/admin/backups/drill-history", { headers: h, signal: AbortSignal.timeout(15000) }), // 2026-08-20 — restore-drill health
+          api.get("/admin/deploy-readiness", { headers: h, signal: AbortSignal.timeout(15000) }),      // 2026-08-24 — Option A advisory card
+          api.get("/admin/insights/dora", { headers: h, signal: AbortSignal.timeout(15000) }),         // 2026-08-24 — Guard 22 DORA metrics
+          api.get("/admin/insights/slo", { headers: h, signal: AbortSignal.timeout(15000) }),          // 2026-08-26 — Phase 5.3 SLO compliance
+          api.get("/admin/insights/cost-alert", { headers: h, signal: AbortSignal.timeout(15000) }),   // 2026-08-27 — Live Cost Alert
+          api.get("/admin/insights/journey-watch", { headers: h, signal: AbortSignal.timeout(15000) }), // 2026-08-27 — P7 Journey Watch card
         ]);
       if (healthRes.status   === "fulfilled") setHealth(healthRes.value);
       if (statsRes.status    === "fulfilled") setStats(statsRes.value.data);
@@ -114,11 +119,11 @@ export default function AdminOverview() {
       const [healthRes, dbHealthRes, councilHealthRes, ghSyncRes, breakersRes, alertsRes] =
         await Promise.allSettled([
           fetch(HEALTH_URL, { signal: AbortSignal.timeout(10000) }).then((r) => r.json()),
-          api.get("/admin/db-health", { headers: h }),
-          api.get("/admin/council/health", { headers: h }),
-          api.get("/admin/github-sync", { headers: h }),
-          api.get("/admin/qa/guard17-breakers", { headers: h }),
-          api.get("/admin/alerts", { headers: h }),
+          api.get("/admin/db-health", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/council/health", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/github-sync", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/qa/guard17-breakers", { headers: h, signal: AbortSignal.timeout(15000) }),
+          api.get("/admin/alerts", { headers: h, signal: AbortSignal.timeout(15000) }),
         ]);
       if (healthRes.status === "fulfilled") setHealth(healthRes.value);
       if (dbHealthRes.status === "fulfilled") setDbHealth(dbHealthRes.value.data);
@@ -159,8 +164,8 @@ export default function AdminOverview() {
     setRefreshingHealth(true);
     try {
       const h = { Authorization: `Bearer ${getToken()}` };
-      await api.post("/admin/integrations/refresh", null, { headers: h });
-      const a = await api.get("/admin/alerts", { headers: h });
+      await api.post("/admin/integrations/refresh", null, { headers: h, signal: AbortSignal.timeout(15000) });
+      const a = await api.get("/admin/alerts", { headers: h, signal: AbortSignal.timeout(15000) });
       setAlerts(a.data);
     } catch { /* silent */ }
     finally { setRefreshingHealth(false); }
@@ -168,7 +173,7 @@ export default function AdminOverview() {
   const dismissAlert = async (alertId) => {
     try {
       const h = { Authorization: `Bearer ${getToken()}` };
-      await api.post(`/admin/alerts/${alertId}/dismiss`, null, { headers: h });
+      await api.post(`/admin/alerts/${alertId}/dismiss`, null, { headers: h, signal: AbortSignal.timeout(15000) });
       // Optimistic remove
       setAlerts((cur) => cur ? {
         ...cur,
@@ -1434,7 +1439,7 @@ function CachePurgePanel() {
     try {
       // 1. Backend purge
       const h = { Authorization: `Bearer ${getToken()}` };
-      const r = await api.post("/admin/cache/purge", {}, { headers: h });
+      const r = await api.post("/admin/cache/purge", {}, { headers: h, signal: AbortSignal.timeout(15000) });
       setReport(r.data?.report || null);
 
       // 2. Client-side blast

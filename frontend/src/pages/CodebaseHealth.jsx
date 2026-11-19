@@ -30,6 +30,7 @@ import { api } from "../lib/api";
 import useFixQuota from "../lib/useFixQuota";
 import BulkFixConfirmModal from "../components/BulkFixConfirmModal";
 import NewUserWizard from "../components/NewUserWizard";
+import { toast } from "../components/Toast";
 
 const CATS = [
   { key: "security",     label: "Security",      icon: Shield,    tone: "#ef4444", cost: 5,
@@ -105,6 +106,7 @@ export function DownloadPdfButton({ projectId }) {
       a.remove();
       URL.revokeObjectURL(url);
       setState("downloaded");
+    toast({ message: "Report downloaded - check your downloads", kind: "success" });
       window.setTimeout(() => setState("idle"), 5000);
     } catch (e) {
       const status = e?.response?.status;
@@ -113,6 +115,7 @@ export function DownloadPdfButton({ projectId }) {
       else if (status === 403) msg = "You don't have access to this project's report.";
       else if (status === 404) msg = "Project not found — it may have been removed.";
       setErrMsg(msg);
+    toast({ message: msg, kind: "error" });
       setState("error");
     }
   }

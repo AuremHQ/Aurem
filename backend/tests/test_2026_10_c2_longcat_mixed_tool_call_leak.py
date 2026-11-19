@@ -149,3 +149,56 @@ def test_pure_tool_call_only_still_flips_live_false(monkeypatch):
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
+def test_marker_only_reply_falls_back_to_glm_and_flips_live_false(monkeypatch):
+    """2026-11-19 — bracket-marker variant: LongCat returns ONLY the
+    plain-text '[ILLEGAL FUNCTION CALL]' marker (no XML tag, no prose).
+    Must fall back to GLM-5.2 and flip LONGCAT_LIVE off, same as the
+    pure tool-call-only shape."""
+    monkeypatch.setenv("LONGCAT_ENABLED", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    llm = _reload_llm()
+    llm.LONGCAT_LIVE = True
+
+    async def fake_openrouter(**kwargs):
+        return "[ILLEGAL FUNCTION CALL]"
+
+    async def fake_glm(**kwargs):
+        return "via-glm"
+
+    from services.llm import openrouter_client as _oc
+    from services.llm import openrouter_providers as _op
+    monkeypatch.setattr(_oc, "call_openrouter_model", fake_openrouter)
+    monkeypatch.setattr(_op, "_call_glm", fake_glm)
+
+    out = _run(llm._call_longcat(system="s", user="u", max_tokens=10))
+    assert out == "via-glm"
+    assert llm.LONGCAT_LIVE is False, (
+        "a marker-only reply means LongCat gave up on prose entirely — "
+        "LONGCAT_LIVE must flip off, same as the pure tool-call-only shape"
+    )
+
+
+def test_mixed_prose_plus_marker_falls_back_but_keeps_live_true(monkeypatch):
+    """Real prose plus the marker: still falls back to GLM-5.2 (a
+    promised-and-never-run action must never read as delivered), but
+    LONGCAT_LIVE stays True — one leaked marker alongside real prose
+    is not proof the model is down."""
+    monkeypatch.setenv("LONGCAT_ENABLED", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    llm = _reload_llm()
+    llm.LONGCAT_LIVE = True
+
+    async def fake_openrouter(**kwargs):
+        return "Sure.\n[ILLEGAL FUNCTION CALL]"
+
+    async def fake_glm(**kwargs):
+        return "via-glm"
+
+    from services.llm import openrouter_client as _oc
+    from services.llm import openrouter_providers as _op
+    monkeypatch.setattr(_oc, "call_openrouter_model", fake_openrouter)
+    monkeypatch.setattr(_op, "_call_glm", fake_glm)
+
+    out = _run(llm._call_longcat(system="s", user="u", max_tokens=10))
+    assert out == "via-glm"
+    assert llm.LONGCAT_LIVE is True

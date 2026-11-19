@@ -100,7 +100,7 @@ export const INSTALL = {
   lede: "Download the zip or run the one-line installer — then start the harness.",
   oneCommandLabel: "Install in one command (PowerShell):",
   oneCommand:
-    `powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://auremcto.com/install/aurem-loop.ps1 | iex"`,
+    `powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://auremcto.com/install-aurem-loop.ps1 | iex"`,
   manualTitle: "Or the manual way:",
   manualSteps: [
     "Download the zip and extract it to <code>aurem-loop-0.8.0</code>.",

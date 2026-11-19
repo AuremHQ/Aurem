@@ -101,4 +101,34 @@ describe("Ticket C-UI · DownloadPdfButton", () => {
     expect(await screen.findByText(/could not generate the report/i)).toBeInTheDocument();
     expect(btn).not.toBeDisabled();
   });
+
+  it("fires a success toast on download (Minor 10)", async () => {
+    api.get.mockResolvedValue({ data: new Blob(["fake-pdf"], { type: "application/pdf" }) });
+    const seen = [];
+    const onToast = (e) => seen.push(e.detail);
+    window.addEventListener("aurem:toast", onToast);
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const user = userEvent.setup();
+    render(<DownloadPdfButton projectId="proj_1" />);
+    await user.click(screen.getByTestId("health-pdf-download-btn"));
+    await waitFor(() =>
+      expect(seen.some((d) => d.kind === "success" && /downloaded/i.test(d.message || ""))).toBe(true)
+    );
+    clickSpy.mockRestore();
+    window.removeEventListener("aurem:toast", onToast);
+  });
+
+  it("fires an error toast on failure (Minor 10)", async () => {
+    api.get.mockRejectedValue({ response: { status: 403 } });
+    const seen = [];
+    const onToast = (e) => seen.push(e.detail);
+    window.addEventListener("aurem:toast", onToast);
+    const user = userEvent.setup();
+    render(<DownloadPdfButton projectId="proj_1" />);
+    await user.click(screen.getByTestId("health-pdf-download-btn"));
+    await waitFor(() =>
+      expect(seen.some((d) => d.kind === "error" && /don.t have access/i.test(d.message || ""))).toBe(true)
+    );
+    window.removeEventListener("aurem:toast", onToast);
+  });
 });

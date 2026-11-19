@@ -1,7 +1,5 @@
 # Ora by Aurem
 
-> ⚠️ STATUS: CORRECTED DRAFT — NOT LIVE YET. Dated **Nov 18, 2026**. Ready for Emergent handover to replace the live file at auremcto.com/llms.txt. The live file (214 lines, last updated **Nov 10, 2026**) is STALE — it says Aurem Loop is "not available to download yet" and says nothing about wsp-kit or ora-grounding. This draft fixes all of that. Nothing here has been deployed.
->
 > Ora by Aurem is an AI engineer for non-technical founders — it commits real fixes to the founder's GitHub repo, security-first. Pricing: **Starter $9 / 900 tokens, Pro $19 / 1,900 tokens, Team $49 / 4,900 tokens** (USD). Free scan + fix. Also on this page: Aurem Loop (free local coding harness, **v0.8.0** live **Nov 16, 2026**), wsp-kit (free MIT weight-space tool, real runs **+29.44** and **+9.44**), and ora-grounding (free MIT post-response grounding check for LLM chat agents). Company: Polaris Built Inc., Canada.
 
 Ora by Aurem is the AI engineer that actually commits. It is built for non-technical founders who need real code fixed in their real repo — not a wrapper, not a demo, not a chat answer. A free scan + fix is available before paying. **100% of what the user pays goes to the user's value** (no margin kept). Security-first. Founded **2024** by Tejinder Sandhu. **AUREM™ CIPO Application No. 2492318, filed Aug 5, 2026, pending.**

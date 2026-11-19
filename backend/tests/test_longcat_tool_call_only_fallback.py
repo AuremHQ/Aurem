@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from services.llm.openrouter_providers import _strip_tool_call_xml_len
+from services.llm.openrouter_providers import (
+    _has_illegal_function_call_marker,
+    _strip_tool_call_xml_len,
+)
 
 
 def test_empty_input_returns_zero():
@@ -79,3 +82,17 @@ def test_thinking_and_scratchpad_also_stripped():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+def test_illegal_function_call_marker_is_detected():
+    """2026-11-19 — the provider's plain-text '[ILLEGAL FUNCTION CALL]'
+    marker (no XML tag) must be detected so `_call_longcat` falls back
+    to GLM-5.2 instead of delivering the raw marker as the reply."""
+    assert _has_illegal_function_call_marker("[ILLEGAL FUNCTION CALL]") is True
+    assert _has_illegal_function_call_marker("Let me check.\n[ILLEGAL FUNCTION CALL]") is True
+    assert _has_illegal_function_call_marker("[illegal function call]") is True
+
+
+def test_marker_detector_does_not_false_positive():
+    assert _has_illegal_function_call_marker("No open findings right now.") is False
+    assert _has_illegal_function_call_marker("That was an illegal function call, so I stopped.") is False
+    assert _has_illegal_function_call_marker("") is False
+    assert _has_illegal_function_call_marker(None) is False

@@ -116,6 +116,7 @@ def finalize(result: dict, content: str, *, prompt: str, session_id: str,
 def _promises_a_tool_action_it_never_ran(content: str, result: dict) -> bool:
     """True iff `content` still contains an unexecuted tool-call tag
     (any of `<tool_call>`, `<function_call>`, `<tool>`, `<function>`,
+    the provider's plain-text `[ILLEGAL FUNCTION CALL]` marker,
     or LongCat's native `<longcat_tool_call>`) AND no tool actually
     ran this turn (`tool_calls_run == 0`). A tag present with real
     invocations alongside it (`tool_calls_run > 0`) is not this bug —
@@ -129,7 +130,8 @@ def _promises_a_tool_action_it_never_ran(content: str, result: dict) -> bool:
         return False
     import re as _re
     return bool(_re.search(
-        r"<\s*/?\s*(?:tool_call|function_call|tool|function|longcat_tool_call)\b",
+        r"<\s*/?\s*(?:tool_call|function_call|tool|function|longcat_tool_call)\b"
+        r"|\[\s*ILLEGAL\s+FUNCTION\s+CALL\s*\]",
         text, _re.IGNORECASE,
     ))
 

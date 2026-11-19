@@ -52,9 +52,10 @@ import React, { useEffect, useState } from "react";
 import { api, healthApi, getToken, setToken, setUser } from "../lib/api";
 import { scorePassword, MIN_ACCEPTABLE_SCORE } from "../lib/passwordStrength";
 import {
-  HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, FAQ_ITEMS,
+  HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, INSTALL, FAQ_ITEMS,
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../data/harnessContent.mjs";
+import { LOOP_JSON_LD } from "../data/aaoJsonLd";
 
 const CSS = `
 :root {
@@ -248,9 +249,17 @@ function fmtBytes(n) {
   return n.toLocaleString();
 }
 
+function fmtReleaseDate(iso) {
+  if (!iso) return "Nov 16, 2026";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Nov 16, 2026";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export default function HarnessPage() {
   const [flagEnabled, setFlagEnabled] = useState(null);
   const [release, setRelease] = useState({ available: false });
+  const releaseDate = fmtReleaseDate(release?.published_at);
   const [authChecked, setAuthChecked] = useState(false);
 
   const [view, setView] = useState("signup"); // signup | signin | reset | done
@@ -290,6 +299,18 @@ export default function HarnessPage() {
     healthApi.get("/harness/release-status")
       .then((r) => setRelease(r.data || { available: false }))
       .catch(() => setRelease({ available: false }));
+  }, []);
+
+  // AAO: Aurem Loop JSON-LD (machine-readable-blocks.md). Static block; no aggregateRating.
+  useEffect(() => {
+    const ld = document.createElement("script");
+    ld.type = "application/ld+json";
+    ld.id = "ld-aurem-loop";
+    ld.text = JSON.stringify(LOOP_JSON_LD);
+    document.head.appendChild(ld);
+    return () => {
+      document.getElementById("ld-aurem-loop")?.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -476,7 +497,7 @@ export default function HarnessPage() {
       const status = err?.response?.status;
       let msg = "Could not start the download — try again.";
       if (status === 401) msg = "You're not logged in — please sign in again.";
-      else if (status === 409) msg = "No release is published yet — check back shortly.";
+      else if (status === 409) msg = "The download details could not be loaded — please refresh the page and try again.";
       else if (status === 429) msg = "Too many download attempts — try again in a minute.";
       setDownloadError(msg);
       setDownloadState("error");
@@ -545,12 +566,12 @@ export default function HarnessPage() {
             <p className="release" data-testid="harness-release-line">
               {release?.available ? (
                 <>
-                  <span><span className="dot" aria-hidden="true"></span>Download available — v{release.version}</span>
+                  <span><span className="dot" aria-hidden="true"></span>Available now — free download, v{release.version} · Live since {releaseDate}</span>
                   <span>For {release.platform === "windows" ? "Windows" : release.platform}</span>
                   <span>Free with your account</span>
                 </>
               ) : (
-                <span>Download not available yet — check back shortly.</span>
+                <span>Free download with your account</span>
               )}
             </p>
           </div>
@@ -678,11 +699,12 @@ export default function HarnessPage() {
                     {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version}`}
                   </button>
                 ) : (
-                  <p style={{ color: "var(--ink-3)", fontSize: "0.9rem" }}>No release is published yet — check back shortly.</p>
+                  <p style={{ color: "var(--ink-3)", fontSize: "0.9rem" }}>The download details could not be loaded — please refresh the page and try again.</p>
                 )}
                 {release?.available && (
                   <p className="meta">
-                    File size: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256}<br />
+                    File: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256} · Released {releaseDate}<br />
+        Ships qwen2.5-coder:1.5b · Windows · Runs entirely on your PC<br />
                     Verify the SHA-256 after downloading — it must match exactly before you run the installer.
                   </p>
                 )}
@@ -738,6 +760,20 @@ export default function HarnessPage() {
             </ul>
           </div>
         </section>
+
+<section className="below" id="install" aria-labelledby="installH">
+  <p className="kicker">{INSTALL.kicker}</p>
+  <h2 id="installH">{INSTALL.title}</h2>
+  <p className="lede">{INSTALL.lede}</p>
+  <p><b>{INSTALL.oneCommandLabel}</b></p>
+  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", overflowX: "auto" }}>{INSTALL.oneCommand}</pre>
+  <p><b>{INSTALL.manualTitle}</b></p>
+  <ol>
+    {INSTALL.manualSteps.map((stepHtml, i) => (
+      <li key={i} dangerouslySetInnerHTML={{ __html: stepHtml }} />
+    ))}
+  </ol>
+</section>
 
         <section className="below" id="faq" aria-labelledby="faqH">
           <p className="kicker">Questions</p>

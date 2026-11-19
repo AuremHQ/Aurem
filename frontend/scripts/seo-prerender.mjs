@@ -42,6 +42,18 @@ import {
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../src/data/harnessContent.mjs";
 
+import {
+  pricingHeroHeadline,
+  pricingDetailLine,
+  howMuchFaqAnswer,
+  pricingFeatureCardDesc,
+  comparisonSectionSub,
+  comparisonFlatPricingRowLabel,
+  landingPricingSectionSub,
+  tierCapacityLine,
+  freeOfferShortLine,
+} from "../src/lib/billingCopy.js";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
 
@@ -204,22 +216,22 @@ const esc = (s) =>
 
 function swapHead(html, { title, description, canonical }) {
   let out = html
-    .replace(/<title>[\s\S]*?<\/title>/, `<title>${esc(title)}</title>`)
+    .replace(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(title)}</title>`)
     .replace(/(<meta\s+name="description"\s+content=")[^"]*(")/,
-      `$1${esc(description)}$2`)
+      (_m, g1, g2) => `${g1}${esc(description)}${g2}`)
     .replace(/(<meta\s+property="og:title"\s+content=")[^"]*(")/,
-      `$1${esc(title)}$2`)
+      (_m, g1, g2) => `${g1}${esc(title)}${g2}`)
     .replace(/(<meta\s+property="og:description"\s+content=")[^"]*(")/,
-      `$1${esc(description)}$2`)
+      (_m, g1, g2) => `${g1}${esc(description)}${g2}`)
     .replace(/(<meta\s+property="og:url"\s+content=")[^"]*(")/,
-      `$1${esc(canonical)}$2`)
+      (_m, g1, g2) => `${g1}${esc(canonical)}${g2}`)
     .replace(/(<meta\s+name="twitter:title"\s+content=")[^"]*(")/,
-      `$1${esc(title)}$2`)
+      (_m, g1, g2) => `${g1}${esc(title)}${g2}`)
     .replace(/(<meta\s+name="twitter:description"\s+content=")[^"]*(")/,
-      `$1${esc(description)}$2`);
+      (_m, g1, g2) => `${g1}${esc(description)}${g2}`);
   if (/<link\s+rel="canonical"/.test(out)) {
     out = out.replace(/(<link\s+rel="canonical"\s+href=")[^"]*(")/,
-      `$1${esc(canonical)}$2`);
+      (_m, g1, g2) => `${g1}${esc(canonical)}${g2}`);
   } else {
     out = out.replace("</head>",
       `  <link rel="canonical" href="${esc(canonical)}" />\n</head>`);
@@ -259,8 +271,8 @@ function injectRoot(html, inner) {
       .ora-seo-snapshot th,.ora-seo-snapshot td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}
     </style>`;
   const re = /(<div id="root">)([\s\S]*?)(<\/div>)/;
-  if (re.test(html)) return html.replace(re, `$1${styled}$3`);
-  return html.replace('<div id="root"></div>', `<div id="root">${styled}</div>`);
+  if (re.test(html)) return html.replace(re, (_m, g1, _g2, g3) => `${g1}${styled}${g3}`);
+  return html.replace('<div id="root"></div>', () => `<div id="root">${styled}</div>`);
 }
 
 function vsBody(c) {
@@ -292,6 +304,7 @@ function vsBody(c) {
 <h1>ORA vs ${esc(c.name)}</h1>
 <p>Honest comparison · data verified ${esc(LAST_VERIFIED)}.</p>
 <p>${esc(c.intro)}</p>
+<p>${esc(c.description)}</p>
 ${pick("Choose ORA if you want…", c.pickAurem)}
 ${pickThemBlocks}
 <h2>The pricing difference, in real numbers</h2>
@@ -309,13 +322,18 @@ ${faq}
 }
 
 function compareBody() {
-  const cards = Object.values(COMPETITORS).map((c) =>
-    `<li><a href="/vs/${c.slug}">ORA vs ${esc(c.name)}</a> — ${esc(c.intro.slice(0, 150))}…</li>`)
-    .join("");
+  // 2026-11-19 — render the full COMPETITORS data on the hub page:
+  // every competitor's full intro and description, its comparison
+  // rows table, and its FAQ (the same data the /vs pages render).
+  const sections = Object.values(COMPETITORS).map((c) => {
+    const rows = (c.rows || []).map((r) => `<tr><th>${esc(r[0])}</th><td>${esc(r[1])}</td><td>${esc(r[2])}</td></tr>`).join("");
+    const faq = (c.faq || []).map((item) => `<h3>${esc(item.q)}</h3><p>${esc(item.a)}</p>`).join("");
+    return `<section><h2><a href="/vs/${c.slug}">ORA vs ${esc(c.name)}</a></h2><p>${esc(c.intro)}</p><p>${esc(c.description)}</p><table><thead><tr><th></th><th>ORA</th><th>${esc(c.name)}</th></tr></thead><tbody>${rows}</tbody></table>${faq}</section>`;
+  }).join("");
   return `<main>
 <h1>How ORA compares</h1>
 <p>${esc(COMPARE_HUB.description)}</p>
-<ul>${cards}</ul>
+${sections}
 <p><a href="/signup">${TOKEN_MODE ? "Start free — one full scan, no credit card" : "Start free — 10 tasks/month, no credit card"}</a></p>
 </main>`;
 }
@@ -374,6 +392,169 @@ for (const c of Object.values(COMPETITORS)) {
 }
 
 // ── 2026-08-30 · P0 #1 — homepage / about / contact / privacy ───────
+
+// Extra homepage copy from src/pages/Landing.jsx (extracted 2026-11-19).
+// Renders landing sections the base snapshot omits, so served HTML carries real text.
+const HOME_EXTRA = [
+  "Fast, cheap, reliable.",
+  "GPT-4o-mini / Claude Haiku 4.5",
+  "class. Perfect for quick fixes and everyday tasks.",
+  "\u2713 commit a1b2c3 pushed",
+  "Balanced quality + depth.",
+  "Claude Sonnet 4.5 / GPT-5.2",
+  "class. Best default for production work.",
+  "\u2713 commit 9z8y7x pushed",
+  "Deep, thorough, audit-grade.",
+  "Claude Opus 4.5 / GPT-5.2 / Gemini 3 Pro",
+  ". For refactors and risky changes.",
+  "\u2713 commit f4e3d2 pushed",
+  "\u25b8 Developers Choice",
+  "AUREM LOOP harness",
+  "ORA reads your GitHub repo, runs Vanguard security scans,",
+  "and ships production-ready code \u2014 with Loop Mode that",
+  "verifies every step before committing.",
+  "Watch it ship",
+  "\u2014 no credit card required \u00b7 30-second signup",
+  "Made in Canada",
+  "GDPR \u00b7 PIPEDA \u00b7 DPDP \u00b7 CCPA aligned",
+  "flat monthly",
+  "tap to commit",
+  "Why teams ship with ORA",
+  "developers using ORA",
+  "production commits shipped",
+  "AI mistakes auto-caught",
+  "Watch ORA ship real code",
+  "Real repos. Real commits. No staging.",
+  "\u25b6 OPEN FULL WALKTHROUGH \u2192",
+  "New \u00b7 Vanguard 2.0",
+  "surface sweep \u00b7 412 files \u00b7 25 patterns",
+  "deep re-scan \u00b7 9 flagged \u00b7 context \u00b110",
+  "sql_format + insecure_http \u2192 CRITICAL",
+  "ORA wrote 3 patches \u00b7 risk 78 \u2192 12",
+  "draft opened \u00b7 vanguard/auto-fix \u2713",
+  "Vanguard 2.0 \u2014 two-round deep scan + auto PR",
+  "Scan finds the bugs. ORA writes the fixes. PR lands in your",
+  "repo \u2014 draft, never force-merged. New in Feb 2026.",
+  "From prompt to commit in 4 steps",
+  "No setup. No IDE. No context switching.",
+  "The workspace",
+  "Three windows. One agent.",
+  "Code, Live Preview and Advisor \u2014 side by side. Switch tabs, never switch tools.",
+  "Code \u00b7 auth.py",
+  "DIFF +24 / \u22126",
+  "# Iter 184 \u2014 bcrypt + rate-limit",
+  "HTTPException",
+  "create_token",
+  "Live preview",
+  "localhost:3000",
+  "Welcome back",
+  "Sign in to ship your next commit.",
+  "hot reload \u00b7 142ms",
+  "tests pass \u00b7 38 / 38",
+  "Why are we using bcrypt over argon2 here?",
+  "column. Want me to draft the PR?",
+  "Yes \u2014 and keep bcrypt as fallback for older rows.",
+  "planning across 3 files\u2026",
+  "Three things no other AI dev tool does.",
+  "Grep the repo. Every claim below points to a real file.",
+  "CITATION GUARD",
+  "file contents.",
+  "If ORA mentions any file path or version WITHOUT reading it in the same",
+  "turn, the response is auto-blocked, the real file is fetched, and the",
+  "LLM is re-run with the correct data. Zero fabricated references \u2014 by",
+  "design, not by prompt.",
+  "services/citation_guard.py",
+  "PARLIAMENT COUNCIL",
+  "Three AI models vote",
+  "before your code commits.",
+  "core/parliament.py",
+  "Your advisor sees",
+  "what you see.",
+  "services/advisor_vision.py",
+  "Pick your speed",
+  "Every mode commits direct to GitHub.",
+  "Why teams switch",
+  "Built like a teammate, not a chat bot",
+  "All shipped, all in production.",
+  "Why developers choose ORA",
+  "GitHub Copilot",
+  "Try ORA live \u2014 free.",
+  "Connect your GitHub repo and ship your first task in under 2 minutes. No credit card required.",
+  "What developers are saying",
+  "Real feedback from real developers.",
+  "Flat pricing. No surprises.",
+  "Everything you need to know.",
+  "Ready to ship code",
+  "without an IDE?",
+  "ORA by Aurem \u2014 Built for developers \u00b7 MIT extension",
+  "Developer Portal",
+  "OpenAPI Spec",
+  "Privacy Policy",
+  "Terms of Service",
+  "Cookie Policy",
+  "Acceptable Use",
+  "Subprocessors",
+  "System Status",
+  "Support \u00b7 auremcto.com/support",
+  "Privacy \u00b7 auremcto.com/support",
+  "security@auremcto.com",
+  "billing@auremcto.com",
+  "Polaris Built Inc",
+  "\u2014 ORA by Aurem, made by AUREM \u00b7 Incorporated in Canada \u00b7 All rights reserved.",
+  "Cookie preferences",
+  "../components/PricingCards",
+  "../components/LazyVideo",
+  "../components/marketing/MarketingNav",
+  "../components/demo/WalkthroughPlayer",
+  "../components/demo/demoSteps",
+  "~30 seconds end-to-end",
+  "Minimum-diff commits",
+  "Full review pass included",
+  "Security scan every commit",
+  "Multi-file reasoning",
+  "Test scaffolds auto-included",
+  "2-step plan-then-act",
+  "Token-aware budget control",
+  "Full repo grep + AST scan",
+  "RCA on every regression",
+  "Migration scripts included",
+  "3-step plan/code/verify",
+  "migrate sessions to redis",
+  "UNIQUE \u2014 no competitor",
+  "Security-First by Default",
+  "25-pattern Vanguard scan runs before every commit. Secrets, injection, JWT replay, XSS \u2014 all caught before they reach your repo. The only AI engineer with mandatory pre-commit security.",
+  "Loop Mode \u2014 Verified Before Ship",
+  "Plan \u2192 Execute \u2192 Verify \u2192 Scan \u2192 Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically, up to a 2-retry cap.",
+  "Codebase Health Scanner",
+  "16-category audit: security, performance, code quality, dependencies, database, and more. Health score 0-100. Individual fix buttons. Find 44 issues in minutes, fix them with one click.",
+  "UNIQUE \u00b7 4-hop chain",
+  "4-Provider Failover Chain",
+  "OpenRouter \u2192 DeepSeek \u2192 OR free chain \u2192 Groq emergency. If one provider has an outage, ORA automatically retries the next in the chain \u2014 reducing (not eliminating) the chance that a single provider's downtime stops your ship.",
+  "UNIQUE \u00b7 self-learning",
+  "ORA Learns Your Codebase",
+  "ORA Council tracks every interaction across 5 modes (chat, advice, code, debug, audit) and fine-tunes ORA on your specific patterns. The more you use ORA, the better it gets at your codebase.",
+  "I shipped a Stripe integration in a Slack thread while waiting for a flight. ORA read the repo, wrote the code, ran the tests, committed. Mind blown.",
+  "Finally an AI that actually commits \u2014 no copy-paste compromise. ORA is just direct.",
+  "The only AI tool that understands my repo. After running it once, the warm-start memory is dialled in. Tasks land in minutes, not hours.",
+  "Senior, SaaS startup",
+  "Linux dev. No IDE, no problem. ORA via Claude Code in terminal is the cleanest workflow I've ever had.",
+  "Ships changes to your GitHub repo",
+  "Mobile-friendly (web + PWA)",
+  "MCP server (Claude / Cursor / VS Code)",
+  "Codebase memory (warm-start)",
+  "OAuth 2.1 + PKCE for AI clients",
+  "Open source friendly",
+  "AUREM is the company. ORA is the product \u2014 an autonomous AI engineer that reads your GitHub repo, writes code, runs security scans, and commits directly to your branches. AUREM (Application No. 2492318 with the Canadian Intellectual Property Office) is a trademark of Polaris Built Inc.",
+  "Does ORA commit code automatically or do I approve first?",
+  "You approve first. ORA runs a 5-phase Loop \u2014 Plan \u2192 Execute \u2192 Verify \u2192 Scan \u2192 Ship \u2014 and Ship requires your manual click. Nothing lands in your repo until you press Ship, and every ship generates a real commit (not a force-push) that can be rolled back in one click.",
+  "How much does ORA cost?",
+  "What happens if ORA can't verify a change?",
+  "ORA self-heals up to 2 times, then fails cleanly \u2014 no infinite loop. When the verify step (ruff / eslint / type checks) fails, ORA re-writes the file with the actual lint errors as context; if 2 attempts still fail, the loop terminates and shows you the exact ruff/eslint errors and which files failed so you can either fix manually or send a more specific follow-up prompt.",
+  "No. ORA is a browser app (also installable as a PWA on mobile) and a terminal MCP 2.4 server \u2014 no IDE required. If you already live in VS Code, Cursor, Claude Desktop, or Claude Code, ORA has an MCP client for each, but the extension is optional.",
+];
+function homeExtraHtml() {
+  return "<section><h2>More from ORA</h2>" + HOME_EXTRA.map((t) => "<p>" + t + "</p>").join("") + "</section>";
+}
 function homeBody() {
   return `<main>
 <h1>ORA by AUREM \u2014 the AI engineer that actually commits</h1>
@@ -448,6 +629,110 @@ ${sections}
 </main>`;
 }
 
+// Pricing plans mirror src/components/PricingCards.jsx (Free/Starter/Pro/Team).
+// Keep the names, prices and features in sync with that file.
+const PRICING_PLANS = [
+  {
+    id: "free",
+    name: "Free",
+    price: "$0",
+    period: "/ month USD",
+    cta: "Start free",
+    features: [
+      "10 tasks per month",
+      "Standard mode",
+      "Changes delivered to your repo",
+      "F12 error debugger",
+      "Community support",
+    ],
+  },
+  {
+    id: "starter",
+    name: "Starter",
+    price: "$9",
+    period: "/ month USD",
+    cta: "Upgrade to Starter",
+    features: [
+      "50 tasks per month",
+      "Swift mode only",
+      "Changes delivered to your repo with one-click rollback",
+      "Live worker tape",
+      "Email support",
+    ],
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price: "$19",
+    period: "/ month USD",
+    cta: "Upgrade to Pro",
+    features: [
+      "300 tasks per month",
+      "Swift + Pro review modes",
+      "Changes delivered to your repo — Beta",
+      "Project Brain memory",
+      "Parallel agents",
+      "VS Code extension",
+      "Priority support",
+    ],
+  },
+  {
+    id: "team",
+    name: "Team",
+    price: "$49",
+    period: "/ month USD",
+    cta: "Upgrade to Team",
+    features: [
+      "Everything in Pro",
+      "400 tasks per month",
+      "Maxx mode — Claude writes your code",
+      "Changes delivered to your repo — Beta",
+      "All 3 modes: Swift, Pro, Maxx",
+      "Admin dashboard + roles",
+      "Priority queue",
+      "Shared project brain",
+      "Slack / DM support",
+    ],
+  },
+];
+
+function pricingBody() {
+  // 2026-11-19 — full pricing snapshot: plan cards, a feature comparison
+  // table built from PRICING_PLANS, the full FAQ, and the site footer.
+  // tierCapacityLine() returns null when the tasks wording is active
+  // (TOKEN_WORDING_ACTIVE off), so a missing capacity line is omitted
+  // instead of rendering the literal string "null".
+  const plans = PRICING_PLANS.map((pp) => {
+    const feats = pp.features.map((f) => "<li>" + f + "</li>").join("");
+    const cap = tierCapacityLine(pp.id);
+    const tag = pp.id === "pro" ? "<p>Most popular</p>" : "";
+    return `<section><h2>${pp.name} — ${pp.price} ${pp.period}</h2>` + tag + `<ul>` + feats + "</ul><p>" + pp.cta + "</p>" + (cap ? "<p>" + cap + "</p>" : "") + "</section>";
+  }).join("");
+  const featureSet = [];
+  PRICING_PLANS.forEach((pp) => pp.features.forEach((f) => { if (f !== "Everything in Pro" && !featureSet.includes(f)) featureSet.push(f); }));
+  const tableRows = featureSet.map((f) => {
+    const cells = PRICING_PLANS.map((pp) => `<td>${pp.features.includes(f) ? "Yes" : "—"}</td>`).join("");
+    return `<tr><th>${esc(f)}</th>${cells}</tr>`;
+  }).join("");
+  const tableHtml = `<section><h2>Compare plans</h2><table><thead><tr><th>Feature</th><th>Free</th><th>Starter</th><th>Pro</th><th>Team</th></tr></thead><tbody>${tableRows}</tbody></table><p>Monthly price: Free $0, Starter $9, Pro $19, Team $49. Tasks per month: 10 on Free, 50 on Starter, 300 on Pro, 400 on Team. Annual billing saves 20%.</p></section>`;
+  const faq = [
+    { q: "How much does ORA cost?", a: howMuchFaqAnswer() },
+    { q: "Is there a free plan?", a: "Yes. The Free plan includes 10 tasks per month, Standard mode, changes delivered to your repo, the F12 error debugger, and community support — and you can start with no credit card." },
+    { q: "What counts as a task?", a: "A task is one job ORA completes and delivers to your repo. Each plan includes a monthly task allotment: 10 tasks on Free, 50 on Starter, 300 on Pro, and 400 on Team. Your allotment renews each month." },
+    { q: "Are there per-seat or per-token charges?", a: "No. ORA charges one flat monthly price per plan — $9, $19 or $49 — with no per-seat pricing and no token meters to watch." },
+    { q: "Do I need to install an IDE or extension?", a: "No. ORA works outside the editor and commits directly to GitHub, so there is no IDE to install and no extension to configure." },
+    { q: "What are Swift, Pro, and Maxx modes?", a: "Swift is the fast standard mode. Pro adds review modes that double-check the work before it ships. Maxx, on Team, has Claude write your code directly. Free includes Standard mode, Starter includes Swift mode only, Pro includes Swift and Pro review modes, and Team includes all three modes. Starter and up include the live worker tape so you can watch ORA work." },
+    { q: "What is Project Brain?", a: "Project Brain is ORA's memory of your project across tasks. It is included on Pro, and Team adds a shared project brain for the whole team." },
+    { q: "How does ORA deliver changes?", a: "ORA commits changes directly to your repo. The Starter plan adds one-click rollback on every delivery." },
+    { q: "Is there an annual discount?", a: "Yes. Annual plans save 20%: Starter $86 per year, Pro $182 per year, Team $470 per year." },
+    { q: "Can I cancel anytime?", a: "Yes. ORA is a flat monthly fee with no token surprises, and you can cancel any time. You manage your subscription from the billing portal." },
+    { q: "What is the F12 error debugger?", a: "The F12 error debugger helps diagnose errors in your app. It is included on the Free plan." },
+  ];
+  const faqHtml = `<section><h2>Frequently asked questions</h2>` + faq.map((item) => `<h3>${esc(item.q)}</h3><p>${esc(item.a)}</p>`).join("") + `</section>`;
+  const footerHtml = `<p><a href="/about">About AUREM</a> · <a href="/compare">How ORA compares</a> · <a href="/pricing">Pricing</a> · <a href="/developers">Developers</a> · <a href="/api/docs">API Docs</a> · <a href="/signup">Start free</a> · <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p><p>Cookie preferences</p><p>Still have questions? <a href="/contact">Contact us</a>.</p>`;
+  return `<main><h1>Pricing</h1><p>` + pricingHeroHeadline() + `</p><h2>Plans</h2><p>` + pricingDetailLine() + `</p><p>How ORA works: ORA connects to your GitHub repo, writes code, runs a security scan, and commits on your approval. Every plan delivers changes directly to your repo.</p><p>Try it free: one free full scan, no credit card.</p>` + plans + `<section><h2>` + comparisonSectionSub() + `</h2><p>` + comparisonFlatPricingRowLabel() + `</p><p>` + pricingFeatureCardDesc() + `</p></section>` + tableHtml + faqHtml + `<p>` + landingPricingSectionSub() + `</p>` + footerHtml + `</main>`;
+}
+
 {
   let html = swapHead(base, {
     title: "ORA by AUREM \u2014 the AI engineer that actually commits",
@@ -460,7 +745,7 @@ ${sections}
         "no card. Starter: $9/month flat.",
     canonical: "https://auremcto.com/",
   });
-  html = injectRoot(html, homeBody());
+  html = injectRoot(html, homeBody() + homeExtraHtml());
   writeFileSync(join(DIST, "index.html"), html);
   written += 1;
   console.log("[seo-prerender] wrote / (root index.html, homepage content)");
@@ -505,6 +790,19 @@ ${sections}
   written += 1;
   console.log("[seo-prerender] wrote /developers/index.html");
 }
+
+  {
+    let html = swapHead(base, {
+      title: "Pricing — AUREM",
+      description: "AUREM pricing: flat monthly plans with no token meters and no per-seat pricing. Free, Starter, Pro and Team plans.",
+      canonical: "https://auremcto.com/pricing",
+    });
+    html = injectRoot(html, pricingBody());
+    mkdirSync(join(DIST, "pricing"), { recursive: true });
+    writeFileSync(join(DIST, "pricing", "index.html"), html);
+    written += 1;
+    console.log("[seo-prerender] wrote /pricing/index.html");
+  }
 
 // 2026-11-17 — rebuilt for the Midnight Gold /harness page. The page
 // is now fully self-contained (hero + inline sign-up/sign-in card +

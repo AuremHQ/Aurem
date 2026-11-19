@@ -1,5 +1,5 @@
 # robots.txt — AUREM (auremcto.com)
-# Last updated: 2026-06-14
+# Last updated: 2026-11-19
 #
 # Policy: we welcome traditional crawlers AND AI/LLM crawlers — answer
 # engines (ChatGPT Search, Perplexity, Claude, Google AI Overviews,
@@ -11,6 +11,7 @@ Allow: /
 Allow: /wrapped
 Disallow: /dashboard
 Disallow: /admin
+Disallow: /account
 Disallow: /deploy
 Disallow: /database
 Disallow: /domain
@@ -66,6 +67,9 @@ User-agent: ClaudeBot
 Allow: /
 
 User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
 Allow: /
 
 User-agent: anthropic-ai

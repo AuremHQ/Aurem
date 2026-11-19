@@ -2347,6 +2347,7 @@ export default function Admin({ initialTab = "overview" }) {
   const [page, setPage] = useState(initialTab);
   const [selectedUser, setSelectedUser] = useState(null);
   const [me, setMe] = useState(null);
+  const [guardError, setGuardError] = useState(null);
   // AT3 — Admin Team sidebar filtering. The Owner's own nav must
   // never flicker/hide while this resolves, so it defaults to "full
   // access" synchronously for the Owner and only fail-closed (empty)
@@ -2440,31 +2441,52 @@ export default function Admin({ initialTab = "overview" }) {
   }, [page, location.search, navigate]);
 
   useEffect(() => {
-    // Guard order matters: NO token at all → bounce to /login with a
-    // `next=/admin` so we come right back after sign-in. With a token
-    // but no admin → /dashboard (the regular app surface).
-    // Previously we always went to /dashboard which, for unauthed users,
-    // re-bounced to / — making /admin look like it "doesn't exist".
+    // Guard order matters: NO token at all — bounce to /login with a
+    // 'next=/admin' so we come right back after sign-in. With a token
+    // but no admin — dashboard (the regular app surface).
+    // Previously we always went to /dashboard which, for unauth users,
+    // re-bounced to / making /admin look like it "doesn't exist".
+    // 2026-11-19 — a slow/failed /admin/me check used to bounce a
+    // signed-in admin to /dashboard with "Admin access required":
+    // any non-401 error (network error, timeout, 5xx) was treated as
+    // "not admin". Only a real 403 means "signed in but not admin".
+    // A network/5xx failure retries once, then stays on /admin with
+    // a retry screen instead of bouncing a possibly-admin user away.
     const tok = localStorage.getItem("aurem_token");
     if (!tok) {
       navigate("/login?next=/admin", { replace: true });
       return;
     }
-    api.get("/admin/me")
-      .then((r) => setMe(r.data))
-      .catch((err) => {
+    let cancelled = false;
+    async function checkAdmin(retried) {
+      try {
+        const r = await api.get("/admin/me");
+        if (!cancelled) setMe(r.data);
+      } catch (err) {
+        if (cancelled) return;
         const status = err?.response?.status;
         if (status === 401) {
           // Token expired / invalid — clear it and bounce to login
           localStorage.removeItem("aurem_token");
           localStorage.removeItem("aurem_user");
           navigate("/login?next=/admin", { replace: true });
-        } else {
-          // 403 or anything else — user is signed in but not admin
+        } else if (status === 403) {
+          // Signed in but not admin — the only case that bounces
           toast({ message: "Admin access required", kind: "error" });
           navigate("/dashboard", { replace: true });
+        } else if (!retried) {
+          // Transient (network error, timeout, 5xx) — retry once
+          // after a short pause; the backend may just be slow.
+          window.setTimeout(() => { if (!cancelled) checkAdmin(true); }, 2000);
+        } else {
+          // Still failing after a retry — stay on /admin and show a
+          // retry screen instead of bouncing an admin to /dashboard.
+          setGuardError("Couldn't verify admin access — the server didn't respond. Check your connection and try again.");
         }
-      });
+      }
+    }
+    checkAdmin(false);
+    return () => { cancelled = true; };
   }, [navigate]);
 
   // Toggle the network-mesh glass bg on body while the admin page is
@@ -2474,6 +2496,16 @@ export default function Admin({ initialTab = "overview" }) {
     document.body.classList.add("aurem-glass");
     return () => { document.body.classList.remove("aurem-glass"); };
   }, []);
+
+  if (guardError) return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "transparent", color: "var(--text-faint)" }}>
+      <div style={{ textAlign: "center", maxWidth: 420, padding: 24 }}>
+        <p style={{ fontSize: 14, marginBottom: 8 }}>{guardError}</p>
+        <p style={{ fontSize: 12, marginBottom: 16 }}>Your sign-in is still valid — this is a connection problem, not an access problem.</p>
+        <button type="button" onClick={() => window.location.reload()} style={{ padding: "8px 18px", fontSize: 13, cursor: "pointer", borderRadius: 8, border: "1px solid var(--border, #ccc)", background: "var(--bg-elev, #fff)" }}>Try again</button>
+      </div>
+    </div>
+  );
 
   if (!me) return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
