@@ -1,0 +1,15 @@
+{
+    "$schema": "discovery/0.2.0/schema.json",
+    "skills": [
+        {
+            "name": "ora-ship-code",
+            "description": "Ship code to GitHub with ORA: submit a task, ORA plans, writes code, scans, and commits after approval.",
+            "location": "https://auremcto.com/.well-known/agent-skills/ora-ship-code.md"
+        },
+        {
+            "name": "ora-api",
+            "description": "Use the ORA REST API and MCP server: auth, projects, tasks, and billing.",
+            "location": "https://auremcto.com/AGENTS.md"
+        }
+    ]
+}

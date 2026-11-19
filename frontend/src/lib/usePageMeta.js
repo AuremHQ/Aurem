@@ -35,6 +35,33 @@ function setCanonical(href) {
   tag.setAttribute("href", href);
 }
 
+function setMarkdownAlternate(href) {
+  let tag = null;
+  const links = document.querySelectorAll("link[rel=alternate]");
+  for (const l of links) {
+    if (l.getAttribute("type") === "text/markdown") {
+      tag = l;
+      break;
+    }
+  }
+  if (tag === null) {
+    tag = document.createElement("link");
+    tag.setAttribute("rel", "alternate");
+    tag.setAttribute("type", "text/markdown");
+    document.head.appendChild(tag);
+  }
+  tag.setAttribute("href", href);
+}
+function markdownHrefFor(canonical) {
+  try {
+    let path = new URL(canonical).pathname;
+    if (path === "/") return "/index.md";
+    if (path.endsWith("/")) path = path.slice(0, -1);
+    return path + ".md";
+  } catch {
+    return "/index.md";
+  }
+}
 export default function usePageMeta({ title, description, canonical }) {
   useEffect(() => {
     if (title) document.title = title;
@@ -45,7 +72,10 @@ export default function usePageMeta({ title, description, canonical }) {
       setMeta("twitter:title", title || DEFAULT_TITLE);
       setMeta("twitter:description", description);
     }
-    if (canonical) setCanonical(canonical);
+    if (canonical) {
+      setCanonical(canonical);
+      setMarkdownAlternate(markdownHrefFor(canonical));
+    }
     return () => {
       document.title = DEFAULT_TITLE;
       setMeta("description", DEFAULT_DESC);
@@ -54,6 +84,9 @@ export default function usePageMeta({ title, description, canonical }) {
       setMeta("twitter:title", DEFAULT_TITLE);
       setMeta("twitter:description", DEFAULT_DESC);
       setCanonical(window.location.origin + "/");
+      setMarkdownAlternate("/index.md");
     };
   }, [title, description, canonical]);
 }
+
+

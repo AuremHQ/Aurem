@@ -1,0 +1,19 @@
+{
+    "protocol": {
+        "name": "acp",
+        "version": "2026-01-30",
+        "supported_versions": [
+            "2025-09-29",
+            "2026-01-30"
+        ]
+    },
+    "api_base_url": "https://auremcto.com/api/aurem-dev",
+    "transports": [
+        "rest"
+    ],
+    "capabilities": {
+        "services": [
+            "checkout"
+        ]
+    }
+}

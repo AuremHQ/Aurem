@@ -2301,6 +2301,8 @@ const NAV_ICONS = {
   // code-surface tiles) was defined but never wired into renderPage;
   // /admin/architecture silently fell through to Overview.
   arch: Cpu,
+  harness_releases: GitBranch,
+  harness_overview: Terminal,
   bin_tracker: Users,
   github_bulk_revoke: ShieldAlert,
   visibility_kit: Sparkles,

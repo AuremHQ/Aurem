@@ -1,0 +1,30 @@
+{
+    "metadata": {
+        "name": "ORA by Aurem",
+        "version": "1.0.0"
+    },
+    "permissions": {
+        "read": [
+            "/",
+            "/pricing",
+            "/developers",
+            "/harness",
+            "/compare",
+            "/vs/*",
+            "/about",
+            "/contact",
+            "/terms",
+            "/privacy",
+            "/glossary",
+            "/llms.txt",
+            "/llms-full.txt",
+            "/openapi.json",
+            "/sitemap.xml",
+            "/sitemap.md",
+            "/AGENTS.md",
+            "/agents.json",
+            "/.well-known/*"
+        ],
+        "write": []
+    }
+}

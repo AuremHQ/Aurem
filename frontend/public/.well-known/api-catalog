@@ -6,11 +6,21 @@
         {
           "href": "https://auremcto.com/api/openapi.json",
           "type": "application/vnd.oai.openapi+json;version=3.1"
+        },
+        {
+          "href": "https://auremcto.com/openapi.json",
+          "type": "application/vnd.oai.openapi+json;version=3.1"
         }
       ],
       "service-doc": [
-        { "href": "https://auremcto.com/api/docs", "type": "text/html" },
-        { "href": "https://auremcto.com/api/redoc", "type": "text/html" }
+        {
+          "href": "https://auremcto.com/api/docs",
+          "type": "text/html"
+        },
+        {
+          "href": "https://auremcto.com/api/redoc",
+          "type": "text/html"
+        }
       ]
     }
   ]

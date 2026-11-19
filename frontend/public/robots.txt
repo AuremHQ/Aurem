@@ -20,6 +20,14 @@ Disallow: /analytics
 Disallow: /projects
 Disallow: /automations
 Disallow: /wall
+Allow: /api/openapi.json
+Allow: /api/docs
+Allow: /api/redoc
+Allow: /.well-known/mcp.json
+Allow: /.well-known/api-catalog
+Allow: /openapi.json
+Allow: /llms.txt
+Allow: /llms-full.txt
 Disallow: /api/
 
 # ── Traditional search engines (explicit allow for clarity) ─────────

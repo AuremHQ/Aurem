@@ -64,7 +64,7 @@ async def my_wrapped(
     tasks = await db.cto_tasks.find(
         {
             "user_id":    user_id,
-            "created_at": {"$gte": start_ts, "$lte": end_ts},
+9            "completed_at": {"$gte": start_ts, "$lte": end_ts},  # shipped in period, not created in period
         },
         {"_id": 0},
     ).to_list(500)
@@ -110,11 +110,12 @@ async def my_wrapped(
         for t in done
         if t.get("github_owner")
     }
-    # Loop ships know only their project_id — resolve to repo names.
+    # Loop ships and regular done tasks know only their project_id - resolve to repo names.
     loop_pids = {l["project_id"] for l in loops if l.get("project_id")}
-    if loop_pids:
+    task_pids = {t["project_id"] for t in done if t.get("project_id")}
+    if loop_pids or task_pids:
         async for p in db.cto_projects.find(
-                {"project_id": {"$in": list(loop_pids)}},
+                {"project_id": {"$in": list(loop_pids | task_pids)}},
                 {"_id": 0, "github_owner": 1, "github_repo": 1}):
             if p.get("github_owner"):
                 repos.add(f"{p['github_owner']}/{p.get('github_repo','')}")

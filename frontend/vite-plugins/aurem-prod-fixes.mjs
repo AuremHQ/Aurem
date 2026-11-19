@@ -110,6 +110,12 @@ const KNOWN_PREFIXES = new Set([
   // navigation to it worked fine and production (served by the real
   // build, not this dev-only 404 middleware) already returned 200.
   "harness",
+  // 2026-11-19 - Agent Ready P14 - /glossary (GlossaryPage.jsx,
+  // App.jsx route) was missing here, so a direct load/refresh/curl of
+  // /glossary in the dev preview returned 404 even though in-app SPA
+  // navigation to it worked fine and production (served by the real
+  // build, not this dev-only 404 middleware) already returned 200.
+  "glossary",
 ]);
 
 const HAS_EXTENSION = /\.[a-zA-Z0-9]+$/;
@@ -294,3 +300,4 @@ export default function auremProdFixes(options = {}) {
     },
   };
 }
+

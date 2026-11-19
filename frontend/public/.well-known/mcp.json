@@ -1,0 +1,17 @@
+{
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+    "name": "ora-by-aurem",
+    "description": "ORA by Aurem - AI engineer that reads your repo and ships code to GitHub. No IDE needed.",
+    "version": "1.0.0",
+    "repository": {
+        "url": "https://github.com/TJSNDHU/Aurem",
+        "source": "github",
+        "id": "TJSNDHU/Aurem"
+    },
+    "remotes": [
+        {
+            "type": "streamable-http",
+            "url": "https://auremcto.com/api/aurem-dev/mcp"
+        }
+    ]
+}

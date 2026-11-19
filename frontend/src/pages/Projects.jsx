@@ -2259,15 +2259,15 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
           <label><span className="label-mini">Task (plain English)</span>
             <textarea data-testid="task-input" className="input" rows={2}
                       value={task} onChange={(e) => setTask(e.target.value)}
-                      placeholder="Fix the JWT bug in auth.py and add a /health endpoint"
+                      placeholder="Describe what to build or fix..."
                       style={{ resize: "none", fontFamily: "'Jost', sans-serif" }} /></label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <label><span className="label-mini">Files (comma-sep, optional)</span>
               <input data-testid="task-files" className="input" value={files} onChange={(e) => setFiles(e.target.value)}
-                     placeholder="src/auth.py, src/routes.py" /></label>
+                     placeholder="Optional file paths, comma-separated" /></label>
             <label><span className="label-mini">Extra context (optional)</span>
               <input data-testid="task-context" className="input" value={context} onChange={(e) => setContext(e.target.value)}
-                     placeholder="Error: 401 on /login" /></label>
+                     placeholder="Optional extra context or error text" /></label>
           </div>
           <button type="submit" data-testid="task-submit" className="btn-primary" disabled={busy || !task.trim()}>
             <Send size={13} /> {busy ? "Queuing…" : "Run task"}

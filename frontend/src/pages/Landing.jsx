@@ -1491,6 +1491,7 @@ export default function Landing() {
             <div className="footer-links" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
               <Link to="/privacy"         data-testid="footer-privacy">Privacy Policy</Link>
               <Link to="/terms"           data-testid="footer-terms">Terms of Service</Link>
+            <Link to="/glossary" data-testid="footer-glossary">Glossary</Link>
               <Link to="/cookie-policy"   data-testid="footer-cookies">Cookie Policy</Link>
               <Link to="/refund-policy"   data-testid="footer-refund">Refund &amp; Billing</Link>
               <Link to="/acceptable-use"  data-testid="footer-aup">Acceptable Use</Link>

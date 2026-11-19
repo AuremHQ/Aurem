@@ -1,0 +1,40 @@
+{
+    "agentsJson": "0.1.0",
+    "info": {
+        "name": "ORA by Aurem",
+        "description": "ORA is an autonomous AI software engineer that reads a GitHub repository and ships code to it.",
+        "version": "1.0.0"
+    },
+    "sources": [
+        {
+            "type": "llms.txt",
+            "url": "https://auremcto.com/llms.txt"
+        },
+        {
+            "type": "llms-full.txt",
+            "url": "https://auremcto.com/llms-full.txt"
+        },
+        {
+            "type": "openapi",
+            "url": "https://auremcto.com/openapi.json"
+        },
+        {
+            "type": "sitemap",
+            "url": "https://auremcto.com/sitemap.xml"
+        },
+        {
+            "type": "agents-md",
+            "url": "https://auremcto.com/AGENTS.md"
+        }
+    ],
+    "authors": [
+        {
+            "name": "Tejinder Sandhu",
+            "url": "https://auremcto.com/about"
+        },
+        {
+            "name": "Aurem",
+            "url": "https://auremcto.com"
+        }
+    ]
+}

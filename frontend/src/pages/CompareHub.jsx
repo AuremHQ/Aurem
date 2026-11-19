@@ -66,6 +66,7 @@ export default function CompareHub() {
           </p>
         </header>
 
+        <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 16px" }}>Compare ORA with every alternative</h2>
         <div style={{ display: "grid", gap: 14,
                       gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
           {Object.values(COMPETITORS).map((c) => (
@@ -83,6 +84,7 @@ export default function CompareHub() {
         </div>
 
         <section style={{ textAlign: "center", padding: "56px 0 0" }}>
+          <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 16px" }}>Start shipping today</h2>
           <Link to="/signup" data-testid="compare-hub-cta" style={{
             display: "inline-flex", alignItems: "center", gap: 8,
             background: "var(--accent)", color: "#1a0e00", fontWeight: 600,

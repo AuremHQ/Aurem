@@ -1,0 +1,16 @@
+{
+    "ucp": {
+        "version": "2026-04-08",
+        "services": {
+            "checkout": {
+                "endpoint": "https://auremcto.com/api/aurem-dev/payments/checkout"
+            }
+        },
+        "capabilities": {
+            "checkout_sessions": {
+                "supported": false
+            }
+        },
+        "signing_keys": []
+    }
+}

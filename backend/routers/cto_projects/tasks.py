@@ -99,7 +99,12 @@ async def _enqueue_cto_task(
          "repo_index_blocks": 0, "last_commit_diff": 0}
         )
     if not proj:
-        # Fall back to the user's most recently used project.
+        if project_id and project_id != "home":
+            # Explicit project requested but not found: fail loudly
+            # instead of silently filing under another project.
+            return {"ok": False, "reason": "no_project"}
+        # No project named (e.g. a home chat): fall back to the
+        # most recently used project.
         proj = await db.cto_projects.find_one(
             {"user_id": user_id},
             sort=[("last_task", -1), ("created_at", -1)],
