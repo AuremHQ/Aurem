@@ -21,6 +21,7 @@
 import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { useF12Errors, F12Badge, ModePill } from "./ChatPanelF12";
+import { copyText } from "../lib/copyText";
 import { getUser, isAdminOrFounder } from "../lib/api";
 
 // 2026-08-27 · P5 (Journey/Intent-Grounding build round) — the F12
@@ -111,11 +112,10 @@ export default function TopBarStatusSlot({ sessionId }) {
           data-testid="context-bridge-session-id-copy"
           title="Copy this chat session's ID — paste it into the AUREM Context Bridge Chrome extension so a capture lands in this conversation"
           onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(sessionId);
+            if (await copyText(sessionId)) {
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
-            } catch { /* clipboard unavailable — badge still shows the id to select manually */ }
+            }
           }}
           style={{
             display: "flex", alignItems: "center", gap: 6,

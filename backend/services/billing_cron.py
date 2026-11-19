@@ -37,6 +37,7 @@ from calendar import monthrange
 import httpx
 
 from services.http import ext_request
+from services.cron_runner import run_clock_cron
 
 logger = logging.getLogger(__name__)
 
@@ -370,35 +371,36 @@ async def schedule_maxx_overage_billing(get_db_callable) -> None:
     logger.info(
         f"[billing_cron] scheduler started — fires day={day} hour={hour:02d}:00 UTC monthly"
     )
-    while True:
+    # MIGRATED to services.cron_runner
+    def _next_wait_seconds():
         now      = datetime.now(timezone.utc)
         next_run = _next_run_at(now, day, hour)
         wait_s   = (next_run - now).total_seconds()
         logger.info(
             f"[billing_cron] sleeping {int(wait_s/3600)}h until {next_run.isoformat()}"
         )
-        try:
-            await asyncio.sleep(wait_s)
-        except asyncio.CancelledError:
-            # 2026-08-23 — same G-F1 false-positive fix as daily_digest.py
-            # — re-raise so the task reports as genuinely cancelled on
-            # shutdown, instead of "completed normally" (misclassified
-            # as a dead cron by the supervised-task watchdog).
-            raise
-        try:
-            db = get_db_callable()
-            if db is None:
-                logger.warning("[billing_cron] db unavailable — will retry next cycle")
+        return wait_s
+    async def _tick():
+        db = get_db_callable()
+        if db is None:
+            logger.warning("[billing_cron] db unavailable — will retry next cycle")
+        else:
+            result = await _run_overage_billing_once(db)
+            if result.get("skipped"):
+                logger.info(f"[billing_cron] {result}")
             else:
-                result = await _run_overage_billing_once(db)
-                if result.get("skipped"):
-                    logger.info(f"[billing_cron] {result}")
-                else:
-                    logger.info(
-                        f"💵 [billing_cron] billed {result.get('billed', 0)}/"
-                        f"{result.get('processed', 0)} users for "
-                        f"${result.get('total_revenue_usd', 0)} "
-                        f"({result.get('failed', 0)} failed) bucket={result.get('bucket')}"
-                    )
-        except Exception as e:
-            logger.warning(f"[billing_cron] run failed: {e!r}")
+                logger.info(
+                    f"💵 [billing_cron] billed {result.get('billed', 0)}/"
+                    f"{result.get('processed', 0)} users for "
+                    f"${result.get('total_revenue_usd', 0)} "
+                    f"({result.get('failed', 0)} failed) bucket={result.get('bucket')}"
+                )
+    def _on_error(e):
+        logger.warning(f"[billing_cron] run failed: {e!r}")
+    return await run_clock_cron(
+        'schedule_maxx_overage_billing',
+        _next_wait_seconds,
+        _tick,
+        on_error=_on_error,
+        log=logger,
+    )

@@ -2822,20 +2822,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
 
       await streamChat({
       prompt: finalPrompt,
-      projectId: activeProject?.project_id || null,
-      sessionId,
-      maxToolIters: 2,
-      maxxMode,
+      project_id: activeProject?.project_id || null,
+      session_id: sessionId,
+      max_tool_iters: 2,
+      maxx_mode: maxxMode,
       agent,                       // iter 38: selector value
       mode: chatMode,              // Iter 153: swift / pro / maxx review
-      executionMode: isScopeResume ? "prompt" : execMode,
-      f12Payload,                  // iter 42: console/network/stack errors
+      execution_mode: isScopeResume ? "prompt" : execMode,
+      f12_payload: f12Payload,                  // iter 42: console/network/stack errors
       // INTERACTION_CONTRACT_V1 P1 — set on every call INCLUDING the
       // first: null on a genuinely fresh turn (lastRequestIdRef is
       // reset before runTurn's first invocation — see below), the
       // PRIOR attempt's own id on a retry re-invocation of runTurn.
-      retryOfRequestId: lastRequestIdRef.current,
-      scopeConfirmedProposalId,
+      retry_of_request_id: lastRequestIdRef.current,
+      scope_confirmed_proposal_id: scopeConfirmedProposalId,
       signal: ctrl.signal,
       onMode: (m) => {
         bumpActivity();

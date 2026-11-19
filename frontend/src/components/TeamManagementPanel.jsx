@@ -11,6 +11,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { UserPlus, Trash2, RotateCcw, Shield, Loader2, Link2, Check } from "lucide-react";
 import { api } from "../lib/api";
+import { copyText } from "../lib/copyText";
 
 const LEVELS = ["none", "read", "write", "read_write"];
 const LEVEL_LABEL = { none: "No access", read: "Read only", write: "Write only", read_write: "Full" };
@@ -108,11 +109,10 @@ export default function TeamManagementPanel() {
   }
 
   async function copyLink(memberId, link) {
-    try {
-      await navigator.clipboard.writeText(link);
+    if (await copyText(link, { error: false })) {
       setCopiedId(memberId);
       setTimeout(() => setCopiedId((id) => (id === memberId ? null : id)), 2000);
-    } catch (e) {
+    } else {
       setError("Couldn't copy the link — copy it manually from your browser.");
     }
   }

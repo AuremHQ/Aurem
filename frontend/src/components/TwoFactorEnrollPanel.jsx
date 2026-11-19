@@ -6,7 +6,7 @@
  */
 import React, { useState } from "react";
 import { Copy as CopyIcon, Check } from "lucide-react";
-import { toast } from "./Toast";
+import { copyText } from "../lib/copyText";
 
 export function EnrollPanel({ enroll, code, onCode, onConfirm, onCancel, busy }) {
   // 2026-10 — redesign: copy buttons swap to a checkmark + "Copied"
@@ -15,13 +15,10 @@ export function EnrollPanel({ enroll, code, onCode, onConfirm, onCancel, busy })
   // secret and backup-codes buttons track independently.
   const [copiedKey, setCopiedKey] = useState(null);
   const copy = async (text, label, key) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({ message: `${label} copied`, kind: "info" });
+    if (await copyText(text, { success: label + " copied" })) {
       setCopiedKey(key);
       setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
     }
-    catch { /* ignore */ }
   };
   return (
     <div data-testid="admin-2fa-enroll-panel" style={{ display: "grid", gap: 16, marginTop: 8 }}>

@@ -23,6 +23,7 @@ import logging
 import os
 
 from services.founder_alerts import send_founder_alert
+from services.cron_runner import run_cron
 
 logger = logging.getLogger("ci_ingest_heartbeat")
 
@@ -104,22 +105,20 @@ async def run_heartbeat_check(db) -> dict:
 
 
 async def ci_ingest_heartbeat_cron(db_getter=None) -> None:
-    try:
-        await asyncio.sleep(STARTUP_DELAY_SECONDS)
-    except asyncio.CancelledError:
-        raise
-    while True:
-        try:
-            db = db_getter() if db_getter else None
-            if db is None:
-                logger.warning("ci_ingest_heartbeat_cron: no db available — skipping this cycle")
-            else:
-                await run_heartbeat_check(db)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning("ci_ingest_heartbeat_cron loop error: %r", e)
-        try:
-            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            raise
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        db = db_getter() if db_getter else None
+        if db is None:
+            logger.warning("ci_ingest_heartbeat_cron: no db available — skipping this cycle")
+        else:
+            await run_heartbeat_check(db)
+    def _on_error(e):
+        logger.warning("ci_ingest_heartbeat_cron loop error: %r", e)
+    return await run_cron(
+        'ci_ingest_heartbeat_cron',
+        HEARTBEAT_INTERVAL_SECONDS,
+        _tick,
+        startup_delay_seconds=STARTUP_DELAY_SECONDS,
+        on_error=_on_error,
+        log=logger,
+    )

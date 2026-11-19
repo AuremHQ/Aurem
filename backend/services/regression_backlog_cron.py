@@ -38,6 +38,7 @@ import time as _time
 from pymongo import ReturnDocument
 
 from services import self_bug
+from services.cron_runner import run_cron
 
 logger = logging.getLogger("regression_backlog_cron")
 
@@ -151,27 +152,25 @@ async def _reconcile_one(db, failure_reason: str, real_count: int) -> bool:
 
 
 async def regression_backlog_cron(db_getter=None) -> None:
-    try:
-        await asyncio.sleep(STARTUP_DELAY_SECONDS)
-    except asyncio.CancelledError:
-        raise
-    while True:
-        try:
-            db = db_getter() if db_getter else None
-            if db is None:
-                logger.warning("regression_backlog_cron: no db available — skipping this cycle")
-            else:
-                result = await scan_and_flag_recurring_failure_reasons(db)
-                if result.get("flagged"):
-                    logger.info("regression_backlog_cron: %s", result)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning("regression_backlog_cron loop error: %r", e)
-        try:
-            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            raise
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        db = db_getter() if db_getter else None
+        if db is None:
+            logger.warning("regression_backlog_cron: no db available — skipping this cycle")
+        else:
+            result = await scan_and_flag_recurring_failure_reasons(db)
+            if result.get("flagged"):
+                logger.info("regression_backlog_cron: %s", result)
+    def _on_error(e):
+        logger.warning("regression_backlog_cron loop error: %r", e)
+    return await run_cron(
+        'regression_backlog_cron',
+        SCAN_INTERVAL_SECONDS,
+        _tick,
+        startup_delay_seconds=STARTUP_DELAY_SECONDS,
+        on_error=_on_error,
+        log=logger,
+    )
 
 
 __all__ = [

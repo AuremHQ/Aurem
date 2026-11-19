@@ -12,7 +12,7 @@ it("delivers the actual proposal SSE event and preserves its done fields", async
     headers: { "Content-Type": "text/event-stream" },
   })));
   const onScopeConfirmation = vi.fn(), onDone = vi.fn();
-  await streamChat({ prompt: "saved", sessionId: "s1", onScopeConfirmation, onDone });
+  await streamChat({ prompt: "saved", session_id: "s1", onScopeConfirmation, onDone });
   expect(onScopeConfirmation).toHaveBeenCalledWith(event);
   expect(onDone).toHaveBeenCalledWith(done);
 });
@@ -22,7 +22,7 @@ it("serializes the button proposal ID and exposes the real execution receipt", a
   const fetcher = vi.fn().mockResolvedValue(new Response(`data: ${JSON.stringify({ done: true, scope_execution: receipt })}\n\n`));
   vi.stubGlobal("fetch", fetcher);
   const onDone = vi.fn();
-  await streamChat({ prompt: "Confirm and proceed", projectId: "project1", sessionId: "s1", scopeConfirmedProposalId: "p1", onDone });
+  await streamChat({ prompt: "Confirm and proceed", project_id: "project1", session_id: "s1", scope_confirmed_proposal_id: "p1", onDone });
   const body = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(body.scope_confirmed_proposal_id).toBe("p1");
   expect(body.session_id).toBe("s1");

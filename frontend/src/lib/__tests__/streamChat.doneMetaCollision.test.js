@@ -76,7 +76,7 @@ describe("2026-09-05 — done-event `meta:{}` no longer swallowed by onMeta", ()
     const onError = vi.fn();
 
     await streamChat({
-      prompt: "hi", sessionId: "s1",
+      prompt: "hi", session_id: "s1",
       onMeta, onToken, onDone, onError,
     });
 
@@ -102,7 +102,7 @@ describe("2026-09-05 — done-event `meta:{}` no longer swallowed by onMeta", ()
 
     const onMeta = vi.fn();
     const onDone = vi.fn();
-    await streamChat({ prompt: "hi", sessionId: "s2", onMeta, onDone });
+    await streamChat({ prompt: "hi", session_id: "s2", onMeta, onDone });
 
     expect(onMeta).not.toHaveBeenCalled();
     expect(onDone).toHaveBeenCalledTimes(1);
@@ -119,7 +119,7 @@ describe("2026-09-05 — done-event `meta:{}` no longer swallowed by onMeta", ()
 
     const onMeta = vi.fn();
     const onDone = vi.fn();
-    await streamChat({ prompt: "hi", sessionId: "s3", onMeta, onDone });
+    await streamChat({ prompt: "hi", session_id: "s3", onMeta, onDone });
 
     expect(onMeta).toHaveBeenCalledTimes(2);
     expect(onDone).toHaveBeenCalledTimes(1);

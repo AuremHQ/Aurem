@@ -27,6 +27,7 @@
 import React, { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getSpeedDiagnostic } from "../lib/loopApi";
+import { copyText } from "../lib/copyText";
 
 const C = {
   bg:       "#0a0e18",
@@ -185,13 +186,9 @@ export default function AdminInspectSpeedDiagnostic() {
   const [copied, setCopied] = useState(false);
   const copyJson = useCallback(async () => {
     if (!data) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    if (await copyText(JSON.stringify(data, null, 2))) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard permission denied — silently skip; the pre block is
-      // already selectable manually.
     }
   }, [data]);
 

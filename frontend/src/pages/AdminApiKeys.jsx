@@ -15,6 +15,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check } from "lucide-react";
 import { api, getToken } from "../lib/api";
+import { copyText } from "../lib/copyText";
 import { cleanErr } from "../lib/cleanErr";
 import { toast } from "../components/Toast";
 
@@ -102,11 +103,11 @@ export default function AdminApiKeys() {
     }
   };
 
-  const copy = (text, key) => {
-    navigator.clipboard.writeText(text);
-    toast({ message: "Copied to clipboard.", kind: "success", duration: 1500 });
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+  const copy = async (text, key) => {
+    if (await copyText(text, { success: "Copied to clipboard.", duration: 1500 })) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+    }
   };
 
   return (
@@ -399,11 +400,11 @@ function OraChatMcpCard() {
     }
   };
 
-  const copy = (text, key) => {
-    navigator.clipboard.writeText(text);
-    toast({ message: "Copied.", kind: "success", duration: 1500 });
-    setCopiedKey2(key);
-    setTimeout(() => setCopiedKey2((k) => (k === key ? null : k)), 1500);
+  const copy = async (text, key) => {
+    if (await copyText(text, { success: "Copied.", duration: 1500 })) {
+      setCopiedKey2(key);
+      setTimeout(() => setCopiedKey2((k) => (k === key ? null : k)), 1500);
+    }
   };
   const copyBtnStyle = (key) => (copiedKey2 === key
     ? { ...btnGhost, color: "#4ade80", borderColor: "rgba(34,197,94,0.45)", display: "inline-flex", alignItems: "center", gap: 4 }

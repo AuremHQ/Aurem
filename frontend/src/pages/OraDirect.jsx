@@ -19,6 +19,7 @@ import { Lock, Settings, LogOut, ArrowUp, Zap, Clock, Plus, Square, Copy, Check,
 import { api, setToken, getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "../components/OraChatHouseRulesPanel";
 import VideoGenPanel from "../components/VideoGenPanel";
+import { copyText } from "../lib/copyText";
 // Feb 2026 · Phase 1 (Streamdown) — see OraChatDrawer.jsx for the full
 // rationale. XSS-safe defaults, streaming caret, GFM/LaTeX/Mermaid.
 import { Streamdown } from "streamdown";
@@ -1470,11 +1471,10 @@ function Bubble({ m, debug = false, onOpenPreview }) {
   // 2s "Copied!" flash confirms the clipboard write, then reverts.
   const [copied, setCopied] = useState(false);
   const doCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(m.content || "");
+    if (await copyText(m.content || "", { error: false })) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
+    } else {
       // Legacy fallback for older browsers / non-secure contexts.
       const ta = document.createElement("textarea");
       ta.value = m.content || "";

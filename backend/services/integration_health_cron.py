@@ -32,6 +32,7 @@ import os
 import random
 import time
 from typing import Optional
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -152,37 +153,24 @@ async def schedule_integration_health_cron() -> None:
     if not _is_enabled():
         logger.info("integration_health cron disabled via env")
         return
-
     interval = _interval_seconds()
     logger.info("🩺 integration_health cron ON · every %ds", interval)
-
-    # First probe: wait a stagger so the app can finish booting before
-    # we hammer the LLMs. Iter 336 — raised 30 → 150 s so the first
-    # 11-probe burst (Stripe+E2B+LLM) lands AFTER the deferred boot
-    # tasks (linter install at +120 s), not on top of them.
-    # C2 · 2026-08-26 — + a bounded per-worker jitter (0-60s) so a
-    # 2-worker prod pod doesn't run this cron in perfect lockstep
-    # across both workers forever (see _startup_jitter_s docstring).
-    # 2026-02 — raised 150 → 300 s. Fresh-boot `_PROBE_CACHE` is
-    # empty, so tick 1 always runs the full uncached, heaviest burst
-    # (Stripe's 8 calls + a real E2B round-trip) — the confirmed
-    # /health 110-timeout trigger (integration_health.py "round 3").
-    await asyncio.sleep(300 + _startup_jitter_s())
-
-    while True:
-        try:
-            # Iter 328 · #11 — runtime kill-switch via feature flag.
-            # If founder toggles integration_health_cron OFF in
-            # /admin/feature-flags, this branch skips the probe.
-            # Admin toggle invalidates the flag cache so pause takes
-            # effect within one cycle.
-            if await _is_paused_by_flag():
-                logger.debug("integration_health cron paused by feature flag")
-            else:
-                from cto_services.db import get_db
-                db = get_db()
-                if db is not None:
-                    await _probe_and_persist_once(db)
-        except Exception as e:                              # noqa: BLE001
-            logger.warning("integration_health cron tick failed: %r", e)
-        await asyncio.sleep(interval)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        if await _is_paused_by_flag():
+            logger.debug("integration_health cron paused by feature flag")
+        else:
+            from cto_services.db import get_db
+            db = get_db()
+            if db is not None:
+                await _probe_and_persist_once(db)
+    def _on_error(e):
+        logger.warning("integration_health cron tick failed: %r", e)
+    return await run_cron(
+        'schedule_integration_health_cron',
+        interval,
+        _tick,
+        startup_delay_seconds=300 + _startup_jitter_s(),
+        on_error=_on_error,
+        log=logger,
+    )

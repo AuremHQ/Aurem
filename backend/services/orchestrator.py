@@ -2130,7 +2130,14 @@ async def _chat_with_tools_build_base_system(prompt, extra, history_lines, catal
         "context already shows an in-progress task or a past finding."
     )
     # First-iteration system prompt — full tool catalog + help.
-    first_iter_system = base_system + _TOOL_HELP_TEMPLATE + catalog_text
+    # Token win: when the sliced catalog is empty there is no tool
+    # for the model to call, the tool-use template (which only
+    # teaches the call format) is pure overhead on that turn.
+    # Keep only the no-tools note already in catalog_text.
+    if tools:
+        first_iter_system = base_system + _TOOL_HELP_TEMPLATE + catalog_text
+    else:
+        first_iter_system = base_system + "\n\n" + catalog_text
     # Iter 212m-4 — Force tool-reminder injection. When the prompt is
     # repo-scoped AND looks like a code/file question, tack on an
     # unmissable directive so the LLM can't reply from memory. This is

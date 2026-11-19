@@ -10,6 +10,7 @@ import { Plus, Trash2, Zap, Copy, Check, GitBranch, Play } from "lucide-react";
 import Shell, { PageHeader } from "../components/Shell";
 import RailShell from "../components/nav/RailShell";
 import { api, API_BASE } from "../lib/api";
+import { copyText } from "../lib/copyText";
 
 const WEBHOOK_PATH = "/automations/webhook/github";
 
@@ -67,9 +68,10 @@ export default function Automations() {
 
   const webhookUrl = `${API_BASE}${WEBHOOK_PATH}`;
   async function copyHook() {
-    try { await navigator.clipboard.writeText(webhookUrl);
-          setCopied(true); setTimeout(() => setCopied(false), 1500); }
-    catch { /* noop */ }
+    if (await copyText(webhookUrl)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   }
 
   return (

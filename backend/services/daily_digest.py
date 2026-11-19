@@ -22,6 +22,7 @@ from services.http import ext_request
 from services.http.client import ExternalCallError
 
 from cto_services.db import get_db
+from services.cron_runner import run_clock_cron
 
 logger = logging.getLogger(__name__)
 
@@ -291,27 +292,24 @@ async def _run_once() -> None:
 async def schedule_daily_digest() -> None:
     """Background loop — sleeps until target UTC hour, fires once, repeats."""
     target_hour = int(os.environ.get("DIGEST_HOUR_UTC", "6"))
-    while True:
+    # MIGRATED to services.cron_runner
+    def _next_wait_seconds():
         now = datetime.now(timezone.utc)
         next_run = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
         if next_run <= now:
             next_run = next_run + timedelta(days=1)
         wait_s = (next_run - now).total_seconds()
         logger.info(f"daily digest sleeping {int(wait_s/3600)}h until {next_run.isoformat()}")
-        try:
-            await asyncio.sleep(wait_s)
-            await _run_once()
-        except asyncio.CancelledError:
-            # 2026-08-23 — BUG FIX: catching-and-returning here made the
-            # task finish in "completed normally" state instead of
-            # "cancelled" state (task.cancelled() == False), which made
-            # services/supervised_tasks.py's G-F1 watchdog misclassify
-            # every clean pod shutdown as a "silent_completion" — i.e. a
-            # crashed cron. Re-raise so the cancellation propagates
-            # properly; task.cancelled() then reports True and the
-            # watchdog correctly treats it as a normal shutdown.
-            raise
-        except Exception as e:
-            logger.exception(f"digest scheduler crash: {e!r}")
-            # Don't tight-loop on crash
-            await asyncio.sleep(3600)
+        return wait_s
+    async def _tick():
+        await _run_once()
+    def _on_error(e):
+        logger.exception(f"digest scheduler crash: {e!r}")
+    return await run_clock_cron(
+        'schedule_daily_digest',
+        _next_wait_seconds,
+        _tick,
+        backoff_seconds=3600,
+        on_error=_on_error,
+        log=logger,
+    )

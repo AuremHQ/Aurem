@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate }             from "react-router-dom";
 import { ArrowLeft }               from "lucide-react";
 import { api, getToken, API_BASE } from "../lib/api";
+import { copyText }                from "../lib/copyText";
 import { toast }                   from "../components/Toast";
 import ConfirmModal                from "../components/ConfirmModal";
 
@@ -105,13 +106,8 @@ export default function Integrations() {
     toast({ message: "API key revoked — a new one was generated.", kind: "success", duration: 4000 });
   }, [fetchLinks]);
 
-  const copy = useCallback((text, label) => {
-    try {
-      navigator.clipboard.writeText(text);
-      toast({ message: `${label} copied`, kind: "success", duration: 2000 });
-    } catch {
-      toast({ message: "Copy failed — please select manually.", kind: "error" });
-    }
+  const copy = useCallback(async (text, label) => {
+    await copyText(text, { success: label + " copied", error: "Copy failed — please select manually.", duration: 2000 });
   }, []);
 
   const testConnection = useCallback(async () => {

@@ -27,6 +27,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +122,18 @@ async def schedule_leak_alert_cron() -> None:
         logger.info("leak_alert_cron disabled (ENABLE_LEAK_ALERT_CRON=0)")
         return
     interval = _interval_seconds()
-    while True:
-        try:
-            from cto_services.db import get_db
-            db = get_db()
-            if db is not None:
-                await _check_and_alert_once(db)
-        except Exception as e:                               # noqa: BLE001
-            logger.warning("leak_alert_cron tick failed: %r", e)
-        await asyncio.sleep(interval)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            await _check_and_alert_once(db)
+    def _on_error(e):
+        logger.warning("leak_alert_cron tick failed: %r", e)
+    return await run_cron(
+        'schedule_leak_alert_cron',
+        interval,
+        _tick,
+        on_error=_on_error,
+        log=logger,
+    )

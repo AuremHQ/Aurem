@@ -48,6 +48,7 @@ from html import escape as html_escape
 from typing import Optional
 
 from cto_services.db import get_db
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -617,15 +618,21 @@ async def nudge_cron(interval_seconds: int = 86400, *, startup_delay_seconds: in
     happens again, but the delay also avoids wasting a tick on a pod
     that's about to be replaced during the ~30-60s cutover window."""
     import asyncio
-    await asyncio.sleep(startup_delay_seconds)
-    while True:
-        try:
-            db = get_db()
-            if db is not None:
-                result = await run_nudge_batch(db, dry_run=False)
-                if result["sent"] or result["failed"] or result["skipped"]:
-                    logger.info("🪧 funnel_nudge cron — sent=%d failed=%d skipped=%d",
-                                result["sent"], result["failed"], result["skipped"])
-        except Exception as e:
-            logger.warning("funnel_nudge_cron tick failed: %r", e)
-        await asyncio.sleep(interval_seconds)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        db = get_db()
+        if db is not None:
+            result = await run_nudge_batch(db, dry_run=False)
+            if result["sent"] or result["failed"] or result["skipped"]:
+                logger.info("🪧 funnel_nudge cron — sent=%d failed=%d skipped=%d",
+                            result["sent"], result["failed"], result["skipped"])
+    def _on_error(e):
+        logger.warning("funnel_nudge_cron tick failed: %r", e)
+    return await run_cron(
+        'nudge_cron',
+        interval_seconds,
+        _tick,
+        startup_delay_seconds=startup_delay_seconds,
+        on_error=_on_error,
+        log=logger,
+    )

@@ -23,6 +23,7 @@ import os
 
 from services import db_restore
 from services.founder_alerts import send_founder_alert
+from services.cron_runner import run_cron
 
 logger = logging.getLogger("restore_drill")
 
@@ -183,25 +184,23 @@ async def run_restore_drill(db) -> dict:
 
 
 async def restore_drill_cron(db_getter=None) -> None:
-    try:
-        await asyncio.sleep(STARTUP_DELAY_SECONDS)
-    except asyncio.CancelledError:
-        raise
-    while True:
-        try:
-            db = db_getter() if db_getter else None
-            if db is None:
-                logger.warning("restore_drill_cron: no db available — skipping this cycle")
-            else:
-                await run_restore_drill(db)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning("restore_drill_cron loop error: %r", e)
-        try:
-            await asyncio.sleep(DRILL_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            raise
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        db = db_getter() if db_getter else None
+        if db is None:
+            logger.warning("restore_drill_cron: no db available — skipping this cycle")
+        else:
+            await run_restore_drill(db)
+    def _on_error(e):
+        logger.warning("restore_drill_cron loop error: %r", e)
+    return await run_cron(
+        'restore_drill_cron',
+        DRILL_INTERVAL_SECONDS,
+        _tick,
+        startup_delay_seconds=STARTUP_DELAY_SECONDS,
+        on_error=_on_error,
+        log=logger,
+    )
 
 
 __all__ = ["run_restore_drill", "restore_drill_cron", "DRILL_INTERVAL_SECONDS"]

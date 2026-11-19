@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -24,21 +25,27 @@ async def trust_calibration_cron() -> None:
     long_lived=True)` in main.py, same convention as
     services/chat_reliability.chat_ledger_reconciler_loop)."""
     from cto_services.db import get_db
-    while True:
-        try:
-            db = get_db()
-            if db is not None:
-                from services.trust_calibration import (
-                    compute_correction_rate_30d, save_snapshot,
-                )
-                snap = await compute_correction_rate_30d(db)
-                await save_snapshot(db, snap)
-                logger.info(
-                    "trust_calibration_cron: snapshot computed "
-                    "(denominator=%s numerator=%s rate=%s)",
-                    snap.get("denominator"), snap.get("numerator"),
-                    snap.get("correction_rate_pct"),
-                )
-        except Exception as e:                               # noqa: BLE001
-            logger.warning("trust_calibration_cron tick failed: %r", e)
-        await asyncio.sleep(INTERVAL_S)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        db = get_db()
+        if db is not None:
+            from services.trust_calibration import (
+                compute_correction_rate_30d, save_snapshot,
+            )
+            snap = await compute_correction_rate_30d(db)
+            await save_snapshot(db, snap)
+            logger.info(
+                "trust_calibration_cron: snapshot computed "
+                "(denominator=%s numerator=%s rate=%s)",
+                snap.get("denominator"), snap.get("numerator"),
+                snap.get("correction_rate_pct"),
+            )
+    def _on_error(e):
+        logger.warning("trust_calibration_cron tick failed: %r", e)
+    return await run_cron(
+        'trust_calibration_cron',
+        INTERVAL_S,
+        _tick,
+        on_error=_on_error,
+        log=logger,
+    )

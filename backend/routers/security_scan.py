@@ -363,6 +363,42 @@ async def run_security_scan(
 
 # ─── Iter 212m-66 — Internal helpers ──────────────────────────────────
 
+
+# Heuristic vuln-class mapping: secret_* → secret_leak,
+# sql_*  → sql_injection, nosql_* → nosql_injection,
+# redos_* → redos, lpdos_* → lpdos, ssti_* → ssti,
+# chain_* → chain, eval/exec/yaml/os → dangerous_code
+_SECRET_RULE_IDS = frozenset({
+    "generic_api_key",
+    "aws_access_key",
+    "aws_secret_key",
+    "password_assignment",
+    "token_assignment",
+    "private_key",
+    "github_token",
+    "slack_token",
+    "generic_secret",
+    "db_connection_string",
+    "stripe_live_key",
+    "stripe_test_key",
+    "google_api_key",
+    "sendgrid_key",
+    "openai_key",
+})
+_RULE_PREFIX_TO_VULN = {
+    "secret_": "secret_leak",
+    "sql_": "sql_injection",
+    "nosql_": "nosql_injection",
+    "redos_": "redos",
+    "lpdos_": "lpdos",
+    "ssti_": "ssti",
+    "chain": "chain",
+    "clipboard": "clipboard",
+    "replay": "replay",
+    "python_syntax_error": "syntax_error",
+}
+
+
 def _normalize_findings(findings: list[dict]) -> list[dict]:
     """Normalise Vanguard-format findings into the security_scan
     response shape (rule_id / vuln / file / line / severity / desc).
@@ -374,38 +410,14 @@ def _normalize_findings(findings: list[dict]) -> list[dict]:
     for f in findings or []:
         rule_id = (f.get("rule_id") or f.get("name") or f.get("rule")
                    or "unknown").strip()
-        # Heuristic vuln-class mapping: secret_* → secret_leak,
-        # sql_*  → sql_injection, nosql_* → nosql_injection,
-        # redos_* → redos, lpdos_* → lpdos, ssti_* → ssti,
-        # chain_* → chain, eval/exec/yaml/os → dangerous_code
-        if rule_id.startswith("secret_") or rule_id in (
-            "generic_api_key", "aws_access_key", "aws_secret_key",
-            "password_assignment", "token_assignment", "private_key",
-            "github_token", "slack_token", "generic_secret",
-            "db_connection_string", "stripe_live_key", "stripe_test_key",
-            "google_api_key", "sendgrid_key", "openai_key",
-        ):
+        if rule_id in _SECRET_RULE_IDS:
             vuln = "secret_leak"
-        elif rule_id.startswith("sql_"):
-            vuln = "sql_injection"
-        elif rule_id.startswith("nosql_"):
-            vuln = "nosql_injection"
-        elif rule_id.startswith("redos_"):
-            vuln = "redos"
-        elif rule_id.startswith("lpdos_"):
-            vuln = "lpdos"
-        elif rule_id.startswith("ssti_"):
-            vuln = "ssti"
-        elif rule_id.startswith("chain_"):
-            vuln = "chain"
-        elif rule_id.startswith("clipboard"):
-            vuln = "clipboard"
-        elif rule_id.startswith("replay"):
-            vuln = "replay"
-        elif rule_id.startswith("python_syntax_error"):
-            vuln = "syntax_error"
         else:
             vuln = "dangerous_code"
+            for prefix, vuln_class in _RULE_PREFIX_TO_VULN.items():
+                if rule_id.startswith(prefix):
+                    vuln = vuln_class
+                    break
         sev = (f.get("severity") or "").lower() or "medium"
         out.append({
             "rule_id":       rule_id,

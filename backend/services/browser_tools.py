@@ -142,9 +142,108 @@ async def _release_project_lock(db, project_id: str, user_id: str, lock_id: str)
         logger.warning("browser_tools lock release failed: %r", e)
 
 
+async def _launch_browser(pw):
+    """Launch Chromium, retrying once without the executable-path override.
+
+    2026-09-13 - same fallback-retry fix as web_inspect.py /
+    deploy-verify.py (recurring bug: PLAYWRIGHT_CHROME_EXECUTABLE_PATH
+    is a base-image-maintained symlink that goes stale
+    independently of this repo). Retry once without the
+    override before degrading.
+
+    Returns a (browser, error) pair: exactly one is None. The error is the
+    result dict _run_steps returns when the browser cannot be launched.
+    """
+    from services.deploy_verify import _is_browser_missing_error
+
+    launch_kwargs = {"headless": True}
+    exe = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
+    if exe:
+        launch_kwargs["executable_path"] = exe
+    try:
+        browser = await pw.chromium.launch(**launch_kwargs)
+    except Exception as e:  # noqa: BLE001
+        if launch_kwargs.get("executable_path") and _is_browser_missing_error(e):
+            try:
+                browser = await pw.chromium.launch(headless=True)
+            except Exception as e2:  # noqa: BLE001
+                if _is_browser_missing_error(e2):
+                    return None, {
+                        "ok": False, "browser_available": False,
+                        "error": "browser_unavailable", "message": UNAVAILABLE_MESSAGE,
+                    }
+                return None, {"ok": False, "browser_available": True,
+                              "error": f"browser_launch_failed: {type(e2).__name__}: {e2}"}
+        elif _is_browser_missing_error(e):
+            return None, {
+                "ok": False, "browser_available": False,
+                "error": "browser_unavailable", "message": UNAVAILABLE_MESSAGE,
+            }
+        else:
+            return None, {"ok": False, "browser_available": True,
+                          "error": f"browser_launch_failed: {type(e).__name__}: {e}"}
+    return browser, None
+
+
+async def _run_one_step(page, step, result, nav_count):
+    """Run a single browser step. Returns (stop, nav_count)."""
+    action = step.get("action")
+    if action == "navigate":
+        nav_count += 1
+        if nav_count > MAX_NAVIGATIONS_PER_TURN:
+            result["errors"].append("navigation_cap_exceeded (max 3/turn)")
+            return True, nav_count
+        url = step.get("url", "")
+        ok, why = validate_target_url(url)
+        if not ok:
+            result["errors"].append(f"blocked_ssrf:{why} for {url!r}")
+            result["ok"] = False
+            return True, nav_count
+        await page.goto(url, wait_until="load", timeout=NAV_TIMEOUT_MS)
+        result["current_url"] = page.url
+        return False, nav_count
+    if action == "click":
+        await page.locator(step["sel"]).first.click(timeout=ACTION_TIMEOUT_MS)
+        return False, nav_count
+    if action == "fill":
+        await page.locator(step["sel"]).first.fill(
+            step.get("val", ""), timeout=ACTION_TIMEOUT_MS)
+        return False, nav_count
+    if action == "submit":
+        loc = page.locator(step["sel"]).first
+        try:
+            await loc.click(timeout=ACTION_TIMEOUT_MS)
+        except Exception:  # noqa: BLE001
+            await loc.evaluate(
+                "el => el.closest('form') && el.closest('form').requestSubmit()")
+            await page.wait_for_timeout(800)
+        return False, nav_count
+    if action == "wait_for":
+        await page.locator(step["sel"]).first.wait_for(
+            timeout=step.get("timeout", 5000))
+        return False, nav_count
+    if action == "back":
+        await page.go_back(timeout=NAV_TIMEOUT_MS)
+        return False, nav_count
+    if action == "a11y_snapshot":
+        snap = await page.locator("body").aria_snapshot(mode="ai")
+        result["a11y_snapshot"] = (snap or "")[:A11Y_CHAR_CAP]
+        return False, nav_count
+    if action in ("console_errors", "network_log"):
+        return False, nav_count
+    if action == "screenshot":
+        if result["screenshot_base64"] is None:
+            shot = await page.screenshot(type="jpeg", quality=70)
+            shot = _resize_screenshot_if_needed(shot)
+            result["screenshot_base64"] = base64.b64encode(shot).decode("ascii")
+        return False, nav_count
+    if action == "close":
+        return True, nav_count
+    return False, nav_count
+
+
 async def _run_steps(steps: list[dict]) -> dict:
     from playwright.async_api import async_playwright
-    from services.deploy_verify import _is_browser_missing_error
 
     result: dict = {
         "ok": True, "browser_available": True, "steps_executed": [],
@@ -156,37 +255,9 @@ async def _run_steps(steps: list[dict]) -> dict:
     nav_count = 0
 
     async with async_playwright() as pw:
-        launch_kwargs = {"headless": True}
-        exe = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
-        if exe:
-            launch_kwargs["executable_path"] = exe
-        try:
-            browser = await pw.chromium.launch(**launch_kwargs)
-        except Exception as e:                             # noqa: BLE001
-            # 2026-09-13 — same fallback-retry fix as web_inspect.py /
-            # deploy_verify.py (recurring bug: PLAYWRIGHT_CHROME_EXECUTABLE_PATH
-            # is a base-image-maintained symlink that goes stale
-            # independently of this repo). Retry once without the
-            # override before degrading.
-            if launch_kwargs.get("executable_path") and _is_browser_missing_error(e):
-                try:
-                    browser = await pw.chromium.launch(headless=True)
-                except Exception as e2:                       # noqa: BLE001
-                    if _is_browser_missing_error(e2):
-                        return {
-                            "ok": False, "browser_available": False,
-                            "error": "browser_unavailable", "message": UNAVAILABLE_MESSAGE,
-                        }
-                    return {"ok": False, "browser_available": True,
-                            "error": f"browser_launch_failed: {type(e2).__name__}: {e2}"}
-            elif _is_browser_missing_error(e):
-                return {
-                    "ok": False, "browser_available": False,
-                    "error": "browser_unavailable", "message": UNAVAILABLE_MESSAGE,
-                }
-            else:
-                return {"ok": False, "browser_available": True,
-                        "error": f"browser_launch_failed: {type(e).__name__}: {e}"}
+        browser, launch_error = await _launch_browser(pw)
+        if launch_error is not None:
+            return launch_error
 
         try:
             # Fresh, isolated context every session — no persisted
@@ -213,48 +284,8 @@ async def _run_steps(steps: list[dict]) -> dict:
             for step in steps:
                 action = step.get("action")
                 try:
-                    if action == "navigate":
-                        nav_count += 1
-                        if nav_count > MAX_NAVIGATIONS_PER_TURN:
-                            result["errors"].append("navigation_cap_exceeded (max 3/turn)")
-                            break
-                        url = step.get("url", "")
-                        ok, why = validate_target_url(url)
-                        if not ok:
-                            result["errors"].append(f"blocked_ssrf:{why} for {url!r}")
-                            result["ok"] = False
-                            break
-                        await page.goto(url, wait_until="load", timeout=NAV_TIMEOUT_MS)
-                        result["current_url"] = page.url
-                    elif action == "click":
-                        await page.locator(step["sel"]).first.click(timeout=ACTION_TIMEOUT_MS)
-                    elif action == "fill":
-                        await page.locator(step["sel"]).first.fill(
-                            step.get("val", ""), timeout=ACTION_TIMEOUT_MS)
-                    elif action == "submit":
-                        loc = page.locator(step["sel"]).first
-                        try:
-                            await loc.click(timeout=ACTION_TIMEOUT_MS)
-                        except Exception:                   # noqa: BLE001
-                            await loc.evaluate(
-                                "el => el.closest('form') && el.closest('form').requestSubmit()")
-                        await page.wait_for_timeout(800)
-                    elif action == "wait_for":
-                        await page.locator(step["sel"]).first.wait_for(
-                            timeout=step.get("timeout", 5000))
-                    elif action == "back":
-                        await page.go_back(timeout=NAV_TIMEOUT_MS)
-                    elif action == "a11y_snapshot":
-                        snap = await page.locator("body").aria_snapshot(mode="ai")
-                        result["a11y_snapshot"] = (snap or "")[:A11Y_CHAR_CAP]
-                    elif action in ("console_errors", "network_log"):
-                        pass  # aggregated below regardless of when asked
-                    elif action == "screenshot":
-                        if result["screenshot_base64"] is None:
-                            shot = await page.screenshot(type="jpeg", quality=70)
-                            shot = _resize_screenshot_if_needed(shot)
-                            result["screenshot_base64"] = base64.b64encode(shot).decode("ascii")
-                    elif action == "close":
+                    stop, nav_count = await _run_one_step(page, step, result, nav_count)
+                    if stop:
                         break
                     result["steps_executed"].append(action)
                 except Exception as e:                     # noqa: BLE001

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
+import { copyText } from "../lib/copyText";
 import ShipDialog from "./ShipDialog";
 import FileDiffPeek from "./FileDiffPeek";
 import TaskProgressCard from "./TaskProgressCard";
@@ -711,11 +712,12 @@ export default function MessageBubble({
     }
   }
 
-  function copyText() {
+  async function copyMessage() {
     if (!m.content) return;
-    navigator.clipboard.writeText(m.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyText(m.content)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   }
 
   async function sendVote(v) {
@@ -964,7 +966,7 @@ export default function MessageBubble({
           {showUserCopy && (
             <button
               data-testid={`copy-user-${idx}`}
-              onClick={copyText}
+              onClick={copyMessage}
               title={copied ? "Copied!" : "Copy"}
               aria-label="Copy message"
               style={{
@@ -1514,7 +1516,7 @@ export default function MessageBubble({
             transition: "opacity 0.15s ease",
             pointerEvents: hover ? "auto" : "none",
           }}>
-            <ActionBtn testid={`copy-${idx}`} title={copied ? "Copied!" : "Copy"} onClick={copyText} Icon={copied ? Check : CopyIcon} active={copied} color="rgba(234,179,8,0.55)" />
+            <ActionBtn testid={`copy-${idx}`} title={copied ? "Copied!" : "Copy"} onClick={copyMessage} Icon={copied ? Check : CopyIcon} active={copied} color="rgba(234,179,8,0.55)" />
             <ActionBtn testid={`thumbs-up-${idx}`} title="Good reply" onClick={() => sendVote("up")} Icon={ThumbsUp} active={vote === "up"} color="rgba(109,212,161,0.55)" />
             <ActionBtn testid={`thumbs-down-${idx}`} title="Bad reply — we'll refine" onClick={() => sendVote("down")} Icon={ThumbsDown} active={vote === "down"} color="rgba(255,107,107,0.55)" />
           </div>

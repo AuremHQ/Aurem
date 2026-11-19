@@ -21,6 +21,7 @@ import React, {
 import mermaid from "mermaid";
 import DOMPurify from "dompurify";
 import { Copy, Check, AlertTriangle, Network } from "lucide-react";
+import { copyText } from "../lib/copyText";
 
 let _mermaidInitialised = false;
 function _initMermaid() {
@@ -77,19 +78,17 @@ export default function MermaidBlock({ code, title }) {
   }, [code, id]);
 
   const onCopySvg = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(svg);
+    if (await copyText(svg)) {
       setCopiedSvg(true);
       setTimeout(() => setCopiedSvg(false), 1600);
-    } catch { /* ignore */ }
+    }
   }, [svg]);
 
   const onCopyCode = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(code || "");
+    if (await copyText(code || "")) {
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 1600);
-    } catch { /* ignore */ }
+    }
   }, [code]);
 
   return (

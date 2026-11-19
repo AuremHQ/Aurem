@@ -31,6 +31,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -254,34 +255,38 @@ async def schedule_cost_revenue_alert_cron() -> None:
     if not _is_enabled():
         logger.info("cost_revenue_alert cron disabled via env")
         return
-
     interval = _interval_seconds()
     logger.info(
         "💸 cost_revenue_alert cron ON · every %ds · email=%s",
         interval, _email_enabled(),
     )
-    await asyncio.sleep(200)  # boot stagger, after slo_alert_cron's 180s
-
     _index_ensured = False
-    while True:
-        try:
-            from cto_services.db import get_db
-            db = get_db()
-            if db is not None:
-                if not _index_ensured:
-                    # code-review follow-up (2026-08-27 testing pass) —
-                    # best-effort, non-unique: keeps the dedup lookup +
-                    # admin card's recent_findings sort off a full scan
-                    # as this collection grows. Created once per process.
-                    try:
-                        await db.cost_revenue_alert_log.create_index(
-                            [("source_key", 1), ("created_at", -1)],
-                            name="source_key_created_at", background=True,
-                        )
-                        _index_ensured = True
-                    except Exception:
-                        pass
-                await _check_and_alert_once(db)
-        except Exception as e:                              # noqa: BLE001
-            logger.warning("cost_revenue_alert cron tick failed: %r", e)
-        await asyncio.sleep(interval)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            if not _index_ensured:
+                # code-review follow-up (2026-08-27 testing pass) —
+                # best-effort, non-unique: keeps the dedup lookup +
+                # admin card's recent_findings sort off a full scan
+                # as this collection grows. Created once per process.
+                try:
+                    await db.cost_revenue_alert_log.create_index(
+                        [("source_key", 1), ("created_at", -1)],
+                        name="source_key_created_at", background=True,
+                    )
+                    _index_ensured = True
+                except Exception:
+                    pass
+            await _check_and_alert_once(db)
+    def _on_error(e):
+        logger.warning("cost_revenue_alert cron tick failed: %r", e)
+    return await run_cron(
+        'schedule_cost_revenue_alert_cron',
+        interval,
+        _tick,
+        startup_delay_seconds=200,
+        on_error=_on_error,
+        log=logger,
+    )

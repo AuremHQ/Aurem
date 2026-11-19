@@ -27,6 +27,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
+from services.cron_runner import run_clock_cron
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,8 @@ async def schedule_leak_digest_cron() -> None:
         return
     target_weekday = int(os.environ.get("LEAK_DIGEST_WEEKDAY_UTC", "0"))  # 0=Monday
     target_hour = int(os.environ.get("LEAK_DIGEST_HOUR_UTC", "7"))
-    while True:
+    # MIGRATED to services.cron_runner
+    def _next_wait_seconds():
         now = datetime.now(timezone.utc)
         days_ahead = (target_weekday - now.weekday()) % 7
         next_run = (now + timedelta(days=days_ahead)).replace(
@@ -150,14 +152,19 @@ async def schedule_leak_digest_cron() -> None:
             next_run += timedelta(days=7)
         wait_s = (next_run - now).total_seconds()
         logger.info(f"leak digest sleeping {int(wait_s/3600)}h until {next_run.isoformat()}")
-        try:
-            await asyncio.sleep(wait_s)
-            from cto_services.db import get_db
-            db = get_db()
-            if db is not None:
-                await _run_once(db)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:                              # noqa: BLE001
-            logger.exception(f"leak digest scheduler crash: {e!r}")
-            await asyncio.sleep(3600)
+        return wait_s
+    async def _tick():
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            await _run_once(db)
+    def _on_error(e):
+        logger.exception(f"leak digest scheduler crash: {e!r}")
+    return await run_clock_cron(
+        'schedule_leak_digest_cron',
+        _next_wait_seconds,
+        _tick,
+        backoff_seconds=3600,
+        on_error=_on_error,
+        log=logger,
+    )

@@ -320,23 +320,21 @@ export function newSessionId() {
  * tool call returned `no_bin_ctx` even with a healthy repo connected
  * (and a green sidebar dot).
  *
- * We now accept BOTH the camelCase form (main ChatPanel) and the
- * snake_case form (AskAdvisorReal.jsx) so existing callers stay
- * untouched. `ora_panel` is also destructured and forwarded so the
+ * Callers now pass ONLY the snake_case form (ChatPanel was converted
+ * to match AskAdvisorReal.jsx), so the camelCase aliases were removed.
+ * `ora_panel` is also destructured and forwarded so the
  * backend's advisor code path (chat.py line ~1368) can inject the
  * ORA_PANEL_TONE prompt.
  */
-export async function streamChat({ prompt, sessionId, session_id,
-                                    maxToolIters = 2, max_tool_iters,
-                                    maxxMode = false, maxx_mode,
-                                    projectId = null, project_id,
+export async function streamChat({ prompt, session_id,
+                                    max_tool_iters = 2,
+                                    maxx_mode = false,
+                                    project_id = null,
                                     ora_panel = false,
-                                    screenshotB64 = null,
-                                    screenshot_b64,
+                                    screenshot_b64 = null,
                                     agent = "auto", mode = "swift",
-                                    executionMode = "prompt",  // Iter 212m-58
-                                    execution_mode,
-                                    f12Payload = null, f12_payload,
+                                    execution_mode = "prompt",  // Iter 212m-58
+                                    f12_payload = null,
                                     onMeta, onMode, onToken, onWatchdog, onWatchdogPending,
                                     onOpsRedirect,
                                     onThinking, onTaskHandoff, onDone, onError,
@@ -344,21 +342,9 @@ export async function streamChat({ prompt, sessionId, session_id,
                                     onCouncil, // Iter 212m-78 — recalled count
                                     onIntent,  // Iter 212m-149 — gateway tier classification
                                     onScopeConfirmation, // Trust & Verification round — Enhancement 5
-                                    retryOfRequestId, retry_of_request_id,  // INTERACTION_CONTRACT_V1 P1
-                                    scopeConfirmedProposalId, scope_confirmed_proposal_id,
+                                    retry_of_request_id,  // INTERACTION_CONTRACT_V1 P1
+                                    scope_confirmed_proposal_id,
                                     signal }) {
-  // Iter 212m-194 — coalesce camelCase + snake_case aliases so
-  // AskAdvisorReal (snake) and ChatPanel (camel) both work.
-  const _sessionId    = session_id     ?? sessionId;
-  const _maxToolIters = max_tool_iters ?? maxToolIters;
-  const _maxxMode     = maxx_mode      ?? maxxMode;
-  const _projectId    = project_id     ?? projectId;
-  const _executionMode = execution_mode ?? executionMode;
-  const _f12Payload   = f12_payload    ?? f12Payload;
-  // Iter 212m-212 — screenshot passthrough
-  const _screenshotB64 = screenshot_b64 ?? screenshotB64;
-  const _retryOfRequestId = retry_of_request_id ?? retryOfRequestId ?? null;
-  const _scopeConfirmedProposalId = scope_confirmed_proposal_id ?? scopeConfirmedProposalId ?? null;
   const token = getToken();
   // 2026-09-12 — founder-reported (rapid Stop-clicks, confirmed
   // reproducible): this initial `fetch()` had no try/catch of its
@@ -380,24 +366,24 @@ export async function streamChat({ prompt, sessionId, session_id,
       },
       body: JSON.stringify({
         prompt,
-        session_id: _sessionId,
-        max_tool_iters: _maxToolIters,
-        maxx_mode: _maxxMode,
+        session_id,
+        max_tool_iters,
+        maxx_mode,
         agent,
         mode,
-        execution_mode: _executionMode,
-        project_id: _projectId,
-        f12_payload: _f12Payload,
+        execution_mode,
+        project_id,
+        f12_payload,
         ora_panel,                       // Iter 212m-194 — was being dropped
-        screenshot_b64: _screenshotB64,  // Iter 212m-212
+        screenshot_b64,  // Iter 212m-212
         // INTERACTION_CONTRACT_V1 P1 — set only on a genuine retry;
         // omitted (undefined -> not serialized meaningfully, backend
         // treats missing/None identically) on a normal first send.
-        ...(_retryOfRequestId ? { retry_of_request_id: _retryOfRequestId } : {}),
+        ...(retry_of_request_id ? { retry_of_request_id } : {}),
         // Trust & Verification round — Enhancement 5. Set only when
         // resending after the user clicked "Confirm and proceed" on
         // a scope-confirmation card.
-        ...(_scopeConfirmedProposalId ? { scope_confirmed_proposal_id: _scopeConfirmedProposalId } : {}),
+        ...(scope_confirmed_proposal_id ? { scope_confirmed_proposal_id } : {}),
       }),
       signal,
     });

@@ -19,7 +19,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { X, Copy, Check, RefreshCw, Code2, Eye, ExternalLink, Loader2, Rocket, Smartphone, Tablet, Monitor, Camera } from "lucide-react";
-import { toast } from "./Toast";
+import { copyText } from "../lib/copyText";
 import { api } from "../lib/api";
 import DeployPanel from "./DeployPanel";
 
@@ -546,12 +546,12 @@ export default function PreviewPanel({ blocks, onClose, activeProject, initialVi
   }, [viewMode, codeSubTab, activeProject?.project_id]);
 
   const [codeCopied, setCodeCopied] = useState(false);
-  const copyCode = () => {
+  const copyCode = async () => {
     if (!effectiveCode) return;
-    navigator.clipboard.writeText(effectiveCode);
-    toast({ message: "Code copied.", kind: "success", duration: 1800 });
-    setCodeCopied(true);
-    setTimeout(() => setCodeCopied(false), 1500);
+    if (await copyText(effectiveCode, { success: "Code copied.", duration: 1800 })) {
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1500);
+    }
   };
 
   const canShowCodeToggle = (

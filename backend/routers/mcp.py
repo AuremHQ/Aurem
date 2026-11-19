@@ -67,387 +67,326 @@ _RPC_TOOL_FAILED      = -32002
 # (what it does + when to use + what it returns). Per paper Section
 # VIII-B, description quality — NOT filtering — is the dominant driver
 # of tool-selection accuracy at the LLM boundary.
+# ── Tool factory (Tier 3 N14) ─────────────────────────────────────────
+# The 20 tool dicts below share one skeleton: inputSchema is always
+# {"type": "object", "properties": ..., "additionalProperties": False},
+# annotations always carry "destructiveHint": False, and "required" is
+# omitted when empty. _tool() encodes those defaults so each tool only
+# spells out what is unique to it: name, description, properties,
+# title, and (when different) required / read_only.
+def _tool(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    *,
+    title: str,
+    required: list[str] | None = None,
+    read_only: bool = True,
+) -> dict[str, Any]:
+    """Build one MCP tool dict.
+
+    Defaults encode what is true for nearly every tool in this file
+    (verified 2026-11-19 against all 20 tools on main):
+      * inputSchema is always {"type": "object", "properties": ...,
+        "additionalProperties": False};
+      * annotations always carry "destructiveHint": False;
+      * "readOnlyHint" is True except for ship_code and
+        write_repo_file (pass read_only=False for those);
+      * "required" is omitted when empty.
+    ``title`` is always explicit — it is the UI label, never derived
+    from the name.
+    """
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    schema["additionalProperties"] = False
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": schema,
+        "annotations": {
+            "title": title,
+            "readOnlyHint": read_only,
+            "destructiveHint": False,
+        },
+    }
+
+
 TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "list_projects",
-        "description": (
+    _tool(
+        'list_projects',
+        (
             "List all connected GitHub repos for the authenticated user. "
             "Use to see or switch projects. "
             "Returns project IDs, names, and repo names."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Max projects to return (1–100).",
-                    "minimum": 1,
-                    "maximum": 100,
-                    "default": 50,
-                },
+        {
+            "limit": {
+                "type": "integer",
+                "description": "Max projects to return (1–100).",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 50,
             },
-            "additionalProperties": False,
         },
-        # Iter 183 — MCP tool annotations (per MCP spec). Hints the
-        # client UI (Claude Desktop, Cursor) about behaviour: title
-        # for the chrome, readOnlyHint to skip the "agent will modify
-        # data" warning, destructiveHint to flag dangerous tools.
-        "annotations": {
-            "title":           "List ORA Projects",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "ship_code",
-        "description": (
+        title='List ORA Projects',
+    ),
+    _tool(
+        'ship_code',
+        (
             "Submit changes through ORA's security scan + commit pipeline. "
             "Use for production-ready changes needing verification. "
             "Returns task ID (poll with get_task_status)."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {
-                    "type": "string",
-                    "description": (
-                        "Target project_id. If omitted, the user's most "
-                        "recently used project is used."
-                    ),
-                },
-                "task": {
-                    "type": "string",
-                    "description": (
-                        "Concrete file-edit task brief. Example: "
-                        "'Add /api/health route to backend/routers/health.py "
-                        "returning {ok: true}'."
-                    ),
-                    "minLength": 10,
-                    "maxLength": 4000,
-                },
-                "maxx_mode": {
-                    "type": "boolean",
-                    "description": "Enable extended-reasoning mode (slower, deeper).",
-                    "default": False,
-                },
+        {
+            "project_id": {
+                "type": "string",
+                "description": (
+                    "Target project_id. If omitted, the user's most "
+                    "recently used project is used."
+                ),
             },
-            "required": ["task"],
-            "additionalProperties": False,
+            "task": {
+                "type": "string",
+                "description": (
+                    "Concrete file-edit task brief. Example: "
+                    "'Add /api/health route to backend/routers/health.py "
+                    "returning {ok: true}'."
+                ),
+                "minLength": 10,
+                "maxLength": 4000,
+            },
+            "maxx_mode": {
+                "type": "boolean",
+                "description": "Enable extended-reasoning mode (slower, deeper).",
+                "default": False,
+            },
         },
-        "annotations": {
-            "title":           "Ship Code to GitHub",
-            "readOnlyHint":    False,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "get_task_status",
-        "description": (
+        title='Ship Code to GitHub',
+        required=['task'],
+        read_only=False,
+    ),
+    _tool(
+        'get_task_status',
+        (
             "Check status of a task or Loop run. "
             "Use after ship_code to confirm completion. "
             "Returns state, phase, and commit SHA when shipped."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "The task_id returned by ship_code.",
-                    "minLength": 4,
-                },
+        {
+            "task_id": {
+                "type": "string",
+                "description": "The task_id returned by ship_code.",
+                "minLength": 4,
             },
-            "required": ["task_id"],
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Get Task Status",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "get_recent_commits",
-        "description": (
+        title='Get Task Status',
+        required=['task_id'],
+    ),
+    _tool(
+        'get_recent_commits',
+        (
             "Get recent commit history from the project's GitHub repo. "
             "Use to verify a ship or review changes. "
             "Returns SHA, message, author, and timestamp."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {
-                    "type": "string",
-                    "description": "Target project_id.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max commits to return (1–50).",
-                    "minimum": 1,
-                    "maximum": 50,
-                    "default": 10,
-                },
+        {
+            "project_id": {
+                "type": "string",
+                "description": "Target project_id.",
             },
-            "required": ["project_id"],
-            "additionalProperties": False,
+            "limit": {
+                "type": "integer",
+                "description": "Max commits to return (1–50).",
+                "minimum": 1,
+                "maximum": 50,
+                "default": 10,
+            },
         },
-        "annotations": {
-            "title":           "Get Recent Commits",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
+        title='Get Recent Commits',
+        required=['project_id'],
+    ),
     # ── Iter 212m-174 — Repo-scoped tools (5→12) ─────────────────────
-    {
-        "name": "read_repo_file",
-        "description": (
+    _tool(
+        'read_repo_file',
+        (
             "Read full contents of one file in the connected repo. "
             "Use when you need to see actual code. "
             "Returns file text and SHA."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Target project_id."},
-                "file_path":  {
-                    "type": "string",
-                    "description": "Repo-relative path (e.g. 'backend/main.py').",
-                    "minLength": 1,
-                    "maxLength": 512,
-                },
+        {
+            "project_id": {"type": "string", "description": "Target project_id."},
+            "file_path":  {
+                "type": "string",
+                "description": "Repo-relative path (e.g. 'backend/main.py').",
+                "minLength": 1,
+                "maxLength": 512,
             },
-            "required": ["project_id", "file_path"],
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Read Repo File",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "list_repo_files",
-        "description": (
+        title='Read Repo File',
+        required=['project_id', 'file_path'],
+    ),
+    _tool(
+        'list_repo_files',
+        (
             "List files and folders at a path in the connected repo "
             "(single-level; empty path = repo root). "
             "Use to explore structure or locate a file. "
             "Returns names, paths, and file/dir type."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Target project_id."},
-                "path":       {
-                    "type":        "string",
-                    "description": "Directory path to list. Empty string = repo root.",
-                    "default":     "",
-                    "maxLength":   512,
-                },
+        {
+            "project_id": {"type": "string", "description": "Target project_id."},
+            "path":       {
+                "type":        "string",
+                "description": "Directory path to list. Empty string = repo root.",
+                "default":     "",
+                "maxLength":   512,
             },
-            "required": ["project_id"],
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "List Repo Files",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "search_repo",
-        "description": (
+        title='List Repo Files',
+        required=['project_id'],
+    ),
+    _tool(
+        'search_repo',
+        (
             "Search the repo code by keyword or concept "
             "(case-insensitive, whole-word by default). "
             "Use to find where something is implemented. "
             "Returns files, line numbers, and matching snippets."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id":  {"type": "string", "description": "Target project_id."},
-                "query":       {
-                    "type":       "string",
-                    "description": "Text to search for (min 3 chars).",
-                    "minLength":  3,
-                    "maxLength":  200,
-                },
-                "max_results": {
-                    "type":       "integer",
-                    "description": "Max matches to return (1–50).",
-                    "minimum":    1,
-                    "maximum":    50,
-                    "default":    10,
-                },
+        {
+            "project_id":  {"type": "string", "description": "Target project_id."},
+            "query":       {
+                "type":       "string",
+                "description": "Text to search for (min 3 chars).",
+                "minLength":  3,
+                "maxLength":  200,
             },
-            "required": ["project_id", "query"],
-            "additionalProperties": False,
+            "max_results": {
+                "type":       "integer",
+                "description": "Max matches to return (1–50).",
+                "minimum":    1,
+                "maximum":    50,
+                "default":    10,
+            },
         },
-        "annotations": {
-            "title":           "Search Repo",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "write_repo_file",
-        "description": (
+        title='Search Repo',
+        required=['project_id', 'query'],
+    ),
+    _tool(
+        'write_repo_file',
+        (
             "Write or update a file and create a GitHub commit. "
             "Use only when changing code. "
             "Returns commit SHA on success (blocks on CRITICAL Vanguard findings)."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id":     {"type": "string", "description": "Target project_id."},
-                "file_path":      {
-                    "type":       "string",
-                    "description": "Repo-relative path (no leading '/', no '..').",
-                    "minLength":  1,
-                    "maxLength":  512,
-                },
-                "content":        {
-                    "type":       "string",
-                    "description": "FULL new file body (max 200KB).",
-                    "maxLength":  200_000,
-                },
-                "commit_message": {
-                    "type":       "string",
-                    "description": "Commit message (optional).",
-                    "maxLength":  512,
-                },
+        {
+            "project_id":     {"type": "string", "description": "Target project_id."},
+            "file_path":      {
+                "type":       "string",
+                "description": "Repo-relative path (no leading '/', no '..').",
+                "minLength":  1,
+                "maxLength":  512,
             },
-            "required": ["project_id", "file_path", "content"],
-            "additionalProperties": False,
+            "content":        {
+                "type":       "string",
+                "description": "FULL new file body (max 200KB).",
+                "maxLength":  200_000,
+            },
+            "commit_message": {
+                "type":       "string",
+                "description": "Commit message (optional).",
+                "maxLength":  512,
+            },
         },
-        "annotations": {
-            "title":           "Write Repo File",
-            "readOnlyHint":    False,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "run_vanguard_scan",
-        "description": (
+        title='Write Repo File',
+        required=['project_id', 'file_path', 'content'],
+        read_only=False,
+    ),
+    _tool(
+        'run_vanguard_scan',
+        (
             "Run a 25-pattern Vanguard security scan on the connected repo. "
             "Use before shipping or when checking vulnerabilities. "
             "Returns scan_id in <1s (async — poll get_scan_status)."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Target project_id."},
-                "max_files":  {
-                    "type":       "integer",
-                    "description": "Cap files scanned to keep latency bounded.",
-                    "minimum":    1,
-                    "maximum":    500,
-                    "default":    150,
-                },
+        {
+            "project_id": {"type": "string", "description": "Target project_id."},
+            "max_files":  {
+                "type":       "integer",
+                "description": "Cap files scanned to keep latency bounded.",
+                "minimum":    1,
+                "maximum":    500,
+                "default":    150,
             },
-            "required": ["project_id"],
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Run Vanguard Scan",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "get_scan_status",
-        "description": (
+        title='Run Vanguard Scan',
+        required=['project_id'],
+    ),
+    _tool(
+        'get_scan_status',
+        (
             "Fetch the result of an async Vanguard scan by scan_id. "
             "Use to poll after run_vanguard_scan. "
             "Returns status (pending|running|done|failed) and full results when done."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "scan_id": {
-                    "type":        "string",
-                    "description": "The scan_id returned by run_vanguard_scan.",
-                    "minLength":   4,
-                    "maxLength":   80,
-                },
+        {
+            "scan_id": {
+                "type":        "string",
+                "description": "The scan_id returned by run_vanguard_scan.",
+                "minLength":   4,
+                "maxLength":   80,
             },
-            "required": ["scan_id"],
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Get Scan Status",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "get_repo_health",
-        "description": (
+        title='Get Scan Status',
+        required=['scan_id'],
+    ),
+    _tool(
+        'get_repo_health',
+        (
             "Get the latest cached codebase-health score without running a new scan. "
             "Use to view the current overall health of the project. "
             "Returns score, label, and top findings (or ok=false when no scan exists)."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Target project_id."},
-            },
-            "required": ["project_id"],
-            "additionalProperties": False,
+        {
+            "project_id": {"type": "string", "description": "Target project_id."},
         },
-        "annotations": {
-            "title":           "Get Repo Health",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "get_repo_structure",
-        "description": (
+        title='Get Repo Health',
+        required=['project_id'],
+    ),
+    _tool(
+        'get_repo_structure',
+        (
             "Get the top-level directory tree of the connected repo. "
             "Use before reading files to understand layout. "
             "Returns tree, file counts, and detected languages."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Target project_id."},
-                "max_depth":  {
-                    "type":       "integer",
-                    "description": "Max tree depth to return (1–6).",
-                    "minimum":    1,
-                    "maximum":    6,
-                    "default":    3,
-                },
+        {
+            "project_id": {"type": "string", "description": "Target project_id."},
+            "max_depth":  {
+                "type":       "integer",
+                "description": "Max tree depth to return (1–6).",
+                "minimum":    1,
+                "maximum":    6,
+                "default":    3,
             },
-            "required": ["project_id"],
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Get Repo Structure",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "get_project_info",
-        "description": (
+        title='Get Repo Structure',
+        required=['project_id'],
+    ),
+    _tool(
+        'get_project_info',
+        (
             "Get metadata for one project — owner/repo, branch, health, and task counts. "
             "Use when the client already knows the project_id (faster than list_projects). "
             "Returns project metadata + connection state."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {"type": "string", "description": "Target project_id."},
-            },
-            "required": ["project_id"],
-            "additionalProperties": False,
+        {
+            "project_id": {"type": "string", "description": "Target project_id."},
         },
-        "annotations": {
-            "title":           "Get Project Info",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
+        title='Get Project Info',
+        required=['project_id'],
+    ),
     # ── Iter 287 (Master QA Track 1 Step 5) — Founder-only QA tools ──
     # These four surfaces expose the /app/docs/traceability_matrix.json
     # single-source-of-truth + regression-test index + coverage.json
@@ -456,96 +395,66 @@ TOOLS: list[dict[str, Any]] = [
     #
     # All four are strictly read-only and gated on tier == "founder"
     # (or is_admin) via `_require_founder`.
-    {
-        "name": "qa_traceability_matrix",
-        "description": (
+    _tool(
+        'qa_traceability_matrix',
+        (
             "Read the QA traceability matrix — every tracked user journey with "
             "its entry-points, source paths, regression tests, and status. "
             "Use when auditing test coverage of a specific journey or planning "
             "new regression tests. Returns matrix + live status counts."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "journey_id": {
-                    "type":       "string",
-                    "description": "Optional — return only this journey_id.",
-                },
+        {
+            "journey_id": {
+                "type":       "string",
+                "description": "Optional — return only this journey_id.",
             },
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "QA Traceability Matrix",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "qa_open_gaps",
-        "description": (
+        title='QA Traceability Matrix',
+    ),
+    _tool(
+        'qa_open_gaps',
+        (
             "List QA journeys with status = OPEN_GAP, sorted p0 → p2. "
             "Use to see what regression coverage is missing right now. "
             "Returns journey_id, title, severity, gap_description, and a "
             "proposed_fix_family when the row carries one."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "severity": {
-                    "type":       "string",
-                    "description": "Optional filter — 'p0', 'p1', or 'p2'.",
-                    "enum":       ["p0", "p1", "p2"],
-                },
+        {
+            "severity": {
+                "type":       "string",
+                "description": "Optional filter — 'p0', 'p1', or 'p2'.",
+                "enum":       ["p0", "p1", "p2"],
             },
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "QA Open Gaps",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "qa_regression_index",
-        "description": (
+        title='QA Open Gaps',
+    ),
+    _tool(
+        'qa_regression_index',
+        (
             "List every test_regression_iter*.py file in /app/backend/tests, "
             "each paired with its postmortem doc when one exists. "
             "Use to correlate a bug fix with its permanent test + writeup. "
             "Returns test_file + iter + postmortem path."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
-        "annotations": {
-            "title":           "QA Regression Index",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "qa_coverage_summary",
-        "description": (
+        {}
+,
+        title='QA Regression Index',
+    ),
+    _tool(
+        'qa_coverage_summary',
+        (
             "Read the latest pytest-cov aggregate from "
             "/app/backend/coverage.json. Use to see overall coverage % and "
             "the 10 worst-covered files. Returns {ok:false, reason:'no_run'} "
             "when no coverage run has been captured — never fakes numbers."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
-        "annotations": {
-            "title":           "QA Coverage Summary",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "run_canary_e2e",
-        "description": (
+        {}
+,
+        title='QA Coverage Summary',
+    ),
+    _tool(
+        'run_canary_e2e',
+        (
             "Track-1 canary entry point. Two lanes: (1) 'lane_a' — fast, "
             "no external deps: returns backend + frontend coverage "
             "summaries and the per-journey traceability-matrix gap "
@@ -554,27 +463,19 @@ TOOLS: list[dict[str, Any]] = [
             "when Canary env vars are missing. Never stubs a passing "
             "result. Founder-gated, read-only."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type":        "string",
-                    "description": "'lane_a' (fast, mocked-tests) or "
-                                    "'lane_b' (real GitHub). Default lane_a.",
-                    "enum":        ["lane_a", "lane_b"],
-                },
+        {
+            "mode": {
+                "type":        "string",
+                "description": "'lane_a' (fast, mocked-tests) or "
+                                "'lane_b' (real GitHub). Default lane_a.",
+                "enum":        ["lane_a", "lane_b"],
             },
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Canary E2E (Lane A / Lane B)",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "qa_mock_reality_check",
-        "description": (
+        title='Canary E2E (Lane A / Lane B)',
+    ),
+    _tool(
+        'qa_mock_reality_check',
+        (
             "Lightweight 'did the shape change?' check against the real "
             "GitHub REST API and OpenRouter model-list API. Compares the "
             "top-level JSON key set of each response to the shape our "
@@ -583,27 +484,19 @@ TOOLS: list[dict[str, Any]] = [
             "Returns {ok:false, drift_summary:[...]} on any missing "
             "or unexpected field."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "timeout": {
-                    "type":        "number",
-                    "description": "Per-upstream timeout in seconds (default 8).",
-                    "minimum":     1,
-                    "maximum":     30,
-                },
+        {
+            "timeout": {
+                "type":        "number",
+                "description": "Per-upstream timeout in seconds (default 8).",
+                "minimum":     1,
+                "maximum":     30,
             },
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "Mock-Reality Shape Check",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
-    {
-        "name": "qa_static_vs_behavioural_ratio",
-        "description": (
+        title='Mock-Reality Shape Check',
+    ),
+    _tool(
+        'qa_static_vs_behavioural_ratio',
+        (
             "Classify every test in /app/backend/tests as STATIC_GREP "
             "(reads a source file + asserts on substrings — validates "
             "patterns, does NOT execute code), BEHAVIOURAL (awaits or "
@@ -613,23 +506,15 @@ TOOLS: list[dict[str, Any]] = [
             "counts, per-file breakdown, and a 'weak_p0' list of "
             "security-critical tests that are grep-only."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "file_pattern": {
-                    "type":       "string",
-                    "description": "Optional regex on the test basename "
-                                    "(default: all test_*.py files).",
-                },
+        {
+            "file_pattern": {
+                "type":       "string",
+                "description": "Optional regex on the test basename "
+                                "(default: all test_*.py files).",
             },
-            "additionalProperties": False,
         },
-        "annotations": {
-            "title":           "QA Static-vs-Behavioural Ratio",
-            "readOnlyHint":    True,
-            "destructiveHint": False,
-        },
-    },
+        title='QA Static-vs-Behavioural Ratio',
+    ),
 ]
 
 

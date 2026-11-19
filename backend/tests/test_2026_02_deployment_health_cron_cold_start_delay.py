@@ -26,9 +26,8 @@ CRON = Path("/app/backend/services/integration_health_cron.py").read_text(encodi
 
 
 def test_first_tick_delay_is_at_least_300s():
-    seg = CRON.split("# First probe:", 1)[1][:1200]
-    m = re.search(r"sleep\((\d+(?:\.\d+)?)", seg)
-    assert m, "no stagger sleep found after '# First probe:'"
+    m = re.search(r"startup_delay_seconds=([0-9]+(?:[.][0-9]+)?)", CRON)
+    assert m, "no startup_delay_seconds found in the run_cron call"
     delay = float(m.group(1))
     assert delay >= 300, (
         f"integration_health_cron's first-tick delay regressed to {delay}s "
@@ -39,5 +38,6 @@ def test_first_tick_delay_is_at_least_300s():
 
 
 def test_startup_jitter_still_applied_on_top_of_the_base_delay():
-    seg = CRON.split("# First probe:", 1)[1][:1200]
-    assert "_startup_jitter_s()" in seg.split("await asyncio.sleep")[1][:60]
+    m = re.search(r"startup_delay_seconds=([^,]+)", CRON)
+    assert m, "no startup_delay_seconds found in the run_cron call"
+    assert "_startup_jitter_s()" in m.group(1)

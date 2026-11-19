@@ -34,6 +34,7 @@ import asyncio
 import logging
 import time
 from typing import Optional
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -205,17 +206,21 @@ async def downgrade_sweeper_cron(interval_s: Optional[float] = None) -> None:
     the loop. Wired into `main.py` behind
     `ENABLE_SUPABASE_SWEEPER=1` env flag."""
     interval = interval_s or _SWEEP_INTERVAL_S
-    while True:
-        try:
-            # Late import so a missing get_db() dependency at module
-            # import time doesn't break the whole backend boot.
-            from cto_services.db import get_db
-            db = get_db()
-            if db is not None:
-                await sweep_once(db)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[sweeper] pass errored: %r", e)
-        await asyncio.sleep(interval)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            await sweep_once(db)
+    def _on_error(e):
+        logger.warning("[sweeper] pass errored: %r", e)
+    return await run_cron(
+        'downgrade_sweeper_cron',
+        interval,
+        _tick,
+        on_error=_on_error,
+        log=logger,
+    )
 
 
 async def list_pending_downgrades(db) -> list[dict]:

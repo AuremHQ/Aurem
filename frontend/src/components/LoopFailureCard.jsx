@@ -21,6 +21,7 @@ import {
   AlertTriangle, Copy, Check, ChevronDown, ChevronUp, FileCode, LinkIcon,
 } from "lucide-react";
 import { translateGithubConnectError } from "../lib/githubConnectErrors";
+import { copyText } from "../lib/copyText";
 
 function shortenErr(s) {
   if (typeof s !== "string") return "";
@@ -54,11 +55,10 @@ export default function LoopFailureCard({
       failedFiles.length ? `Failing files:\n${failedFiles.map((f) => "  - " + f).join("\n")}` : "",
       errors.length ? `Errors:\n${errors.map((e) => "  " + e).join("\n")}` : "",
     ].filter(Boolean).join("\n\n");
-    try {
-      await navigator.clipboard.writeText(payload);
+    if (await copyText(payload)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
-    } catch { /* clipboard unavailable in some contexts */ }
+    }
   };
 
   return (

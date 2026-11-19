@@ -9,6 +9,7 @@ import { Check } from "lucide-react";
 import { api } from "../lib/api";
 import usePageMeta from "../lib/usePageMeta";
 import MarketingNav from "../components/marketing/MarketingNav";
+import { copyText } from "../lib/copyText";
 
 const APP_URL = window.location.origin;
 
@@ -197,10 +198,11 @@ function ShipCard({ ship, sharing, onShare }) {
               style={{ fontSize: 11, padding: "5px 14px", background: "#000", color: "#fff", borderRadius: 6, textDecoration: "none" }}>
               Post on X
             </a>
-            <button onClick={() => {
-                navigator.clipboard.writeText(ship.share_url);
-                setLinkCopied(true);
-                setTimeout(() => setLinkCopied(false), 1500);
+            <button onClick={async () => {
+                if (await copyText(ship.share_url)) {
+                  setLinkCopied(true);
+                  setTimeout(() => setLinkCopied(false), 1500);
+                }
               }}
               style={{
                 fontSize: 11, padding: "5px 14px", cursor: "pointer", borderRadius: 6,

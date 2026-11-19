@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from services.cron_runner import run_cron
 
 logger = logging.getLogger(__name__)
 
@@ -81,17 +82,21 @@ async def schedule_slo_alert_cron() -> None:
     if not _is_enabled():
         logger.info("slo_alert cron disabled via env")
         return
-
     interval = _interval_seconds()
     logger.info("📈 slo_alert cron ON · every %ds", interval)
-    await asyncio.sleep(180)  # let the app finish booting first
-
-    while True:
-        try:
-            from cto_services.db import get_db
-            db = get_db()
-            if db is not None:
-                await _check_and_alert_once(db)
-        except Exception as e:                              # noqa: BLE001
-            logger.warning("slo_alert cron tick failed: %r", e)
-        await asyncio.sleep(interval)
+    # MIGRATED to services.cron_runner
+    async def _tick():
+        from cto_services.db import get_db
+        db = get_db()
+        if db is not None:
+            await _check_and_alert_once(db)
+    def _on_error(e):
+        logger.warning("slo_alert cron tick failed: %r", e)
+    return await run_cron(
+        'schedule_slo_alert_cron',
+        interval,
+        _tick,
+        startup_delay_seconds=180,
+        on_error=_on_error,
+        log=logger,
+    )

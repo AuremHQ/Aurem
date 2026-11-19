@@ -16,6 +16,7 @@
  */
 import React, { Suspense, lazy, useMemo, useState } from "react";
 import { Copy, Check } from "lucide-react";
+import { copyText } from "../lib/copyText";
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
 
@@ -64,11 +65,12 @@ export default function CodeBlock({ language, code, filename }) {
   // long files stay scrollable inside the chat bubble.
   const height = Math.min(Math.max(lineCount * 19 + 16, 80), 480);
 
-  function doCopy() {
+  async function doCopy() {
     if (!code) return;
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1400);
+    if (await copyText(code)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    }
   }
 
   return (
