@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import require_db
-from services.harness_releases import create_draft_release, publish_release
+from services.harness_releases import attach_exe, create_draft_release, publish_release
 
 logger = logging.getLogger("aurem-dev.admin_harness")
 
@@ -64,6 +64,16 @@ class HarnessReleaseCreate(BaseModel):
         except (binascii.Error, ValueError) as e:
             raise HTTPException(400, "artifact_base64 is not valid base64") from e
 
+
+class HarnessExeAttach(BaseModel):
+    exe_base64: str = Field(..., min_length=1)
+
+    @property
+    def exe_bytes(self) -> bytes:
+        try:
+            return base64.b64decode(self.exe_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(400, "exe_base64 is not valid base64") from e
 
 @router.post("/admin/harness/releases")
 async def admin_create_release(
@@ -99,12 +109,25 @@ async def admin_publish_release(release_id: str) -> dict:
         raise HTTPException(404, str(e)) from e
 
 
+@router.post("/admin/harness/releases/{release_id}/exe")
+async def admin_attach_exe(release_id: str, body: HarnessExeAttach) -> dict:
+    db = require_db()
+    try:
+        return await attach_exe(db, release_id=release_id, exe_bytes=body.exe_bytes)
+    except ValueError as e:
+        msg = str(e)
+        if msg.startswith("release not found"):
+            raise HTTPException(404, msg) from e
+        raise HTTPException(422, msg) from e
+
 @router.get("/admin/harness/releases")
 async def admin_list_releases() -> dict:
     db = require_db()
     rows = await db.harness_releases.find(
         {}, {"_id": 0},
     ).sort("created_at", -1).limit(200).to_list(200)
+    for row in rows:
+        row["exe_available"] = bool(row.get("exe_sha256"))
     return {"releases": rows}
 
 

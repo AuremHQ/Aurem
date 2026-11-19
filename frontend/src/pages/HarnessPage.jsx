@@ -497,12 +497,39 @@ export default function HarnessPage() {
       const status = err?.response?.status;
       let msg = "Could not start the download — try again.";
       if (status === 401) msg = "You're not logged in — please sign in again.";
-      else if (status === 409) msg = "The download details could not be loaded — please refresh the page and try again.";
+      else if (status === 409) msg = "No release is published yet";
       else if (status === 429) msg = "Too many download attempts — try again in a minute.";
       setDownloadError(msg);
       setDownloadState("error");
     }
   }
+
+async function handleDownloadExe() {
+  setDownloadState("downloading"); setDownloadError(""); setDownloadSuccess(false); setDeliveredSha256(null);
+  try {
+    const resp = await api.post("/harness/download-exe", {}, { responseType: "blob" });
+    const delivered = resp.headers?.["x-aurem-package-sha256"] || null;
+    if (delivered) setDeliveredSha256(delivered);
+    const url = URL.createObjectURL(resp.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aurem-loop-${release?.version || "latest"}.exe`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setDownloadSuccess(true);
+    setDownloadState("idle");
+  } catch (err) {
+    const status = err?.response?.status;
+    let msg = "Could not start the download — try again.";
+    if (status === 401) msg = "You're not logged in — please sign in again.";
+    else if (status === 409) msg = "No Windows installer has been attached to the latest release yet — use the .zip download below.";
+    else if (status === 429) msg = "Too many download attempts — try again in a minute.";
+    setDownloadError(msg);
+    setDownloadState("error");
+  }
+}
 
   async function signOutAndShowForm() {
     const tok = getToken();
@@ -571,7 +598,7 @@ export default function HarnessPage() {
                   <span>Free with your account</span>
                 </>
               ) : (
-                <span>Free download with your account</span>
+                <span>Download not available yet</span>
               )}
             </p>
           </div>
@@ -694,16 +721,31 @@ export default function HarnessPage() {
                 <div className="check" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d={CHECK_PATH} /></svg></div>
                 <h2 data-testid="harness-done-title">{doneTitle}</h2>
                 <p data-testid="harness-done-text">{doneText}</p>
-                {release?.available ? (
-                  <button type="button" className="dl-btn" data-testid="harness-download-btn" onClick={handleDownload} disabled={downloadState === "downloading"}>
-                    {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version}`}
-                  </button>
-                ) : (
-                  <p style={{ color: "var(--ink-3)", fontSize: "0.9rem" }}>The download details could not be loaded — please refresh the page and try again.</p>
-                )}
+{release?.available ? (
+  release.exe_available ? (
+    <>
+      <button type="button" className="dl-btn" data-testid="harness-download-exe-btn" onClick={handleDownloadExe} disabled={downloadState === "downloading"}>
+        {downloadState === "downloading" ? "Starting download…" : `Download for Windows (.exe) — v${release.version}`}
+      </button>
+      <button type="button" className="again" data-testid="harness-download-zip-link" onClick={handleDownload} disabled={downloadState === "downloading"} style={{ marginTop: 8 }}>
+        Advanced: download the .zip instead
+      </button>
+    </>
+  ) : (
+    <button type="button" className="dl-btn" data-testid="harness-download-btn" onClick={handleDownload} disabled={downloadState === "downloading"}>
+      {downloadState === "downloading" ? "Starting download…" : `Download for Windows — v${release.version}`}
+    </button>
+  )
+) : (
+  <p style={{ color: "var(--ink-3)", fontSize: "0.9rem" }}>The download details could not be loaded — please refresh the page and try again.</p>
+)}
                 {release?.available && (
                   <p className="meta">
-                    File: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256} · Released {releaseDate}<br />
+                    {release.exe_available ? (
+                      <>File: {fmtBytes(release.exe_size_bytes)} bytes · SHA-256: {release.exe_sha256} · Released {releaseDate}<br /></>
+                    ) : (
+                      <>File: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256} · Released {releaseDate}<br /></>
+                    )}
         Ships qwen2.5-coder:1.5b · Windows · Runs entirely on your PC<br />
                     Verify the SHA-256 after downloading — it must match exactly before you run the installer.
                   </p>

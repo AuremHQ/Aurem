@@ -29,6 +29,7 @@ import PersistentFixBar from "./components/PersistentFixBar";
 import CookieConsentBanner from "./components/CookieConsentBanner";
 import OraGuideMascot from "./components/OraGuideMascot";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
+import { AppStateBanners } from "./components/ui-states/UiStates.jsx";
 import MaintenanceGate from "./components/MaintenanceGate";  // 2026-08
 import { PrivateRoute, AdminRoute } from "./components/PrivateRoute";
 
@@ -373,6 +374,7 @@ export default function App() {
         {/* Iter 388t — Bug 25 skip-link anchor + WCAG landmark
             (semantic `<main>` was missing from the shell entirely). */}
         <main id="main-content" tabIndex={-1}>
+<AppStateBanners />
         <Routes>
           <Route path="/"                element={<Landing />} />
           {/* 2026-11-xx — /both retired: the Builder/Developer switcher

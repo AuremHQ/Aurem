@@ -1,15 +1,19 @@
 {
-    "$schema": "discovery/0.2.0/schema.json",
-    "skills": [
-        {
-            "name": "ora-ship-code",
-            "description": "Ship code to GitHub with ORA: submit a task, ORA plans, writes code, scans, and commits after approval.",
-            "location": "https://auremcto.com/.well-known/agent-skills/ora-ship-code.md"
-        },
-        {
-            "name": "ora-api",
-            "description": "Use the ORA REST API and MCP server: auth, projects, tasks, and billing.",
-            "location": "https://auremcto.com/AGENTS.md"
-        }
-    ]
+  "version": "0.2.0",
+  "skills": [
+    {
+      "name": "ora-ship-code",
+      "type": "skill-md",
+      "description": "Ship code to GitHub with ORA: submit a task, ORA plans, writes code, scans, and commits after approval.",
+      "url": "https://auremcto.com/.well-known/agent-skills/ora-ship-code.md",
+      "digest": "sha256:3f4f912045d9a256113dc4a9860cfd2542c60a1b9d05bae09b00ced4abcf6dfb"
+    },
+    {
+      "name": "ora-api",
+      "type": "skill-md",
+      "description": "Use the ORA REST API and MCP server: auth, projects, tasks, and billing.",
+      "url": "https://auremcto.com/AGENTS.md",
+      "digest": "sha256:d14a240a03300052eaf482b2f692c15748a6b92572ff50fa4802c73572e5d30f"
+    }
+  ]
 }

@@ -133,6 +133,7 @@ class _FakeDB:
         self.harness_tokens = _FakeColl()
         self.harness_releases = _FakeColl()
         self.harness_release_artifacts = _FakeColl()
+        self.harness_release_exe_artifacts = _FakeColl()
         self.harness_downloads = _FakeColl()
 
     def __getitem__(self, name):
@@ -841,3 +842,156 @@ class TestRealAcceptanceFlowServerSideOnly:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+class TestExeSidecar:
+    """PR #342 — the Windows .exe installer as the primary /harness download."""
+
+    async def test_attach_exe_stores_bytes_and_marks_release(self):
+        from services import harness_releases
+        db = _FakeDB()
+        rel = await harness_releases.create_draft_release(
+            db, version="0.8.0", platform="windows",
+            changelog=["exe"], mandatory=False,
+            artifact_bytes=_synthetic_zip(), source="test_fixture",
+            created_by="admin1",
+        )
+        exe = b"MZ" + b"\x00" * 100
+        out = await harness_releases.attach_exe(db, release_id=rel["release_id"], exe_bytes=exe)
+        assert out["exe_available"] is True
+        assert out["exe_sha256"] == hashlib.sha256(exe).hexdigest()
+        assert out["exe_size_bytes"] == len(exe)
+        # the zip artifact is untouched by the exe attach
+        assert (await harness_releases.get_release_artifact_bytes(db, release_id=rel["release_id"])) == _synthetic_zip()
+        assert (await harness_releases.get_release_exe_bytes(db, release_id=rel["release_id"])) == exe
+        row = await db.harness_releases.find_one({"release_id": rel["release_id"]})
+        assert row["exe_sha256"] == out["exe_sha256"]
+        assert harness_releases.verify_exe_manifest_signature(
+            row["exe_signature"], version="0.8.0", platform="windows", exe_sha256=out["exe_sha256"],
+        ) is True
+        assert harness_releases.verify_exe_manifest_signature(
+            "0" * 64, version="0.8.0", platform="windows", exe_sha256=out["exe_sha256"],
+        ) is False
+
+    async def test_attach_exe_to_missing_release_raises(self):
+        from services import harness_releases
+        db = _FakeDB()
+        with pytest.raises(ValueError, match="release not found"):
+            await harness_releases.attach_exe(db, release_id="rel_nope", exe_bytes=b"MZ")
+
+    async def test_attach_exe_replaces_on_reattach(self):
+        from services import harness_releases
+        db = _FakeDB()
+        rel = await harness_releases.create_draft_release(
+            db, version="0.8.0", platform="windows",
+            changelog=[], mandatory=False,
+            artifact_bytes=_synthetic_zip(), source="test_fixture",
+            created_by="admin1",
+        )
+        await harness_releases.attach_exe(db, release_id=rel["release_id"], exe_bytes=b"MZ-one")
+        await harness_releases.attach_exe(db, release_id=rel["release_id"], exe_bytes=b"MZ-two")
+        assert (await harness_releases.get_release_exe_bytes(db, release_id=rel["release_id"])) == b"MZ-two"
+
+    async def test_admin_attach_exe_endpoint_and_list_flag(self):
+        db = _FakeDB()
+        app, ah_mod = _app_with_admin_router(db)
+
+        async def _fake_admin(authorization=None):
+            return {"user_id": "admin1", "is_admin": True}
+
+        app.dependency_overrides[ah_mod.require_admin_dep] = _fake_admin
+        try:
+            with patch.object(ah_mod, "require_db", lambda: db):
+                client = TestClient(app, raise_server_exceptions=False)
+                r = client.post("/api/aurem-dev/admin/harness/releases", json={
+                    "version": "0.8.0", "platform": "windows", "changelog": [],
+                    "mandatory": False,
+                    "artifact_base64": base64.b64encode(_synthetic_zip()).decode(),
+                    "source": "test_fixture",
+                })
+                assert r.status_code == 200, r.text
+                rid = r.json()["release_id"]
+                exe_b64 = base64.b64encode(b"MZ" + b"\x00" * 10).decode()
+                r2 = client.post(f"/api/aurem-dev/admin/harness/releases/{rid}/exe", json={"exe_base64": exe_b64})
+                assert r2.status_code == 200, r2.text
+                assert r2.json()["exe_available"] is True
+                assert r2.json()["exe_sha256"] == hashlib.sha256(b"MZ" + b"\x00" * 10).hexdigest()
+                r3 = client.get("/api/aurem-dev/admin/harness/releases")
+                assert r3.status_code == 200
+                rows = r3.json()["releases"]
+                assert rows[0]["exe_available"] is True
+                r4 = client.post("/api/aurem-dev/admin/harness/releases/rel_nope/exe", json={"exe_base64": exe_b64})
+                assert r4.status_code == 404
+        finally:
+            app.dependency_overrides.pop(ah_mod.require_admin_dep, None)
+
+    async def test_download_exe_returns_attached_bytes_and_logs_format_exe(self):
+        from services import harness_releases
+        db = _FakeDB()
+        db.dev_users.docs.append({"user_id": "sub1", "tier": "pro"})
+        rel = await harness_releases.create_draft_release(
+            db, version="0.8.0", platform="windows",
+            changelog=["t"], mandatory=False,
+            artifact_bytes=_synthetic_zip(), source="test_fixture",
+            created_by="admin1",
+        )
+        await harness_releases.publish_release(db, release_id=rel["release_id"])
+        exe = b"MZ" + b"\x00" * 50
+        await harness_releases.attach_exe(db, release_id=rel["release_id"], exe_bytes=exe)
+
+        app, hd_mod = _app_with_download_router(db)
+
+        async def _fake_current_dev(authorization=None):
+            return {"user_id": "sub1", "tier": "pro"}
+
+        with patch.object(hd_mod, "require_db", lambda: db), \
+                patch.object(hd_mod, "current_dev", _fake_current_dev):
+            client = TestClient(app)
+            resp = client.post("/api/aurem-dev/harness/download-exe",
+                               headers={"Authorization": "Bearer x"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/vnd.microsoft.portable-executable"
+        assert "aurem-loop-0.8.0.exe" in resp.headers["content-disposition"]
+        assert resp.content == exe
+        assert len(db.harness_downloads.docs) == 1
+        assert db.harness_downloads.docs[0]["format"] == "exe"
+        assert db.harness_downloads.docs[0]["release_id"] == rel["release_id"]
+
+    async def test_download_exe_without_attached_exe_returns_409(self):
+        from services import harness_releases
+        db = _FakeDB()
+        db.dev_users.docs.append({"user_id": "sub1", "tier": "pro"})
+        rel = await harness_releases.create_draft_release(
+            db, version="0.8.0", platform="windows",
+            changelog=["t"], mandatory=False,
+            artifact_bytes=_synthetic_zip(), source="test_fixture",
+            created_by="admin1",
+        )
+        await harness_releases.publish_release(db, release_id=rel["release_id"])
+        app, hd_mod = _app_with_download_router(db)
+
+        async def _fake_current_dev(authorization=None):
+            return {"user_id": "sub1", "tier": "pro"}
+
+        with patch.object(hd_mod, "require_db", lambda: db), \
+                patch.object(hd_mod, "current_dev", _fake_current_dev):
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post("/api/aurem-dev/harness/download-exe",
+                               headers={"Authorization": "Bearer x"})
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error"] == "no_exe_attached"
+        assert db.harness_downloads.docs == []
+
+    async def test_download_exe_without_release_returns_409(self):
+        db = _FakeDB()
+        db.dev_users.docs.append({"user_id": "sub1", "tier": "pro"})
+        app, hd_mod = _app_with_download_router(db)
+
+        async def _fake_current_dev(authorization=None):
+            return {"user_id": "sub1", "tier": "pro"}
+
+        with patch.object(hd_mod, "require_db", lambda: db), \
+                patch.object(hd_mod, "current_dev", _fake_current_dev):
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post("/api/aurem-dev/harness/download-exe",
+                               headers={"Authorization": "Bearer x"})
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error"] == "no_release_available"

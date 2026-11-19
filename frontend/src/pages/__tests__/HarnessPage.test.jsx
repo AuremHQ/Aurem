@@ -287,6 +287,37 @@ describe("HarnessPage — real authenticated download + congratulations", () => 
     await waitFor(() => expect(screen.getByTestId("harness-download-error")).toHaveTextContent("No release is published yet"));
     expect(screen.queryByTestId("harness-download-success")).not.toBeInTheDocument();
   });
+  it("shows the .exe as the primary download and the .zip as an Advanced link when an installer is attached (PR #342)", async () => {
+    const EXE_RELEASE = { ...RELEASE, exe_available: true, exe_sha256: "aabbccdd".repeat(8), exe_size_bytes: 123456 };
+    mockEndpoints({ flag: true, release: EXE_RELEASE });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await signUpAndReachDone();
+
+    expect(screen.getByTestId("harness-download-exe-btn")).toHaveTextContent("Download for Windows (.exe) — v0.8.0");
+    expect(screen.getByTestId("harness-download-zip-link")).toHaveTextContent("Advanced: download the .zip instead");
+    expect(screen.queryByTestId("harness-download-btn")).not.toBeInTheDocument();
+    expect(document.body.textContent).toContain("aabbccdd");
+
+    global.URL.createObjectURL = vi.fn(() => "blob:mock-url");
+    global.URL.revokeObjectURL = vi.fn();
+    api.post.mockResolvedValueOnce({ data: new Blob(["exe-bytes"]), headers: {} });
+    fireEvent.click(screen.getByTestId("harness-download-exe-btn"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/harness/download-exe", {}, { responseType: "blob" }));
+    await waitFor(() => expect(screen.getByTestId("harness-download-success")).toHaveTextContent("🎊 Congratulations! Successfully downloaded"));
+  });
+
+  it("keeps the .zip as the primary download when no installer is attached", async () => {
+    mockEndpoints({ flag: true, release: RELEASE });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    await signUpAndReachDone();
+
+    expect(screen.getByTestId("harness-download-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("harness-download-exe-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("harness-download-zip-link")).not.toBeInTheDocument();
+  });
+
 });
 
 describe("HarnessPage — sign out and show the form again", () => {

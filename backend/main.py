@@ -75,7 +75,8 @@ from routers.github_auth_migration import router as github_auth_migration_router
 from routers.support import router as support_router
 from routers.payments import router as payments_router
 from routers.stripe_webhook_compat import router as stripe_webhook_compat_router  # Iter 388-ae — legacy /api/stripe/webhook alias (see Payments $0 root-cause memo)
-from routers.harness import router as harness_router  # Aurem Loop harness Phase A — /api/harness/verify (external client contract, no /aurem-dev segment)
+from routers.harness import router as harness_router
+from routers.ask import router as ask_router  # NLWeb: GET/POST /ask
 from routers.harness_downloads import router as harness_downloads_router  # Aurem Loop harness Phase B — user-facing download
 from routers.admin_harness import router as admin_harness_router  # Aurem Loop harness Phase B — admin release/download-log view
 from routers.harness_telemetry import router as harness_telemetry_router  # Aurem Loop harness Fix E — /api/harness/telemetry (external client contract, no /aurem-dev segment)
@@ -4172,7 +4173,8 @@ app.include_router(payments_router,      prefix="/api/aurem-dev")
 # URL. This alias forwards to the canonical handler in payments.py so
 # no dashboard change is required.
 app.include_router(stripe_webhook_compat_router, prefix="/api")
-app.include_router(harness_router, prefix="/api")  # /api/harness/verify — external harness client, matches its hardcoded URL exactly
+app.include_router(harness_router, prefix="/api")
+app.include_router(ask_router)  # NLWeb: GET/POST /ask (no prefix)
 app.include_router(harness_downloads_router, prefix="/api/aurem-dev")  # /api/aurem-dev/harness/download — logged-in browser user
 app.include_router(admin_harness_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/harness/* — release + download-log admin view
 app.include_router(harness_telemetry_router, prefix="/api")  # /api/harness/telemetry — external harness client, matches its hardcoded URL exactly

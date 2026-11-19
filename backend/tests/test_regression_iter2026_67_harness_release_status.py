@@ -69,3 +69,57 @@ async def test_release_status_requires_no_auth():
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/harness/release-status")
     assert resp.status_code not in (401, 403)
+@pytest.mark.asyncio
+async def test_release_status_reports_exe_fields_when_attached():
+    """PR #342 — a release with an attached .exe reports the exe fields
+    so /harness can show the .exe as the primary download."""
+    fake_release = {
+        "release_id": "rel_abc123",
+        "version": "0.8.0",
+        "platform": "windows",
+        "artifact_sha256": "deadbeef" * 8,
+        "changelog": ["Initial public Windows build"],
+        "mandatory": False,
+        "size_bytes": 292519,
+        "published_at": 1762819200.0,
+        "status": "published",
+        "is_latest": True,
+        "exe_sha256": "aabbccdd" * 8,
+        "exe_size_bytes": 123456,
+    }
+    with patch("routers.harness.require_db", return_value=object()), \
+            patch("routers.harness.get_latest_release", new=AsyncMock(return_value=fake_release)):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/harness/release-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["exe_available"] is True
+    assert body["exe_sha256"] == "aabbccdd" * 8
+    assert body["exe_size_bytes"] == 123456
+
+
+@pytest.mark.asyncio
+async def test_release_status_reports_exe_unavailable_when_not_attached():
+    fake_release = {
+        "release_id": "rel_abc123",
+        "version": "0.8.0",
+        "platform": "windows",
+        "artifact_sha256": "deadbeef" * 8,
+        "changelog": ["Initial public Windows build"],
+        "mandatory": False,
+        "size_bytes": 292519,
+        "published_at": 1762819200.0,
+        "status": "published",
+        "is_latest": True,
+    }
+    with patch("routers.harness.require_db", return_value=object()), \
+            patch("routers.harness.get_latest_release", new=AsyncMock(return_value=fake_release)):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/harness/release-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["exe_available"] is False
+    assert body["exe_sha256"] is None
+    assert body["exe_size_bytes"] is None

@@ -1,81 +1,89 @@
 {
-    "name": "ORA by Aurem",
-    "description": "ORA is an autonomous AI software engineer. It connects to a GitHub repository, plans a change, writes the code, runs security scans, and commits to your branches after your approval. Reach it through the MCP endpoint below (Streamable HTTP, JSON-RPC 2.0). There is no separate A2A JSON-RPC endpoint.",
-    "url": "https://auremcto.com/api/aurem-dev/mcp",
-    "version": "1.0.0",
-    "protocolVersion": "1.0",
-    "capabilities": {
-        "streaming": false,
-        "pushNotifications": false,
-        "stateTransitionHistory": false
+  "name": "ORA by Aurem",
+  "description": "ORA is an autonomous AI software engineer. It connects to a GitHub repository, plans a change, writes the code, runs security scans, and commits to your branches after your approval. Reach it through the MCP endpoint below (Streamable HTTP, JSON-RPC 2.0). There is no separate A2A JSON-RPC endpoint.",
+  "url": "https://auremcto.com/api/aurem-dev/mcp",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "skills": [
+    {
+      "id": "ship_code",
+      "name": "Ship code to GitHub",
+      "description": "Submit a concrete file-edit task. ORA plans, writes the code, runs security scans, and commits to GitHub after approval.",
+      "tags": [
+        "code",
+        "github",
+        "ship"
+      ],
+      "examples": [
+        "Add a /api/health route to backend/routers/health.py returning {ok: true}"
+      ]
     },
-    "defaultInputModes": [
-        "text/plain"
-    ],
-    "defaultOutputModes": [
-        "text/plain"
-    ],
-    "skills": [
-        {
-            "id": "ship_code",
-            "name": "Ship code to GitHub",
-            "description": "Submit a concrete file-edit task. ORA plans, writes the code, runs security scans, and commits to GitHub after approval.",
-            "tags": [
-                "code",
-                "github",
-                "ship"
-            ],
-            "examples": [
-                "Add a /api/health route to backend/routers/health.py returning {ok: true}"
-            ]
-        },
-        {
-            "id": "list_projects",
-            "name": "List projects",
-            "description": "List connected GitHub repositories for the authenticated user.",
-            "tags": [
-                "projects",
-                "github"
-            ],
-            "examples": [
-                "List my connected repos"
-            ]
-        },
-        {
-            "id": "get_task_status",
-            "name": "Get task status",
-            "description": "Check the status of a task or Loop run, including the commit SHA when shipped.",
-            "tags": [
-                "status",
-                "tasks"
-            ],
-            "examples": [
-                "What is the status of task t_abc123?"
-            ]
-        },
-        {
-            "id": "get_recent_commits",
-            "name": "Get recent commits",
-            "description": "Get recent commit history from the project GitHub repo.",
-            "tags": [
-                "commits",
-                "github"
-            ],
-            "examples": [
-                "Show recent commits for my project"
-            ]
-        }
-    ],
-    "securitySchemes": {
-        "bearer": {
-            "type": "http",
-            "scheme": "bearer",
-            "description": "JWT from auremcto.com login, or a long-lived API key starting with sk-aurem- issued via POST /api/aurem-dev/mcp/keys."
-        }
+    {
+      "id": "list_projects",
+      "name": "List projects",
+      "description": "List connected GitHub repositories for the authenticated user.",
+      "tags": [
+        "projects",
+        "github"
+      ],
+      "examples": [
+        "List my connected repos"
+      ]
     },
-    "security": [
-        {
-            "bearer": []
-        }
-    ]
+    {
+      "id": "get_task_status",
+      "name": "Get task status",
+      "description": "Check the status of a task or Loop run, including the commit SHA when shipped.",
+      "tags": [
+        "status",
+        "tasks"
+      ],
+      "examples": [
+        "What is the status of task t_abc123?"
+      ]
+    },
+    {
+      "id": "get_recent_commits",
+      "name": "Get recent commits",
+      "description": "Get recent commit history from the project GitHub repo.",
+      "tags": [
+        "commits",
+        "github"
+      ],
+      "examples": [
+        "Show recent commits for my project"
+      ]
+    }
+  ],
+  "securitySchemes": {
+    "bearer": {
+      "type": "http",
+      "scheme": "bearer",
+      "description": "JWT from auremcto.com login, or a long-lived API key starting with sk-aurem- issued via POST /api/aurem-dev/mcp/keys."
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "supportedInterfaces": [
+    {
+      "url": "https://auremcto.com/api/aurem-dev/mcp",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "preferredTransport": "JSONRPC"
 }

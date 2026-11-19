@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "schema_version": "1.0.0",
+    "last_updated": "2026-11-19T20:25:27.852Z"
+  },
+  "strict": false,
+  "resource_rules": [
+    {
+      "verb": "read_content",
+      "selector": "*",
+      "allowed": true
+    },
+    {
+      "verb": "read_metadata",
+      "selector": "*",
+      "allowed": true
+    },
+    {
+      "verb": "follow_link",
+      "selector": "*",
+      "allowed": true
+    },
+    {
+      "verb": "execute_script",
+      "selector": "*",
+      "allowed": false
+    },
+    {
+      "verb": "upload_file",
+      "selector": "*",
+      "allowed": false
+    }
+  ],
+  "api": [
+    {
+      "type": "a2a",
+      "endpoint": "https://auremcto.com/api/aurem-dev/mcp",
+      "description": "A2A agent ORA by Aurem, per the agent card at /.well-known/agent-card.json."
+    },
+    {
+      "type": "openapi",
+      "endpoint": "https://auremcto.com/openapi.json",
+      "description": "OpenAPI 3.1 document for the ORA REST API (projects, tasks, billing)."
+    },
+    {
+      "type": "mcp",
+      "endpoint": "https://auremcto.com/api/aurem-dev/mcp",
+      "description": "MCP server for ORA (JSON-RPC over HTTP) - tools for projects, tasks and billing."
+    }
+  ]
+}

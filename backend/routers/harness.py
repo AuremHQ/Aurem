@@ -131,6 +131,9 @@ async def harness_release_status() -> dict:
         "mandatory": release.get("mandatory", False),
         "size_bytes": release.get("size_bytes"),
         "published_at": release.get("published_at"),
+        "exe_available": bool(release.get("exe_sha256")),
+        "exe_sha256": release.get("exe_sha256"),
+        "exe_size_bytes": release.get("exe_size_bytes"),
     }
 
 

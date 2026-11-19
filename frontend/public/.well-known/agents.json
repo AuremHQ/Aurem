@@ -1,0 +1,192 @@
+{
+  "agentsJson": "0.1.0",
+  "info": {
+    "title": "ORA by Aurem",
+    "version": "1.0.0",
+    "description": "ORA is an autonomous AI software engineer that reads a GitHub repository and ships code to it."
+  },
+  "sources": [
+    {
+      "id": "aurem_api",
+      "path": "https://auremcto.com/openapi.json",
+      "description": "OpenAPI 3.1 document for the ORA REST API (projects, tasks, billing)."
+    }
+  ],
+  "flows": [
+    {
+      "id": "check_health_flow",
+      "title": "Check API health",
+      "description": "Check that the ORA API is up and read its deploy identity.",
+      "actions": [
+        {
+          "id": "check_health",
+          "sourceId": "aurem_api",
+          "operationId": "health_api_health_get"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "id": "sign_up_flow",
+      "title": "Create an account",
+      "description": "Create a new ORA account so an agent can act for the signed-in user.",
+      "actions": [
+        {
+          "id": "sign_up",
+          "sourceId": "aurem_api",
+          "operationId": "signup_api_aurem_dev_auth_signup_post"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "id": "ship_code_flow",
+      "title": "Ship code to GitHub",
+      "description": "Submit a concrete file-edit task for ORA and read back the task status.",
+      "actions": [
+        {
+          "id": "submit_task",
+          "sourceId": "aurem_api",
+          "operationId": "submit_task_api_aurem_dev_cto_tasks_submit_post"
+        },
+        {
+          "id": "get_task",
+          "sourceId": "aurem_api",
+          "operationId": "get_task_api_aurem_dev_cto_tasks__task_id__get"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "id": "chat_with_ora_flow",
+      "title": "Chat with ORA",
+      "description": "Send a chat message to ORA and read the conversation history.",
+      "actions": [
+        {
+          "id": "send_chat",
+          "sourceId": "aurem_api",
+          "operationId": "chat_send_api_aurem_dev_chat_send_post"
+        },
+        {
+          "id": "read_history",
+          "sourceId": "aurem_api",
+          "operationId": "chat_history_api_aurem_dev_chat_history_get"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "id": "check_usage_flow",
+      "title": "Check usage and plan",
+      "description": "Read the account token usage and current billing plan.",
+      "actions": [
+        {
+          "id": "read_usage",
+          "sourceId": "aurem_api",
+          "operationId": "my_usage_api_aurem_dev_usage_me_get"
+        },
+        {
+          "id": "read_plan",
+          "sourceId": "aurem_api",
+          "operationId": "my_plan_api_aurem_dev_payments_my_plan_get"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "id": "download_harness_flow",
+      "title": "Download the Aurem Loop",
+      "description": "Read the latest Aurem Loop release status and download the installer.",
+      "actions": [
+        {
+          "id": "release_status",
+          "sourceId": "aurem_api",
+          "operationId": "harness_release_status_api_harness_release_status_get"
+        },
+        {
+          "id": "download_harness",
+          "sourceId": "aurem_api",
+          "operationId": "harness_download_api_aurem_dev_harness_download_post"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "id": "use_mcp_flow",
+      "title": "Use the ORA MCP server",
+      "description": "Read the MCP manifest and call an MCP tool over JSON-RPC.",
+      "actions": [
+        {
+          "id": "read_manifest",
+          "sourceId": "aurem_api",
+          "operationId": "mcp_manifest_api_aurem_dev_mcp_get"
+        },
+        {
+          "id": "call_tool",
+          "sourceId": "aurem_api",
+          "operationId": "mcp_rpc_api_aurem_dev_mcp_post"
+        }
+      ],
+      "fields": {
+        "parameters": [],
+        "responses": {
+          "success": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  ],
+  "authors": [
+    {
+      "name": "Tejinder Sandhu",
+      "url": "https://auremcto.com/about"
+    },
+    {
+      "name": "Aurem",
+      "url": "https://auremcto.com"
+    }
+  ]
+}

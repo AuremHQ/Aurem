@@ -11,6 +11,7 @@ import { api, setToken, setUser } from "../lib/api";
 import { loginFreeOfferCta } from "../lib/billingCopy";
 import RobotGuide, { RobotGuideKeyframes, escapeHtml } from "../components/RobotGuide";
 import PasswordInput from "../components/PasswordInput";
+import { SessionExpiredBanner } from "../components/ui-states/UiStates.jsx";
 
 export default function Login() {
   const [searchParams] = useSearchParams();
@@ -374,6 +375,7 @@ export default function Login() {
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
           </div>
           <form onSubmit={submit} style={{ display: mfaState || forgotMode ? "none" : "grid", gap: 16 }}>
+{searchParams.get("session") === "expired" && (<SessionExpiredBanner email={searchParams.get("email") || ""} onSignIn={() => document.querySelector("input[type=email]")?.focus()} />)}
             <label>
               <span className="label-mini">Email</span>
               <input

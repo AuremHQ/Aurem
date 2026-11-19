@@ -86,6 +86,36 @@ def verify_manifest_signature(signature: str, *, version, platform,
     return hmac.compare_digest(expected, signature)
 
 
+_MAX_EXE_BYTES = 15 * 1024 * 1024
+
+
+def _canonical_exe_manifest(*, version: str, platform: str, exe_sha256: str) -> bytes:
+    return json.dumps(
+        {
+            "kind": "aurem-loop-exe",
+            "version": version,
+            "platform": platform,
+            "exe_sha256": exe_sha256,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def sign_exe_manifest(*, version: str, platform: str, exe_sha256: str) -> str:
+    body = _canonical_exe_manifest(
+        version=version, platform=platform, exe_sha256=exe_sha256,
+    )
+    return hmac.new(_signing_secret(), body, hashlib.sha256).hexdigest()
+
+
+def verify_exe_manifest_signature(signature: str, *, version: str, platform: str, exe_sha256: str) -> bool:
+    expected = sign_exe_manifest(
+        version=version, platform=platform, exe_sha256=exe_sha256,
+    )
+    return hmac.compare_digest(expected, signature)
+
+
 async def create_draft_release(
     db, *, version: str, platform: str, changelog: list, mandatory: bool,
     artifact_bytes: bytes, source: str, created_by: str,
@@ -168,6 +198,68 @@ async def get_latest_release(db, *, platform: str) -> dict | None:
 async def get_release_artifact_bytes(db, *, release_id: str) -> bytes | None:
     doc = await db.harness_release_artifacts.find_one({"release_id": release_id})
     return doc["artifact_bytes"] if doc else None
+
+
+async def attach_exe(db, *, release_id: str, exe_bytes: bytes) -> dict:
+    """Attach the Windows .exe installer to an existing release.
+
+    The .exe is a sidecar to the zip artifact, not a replacement: the
+    release keeps its zip (artifact_sha256/signature) and gains
+    exe_sha256/exe_size_bytes/exe_signature on the release doc, with
+    the exe bytes in their own `harness_release_exe_artifacts`
+    collection (same 15MB inline cap as the zip). Re-attaching
+    replaces the previous exe bytes for that release. The exe is
+    served by POST /harness/download-exe; it is never injected with
+    identity.json (an installer cannot carry it) and carries no
+    per-user token.
+    """
+    if not exe_bytes:
+        raise ValueError("exe_bytes must not be empty")
+    if len(exe_bytes) > _MAX_EXE_BYTES:
+        raise ValueError(
+            f"exe is {len(exe_bytes)} bytes, over the "
+            f"{_MAX_EXE_BYTES}-byte v1 inline-storage cap",
+        )
+    release = await db.harness_releases.find_one({"release_id": release_id})
+    if not release:
+        raise ValueError(f"release not found: {release_id!r}")
+    exe_sha256 = hashlib.sha256(exe_bytes).hexdigest()
+    signature = sign_exe_manifest(
+        version=release["version"], platform=release["platform"], exe_sha256=exe_sha256,
+    )
+    now = time.time()
+    existing = await db.harness_release_exe_artifacts.find_one({"release_id": release_id})
+    if existing:
+        await db.harness_release_exe_artifacts.update_one(
+            {"release_id": release_id}, {"$set": {"exe_bytes": exe_bytes}},
+        )
+    else:
+        await db.harness_release_exe_artifacts.insert_one({
+            "release_id": release_id,
+            "exe_bytes": exe_bytes,
+        })
+    await db.harness_releases.update_one(
+        {"release_id": release_id},
+        {"$set": {
+            "exe_sha256": exe_sha256,
+            "exe_size_bytes": len(exe_bytes),
+            "exe_signature": signature,
+            "exe_attached_at": now,
+        }},
+    )
+    return {
+        "release_id": release_id,
+        "version": release["version"],
+        "exe_available": True,
+        "exe_sha256": exe_sha256,
+        "exe_size_bytes": len(exe_bytes),
+        "exe_attached_at": now,
+    }
+
+
+async def get_release_exe_bytes(db, *, release_id: str) -> bytes | None:
+    doc = await db.harness_release_exe_artifacts.find_one({"release_id": release_id})
+    return doc["exe_bytes"] if doc else None
 
 
 def inject_identity_into_zip(artifact_zip_bytes: bytes, *, bin: str, token: str) -> bytes:
