@@ -64,7 +64,7 @@ async def my_wrapped(
     tasks = await db.cto_tasks.find(
         {
             "user_id":    user_id,
-9            "completed_at": {"$gte": start_ts, "$lte": end_ts},  # shipped in period, not created in period
+            "completed_at": {"$gte": start_ts, "$lte": end_ts},  # shipped in period, not created in period
         },
         {"_id": 0},
     ).to_list(500)

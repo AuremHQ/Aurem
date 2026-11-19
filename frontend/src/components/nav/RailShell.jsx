@@ -343,7 +343,19 @@ export default function RailShell({
       document.removeEventListener("keydown", onKey);
     };
   }, []);
-  useEffect(() => { setOpen(null); }, [location.pathname, location.search]);
+  // Keep the flyout open when navigation lands on a route in the open
+  // section (a rail-icon click navigates to the section first route);
+  // close it only when the new route belongs to another section.
+  useEffect(() => {
+    setOpen((cur) => {
+      if (cur == null) return cur;
+      const section = SECTIONS.find((s) => s.id === cur);
+      const stillThere = (section?.match || []).some((m) =>
+        location.pathname.startsWith(m.split("?")[0])
+      );
+      return stillThere ? cur : null;
+    });
+  }, [location.pathname, location.search]);
 
   // Logo click — the EXACT existing dashboard-logo behaviour
   // (Iter 212m-101, copied verbatim from SidebarBound): click clears
@@ -627,7 +639,11 @@ export default function RailShell({
               data-testid={`rail-icon-${s.id}`}
               aria-label={s.label}
               title={s.label}
-              onClick={() => setOpen((o) => (o === s.id ? null : s.id))}
+      onClick={() => {
+        const alreadyThere = (s.match || []).some((m) => location.pathname === m.split("?")[0]);
+        setOpen((o) => (o === s.id ? null : s.id));
+        if (!alreadyThere && s.match && s.match[0]) navigate(s.match[0]);
+      }}
               style={{
                 width: 40, height: 40, borderRadius: 10, border: "none",
                 display: "flex", alignItems: "center", justifyContent: "center",
