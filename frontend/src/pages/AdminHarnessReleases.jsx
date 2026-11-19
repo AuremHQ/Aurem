@@ -29,6 +29,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api, API_BASE, getToken } from "../lib/api";
+import { cleanErr } from "../lib/cleanErr";
 import { toast } from "../components/Toast";
 // Same origin as the API, minus the /aurem-dev suffix, for the public
 // release-status endpoint (it lives at /api/harness/release-status).
@@ -73,9 +74,6 @@ function ago(seconds) {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${d.getDate()} ${_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
-}
-function cleanErr(e, fallback) {
-  return e?.response?.data?.detail || e?.message || fallback;
 }
 async function sha256Hex(arrayBuffer) {
   if (!window.crypto?.subtle) return null;

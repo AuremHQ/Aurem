@@ -10,11 +10,12 @@ import re
 import time
 from typing import Optional
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from .deps import get_current_user_db
 from services.chat_helpers import (
     _build_blocked_followup,
     _build_done_fallback,
@@ -419,7 +420,7 @@ class TurnShippedBody(BaseModel):
 @router.post("/turn/shipped")
 async def chat_turn_shipped(
     body: TurnShippedBody,
-    authorization: Optional[str] = Header(None),
+    user_db: tuple = Depends(get_current_user_db),
 ) -> dict:
     """Record that an assistant turn was shipped so the Ship button
     doesn't re-appear on refresh/rejoin. Stores `task_id` on the turn doc.
@@ -430,10 +431,7 @@ async def chat_turn_shipped(
     and brings the Ship button back on every refresh. Front-end already
     sends a DB-correct index, but legacy clients / stale tabs might not.
     """
-    user = await current_dev(authorization)
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "Database not connected")
+    user, db = user_db
     if body.turn_index < 0:
         raise HTTPException(400, "turn_index must be >= 0")
 
@@ -476,7 +474,7 @@ class TurnShipCancelledBody(BaseModel):
 @router.post("/turn/ship-cancelled")
 async def chat_turn_ship_cancelled(
     body: TurnShipCancelledBody,
-    authorization: Optional[str] = Header(None),
+    user_db: tuple = Depends(get_current_user_db),
 ) -> dict:
     """2026-09-12 — Bug 2 fix (critical-diff cancel bug). Record that
     the user explicitly rejected a still-pending ```aurem-handoff```
@@ -487,10 +485,7 @@ async def chat_turn_ship_cancelled(
     defensive fallback (marks the latest un-shipped assistant turn
     instead of corrupting a sparse array index).
     """
-    user = await current_dev(authorization)
-    db = get_db()
-    if db is None:
-        raise HTTPException(503, "Database not connected")
+    user, db = user_db
     if body.turn_index < 0:
         raise HTTPException(400, "turn_index must be >= 0")
 

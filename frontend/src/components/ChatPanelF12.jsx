@@ -14,7 +14,7 @@
  *   Search for each "// PATCH:" comment to find insertion points.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Copy, Check } from "lucide-react";
 
 // ─── F12 error badge hook ──────────────────────────────────────────────────

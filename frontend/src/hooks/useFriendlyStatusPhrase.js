@@ -12,7 +12,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 
-export const FRIENDLY_STATUS_PHRASES = [
+const FRIENDLY_STATUS_PHRASES = [
   "Bear with me — our agents are working on it…",
   "Thinking through your request…",
   "Deciding on the best approach…",

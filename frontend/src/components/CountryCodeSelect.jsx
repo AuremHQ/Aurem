@@ -12,7 +12,7 @@
  */
 import React from "react";
 
-export const COUNTRY_DIAL_CODES = [
+const COUNTRY_DIAL_CODES = [
   { code: "US", dial: "+1",   flag: "🇺🇸", name: "United States" },
   { code: "CA", dial: "+1",   flag: "🇨🇦", name: "Canada" },
   { code: "GB", dial: "+44",  flag: "🇬🇧", name: "United Kingdom" },

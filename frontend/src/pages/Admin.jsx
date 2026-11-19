@@ -528,6 +528,22 @@ function UsersList({ onSelect }) {
 // with `{{name}}` and `{{email}}` substitutions handled server-side.
 // Shows recipient count up front and a confirm summary before sending
 // so an admin can't fat-finger a 500-user blast.
+// N7 - one result toast for the admin bulk-send composers (EmailOfferComposer
+// and NotificationComposer). Email offers report dry-run / sent / failed;
+// notifications report sent users. Errors show the API detail, or "Send failed".
+function showEmailResult({ dryRun, sent, failed = 0, total, unit, prefix = "", error }) {
+  if (error) {
+    toast({ message: error?.response?.data?.detail || "Send failed", kind: "error" });
+    return;
+  }
+  toast({
+    message: dryRun
+      ? `Dry-run (RESEND_API_KEY missing) · ${total} would receive`
+      : `Sent ${prefix}${sent} ${unit}${failed ? ` · ${failed} failed` : ""}`,
+    kind: failed === 0 ? "success" : "info",
+  });
+}
+
 function EmailOfferComposer({ userIds, recipients, onClose, onSent }) {
   const [subject, setSubject] = useState("");
   const [bodyHtml, setBodyHtml] = useState(
@@ -550,18 +566,10 @@ function EmailOfferComposer({ userIds, recipients, onClose, onSent }) {
       const dryRun = r.data?.dry_run;
       const sent = r.data?.sent ?? 0;
       const failed = r.data?.failed ?? 0;
-      toast({
-        message: dryRun
-          ? `Dry-run (RESEND_API_KEY missing) · ${recipients.length} would receive`
-          : `Sent ${sent} email(s)${failed ? ` · ${failed} failed` : ""}`,
-        kind: failed === 0 ? "success" : "info",
-      });
+      showEmailResult({ dryRun, sent, failed, total: recipients.length, unit: "email(s)" });
       onSent();
     } catch (e) {
-      toast({
-        message: e?.response?.data?.detail || "Send failed",
-        kind: "error",
-      });
+      showEmailResult({ error: e });
     } finally { setSending(false); }
   }
 
@@ -696,13 +704,10 @@ function NotificationComposer({ all, userIds, recipientCount, onClose, onSent })
         ...(all ? { all: true } : { user_ids: userIds }),
         message: message.trim(),
       });
-      toast({ message: `Sent to ${r.data?.sent ?? 0} user(s)`, kind: "success" });
+      showEmailResult({ sent: r.data?.sent ?? 0, unit: "user(s)", prefix: "to " });
       onSent();
     } catch (e) {
-      toast({
-        message: e?.response?.data?.detail || "Send failed",
-        kind: "error",
-      });
+      showEmailResult({ error: e });
     } finally { setSending(false); }
   }
 

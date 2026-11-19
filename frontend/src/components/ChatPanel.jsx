@@ -29,7 +29,6 @@ import IdleStartHelper from "./IdleStartHelper";
 
 import { useWarmStart } from "../hooks/useWarmStart";
 import GraphPanel from "./GraphPanel";
-import TemperatureBadge from "./TemperatureBadge";
 import { useF12Errors, detectMode, F12Badge, ModePill } from "./ChatPanelF12";
 import MessageBubble from "./MessageBubble";
 import PostTaskScan from "./PostTaskScan";

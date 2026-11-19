@@ -94,7 +94,6 @@ export function resolveInitialSession({ freshLogin, urlSessionId, stickySession,
   return { source: "mint", id: null };
 }
 
-const SESSION_KEY = "aurem_active_session";
 const COLLAPSED_KEY = "aurem_sidebar_collapsed";
 
 // ── Context ────────────────────────────────────────────────────────────
@@ -405,9 +404,6 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
   const [tokensRemaining, setTokensRemaining] = useState(
     () => (getUser() || {}).tokens_remaining ?? null
   );
-  const [tokensUnlimited, setTokensUnlimited] = useState(
-    () => !!((getUser() || {}).is_unlimited)
-  );
 
   const refreshTokens = useCallback(async () => {
     if (!token) return;
@@ -428,7 +424,6 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
       }
       if (typeof used === "number") {
         setTokensRemaining(used);
-        setTokensUnlimited(unlimited);
         const u = getUser();
         if (u) saveUser({ ...u, tokens_remaining: used, is_unlimited: unlimited });
       }

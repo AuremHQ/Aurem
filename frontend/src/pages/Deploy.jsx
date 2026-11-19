@@ -32,6 +32,34 @@ const EMPTY_CFG = {
   compose_file: "docker-compose.yml",
 };
 
+// Tier 3 - the projects list can contain two distinct projects with the
+// same display name (e.g. TJSNDHU/Aurem and AuremHQ/Aurem are both named
+// Aurem), and the same project twice. The dropdown showed two identical
+// Aurem options with no way to tell them apart, so dedupe by project_id
+// and disambiguate a shared name with the project id.
+function projectSelectOptions(projects) {
+  const seen = new Set();
+  const unique = [];
+  for (const p of projects || []) {
+    if (!p || !p.project_id || seen.has(p.project_id)) continue;
+    seen.add(p.project_id);
+    unique.push(p);
+  }
+  const nameCounts = {};
+  unique.forEach((p) => {
+    const name = p.name || p.project_id;
+    nameCounts[name] = (nameCounts[name] || 0) + 1;
+  });
+  return unique.map((p) => {
+    const label = p.name || p.project_id;
+    return {
+      value: p.project_id,
+      label: nameCounts[label] > 1 ? label + " (" + p.project_id + ")" : label,
+    };
+  });
+}
+
+
 export default function Deploy() {
   const [cfg, setCfg]           = useState(EMPTY_CFG);
   const [savedKey, setSavedKey] = useState("");   // "••••••" marker from backend
@@ -303,9 +331,9 @@ export default function Deploy() {
               <span className="label-mini">Project</span>
               <select data-testid="hosted-project-select" className="input" value={hostedProjectId}
                       onChange={(e) => setHostedProjectId(e.target.value)}>
-                {projects.map((p) => (
-                  <option key={p.project_id} value={p.project_id}>
-                    {p.name || p.project_id}
+                {projectSelectOptions(projects).map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
                   </option>
                 ))}
               </select>

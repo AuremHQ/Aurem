@@ -102,7 +102,6 @@ export function initSentry() {
 
 /** Sentry.ErrorBoundary re-export so callers don't need a second
  *  `import * as Sentry` line. */
-export const SentryErrorBoundary = Sentry.ErrorBoundary;
 
 /** Manually report an exception without throwing (e.g. from a
  *  catch block that intentionally recovers).  No-op if Sentry

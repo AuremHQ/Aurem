@@ -71,14 +71,6 @@ _PID = os.getpid()
 # Deliberately narrow: only known internal codenames/jargon, never a
 # broad path-stripping regex (a narration legitimately says "Committing
 # N file(s) to {owner}/{repo}" — the user's OWN repo name, not leaked
-# engine machinery).
-# 2026-08-27 — "Show the Outcome, Never the Engine" P0c. `_narrate()`'s
-# own design invariant #4 says live-feed text must be plain-language,
-# but never enforced it — this is that enforcement, a defense-in-depth
-# backstop on top of fixing known call sites directly (e.g. _do_scan).
-# Deliberately narrow: only known internal codenames/jargon, never a
-# broad path-stripping regex (a narration legitimately says "Committing
-# N file(s) to {owner}/{repo}" — the user's OWN repo name, not leaked
 # engine machinery). "Vanguard" is DELIBERATELY EXCLUDED from this
 # list — see ci_check_machinery_leak_copy.py's investigation: it is
 # the product's own public, marketed feature name (landing page,

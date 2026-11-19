@@ -55,6 +55,3 @@ export function isProjectVersionsEnabled() {
   return _flags.projectVersions;
 }
 
-export function isHarnessPageEnabled() {
-  return _flags.harnessPage;
-}

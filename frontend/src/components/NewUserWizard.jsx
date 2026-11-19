@@ -29,11 +29,7 @@ import { Z_ACTIVE_MODAL } from "../lib/zIndex";
 const DISMISS_KEY = "aurem_wizard_dismissed";
 const REPO_RX = /^(https?:\/\/)?(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?$/i;
 
-export function isWizardDismissed() {
-  try { return localStorage.getItem(DISMISS_KEY) === "1"; }
-  catch { return true; }
-}
-export function dismissWizard() {
+function dismissWizard() {
   try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* private mode */ }
 }
 

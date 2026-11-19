@@ -64,11 +64,14 @@ export default function Settings() {
 
   const params = new URLSearchParams(location.search);
   const hasStripeSession = !!params.get("session_id");
+  // Tier 3: older links/bookmarks use ?tab=billing for the Plans & Usage
+  // tab; map it to the current id instead of falling back to Profile.
+  const requestedTab = params.get("tab") === "billing" ? "plans" : params.get("tab");
   const initialTab =
     hasStripeSession || location.hash === "#pricing"
       ? "plans"
-      : (TABS.some((t) => t.id === params.get("tab"))
-          ? params.get("tab") : "profile");
+      : (TABS.some((t) => t.id === requestedTab)
+          ? requestedTab : "profile");
   const [tab, setTab] = useState(initialTab);
 
   useEffect(() => {

@@ -23,7 +23,7 @@ import React from "react";
 import { RefreshCw, Lock } from "lucide-react";
 import HoverTip from "./HoverTip";
 
-export const EXEC_MODE_KEY = "ora_execution_mode";
+const EXEC_MODE_KEY = "ora_execution_mode";
 export const EXEC_MODES = { PROMPT: "prompt", LOOP: "loop" };
 
 export function loadExecMode() {

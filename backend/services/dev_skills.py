@@ -40,6 +40,15 @@ from .sandbox_runner import run_python_check
 # (local_tools ⇄ dev_skills at module init).
 
 logger = logging.getLogger(__name__)
+def _repo_ctx(ctx):
+    """Read the repo tuple from BINContext via local_tools (lazy import: local_tools imports dev_skills)."""
+    try:
+        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
+        return _lt_repo_ctx_from(ctx), _lt_no_ctx
+    except Exception as _e:
+        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+        return None, None
+
 
 GITHUB_API = "https://api.github.com"
 NPM_REGISTRY = "https://registry.npmjs.org"
@@ -90,14 +99,7 @@ async def find_usages(ctx: dict, args: dict) -> dict:
         return {"ok": False, "error": "symbol required (alphanumeric/underscore)"}
 
     # Iter 212m-172 — read repo tuple from BINContext, never the DB.
-    rc = None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rc = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rc, _NO_CTX = _repo_ctx(ctx)
     if rc is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 
@@ -199,14 +201,7 @@ async def get_dependencies(ctx: dict, args: dict) -> dict:
     args: none required.
     """
     # Iter 212m-172 — repo tuple from BINContext.
-    rc= None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rc = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rc, _NO_CTX = _repo_ctx(ctx)
     if rc is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 
@@ -288,14 +283,7 @@ async def get_env_vars(ctx: dict, args: dict) -> dict:
     Returns deduplicated key list.
     """
     # Iter 212m-172 — repo tuple from BINContext.
-    rc= None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rc = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rc, _NO_CTX = _repo_ctx(ctx)
     if rc is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 
@@ -358,14 +346,7 @@ async def detect_framework(ctx: dict, args: dict) -> dict:
     / file layout. Returns ranked stack labels.
     """
     # Iter 212m-172 — repo tuple from BINContext.
-    rc= None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rc = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rc, _NO_CTX = _repo_ctx(ctx)
     if rc is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 
@@ -467,14 +448,7 @@ async def get_commit_history(ctx: dict, args: dict) -> dict:
     path_filter = (args or {}).get("path") or ""
 
     # Iter 212m-172 — repo tuple from BINContext.
-    rc= None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rc = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rc, _NO_CTX = _repo_ctx(ctx)
     if rc is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 
@@ -545,14 +519,7 @@ async def list_issues(ctx: dict, args: dict) -> dict:
         state = "open"
 
     # Iter 212m-172 — repo tuple from BINContext.
-    rc= None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rc = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rc, _NO_CTX = _repo_ctx(ctx)
     if rc is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 
@@ -623,14 +590,7 @@ async def get_pr_comments(ctx: dict, args: dict) -> dict:
         return {"ok": False, "error": "pr_number must be int"}
 
     # Iter 212m-172 — repo tuple from BINContext.
-    rctx= None
-    _NO_CTX = None
-    try:
-        from .local_tools import _repo_ctx_from as _lt_repo_ctx_from, _NO_BIN_CTX_ERROR as _lt_no_ctx
-        rctx = _lt_repo_ctx_from(ctx)
-        _NO_CTX = _lt_no_ctx
-    except Exception as _e:
-        logger.warning("dev_skills: _repo_ctx_from import failed: %r", _e)
+    rctx, _NO_CTX = _repo_ctx(ctx)
     if rctx is None:
         return _NO_CTX or {"ok": False, "error": "no repo context"}
 

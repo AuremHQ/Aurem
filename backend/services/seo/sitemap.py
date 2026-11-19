@@ -14,6 +14,7 @@ file bytes — pure path-list math.
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -23,6 +24,22 @@ from .meta_tags import SeoPatch
 _DYNAMIC = re.compile(r"\[.*?\]")          # Next.js [slug] etc.
 _EXT = re.compile(r"\.(tsx|jsx|js|mjs|ts)$")
 
+
+# Hosts that must never be emitted in a generated sitemap or robots file.
+# Fix #20 merge_lastmod already strips these from scanned URLs; the
+# renderers below used to fall back to interpolating yourdomain.com
+# when no real domain was configured. Tier 3 removes that fallback:
+# a missing or placeholder site_url is now an error (sitemap) or omits
+# the Sitemap line (robots) instead of emitting a fake domain.
+_PLACEHOLDER_HOSTS = ("yourdomain.com", "example.com", "example.org")
+
+
+def _is_placeholder_site_url(site_url: str | None) -> bool:
+    if not site_url or not str(site_url).strip():
+        return True
+    parsed = urlparse(str(site_url).strip())
+    host = (parsed.hostname or str(site_url).strip().split(chr(47))[0] or str()).lower()
+    return host in _PLACEHOLDER_HOSTS
 
 def extract_routes(paths: list[str]) -> list[str]:
     """Pure function. Given a flat list of repo paths, return the
@@ -90,7 +107,9 @@ def render_sitemap_xml(
     routes: list[str], site_url: str,
     *, lastmod: Optional[str] = None,
 ) -> str:
-    base = (site_url or "https://yourdomain.com").rstrip("/")
+    if _is_placeholder_site_url(site_url):
+        raise ValueError("render_sitemap_xml requires a real site_url; refusing to emit placeholder-domain URLs")
+    base = str(site_url).rstrip(chr(47))
     date = lastmod or datetime.now(timezone.utc).date().isoformat()
     parts = ['<?xml version="1.0" encoding="UTF-8"?>',
              '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
@@ -117,6 +136,8 @@ def patch_sitemap(
     existing_root_sitemap: Optional[str] = None,
     lastmod: Optional[str] = None,
 ) -> Optional[SeoPatch]:
+    if _is_placeholder_site_url(site_url):
+        return None
     routes = extract_routes(paths)
     target = "public/sitemap.xml" if has_public_dir else "sitemap.xml"
     existing = (
@@ -149,7 +170,6 @@ _AI_COMMENT = "<!-- AI crawlers: see robots.txt (managed by AUREM) -->"
 # real <loc> entries down to the placeholder-only set. Filter out
 # known placeholder hosts from the freshly-scanned set so a bad scan
 # can't inject junk into an otherwise-real sitemap.
-_PLACEHOLDER_HOSTS = ("yourdomain.com", "example.com", "example.org")
 
 
 def render_sitemap(urls: list[dict], scan_date: str) -> str:

@@ -172,10 +172,10 @@ def client(fake_db):
         return USER
 
     # 2026-09-08 chat.py -> chat/ package split — `current_dev` is
-    # imported independently by each of the 4 submodules, so this
+    # imported independently by each of the 5 submodules, so this
     # shared fixture (used across every endpoint class in this file)
-    # must patch it on all 4, not just the __init__ shim.
-    _submods = (router_mod.misc, router_mod.turn, router_mod.stream, router_mod.history)
+    # must patch it on all 5, not just the __init__ shim.
+    _submods = (router_mod.misc, router_mod.turn, router_mod.stream, router_mod.history, router_mod.deps)
     _old = {m: m.current_dev for m in _submods}
     for m in _submods:
         m.current_dev = _fake_current_dev
@@ -395,14 +395,14 @@ class TestChatTurnShipped:
 
     def test_db_not_connected(self, client, fake_db):
         from routers import chat as router_mod
-        router_mod.misc.get_db = lambda: None
+        router_mod.deps.get_db = lambda: None
         try:
             r = client.post("/api/aurem-dev/chat/turn/shipped", headers=AUTH,
                             json=self._body())
             assert r.status_code == 503
         finally:
             from cto_services.db import get_db as real_get_db
-            router_mod.misc.get_db = real_get_db
+            router_mod.deps.get_db = real_get_db
 
 
 # ═════════════════════════════════════════════════════════════════════

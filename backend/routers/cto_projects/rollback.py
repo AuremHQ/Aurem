@@ -115,6 +115,48 @@ async def _run_rollback(task_id: str, proj: dict, commit_sha: str,
     return await _pkg._run_rollback_via_api(task_id, proj, commit_sha, user_token)
 
 
+# Tier 3 - the rollback api/git twin, unified in the Fix #15 shape.
+# The safety and status stages below are shared, module-level code
+# called by BOTH rollback paths in the same order. Only the revert
+# mechanism differs: the GitHub Data API in _run_rollback_via_api,# the git binary (clone / revert / push) in _run_rollback_with_git.
+class _RollbackRun:
+    def __init__(self, task_id, user_token):
+        self.task_id = task_id
+        self.user_token = user_token
+        self.db = _pkg.get_db()
+
+    def scrub(self, s):
+        if not s or not self.user_token:
+            return s or "",
+        return s.replace(self.user_token, "***PAT***")
+
+    async def set(self, **fields):
+        if self.db is not None:
+            await self.db.cto_tasks.update_one({"task_id": self.task_id}, {"$set": fields})
+
+    async def prog(self, step, status="info"):
+        await _rollback_log(self.task_id, step, status)
+
+    async def mark_done(self, new_sha):
+        await self.set(rollback_status="done", rollback_sha=new_sha, rollback_completed_at=time.time())
+
+    async def mark_failed(self, err):
+        safe = self.scrub(str(err))
+        await _rollback_log(self.task_id, f"❌ {safe}", "error")
+        await self.set(rollback_status="failed", rollback_error=safe, rollback_completed_at=time.time())
+
+
+async def _run_rollback_core(task_id, proj, commit_sha, user_token, label, revert):
+    run = _RollbackRun(task_id, user_token)
+    try:
+        await run.set(rollback_status="running", rollback_worker_started_at=time.time())
+        new_sha = await revert(run)
+        await run.mark_done(new_sha)
+    except Exception as e:
+        logger.exception(f"[{label} {task_id}] failed")
+        await run.mark_failed(e)
+
+
 async def _run_rollback_via_api(task_id: str, proj: dict, commit_sha: str,
                                   user_token: str) -> None:
     """Pure-API rollback — uses GitHub Git Data API to push a revert
@@ -122,22 +164,10 @@ async def _run_rollback_via_api(task_id: str, proj: dict, commit_sha: str,
     owner = proj["github_owner"]
     repo = proj["github_repo"]
     branch = proj.get("branch", "main")
-    db = _pkg.get_db()
-
-    def _scrub(s: str) -> str:
-        return (s or "").replace(user_token or "", "***PAT***") if user_token else (s or "")
-
-    async def _set(**fields):
-        if db is not None:
-            await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
-
-    async def _prog(step: str, status: str = "info"):
-        await _rollback_log(task_id, step, status)
-
-    try:
+    async def _revert(run):
+        db = run.db
         # 2026-09-1…21 chars truncated…lay ("queued but not yet scheduled" vs. GH API being slow)
         # without needing raw server log access to diagnose next time.
-        await _set(rollback_status="running", rollback_worker_started_at=time.time())
         # Iter 212m-218 — attribute the revert commit to the real
         # developer instead of the historical "AUREM" bot identity.
         from services.git_identity import resolve_git_identity
@@ -146,123 +176,77 @@ async def _run_rollback_via_api(task_id: str, proj: dict, commit_sha: str,
         )
         result = await _pkg.gh_api_revert(
             owner=owner, repo=repo, branch=branch, token=user_token,
-            commit_sha=commit_sha, progress=_prog,
+            commit_sha=commit_sha, progress=run.prog,
             author_name=_author_name, author_email=_author_email,
         )
-        await _set(
-            rollback_status="done",
-            rollback_sha=result["sha"],
-            rollback_completed_at=time.time(),
-        )
-    except Exception as e:
-        logger.exception(f"[rollback-api {task_id}] failed")
-        safe = _scrub(str(e))
-        await _rollback_log(task_id, f"❌ {safe}", "error")
-        await _set(
-            rollback_status="failed",
-            rollback_error=safe,
-            rollback_completed_at=time.time(),
-        )
+        return result["sha"]
+
+    return await _run_rollback_core(task_id, proj, commit_sha, user_token, "rollback-api", _revert)
 
 
 async def _run_rollback_with_git(task_id: str, proj: dict, commit_sha: str,
                                    user_token: str) -> None:
     """Clone, `git revert --no-edit <sha>`, push the revert commit."""
-    ws = _pkg.WORKSPACE / f"rb_{task_id}"
-    ws.mkdir(parents=True, exist_ok=True)
-    repo_path = ws / "repo"
-    owner = proj["github_owner"]
-    repo = proj["github_repo"]
-    branch = proj.get("branch", "main")
-    # 2026-08-24 fix — GitHub App installation tokens must be passed as
-    # the HTTPS PASSWORD (username "x-access-token"), not as the
-    # username-only PAT-style embed. The old `https://{token}@github.com`
-    # form makes git treat the token as a username with a blank
-    # password, which then tries an interactive password prompt and
-    # fails non-interactively ("could not read Password ... No such
-    # device or address"). Confirmed via a real Preview/testbed E2E
-    # ship drill (task submitted against polarisbuiltinc-wq/aurem-
-    # rollback-testbed via App installation 152797252).
-    clone_url = (f"https://x-access-token:{user_token}@github.com/{owner}/{repo}.git"
-                if user_token else f"https://github.com/{owner}/{repo}.git")
+    async def _revert(run):
+        ws = _pkg.WORKSPACE / f"rb_{task_id}"
+        ws.mkdir(parents=True, exist_ok=True)
+        repo_path = ws / "repo"
+        owner = proj["github_owner"]
+        repo = proj["github_repo"]
+        branch = proj.get("branch", "main")
+        clone_url = (f"https://x-access-token:{user_token}@github.com/{owner}/{repo}.git"
+        if user_token else f"https://github.com/{owner}/{repo}.git")
+        try:
+            await _rollback_log(task_id, f"Cloning {owner}/{repo}@{branch}…")
+            # Full history needed (no --depth=1) so the revert can find the sha
+            # 2026-09-09 — offloaded to a thread (asyncio.to_thread) so these
+            # synchronous `subprocess.run()` git calls (up to 120s) never block
+            # the shared event loop. This function runs via FastAPI
+            # BackgroundTasks on the SAME event loop as every other request
+            # (including the trivial /health probe) — a blocked clone/push here
+            # was the confirmed root cause of the nginx "/health upstream timed
+            # out" bursts that made K8s mark the pod unhealthy mid-deploy.
+            r = await asyncio.to_thread(
+                _pkg._sh, ["git", "clone", "--branch", branch, clone_url, str(repo_path)],
+                cwd=ws, timeout=120)
+            if r.returncode != 0:
+                raise RuntimeError(f"git clone failed: {run.scrub(r.stderr)[:300]}")
+            await _rollback_log(task_id, "✅ Cloned", "success")
 
-    db = _pkg.get_db()
+            await asyncio.to_thread(_pkg._sh, ["git", "config", "user.email", "cto@auremcto.com"], repo_path)
+            await asyncio.to_thread(_pkg._sh, ["git", "config", "user.name", "AUREM"], repo_path)
 
-    def _scrub(s: str) -> str:
-        """Strip the PAT from any error/log string before we persist it."""
-        if not s or not user_token:
-            return s or ""
-        return s.replace(user_token, "***PAT***")
-
-    async def _set(**fields):
-        if db is not None:
-            await db.cto_tasks.update_one({"task_id": task_id}, {"$set": fields})
-
-    try:
-        await _set(rollback_status="running", rollback_worker_started_at=time.time())
-        await _rollback_log(task_id, f"Cloning {owner}/{repo}@{branch}…")
-        # Full history needed (no --depth=1) so the revert can find the sha
-        # 2026-09-09 — offloaded to a thread (asyncio.to_thread) so these
-        # synchronous `subprocess.run()` git calls (up to 120s) never block
-        # the shared event loop. This function runs via FastAPI
-        # BackgroundTasks on the SAME event loop as every other request
-        # (including the trivial /health probe) — a blocked clone/push here
-        # was the confirmed root cause of the nginx "/health upstream timed
-        # out" bursts that made K8s mark the pod unhealthy mid-deploy.
-        r = await asyncio.to_thread(
-            _pkg._sh, ["git", "clone", "--branch", branch, clone_url, str(repo_path)],
-            cwd=ws, timeout=120)
-        if r.returncode != 0:
-            raise RuntimeError(f"git clone failed: {_scrub(r.stderr)[:300]}")
-        await _rollback_log(task_id, "✅ Cloned", "success")
-
-        await asyncio.to_thread(_pkg._sh, ["git", "config", "user.email", "cto@auremcto.com"], repo_path)
-        await asyncio.to_thread(_pkg._sh, ["git", "config", "user.name", "AUREM"], repo_path)
-
-        # Use `git revert` so we never force-push; it produces a new commit
-        # that undoes the changes. `-m 1` lets us revert merge commits if
-        # the original was a merge.
-        revert = await asyncio.to_thread(
-            _pkg._sh,
-            ["git", "revert", "--no-edit", "-m", "1", commit_sha],
-            repo_path, timeout=60,
-        )
-        if revert.returncode != 0:
-            # Plain (non-merge) commits don't accept `-m`; retry without it
-            await asyncio.to_thread(_pkg._sh, ["git", "revert", "--abort"], repo_path)
+            # Use `git revert` so we never force-push; it produces a new commit
+            # that undoes the changes. `-m 1` lets us revert merge commits if
+            # the original was a merge.
             revert = await asyncio.to_thread(
                 _pkg._sh,
-                ["git", "revert", "--no-edit", commit_sha],
+                ["git", "revert", "--no-edit", "-m", "1", commit_sha],
                 repo_path, timeout=60,
             )
-        if revert.returncode != 0:
-            raise RuntimeError(
-                f"git revert failed (possibly conflicts): {_scrub(revert.stderr)[:300]}"
-            )
-        await _rollback_log(task_id, f"✏️ Reverted {commit_sha}", "success")
+            if revert.returncode != 0:
+                # Plain (non-merge) commits don't accept `-m`; retry without it
+                await asyncio.to_thread(_pkg._sh, ["git", "revert", "--abort"], repo_path)
+                revert = await asyncio.to_thread(
+                    _pkg._sh,
+                    ["git", "revert", "--no-edit", commit_sha],
+                    repo_path, timeout=60,
+                )
+            if revert.returncode != 0:
+                raise RuntimeError(
+                    f"git revert failed (possibly conflicts): {run.scrub(revert.stderr)[:300]}"
+                )
+            await _rollback_log(task_id, f"✏️ Reverted {commit_sha}", "success")
 
-        push = await asyncio.to_thread(_pkg._sh, ["git", "push", "origin", branch], repo_path, timeout=90)
-        if push.returncode != 0:
-            raise RuntimeError(f"git push failed: {_scrub(push.stderr)[:300]}")
+            push = await asyncio.to_thread(_pkg._sh, ["git", "push", "origin", branch], repo_path, timeout=90)
+            if push.returncode != 0:
+                raise RuntimeError(f"git push failed: {run.scrub(push.stderr)[:300]}")
 
-        new_sha_r = await asyncio.to_thread(_pkg._sh, ["git", "rev-parse", "--short", "HEAD"], repo_path)
-        new_sha = new_sha_r.stdout.strip()
-        await _rollback_log(task_id, f"🚀 pushed revert — {new_sha}", "success")
-        await _set(
-            rollback_status="done",
-            rollback_sha=new_sha,
-            rollback_completed_at=time.time(),
-        )
-    except Exception as e:
-        logger.exception(f"[rollback {task_id}] failed")
-        safe_msg = _scrub(str(e))
-        await _rollback_log(task_id, f"❌ {safe_msg}", "error")
-        await _set(
-            rollback_status="failed",
-            rollback_error=safe_msg,
-            rollback_completed_at=time.time(),
-        )
-    finally:
-        shutil.rmtree(ws, ignore_errors=True)
+            new_sha_r = await asyncio.to_thread(_pkg._sh, ["git", "rev-parse", "--short", "HEAD"], repo_path)
+            new_sha = new_sha_r.stdout.strip()
+            await _rollback_log(task_id, f"🚀 pushed revert — {new_sha}", "success")
+        finally:
+            shutil.rmtree(ws, ignore_errors=True)
+        return new_sha
 
-
+    return await _run_rollback_core(task_id, proj, commit_sha, user_token, "rollback", _revert)

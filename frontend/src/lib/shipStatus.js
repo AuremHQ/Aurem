@@ -43,6 +43,3 @@ export function shipStatusLabel(status) {
   return _LABEL[status] || status;
 }
 
-export function shipStatusColor(status) {
-  return _COLOR[status] || "#8A8A8A";
-}

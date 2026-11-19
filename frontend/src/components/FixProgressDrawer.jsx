@@ -17,7 +17,7 @@
  *   - Active Fix Card → Completed Fixes List → Final Summary
  *   - Heartbeat pulse + running clock + event counter + restart
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   X, GitCommit, GitPullRequest, ShieldCheck, ShieldAlert, ExternalLink,
   Loader2, FileSearch, Sparkles, UploadCloud, BadgeCheck, RotateCw,

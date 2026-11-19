@@ -42,7 +42,6 @@ from .turn import ChatBody, chat_send  # noqa: F401,E402
 from .handoff_guard import (  # noqa: F401,E402
     _handoff_brief_is_shell_command, _maybe_guard_shell_handoff_followup,
 )
-from .stream import chat_stream  # noqa: F401,E402
 from .history import (  # noqa: F401,E402
     chat_history, chat_sessions_list, chat_session_delete,
     chat_session_clear_messages,

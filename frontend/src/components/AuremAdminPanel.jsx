@@ -15,8 +15,8 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { api } from "../lib/api";
 
-const API = process.env.REACT_APP_BACKEND_URL || "";
 
 // ─── time-ago helper for the "last updated" pill ─────────────────
 function _relTime(ms) {
@@ -29,21 +29,6 @@ function _relTime(ms) {
   return new Date(ms).toLocaleTimeString();
 }
 
-// ─── tiny fetch helper ───────────────────────────────────────────
-async function apiFetch(path, opts = {}) {
-  const token = localStorage.getItem("aurem_token");
-  const res = await fetch(`${API}${path}`, {
-    signal: AbortSignal.timeout(20000),
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(opts.headers || {}),
-    },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
-}
 
 // ─── stat card ───────────────────────────────────────────────────
 function StatCard({ label, value, sub, color = "#ff8a2a", icon }) {
@@ -186,7 +171,7 @@ export default function AuremAdminPanel() {
   const fetchStats = useCallback(async () => {
     try {
       setError(null);
-      const s = await apiFetch("/api/aurem-dev/admin/ora-stats");
+      const { data: s } = await api.get("/admin/ora-stats");
       setStats(s);
       setLastUpdated(Date.now());
     } catch (e) {
@@ -197,7 +182,7 @@ export default function AuremAdminPanel() {
   const fetchBrain = useCallback(async (pid) => {
     if (!pid) return;
     try {
-      const b = await apiFetch(`/api/aurem-dev/admin/project-brain/${pid}`);
+      const { data: b } = await api.get(`/admin/project-brain/${pid}`);
       setBrain(b);
     } catch {
       setBrain(null);

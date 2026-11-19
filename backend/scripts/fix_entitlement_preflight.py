@@ -26,29 +26,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
+try:
+    from _cli import run_with_guarded_db
+except ImportError:  # imported as backend.scripts.<name>
+    from backend.scripts._cli import run_with_guarded_db
 
 
 async def _run() -> dict | None:
-    mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME")
-    if not mongo_url or not db_name:
-        print("MONGO_URL/DB_NAME not set — refusing to run.", file=sys.stderr)
-        return None
+    async def _work(guarded):
+        from services.fix_entitlement import find_stale_entitlements
 
-    from motor.motor_asyncio import AsyncIOMotorClient
-
-    from services.fix_entitlement import find_stale_entitlements
-    from services.plan_transition_write_guard import WriteGuardedDB
-
-    client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
-    db = client[db_name]
-    guarded = WriteGuardedDB(db)
-    try:
         return await find_stale_entitlements(guarded)
-    finally:
-        client.close()
+
+    return await run_with_guarded_db(_work)
 
 
 def main() -> int:

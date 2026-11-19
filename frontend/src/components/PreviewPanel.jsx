@@ -9,11 +9,6 @@
  *
  * The iframe is sandboxed with `allow-scripts` only — no same-origin —
  * so any code rendered here cannot read parent state.
- */
-/* eslint-disable react/no-danger */
-/**
- * PreviewPanel.jsx — Right-side live preview for code blocks parsed from
- * the latest assistant message.
  *
  * SECURITY NOTE — the string-literal `.innerHTML = ...` occurrences in
  * `buildIframeDoc()` live INSIDE the srcDoc of a sandboxed iframe

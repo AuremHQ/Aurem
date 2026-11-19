@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.orchestrator import chat_with_tools  # noqa: F401 — test patch target (monkeypatch stream.chat_with_tools)
-from services.llm import call_emergent_watchdog, call_llm_with_meta  # noqa: F401 — call_llm_with_meta is a test patch target
+from services.llm import call_emergent_watchdog
 from services.repo_context import get_repo_context
 from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
 from services.chat_helpers import (

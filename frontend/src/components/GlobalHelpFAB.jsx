@@ -20,7 +20,7 @@ import { SupportButton } from "./SupportPopup";
 // help entry point that replaces this FAB in App.jsx) can reuse the
 // exact same "where does help even make sense" rules without forking
 // the list.
-export const HIDE_PREFIXES = [
+const HIDE_PREFIXES = [
   "/login", "/signup", "/verify", "/support",
   "/demo", "/bug-hunt", "/why-ora",
   "/admin",
@@ -30,7 +30,7 @@ export const HIDE_PREFIXES = [
   // FAB's "file a support ticket" entry point doesn't apply there.
   "/harness",
 ];
-export const EXACT_HIDE = new Set(["/"]);
+const EXACT_HIDE = new Set(["/"]);
 
 export function shouldHide(pathname) {
   if (EXACT_HIDE.has(pathname)) return true;

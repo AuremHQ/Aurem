@@ -17,7 +17,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
-from cto_services.auth import current_dev, require_admin
+from cto_services.auth import require_admin
 from cto_services.db import get_db
 
 logger = logging.getLogger(__name__)

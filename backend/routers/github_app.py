@@ -52,7 +52,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from cto_services.auth import current_dev, resolve_github_nav_user
-from cto_services.db import get_db, require_db  # noqa: F401 — get_db is a test patch target
+from cto_services.db import require_db
 from services import github_app as _ga
 from services.github_app_config import is_configured as _app_configured
 from routers.github_funnel import track_server_side as _funnel_track

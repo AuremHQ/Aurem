@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .meta_tags import SeoPatch
+from .sitemap import _is_placeholder_site_url
 
 
 DEFAULT_DISALLOW = ("/admin", "/api", "/private", "/.env")
@@ -20,9 +21,8 @@ def render_robots_txt(
     for p in disallow_paths:
         lines.append(f"Disallow: {p}")
     lines.append("")
-    lines.append(
-        f"Sitemap: {(site_url or 'https://yourdomain.com').rstrip('/')}/sitemap.xml"
-    )
+    if not _is_placeholder_site_url(site_url):
+        lines.append(f"Sitemap: {str(site_url).rstrip(chr(47))}/sitemap.xml")
     return "\n".join(lines) + "\n"
 
 

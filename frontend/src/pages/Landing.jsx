@@ -556,13 +556,7 @@ const TOOLS = [
   "Claude Desktop", "Claude Code", "Cursor", "VS Code",
   "GitHub", "MCP 2.4",
 ];
-const TAGLINES = [
-  "Claude Desktop",
-  "Claude Code",
-  "Cursor",
-  "VS Code",
-  "GitHub",
-  "MCP 2.4",
+const TAGLINES = [...TOOLS,
   "Vanguard Security",
   "Loop Mode",
   "Health Scanner",

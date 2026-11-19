@@ -41,7 +41,7 @@ import { Z_ACTIVE_MODAL } from "../lib/zIndex";
 
 /** Parse a free-form `owner/repo` or `https://github.com/owner/repo` into
  *  canonical `{owner, repo, full_name, url}`. Returns null on invalid. */
-export function parseRepoInput(raw) {
+function parseRepoInput(raw) {
   const s = (raw || "")
     .trim()
     .replace(/^https?:\/\/github\.com\//i, "")

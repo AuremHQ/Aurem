@@ -30,6 +30,35 @@ const LAYER_ICONS = {
   Config: "⚙️", Test: "🧪", Other: "📄",
 };
 
+// Tier 3 - the raw minute count (Built 34173m ago) is unreadable once the
+// graph is more than an hour old, and a missing/zero built_at rendered as
+// an enormous minute count. Humanise it, and show the calendar date for
+// anything older than a week. built_at is epoch seconds (graph_builder);
+// a millisecond value is accepted too.
+function normalizeBuiltAtMs(builtAt) {
+  const value = Number(builtAt);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value > 1e11 ? value : value * 1000;
+}
+function formatBuiltAge(builtAt) {
+  const builtMs = normalizeBuiltAtMs(builtAt);
+  if (builtMs === null) return null;
+  const seconds = Math.max(0, (Date.now() - builtMs) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return minutes + "m ago";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + "h ago";
+  const days = Math.floor(hours / 24);
+  if (days < 7) return days + "d ago";
+  return new Date(builtMs).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+
 export default function GraphPanel({ projectId, open, onClose }) {
   const [graph, setGraph] = useState(null);
   const [status, setStatus] = useState("idle");
@@ -768,16 +797,15 @@ export default function GraphPanel({ projectId, open, onClose }) {
               {graph.llm_files || 0} files described by AI ·{" "}
               {(graph.edges || []).length} connections
             </span>
-            <span>
-              Built{" "}
-              {Math.max(
-                0,
-                Math.round(
-                  (Date.now() / 1000 - (graph.built_at || 0)) / 60
-                )
-              )}
-              m ago
-            </span>
+        <span
+          title={
+            graph.built_at
+              ? new Date(normalizeBuiltAtMs(graph.built_at)).toLocaleString()
+              : undefined
+          }
+        >
+          Built {formatBuiltAge(graph.built_at) || "—"}
+        </span>
           </div>
         )}
       </div>

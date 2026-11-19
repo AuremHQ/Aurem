@@ -1782,7 +1782,7 @@ function EditDialog({ project, onClose, onSaved }) {
 // clicks the small "PAT" pill on a project row, or from the chat-side
 // "Add PAT" CTA when a tool hits a 401.
 // ───────────────────────────────────────────────────────────────────
-export function PatModal({ project, onClose, onSaved }) {
+function PatModal({ project, onClose, onSaved }) {
   // 2026-08-24 · PAT-removal sweep — this modal no longer accepts PATs
   // (backend rejects them with pat_not_supported). It is now the
   // per-project GitHub App connect/repair flow: open the install popup,

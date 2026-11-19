@@ -16,6 +16,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Users, Download, Package, Radio, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
+import { cleanErr } from "../lib/cleanErr";
 import { toast } from "../components/Toast";
 
 function Card({ children, style }) {
@@ -33,9 +34,6 @@ function fmtDate(seconds) {
   return d.toLocaleString();
 }
 
-function cleanErr(e, fallback) {
-  return e?.response?.data?.detail || e?.message || fallback;
-}
 
 export default function AdminHarnessOverview() {
   const [signups, setSignups] = useState([]);

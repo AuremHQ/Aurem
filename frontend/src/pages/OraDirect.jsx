@@ -15,8 +15,7 @@
  * streaming / budget / house-rules backend.
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import { Lock, Settings, LogOut, ArrowUp, RefreshCw, Zap, Clock, Plus, Square, Copy, Check, Play, Paperclip, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Lock, Settings, LogOut, ArrowUp, Zap, Clock, Plus, Square, Copy, Check, Play, Paperclip, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { api, setToken, getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "../components/OraChatHouseRulesPanel";
 import VideoGenPanel from "../components/VideoGenPanel";

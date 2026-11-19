@@ -62,34 +62,39 @@ def category(title):
     return m.group(1) if m else (title or "")[:40]
 
 
-def main():
-    rows, poison_count = [], 0
-    for pr in all_open_prs():
-        n = pr["number"]
-        files = pr_files(n)
-        names = [f["filename"] for f in files]
-        adds = sum(f.get("additions", 0) for f in files)
-        dels = sum(f.get("deletions", 0) for f in files)
-        marker_only = bool(names) and all(
-            f.startswith(".vanguard/") for f in names)
-        poison = any(is_scanner_rule_file(f) for f in names)
-        if poison:
-            poison_count += 1
-        flag = ("POISON" if poison
-                else "marker-only" if marker_only else "REVIEW")
-        rows.append((n, pr["created_at"][:10], category(pr["title"]),
-                     "; ".join(names[:4]) + ("…" if len(names) > 4 else ""),
-                     f"+{adds}/-{dels}", pr.get("draft"), flag))
+def _classify_pr(pr, files):
+    names = [f["filename"] for f in files]
+    adds = sum(f.get("additions", 0) for f in files)
+    dels = sum(f.get("deletions", 0) for f in files)
+    marker_only = bool(names) and all(f.startswith(".vanguard/") for f in names)
+    poison = any(is_scanner_rule_file(f) for f in names)
+    flag = "POISON" if poison else "marker-only" if marker_only else "REVIEW"
+    row = (pr["number"], pr["created_at"][:10], category(pr["title"]), ", ".join(names[:4]) + ("..." if len(names) > 4 else ""), f"+{adds}/-{dels}", pr.get("draft"), flag)
+    return row, poison
 
+
+
+def _print_report(rows, poison_count):
     print("| PR | Created | Category | Files changed | +/- | Draft | Verdict |")
     print("|---|---|---|---|---|---|---|")
     for r in sorted(rows, key=lambda x: x[0]):
         print("| #{} | {} | {} | {} | {} | {} | **{}** |".format(*r))
-    print(f"\nTotals: {len(rows)} open · {poison_count} POISON "
+    print()
+    print(f"Totals: {len(rows)} open · {poison_count} POISON "
           f"(touch scanner-pipeline files) · "
           f"{sum(1 for r in rows if r[6] == 'marker-only')} marker-only · "
           f"{sum(1 for r in rows if r[6] == 'REVIEW')} need eyeball review")
 
+
+
+def main():
+    rows, poison_count = [], 0
+    for pr in all_open_prs():
+        row, poison = _classify_pr(pr, pr_files(pr["number"]))
+        rows.append(row)
+        if poison:
+            poison_count += 1
+    _print_report(rows, poison_count)
 
 if __name__ == "__main__":
     main()

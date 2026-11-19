@@ -34,7 +34,7 @@ from .scoring import (
 from .breaker import ParliamentCircuitBreaker, _GLOBAL_BREAKER
 from .routing import TaskRouter
 from . import llm_call
-from .llm_call import _llm_call_protected, MAX_CONCURRENT_LLM_CALLS, _GLOBAL_LLM_SEM
+from .llm_call import MAX_CONCURRENT_LLM_CALLS, _GLOBAL_LLM_SEM
 from .councils import (
     _CouncilMember, _Council, CouncilA, CouncilB, CouncilC,
     _COUNCIL_A_PERSONA, _COUNCIL_B_PERSONAS, _COUNCIL_C_PERSONAS,

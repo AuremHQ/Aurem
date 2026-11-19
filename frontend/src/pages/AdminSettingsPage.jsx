@@ -662,11 +662,9 @@ function StripePriceIdsCard() {
   );
 }
 
-// ─── 2026-02-10 — GitHub App credential card ─────────────────────────
-// Mirrors the Stripe cards: presence-only summary (never echoes secrets),
-// live probe pill, edit modal with 4 paste fields, validates against
-// GitHub before persisting. Used to bootstrap the Phase 1.1 service and
-// wizard integration that come next.
+// ─── LLM provider configs ─────────────────────────────────────────────
+// CRUD over /admin/llm/configs (label, role, base_url, model, api_key,
+// params), with one active entry per role and a per-entry test action.
 function LlmSettingsCard() {
   const emptyForm = { label: "", role: "chat", base_url: "", model: "", api_key: "", params: "" };
   const [configs, setConfigs] = useState(null);
@@ -1206,6 +1204,11 @@ function VideoPipelineKeysCard() {
   );
 }
 
+// ─── 2026-02-10 — GitHub App credential card ─────────────────────────
+// Mirrors the Stripe cards: presence-only summary (never echoes secrets),
+// live probe pill, edit modal with 4 paste fields, validates against
+// GitHub before persisting. Used to bootstrap the Phase 1.1 service and
+// wizard integration that come next.
 function GitHubAppConfigCard() {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(false);

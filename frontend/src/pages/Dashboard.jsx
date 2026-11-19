@@ -59,7 +59,6 @@ import { logout, getUser } from "../lib/api";
 // v2 chrome
 import { TopBar }       from "../components/dashboard/v2/TopBar";
 import TopBarStatusSlot from "../components/TopBarStatusSlot";
-import { Menu as MenuIcon } from "lucide-react";
 import SidebarV2Bound   from "../components/dashboard/v2/SidebarBound";
 import RailShell        from "../components/nav/RailShell";
 import AskAdvisorReal   from "../components/dashboard/v2/AskAdvisorReal";

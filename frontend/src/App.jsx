@@ -80,7 +80,6 @@ const Admin             = lazy(() => import("./pages/Admin"));
 // now renders inside the Admin shell via <Admin initialTab="overview" />
 // so sidebar chrome is present. AdminOverview is still imported by
 // Admin.jsx's renderPage() switch.
-const AdminCockpit      = lazy(() => import("./pages/AdminCockpit"));
 const AdminIntegrations = lazy(() => import("./pages/AdminIntegrations"));
 const AdminFinancials   = lazy(() => import("./pages/AdminFinancials"));
 const AdminVanguard     = lazy(() => import("./pages/AdminVanguard"));
@@ -106,10 +105,8 @@ const AboutPage         = lazy(() => import("./pages/AboutPage"));   // 2026-08-
 const ContactPage       = lazy(() => import("./pages/ContactPage")); // 2026-08-30 · public-site fixes
 const DevelopersPage    = lazy(() => import("./pages/DevelopersPage")); // 2026-09-12 · agent-readiness fixes
 const Wrapped           = lazy(() => import("./pages/Wrapped"));
-const ShipWall          = lazy(() => import("./pages/ShipWall"));
 const BrainDump         = lazy(() => import("./pages/BrainDump"));
 const OpsRecipes        = lazy(() => import("./pages/OpsRecipes"));
-const Automations       = lazy(() => import("./pages/Automations"));
 const OAuthFinish       = lazy(() => import("./pages/OAuthFinish"));
 const MagicLogin        = lazy(() => import("./pages/MagicLogin"));   // 2026-08-20
 const VsDevin           = lazy(() => import("./pages/VsDevin"));

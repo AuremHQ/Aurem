@@ -70,7 +70,7 @@ def test_council_reprobe_endpoint_registered():
     can force an immediate LongCat re-probe from the Admin UI. Without
     it, a transient OpenRouter blip keeps Council A in "degraded"
     for up to 15 minutes."""
-    from routers.admin import router as admin_router
+    from routers.admin_analytics import router as admin_router
     route_paths = [r.path for r in admin_router.routes]
     assert "/admin/council/reprobe"     in route_paths, (
         "POST /admin/council/reprobe endpoint missing — founder can't "
@@ -90,7 +90,7 @@ def test_council_reprobe_is_throttled():
     """Two rapid reprobe calls in <3 s should short-circuit to
     `throttled: true`. Protects OpenRouter budget from a founder
     button-mash."""
-    import routers.admin as admin_mod
+    import routers.admin_analytics as admin_mod
     src = open(admin_mod.__file__).read()
     # Static: the 3 s guard is in place.
     assert "_COUNCIL_REPROBE_LAST_AT" in src

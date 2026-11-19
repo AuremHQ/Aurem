@@ -25,7 +25,7 @@
  *     parent opens the findings drawer.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, X, ChevronRight, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, X, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import WorkCard from "./WorkCard";
 
@@ -89,7 +89,7 @@ export function markScanJustCompleted({ critical, high, projectId, projectName }
 }
 
 /** Explicit clear — parent may call this after user acts on the strip. */
-export function clearScanJustCompleted() {
+function clearScanJustCompleted() {
   try { sessionStorage.removeItem(JUST_COMPLETED_KEY); } catch {
     // Private-mode / disabled storage — nothing to clear, ignore.
   }

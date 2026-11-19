@@ -6,7 +6,6 @@ core/parliament/routing.py — 2026-09-08 Phase 3 god-class split.
 """
 from __future__ import annotations
 
-from core.task_type import infer_task_type  # noqa: E402,F401 (compat re-export)
 
 
 class TaskRouter:
