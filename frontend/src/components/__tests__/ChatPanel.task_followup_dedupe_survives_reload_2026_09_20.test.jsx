@@ -30,9 +30,12 @@ describe("ChatPanel — task-followup dedupe depends on mapHistoryTurn wiring", 
   });
 
   it("the history-load effect maps turns through mapHistoryTurn (not an inline object literal)", () => {
-    expect(src).toContain(
-      "setMessages(sortMessagesByTimestamp(turns.map(mapHistoryTurn)));",
-    );
+      // Minor 13 - mapped turns are bound to restored first so the
+      // same array is both painted and written to the session cache.
+      expect(src).toContain(
+        "const restored = sortMessagesByTimestamp(turns.map(mapHistoryTurn));",
+      );
+      expect(src).toContain("setMessages(restored);");
   });
 
   it("does NOT reintroduce an inline turns.map object literal that could omit kind/task_id", () => {
@@ -54,4 +57,15 @@ describe("ChatPanel — task-followup dedupe depends on mapHistoryTurn wiring", 
     const nearby = src.slice(idx, idx + 600);
     expect(nearby).toContain("ts: Date.now() / 1000");
   });
+
+    // Minor 13 - stale-while-revalidate: repeat dashboard visits paint
+    // the cached turns immediately instead of "loading history..." while
+    // GET /chat/history revalidates in the background.
+    it("history-load paints cached turns first, then rewrites the cache", () => {
+      expect(src).toContain("const CHAT_HISTORY_CACHE_KEY = \"aurem_chat_history_\";");
+      expect(src).toContain("sessionStorage.getItem(CHAT_HISTORY_CACHE_KEY + sessionId)");
+      expect(src).toContain("setMessages(parsed);");
+      expect(src).toContain("sessionStorage.setItem(CHAT_HISTORY_CACHE_KEY + sessionId, JSON.stringify(restored))");
+      expect(src).toContain("sessionStorage.removeItem(CHAT_HISTORY_CACHE_KEY + sessionId)");
+    });
 });

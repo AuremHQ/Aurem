@@ -2,6 +2,7 @@
 // Minor 11: the floating guide button hides while the Advisor panel
 // is open, so it never covers the Advisor input/send row.
 // Minor 16: the guide panel never grows into the dashboard top bar.
+import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";

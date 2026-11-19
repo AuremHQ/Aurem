@@ -141,6 +141,10 @@ const TEXT_FAST_PATH_BYTES = 50 * 1024;  // <=50KB text → skip server roundtri
 const MAXX_KEY = "aurem_maxx_mode";
 const AGENT_KEY = "aurem_chat_agent";
 const PREVIEW_KEY = "aurem_preview_open";
+// Minor 13 - chat-history cache key PREFIX (sessionStorage, per tab):
+// repeat dashboard visits paint the cached turns immediately while
+// GET /chat/history revalidates in the background.
+const CHAT_HISTORY_CACHE_KEY = "aurem_chat_history_";
 // Iter 131 — Clear ↑ toolbar: when `hideOlder` is ON, only this many
 // most-recent messages render. Older ones collapse into a single
 // "N older messages hidden — show all" pill.
@@ -1787,8 +1791,24 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoadingHistory(true);
+      // Minor 13 - stale-while-revalidate: paint the cached turns for
+      // this session immediately (repeat dashboard visits) instead of
+      // "loading history..." while the fetch runs. The fetch below
+      // still replaces them with fresh turns.
+      let paintedFromCache = false;
+      try {
+        const cached = sessionStorage.getItem(CHAT_HISTORY_CACHE_KEY + sessionId);
+        const parsed = cached ? JSON.parse(cached) : null;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setMessages(parsed);
+          paintedFromCache = true;
+        }
+      } catch { /* ignore */ }
+      if (!paintedFromCache) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLoadingHistory(true);
+      }
     api
       .get(`/chat/history`, { params: { session_id: sessionId } })
       .then((r) => {
@@ -1803,6 +1823,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           // Iter 330 root-fix — only paint WELCOME on a CONFIRMED empty
           // session (server returned OK with no turns). Never on error.
           setMessages([WELCOME]);
+          try { sessionStorage.removeItem(CHAT_HISTORY_CACHE_KEY + sessionId); } catch { /* ignore */ }
         } else {
           // 2026-09-11 — see sortMessagesByTimestamp's docstring: a
           // Loop turn-pair can be $push'd (appended) well AFTER other
@@ -1817,7 +1838,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           // docstring for the "old task-followup re-appended at the
           // bottom" bug this fixes) instead of only checkable by
           // reading source text.
-          setMessages(sortMessagesByTimestamp(turns.map(mapHistoryTurn)));
+          const restored = sortMessagesByTimestamp(turns.map(mapHistoryTurn));
+          setMessages(restored);
+          try {
+            sessionStorage.setItem(CHAT_HISTORY_CACHE_KEY + sessionId, JSON.stringify(restored));
+          } catch { /* ignore */ }
           // Iter 212m-44 — the user has prior turns in this session
           // (reloaded mid-conversation), so the chrome (top tabs +
           // sidebar) should be auto-hidden as if they had just sent

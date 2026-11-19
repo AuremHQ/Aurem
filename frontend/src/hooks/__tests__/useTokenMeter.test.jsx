@@ -14,7 +14,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 vi.mock("../../lib/api", () => ({ api: { get: vi.fn() } }));
 
 import { api } from "../../lib/api";
-import { useTokenMeter } from "../useTokenMeter";
+import { useTokenMeter, METER_CACHE_KEY } from "../useTokenMeter";
 
 function Harness() {
   const { meter, loading } = useTokenMeter();
@@ -26,6 +26,7 @@ function Harness() {
 describe("useTokenMeter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem(METER_CACHE_KEY);
   });
 
   it("fetches /usage/me/meter on mount", async () => {
@@ -81,5 +82,24 @@ describe("ITEM 8 — TokenMeter and a Settings-shaped consumer show the SAME num
 
     await waitFor(() => expect(screen.getByTestId("token-meter-balance")).toHaveTextContent("820 tokens left"));
     await waitFor(() => expect(screen.getByTestId("state")).toHaveTextContent("820"));
+  });
+
+  // Minor 13 - TOKENS USED must not show a dash at first paint: a cached
+  // meter from the previous visit paints immediately, before the fetch.
+  it("paints the cached meter immediately, before the fetch resolves", () => {
+    localStorage.setItem(
+      METER_CACHE_KEY,
+      JSON.stringify({ visible: true, balance: 820, base: 1000, pct_remaining: 82, refill_date: null, threshold: "ok" }),
+    );
+    api.get.mockImplementation(() => new Promise(() => {}));
+    render(<Harness />);
+    expect(screen.getByTestId("state")).toHaveTextContent("820");
+  });
+
+  it("writes the fetched meter to the cache", async () => {
+    api.get.mockResolvedValue({ data: { visible: true, balance: 820, base: 1000, pct_remaining: 82, refill_date: null, threshold: "ok" } });
+    render(<Harness />);
+    await waitFor(() => expect(screen.getByTestId("state")).toHaveTextContent("820"));
+    expect(JSON.parse(localStorage.getItem(METER_CACHE_KEY))).toMatchObject({ visible: true, balance: 820 });
   });
 });

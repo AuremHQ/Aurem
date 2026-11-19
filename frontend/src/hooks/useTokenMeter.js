@@ -20,9 +20,25 @@ import { api } from "../lib/api";
 
 const POLL_MS = 60000;
 
+// Minor 13 - last-known meter: TOKENS USED paints the cached value
+// at first paint instead of a dash; the fetch below still refreshes.
+export const METER_CACHE_KEY = "aurem_token_meter_cache";
+
+function readCachedMeter() {
+  try {
+    const raw = localStorage.getItem(METER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !("visible" in parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function useTokenMeter() {
-  const [meter, setMeter] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [meter, setMeter] = useState(readCachedMeter);
+  const [loading, setLoading] = useState(meter == null);
   const activeRef = useRef(true);
 
   useEffect(() => {
@@ -31,6 +47,7 @@ export function useTokenMeter() {
       try {
         const r = await api.get("/usage/me/meter");
         if (activeRef.current) setMeter(r.data);
+        try { localStorage.setItem(METER_CACHE_KEY, JSON.stringify(r.data)); } catch { /* ignore */ }
       } catch (_) {
         // degrade silently — caller treats null/invisible the same as "hidden"
       } finally {
