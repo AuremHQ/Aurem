@@ -388,6 +388,10 @@ class IntentClassifyBody(BaseModel):
     project_id: Optional[str] = None
 
 
+# ─── Iter 212m-149 — Intent Gateway live-classify endpoint ────────────
+# Used by the chat composer to render the live tier-dot indicator
+# (casual / query / agentic) as the user types.  Heuristic-only
+# (escalate_to_llm=False) so it returns in <5 ms with no LLM cost.
 @router.post("/classify-intent")
 async def classify_intent_endpoint(
     body: IntentClassifyBody,

@@ -96,6 +96,43 @@ export function SelfHealIndicator({ visible, attempt = 1, max = 2,
 }
 
 
+// One shared shell for the loop gate cards: the SHIP human-review gate and
+// the generic retry/skip/abort card differ only in accent, title, countdown
+// colour, message, the optional <pre> block and their buttons.
+const GATE_CARD_BASE = {
+  margin: "10px 0",
+  padding: 14,
+  borderRadius: 12,
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+  fontFamily: "'JetBrains Mono', monospace",
+};
+
+function GateCard({ testId, phase, ariaLabel, cardStyle, icon, title, secondsLeft, expired, countdownIdleColor, message, preTestId, preColor, preMaxHeight, preShown, preText, children }) {
+  return (
+    <div data-testid={testId} data-phase={phase} role="region" aria-label={ariaLabel} style={cardStyle}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {icon}
+        {title}
+        {secondsLeft != null && (
+          <span data-testid="user-action-countdown" className={secondsLeft <= 60 ? "aurem-countdown-urgent" : undefined} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: secondsLeft <= 60 ? "#fda4af" : countdownIdleColor, fontFamily: "'JetBrains Mono', monospace" }}>
+            <Clock size={11} />
+            {expired ? "Waiting to expire…" : formatCountdown(secondsLeft)}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--text, #e8ecf3)", lineHeight: 1.5 }}>{message}</div>
+      {preShown && (
+        <pre data-testid={preTestId} style={{ margin: 0, padding: "8px 10px", background: "rgba(0,0,0,0.40)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, fontSize: 10.5, color: preColor, maxHeight: preMaxHeight, overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+          {preText}
+        </pre>
+      )}
+      {children}
+    </div>
+  );
+}
+
 /**
  * @param {object} props
  * @param {string} props.phase   — phase the loop paused on (verify/scan/etc.)
@@ -117,180 +154,100 @@ export function UserActionCard({ phase, message, errors,
   // modified, so the engine paused for explicit approval. Generic
   // retry/skip buttons here soft-locked the engine; the ONLY valid
   // actions are Approve & Ship or Cancel.
-  if (gateType === "ship_human_review") {
+    if (gateType === "ship_human_review") {
     return (
-      <div
-        data-testid="ship-review-gate-card"
-        data-phase={phase}
-        role="region"
-        aria-label="Human review required before ship"
-        style={{
-          margin: "10px 0",
-          padding: 14,
-          background: "linear-gradient(135deg, rgba(34,197,94,0.10), rgba(16,185,129,0.05))",
-          border: "1px solid rgba(34,197,94,0.40)",
-          borderRadius: 12,
-          display: "flex", flexDirection: "column", gap: 10,
-          fontFamily: "'JetBrains Mono', monospace",
-          boxShadow: "0 0 28px -10px rgba(34,197,94,0.45)",
-        }}
+      <GateCard
+        testId="ship-review-gate-card"
+        phase={phase}
+        ariaLabel="Human review required before ship"
+        cardStyle={{ ...GATE_CARD_BASE, background: "linear-gradient(135deg, rgba(34,197,94,0.12), rgba(16,185,129,0.05))", border: "1px solid rgba(34,197,94,0.45)", boxShadow: "0 0 28px -10px rgba(34,197,94,0.5)" }}
+        icon={<ShieldCheck size={14} color="#86efac" />}
+        title={<strong style={{ fontSize: 12, color: "#86efac", letterSpacing: 0.4 }}>Paused for your review — this change touches test files</strong>}
+        secondsLeft={secondsLeft}
+        expired={expired}
+        countdownIdleColor="#86efac"
+        message={message}
+        preTestId="ship-review-tests-touched"
+        preColor="#86efac"
+        preMaxHeight={120}
+        preShown={Array.isArray(testsTouched) && testsTouched.length > 0}
+        preText={testsTouched.slice(0, 10).join("\n") + (testsTouched.length > 10 ? "\n...and " + (testsTouched.length - 10) + " more" : "")}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <ShieldCheck size={14} color="#86efac" />
-          <strong style={{ fontSize: 12, color: "#86efac", letterSpacing: 0.4 }}>
-            Paused for your review — this change touches test files
-          </strong>
-          {secondsLeft != null && (
-            <span
-              data-testid="user-action-countdown"
-              className={secondsLeft <= 60 ? "aurem-countdown-urgent" : undefined}
-              style={{
-                marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4,
-                fontSize: 10.5, fontWeight: 700,
-                color: secondsLeft <= 60 ? "#fda4af" : "#86efac",
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              <Clock size={11} />
-              {expired ? "Waiting to expire…" : formatCountdown(secondsLeft)}
-            </span>
-          )}
-        </div>
-        <div style={{ fontSize: 11.5, color: "var(--text, #e8ecf3)", lineHeight: 1.5 }}>
-          {message}
-        </div>
-        {Array.isArray(testsTouched) && testsTouched.length > 0 && (
-          <pre
-            data-testid="ship-review-tests-touched"
-            style={{
-              margin: 0, padding: "8px 10px",
-              background: "rgba(0,0,0,0.40)",
-              border: "1px solid rgba(255,255,255,0.06)",
-              borderRadius: 6,
-              fontSize: 10.5, color: "#86efac",
-              maxHeight: 120, overflowY: "auto",
-              whiteSpace: "pre-wrap", wordBreak: "break-all",
-            }}
-          >
-            {testsTouched.slice(0, 10).join("\n")}
-            {testsTouched.length > 10 && `\n…and ${testsTouched.length - 10} more`}
-          </pre>
-        )}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <ActionBtn
             testid="loop-approve-ship-btn"
-            Icon={Rocket} label="Approve & Ship"
-            tone="primary" disabled={busy || expired}
+            icon={Rocket}
+            label={busy ? "Approving…" : "Approve & Ship"}
+            tone="primary"
+            disabled={busy || expired}
             onClick={() => onAction?.("approve_ship")}
           />
           <ActionBtn
             testid="loop-cancel-ship-btn"
-            Icon={X} label="Cancel ship"
-            tone="danger" disabled={busy || expired}
+            icon={X}
+            label="Cancel ship"
+            tone="danger"
+            disabled={busy || expired}
             onClick={() => onAction?.("cancel_ship")}
           />
         </div>
-      </div>
+      </GateCard>
     );
   }
   return (
-    <div
-      data-testid="user-action-card"
-      data-phase={phase}
-      role="region"
-      aria-label="Loop paused — your input needed"
-      style={{
-        margin: "10px 0",
-        padding: 14,
-        background: "linear-gradient(135deg, rgba(244,63,94,0.10), rgba(244,114,182,0.05))",
-        border: "1px solid rgba(244,63,94,0.40)",
-        borderRadius: 12,
-        display: "flex", flexDirection: "column", gap: 10,
-        fontFamily: "'JetBrains Mono', monospace",
-        boxShadow: "0 0 28px -10px rgba(244,63,94,0.45)",
-      }}
+    <GateCard
+      testId="user-action-card"
+      phase={phase}
+      ariaLabel="Loop paused — your input needed"
+      cardStyle={{ ...GATE_CARD_BASE, background: "linear-gradient(135deg, rgba(244,63,94,0.10), rgba(244,114,182,0.05))", border: "1px solid rgba(244,63,94,0.40)", boxShadow: "0 0 28px -10px rgba(244,63,94,0.45)" }}
+      icon={<AlertTriangle size={14} color="#fda4af" />}
+      title={<strong style={{ fontSize: 12, color: "#fda4af", letterSpacing: 0.4 }}>Loop paused at <code style={{ color: "#fff" }}>{phase}</code> — your input needed</strong>}
+      secondsLeft={secondsLeft}
+      expired={expired}
+      countdownIdleColor="#fb7185"
+      message={message}
+      preTestId="user-action-errors"
+      preColor="#fda4af"
+      preMaxHeight={140}
+      preShown={Array.isArray(errors) && errors.length > 0}
+      preText={errors.slice(0, 12).join("\n") + (errors.length > 12 ? "\n...and " + (errors.length - 12) + " more" : "")}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <AlertTriangle size={14} color="#fda4af" />
-        <strong style={{ fontSize: 12, color: "#fda4af", letterSpacing: 0.4 }}>
-          Loop paused at <code style={{ color: "#fff" }}>{phase}</code> — your input needed
-        </strong>
-        {secondsLeft != null && (
-          <span
-            data-testid="user-action-countdown"
-            className={secondsLeft <= 60 ? "aurem-countdown-urgent" : undefined}
-            style={{
-              marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4,
-              fontSize: 10.5, fontWeight: 700,
-              color: secondsLeft <= 60 ? "#fda4af" : "#fb7185",
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            <Clock size={11} />
-            {expired ? "Waiting to expire…" : formatCountdown(secondsLeft)}
-          </span>
-        )}
-      </div>
-      <div style={{
-        fontSize: 11.5, color: "var(--text, #e8ecf3)", lineHeight: 1.5,
-      }}>
-        {message}
-      </div>
-      {Array.isArray(errors) && errors.length > 0 && (
-        <pre
-          data-testid="user-action-errors"
-          style={{
-            margin: 0, padding: "8px 10px",
-            background: "rgba(0,0,0,0.40)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 6,
-            fontSize: 10.5, color: "#fda4af",
-            maxHeight: 140, overflowY: "auto",
-            whiteSpace: "pre-wrap", wordBreak: "break-all",
-          }}
-        >
-          {errors.slice(0, 12).join("\n")}
-          {errors.length > 12 && `\n…and ${errors.length - 12} more`}
-        </pre>
-      )}
       <textarea
         data-testid="user-action-feedback"
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}
         placeholder="Optional note for ORA (e.g. 'try a different library')"
+        rows={2}
         disabled={busy}
-        style={{
-          width: "100%", minHeight: 52,
-          padding: "8px 10px",
-          background: "var(--surface-2, rgba(255,255,255,0.04))",
-          border: "1px solid var(--border, rgba(255,255,255,0.12))",
-          borderRadius: 8,
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 11, color: "var(--text, #e8ecf3)",
-          resize: "vertical",
-        }}
+        style={{ width: "100%", resize: "vertical", background: "rgba(255,255,255,0.04)", color: "inherit", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: 8, fontSize: 12, fontFamily: "inherit" }}
       />
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <ActionBtn
           testid="loop-retry-btn"
-          Icon={Play} label="Try a different approach"
-          tone="primary" disabled={busy || expired}
+          icon={Play}
+          label={busy ? "Retrying…" : "Try a different approach"}
+          tone="primary"
+          disabled={busy || expired}
           onClick={() => onAction?.("retry", feedback || undefined)}
         />
         <ActionBtn
           testid="loop-skip-btn"
-          Icon={SkipForward} label="Skip this step"
-          tone="warn" disabled={busy || expired}
+          icon={SkipForward}
+          label="Skip this step"
+          tone="warn"
+          disabled={busy || expired}
           onClick={() => onAction?.("skip", feedback || undefined)}
         />
         <ActionBtn
           testid="loop-abort-btn"
-          Icon={X} label="Abort loop"
-          tone="danger" disabled={busy || expired}
+          icon={X}
+          label="Abort loop"
+          tone="danger"
+          disabled={busy || expired}
           onClick={() => onAction?.("abort", feedback || undefined)}
         />
       </div>
-    </div>
+    </GateCard>
   );
 }
 

@@ -142,13 +142,9 @@ async def _replay_retry_gen(rec: dict, body: "ChatBody"):
     )
 
 
-# ─── Iter 212m-149 — Intent Gateway live-classify endpoint ────────────
-# Used by the chat composer to render the live tier-dot indicator
-# (casual / query / agentic) as the user types.  Heuristic-only
-# (escalate_to_llm=False) so it returns in <5 ms with no LLM cost.
+# NOTE (Fix #22): the Iter 212m-149 Intent Gateway live-classify comment that was here now sits above POST /classify-intent in backend/routers/chat/misc.py.
 
 
-@router.post("/stream")
 async def _chat_stream_authenticate_and_tag_request(body, authorization):
     _r10_turn_t0 = time.monotonic()  # R10 FOCUS MODE temp instrumentation
     logger.info("R10_TIMING turn_start prompt=%r session=%s project=%s",
@@ -563,6 +559,7 @@ async def _chat_stream_setup_plain_english_panel(_r10_council_t0, _recall_mode, 
     return _plain_english_active, extra_sys
 
 
+@router.post("/stream")
 async def chat_stream(
     request: Request,
     body: ChatBody,
