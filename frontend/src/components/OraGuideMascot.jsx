@@ -132,6 +132,11 @@ export default function OraGuideMascot() {
   const { pathname } = useLocation();
   const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem("aurem_token"));
   const [open, setOpen] = useState(false);
+  // Minor 11 - tracks whether the Advisor panel is open (via the
+  // aurem:ora-panel-state event, see below). While it is open the
+  // mascot hides entirely, so the floating button can never sit on
+  // the Advisor input/send row.
+  const [advisorOpen, setAdvisorOpen] = useState(false);
   const [autoGroup, setAutoGroup] = useState(null);  // stage-triggered bubble
   const [panelMode, setPanelMode] = useState("stage"); // "stage" | "external" | "first_scan" | "general" | "suggestions" | "escalating" | "escalated"
   const pollRef = useRef(null);
@@ -268,6 +273,15 @@ export default function OraGuideMascot() {
     return () => window.removeEventListener("aurem:ora-busy-status", onStatus);
   }, []);
 
+  // Minor 11 - the Advisor panel announces open/close on
+  // aurem:ora-panel-state with detail { open }. Same window-event
+  // pattern as the busy-status listener above.
+  useEffect(() => {
+    const onPanelState = (e) => setAdvisorOpen(!!e?.detail?.open);
+    window.addEventListener("aurem:ora-panel-state", onPanelState);
+    return () => window.removeEventListener("aurem:ora-panel-state", onPanelState);
+  }, []);
+
   useEffect(() => {
     setLoggedIn(!!localStorage.getItem("aurem_token"));
     const onStorage = (e) => { if (e.key === "aurem_token") setLoggedIn(!!e.newValue); };
@@ -280,7 +294,7 @@ export default function OraGuideMascot() {
   // a brand-new user never sees two onboarding overlays competing at
   // once.
   const canShowMascot = useCanShowOverlay("mascot");
-  const hidden = !loggedIn || shouldHide(pathname) || !canShowMascot;
+  const hidden = !loggedIn || shouldHide(pathname) || !canShowMascot || advisorOpen;
 
   // At most one gentle nudge per session: once Fix List has open
   // items for the active project, wait a moment (so it never wins a
@@ -659,8 +673,13 @@ export default function OraGuideMascot() {
             // height so it scrolls instead of overflowing the
             // viewport on shorter screens. 2026-10 — "fixlist-all" can
             // list up to 20 items, same cap/scroll treatment.
-            maxHeight: (panelMode === "suggestions" || panelMode === "fixlist-all") ? "min(70vh, 560px)" : undefined,
-            overflowY: (panelMode === "suggestions" || panelMode === "fixlist-all") ? "auto" : undefined,
+            // Minor 16 - the panel bottom edge sits 160px above the viewport
+            // bottom (92px root + 68px panel offset), so on a shorter viewport a
+            // tall panel used to reach the top bar and cover the Switch project
+            // button until dismissed. Cap every mode to leave 88px clear at the
+            // top; the panel scrolls instead of growing into the header.
+            maxHeight: "min(70vh, 560px, calc(100vh - 248px))",
+            overflowY: "auto",
           }}
         >
           <div style={{

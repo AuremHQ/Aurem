@@ -170,6 +170,16 @@ function DashboardV2Body() {
   // every login / refresh; opens only when clicked.
   const [advisorCollapsed, setAdvisorCollapsed] = useState(true);
 
+  // Minor 11 - announce the dashboard Ask Advisor panel on the same
+  // aurem:ora-panel-state event useORAPanel dispatches, so the floating
+  // ORA Guide button hides while the Advisor is open instead of covering
+  // its input/send row.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent("aurem:ora-panel-state", { detail: { open: !advisorCollapsed } }));
+    } catch { /* ignore */ }
+  }, [advisorCollapsed]);
+
   // 2026-08-20 — bug fix: OraGuideMascot's "Open Advisor" button
   // dispatches `aurem:ora-open` expecting FloatingORAButton to pick
   // it up, but FloatingORAButton is only mounted in Shell.jsx when
