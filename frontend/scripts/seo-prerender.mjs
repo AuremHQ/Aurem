@@ -429,7 +429,7 @@ function privacyBody() {
   );
   return `<main>${marked.parse(md)}</main>`;
 }
-
+function termsBody() {  const md = readFileSync(    join(ROOT, "public", "policies", "terms-of-service.md"), "utf8",  );  return `<main>${marked.parse(md)}</main>`;}
 // 2026-09-12 · is-agentic.com agent-readiness fixes — /developers
 // needs the same real-HTML-without-JS treatment as /about, /contact.
 function developersBody() {
@@ -496,7 +496,7 @@ ${sections}
   written += 1;
   console.log("[seo-prerender] wrote /privacy/index.html");
 }
-
+  {    let html = swapHead(base, {      title: "Terms of Service — AUREM",      description: "AUREM terms of service: service description, eligibility, GitHub access, AI-generated code, acceptable use, subscriptions and billing, data and privacy, liability and governing law.",      canonical: "https://auremcto.com/terms",    });    html = injectRoot(html, termsBody());    mkdirSync(join(DIST, "terms"), { recursive: true });    writeFileSync(join(DIST, "terms", "index.html"), html);    written += 1;    console.log("[seo-prerender] wrote /terms/index.html");  }
 {
   let html = swapHead(base, DEVELOPERS);
   html = injectRoot(html, developersBody());
