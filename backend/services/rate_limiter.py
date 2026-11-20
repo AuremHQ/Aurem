@@ -24,8 +24,10 @@ pod a shared view of the same sliding window.
 Suspended when env RATE_LIMIT_DISABLED=1 (tests).
 """
 from __future__ import annotations
+import asyncio
 import logging
 import os
+import random
 import re
 import time
 import uuid
@@ -241,6 +243,17 @@ _REDIS_LAST_ERROR_WAS_RATE_LIMITED: bool = False
 _REDIS_WARN_LAST_SIG: str | None = None
 _REDIS_WARN_LAST_MINUTE: int = 0
 _REDIS_WARN_SUPPRESSED_COUNT: int = 0
+# 2026-11-19 - first-handshake stagger: N workers booting at once used
+# to dial Upstash in the same instant (ping + SCRIPT LOAD + EVALSHA each).
+# The first _ensure_redis() attempt in a process now waits a small random
+# delay first. Env-tunable; 0 disables it (tests do this).
+_REDIS_INIT_JITTER_S = float(os.getenv("RATE_LIMIT_REDIS_INIT_JITTER_S", "0.25"))
+# EVALSHA retry budget: transient (dropped connection / timeout) errors only.
+# Upstash ResponseErrors - including "temporarily rate-limited" - are never
+# retried; they arm the cooldown immediately (see _note_redis_failure).
+_REDIS_EVALSHA_MAX_ATTEMPTS = 3
+_REDIS_EVALSHA_RETRY_BASE_S = 0.05
+_REDIS_EVALSHA_RETRY_JITTER_S = 0.05
 
 
 def _redact_redis_url(url: str) -> str:
@@ -256,6 +269,112 @@ def _redact_redis_url(url: str) -> str:
         return f"{host}:{port}"
     except Exception:
         return "<unparseable>"
+
+
+
+def _is_rate_limited_error(exc: BaseException) -> bool:
+    """True when the error text carries Upstash's own backoff signal
+    ("... temporarily rate-limited ..."). Any other failure - timeout,
+    connection refused, generic quota error - is not this."""
+    return _REDIS_RATE_LIMITED_SNIPPET in str(exc).lower()
+
+
+def _is_transient_redis_error(exc: BaseException) -> bool:
+    """True for errors worth one bounded retry of the EVALSHA: a dropped
+    connection or a timeout, where the command may never have landed.
+    ResponseErrors are never transient here - a rate-limited answer is a
+    deliberate 'back off' from the provider, and any other ResponseError
+    is a deterministic rejection, not a blip worth re-issuing."""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    return (
+        type(exc).__module__.split(".")[0] == "redis"
+        and type(exc).__name__ in {"ConnectionError", "TimeoutError"}
+    )
+
+
+def _log_redis_warning(exc: BaseException) -> None:
+    """The single throttled 'Redis unavailable' log line, shared by the
+    connect path and the mid-request path: one line per minute per
+    (type, first-80-chars) signature, with a suppressed-duplicates tally
+    when the minute rolls over. Without this, the mid-request path logged
+    on every single request while Redis was down."""
+    global _REDIS_WARN_LAST_SIG, _REDIS_WARN_LAST_MINUTE, _REDIS_WARN_SUPPRESSED_COUNT
+    sig = f"{type(exc).__name__}:{str(exc)[:80]}"
+    now_min = int(time.time() // 60)
+    error_text = f"{type(exc).__name__}: {str(exc)[:250]}"
+    if sig != _REDIS_WARN_LAST_SIG:
+        _REDIS_WARN_LAST_SIG = sig
+        _REDIS_WARN_LAST_MINUTE = now_min
+        _REDIS_WARN_SUPPRESSED_COUNT = 0
+        logger.warning(
+            "rate_limiter: Redis unavailable at host=%s error=%s - falling back to per-process in-memory",
+            _REDIS_HOST_REDACTED,
+            error_text,
+        )
+    elif now_min != _REDIS_WARN_LAST_MINUTE:
+        _REDIS_WARN_LAST_MINUTE = now_min
+        logger.warning(
+            "rate_limiter: Redis unavailable at host=%s error=%s - falling back to per-process in-memory (%d identical warnings suppressed in the last minute)",
+            _REDIS_HOST_REDACTED,
+            error_text,
+            _REDIS_WARN_SUPPRESSED_COUNT,
+        )
+        _REDIS_WARN_SUPPRESSED_COUNT = 0
+    else:
+        _REDIS_WARN_SUPPRESSED_COUNT += 1
+
+
+def _note_redis_failure(exc: BaseException) -> None:
+    """Mark Redis down after a failure observed anywhere - connect/ping/
+    SCRIPT LOAD in _ensure_redis() OR a mid-request EVALSHA/EVAL in
+    check_rate_limit_async().
+
+    2026-11-19: the mid-request path used to only log and fall back,
+    leaving the cached client marked active and no cooldown armed, so
+    the next request re-issued EVALSHA against a database that had just
+    rate-limited us - hammering it on every request and logging every
+    time. Recording the failure here arms the same cooldown
+    _ensure_redis() already honours (300 s for a rate-limited answer,
+    30 s otherwise) and drops the cached client, so no Redis command is
+    attempted again until the cooldown expires."""
+    global _REDIS_CLIENT, _REDIS_BACKEND_ACTIVE, _REDIS_LAST_ERROR
+    global _REDIS_LAST_ATTEMPT_TS, _REDIS_LAST_ERROR_WAS_RATE_LIMITED
+    _REDIS_CLIENT = None
+    _REDIS_BACKEND_ACTIVE = False
+    _REDIS_LAST_ERROR = f"{type(exc).__name__}: {str(exc)[:250]}"
+    _REDIS_LAST_ERROR_WAS_RATE_LIMITED = _is_rate_limited_error(exc)
+    _REDIS_LAST_ATTEMPT_TS = time.time()
+    _log_redis_warning(exc)
+
+
+async def _evalsha_with_retry(client, rkey, now_ms, window_ms, limit_per_minute, mid):
+    """Run the sliding-window Lua script, retrying transient errors only.
+
+    Retries reuse the same member id, so a request whose first attempt
+    actually landed server-side is not double-counted (ZADD is
+    idempotent per member). Backoff is exponential with jitter:
+    ~50 ms, then ~100 ms. NOSCRIPT / missing-SHA and all ResponseErrors
+    propagate immediately - they are handled (or cooled down) by the
+    caller, never retried."""
+    for attempt in range(_REDIS_EVALSHA_MAX_ATTEMPTS):
+        try:
+            if _REDIS_LUA_SHA is None:
+                raise RuntimeError("lua_sha_missing")
+            return await client.evalsha(
+                _REDIS_LUA_SHA, 1, rkey,
+                str(now_ms), str(window_ms), str(limit_per_minute), mid,
+            )
+        except Exception as e:
+            if "NOSCRIPT" in repr(e) or "lua_sha_missing" in repr(e):
+                raise
+            if not _is_transient_redis_error(e) or attempt == _REDIS_EVALSHA_MAX_ATTEMPTS - 1:
+                raise
+            await asyncio.sleep(
+                _REDIS_EVALSHA_RETRY_BASE_S * (2 ** attempt)
+                + random.uniform(0, _REDIS_EVALSHA_RETRY_JITTER_S)
+            )
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 async def _ensure_redis():
@@ -291,6 +410,10 @@ async def _ensure_redis():
             and (time.time() - _REDIS_LAST_ATTEMPT_TS) < _effective_cooldown):
         return None
     _REDIS_LAST_ATTEMPT_TS = time.time()
+    if not _REDIS_TRIED and _REDIS_INIT_JITTER_S > 0:
+        # First handshake in this process: jitter it so N workers booting
+        # together don't all dial Upstash in the same instant.
+        await asyncio.sleep(random.uniform(0, _REDIS_INIT_JITTER_S))
     _REDIS_HOST_REDACTED = _redact_redis_url(url)
     try:
         from redis import asyncio as aioredis
@@ -314,44 +437,10 @@ async def _ensure_redis():
             _REDIS_TRIED = True
         return client
     except Exception as e:
-        global _REDIS_WARN_LAST_SIG, _REDIS_WARN_LAST_MINUTE, _REDIS_WARN_SUPPRESSED_COUNT
-        _REDIS_CLIENT = None
-        _REDIS_BACKEND_ACTIVE = False
-        # Capture the FULL error string (type + message) so the health
-        # probe can surface WHY the connection failed. Truncated to
-        # 300 chars so a huge traceback doesn't blow up the JSON.
-        _REDIS_LAST_ERROR = f"{type(e).__name__}: {str(e)[:250]}"
-        _REDIS_LAST_ERROR_WAS_RATE_LIMITED = (
-            _REDIS_RATE_LIMITED_SNIPPET in str(e).lower()
-        )
-        # Iter 388-noise · throttle policy:
-        #   · NEW error signature       → log immediately (flap visible)
-        #   · SAME signature, new minute → log once with a suppression tally
-        #   · SAME signature, same minute → drop silently (still counted)
-        # Signature keys on error type + first 80 chars of message so
-        # different reasons (quota-exceeded vs conn-refused vs timeout)
-        # each get their own visibility.
-        sig = f"{type(e).__name__}:{str(e)[:80]}"
-        now_min = int(time.time() // 60)
-        if sig != _REDIS_WARN_LAST_SIG:
-            logger.warning(
-                "rate_limiter: Redis unavailable at host=%s error=%s "
-                "— falling back to per-process in-memory",
-                _REDIS_HOST_REDACTED, _REDIS_LAST_ERROR)
-            _REDIS_WARN_LAST_SIG = sig
-            _REDIS_WARN_LAST_MINUTE = now_min
-            _REDIS_WARN_SUPPRESSED_COUNT = 0
-        elif now_min != _REDIS_WARN_LAST_MINUTE:
-            logger.warning(
-                "rate_limiter: Redis unavailable at host=%s error=%s "
-                "— falling back to per-process in-memory "
-                "(%d identical warnings suppressed in the last minute)",
-                _REDIS_HOST_REDACTED, _REDIS_LAST_ERROR,
-                _REDIS_WARN_SUPPRESSED_COUNT)
-            _REDIS_WARN_LAST_MINUTE = now_min
-            _REDIS_WARN_SUPPRESSED_COUNT = 0
-        else:
-            _REDIS_WARN_SUPPRESSED_COUNT += 1
+        # One shared failure path with the mid-request EVALSHA handler:
+        # record the error (arming the cooldown), log it once per minute
+        # per signature, and stay on in-memory until the cooldown expires.
+        _note_redis_failure(e)
         _REDIS_TRIED = True
         return None
 
@@ -389,11 +478,8 @@ async def check_rate_limit_async(key: str, limit_per_minute: int) -> bool:
         # EVALSHA when the script is loaded (fast path), fall back to
         # EVAL on NOSCRIPT (rare — Redis restarted).
         try:
-            if _REDIS_LUA_SHA is None:
-                raise RuntimeError("lua_sha_missing")
-            res = await client.evalsha(
-                _REDIS_LUA_SHA, 1, rkey,
-                str(now_ms), str(window_ms), str(limit_per_minute), mid,
+            res = await _evalsha_with_retry(
+                client, rkey, now_ms, window_ms, limit_per_minute, mid
             )
         except Exception as e:
             # NOSCRIPT or dropped SHA — reload once and retry via EVAL.
@@ -407,13 +493,13 @@ async def check_rate_limit_async(key: str, limit_per_minute: int) -> bool:
                 raise
         return bool(int(res))
     except Exception as e:                                    # noqa: BLE001
-        # Redis went sideways mid-request. Fail OPEN (allow) via the
-        # in-memory path so we don't 429 legitimate users on a Redis
-        # outage. Log so we notice.
-        logger.warning(
-            "rate_limiter: Redis path failed (%s), fell back to in-memory",
-            type(e).__name__)
-        return check_rate_limit(key, limit_per_minute)
+            # Redis went sideways mid-request. Fail OPEN (allow) via the
+            # in-memory path so we do not 429 legitimate users on a Redis
+            # outage - and record the failure so the cooldown arms: without
+            # this, the next request re-issued EVALSHA against a database
+            # that had just rate-limited us (2026-11-19).
+            _note_redis_failure(e)
+            return check_rate_limit(key, limit_per_minute)
 
 
 def redis_backend_active() -> bool:

@@ -81,6 +81,7 @@ from routers.harness_downloads import router as harness_downloads_router  # Aure
 from routers.admin_harness import router as admin_harness_router  # Aurem Loop harness Phase B — admin release/download-log view
 from routers.harness_telemetry import router as harness_telemetry_router  # Aurem Loop harness Fix E — /api/harness/telemetry (external client contract, no /aurem-dev segment)
 from routers.mcp import router as mcp_router, mcp_discovery_root
+from routers.api_catalog import api_catalog_root
 from routers.mcp_ora_chat import router as mcp_ora_chat_router  # 2026-09-28 ORA Chat MCP (admin-only, Part A)
 from routers.admin_gateway import router as admin_gateway_router  # 2026-09-28 ORA Chat MCP/Gateway key admin API
 from routers.vercel import router as vercel_router  # Iter 212m-84 — Vercel platform tools for ORA
@@ -4175,6 +4176,7 @@ app.include_router(payments_router,      prefix="/api/aurem-dev")
 app.include_router(stripe_webhook_compat_router, prefix="/api")
 app.include_router(harness_router, prefix="/api")
 app.include_router(ask_router)  # NLWeb: GET/POST /ask (no prefix)
+app.include_router(ask_router, prefix='/api')  # NLWeb: GET/POST /api/ask - same handler under /api so nginx (which only proxies /api/*) reaches it
 app.include_router(harness_downloads_router, prefix="/api/aurem-dev")  # /api/aurem-dev/harness/download — logged-in browser user
 app.include_router(admin_harness_router, prefix="/api/aurem-dev")  # /api/aurem-dev/admin/harness/* — release + download-log admin view
 app.include_router(harness_telemetry_router, prefix="/api")  # /api/harness/telemetry — external harness client, matches its hardcoded URL exactly
@@ -4285,5 +4287,10 @@ app.add_route(
 app.add_route(
     "/.well-known/openid-configuration",
     openid_configuration_root,
+    methods=["GET"],
+)
+app.add_route(
+    "/.well-known/api-catalog",
+    api_catalog_root,
     methods=["GET"],
 )
