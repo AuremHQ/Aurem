@@ -1098,3 +1098,7 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-11-19
 
 - `services/cron_runner.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-19T02:19:24.790578Z] <!-- inv:service:services/cron_runner.py -->
+
+### Iter 0 · 2026-11-20
+
+| `routers/api_catalog.py` | `(none)` | 0 | auto-detected new router (verify) (Iter 0, 2026-11-20T00:29:35.579943Z) | <!-- inv:router:routers/api_catalog.py -->
