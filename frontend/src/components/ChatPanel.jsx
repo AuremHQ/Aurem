@@ -6555,10 +6555,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         {rateLimitInfo && (
           <RateLimitState retryInSeconds={rateLimitInfo.retrySecs} onUnlockAlternative={() => setRateLimitInfo(null)} alternativeLabel="Dismiss for now" />
         )}
-        {turns.length === 1 && (
+        {messages.length === 1 && (
           <EmptyState title="No messages yet" message="Describe the fix you want, or pick a starter prompt below." />
         )}
-        {turns.length === 0 && (
+        {messages.length === 0 && (
           <LoadingSkeleton lines={3} label="Loading messages…" />
         )}
         <div className="composer-card" data-testid="composer-card"
