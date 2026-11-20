@@ -24,6 +24,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { toast } from "../components/Toast";
+import { ReconnectingBanner } from "../components/ui-states/UiStates.jsx";
 
 const REFRESH_MS = 30_000;
 const PROD_ORIGIN = "https://auremcto.com";
@@ -82,6 +83,7 @@ export default function AdminSystemHealth() {
   const [failedOpen, setFailedOpen] = useState(false);   // Iter 351 — expand feedback
   const [learning, setLearning]     = useState(null);
   const [loopMetrics, setLoopMetrics] = useState(null);
+  const [loopRetries, setLoopRetries] = useState(0);
   const [tokenMetrics, setTokenMetrics] = useState(null);
   const [webhookFence, setWebhookFence] = useState(null);
   const [webhookFenceInstallOnly, setWebhookFenceInstallOnly] = useState(false);
@@ -140,8 +142,8 @@ export default function AdminSystemHealth() {
     // credentials into a terminal.
     try {
       const r = await api.get("/admin/loop-metrics");
-      setLoopMetrics(r.data);
-    } catch (e) { nextErrs.loop_metrics = e?.response?.data?.detail || e?.message || "loop-metrics failed"; }
+      setLoopMetrics(r.data); setLoopRetries(0);
+    } catch (e) { nextErrs.loop_metrics = e?.response?.data?.detail || e?.message || "loop-metrics failed"; setLoopRetries((n) => n + 1); }
 
     // 6) Iter 309 · Batch-2 Item 4 — per-loop LLM token accounting.
     // Feeds the new "Loop Token Metrics" card. Renders per-phase
@@ -496,9 +498,12 @@ export default function AdminSystemHealth() {
             return StatusBadge("ok");
           })()}
         >
-          {errs.loop_metrics ? (
+        {errs.loop_metrics ? (
+          <>
             <div style={{ fontSize: 12, color: C.red }}>{errs.loop_metrics}</div>
-          ) : loopMetrics ? (
+            <ReconnectingBanner attempt={Math.max(1, Math.min(loopRetries, 5))} total={5} onRetry={fetchAll} />
+          </>
+        ) : loopMetrics ? (
             <>
               {/* Iter 309-b — explicit data-source identity so the
                   founder can confirm this card is reading prod

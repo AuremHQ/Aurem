@@ -995,3 +995,83 @@ class TestExeSidecar:
                                headers={"Authorization": "Bearer x"})
         assert resp.status_code == 409
         assert resp.json()["detail"]["error"] == "no_release_available"
+
+
+async def test_signed_in_zip_download_headers_match_the_file_actually_served():
+    """Regression: the signed-in zip is personalized per installation, so
+    its size and SHA-256 differ from the release record; the response must
+    carry the hash and size of the file actually served."""
+    from services import harness_releases
+
+    db = _FakeDB()
+    db.dev_users.docs.append({"user_id": "sub1", "tier": "pro"})
+    base_zip = _synthetic_zip()
+    rel = await harness_releases.create_draft_release(
+        db, version="0.0.1-test", platform="windows",
+        changelog=["t"], mandatory=False,
+        artifact_bytes=base_zip, source="test_fixture",
+        created_by="admin1",
+    )
+    await harness_releases.publish_release(db, release_id=rel["release_id"])
+
+    app, hd_mod = _app_with_download_router(db)
+
+    async def _fake_current_dev(authorization=None):
+        return {"user_id": "sub1", "tier": "pro"}
+
+    with patch.object(hd_mod, "require_db", lambda: db), patch.object(hd_mod, "current_dev", _fake_current_dev):
+        client = TestClient(app)
+        resp = client.post("/api/aurem-dev/harness/download",
+                           headers={"Authorization": "Bearer x"})
+
+    assert resp.status_code == 200
+    delivered_sha256 = hashlib.sha256(resp.content).hexdigest()
+    assert resp.headers["x-aurem-package-sha256"] == delivered_sha256
+    assert resp.headers["x-aurem-package-size-bytes"] == str(len(resp.content))
+    # Personalized: the delivered file is not the base artifact, so its
+    # hash and size must differ from the release record.
+    assert delivered_sha256 != rel["artifact_sha256"]
+    assert len(resp.content) != len(base_zip)
+    row = db.harness_downloads.docs[-1]
+    assert row["delivered_sha256"] == delivered_sha256
+    assert row["delivered_size_bytes"] == len(resp.content)
+
+
+async def test_exe_download_headers_match_the_file_actually_served():
+    """The attached .exe is served verbatim, so the delivered hash is also
+    the release record exe_sha256 -- and the response must carry it under
+    the same header the frontend reads for the zip."""
+    from services import harness_releases
+
+    db = _FakeDB()
+    db.dev_users.docs.append({"user_id": "sub1", "tier": "pro"})
+    exe = b"MZ" + b"\x00" * 512
+    rel = await harness_releases.create_draft_release(
+        db, version="0.8.0", platform="windows",
+        changelog=["t"], mandatory=False,
+        artifact_bytes=_synthetic_zip(), source="test_fixture",
+        created_by="admin1",
+    )
+    await harness_releases.publish_release(db, release_id=rel["release_id"])
+    await harness_releases.attach_exe(db, release_id=rel["release_id"], exe_bytes=exe)
+    latest = await harness_releases.get_latest_release(db, platform="windows")
+
+    app, hd_mod = _app_with_download_router(db)
+
+    async def _fake_current_dev(authorization=None):
+        return {"user_id": "sub1", "tier": "pro"}
+
+    with patch.object(hd_mod, "require_db", lambda: db), patch.object(hd_mod, "current_dev", _fake_current_dev):
+        client = TestClient(app)
+        resp = client.post("/api/aurem-dev/harness/download-exe",
+                           headers={"Authorization": "Bearer x"})
+
+    assert resp.status_code == 200
+    assert resp.content == exe
+    assert resp.headers["x-aurem-package-sha256"] == hashlib.sha256(exe).hexdigest()
+    assert resp.headers["x-aurem-package-sha256"] == latest["exe_sha256"]
+    assert resp.headers["x-aurem-package-size-bytes"] == str(len(exe))
+    assert latest["exe_size_bytes"] == len(exe)
+    row = db.harness_downloads.docs[-1]
+    assert row["delivered_sha256"] == latest["exe_sha256"]
+    assert row["delivered_size_bytes"] == len(exe)

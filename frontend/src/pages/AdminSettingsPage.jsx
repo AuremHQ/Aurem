@@ -13,6 +13,7 @@ import React, { useState, useEffect } from "react";
 import { Brain, Cpu } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "../components/Toast";
+import { ErrorState, SuccessState, WarningState } from "../components/ui-states/UiStates.jsx";
 import AuremAdminPanel from "../components/AuremAdminPanel";
 import AdminThinkingHints from "../components/AdminThinkingHints";
 import TwoFactorCard from "../components/TwoFactorCard";
@@ -674,6 +675,8 @@ function LlmSettingsCard() {
   const [saving, setSaving] = useState(false);
   const [testResults, setTestResults] = useState({});   // config_id -> {ok, latency_ms, error}
   const [testingId, setTestingId] = useState(null);
+  const [feedback, setFeedback] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   async function refresh() {
     try {
@@ -681,7 +684,7 @@ function LlmSettingsCard() {
       setConfigs(r.data.configs || []);
     } catch (e) {
       setConfigs([]);
-      toast({ message: e?.response?.data?.detail || "Could not load LLM configs", kind: "error" });
+      setFeedback({ kind: "error", title: "Could not load LLM configs", message: e?.response?.data?.detail || undefined, retry: true });
     }
   }
   useEffect(() => { refresh(); }, []);
@@ -721,7 +724,7 @@ function LlmSettingsCard() {
 
   async function save() {
     const err = validate();
-    if (err) { toast({ message: err, kind: "warning" }); return; }
+    if (err) { setFeedback({ kind: "error", title: "Config not saved", message: err }); return; }
     setSaving(true);
     try {
       const payload = {
@@ -732,37 +735,40 @@ function LlmSettingsCard() {
       if (editingId) {
         if (form.api_key.trim()) payload.api_key = form.api_key.trim();
         await api.put(`/admin/llm/configs/${editingId}`, payload);
-        toast({ message: "Config updated", kind: "success" });
+        setFeedback({ kind: "success", title: "Config updated" });
       } else {
         payload.api_key = form.api_key.trim();
         await api.post("/admin/llm/configs", payload);
-        toast({ message: "Config added", kind: "success" });
+        setFeedback({ kind: "success", title: "Config added" });
       }
       cancelForm();
       await refresh();
     } catch (e) {
-      toast({ message: e?.response?.data?.detail || "Save failed", kind: "error" });
+      setFeedback({ kind: "error", title: "Save failed", message: e?.response?.data?.detail || undefined });
     } finally { setSaving(false); }
   }
 
-  async function remove(cfg) {
-    if (!window.confirm(`Delete "${cfg.label}"? This can't be undone.`)) return;
+  function askRemove(cfg) { setPendingDelete(cfg); }
+  async function confirmRemove() {
+    const cfg = pendingDelete;
+    setPendingDelete(null);
+    if (!cfg) return;
     try {
       await api.delete(`/admin/llm/configs/${cfg.config_id}`);
-      toast({ message: "Config deleted", kind: "success" });
+      setFeedback({ kind: "success", title: "Config deleted" });
       await refresh();
     } catch (e) {
-      toast({ message: e?.response?.data?.detail || "Delete failed", kind: "error" });
+      setFeedback({ kind: "error", title: "Delete failed", message: e?.response?.data?.detail || undefined });
     }
   }
 
   async function setActive(cfg) {
     try {
       await api.post(`/admin/llm/configs/${cfg.config_id}/set-active`, { role: cfg.role });
-      toast({ message: `${cfg.label} is now active for "${cfg.role}"`, kind: "success" });
+      setFeedback({ kind: "success", title: `${cfg.label} is now active for "${cfg.role}"` });
       await refresh();
     } catch (e) {
-      toast({ message: e?.response?.data?.detail || "Could not set active", kind: "error" });
+      setFeedback({ kind: "error", title: "Could not set active", message: e?.response?.data?.detail || undefined });
     }
   }
 
@@ -811,6 +817,21 @@ function LlmSettingsCard() {
         encrypted at rest and never shown again after saving.
       </div>
 
+      {feedback && feedback.kind === "success" && (
+        <SuccessState title={feedback.title} />
+      )}
+      {feedback && feedback.kind === "error" && (
+        <ErrorState title={feedback.title} message={feedback.message || undefined} onRetry={feedback.retry ? refresh : undefined} />
+      )}
+      {pendingDelete && (
+        <WarningState
+          title={`Delete "${pendingDelete.label}"?`}
+          consequences="This can't be undone."
+          confirmLabel="Delete"
+          onConfirm={confirmRemove}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
       {configs === null && (
         <div style={{ color: "var(--text-faint)", fontSize: 12 }}>Loading…</div>
       )}
@@ -870,7 +891,7 @@ function LlmSettingsCard() {
             </button>
             <button data-testid={`admin-llm-delete-btn-${cfg.config_id}`}
                     className="btn-secondary" style={{ fontSize: 11, padding: "5px 10px", color: "#fca5a5" }}
-                    onClick={() => remove(cfg)}>
+                    onClick={() => askRemove(cfg)}>
               Delete
             </button>
           </div>

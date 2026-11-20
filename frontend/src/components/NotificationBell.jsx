@@ -23,6 +23,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../lib/api";
+import { OptimisticToggle, SyncIndicator } from "./ui-states/UiStates.jsx";
 
 const POLL_MS = Number(import.meta?.env?.REACT_APP_BELL_POLL_MS || 12000);
 const SOUND_ENABLED_KEY = "aurem_bell_sound_enabled";
@@ -82,11 +83,20 @@ export default function NotificationBell() {
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [lastFetchedAt, setLastFetchedAt] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(() => {
     try { return localStorage.getItem(SOUND_ENABLED_KEY) === "1"; }
     catch { return false; }
   });
   const dropdownRef = useRef(null);
+  const panelRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    panelRef.current?.focus();
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   // Bell-2 tracking — previous unread count so we only beep on genuine
   // increase, not on every poll or on the initial mount. `null` on first
@@ -94,6 +104,7 @@ export default function NotificationBell() {
   const prevUnreadRef = useRef(null);
 
   const applyFetchResult = useCallback((d) => {
+    setLastFetchedAt(new Date());
     const list = Array.isArray(d?.notifications) ? d.notifications : [];
     const newUnread = Number(d?.unread_count || 0);
 
@@ -227,7 +238,7 @@ export default function NotificationBell() {
   return (
     <div style={{ position: "relative", display: "inline-block" }} ref={dropdownRef}>
       <button
-        data-testid="notification-bell-btn"
+        data-testid="notification-bell-btn" aria-expanded={open} aria-haspopup="dialog" aria-label={unread > 0 ? `${unread} unread notifications` : "Notifications"}
         onClick={() => setOpen(!open)}
         title={unread > 0 ? `${unread} unread` : "Notifications"}
         style={{
@@ -267,6 +278,7 @@ export default function NotificationBell() {
       {open && (
         <div
           data-testid="notification-bell-dropdown"
+          role="dialog" aria-label="Notifications" tabIndex={-1} ref={panelRef}
           style={{
             position: "absolute",
             right: 0, top: "calc(100% + 6px)",
@@ -292,18 +304,7 @@ export default function NotificationBell() {
               NOTIFICATIONS · {items.length}
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button
-                data-testid="notification-sound-toggle"
-                onClick={toggleSound}
-                title={soundEnabled ? "Sound on — click to mute" : "Sound off — click to enable & test"}
-                style={{
-                  background: "transparent",
-                  border: `1px solid ${C.border}`,
-                  color: soundEnabled ? C.green : C.faint,
-                  fontFamily: C.mono, fontSize: 11,
-                  padding: "3px 8px", borderRadius: 5, cursor: "pointer",
-                }}
-              >{soundEnabled ? "🔊 on" : "🔈 off"}</button>
+              <OptimisticToggle checked={soundEnabled} onChange={toggleSound} label="Sound" />
               {unread > 0 && (
                 <button
                   data-testid="mark-all-read-btn"
@@ -364,6 +365,7 @@ export default function NotificationBell() {
               </div>
             );
           })}
+      <SyncIndicator status={loading ? "syncing" : "synced"} lastSynced={lastFetchedAt ? lastFetchedAt.toLocaleTimeString() : undefined} onRetry={fetchNow} />
         </div>
       )}
     </div>

@@ -10,6 +10,13 @@
  *   t_login_landing_avoids_revoked  — if the saved active project is
  *                                     revoked, auto-switches to the next
  *                                     valid one + shows a notice toast
+ *   t_add_repository_opens_connect_flow — the switcher menu offers a
+ *                                   working Add repository entry
+ *   t_add_repository_visible_with_no_projects — the entry shows even
+ *                                   before any project is connected
+ *   t_add_repository_default_navigates_to_connect_flow — without a
+ *                                   handler the entry opens
+ *                                   /projects?flow=connect-repo
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -125,5 +132,52 @@ describe("ProjectSwitcher — R3 Repo Quick-Switch", () => {
     expect(nameX.textContent).toBe("Staging clone");
     expect(nameY.textContent).toBe("Prod mirror");
     expect(nameX.textContent).not.toBe(nameY.textContent);
+  });
+
+  it("t_add_repository_opens_connect_flow: the switcher menu offers a working Add repository entry", async () => {
+    get.mockResolvedValue({ data: { statuses: [] } });
+    const onSelect = vi.fn();
+    const onAddRepository = vi.fn();
+    render(<ProjectSwitcher projects={PROJECTS} activeProjectId="p_a" onSelect={onSelect} onAddRepository={onAddRepository} />);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("project-switcher-trigger"));
+    fireEvent.click(await screen.findByTestId("project-switcher-add-repository"));
+    expect(onAddRepository).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("t_add_repository_visible_with_no_projects: the Add entry shows even before any project is connected", async () => {
+    get.mockResolvedValue({ data: { statuses: [] } });
+    const onSelect = vi.fn();
+    render(<ProjectSwitcher projects={[]} activeProjectId={null} onSelect={onSelect} onAddRepository={vi.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("project-switcher-trigger"));
+    expect(await screen.findByTestId("project-switcher-add-repository")).toBeInTheDocument();
+    expect(screen.getByTestId("project-switcher-empty")).toBeInTheDocument();
+  });
+
+  it("t_add_repository_default_navigates_to_connect_flow: without a handler the entry opens /projects?flow=connect-repo", async () => {
+    get.mockResolvedValue({ data: { statuses: [] } });
+    const onSelect = vi.fn();
+    const assign = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      value: { assign },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      render(<ProjectSwitcher projects={PROJECTS} activeProjectId="p_a" onSelect={onSelect} />);
+      await waitFor(() => expect(get).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("project-switcher-trigger"));
+      fireEvent.click(await screen.findByTestId("project-switcher-add-repository"));
+      expect(assign).toHaveBeenCalledWith("/projects?flow=connect-repo");
+    } finally {
+      Object.defineProperty(window, "location", {
+        value: originalLocation,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 });

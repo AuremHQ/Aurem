@@ -130,6 +130,16 @@ async def harness_release_status() -> dict:
         "changelog": release.get("changelog") or [],
         "mandatory": release.get("mandatory", False),
         "size_bytes": release.get("size_bytes"),
+        # sha256 / size_bytes describe the stored base artifact. The
+        # signed-in zip is personalized per installation (identity.json
+        # injected), so the file a user actually downloads has a
+        # different size and SHA-256; its hash and size are returned
+        # with that download in its X-Aurem-Package-SHA256 /
+        # X-Aurem-Package-Size-Bytes response headers. The attached
+        # .exe, by contrast, is served verbatim and matches exe_sha256.
+        "zip_download_personalized": True,
+        "base_package_sha256": release["artifact_sha256"],
+        "base_package_size_bytes": release.get("size_bytes"),
         "published_at": release.get("published_at"),
         "exe_available": bool(release.get("exe_sha256")),
         "exe_sha256": release.get("exe_sha256"),

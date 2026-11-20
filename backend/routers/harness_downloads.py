@@ -19,6 +19,7 @@ No release published yet -> a clean 409, never a fabricated package.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
@@ -75,6 +76,12 @@ async def harness_download(authorization: str | None = Header(None)) -> Response
 
     token = await issue_harness_token(db, user_id=user_id)
     package = inject_identity_into_zip(artifact_bytes, bin=user_id, token=token)
+    # The signed-in zip is personalized per installation (identity.json
+    # injected), so its size and SHA-256 differ from the release record
+    # (size_bytes / artifact_sha256, which describe the base artifact).
+    # Hash the exact bytes about to be served, so the SHA-256 shown to
+    # the user matches the file they actually download.
+    package_sha256 = hashlib.sha256(package).hexdigest()
 
     plan = user.get("tier") or "free"
     await db.harness_downloads.insert_one({
@@ -83,6 +90,8 @@ async def harness_download(authorization: str | None = Header(None)) -> Response
         "release_id": release["release_id"],
         "version": release["version"],
         "plan": plan,
+        "delivered_sha256": package_sha256,
+        "delivered_size_bytes": len(package),
         "issued_at": time.time(),
     })
 
@@ -90,7 +99,11 @@ async def harness_download(authorization: str | None = Header(None)) -> Response
     return Response(
         content=package,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Aurem-Package-SHA256": package_sha256,
+            "X-Aurem-Package-Size-Bytes": str(len(package)),
+        },
     )
 @router.post("/harness/download-exe")
 async def harness_download_exe(authorization: str | None = Header(None)) -> Response:
@@ -131,6 +144,10 @@ async def harness_download_exe(authorization: str | None = Header(None)) -> Resp
             "message": "No Windows installer has been attached to the latest release yet.",
         })
 
+    # Served verbatim, so this is also the release record's exe_sha256 --
+    # computed here from the bytes actually served, not copied from it.
+    exe_sha256 = hashlib.sha256(exe_bytes).hexdigest()
+
     plan = user.get("tier") or "free"
     await db.harness_downloads.insert_one({
         "grant_id": f"id_{uuid.uuid4().hex[:12]}",
@@ -139,6 +156,8 @@ async def harness_download_exe(authorization: str | None = Header(None)) -> Resp
         "version": release["version"],
         "format": "exe",
         "plan": plan,
+        "delivered_sha256": exe_sha256,
+        "delivered_size_bytes": len(exe_bytes),
         "issued_at": time.time(),
     })
 
@@ -146,5 +165,9 @@ async def harness_download_exe(authorization: str | None = Header(None)) -> Resp
     return Response(
         content=exe_bytes,
         media_type="application/vnd.microsoft.portable-executable",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Aurem-Package-SHA256": exe_sha256,
+            "X-Aurem-Package-Size-Bytes": str(len(exe_bytes)),
+        },
     )

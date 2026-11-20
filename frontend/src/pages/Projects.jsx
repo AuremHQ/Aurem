@@ -27,7 +27,7 @@ import FounderOfferPill from "../components/FounderOfferPill";
 import ConfirmModal from "../components/ConfirmModal";
 import RollbackConfirmModal from "../components/RollbackConfirmModal";
 import ArchitectBlueprintPanel from "../components/ArchitectBlueprintPanel";
-import { ConfirmationDialog, EmptyState, ErrorState, LoadingSkeleton } from "../components/ui-states/UiStates.jsx";
+import { ConfirmationDialog, EmptyState, ErrorState, LoadingSkeleton, UnsavedChangesDialog } from "../components/ui-states/UiStates.jsx";
 import { DownloadPdfButton } from "./CodebaseHealth";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -212,20 +212,28 @@ function Body() {
             <Plus size={14} /> Add Project
           </button>
         </div>
-        {loadError && (
-      <ErrorState title="Couldn't load your projects" message="We couldn't load your project list. Try again." onRetry={() => { setLoading(true); refresh(); }} />
-    )}
+  {loadError && (
+    <div data-testid="proj-load-error">
+      <ErrorState title="Couldn't load your projects" message="We couldn't load your project list. Try again." />
+      <button type="button" data-testid="proj-load-error-retry" className="ora-ui-btn" onClick={() => { setLoading(true); refresh(); }}>
+        Try again
+      </button>
+    </div>
+  )}
         {loading && (
       <LoadingSkeleton lines={3} label="Loading projects…" />
     )}
-    {!loadError && !loading && projects.length === 0 && (
+  {!loadError && !loading && projects.length === 0 && (
+    <>
       <EmptyState
         title="No projects yet"
         message="Connect a GitHub repo to get started."
-        actionLabel="Connect your first repo"
-        onAction={openAdd}
       />
-    )}
+      <button type="button" data-testid="proj-empty-add-btn" className="ora-ui-btn" onClick={openAdd}>
+        Connect your first repo
+      </button>
+    </>
+  )}
         {projects.map((p) => {
           const sel = active?.project_id === p.project_id;
           return (
@@ -1648,6 +1656,10 @@ export function SimplifyFilePanel({ projectId }) {
 function EditDialog({ project, onClose, onSaved }) {
   const [f, setF] = useState({ github_token: "", branch: project.branch || "main", tech_stack: project.tech_stack || "", preview_url: project.preview_url || "", auto_scan_frequency: project.auto_scan_frequency || "off" });
   const [busy, setBusy] = useState(false);
+  const [showUnsaved, setShowUnsaved] = useState(false);
+  const formRef = useRef(null);
+  const dirty = f.github_token.trim() !== "" || f.branch !== (project.branch || "main") || f.tech_stack !== (project.tech_stack || "") || f.preview_url !== (project.preview_url || "") || f.auto_scan_frequency !== (project.auto_scan_frequency || "off");
+  const requestClose = () => { if (dirty) setShowUnsaved(true); else onClose(); };
   const up = (k, v) => setF((p) => ({ ...p, [k]: v }));
   async function submit(e) {
     e.preventDefault();
@@ -1666,11 +1678,12 @@ function EditDialog({ project, onClose, onSaved }) {
     } finally { setBusy(false); }
   }
   return (
-    <div onClick={onClose} style={{
+    <>
+    <div onClick={requestClose} style={{
       position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.65)",
       display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
     }}>
-      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} data-testid="proj-edit-dialog"
+      <form ref={formRef} onSubmit={submit} onClick={(e) => e.stopPropagation()} data-testid="proj-edit-dialog"
             style={{ maxWidth: 500, width: "100%", padding: 24,
                      background: "var(--panel)", border: "1px solid var(--border-strong)",
                      borderRadius: 6, display: "grid", gap: 12 }}>
@@ -1716,13 +1729,22 @@ function EditDialog({ project, onClose, onSaved }) {
         </label>
         <HealthTrendSection projectId={project.project_id} />
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-ghost" onClick={requestClose}>Cancel</button>
           <button type="submit" data-testid="proj-edit-save" className="btn-primary" disabled={busy}>
             {busy ? "Saving…" : "Save changes"}
           </button>
         </div>
       </form>
     </div>
+    {showUnsaved && (
+      <UnsavedChangesDialog
+        itemName={project.name}
+        onSave={() => formRef.current?.requestSubmit()}
+        onDiscard={onClose}
+        onStay={() => setShowUnsaved(false)}
+      />
+    )}
+    </>
   );
 }
 

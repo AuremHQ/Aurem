@@ -19,11 +19,17 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, AlertTriangle, Check } from "lucide-react";
 import { api } from "../../../lib/api";
+
+// Deep link that opens the real GitHub connect flow for an account that
+// already has projects: the Projects page opens the Add Project wizard
+// (AddProjectWizard) when it sees ?flow=connect-repo, and the wizard runs
+// the GitHub App install / OAuth connect flow.
+export const CONNECT_REPOSITORY_PATH = "/projects?flow=connect-repo";
 import { toast } from "../../Toast";
 
 const UNREACHABLE = new Set(["disconnected", "unreachable"]);
 
-export function ProjectSwitcher({ projects = [], activeProjectId, onSelect }) {
+export function ProjectSwitcher({ projects = [], activeProjectId, onSelect, onAddRepository }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const [statuses, setStatuses] = useState({}); // project_id -> status
@@ -79,6 +85,15 @@ export function ProjectSwitcher({ projects = [], activeProjectId, onSelect }) {
       kind: "info",
     });
   }, [activeProjectId, projects, statuses]);
+
+  const handleAddRepository = () => {
+    setOpen(false);
+    if (typeof onAddRepository === "function") {
+      onAddRepository();
+      return;
+    }
+    window.location.assign(CONNECT_REPOSITORY_PATH);
+  };
 
   const toggle = useCallback(() => {
     setOpen((o) => {
@@ -188,7 +203,17 @@ export function ProjectSwitcher({ projects = [], activeProjectId, onSelect }) {
               );
             })
           )}
-        </div>,
+          <button
+        type="button"
+        data-testid="project-switcher-add-repository"
+        title="Connect a new repository"
+        onClick={handleAddRepository}
+        className="mt-1 flex w-full items-center gap-2 border-t border-[#1f2937] px-3 py-2 text-left text-[12px] font-medium text-[color:var(--accent)] hover:bg-[#111827]"
+      >
+        <span aria-hidden="true">+</span>
+        Add repository
+      </button>
+    </div>,
         document.body,
       )}
     </div>

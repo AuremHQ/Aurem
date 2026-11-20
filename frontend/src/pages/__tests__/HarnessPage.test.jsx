@@ -250,6 +250,22 @@ describe("HarnessPage — already signed in on page load", () => {
     renderPage();
     await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
   });
+  it("shows the real publish date, never an epoch date, when published_at is Unix seconds", async () => {
+    mockEndpoints({ flag: true, release: { ...RELEASE, published_at: 1762819200 } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-release-line")).toHaveTextContent("Live since"));
+    expect(screen.getByTestId("harness-release-line")).not.toHaveTextContent("1970");
+    expect(document.body.textContent).toMatch(/2025/);
+  });
+
+  it("hides the release date when published_at is missing", async () => {
+    mockEndpoints({ flag: true, release: { ...RELEASE, published_at: null } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-release-line")).toHaveTextContent("v0.8.0"));
+    expect(screen.getByTestId("harness-release-line")).not.toHaveTextContent("Live since");
+    expect(document.body.textContent).not.toMatch(/Nov 16, 2026/);
+  });
+
 });
 
 describe("HarnessPage — real authenticated download + congratulations", () => {

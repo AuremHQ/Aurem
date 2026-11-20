@@ -28,6 +28,7 @@ import { FixProofPanel } from "./FixProofPanel";
 import { api } from "../lib/api";
 import { toast } from "./Toast";
 import { Undo2 } from "lucide-react";
+import { BackgroundProcessing, CompletionState, PartialSuccess, ProgressState } from "./ui-states/UiStates.jsx";
 
 const PHASE_META = {
   queued:           { Icon: FileSearch,  color: "#94a3b8", label: "Queued" },
@@ -769,7 +770,11 @@ export default function FixProgressDrawer() {
               jobId={jobId}
             />
           )}
+              {terminal && failed > 0 && completed > 0 && (<PartialSuccess done={completed} total={total} failures={[`${failed} fix${failed === 1 ? "" : "es"} failed`]} />)}
+              {terminal && completed > 0 && (<CompletionState title="Fix job complete" summary={`${completed} of ${total} fixes applied${failed > 0 ? ` — ${failed} failed` : ""} in ${elapsedStr}.`} />)}
 
+          {!terminal && activeRow && (<ProgressState fileName={activeRow.file ? activeRow.file.split("/").pop() : "Fix"} percent={activeFixTotal ? Math.round((activeFixIndex / activeFixTotal) * 100) : 0} />)}
+          {!terminal && activeRow && (<BackgroundProcessing title="Fix job running in the background" />)}
           {!terminal && activeRow && (
             <ActiveFixCard
               row={activeRow}

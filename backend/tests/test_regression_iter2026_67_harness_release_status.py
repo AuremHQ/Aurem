@@ -123,3 +123,36 @@ async def test_release_status_reports_exe_unavailable_when_not_attached():
     assert body["exe_available"] is False
     assert body["exe_sha256"] is None
     assert body["exe_size_bytes"] is None
+
+
+@pytest.mark.asyncio
+async def test_release_status_marks_the_signed_in_zip_as_personalized():
+    """Regression: the signed-in zip is personalized per installation, so
+    the file a user downloads does not match the base-artifact sha256 /
+    size_bytes; the record must say so and point at the base artifact."""
+    fake_release = {
+        "version": "1.4.0",
+        "platform": "windows",
+        "artifact_sha256": "deadbeef" * 8,
+        "changelog": ["x"],
+        "mandatory": False,
+        "size_bytes": 292519,
+        "published_at": "2026-02-02T00:00:00+00:00",
+        "exe_sha256": "aabbccdd" * 8,
+        "exe_size_bytes": 123456,
+    }
+    transport = ASGITransport(app=app)
+    with patch("routers.harness.require_db", return_value=object()), patch(
+        "routers.harness.get_latest_release",
+        new=AsyncMock(return_value=fake_release),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/harness/release-status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["zip_download_personalized"] is True
+    assert body["base_package_sha256"] == "deadbeef" * 8
+    assert body["base_package_sha256"] == body["sha256"]
+    assert body["base_package_size_bytes"] == 292519
+    assert body["base_package_size_bytes"] == body["size_bytes"]

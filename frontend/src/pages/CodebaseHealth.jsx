@@ -31,6 +31,7 @@ import useFixQuota from "../lib/useFixQuota";
 import BulkFixConfirmModal from "../components/BulkFixConfirmModal";
 import NewUserWizard from "../components/NewUserWizard";
 import { toast } from "../components/Toast";
+import { EmptyState, ErrorState, FileTransferList, FirstTimeChecklist, SuccessState, WarningState } from "../components/ui-states/UiStates.jsx";
 
 const CATS = [
   { key: "security",     label: "Security",      icon: Shield,    tone: "#ef4444", cost: 5,
@@ -122,6 +123,7 @@ export function DownloadPdfButton({ projectId }) {
 
   return (
     <div data-testid="health-pdf-download-wrap" style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+      {state === "generating" && (<FileTransferList files={[{ id: "health-pdf", name: `aurem-report-${projectId}.pdf`, percent: 0, status: "uploading" }]} />)}
       <button
         type="button"
         data-testid="health-pdf-download-btn"
@@ -142,13 +144,15 @@ export function DownloadPdfButton({ projectId }) {
       {state === "error" && (
         <div data-testid="health-pdf-download-error" role="alert" style={{ fontSize: 11, color: "#fca5a5" }}>
           {errMsg}
+          <FileTransferList files={[{ id: "health-pdf", name: `aurem-report-${projectId}.pdf`, percent: 100, status: "failed" }]} onRetry={() => handleDownload()} />
         </div>
       )}
-  {state === "downloaded" && (
-    <div data-testid="health-pdf-download-success" role="status" style={{ fontSize: 11, color: "#6ee7b7" }}>
-      PDF downloaded - check your downloads folder.
-    </div>
-  )}
+      {state === "downloaded" && (
+        <div data-testid="health-pdf-download-success" role="status" style={{ fontSize: 11, color: "#6ee7b7" }}>
+          PDF downloaded - check your downloads folder.
+          <SuccessState title="PDF downloaded" reference={`aurem-report-${projectId}.pdf`} />
+        </div>
+      )}
     </div>
   );
 }
@@ -610,6 +614,8 @@ function CodebaseHealthInner() {
   const [tokenFloat, setTokenFloat] = useState(null);
   // Iter 212m-121 — Bulk fix modal state + per-fix progress drawer.
   const [bulkModal, setBulkModal] = useState({ open: false, cat: null, findings: [] });
+  const [quotaBlock, setQuotaBlock] = useState(null);
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
   // Iter 212m-190 — task-quota gating (1 fix = 1 task, tier-gated).
   const { quota } = useFixQuota();
   const canFix = !!quota && (quota.fix_tools || []).includes("health-scan");
@@ -623,7 +629,7 @@ function CodebaseHealthInner() {
     // needs more tasks than the user has left this month.
     const remaining = quota?.tasks_remaining;
     if (remaining !== null && remaining !== undefined && tagged.length > remaining) {
-      setError(`You have ${remaining} tasks left this month — not enough for ${tagged.length} fixes. Upgrade or fix issues individually.`);
+      setQuotaBlock({ remaining, needed: tagged.length });
       return;
     }
     setBulkModal({ open: true, cat, findings: tagged });
@@ -898,13 +904,8 @@ function CodebaseHealthInner() {
         </div>
 
         {/* Error pill */}
-        {error && (
-          <div data-testid="health-error" style={{
-            padding: "10px 14px", marginBottom: 16, borderRadius: 8,
-            background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.45)",
-            color: "#fca5a5", fontSize: 13,
-          }}>{error}</div>
-        )}
+        {quotaBlock && (<WarningState title="Not enough tasks left" consequences={[`You have ${quotaBlock.remaining} tasks left this month.`, `This bulk fix needs ${quotaBlock.needed} fixes.`]} confirmLabel="Upgrade plan" onConfirm={() => navigate("/pricing")} onCancel={() => setQuotaBlock(null)} />)}
+        {error && (<ErrorState title="Scan failed" message={error} onRetry={() => runScan(CATS.map((c) => c.key))} />)}
 
         {/* UI-fix C6 — GitHub App token mint rejected (401/403/404) */}
         {githubUnreachable && (
@@ -979,6 +980,9 @@ function CodebaseHealthInner() {
 
         {/* Empty state */}
         {showEmpty && (
+          <>
+          <EmptyState title="No health data yet" message="Run a scan to see findings for this project." />
+          {!checklistDismissed && (<FirstTimeChecklist name="Codebase health" steps={["Connect your repository", "Run your first scan", "Fix your first issue"]} onStart={() => runScan(CATS.map((c) => c.key))} onSkip={() => setChecklistDismissed(true)} />)}
           <div data-testid="health-empty" style={{ padding: 32, borderRadius: 14,
             background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)" }}>
             <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>🔍 Your codebase is unscanned</div>
@@ -1032,7 +1036,8 @@ function CodebaseHealthInner() {
               🚀 Full Scan — all {CATS.length} categories · {CATS.reduce((s,c)=>s+c.cost,0)} 💎
             </button>
           </div>
-        )}
+    </>
+  )}
 
         {/* Scanning state */}
         {scanning && (

@@ -14,11 +14,25 @@
 import React, { useEffect, useState, useRef } from "react";
 import { X, RotateCcw, AlertTriangle, Upload } from "lucide-react";
 import { api } from "../lib/api";
+import { UnsavedChangesDialog } from "./ui-states/UiStates.jsx";
 
 const MAX_LEN = 4000;
 
 export default function OraChatHouseRulesPanel({ onClose, initialScope = "chat" }) {
-  const [scope, setScope] = useState(initialScope); // "chat" | "video"
+  const [scope, setScope] = useState(initialScope);
+  const [showUnsaved, setShowUnsaved] = useState(false);
+  const chatDirtyRef = useRef(false);
+  const videoDirtyRef = useRef(false);
+  const chatSaveRef = useRef(null);
+  const videoSaveRef = useRef(null);
+  const hasUnsaved = () => chatDirtyRef.current || videoDirtyRef.current;
+  const requestClose = () => { if (hasUnsaved()) setShowUnsaved(true); else onClose(); };
+  const saveUnsaved = async () => {
+    let ok = true;
+    if (chatDirtyRef.current && chatSaveRef.current) { const r = await chatSaveRef.current(); if (r === false) ok = false; }
+    if (videoDirtyRef.current && videoSaveRef.current) { const r = await videoSaveRef.current(); if (r === false) ok = false; }
+    return ok;
+  }; // "chat" | "video"
 
   // Keep the switcher's default in sync if the caller's initialScope
   // changes after this panel has already mounted (e.g. the drawer's
@@ -33,7 +47,7 @@ export default function OraChatHouseRulesPanel({ onClose, initialScope = "chat" 
         display: "flex", alignItems: "stretch", justifyContent: "flex-end",
       }}
     >
-      <div onClick={onClose}
+      <div onClick={requestClose}
            style={{ flex: 1, background: "rgba(0,0,0,0.5)" }} />
       <div style={{
         width: "min(520px, 96vw)", background: "#0f1113", color: "#e8e3d3",
@@ -85,7 +99,7 @@ export default function OraChatHouseRulesPanel({ onClose, initialScope = "chat" 
 
           <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.1)" }} />
 
-          <button data-testid="hr-close" onClick={onClose}
+          <button data-testid="hr-close" onClick={requestClose}
                   style={{ background: "transparent", border: "none",
                             color: "#a39d8a", cursor: "pointer", padding: 6 }}>
             <X size={16} />
@@ -93,18 +107,27 @@ export default function OraChatHouseRulesPanel({ onClose, initialScope = "chat" 
         </div>
 
         <div style={{ flex: 1, overflow: "auto", display: scope === "chat" ? "block" : "none" }}>
-          <ChatRulesBody />
+          <ChatRulesBody onDirtyChange={(d) => { chatDirtyRef.current = d; }} registerSave={(fn) => { chatSaveRef.current = fn; }} />
         </div>
         <div style={{ flex: 1, overflow: "auto", display: scope === "video" ? "block" : "none" }}>
-          <VideoRulesBody />
+          <VideoRulesBody onDirtyChange={(d) => { videoDirtyRef.current = d; }} registerSave={(fn) => { videoSaveRef.current = fn; }} />
         </div>
       </div>
+      {showUnsaved && (
+        <UnsavedChangesDialog
+          itemName={videoDirtyRef.current && chatDirtyRef.current ? "House rules" : videoDirtyRef.current ? "Video house rules" : "Chat house rules"}
+          onSave={async () => { const ok = await saveUnsaved(); if (ok) { setShowUnsaved(false); onClose(); } }}
+          onDiscard={() => { setShowUnsaved(false); onClose(); }}
+          onStay={() => setShowUnsaved(false)}
+        />
+      )}
     </div>
   );
 }
 
-function ChatRulesBody() {
+function ChatRulesBody({ onDirtyChange, registerSave }) {
   const [text, setText]         = useState("");
+  const [savedText, setSavedText] = useState("");
   const [defaultText, setDT]    = useState("");
   const [history, setHistory]   = useState([]);
   const [warning, setWarning]   = useState(null);
@@ -115,6 +138,7 @@ function ChatRulesBody() {
     try {
       const r = await api.get("/ora-chat/house-rules");
       setText(r.data.current?.rules_text || r.data.effective_text || "");
+    setSavedText(r.data.current?.rules_text || r.data.effective_text || "");
       setDT(r.data.default_text || "");
       const h = await api.get("/ora-chat/house-rules/history");
       setHistory(h.data.history || []);
@@ -122,15 +146,21 @@ function ChatRulesBody() {
   };
   useEffect(() => { load(); }, []);
 
+  const dirty = text !== savedText;
+  useEffect(() => { onDirtyChange?.(dirty); });
+  useEffect(() => { registerSave?.(save); return () => registerSave?.(null); });
   const save = async () => {
-    if (text.length > MAX_LEN || busy) return;
+    if (text.length > MAX_LEN || busy) return false;
     setBusy(true);
     try {
       const r = await api.put("/ora-chat/house-rules", { rules_text: text });
       setWarning(r.data.soft_warning);
       setSavedAt(Date.now());
       await load();
-    } finally { setBusy(false); }
+    return true;
+  } catch {
+    return false;
+  } finally { setBusy(false); }
   };
 
   const restore = async (v) => {
@@ -266,7 +296,7 @@ function ChatRulesBody() {
   );
 }
 
-function VideoRulesBody() {
+function VideoRulesBody({ onDirtyChange, registerSave }) {
   const [loaded, setLoaded]     = useState(false);
   const [text, setText]         = useState("");
   const [mode, setMode]         = useState("block");
@@ -282,6 +312,7 @@ function VideoRulesBody() {
       setText(r.data.rules_text || "");
       setMode(r.data.enforcement_mode || "block");
       setDirty(false);
+    return true;
       setLoaded(true);
     } catch (e) {
       setErr(e?.response?.data?.detail || "Could not load video house rules");
@@ -290,6 +321,8 @@ function VideoRulesBody() {
   };
   useEffect(() => { load(); }, []);
 
+  useEffect(() => { onDirtyChange?.(dirty); });
+  useEffect(() => { registerSave?.(save); return () => registerSave?.(null); });
   const onFileChosen = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -311,6 +344,7 @@ function VideoRulesBody() {
       setDirty(false);
     } catch (e) {
       setErr(e?.response?.data?.detail || "Save failed.");
+    return false;
     } finally { setBusy(false); }
   };
 

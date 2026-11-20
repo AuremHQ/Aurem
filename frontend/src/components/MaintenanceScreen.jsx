@@ -8,6 +8,7 @@
  */
 import React from "react";
 import { Loader2, Wrench, Zap } from "lucide-react";
+import { MaintenanceState } from "./ui-states/UiStates.jsx";
 
 export default function MaintenanceScreen({ manual, message, window: windowText }) {
   return (
@@ -71,6 +72,7 @@ export default function MaintenanceScreen({ manual, message, window: windowText 
             {windowText}
           </div>
         )}
+            {manual && (<MaintenanceState />)}
 
         <div
           data-testid="maintenance-retry-indicator"

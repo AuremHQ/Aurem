@@ -57,7 +57,7 @@ import {
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../data/harnessContent.mjs";
 import { LOOP_JSON_LD } from "../data/aaoJsonLd";
-import { CompletionState, ErrorState, FieldError, FileTransferList, SavingButton, SuccessState } from "../components/ui-states/UiStates.jsx";
+import { ErrorState, FieldError, SuccessState } from "../components/ui-states/UiStates.jsx";
 
 const CSS = `
 :root {
@@ -249,9 +249,12 @@ function fmtBytes(n) {
 }
 
 function fmtReleaseDate(iso) {
-  if (!iso) return "Nov 16, 2026";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Nov 16, 2026";
+  // published_at is Unix seconds (Python time.time()); Date expects milliseconds.
+  if (iso == null || iso === "" || iso === 0) return null;
+  const numeric = typeof iso === "number" ? iso : Number(iso);
+  const ms = Number.isFinite(numeric) ? (Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric) : Date.parse(iso);
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -630,7 +633,7 @@ async function handleDownloadExe() {
             <p className="release" data-testid="harness-release-line">
               {release?.available ? (
                 <>
-                  <span><span className="dot" aria-hidden="true"></span>Available now — free download, v{release.version} · Live since {releaseDate}</span>
+                  <span><span className="dot" aria-hidden="true"></span>Available now — free download, v{release.version}{releaseDate ? <> · Live since {releaseDate}</> : null}</span>
                   <span>For {release.platform === "windows" ? "Windows" : release.platform}</span>
                   <span>Free with your account</span>
                 </>
@@ -784,9 +787,9 @@ async function handleDownloadExe() {
                 {release?.available && (
                   <p className="meta">
                     {release.exe_available ? (
-                      <>File: {fmtBytes(release.exe_size_bytes)} bytes · SHA-256: {release.exe_sha256} · Released {releaseDate}<br /></>
+                      <>File: {fmtBytes(release.exe_size_bytes)} bytes · SHA-256: {release.exe_sha256}{releaseDate ? <> · Released {releaseDate}</> : null}<br /></>
                     ) : (
-                      <>File: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256} · Released {releaseDate}<br /></>
+                      <>File: {fmtBytes(release.size_bytes)} bytes · SHA-256: {release.sha256}{releaseDate ? <> · Released {releaseDate}</> : null}<br /></>
                     )}
         Ships qwen2.5-coder:1.5b · Windows · Runs entirely on your PC<br />
                     Verify the SHA-256 after downloading — it must match exactly before you run the installer.

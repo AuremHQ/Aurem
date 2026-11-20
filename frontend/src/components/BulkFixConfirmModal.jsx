@@ -19,6 +19,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Zap, GitMerge, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
+import { ConfirmationDialog } from "./ui-states/UiStates.jsx";
 
 export default function BulkFixConfirmModal({
   open, onClose, projectId, findings, category, tool = "health-scan",
@@ -244,6 +245,9 @@ export default function BulkFixConfirmModal({
           }}>{error}</div>
         )}
 
+        {preview?.can_proceed && !starting && !loading ? (
+          <ConfirmationDialog subject={`Fix ${preview?.count ?? findings?.length} issues?`} consequence={`Estimated cost: ${(preview?.tokens_cost || 0).toLocaleString()} tokens ($${(preview?.usd_cost || 0).toFixed(4)}). Fixes will modify your repository files.`} confirmLabel={founder ? (overCap ? `Fix first ${preview?.count} — FREE` : "Fix all — FREE") : `Fix all ${preview?.count ?? findings?.length}`} onConfirm={confirm} onCancel={onClose} />
+        ) : (
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button
             onClick={onClose}
@@ -278,6 +282,7 @@ export default function BulkFixConfirmModal({
               : `Fix all ${preview?.count ?? findings?.length}`}
           </button>
         </div>
+        )}
       </div>
     </div>
   );

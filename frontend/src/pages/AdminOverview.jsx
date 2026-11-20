@@ -14,6 +14,7 @@ import { LLMCreditMonitor } from "./AdminLLMCredits";       // Iter 212m-171
 import { BoundaryProbesTile } from "../components/BoundaryProbesTile";  // Iter 212m-171
 import { DeployReadinessCard } from "../components/DeployReadinessCard"; // 2026-08-24 — Option A
 import { TOKEN_WORDING_ACTIVE } from "../lib/billingCopy";
+import { ErrorState, LoadingSkeleton, ProgressState, SyncIndicator, TimeoutState, UpdateRequired } from "../components/ui-states/UiStates.jsx";
 
 export default function AdminOverview() {
   const [health,  setHealth]  = useState(null);
@@ -42,6 +43,15 @@ export default function AdminOverview() {
   const [refreshingHealth, setRefreshingHealth] = useState(false);
   const [refreshingAll, setRefreshingAll] = useState(false); // 2026-08-27 · Admin Compact M1
   const [loading, setLoading] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(0);
+  const [loadTotal, setLoadTotal] = useState(0);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  const [swUpdate, setSwUpdate] = useState(false);
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || !navigator.serviceWorker.getRegistrations) return undefined;
+    navigator.serviceWorker.getRegistrations().then((regs) => { if (regs.some((r) => r.waiting)) setSwUpdate(true); }).catch(() => {});
+    return undefined;
+  }, []);
 
   // 2026-11-19 — every overview call carries its own 15s timeout:
   // Promise.allSettled waits for the SLOWEST call, and with only the
@@ -52,8 +62,7 @@ export default function AdminOverview() {
     const h = { Authorization: `Bearer ${getToken()}` };
     const HEALTH_URL = `${process.env.REACT_APP_BACKEND_URL}/api/health`;
     try {
-      const [healthRes, statsRes, wallRes, councilRes, telRes, dbHealthRes, metricsRes, patternsRes, funnelRes, alertsRes, councilHealthRes, ghSyncRes, breakersRes, vscodeRes, ghFunnelRes, nudgeStagesRes, backupStatusRes, drillHistoryRes, deployReadinessRes, doraRes, sloRes, costAlertRes, journeyWatchRes] =
-        await Promise.allSettled([
+      const _loadCalls = [
           fetch(HEALTH_URL, { signal: AbortSignal.timeout(10000) }).then((r) => r.json()),
           api.get("/usage/public/stats"),
           api.get("/wall/stats"),
@@ -77,7 +86,11 @@ export default function AdminOverview() {
           api.get("/admin/insights/slo", { headers: h, signal: AbortSignal.timeout(15000) }),          // 2026-08-26 — Phase 5.3 SLO compliance
           api.get("/admin/insights/cost-alert", { headers: h, signal: AbortSignal.timeout(15000) }),   // 2026-08-27 — Live Cost Alert
           api.get("/admin/insights/journey-watch", { headers: h, signal: AbortSignal.timeout(15000) }), // 2026-08-27 — P7 Journey Watch card
-        ]);
+        ];
+    setLoadTotal(_loadCalls.length); setLoadProgress(0);
+    const _loadResults = await Promise.allSettled(_loadCalls.map((p) => p.then((v) => { setLoadProgress((c) => c + 1); return v; }, (e) => { setLoadProgress((c) => c + 1); throw e; })));
+    if (_loadResults.some((r) => r.status === "rejected" && (r.reason?.name === "TimeoutError" || /timeout/i.test(String(r.reason?.message || ""))))) setLoadTimedOut(true); else setLoadTimedOut(false);
+    const [healthRes, statsRes, wallRes, councilRes, telRes, dbHealthRes, metricsRes, patternsRes, funnelRes, alertsRes, councilHealthRes, ghSyncRes, breakersRes, vscodeRes, ghFunnelRes, nudgeStagesRes, backupStatusRes, drillHistoryRes, deployReadinessRes, doraRes, sloRes, costAlertRes, journeyWatchRes] = _loadResults;
       if (healthRes.status   === "fulfilled") setHealth(healthRes.value);
       if (statsRes.status    === "fulfilled") setStats(statsRes.value.data);
       if (wallRes.status     === "fulfilled") setWall(wallRes.value.data);
@@ -155,7 +168,8 @@ export default function AdminOverview() {
 
   if (loading) return (
     <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim)", fontSize: 13 }}>
-      Loading system overview…
+      <LoadingSkeleton lines={3} label="Loading system overview…" />
+      <ProgressState fileName="System overview" percent={loadTotal ? Math.round((loadProgress / loadTotal) * 100) : 0} />
     </div>
   );
 
@@ -198,6 +212,10 @@ export default function AdminOverview() {
 
   return (
     <div style={{ padding: "24px 20px", maxWidth: 900 }}>
+      {!health && loadTimedOut && (<TimeoutState referenceId="admin-overview" onCheckStatus={load} />)}
+      {!health && !loadTimedOut && (<ErrorState title="System overview failed to load" message="The health check did not return data." onRetry={load} />)}
+      {swUpdate && (<UpdateRequired version="latest" highlights={["A new version of the app is ready."]} storeHref={window.location.href} onDismiss={() => setSwUpdate(false)} />)}
+      <SyncIndicator status={ghSync ? (ghSync.status === "in_sync" ? "synced" : ghSync.status === "behind" ? "error" : ghSync.status === "not_wired" ? "offline" : "syncing") : "error"} lastSynced={ghSync?.last_sync_at} onRetry={refreshAll} />
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <button

@@ -62,8 +62,9 @@ import TopBarStatusSlot from "../components/TopBarStatusSlot";
 import SidebarV2Bound   from "../components/dashboard/v2/SidebarBound";
 import RailShell        from "../components/nav/RailShell";
 import AskAdvisorReal   from "../components/dashboard/v2/AskAdvisorReal";
-import { ProjectSwitcher } from "../components/dashboard/v2/ProjectSwitcher";
+import { CONNECT_REPOSITORY_PATH, ProjectSwitcher } from "../components/dashboard/v2/ProjectSwitcher";
 import { UserNotificationBell } from "../components/dashboard/v2/UserNotificationBell";
+import { StaleDataNotice } from "../components/ui-states/UiStates.jsx";
 
 const SHARE_MILESTONES = [10, 25, 50, 100, 250];
 
@@ -165,6 +166,9 @@ function DashboardV2Body() {
   //     a background fetch refreshes.  Solves the "shows the previous
   //     repo's score for ~600ms" race.
   const [healthScoreLoading, setHealthScoreLoading] = useState(false);
+  const [scoreFetchedAt, setScoreFetchedAt] = useState(null);
+  const [scoreRefreshing, setScoreRefreshing] = useState(false);
+  const [scoreRefreshTick, setScoreRefreshTick] = useState(0);
   const _healthScoreCacheRef = useRef(new Map());
   // Iter 339h — founder: Ask Advisor stays COMPRESSED by default on
   // every login / refresh; opens only when clicked.
@@ -448,7 +452,8 @@ function DashboardV2Body() {
     // 1) Instant-show cached value if we have one.
     const cached = _healthScoreCacheRef.current.get(pid);
     if (cached !== undefined) {
-      setHealthScore(cached);
+      setHealthScore(cached.score);
+      setScoreFetchedAt(cached.fetchedAt || null);
       setHealthScoreLoading(false);
     } else {
       setHealthScore(null);
@@ -456,23 +461,27 @@ function DashboardV2Body() {
     }
     // 2) Always refetch in the background so the cache stays warm.
     let cancelled = false;
-    api.get(`/codebase-health/last?project_id=${pid}`)
+    setScoreRefreshing(true);
+  api.get(`/codebase-health/last?project_id=${pid}`)
       .then((r) => {
         if (cancelled) return;
         const raw = r.data?.score;
         // Distinguish "no scan yet" (null/undefined → hide ring) from
         // a real "score: 0" (legitimately critical → show red ring).
         const normalised = typeof raw === "number" ? raw : null;
-        _healthScoreCacheRef.current.set(pid, normalised);
+        _healthScoreCacheRef.current.set(pid, { score: normalised, fetchedAt: Date.now() });
         setHealthScore(normalised);
         setHealthScoreLoading(false);
+        setScoreFetchedAt(Date.now());
+        setScoreRefreshing(false);
       })
       .catch(() => {
         if (cancelled) return;
+        setScoreRefreshing(false);
         setHealthScoreLoading(false);
       });
     return () => { cancelled = true; };
-  }, [activeProject?.project_id]);
+  }, [activeProject?.project_id, scoreRefreshTick]);
 
   // ── Map real projects → Sidebar shape ────────────────────────────
   const repoEntries = projects.map((p) => ({
@@ -724,6 +733,7 @@ function DashboardV2Body() {
                 projects={projects}
                 activeProjectId={activeProject?.project_id}
                 onSelect={switchActiveProject}
+          onAddRepository={() => navigate(CONNECT_REPOSITORY_PATH)}
               />
             }
             notificationBellSlot={<UserNotificationBell />}
@@ -782,6 +792,7 @@ function DashboardV2Body() {
             <div data-testid="chat-pane"
               style={{ flex: 1, minHeight: 0, width: "100%",
                        minWidth: 0, overflow: "hidden" }}>
+              {healthScore !== null && scoreRefreshing && scoreFetchedAt && (<StaleDataNotice lastUpdatedMinutes={Math.max(0, Math.round((Date.now() - scoreFetchedAt) / 60000))} onRefresh={() => setScoreRefreshTick((t) => t + 1)} />)}
               <ChatPanel
                 sessionId={sessionId}
                 onTurnSaved={refreshSessions}

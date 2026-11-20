@@ -77,6 +77,7 @@ import {
   mapShipPendingFromActive,
   mapShipPendingFromAwaitingShipEvent,
 } from "../lib/shipPendingMappers.js";
+import { CancelledState, ConfirmationDialog, EmptyState, FileTransferList, LoadingSkeleton, NoResultsState, ProgressState, QueueState, RateLimitState, ReconnectingBanner, TimeoutState } from "./ui-states/UiStates.jsx";
 import {
   startLoop, confirmLoop, pauseResponse, cancelLoop, streamLoopEvents,
   confirmShip, getLoopStatus,
@@ -331,6 +332,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   );
 
   const [clearingChat, setClearingChat] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   // Iter 212m-30 PR-2 — Founder welcome chat-bg tint. The amber wash
   // decays each day for the first 72 h after signup; after that the
   // helper returns "transparent" so the visual hint stops naturally
@@ -852,6 +854,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // whether to render the PlanApprovalCard. `retryCount` is reserved
   // for future verify-loop auto-retry UX (max 3).
   const [loopPhase, setLoopPhase] = useState("idle");
+  const [rateLimitInfo, setRateLimitInfo] = useState(null);
+  useEffect(() => { if (!rateLimitInfo) return undefined; const t = setTimeout(() => setRateLimitInfo(null), Math.max(1, rateLimitInfo.retrySecs) * 1000); return () => clearTimeout(t); }, [rateLimitInfo]);
   // Feb 2026 · Retry counter semantics. Historically this tracked the
   // INNER self-heal attempt (1-2), but the LoopStepBar's chip renders
   // it as "N/3 retries" — a mismatched display that led to founder
@@ -1552,7 +1556,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     setHideOlder((v) => !v);
   }, []);
 
-  const clearChat = useCallback(async () => {
+  const clearChat = useCallback(() => {
     if (clearingChat) return;
     if (!sessionId) {
       // No session yet (welcome screen) — just wipe the local bubble list.
@@ -1560,11 +1564,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       setHideOlder(false);
       return;
     }
-    // eslint-disable-next-line no-alert
-    const ok = window.confirm(
-      "Clear all messages in this chat? The session stays in your sidebar — only the conversation is wiped. This cannot be undone.",
-    );
-    if (!ok) return;
+    setShowClearConfirm(true);
+  }, [clearingChat, sessionId]);
+  const confirmClearChat = useCallback(async () => {
+    setShowClearConfirm(false);
+    if (clearingChat) return;
     setClearingChat(true);
     try {
       await api.delete(`/chat/sessions/${sessionId}/messages`);
@@ -1985,6 +1989,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     );
   }, [loopId]);
 
+  // Attach picker: open the hidden file input. Never fail silently: if
+  // the input is not mounted, surface a toast instead of doing nothing.
+  const openFilePicker = () => {
+    const input = fileInputRef.current;
+    if (input) {
+      input.click();
+    } else {
+      toast({
+        message: "Attach is unavailable right now - please reload the page and try again.",
+        kind: "error",
+      });
+    }
+  };
+
   async function handleFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
@@ -2030,6 +2048,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         size: f.size,
         kind: isImage ? "image" : "doc",
         status: "uploading",
+        progress: 0,
         markdown: "",
       }]);
       // 2026-09-12 — Visual Bug-Fix pipeline (Phase 1): stash the raw
@@ -2052,6 +2071,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           const r = await api.post("/upload/convert", form, {
             headers: { "Content-Type": "multipart/form-data" },
             timeout: 90000,
+            onUploadProgress: (e) => { if (e.total) { const pct = Math.min(100, Math.round((e.loaded * 100) / e.total)); setAttachments((arr) => arr.map((a) => (a.id === pillId ? { ...a, progress: pct } : a))); } },
           });
           const d = r.data || {};
           const truncNote = d.truncated
@@ -2067,7 +2087,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         // Patch the existing pill in place — status → ready, body filled.
         setAttachments((arr) => arr.map((a) =>
           a.id === pillId
-            ? { ...a, status: "ready", markdown: mdBody }
+            ? { ...a, status: "ready", progress: 100, markdown: mdBody }
             : a
         ));
         newAttachments.push({ name: f.name, ok: true });
@@ -3741,7 +3761,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         }
         // Cap the countdown at 300 s so we don't render an hour-long
         // timer even if GitHub asks for one.
-        const retrySecs = Math.min(300, Math.max(1, detail.retry_after_seconds));
+    const retrySecs = Math.min(300, Math.max(1, detail.retry_after_seconds));
+    setRateLimitInfo({ retrySecs });
         const isGh = detail.error === "github_rate_limited";
         const label = isGh
           ? "GitHub API rate limit hit"
@@ -5548,6 +5569,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               }
               {clearingChat ? "Clearing…" : "Clear chat"}
             </button>
+            {showClearConfirm && (
+              <ConfirmationDialog
+                subject="Clear all messages in this chat?"
+                consequence="The session stays in your sidebar — only the conversation is wiped. This cannot be undone."
+                confirmLabel="Clear chat"
+                onConfirm={confirmClearChat}
+                onCancel={() => setShowClearConfirm(false)}
+              />
+            )}
           </div>
         )}
 
@@ -5804,6 +5834,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
                   state={streamHealth}
                 />
               )}
+              {streamHealth.phase === "reconnecting" && (
+                <ReconnectingBanner attempt={1} total={5} />
+              )}
               {suggestions.length > 0 && (
                 <div
                   data-testid="chat-suggestion-chips"
@@ -6020,21 +6053,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           entirely so the chat column stays clean, and let the
           composer grow taller (3-line min) to give more room for
           the user's question. */}
-      {execMode === EXEC_MODES.LOOP && (
-        <LoopStepBar
-          phase={loopPhase}
-          retryCount={loopRetryCount}
-          verifyRetryCount={loopVerifyRetryCount}
-          maxVerifyRetries={3}
-          errorStep={(loopPhase === "error" || loopPhase === "cancelled"
-                      || loopPhase === "aborted" || loopPhase === "failed")
-            ? ({plan:1, execute:2, verify:3, security:4, scan:4, ship:5,
-                cancelled: 0, aborted: 0}[
-                (loopErrorPhase || loopPhase || "").toLowerCase()] || 0)
-            : 0}
-          stepTones={loopStepTones}
-        />
-      )}
+      \1
+            {execMode === EXEC_MODES.LOOP && loopPhase !== "idle" && loopPhase !== "done" && loopPhase !== "cancelled" && loopPhase !== "failed" && progressPct > 0 && (
+              <ProgressState fileName="Fix loop" percent={progressPct} onCancel={() => { loopAbortRef.current?.abort("loop_cancelled"); setLoopPhase("cancelled"); }} />
+            )}
+            {queuedCount > 0 && (
+              <QueueState position={queuedCount} total={queuedCount} />
+            )}
+            {loopPhase === "cancelled" && (
+              <CancelledState title="Loop cancelled" message="The fix loop was stopped. Work completed so far is kept." onRestart={() => setLoopPhase("idle")} />
+            )}
+            {loopPhase === "failed" && (
+              <TimeoutState referenceId={loopId} onCheckStatus={() => setLoopPhase("idle")} />
+            )}
 
       {/* Iter 212m-58 — Plan approval card.  Renders the moment the
           plan-turn ends; user must click Approve before any code
@@ -6314,6 +6345,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               maxHeight: 120, overflowY: "auto",
             }}
           >
+            {attachments.some((a) => a.status === "uploading" || a.status === "error") && (
+              <FileTransferList files={attachments.filter((a) => a.status === "uploading" || a.status === "error").map((a) => ({ id: a.id, name: a.name, percent: a.status === "error" ? 100 : (a.progress ?? 0), size: a.size || 0, status: a.status === "error" ? "failed" : "uploading" }))} onCancel={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))} />
+            )}
             {attachments.map((a) => {
               const colour =
                 a.status === "uploading" ? "var(--text-faint)"
@@ -6341,6 +6375,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
                     overflow: "hidden", textOverflow: "ellipsis",
                     whiteSpace: "nowrap", maxWidth: 160,
                   }}>{a.name}</span>
+                  {a.status === "uploading" && (
+                    <span style={{ opacity: 0.8 }}>{a.progress ?? 0}%</span>
+                  )}
                   {a.status === "uploading"
                     ? <Loader2 size={11} className="spin" style={{ opacity: 0.6 }} />
                     : (
@@ -6515,18 +6552,21 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
 
         {/* Iter 147 — unified composer card: textarea + toolbar share
             one rounded surface so it reads as a single chat input. */}
+        {rateLimitInfo && (
+          <RateLimitState retryInSeconds={rateLimitInfo.retrySecs} onUnlockAlternative={() => setRateLimitInfo(null)} alternativeLabel="Dismiss for now" />
+        )}
+        {turns.length === 1 && (
+          <EmptyState title="No messages yet" message="Describe the fix you want, or pick a starter prompt below." />
+        )}
+        {turns.length === 0 && (
+          <LoadingSkeleton lines={3} label="Loading messages…" />
+        )}
         <div className="composer-card" data-testid="composer-card"
              style={{ position: "relative" }}>
         {/* Iter 212m-190 · Session 3 — Slash-command popover. Absolute
             positioned above the textarea; visible while `slashOpen`
             AND the input still starts with a slash pattern. */}
-        {slashOpen && (
-          <SlashCommandMenu
-            matches={matchSlashCommandsForUser(input)}
-            selectedIndex={slashIdx}
-            onPick={(cmd) => runSlashCommand(cmd, "menu_click")}
-          />
-        )}
+        {slashOpen ? (matchSlashCommandsForUser(input).length === 0 ? (<NoResultsState query={input} onClearFilters={() => setSlashOpen(false)} />) : (<SlashCommandMenu matches={matchSlashCommandsForUser(input)} selectedIndex={slashIdx} onPick={(cmd) => runSlashCommand(cmd, "menu_click")} />)) : null}
         <textarea
           ref={taRef}
           data-testid="chat-input"
@@ -6600,12 +6640,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
 
         {/* Toolbar — inside the same card as the textarea */}
         <div className="composer-toolbar">
-          <input
+          {/* Visually hidden, NOT display:none: a display:none file input cannot be opened reliably with a programmatic click. */}
+      <input
             ref={fileInputRef}
             type="file"
             multiple
-            data-testid="chat-file-input"
-            style={{ display: "none" }}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.json,.js,.jsx,.ts,.tsx,.py,.html,.css,.xml,.yml,.yaml"
+        aria-label="Attach file"
+        data-testid="chat-file-input"
+            style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0, opacity: 0, pointerEvents: "none" }}
             onChange={(e) => {
               handleFiles(e.target.files);
               e.target.value = "";
@@ -6617,7 +6660,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           <ToolButton
             testid="chat-attach-btn"
             title="Attach file — PDF, DOCX, XLSX, PPTX, images, code (max 25 MB)"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={openFilePicker}
             Icon={Paperclip}
             wide
           />

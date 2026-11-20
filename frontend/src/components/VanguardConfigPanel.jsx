@@ -12,6 +12,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { UnsavedChangesDialog } from "./ui-states/UiStates.jsx";
 import { toast } from "./Toast";
 
 const MODES = ["swift", "pro", "maxx"];
@@ -50,6 +51,7 @@ export default function VanguardConfigPanel() {
     }
     return false;
   }, [cfg, draft]);
+  const [showUnsaved, setShowUnsaved] = useState(false);
 
   const setLevel = (mode, lvl) => {
     setDraft((d) => ({ ...d, levels: { ...(d.levels || {}), [mode]: lvl } }));
@@ -65,8 +67,10 @@ export default function VanguardConfigPanel() {
       setCfg(r.data.config);
       setDraft(JSON.parse(JSON.stringify(r.data.config)));
       toast("Vanguard config saved.", "success");
+    return true;
     } catch (e) {
       setError(e?.response?.data?.detail || "Failed to save.");
+    return false;
     } finally {
       setSaving(false);
     }
@@ -134,7 +138,7 @@ export default function VanguardConfigPanel() {
             type="button"
             data-testid="vanguard-discard"
             disabled={!dirty || saving}
-            onClick={() => setDraft(JSON.parse(JSON.stringify(cfg)))}
+            onClick={() => setShowUnsaved(true)}
             style={btnGhost(dirty && !saving)}>
             Discard
           </button>
@@ -149,7 +153,15 @@ export default function VanguardConfigPanel() {
         </div>
       </div>
 
-      {error && (
+      {showUnsaved && (
+      <UnsavedChangesDialog
+        itemName="Vanguard verify config"
+        onSave={async () => { const ok = await save(); if (ok) setShowUnsaved(false); }}
+        onDiscard={() => { setDraft(JSON.parse(JSON.stringify(cfg))); setShowUnsaved(false); }}
+        onStay={() => setShowUnsaved(false)}
+      />
+    )}
+    {error && (
         <div data-testid="vanguard-config-error"
              style={{ color: "#fca5a5", fontSize: 12 }}>{error}</div>
       )}

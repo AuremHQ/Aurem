@@ -25,6 +25,7 @@ import useGitHubConnectStatus from "../hooks/useGitHubConnectStatus";
 // hardcoded 9000 let the floating Advisor re-open tab stay clickable/
 // tabbable on top of this "blocking" overlay.
 import { Z_ACTIVE_MODAL } from "../lib/zIndex";
+import { FirstTimeChecklist, MultiStepForm } from "./ui-states/UiStates.jsx";
 
 const DISMISS_KEY = "aurem_wizard_dismissed";
 const REPO_RX = /^(https?:\/\/)?(www\.)?github\.com\/[\w.-]+\/[\w.-]+\/?$/i;
@@ -35,6 +36,7 @@ function dismissWizard() {
 
 export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
   const [step]         = useState(1);
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
   const [repoUrl, setRepoUrl]   = useState("");
   const [branch, setBranch]     = useState("main");
   const [projectId, setProject] = useState(null);
@@ -709,6 +711,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
             )}
           </div>
         </header>
+        <MultiStepForm step={ghStatus === "connected" ? 3 : (ghStatus === "choosing" || ghStatus === "manual") ? 2 : 1} total={3} steps={[{ label: "Repository" }, { label: "Connect GitHub" }, { label: "Done" }]} />
 
         <div style={{ padding: "20px 20px 16px", overflowY: "auto",
                        flex: "1 1 auto", minHeight: 0 }}>
@@ -757,6 +760,7 @@ export default function NewUserWizard({ onComplete, asGate = false, onSkip }) {
           ) : (<>
           {/* Robot Guide */}
           <RobotGuide message={robotMsg} kind={err ? "error" : "info"} testid="wizard-robot-guide" />
+            {step === 1 && !checklistDismissed && !repoUrl && (<FirstTimeChecklist name="ORA" steps={["Connect a repository", "Connect GitHub", "Ship your first fix"]} onStart={() => setChecklistDismissed(true)} onSkip={() => setChecklistDismissed(true)} />)}
           {step === 1 && (
             <form onSubmit={submitRepo} data-testid="wizard-step-1">
               <h2 id="wizard-title" style={hStyle}>

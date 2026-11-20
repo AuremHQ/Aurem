@@ -37,6 +37,7 @@ import AdminFeatureFlags from "./AdminFeatureFlags";           // Iter 212m-171
 import { LLMCreditMonitor } from "./AdminLLMCredits";          // Iter 212m-171
 import { ParliamentLivePanel } from "./AdminParliamentLive";   // Iter 212m-171
 import RequestAccessModal from "../components/admin/RequestAccessModal";  // AT3
+import { LoadingSkeleton, NoResultsState, PartialSuccess, PermissionDenied, SyncIndicator, TimeoutState } from "../components/ui-states/UiStates.jsx";
 
 // 2026-08-27 · Admin Compact M6 — these 5 tabs used to be defined
 // inline in this file (~1900 lines total: Support, Architecture,
@@ -258,6 +259,8 @@ function UsersList({ onSelect }) {
   // table let admin scope the list to "joined in 24 h", "7 d", "30 d".
   const [windowSel, setWindowSel] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [emailResult, setEmailResult] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [composerOpen, setComposerOpen] = useState(false);
   // 2026-09-21 — in-app notification composer (distinct from the
@@ -272,7 +275,7 @@ function UsersList({ onSelect }) {
     setLoading(true);
     try {
       const r = await api.get("/admin/users", { params: { search: s, window: w } });
-      setUsers(r.data.users || []);
+        setLastSyncedAt(new Date());
       if (r.data.bucket_counts) setBuckets(r.data.bucket_counts);
     } finally { setLoading(false); }
   }, []);
@@ -372,6 +375,7 @@ function UsersList({ onSelect }) {
             className="input"
             style={{ width: 260, maxWidth: "100%" }}
           />
+            <SyncIndicator status={loading ? "syncing" : "synced"} lastSynced={lastSyncedAt ? lastSyncedAt.toLocaleTimeString() : undefined} onRetry={() => load(search, windowSel)} />
         </div>
       </div>
 
@@ -414,7 +418,13 @@ function UsersList({ onSelect }) {
         })}
       </div>
       <Card>
-        {loading ? <div style={{ padding: 24, color: "var(--text-faint)" }}><Loader2 size={14} className="spin" /> Loading…</div> : (
+      {!loading && search && users.length === 0 && (
+          <>
+        {emailResult && emailResult.failed > 0 && (<PartialSuccess done={emailResult.sent} total={emailResult.total} failures={[`${emailResult.failed} email(s) failed to send`]} />)}
+        <NoResultsState query={search} onClearFilters={() => setSearch("")} />
+          </>
+      )}
+        {loading ? <LoadingSkeleton lines={3} label="Loading…" /> : (
           <Table
             cols={[
               <input
@@ -502,10 +512,7 @@ function UsersList({ onSelect }) {
           recipients={users.filter((u) => selected.has(u.user_id))
                           .map((u) => ({ email: u.email, name: u.name }))}
           onClose={() => setComposerOpen(false)}
-          onSent={() => {
-            setComposerOpen(false);
-            setSelected(new Set());
-          }}
+          onSent={(result) => { setComposerOpen(false); setSelected(new Set()); if (result && result.failed > 0) setEmailResult(result); }}
         />
       )}
       {notifyOpen && (
@@ -567,7 +574,7 @@ function EmailOfferComposer({ userIds, recipients, onClose, onSent }) {
       const sent = r.data?.sent ?? 0;
       const failed = r.data?.failed ?? 0;
       showEmailResult({ dryRun, sent, failed, total: recipients.length, unit: "email(s)" });
-      onSent();
+      onSent({ sent, failed, total: recipients.length });
     } catch (e) {
       showEmailResult({ error: e });
     } finally { setSending(false); }
@@ -2063,19 +2070,25 @@ function ReliabilityPage() {
 // the postmortem list at a glance instead of requiring a curl.
 export function SupervisedTasksTile() {
   const [d, setD] = useState(null);
+  const [timedOut, setTimedOut] = useState(false);
+  const load = useCallback(() => {
+    setTimedOut(false);
+    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/health`, {
+      signal: AbortSignal.timeout(5000),
+    })
+      .then((r) => r.json())
+      .then((j) => setD(j.supervised_tasks || null))
+      .catch((e) => {
+        if (e?.name === "TimeoutError") setTimedOut(true);
+      });
+  }, []);
   useEffect(() => {
-    const load = () =>
-      fetch(`${process.env.REACT_APP_BACKEND_URL}/api/health`, {
-        signal: AbortSignal.timeout(5000),
-      })
-        .then((r) => r.json())
-        .then((j) => setD(j.supervised_tasks || null))
-        .catch(() => {});
     load();
     // Refresh every 30s so a fresh death appears without a page reload.
     const id = setInterval(load, 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [load]);
+  if (timedOut && !d) return <TimeoutState referenceId="supervised-tasks" onCheckStatus={load} />;
   if (!d) return null;
   const dead = d.dead || [];
   const alive = d.alive || [];
@@ -2507,6 +2520,7 @@ export default function Admin({ initialTab = "overview" }) {
     </div>
   );
 
+  if (noAccessibleScreens) return (<PermissionDenied roleRequired="Admin" contactName="your workspace admin" onGoBack={() => navigate("/")} />);
   if (!me) return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
                    background: "transparent", color: "var(--text-faint)" }}>
