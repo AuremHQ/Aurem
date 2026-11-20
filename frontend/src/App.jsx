@@ -17,7 +17,7 @@
  *   • Admin pages still hydrate in <300ms once clicked (cached after
  *     first hit by the browser).
  */
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from "react-router-dom";
 import useAutoClearConsole from "./lib/useAutoClearConsole";
 import { getToken } from "./lib/api";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
@@ -184,6 +184,33 @@ function MetaPixelRouteTracker() {
 // preserved `?next=` so they return to where they were once signed in.
 // The `firedRef` guard prevents the same session-expiry from stacking
 // dozens of toasts when multiple parallel requests all 401 at once.
+// 2026-11-20 - Harness sign-in/sign-up redirect (Teji, Nov 19):
+// /login with ?next=/harness (or any next value starting with
+// /harness) is not an ORA sign-in at all - the harness has its own
+// sign-in/sign-up form on /harness itself. Send the visitor there
+// instead of showing the shared orange ORA login page. Only the
+// harness next-value redirects; every other /login use renders the
+// unchanged <Login /> below. The visitor arrived on the sign-in
+// page, so the harness form opens on its Sign-in tab (?tab=signin).
+export function LoginRoute() {
+  const [searchParams] = useSearchParams();
+  const rawNext = searchParams.get("next") || "";
+  const next =
+    rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("\\")
+      ? rawNext
+      : "";
+  const isHarness =
+    next === "/harness" ||
+    next.startsWith("/harness/") ||
+    next.startsWith("/harness?") ||
+    next.startsWith("/harness#");
+  if (!isHarness) return <Login />;
+  const target = new URL(next, "http://localhost");
+  if (target.pathname === "/harness/") target.pathname = "/harness";
+  if (!target.searchParams.has("tab")) target.searchParams.set("tab", "signin");
+  return <Navigate to={`${target.pathname}${target.search}${target.hash}`} replace />;
+}
+
 function SessionExpiredListener() {
   const location = useLocation();
   const firedRef = useRef(false);
