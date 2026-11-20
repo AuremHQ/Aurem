@@ -33,6 +33,24 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js", { scope: "/" })
+      .then((registration) => {
+        // Iter 2026-11-20 — UI states wiring (Phase 2): when a new
+        // service worker is found and reaches "installed" while this
+        // page is already controlled (a genuine update, not a first
+        // install), tell the app so it can show the library
+        // UpdateRequired banner. The update itself still applies
+        // through the existing controllerchange reload below.
+        if (!registration) return;
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) {
+              window.dispatchEvent(new CustomEvent("ora:update-available", { detail: { registration } }));
+            }
+          });
+        });
+      })
       .catch(() => { /* HTTP/non-supported — ignore silently */ });
   });
   if (hadControllerAlready) {

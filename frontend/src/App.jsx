@@ -21,7 +21,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } 
 import useAutoClearConsole from "./lib/useAutoClearConsole";
 import { getToken } from "./lib/api";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
-import { useEffect, useRef, lazy, Suspense } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import Toaster, { toast } from "./components/Toast";
 import FixProgressDrawer from "./components/FixProgressDrawer";
 import { FixJobProvider } from "./components/FixJobContext";
@@ -29,7 +29,7 @@ import PersistentFixBar from "./components/PersistentFixBar";
 import CookieConsentBanner from "./components/CookieConsentBanner";
 import OraGuideMascot from "./components/OraGuideMascot";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
-import { AppStateBanners } from "./components/ui-states/UiStates.jsx";
+import { AppStateBanners, LoadingSkeleton, ReconnectingBanner, UpdateRequired, useOnlineStatus } from "./components/ui-states/UiStates.jsx";
 import MaintenanceGate from "./components/MaintenanceGate";  // 2026-08
 import { PrivateRoute, AdminRoute } from "./components/PrivateRoute";
 
@@ -146,9 +146,49 @@ function RouteLoader() {
         fontFamily: "'JetBrains Mono', monospace",
       }}
     >
-      loading…
+      <LoadingSkeleton lines={3} label="Loading page…" />
     </div>
   );
+}
+
+// Iter 2026-11-20 — UI states wiring (Phase 2): show the library
+// ReconnectingBanner briefly after the connection comes back
+// (online flips false → true). AppStateBanners already covers the
+// offline state itself; this only covers the reconnect moment.
+function ReconnectingNotice() {
+  const online = useOnlineStatus();
+  const wasOffline = useRef(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  useEffect(() => {
+    if (online === false) {
+      wasOffline.current = true;
+      return undefined;
+    }
+    if (wasOffline.current) {
+      wasOffline.current = false;
+      setReconnecting(true);
+      const timer = window.setTimeout(() => setReconnecting(false), 4000);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, [online]);
+  if (!reconnecting) return null;
+  return <ReconnectingBanner attempt={1} total={5} onRetry={() => window.location.reload()} />;
+}
+
+// Iter 2026-11-20 — UI states wiring (Phase 2): show the library
+// UpdateRequired banner when the service worker reports a waiting
+// update (main.jsx dispatches "ora:update-available"). The update
+// itself still applies through the existing controllerchange reload.
+function UpdateNotice() {
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  useEffect(() => {
+    const handler = () => setUpdateAvailable(true);
+    window.addEventListener("ora:update-available", handler);
+    return () => window.removeEventListener("ora:update-available", handler);
+  }, []);
+  if (!updateAvailable) return null;
+  return <UpdateRequired mandatory={false} onDismiss={() => setUpdateAvailable(false)} />;
 }
 
 // Iter 212m-25 — Tiny child of <BrowserRouter> that owns the
@@ -228,6 +268,12 @@ function SessionExpiredListener() {
       import("./lib/api").then(({ setToken, setUser }) => {
         try { setToken(null); } catch { /* noop */ }
         try { setUser(null);  } catch { /* noop */ }
+      // 2026-11-20 - Harness sign-in/sign-up redirect: /harness has
+      // its own sign-in/sign-up form, so an expired session there
+      // just shows that form again. Never bounce a harness visitor
+      // to the shared /login page (and never toast: the form itself
+      // is the signed-out state).
+      if (/^\/harness(\/|\?|#|$)/.test(window.location.pathname)) return;
         // Best-effort toast, then hard nav to /login preserving current
         // path so the user lands back after re-auth.
         try { toast({ message: msg, kind: "error", duration: 4000 }); } catch { /* noop */ }
@@ -340,7 +386,8 @@ export default function App() {
           autoFocus or add a keyboard shortcut (Alt+S) that focuses
           this link programmatically. */}
       <a
-        href="#main-content"
+        className="ora-ui-link"
+  href="#main-content"
         data-testid="skip-to-content-link"
         onClick={(e) => {
           // Programmatic focus so screen readers land on the landmark.
@@ -402,6 +449,8 @@ export default function App() {
             (semantic `<main>` was missing from the shell entirely). */}
         <main id="main-content" tabIndex={-1}>
 <AppStateBanners />
+      <ReconnectingNotice />
+      <UpdateNotice />
         <Routes>
           <Route path="/"                element={<Landing />} />
           {/* 2026-11-xx — /both retired: the Builder/Developer switcher
@@ -422,7 +471,7 @@ export default function App() {
           <Route path="/dev/visual"         element={<VisualFixtures />} />
           <Route path="/why-ora"         element={<WhyOra />} />
           <Route path="/demo"            element={<Demo />} />
-          <Route path="/login"           element={<Login />} />
+          <Route path="/login"           element={<LoginRoute />} />
           <Route path="/signup"          element={<Signup />} />
           <Route path="/reset-password"  element={<ResetPassword />} />
           <Route path="/team/accept-invite" element={<AcceptInvite />} />  {/* 2026-02 · Phase 1 team RBAC — public */}

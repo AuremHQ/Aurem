@@ -11,7 +11,7 @@ import { api, setToken, setUser } from "../lib/api";
 import { loginFreeOfferCta } from "../lib/billingCopy";
 import RobotGuide, { RobotGuideKeyframes, escapeHtml } from "../components/RobotGuide";
 import PasswordInput from "../components/PasswordInput";
-import { SessionExpiredBanner } from "../components/ui-states/UiStates.jsx";
+import { ErrorState, RateLimitState, SavingButton, SessionExpiredBanner, SuccessState } from "../components/ui-states/UiStates.jsx";
 
 export default function Login() {
   const [searchParams] = useSearchParams();
@@ -55,6 +55,16 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+const [rateLimited, setRateLimited] = useState(null);
+// Iter 2026-11-20 — 429 (Too Many Requests): surface the library RateLimitState
+// instead of a generic error, and offer the password-reset path as the alternative.
+function handleRateLimit(e) {
+  if (e?.response?.status !== 429) return false;
+  const retryAfter = Number(e.response?.headers?.["retry-after"]);
+  setRateLimited({ retryInSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 45 });
+  setError(null);
+  return true;
+}
   // Iter 388t · GDPR self-delete flow lands here with ?deleted=1.
   // Surface a one-shot success banner (auto-dismisses on next Tab).
   const [deletedBanner, setDeletedBanner] = useState(
@@ -86,7 +96,7 @@ export default function Login() {
       await api.post("/auth/forgot-password", { email: email.trim() });
       setForgotDone(true);
     } catch (e) {
-      setError(e?.response?.data?.detail || "Could not send reset link. Try again.");
+      if (!handleRateLimit(e)) setError(e?.response?.data?.detail || "Could not send reset link. Try again.");
     } finally {
       setForgotBusy(false);
     }
@@ -137,7 +147,7 @@ export default function Login() {
         }
       }
     } catch (e) {
-      setError(e?.response?.data?.detail || "Sign in failed. Try again.");
+      if (!handleRateLimit(e)) setError(e?.response?.data?.detail || "Sign in failed. Try again.");
     } finally {
       setBusy(false);
     }
@@ -178,7 +188,7 @@ export default function Login() {
         }
       }
     } catch (e) {
-      setError(e?.response?.data?.detail || "Invalid 2FA code. Try again.");
+      if (!handleRateLimit(e)) setError(e?.response?.data?.detail || "Invalid 2FA code. Try again.");
     } finally {
       setBusy(false);
     }
@@ -196,38 +206,13 @@ export default function Login() {
     >
       <section style={{ maxWidth: 440, margin: "20px auto" }}>
         {deletedBanner && (
-          <div
-            data-testid="login-deleted-banner"
-            role="status"
-            style={{
-              background: "rgba(74, 222, 128, 0.10)",
-              border: "1px solid rgba(74, 222, 128, 0.35)",
-              color: "rgb(74, 222, 128)",
-              padding: "10px 14px",
-              borderRadius: 6,
-              marginBottom: 20,
-              fontSize: 13,
-              lineHeight: 1.5,
-            }}
-          >
-            <strong>Your account has been permanently deleted.</strong>
-            <br />
-            <span style={{ opacity: 0.85 }}>
-              All associated data has been purged from our systems.
-              You can create a new account at any time.
-            </span>
-            <button
-              type="button"
-              onClick={() => setDeletedBanner(false)}
-              aria-label="Dismiss deletion notice"
-              style={{
-                float: "right", background: "transparent", border: "none",
-                color: "inherit", cursor: "pointer", fontSize: 16,
-                lineHeight: 1, opacity: 0.7, marginLeft: 8,
-              }}
-            >×</button>
-          </div>
-        )}
+        <>
+          <SuccessState title="Your account has been permanently deleted." nextLabel="Dismiss" onNext={() => setDeletedBanner(false)} />
+          <p className="ora-ui-text" style={{ marginTop: 8 }}>
+            All associated data has been purged from our systems. You can create a new account at any time.
+          </p>
+        </>
+      )}
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <span className="eyebrow">sign in</span>
           <h1 className="serif" style={{ fontSize: 32, marginTop: 10 }}>
@@ -414,16 +399,11 @@ export default function Login() {
               Forgot password?
             </button>
 
-            {error && (
-              <div data-testid="login-error" style={{
-                fontSize: 12, color: "var(--danger)",
-                border: "1px solid rgba(255,107,107,0.25)",
-                background: "rgba(255,107,107,0.06)",
-                padding: "10px 12px", borderRadius: 4,
-              }}>
-                {error}
-              </div>
-            )}
+            {rateLimited ? (
+        <RateLimitState retryInSeconds={rateLimited.retryInSeconds} alternativeLabel="Reset your password instead" onUnlockAlternative={() => { setRateLimited(null); setForgotMode(true); }} />
+      ) : error ? (
+        <ErrorState title="Sign-in failed" message={error} onRetry={() => { setError(null); document.querySelector("input[type=email]")?.focus(); }} />
+      ) : null}
 
             <button
               type="submit"
@@ -466,16 +446,11 @@ export default function Login() {
                       placeholder="you@company.com"
                     />
                   </label>
-                  {error && (
-                    <div data-testid="login-forgot-password-error" style={{
-                      fontSize: 12, color: "var(--danger)",
-                      border: "1px solid rgba(255,107,107,0.25)",
-                      background: "rgba(255,107,107,0.06)",
-                      padding: "10px 12px", borderRadius: 4,
-                    }}>
-                      {error}
-                    </div>
-                  )}
+                  {rateLimited ? (
+        <RateLimitState retryInSeconds={rateLimited.retryInSeconds} alternativeLabel="Back to sign in" onUnlockAlternative={() => { setRateLimited(null); setForgotMode(false); }} />
+      ) : error ? (
+        <ErrorState title="Could not send reset link" message={error} onRetry={() => { setError(null); document.querySelector("input[type=email]")?.focus(); }} />
+      ) : null}
                   <button
                     type="submit"
                     data-testid="login-forgot-password-submit"
@@ -545,16 +520,11 @@ export default function Login() {
                   }}
                 />
               </label>
-              {error && (
-                <div data-testid="login-2fa-error" style={{
-                  fontSize: 12, color: "var(--danger)",
-                  border: "1px solid rgba(255,107,107,0.25)",
-                  background: "rgba(255,107,107,0.06)",
-                  padding: "10px 12px", borderRadius: 4,
-                }}>
-                  {error}
-                </div>
-              )}
+              {rateLimited ? (
+        <RateLimitState retryInSeconds={rateLimited.retryInSeconds} alternativeLabel="Use a backup code instead" onUnlockAlternative={() => { setRateLimited(null); setUseBackup(true); }} />
+      ) : error ? (
+        <ErrorState title="Verification failed" message={error} onRetry={() => { setError(null); document.querySelector('[data-testid="login-2fa-code-input"], [data-testid="login-2fa-backup-input"]')?.focus(); }} />
+      ) : null}
               <button
                 type="submit"
                 data-testid="login-2fa-submit"

@@ -27,6 +27,7 @@ import FounderOfferPill from "../components/FounderOfferPill";
 import ConfirmModal from "../components/ConfirmModal";
 import RollbackConfirmModal from "../components/RollbackConfirmModal";
 import ArchitectBlueprintPanel from "../components/ArchitectBlueprintPanel";
+import { ConfirmationDialog, EmptyState, ErrorState, LoadingSkeleton } from "../components/ui-states/UiStates.jsx";
 import { DownloadPdfButton } from "./CodebaseHealth";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -212,81 +213,19 @@ function Body() {
           </button>
         </div>
         {loadError && (
-          <div data-testid="proj-load-error" style={{
-            padding: "18px 14px",
-            background: "rgba(239,68,68,0.05)",
-            border: "1px dashed rgba(239,68,68,0.3)",
-            borderRadius: 8,
-            textAlign: "center",
-            marginTop: 4,
-          }}>
-            <p style={{ fontSize: 12, color: "var(--text-faint)", margin: "0 0 12px",
-                         lineHeight: 1.5 }}>
-              Couldn&apos;t load your projects.
-            </p>
-            <button
-              data-testid="proj-load-error-retry"
-              onClick={() => { setLoading(true); refresh(); }}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                fontSize: 12,
-                fontWeight: 600,
-                background: "var(--accent, #ff8a2a)",
-                color: "#0a0e1a",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                fontFamily: "'JetBrains Mono', monospace",
-                letterSpacing: "0.04em",
-              }}
-            >
-              <RefreshCw size={14} /> Retry
-            </button>
-          </div>
-        )}
-        {!loadError && !loading && projects.length === 0 && (
-          <div style={{
-            padding: "18px 14px",
-            background: "rgba(255,138,42,0.05)",
-            border: "1px dashed rgba(255,138,42,0.25)",
-            borderRadius: 8,
-            textAlign: "center",
-            marginTop: 4,
-          }}>
-            <p style={{ fontSize: 12, color: "var(--text-faint)", margin: "0 0 12px",
-                         lineHeight: 1.5 }}>
-              No projects yet. Connect a GitHub repo to get started.
-            </p>
-            <button
-              data-testid="proj-empty-add-btn"
-              onClick={openAdd}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                fontSize: 12,
-                fontWeight: 600,
-                background: "var(--accent, #ff8a2a)",
-                color: "#0a0e1a",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                fontFamily: "'JetBrains Mono', monospace",
-                letterSpacing: "0.04em",
-              }}
-            >
-              <Plus size={14} /> Connect your first repo
-            </button>
-          </div>
-        )}
+      <ErrorState title="Couldn't load your projects" message="We couldn't load your project list. Try again." onRetry={() => { setLoading(true); refresh(); }} />
+    )}
+        {loading && (
+      <LoadingSkeleton lines={3} label="Loading projects…" />
+    )}
+    {!loadError && !loading && projects.length === 0 && (
+      <EmptyState
+        title="No projects yet"
+        message="Connect a GitHub repo to get started."
+        actionLabel="Connect your first repo"
+        onAction={openAdd}
+      />
+    )}
         {projects.map((p) => {
           const sel = active?.project_id === p.project_id;
           return (
@@ -2238,15 +2177,15 @@ function ProjectDetail({ project, onRemoved, onChanged }) {
 
   return (
     <div data-testid="proj-detail" style={{ display: "grid", gap: 18 }}>
-      <ConfirmModal
-        open={confirmRemoveOpen}
-        testidPrefix="proj-remove-confirm"
-        title="Remove project?"
-        body={`Remove project "${project.name}"? This unlinks it from AUREM — it does not touch anything on GitHub.`}
+      {confirmRemoveOpen && (
+      <ConfirmationDialog
+        subject={project.name}
+        consequence="This unlinks it from AUREM — it does not touch anything on GitHub."
         confirmLabel="Remove"
         onConfirm={doRemove}
         onCancel={() => setConfirmRemoveOpen(false)}
       />
+    )}
       <div className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <div>

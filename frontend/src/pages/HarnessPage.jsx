@@ -50,12 +50,14 @@
  */
 import React, { useEffect, useState } from "react";
 import { api, healthApi, getToken, setToken, setUser } from "../lib/api";
+import { useSearchParams } from "react-router-dom";
 import { scorePassword, MIN_ACCEPTABLE_SCORE } from "../lib/passwordStrength";
 import {
   HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, INSTALL, FAQ_ITEMS,
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../data/harnessContent.mjs";
 import { LOOP_JSON_LD } from "../data/aaoJsonLd";
+import { CompletionState, ErrorState, FieldError, FileTransferList, SavingButton, SuccessState } from "../components/ui-states/UiStates.jsx";
 
 const CSS = `
 :root {
@@ -120,9 +122,6 @@ const CSS = `
 .aurem-harness-v2 .field label { display: block; font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; }
 .aurem-harness-v2 .field input { width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 .aurem-harness-v2 .field input::placeholder { color: var(--ink-3); }
-.aurem-harness-v2 .field .err-msg { display: none; color: var(--err); font-size: 0.85rem; margin-top: 5px; }
-.aurem-harness-v2 .field.invalid input { border-color: var(--err); }
-.aurem-harness-v2 .field.invalid .err-msg { display: block; }
 .aurem-harness-v2 .pw-wrap { position: relative; }
 .aurem-harness-v2 .pw-wrap input { padding-right: 76px; }
 .aurem-harness-v2 .pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: var(--accent-strong); font-weight: 600; font-size: 0.88rem; cursor: pointer; padding: 6px 10px; min-height: 2.25rem; }
@@ -262,7 +261,8 @@ export default function HarnessPage() {
   const releaseDate = fmtReleaseDate(release?.published_at);
   const [authChecked, setAuthChecked] = useState(false);
 
-  const [view, setView] = useState("signup"); // signup | signin | reset | done
+  const [searchParams] = useSearchParams();
+const [view, setView] = useState(searchParams.get("tab") === "signin" ? "signin" : "signup"); // signup | signin | reset | done
   const [formMsg, setFormMsg] = useState(null); // { text, kind }
   const [busy, setBusy] = useState(false);
 
@@ -319,12 +319,38 @@ export default function HarnessPage() {
     api.get("/auth/me")
       .then((r) => {
         const u = r.data?.user;
-        const first = (u?.name || "").split(" ")[0];
+        // 2026-11-20 - the cached aurem_user must always be the account
+      // this token belongs to. It used to be left untouched here, so
+      // a previous account stayed cached - and displayed - after
+      // signing in as someone else.
+      if (u) {
+        try {
+          setUser({
+            user_id: u.user_id,
+            email: u.email,
+            name: u.name,
+            tier: u.tier,
+            tokens_remaining: u.tokens_remaining,
+            created_at: u.created_at,
+          });
+        } catch {
+          // Cache refresh is best-effort; the done view below still uses the fresh response.
+        }
+      }
+      const first = (u?.name || "").split(" ")[0];
         setDoneTitle(`Welcome back${first ? ", " + first : ""}!`);
         setDoneText("You are signed in and still on the same page — your download is unlocked below, exactly as it should be.");
         setView("done");
       })
-      .catch(() => { /* no valid session — stay on the sign-up/sign-in form */ })
+      .catch(() => {
+      // No valid session - clear any cached user left over from a
+      // previous account so the page never shows the wrong account.
+      try {
+        setUser(null);
+      } catch {
+        // best-effort
+      }
+    })
       .finally(() => setAuthChecked(true));
   }, []);
 
@@ -462,19 +488,23 @@ export default function HarnessPage() {
       window.location.href = `${base}/api/aurem-dev/google/oauth/start?intent=signup&next=${next}`;
       return;
     }
+    // GitHub goes straight to github.com, exactly like Google above.
+  // The funnel click is fire-and-forget telemetry: it used to be
+  // awaited (dynamic import + up to 5 s POST) before the browser
+  // left the page, so a slow or failing telemetry call could delay
+  // - or, when its promise chain rejected, silently swallow - the
+  // OAuth start, and the return then landed on /login?next=/harness
+  // still signed out. Navigate first; telemetry must never gate it.
+  try {
     import("../lib/githubFunnel")
-      .then(({ trackFunnel, withFunnelParams }) =>
-        trackFunnel("cta_click", "harness_homepage", { intent: "signup" })
-          .catch(() => {})
-          .then(() => {
-            window.location.href = withFunnelParams(
-              `${base}/api/aurem-dev/github/oauth/connect?signup=1&next=${next}`,
-              "harness_homepage",
-            );
-          }))
-      .catch(() => {
-        window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&next=${next}`;
-      });
+      .then(({ trackFunnel }) => {
+        trackFunnel("cta_click", "harness_homepage", { intent: "signup" }).catch(() => {});
+      })
+      .catch(() => {});
+  } catch {
+    // Telemetry is best-effort; the navigation below still happens.
+  }
+  window.location.href = `${base}/api/aurem-dev/github/oauth/connect?signup=1&intent=signup&next=${next}`;
   }
 
   async function handleDownload() {
@@ -532,19 +562,26 @@ async function handleDownloadExe() {
 }
 
   async function signOutAndShowForm() {
-    const tok = getToken();
-    if (tok) {
-      try {
-        await api.post("/auth/logout");
-      } catch {
-        // best-effort — the local token clear below is what actually matters.
-      }
+  const tok = getToken();
+  // Clear the local session and show the sign-in form FIRST, synchronously.
+  // 2026-11-20 - the server logout used to be awaited before the clear:
+  // on an expired token it 401s, and the api interceptor fires
+  // aurem:session-expired before the await resolves, so the App listener
+  // bounced to /login?next=/harness and the form never appeared on the
+  // first click. The form must appear immediately; the server logout is
+  // fire-and-forget below, with the captured token in the header.
+  setToken(null);
+  setUser(null);
+  setDownloadSuccess(false);
+  setDeliveredSha256(null);
+  switchView("signin");
+  if (tok) {
+    try {
+      api.post("/auth/logout", {}, { headers: { Authorization: `Bearer ${tok}` } }).catch(() => {});
+    } catch {
+      // best-effort — the local session is already cleared above.
     }
-    setToken(null);
-    setUser(null);
-    setDownloadSuccess(false);
-    setDeliveredSha256(null);
-    switchView("signin");
+  }
   }
 
   function openCookiePreferences() {
@@ -618,24 +655,24 @@ async function handleDownloadExe() {
                   <form onSubmit={handleSignup} noValidate>
                     <h2>Create your free account</h2>
                     <p className="hint">One account for ORA and the Aurem Loop download. It takes less than a minute.</p>
-                    <div className={`field${suErrors.suName ? " invalid" : ""}`}>
+                    <div className="field">
                       <label htmlFor="suName">Full name</label>
-                      <input id="suName" data-testid="harness-signup-name" type="text" autoComplete="name" placeholder="Your name" value={suName} onChange={(e) => setSuName(e.target.value)} />
-                      <p className="err-msg">Please enter your name.</p>
+                      <input id="suName" data-testid="harness-signup-name" className={suErrors.suName ? "ora-ui-field-error" : undefined} aria-invalid={!!suErrors.suName} aria-describedby="suName-error" type="text" autoComplete="name" placeholder="Your name" value={suName} onChange={(e) => setSuName(e.target.value)} />
+                      <FieldError id="suName-error" message={suErrors.suName ? "Please enter your name." : ""} />
                     </div>
-                    <div className={`field${suErrors.suEmail ? " invalid" : ""}`}>
+                    <div className="field">
                       <label htmlFor="suEmail">Email</label>
-                      <input id="suEmail" data-testid="harness-signup-email" type="email" autoComplete="email" placeholder="you@example.com" value={suEmail} onChange={(e) => setSuEmail(e.target.value)} />
-                      <p className="err-msg">Please enter a valid email address, like you@example.com.</p>
+                      <input id="suEmail" data-testid="harness-signup-email" className={suErrors.suEmail ? "ora-ui-field-error" : undefined} aria-invalid={!!suErrors.suEmail} aria-describedby="suEmail-error" type="email" autoComplete="email" placeholder="you@example.com" value={suEmail} onChange={(e) => setSuEmail(e.target.value)} />
+                      <FieldError id="suEmail-error" message={suErrors.suEmail ? "Please enter a valid email address, like you@example.com." : ""} />
                     </div>
                     <div className="field">
                       <label htmlFor="suPhone">Phone <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>(optional)</span></label>
                       <input id="suPhone" data-testid="harness-signup-phone" type="tel" autoComplete="tel" placeholder="+1 …" value={suPhone} onChange={(e) => setSuPhone(e.target.value)} />
                     </div>
-                    <div className={`field${suErrors.suPass ? " invalid" : ""}`}>
+                    <div className="field">
                       <label htmlFor="suPass">Password</label>
                       <div className="pw-wrap">
-                        <input id="suPass" data-testid="harness-signup-password" type={suShowPw ? "text" : "password"} autoComplete="new-password" placeholder="At least 8 characters" value={suPass} onChange={(e) => setSuPass(e.target.value)} />
+                        <input id="suPass" data-testid="harness-signup-password" className={suErrors.suPass ? "ora-ui-field-error" : undefined} aria-invalid={!!suErrors.suPass} aria-describedby="suPass-error" type={suShowPw ? "text" : "password"} autoComplete="new-password" placeholder="At least 8 characters" value={suPass} onChange={(e) => setSuPass(e.target.value)} />
                         <button type="button" className="pw-toggle" onClick={() => setSuShowPw((v) => !v)}>{suShowPw ? "Hide" : "Show"}</button>
                       </div>
                       {suPass && (
@@ -644,10 +681,15 @@ async function handleDownloadExe() {
                         </div>
                       )}
                       <p className="strength-note">{suPass ? scorePassword(suPass).label : ""}</p>
-                      <p className="err-msg">Your password must be at least 8 characters long.</p>
+                      <FieldError id="suPass-error" message={suErrors.suPass ? "Your password must be at least 8 characters long." : ""} />
                     </div>
                     <button className="submit" type="submit" data-testid="harness-signup-submit" disabled={busy}>{busy ? "Creating account…" : "Create account & get the download"}</button>
                     <p className="legal-note">By creating an account you agree to the <a href="#terms">Terms of Use</a> and <a href="#privacy">Privacy Policy</a>.</p>
+        <div className="divider">or</div>
+        <div className="oauth">
+          <button type="button" data-testid="harness-oauth-google" onClick={() => startOAuth("google")}>Continue with Google</button>
+          <button type="button" data-testid="harness-oauth-github" onClick={() => startOAuth("github")}>Continue with GitHub</button>
+        </div>
                     <div className="alt-row">
                       <span style={{ color: "var(--ink-2)" }}>Already have an account?</span>
                       <button type="button" className="link" onClick={() => switchView("signin")}>Sign in →</button>
@@ -659,18 +701,18 @@ async function handleDownloadExe() {
                   <form onSubmit={handleSignin} noValidate>
                     <h2>Welcome back</h2>
                     <p className="hint">Sign in and the download unlocks right here on this page — you will not be sent anywhere else.</p>
-                    <div className={`field${siErrors.siEmail ? " invalid" : ""}`}>
+                    <div className="field">
                       <label htmlFor="siEmail">Email</label>
-                      <input id="siEmail" data-testid="harness-signin-email" type="email" autoComplete="email" placeholder="you@example.com" value={siEmail} onChange={(e) => setSiEmail(e.target.value)} />
-                      <p className="err-msg">Please enter a valid email address, like you@example.com.</p>
+                      <input id="siEmail" data-testid="harness-signin-email" className={siErrors.siEmail ? "ora-ui-field-error" : undefined} aria-invalid={!!siErrors.siEmail} aria-describedby="siEmail-error" type="email" autoComplete="email" placeholder="you@example.com" value={siEmail} onChange={(e) => setSiEmail(e.target.value)} />
+                      <FieldError id="siEmail-error" message={siErrors.siEmail ? "Please enter a valid email address, like you@example.com." : ""} />
                     </div>
-                    <div className={`field${siErrors.siPass ? " invalid" : ""}`}>
+                    <div className="field">
                       <label htmlFor="siPass">Password</label>
                       <div className="pw-wrap">
-                        <input id="siPass" data-testid="harness-signin-password" type={siShowPw ? "text" : "password"} autoComplete="current-password" placeholder="Your password" value={siPass} onChange={(e) => setSiPass(e.target.value)} />
+                        <input id="siPass" data-testid="harness-signin-password" className={siErrors.siPass ? "ora-ui-field-error" : undefined} aria-invalid={!!siErrors.siPass} aria-describedby="siPass-error" type={siShowPw ? "text" : "password"} autoComplete="current-password" placeholder="Your password" value={siPass} onChange={(e) => setSiPass(e.target.value)} />
                         <button type="button" className="pw-toggle" onClick={() => setSiShowPw((v) => !v)}>{siShowPw ? "Hide" : "Show"}</button>
                       </div>
-                      <p className="err-msg">Please enter your password.</p>
+                      <FieldError id="siPass-error" message={siErrors.siPass ? "Please enter your password." : ""} />
                     </div>
                     <button className="submit" type="submit" data-testid="harness-signin-submit" disabled={busy}>{busy ? "Signing in…" : "Sign in & get the download"}</button>
                     <div className="alt-row">
@@ -704,10 +746,10 @@ async function handleDownloadExe() {
                   <form onSubmit={handleReset} noValidate>
                     <h2>Reset your password</h2>
                     <p className="hint">Enter the email you signed up with and we will send you a secure reset link.</p>
-                    <div className={`field${rsErrors.rsEmail ? " invalid" : ""}`}>
+                    <div className="field">
                       <label htmlFor="rsEmail">Email</label>
-                      <input id="rsEmail" data-testid="harness-reset-email" type="email" autoComplete="email" placeholder="you@example.com" value={rsEmail} onChange={(e) => setRsEmail(e.target.value)} />
-                      <p className="err-msg">Please enter a valid email address, like you@example.com.</p>
+                      <input id="rsEmail" data-testid="harness-reset-email" className={rsErrors.rsEmail ? "ora-ui-field-error" : undefined} aria-invalid={!!rsErrors.rsEmail} aria-describedby="rsEmail-error" type="email" autoComplete="email" placeholder="you@example.com" value={rsEmail} onChange={(e) => setRsEmail(e.target.value)} />
+                      <FieldError id="rsEmail-error" message={rsErrors.rsEmail ? "Please enter a valid email address, like you@example.com." : ""} />
                     </div>
                     <button className="submit" type="submit" data-testid="harness-reset-submit" disabled={busy}>{busy ? "Sending…" : "Send reset link"}</button>
                     <div className="alt-row">
@@ -751,13 +793,11 @@ async function handleDownloadExe() {
                   </p>
                 )}
                 {downloadSuccess && (
-                  <div className="form-msg show ok" data-testid="harness-download-success">
-                    🎊 Congratulations! Successfully downloaded
-                    {deliveredSha256 && <><br /><span style={{ fontSize: "0.82rem", wordBreak: "break-all" }}>Delivered file SHA-256: {deliveredSha256}</span></>}
+                  <div data-testid="harness-download-success"><SuccessState title={"\u{1F389} Congratulations! Successfully downloaded"} reference={deliveredSha256 ? "Delivered file SHA-256: " + deliveredSha256 : undefined} />
                   </div>
                 )}
                 {downloadState === "error" && (
-                  <div className="form-msg show bad" data-testid="harness-download-error">{downloadError}</div>
+                  <div data-testid="harness-download-error"><ErrorState title="Download failed" message={downloadError} /></div>
                 )}
                 <button type="button" className="again" data-testid="harness-signout-again" onClick={signOutAndShowForm}>← Sign out and show the form again</button>
               </div>

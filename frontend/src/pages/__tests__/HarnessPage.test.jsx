@@ -22,7 +22,7 @@ vi.mock("../../lib/api", () => ({
 }));
 
 import HarnessPage from "../HarnessPage.jsx";
-import { api, healthApi, getToken } from "../../lib/api";
+import { api, healthApi, getToken, setUser } from "../../lib/api";
 
 const RELEASE = {
   available: true,
@@ -40,9 +40,9 @@ function mockEndpoints({ flag = true, release = { available: false } } = {}) {
   });
 }
 
-function renderPage() {
+function renderPage(entry = "/harness") {
   return render(
-    <MemoryRouter initialEntries={["/harness"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes><Route path="/harness" element={<HarnessPage />} /></Routes>
     </MemoryRouter>,
   );
@@ -202,8 +202,16 @@ describe("HarnessPage — real signin", () => {
       fireEvent.click(screen.getByTestId("harness-oauth-google"));
       expect(window.location.href).toBe(
         "http://localhost:3000/api/aurem-dev/google/oauth/start?intent=signup&next=%2Fharness",
-      );
-    } finally {
+    );
+    // GitHub goes straight to github.com on the first click, same as
+    // Google above — no awaited funnel step in between, and the return
+    // is the ?next= destination, never /dashboard.
+    window.location.href = "";
+    fireEvent.click(screen.getByTestId("harness-oauth-github"));
+    expect(window.location.href).toBe(
+      "http://localhost:3000/api/aurem-dev/github/oauth/connect?signup=1&intent=signup&next=%2Fharness",
+    );
+  } finally {
       window.location = originalLocation;
     }
   });
@@ -320,6 +328,82 @@ describe("HarnessPage — real authenticated download + congratulations", () => 
 
 });
 
+describe("HarnessPage — harness auth fix (2026-11-20)", () => {
+  it("Sign-up tab offers the same Google and GitHub buttons as the Sign-in tab", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    expect(screen.getByTestId("harness-oauth-google")).toBeInTheDocument();
+    expect(screen.getByTestId("harness-oauth-github")).toBeInTheDocument();
+    const originalLocation = window.location;
+    delete window.location;
+    window.location = { href: "", origin: "http://localhost:3000" };
+    try {
+      fireEvent.click(screen.getByTestId("harness-oauth-github"));
+      expect(window.location.href).toBe(
+        "http://localhost:3000/api/aurem-dev/github/oauth/connect?signup=1&intent=signup&next=%2Fharness",
+      );
+    } finally {
+      window.location = originalLocation;
+    }
+  });
+
+  it("opens on the Sign-in tab when ?tab=signin is in the URL and stays there", async () => {
+    mockEndpoints({ flag: true, release: { available: false } });
+    renderPage("/harness?tab=signin");
+    await waitFor(() => expect(screen.getByTestId("harness-signin-submit")).toBeInTheDocument());
+    expect(screen.queryByTestId("harness-signup-submit")).not.toBeInTheDocument();
+  });
+
+  it("refreshes the cached user from /auth/me so the shown account is the signed-in account", async () => {
+    getToken.mockReturnValue("tejinder-jwt");
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.get.mockResolvedValue({
+      data: {
+        user: {
+          user_id: "u-tejinder",
+          email: "tejinder@example.com",
+          name: "Tejinder",
+          tier: "free",
+          tokens_remaining: 10,
+          created_at: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+    expect(setUser).toHaveBeenCalledWith({
+      user_id: "u-tejinder",
+      email: "tejinder@example.com",
+      name: "Tejinder",
+      tier: "free",
+      tokens_remaining: 10,
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("clears the cached user when /auth/me fails so a previous account is never shown", async () => {
+    getToken.mockReturnValue("expired-jwt");
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.get.mockRejectedValue({ response: { status: 401 } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-signup-submit")).toBeInTheDocument());
+    expect(setUser).toHaveBeenCalledWith(null);
+  });
+
+  it("shows the sign-in form on the first click even when the server logout fails", async () => {
+    getToken.mockReturnValue("expired-jwt");
+    mockEndpoints({ flag: true, release: { available: false } });
+    api.get.mockResolvedValue({ data: { user: { name: "Returning User" } } });
+    api.post.mockRejectedValue({ response: { status: 401 } });
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("harness-signout-again"));
+    await waitFor(() => expect(screen.getByTestId("harness-signin-submit")).toBeInTheDocument());
+    expect(screen.queryByTestId("harness-signout-again")).not.toBeInTheDocument();
+  });
+});
+
 describe("HarnessPage — sign out and show the form again", () => {
   it("fires a real logout call, clears local session, and returns to the sign-in form", async () => {
     getToken.mockReturnValue("existing-jwt");
@@ -329,7 +413,7 @@ describe("HarnessPage — sign out and show the form again", () => {
     renderPage();
     await waitFor(() => expect(screen.getByTestId("harness-done-view")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("harness-signout-again"));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/logout"));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/logout", {}, { headers: { Authorization: "Bearer existing-jwt" } }));
     await waitFor(() => expect(screen.getByTestId("harness-signin-submit")).toBeInTheDocument());
   });
 });
