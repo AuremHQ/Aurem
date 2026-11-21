@@ -657,6 +657,38 @@ async def _ci_pass_rate_30d() -> dict:
 
 
 # ── overall roll-up ─────────────────────────────────────────────────────
+async def _score_isolated(name: str, coro) -> tuple[str, dict]:
+    """Run one category scorer in isolation.
+
+    2026-11-21 — the Codebase Health Score page would not open at all:
+    get_health_score() awaited the 9 scorers SEQUENTIALLY with no error
+    isolation, so ONE failing scorer raised out of the whole roll-up and
+    turned GET /admin/health-score into a 500, hiding all 9 categories
+    behind a single error line in the widget. Any scorer can raise on
+    live data — the G21 security scan does unguarded file reads
+    (requirements.txt, routers/*.py, main.py), the DevOps scorer calls
+    the GitHub API, and the coverage/data/performance scorers do raw DB
+    reads. A failing scorer now degrades to an honest "unscored" for
+    ITS OWN category only — the shape every other no-evidence path
+    already returns — and the page opens with the remaining categories.
+    This changes NO scorer, threshold, or weight; the roll-up below
+    already excludes unscored weight (never renormalized).
+    """
+    try:
+        result = await coro
+    except Exception as e:  # noqa: BLE001 — isolation boundary, log + degrade
+        logger.warning("health_score: scorer %s failed: %r", name, e)
+        return name, _unscored(
+            f"Scorer failed — {type(e).__name__}: {e}", live=False)
+    if not isinstance(result, dict) or result.get("status") not in ("scored", "unscored"):
+        logger.warning("health_score: scorer %s returned an unexpected shape: %r",
+                       name, result)
+        return name, _unscored(
+            "Scorer returned an unexpected shape — no trustworthy evidence.",
+            live=False)
+    return name, result
+
+
 async def get_health_score(db) -> dict:
     import asyncio
     from services.architecture_health import run_health_report
@@ -665,17 +697,29 @@ async def get_health_score(db) -> dict:
     # its own synchronous, on-event-loop copy of this scan — see the
     # 2026-08-23 fix notes on both functions above).
     shared_report = await asyncio.to_thread(run_health_report)
-    categories = {
-        "security":      await score_security(db),
-        "bug_density":   await score_bug_density(db),
-        "reliability":   await score_reliability(db),
-        "test_coverage": await score_test_coverage(db),
-        "code_quality":  await score_code_quality(db, report=shared_report),
-        "data_handling": await score_data_handling(db),
-        "performance":   await score_performance(db),
-        "architecture":  await score_architecture(db, report=shared_report),
-        "devops_infra":  await score_devops_infra(db),
-    }
+    # 2026-11-21 — the 9 scorers are independent (each reads its own
+    # evidence; the only shared input is the read-only shared_report),
+    # so run them CONCURRENTLY instead of sequentially: sequential await
+    # made the endpoint's wall time the SUM of the full-codebase scan +
+    # the G21 security scan + up to 3 pages of GitHub API calls, which
+    # can exceed the widget's 40 s fetch timeout and leave the page
+    # showing a timeout instead of a score. Concurrently the wall time
+    # is roughly the slowest single scorer. Each scorer still runs
+    # inside _score_isolated, so a failure degrades its own category.
+    jobs = [
+        ("security", score_security(db)),
+        ("bug_density", score_bug_density(db)),
+        ("reliability", score_reliability(db)),
+        ("test_coverage", score_test_coverage(db)),
+        ("code_quality", score_code_quality(db, report=shared_report)),
+        ("data_handling", score_data_handling(db)),
+        ("performance", score_performance(db)),
+        ("architecture", score_architecture(db, report=shared_report)),
+        ("devops_infra", score_devops_infra(db)),
+    ]
+    categories = dict(await asyncio.gather(
+        *(_score_isolated(name, coro) for name, coro in jobs)
+    ))
     scored_weight = sum(WEIGHTS[k] for k, v in categories.items() if v["status"] == "scored")
     if scored_weight == 0:
         overall = None
