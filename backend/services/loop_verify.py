@@ -111,6 +111,86 @@ def contextlib_suppress():
     return _S()
 
 
+def _skip_row(rel: str, stderr: str) -> dict:
+    """Soft-skip result: the file was not really linted."""
+    return {
+        "path":   rel,
+        "ok":     True,
+        "linter": "skip",
+        "verified": False,   # R2 · W3 2026-08 — honest: no real check ran
+        "error_code": "FILE_LANGUAGE_UNVERIFIED",
+        "stdout": "",
+        "stderr": stderr,
+    }
+
+
+def _first_diagnostic(stdout: str, stderr: str) -> str:
+    """First non-empty diagnostic line — keeps the aggregated error
+    list tight even on noisy linters."""
+    for line in (stdout or stderr).strip().splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def _lint_result(rel: str, tool: str, rc: int, so: bytes, se: bytes,
+                 disk_path: str, sandbox: str) -> tuple[dict, Optional[str]]:
+    ok = (rc == 0)
+    stdout = so.decode(errors="ignore")
+    stderr = se.decode(errors="ignore")
+    stdout = stdout.replace(disk_path, rel).replace(sandbox + "/", "")
+    stderr = stderr.replace(disk_path, rel).replace(sandbox + "/", "")
+    row = {"path": rel, "ok": ok, "linter": tool, "verified": True,
+           "stdout": stdout, "stderr": stderr}
+    if ok:
+        return (row, None)
+    first_err = _first_diagnostic(stdout, stderr)
+    return (row, f"{rel}: {first_err}" if first_err else None)
+
+
+async def _lint_one(f: dict, sandbox: str, sem: asyncio.Semaphore) -> tuple[dict, Optional[str]]:
+    """Returns (result_row, error_line_or_None)."""
+    rel = f["path"]
+    ext = _ext(rel)
+    linter = _LINTERS.get(ext)
+    if not linter:
+        return (_skip_row(rel, f"no linter mapping for {ext or '(no ext)'}"), None)
+    tool, flags = linter
+    safe_rel = rel.replace("..", "_").lstrip("/")
+    file_dir = os.path.join(sandbox, os.path.dirname(safe_rel) or ".")
+    os.makedirs(file_dir, exist_ok=True)
+    disk_path = os.path.join(sandbox, safe_rel)
+    try:
+        with open(disk_path, "w", encoding="utf-8") as fh:
+            fh.write(f["content"])
+    except OSError as e:
+        return ({"path": rel, "ok": False, "linter": tool,
+                 "stdout": "",
+                 "stderr": f"write failed: {e}"},
+                f"{rel}: write failed: {e}")
+    async with sem:
+        rc, so, se = await _run([tool, *flags, disk_path], cwd=sandbox)
+    # Iter 212m-166 — rc=127 = linter binary missing on this pod.
+    # Treat as a soft skip so the Loop continues to Ship instead of
+    # crashing.  Same shape as the `linter=skip` branch above.
+    if rc == 127:
+        return (_skip_row(rel, se.decode(errors="ignore") or f"{tool} not available on runtime pod"), None)
+    return _lint_result(rel, tool, rc, so, se, disk_path, sandbox)
+
+
+def _valid_files(files: Optional[list]) -> list[dict]:
+    return [f for f in (files or [])
+            if isinstance(f, dict) and f.get("path") and f.get("content") is not None]
+
+
+def _cleanup_sandbox(sandbox: str) -> None:
+    try:
+        shutil.rmtree(sandbox, ignore_errors=True)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("sandbox cleanup failed: %r", e)
+
+
 async def verify_files(files: list[dict]) -> dict:
     """Lint each file in a sandboxed temp dir.  Each file gets its own
     subdir so eslint/ruff can't cross-contaminate.  Returns a structured
@@ -123,8 +203,7 @@ async def verify_files(files: list[dict]) -> dict:
     The `_run()` subprocess call already has its own timeout so a hung
     linter can't take down the whole batch.
     """
-    files = [f for f in (files or [])
-             if isinstance(f, dict) and f.get("path") and f.get("content") is not None]
+    files = _valid_files(files)
     if not files:
         return {"ok": True, "results": [], "errors": []}
 
@@ -134,77 +213,12 @@ async def verify_files(files: list[dict]) -> dict:
     # batches; one stuck linter only blocks itself, not its siblings.
     sem = asyncio.Semaphore(4)
 
-    async def _lint_one(f: dict) -> tuple[dict, Optional[str]]:
-        """Returns (result_row, error_line_or_None)."""
-        rel = f["path"]
-        ext = _ext(rel)
-        linter = _LINTERS.get(ext)
-        if not linter:
-            return ({
-                "path":   rel,
-                "ok":     True,
-                "linter": "skip",
-                "verified": False,   # R2 · W3 2026-08 — honest: no real check ran
-                "error_code": "FILE_LANGUAGE_UNVERIFIED",
-                "stdout": "",
-                "stderr": f"no linter mapping for {ext or '(no ext)'}",
-            }, None)
-        tool, flags = linter
-        safe_rel = rel.replace("..", "_").lstrip("/")
-        file_dir = os.path.join(sandbox, os.path.dirname(safe_rel) or ".")
-        os.makedirs(file_dir, exist_ok=True)
-        disk_path = os.path.join(sandbox, safe_rel)
-        try:
-            with open(disk_path, "w", encoding="utf-8") as fh:
-                fh.write(f["content"])
-        except OSError as e:
-            return ({"path": rel, "ok": False, "linter": tool,
-                     "stdout": "",
-                     "stderr": f"write failed: {e}"},
-                    f"{rel}: write failed: {e}")
-        async with sem:
-            rc, so, se = await _run([tool, *flags, disk_path], cwd=sandbox)
-        # Iter 212m-166 — rc=127 = linter binary missing on this pod.
-        # Treat as a soft skip so the Loop continues to Ship instead of
-        # crashing.  Same shape as the `linter=skip` branch above.
-        if rc == 127:
-            return ({
-                "path":   rel,
-                "ok":     True,
-                "linter": "skip",
-                "verified": False,   # R2 · W3 2026-08 — honest: tool missing, no real check ran
-                "error_code": "FILE_LANGUAGE_UNVERIFIED",
-                "stdout": "",
-                "stderr": se.decode(errors="ignore") or f"{tool} not available on runtime pod",
-            }, None)
-        ok = (rc == 0)
-        stdout = so.decode(errors="ignore")
-        stderr = se.decode(errors="ignore")
-        stdout = stdout.replace(disk_path, rel).replace(sandbox + "/", "")
-        stderr = stderr.replace(disk_path, rel).replace(sandbox + "/", "")
-        row = {"path": rel, "ok": ok, "linter": tool, "verified": True,
-               "stdout": stdout, "stderr": stderr}
-        if ok:
-            return (row, None)
-        # First non-empty diagnostic line — keeps the aggregated
-        # error list tight even on noisy linters.
-        first_err = ""
-        for line in (stdout or stderr).strip().splitlines():
-            line = line.strip()
-            if line:
-                first_err = line
-                break
-        return (row, f"{rel}: {first_err}" if first_err else None)
-
     try:
-        rows = await asyncio.gather(*(_lint_one(f) for f in files))
-        results = [r for r, _ in rows]
-        errors  = [e for _, e in rows if e]
+        rows = await asyncio.gather(*(_lint_one(f, sandbox, sem) for f in files))
     finally:
-        try:
-            shutil.rmtree(sandbox, ignore_errors=True)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("sandbox cleanup failed: %r", e)
+        _cleanup_sandbox(sandbox)
+    results = [r for r, _ in rows]
+    errors  = [e for _, e in rows if e]
 
     return {
         "ok":      all(r["ok"] for r in results),

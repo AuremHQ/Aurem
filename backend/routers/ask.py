@@ -65,34 +65,43 @@ def _llms_path():
     return None
 
 
+def _read_llms_text() -> str:
+    path = _llms_path()
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return ""
+
+
+def _add_llms_line(line: str, entries: list, by_url: dict) -> None:
+    """Fold one `llms.txt` link line into `entries`, merging repeats of the same URL."""
+    match = _LINK_RE.match(line)
+    if not match:
+        return
+    url = match.group("url").strip()
+    if not url:
+        return
+    key = url.rstrip("/")
+    title = match.group("title").strip()
+    desc = match.group("desc").strip()
+    if key in by_url:
+        entry = by_url[key]
+        extra = (title + " -- " + desc).strip(" -")
+        if extra and extra not in entry["description"]:
+            entry["description"] = entry["description"] + " " + extra
+        return
+    entry = {"name": title, "url": url, "description": desc}
+    by_url[key] = entry
+    entries.append(entry)
+
+
 def _load_entries():
     entries = []
     by_url = {}
-    path = _llms_path()
-    if path is not None:
-        try:
-            text = path.read_text(encoding="utf-8-sig")
-        except OSError:
-            text = ""
-        for line in text.splitlines():
-            match = _LINK_RE.match(line)
-            if not match:
-                continue
-            url = match.group("url").strip()
-            if not url:
-                continue
-            key = url.rstrip("/")
-            title = match.group("title").strip()
-            desc = match.group("desc").strip()
-            if key in by_url:
-                entry = by_url[key]
-                extra = (title + " -- " + desc).strip(" -")
-                if extra and extra not in entry["description"]:
-                    entry["description"] = entry["description"] + " " + extra
-                continue
-            entry = {"name": title, "url": url, "description": desc}
-            by_url[key] = entry
-            entries.append(entry)
+    for line in _read_llms_text().splitlines():
+        _add_llms_line(line, entries, by_url)
     for name, url, desc in _FALLBACK:
         if url.rstrip("/") not in by_url:
             by_url[url.rstrip("/")] = {"name": name, "url": url, "description": desc}

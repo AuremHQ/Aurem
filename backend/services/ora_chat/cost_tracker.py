@@ -246,6 +246,25 @@ async def log_call(*, user_id: str, session_id: str, route: str,
     return cost
 
 
+async def _resolve_alert_recipient(db) -> str:
+    """Founder email — best-effort. Falls back to env if the DB lookup
+    fails so a critical alert isn't silenced by a DB blip."""
+    to = os.getenv("FOUNDER_EMAIL", "").strip()
+    if to:
+        return to
+    try:
+        row = await db.dev_users.find_one(
+            {"$or": [{"tier": "founder"}, {"is_admin": True}]},
+            {"email": 1, "_id": 0},
+            sort=[("created_at", 1)],
+        )
+        if row:
+            to = row.get("email", "") or ""
+    except Exception:
+        pass
+    return to
+
+
 async def _maybe_send_threshold_alert() -> None:
     """Send a Resend email once per month when spend crosses the alert
     threshold. Idempotency is stored in `ora_chat_budget_alerts`."""
@@ -262,20 +281,7 @@ async def _maybe_send_threshold_alert() -> None:
     if already:
         return
 
-    # Resolve founder email — best-effort. Fall back to env if the DB
-    # lookup fails so a critical alert isn't silenced by a DB blip.
-    to = os.getenv("FOUNDER_EMAIL", "").strip()
-    if not to:
-        try:
-            row = await db.dev_users.find_one(
-                {"$or": [{"tier": "founder"}, {"is_admin": True}]},
-                {"email": 1, "_id": 0},
-                sort=[("created_at", 1)],
-            )
-            if row:
-                to = row.get("email", "") or ""
-        except Exception:
-            pass
+    to = await _resolve_alert_recipient(db)
     if not to:
         return
 

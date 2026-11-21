@@ -34,6 +34,29 @@ async def get_catalog():
     return {"ok": True, "items": items}
 
 
+
+def _score_items(items: list, states: dict) -> tuple[list, int]:
+    """Per-item rows plus the 0-100 visibility score (§3 SCORE formula)."""
+    rows = []
+    total_weight = sum(i["weight"] for i in items)
+    earned = 0.0
+    for item in items:
+        st = states.get(item["key"], {})
+        status = st.get("status", "missing")
+        if status in ("pr_merged", "live"):
+            earned += item["weight"]
+        elif status == "pr_created":
+            earned += item["weight"] / 2  # §3 SCORE formula
+        rows.append({
+            "key": item["key"], "name": item["name"], "what_why": item["what_why"],
+            "weight": item["weight"], "mode": item["mode"],
+            "status": status, "detected_framework": st.get("detected_framework"),
+            "detail": st.get("detail") or {},
+        })
+    score = round(100 * earned / total_weight) if total_weight else 0
+    return rows, score
+
+
 @router.get("/projects/{project_id}/state")
 async def get_state(project_id: str, authorization: str = Header(None)):
     user = await current_dev(authorization)
@@ -55,23 +78,7 @@ async def get_state(project_id: str, authorization: str = Header(None)):
         s["item_id"]: s
         async for s in db.visibility_state.find({"project_id": project_id}, {"_id": 0})
     }
-    rows = []
-    total_weight = sum(i["weight"] for i in items)
-    earned = 0.0
-    for item in items:
-        st = states.get(item["key"], {})
-        status = st.get("status", "missing")
-        if status in ("pr_merged", "live"):
-            earned += item["weight"]
-        elif status == "pr_created":
-            earned += item["weight"] / 2  # §3 SCORE formula
-        rows.append({
-            "key": item["key"], "name": item["name"], "what_why": item["what_why"],
-            "weight": item["weight"], "mode": item["mode"],
-            "status": status, "detected_framework": st.get("detected_framework"),
-            "detail": st.get("detail") or {},
-        })
-    score = round(100 * earned / total_weight) if total_weight else 0
+    rows, score = _score_items(items, states)
 
     policy = await db.visibility_bot_policies.find_one(
         {"project_id": project_id}, {"_id": 0},

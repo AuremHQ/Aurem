@@ -27,6 +27,21 @@ def _strip_fences(text: str) -> str:
     return m.group(1) if m else s
 
 
+_CODE_MARKERS = ("def ", "class ", "import ", "function ", "const ",
+                 "let ", "return ", "{", "}", "from ", "export ")
+
+
+def _score_code_fix(text: str) -> float:
+    hits = sum(1 for m in _CODE_MARKERS if m in text)
+    if hits >= 6:
+        return 0.92
+    if hits >= 3:
+        return 0.78
+    if hits >= 1:
+        return 0.60
+    return 0.30
+
+
 def _score_output(output: str, *, task_type: str = "code_fix",
                   expected_min_chars: int = 50) -> float:
     """Heuristic 0.0-1.0 score for a candidate output."""
@@ -43,16 +58,7 @@ def _score_output(output: str, *, task_type: str = "code_fix",
     if task_type == "writing":
         return _score_writing(text)
     if task_type == "code_fix":
-        markers = ("def ", "class ", "import ", "function ", "const ",
-                   "let ", "return ", "{", "}", "from ", "export ")
-        hits = sum(1 for m in markers if m in text)
-        if hits >= 6:
-            return 0.92
-        if hits >= 3:
-            return 0.78
-        if hits >= 1:
-            return 0.60
-        return 0.30
+        return _score_code_fix(text)
     return 0.65
 
 

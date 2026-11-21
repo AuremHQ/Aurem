@@ -155,6 +155,32 @@ async def my_maxx_usage(authorization: Optional[str] = Header(None)):
 
 
 
+async def _real_marketing_counts(db) -> tuple[int, int]:
+    """(real_developers, commits_shipped) with test/QA accounts excluded.
+
+    Iter 356 · Guard 2 (marketing truth gate) — REAL counts, same rules
+    as the admin funnel. Fail-soft: these extra marketing fields must
+    never take down the whole stats payload (mocked-db unit tests +
+    partial outages degrade to 0s; Landing hides zero-valued stats)."""
+    try:
+        from services.test_accounts import is_test_email
+        rows = await db.dev_users.find(
+            {}, {"_id": 0, "user_id": 1, "email": 1}).to_list(20000)
+        real_rows = [r for r in rows if not is_test_email(r.get("email"))]
+        real_ids = [r["user_id"] for r in real_rows if r.get("user_id")]
+        task_commits = await db.cto_tasks.count_documents(
+            {"commit_sha": {"$exists": True, "$ne": None},
+             "user_id": {"$in": real_ids}})
+        loop_commits = await db.loop_sessions.count_documents(
+            {"last_event.state": "completed",
+             "last_event.data.commit_sha": {"$exists": True, "$ne": None},
+             "user_id": {"$in": real_ids}})
+        return len(real_rows), task_commits + loop_commits
+    except Exception as e:
+        logger.warning("public stats real-count block failed: %r", e)
+        return 0, 0
+
+
 # ── Iter 45 — Public stats (no auth) ──
 # Exposes correction_rate + total tasks shipped so auremcto.com landing
 # page can render a live "Claude caught X% of mistakes" trust badge.
@@ -184,30 +210,7 @@ async def public_stats():
         corrections = await db.ora_council_logs.count_documents({"correction_applied": True})
         lint_blocks = await db.ora_council_logs.count_documents({"lint_blocked": True})
         tasks = await db.cto_tasks.count_documents({"status": "done"})
-        # Iter 356 · Guard 2 (marketing truth gate) — REAL counts with
-        # test/QA accounts excluded, same rules as the admin funnel.
-        # Fail-soft: these extra marketing fields must never take down
-        # the whole stats payload (mocked-db unit tests + partial
-        # outages degrade to 0s; Landing hides zero-valued stats).
-        real_developers = 0
-        commits_shipped = 0
-        try:
-            from services.test_accounts import is_test_email
-            rows = await db.dev_users.find(
-                {}, {"_id": 0, "user_id": 1, "email": 1}).to_list(20000)
-            real_rows = [r for r in rows if not is_test_email(r.get("email"))]
-            real_ids = [r["user_id"] for r in real_rows if r.get("user_id")]
-            task_commits = await db.cto_tasks.count_documents(
-                {"commit_sha": {"$exists": True, "$ne": None},
-                 "user_id": {"$in": real_ids}})
-            loop_commits = await db.loop_sessions.count_documents(
-                {"last_event.state": "completed",
-                 "last_event.data.commit_sha": {"$exists": True, "$ne": None},
-                 "user_id": {"$in": real_ids}})
-            real_developers = len(real_rows)
-            commits_shipped = task_commits + loop_commits
-        except Exception as e:
-            logger.warning("public stats real-count block failed: %r", e)
+        real_developers, commits_shipped = await _real_marketing_counts(db)
         data = {
             "available": True,
             "users": users,

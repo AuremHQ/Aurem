@@ -120,6 +120,17 @@ async def get_project_memory(db, user_id: str, project_id: str) -> dict:
         return {}
 
 
+def _clip_known_fields(fields: dict) -> dict[str, Any]:
+    """Known memory fields only, clipped, with empty values dropped."""
+    update: dict[str, Any] = {}
+    for key, value in (fields or {}).items():
+        if key in _LIST_FIELDS:
+            update[key] = _clip_list(value)
+        elif key in _SCALAR_FIELDS:
+            update[key] = _clip_str(value)
+    return {k: v for k, v in update.items() if v}
+
+
 async def upsert_project_memory(db, user_id: str, project_id: str, fields: dict) -> bool:
     """Merge-updates the caller's own (user_id, project_id) row.
 
@@ -131,13 +142,7 @@ async def upsert_project_memory(db, user_id: str, project_id: str, fields: dict)
         return False
     if not await _owns_project(db, user_id, project_id):
         return False
-    update: dict[str, Any] = {}
-    for key, value in (fields or {}).items():
-        if key in _LIST_FIELDS:
-            update[key] = _clip_list(value)
-        elif key in _SCALAR_FIELDS:
-            update[key] = _clip_str(value)
-    update = {k: v for k, v in update.items() if v}
+    update = _clip_known_fields(fields)
     if not update:
         return False
     async with _lock_for(user_id, project_id):

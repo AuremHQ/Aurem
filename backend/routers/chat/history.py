@@ -45,6 +45,27 @@ def sort_turns_by_ts(turns: list) -> list:
     return [t for _, t in sorted(enumerate(turns), key=functools.cmp_to_key(_cmp))]
 
 
+def _prepare_turns(doc: Optional[dict]) -> list:
+    """Last 200 stored turns of a session, cleaned for the client."""
+    turns = ((doc or {}).get("turns") or [])[-200:]
+    # Iter 339j — strip literal nulls (Mongo pads sparse indexes with
+    # null on out-of-range positional $set from stale clients). One
+    # null crashed the frontend hydration entirely.
+    turns = [t for t in turns if isinstance(t, dict) and t.get("role")]
+    turns = sort_turns_by_ts(turns)
+    # 2026-09-28 MASTER TASK Part A1 — GET /chat/history round-trips
+    # whatever _persist_turn stored verbatim, including the raw
+    # internal `provider` codename ("deepseek-v3-council-c",
+    # "claude-sonnet-maxx-direct", …) on every assistant turn. That's
+    # the SAME leak the live SSE stream was audited for — a page
+    # refresh must not re-expose it just because the live-stream path
+    # was fixed. Sanitized here, once, for every turn returned.
+    for t in turns:
+        if "provider" in t:
+            t["provider"] = sanitize_provider_for_user(t["provider"])
+    return turns
+
+
 @router.get("/history")
 async def chat_history(
     session_id: Optional[str] = None,
@@ -66,22 +87,7 @@ async def chat_history(
         {"session_id": session_id, "user_id": user["user_id"]},
         {"_id": 0, "turns": 1, "title": 1},
     )
-    turns = ((doc or {}).get("turns") or [])[-200:]
-    # Iter 339j — strip literal nulls (Mongo pads sparse indexes with
-    # null on out-of-range positional $set from stale clients). One
-    # null crashed the frontend hydration entirely.
-    turns = [t for t in turns if isinstance(t, dict) and t.get("role")]
-    turns = sort_turns_by_ts(turns)
-    # 2026-09-28 MASTER TASK Part A1 — GET /chat/history round-trips
-    # whatever _persist_turn stored verbatim, including the raw
-    # internal `provider` codename ("deepseek-v3-council-c",
-    # "claude-sonnet-maxx-direct", …) on every assistant turn. That's
-    # the SAME leak the live SSE stream was audited for — a page
-    # refresh must not re-expose it just because the live-stream path
-    # was fixed. Sanitized here, once, for every turn returned.
-    for t in turns:
-        if "provider" in t:
-            t["provider"] = sanitize_provider_for_user(t["provider"])
+    turns = _prepare_turns(doc)
     return {
         "ok": True,
         "messages": turns,
