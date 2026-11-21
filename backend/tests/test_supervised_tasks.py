@@ -33,6 +33,48 @@ class _FakeIncidents:
     async def find_one(self, *_a, **_kw):
         return None
 
+    async def find_one_and_update(self, filter, update, *, upsert=False,
+                                  return_document=None, projection=None):
+        """Emulate the atomic upsert `open_incident()` uses (Aug 25
+        TOCTOU fix): the first call for a (source_key, status=open)
+        pair creates the row from the pipeline's $ifNull defaults;
+        later calls bump recurrence and refresh last_seen. Only the
+        one-stage $set pipeline this caller uses is interpreted —
+        anything else raises so a silent semantic drift can't hide
+        here. Returns the AFTER document (what open_incident asks
+        for); BEFORE returns the pre-update copy."""
+        from pymongo import ReturnDocument
+        row = next((r for r in self.rows
+                    if r.get("source_key") == filter.get("source_key")
+                    and r.get("status") == "open"), None)
+        if row is None:
+            if not upsert:
+                return None
+            row = {}
+            self.rows.append(row)
+        before = dict(row)
+        stages = update if isinstance(update, list) else [update]
+        for stage in stages:
+            sets = stage.get("$set", {})
+            if not isinstance(sets, dict):
+                raise AssertionError(f"fake can't emulate stage: {stage!r}")
+            for key, expr in sets.items():
+                if isinstance(expr, dict) and "$ifNull" in expr:
+                    _field, default = expr["$ifNull"]
+                    row.setdefault(key, default)
+                elif isinstance(expr, dict) and "$add" in expr:
+                    base, inc = expr["$add"]
+                    if isinstance(base, dict) and "$ifNull" in base:
+                        _f, default = base["$ifNull"]
+                        row[key] = row.get(key, default) + inc
+                    else:
+                        row[key] = row.get(key, 0) + inc
+                else:
+                    row[key] = expr
+        if return_document is not None and return_document != ReturnDocument.AFTER:
+            return before
+        return dict(row)
+
     async def insert_one(self, doc):
         self.rows.append(dict(doc))
 
