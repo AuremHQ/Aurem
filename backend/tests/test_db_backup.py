@@ -259,3 +259,65 @@ async def test_source_collection_counts_shape(db):
     counts = await db_restore.source_collection_counts()
     assert isinstance(counts, dict)
     assert all(isinstance(v, int) for v in counts.values())
+
+
+# ────────────────────────────────────────────────────────────────
+# 4. R2 verification after upload (2026-11-21, Data Handling fix)
+# ────────────────────────────────────────────────────────────────
+class _FakeR2Client:
+    """Minimal boto3 stand-in: put succeeds, HEAD behaves as told."""
+
+    def __init__(self, head=None, head_error=None):
+        self._head = head
+        self._head_error = head_error
+        self.put_calls = []
+
+    def put_object(self, **kwargs):
+        self.put_calls.append(kwargs)
+        return {}
+
+    def head_object(self, Bucket, Key):
+        if self._head_error is not None:
+            raise self._head_error
+        return dict(self._head or {})
+
+
+async def test_verify_r2_object_ok_when_size_matches():
+    """HEAD size == uploaded size → no raise (pure unit test,
+    no mongo, no R2)."""
+    from services.db_backup import _verify_r2_object
+    client = _FakeR2Client(head={"ContentLength": 1234})
+    _verify_r2_object(client, "bucket", "mongo/aurem_x.gz", 1234)
+
+
+async def test_verify_r2_object_raises_on_size_mismatch():
+    from services.db_backup import _verify_r2_object
+    client = _FakeR2Client(head={"ContentLength": 10})
+    with pytest.raises(ValueError, match="size mismatch"):
+        _verify_r2_object(client, "bucket", "mongo/aurem_x.gz", 1234)
+
+
+async def test_verify_r2_object_raises_when_object_missing():
+    from services.db_backup import _verify_r2_object
+    client = _FakeR2Client(head_error=Exception("404 Not Found"))
+    with pytest.raises(Exception, match="404"):
+        _verify_r2_object(client, "bucket", "mongo/aurem_x.gz", 1234)
+
+
+@pytest.mark.skipif(_missing, reason=skip_reason)
+async def test_backup_marks_failed_when_r2_object_missing_after_upload(db, monkeypatch):
+    """Full run_backup path: upload "succeeds" but the object is not
+    actually in R2 afterwards (the 2026-08-23 live failure) → the
+    backup must be recorded `failed`, never `success`. R2 client is
+    stubbed; the dump itself runs against the real test DB."""
+    from services import db_backup
+    monkeypatch.setattr(
+        db_backup, "_r2_client",
+        lambda: _FakeR2Client(head_error=Exception("404 Not Found")),
+    )
+    result = await db_backup.run_backup(db)
+    assert result["ok"] is False
+    assert "R2" in (result.get("error") or "") or "404" in (result.get("error") or "")
+    row = await db.backup_history.find_one(sort=[("created_at", -1)])
+    assert row["status"] == "failed"
+    assert "r2_verified" not in row

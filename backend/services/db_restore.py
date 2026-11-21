@@ -219,6 +219,15 @@ async def restore_to_scratch(
                         meta = json.loads(coll_line.decode("utf-8").strip())
                     except Exception as e:
                         result["error"] = f"bad collection header: {e!r}"
+                        # 2026-11-21 — earlier collections in this
+                        # archive may already be inserted into the
+                        # scratch collection; drop it before returning
+                        # (the exception handler below only runs on
+                        # raised errors, not on this early return).
+                        # Respects drop_scratch_after=False (caller
+                        # asked to keep scratch for inspection).
+                        if drop_scratch_after:
+                            await _drop_prefixed(sdb)
                         return result
                     coll_name = meta["collection"]
                     expected = int(meta["doc_count"])
@@ -241,6 +250,14 @@ async def restore_to_scratch(
                                 f"unexpected EOF in collection '{coll_name}' "
                                 f"(inserted={inserted}, expected={expected})"
                             )
+                            # 2026-11-21 — same orphan-scratch fix as
+                            # the bad-collection-header path above:
+                            # this run already inserted `inserted`
+                            # docs into the scratch collection, so
+                            # drop it before returning (the exception
+                            # handler below never sees this return).
+                            if drop_scratch_after:
+                                await _drop_prefixed(sdb)
                             return result
                         doc = bson.decode(raw)
                         # 2026-08-26 fix: many source collections use

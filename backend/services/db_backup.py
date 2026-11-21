@@ -75,6 +75,30 @@ def _r2_client():
     )
 
 
+def _verify_r2_object(client, bucket: str, r2_key: str, size_bytes: int) -> None:
+    """Confirm the uploaded object actually exists in R2 at the
+    expected size, before the backup is recorded as a success.
+
+    2026-11-21 — root-cause fix for the 2026-08-23 live finding:
+    `backup_history` recorded a backup "success" while its R2
+    object was genuinely missing (confirmed via a real bucket
+    listing). The weekly drill then burned its 5-candidate
+    fallback on unrestorable rows and could fail outright — a
+    "success" nobody can restore from is not a success. A HEAD
+    after PUT is read-after-write consistent on R2/S3, so a
+    missing object or a size mismatch here means the upload did
+    not land; the caller marks the backup failed instead.
+    Raises on any verification failure.
+    """
+    head = client.head_object(Bucket=bucket, Key=r2_key)
+    actual = head.get("ContentLength")
+    if actual != size_bytes:
+        raise ValueError(
+            f"R2 object size mismatch after upload: key={r2_key} "
+            f"expected={size_bytes} actual={actual}"
+        )
+
+
 def _capture_sentry(exc: BaseException, extra: Optional[dict] = None) -> None:
     """Best-effort Sentry breadcrumb. Never raises."""
     try:
@@ -93,6 +117,7 @@ def _capture_sentry(exc: BaseException, extra: Optional[dict] = None) -> None:
 async def _write_history(
     db, *, r2_key: str, status: str, size_bytes: int, duration_ms: int,
     error: Optional[str] = None, doc_count: Optional[int] = None,
+    r2_verified: Optional[bool] = None,
 ) -> None:
     doc = {
         "r2_key":       r2_key,
@@ -106,6 +131,11 @@ async def _write_history(
         "env":          os.environ.get("SENTRY_ENV") or "unknown",
         "bucket":       os.environ.get("R2_BUCKET"),
     }
+    if r2_verified is not None:
+        # Only set on success rows that passed the post-upload
+        # HEAD check (see _verify_r2_object) — lets the admin
+        # tell a verified-restorable backup from a legacy row.
+        doc["r2_verified"] = r2_verified
     try:
         await db.backup_history.insert_one(doc)
     except Exception as e:
@@ -230,6 +260,15 @@ async def run_backup(db) -> dict:
                 },
             )
 
+        # 2b. Verify the object actually landed before this backup
+        # is recorded as a success — a "success" row whose object
+        # is missing sends the weekly drill hunting through
+        # unrestorable candidates (see _verify_r2_object). A
+        # verification failure raises here and is recorded as a
+        # failed backup by the handler below; the next night
+        # retries, and the drill falls back to older good backups.
+        _verify_r2_object(client, bucket, r2_key, size_bytes)
+
         # 3. Prune old objects per retention policy.
         retention = int(os.environ.get("BACKUP_RETENTION_DAYS", "30"))
         pruned = await asyncio.to_thread(_prune_old, client, bucket, retention)
@@ -238,6 +277,7 @@ async def run_backup(db) -> dict:
         await _write_history(
             db, r2_key=r2_key, status="success", size_bytes=size_bytes,
             duration_ms=duration_ms, doc_count=dump_stats["total_docs"],
+            r2_verified=True,
         )
         logger.info(
             "backup OK → r2://%s/%s (%.2f MB, %d docs across %d colls, %dms, pruned=%d)",
