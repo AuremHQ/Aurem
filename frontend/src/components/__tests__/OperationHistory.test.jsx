@@ -21,9 +21,9 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
 
-// OperationHistory reads REACT_APP_BACKEND_URL at module import time —
-// hoist the env stub so API_BASE is non-empty and the history fetch runs.
-vi.hoisted(() => { process.env.REACT_APP_BACKEND_URL = "http://vitest.local"; });
+// 2026-11-21 — Aurem Deploy: OperationHistory now reads the relative
+// API_BASE from lib/api.js — no env stub needed any more (the history
+// fetch runs against the relative /api/aurem-dev path).
 
 vi.mock("../../lib/loopApi", () => ({
   streamLoopEvents: vi.fn(),

@@ -16,7 +16,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Lock, Settings, LogOut, ArrowUp, Zap, Clock, Plus, Square, Copy, Check, Play, Paperclip, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
-import { api, setToken, getToken } from "../lib/api";
+import { api, API_BASE, setToken, getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "../components/OraChatHouseRulesPanel";
 import VideoGenPanel from "../components/VideoGenPanel";
 import { copyText } from "../lib/copyText";
@@ -50,7 +50,8 @@ function findRenderableBlock(md) {
   return null;
 }
 
-const BASE = `${process.env.REACT_APP_BACKEND_URL}/api/aurem-dev/ora-chat`;
+// 2026-11-21 — Aurem Deploy: same-origin base (lib/api.js); no baked backend URL.
+const BASE = `${API_BASE}/ora-chat`;
 
 // Iter 212m-263 · Feb 2026 — Claude-style layout: single readable
 // column, generous white-space, no hard-edged card around assistant

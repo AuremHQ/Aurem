@@ -24,9 +24,11 @@
  */
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import { getToken } from "../lib/api";
+import { API_BASE, getToken } from "../lib/api";
 
-const API = process.env.REACT_APP_BACKEND_URL;
+// 2026-11-21 — Aurem Deploy: API calls are same-origin via API_BASE
+// from lib/api.js (relative "/api/aurem-dev"). The old `API` const that
+// held the baked REACT_APP_BACKEND_URL is gone.
 
 
 function Card({ title, sub, testid, children }) {
@@ -166,7 +168,7 @@ export default function AdminQADashboard() {
     try {
       const tok = getToken();
       const r = await axios.get(
-        `${API}/api/aurem-dev/admin/qa/status`,
+        `${API_BASE}/admin/qa/status`,
         { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 20000 },
       );
       setData(r.data);
@@ -400,7 +402,7 @@ function LoopKillSwitchSection() {
 
   const load = () => {
     const tok = getToken();
-    axios.get(`${API}/api/aurem-dev/admin/loop-beta/status`,
+    axios.get(`${API_BASE}/admin/loop-beta/status`,
       { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 15000 })
       .then((r) => setStatus(r.data))
       .catch((e) => setStatus({ error: e?.response?.data?.detail || e.message }));
@@ -415,7 +417,7 @@ function LoopKillSwitchSection() {
     setBusy(true);
     try {
       const tok = getToken();
-      await axios.post(`${API}/api/aurem-dev/admin/loop-beta/kill-switch`,
+      await axios.post(`${API_BASE}/admin/loop-beta/kill-switch`,
         { enabled: nextOn, reason: nextOn ? "manual UI flip" : "manual UI un-flip" },
         { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 15000 });
       load();
@@ -560,7 +562,7 @@ function LatestAutoQASection() {
   const [report, setReport] = useState(null);
   useEffect(() => {
     const tok = getToken();
-    axios.get(`${API}/api/aurem-dev/admin/qa/latest-report`,
+    axios.get(`${API_BASE}/admin/qa/latest-report`,
       { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 20000 })
       .then((r) => setReport(r.data))
       .catch((e) => setReport({
@@ -605,7 +607,7 @@ function IncidentLogSection() {
   const [status, setStatus] = useState("all");
   useEffect(() => {
     const tok = getToken();
-    axios.get(`${API}/api/aurem-dev/admin/qa/guard20-incidents?status=${status}`,
+    axios.get(`${API_BASE}/admin/qa/guard20-incidents?status=${status}`,
       { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 20000 })
       .then((r) => setData(r.data))
       .catch((e) => setData({ error: e?.response?.data?.detail || e.message }));
@@ -708,7 +710,7 @@ function FabricationPatternsSection() {
 
   const load = () => {
     const tok = getToken();
-    axios.get(`${API}/api/aurem-dev/admin/qa/fabrication-patterns`,
+    axios.get(`${API_BASE}/admin/qa/fabrication-patterns`,
       { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 20000 })
       .then((r) => setData(r.data))
       .catch((e) => setData({ error: e?.response?.data?.detail || e.message }));
@@ -784,7 +786,7 @@ function RegressionPatternsSection() {
 
   const load = () => {
     const tok = getToken();
-    axios.get(`${API}/api/aurem-dev/admin/qa/regression-patterns`,
+    axios.get(`${API_BASE}/admin/qa/regression-patterns`,
       { headers: { Authorization: `Bearer ${tok || ""}` }, timeout: 20000 })
       .then((r) => setData(r.data))
       .catch((e) => setData({ error: e?.response?.data?.detail || e.message }));

@@ -2073,7 +2073,7 @@ export function SupervisedTasksTile() {
   const [timedOut, setTimedOut] = useState(false);
   const load = useCallback(() => {
     setTimedOut(false);
-    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/health`, {
+    fetch(`/api/health`, {
       signal: AbortSignal.timeout(5000),
     })
       .then((r) => r.json())
@@ -2534,7 +2534,7 @@ export default function Admin({ initialTab = "overview" }) {
     const tok = localStorage.getItem("aurem_token");
     if (tok) {
       try {
-        fetch(`${process.env.REACT_APP_BACKEND_URL}/api/aurem-dev/auth/logout`, {
+        fetch(`/api/aurem-dev/auth/logout`, {
           method:  "POST",
           headers: { Authorization: `Bearer ${tok}` },
           keepalive: true,

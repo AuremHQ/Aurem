@@ -15,12 +15,9 @@
  * Import this once from main.jsx — side-effecting, no exports needed.
  */
 
-const REPORT_URL = (() => {
-  const base = (typeof process !== "undefined"
-                 && process.env
-                 && process.env.REACT_APP_BACKEND_URL) || "";
-  return `${base}/api/aurem-dev/admin/errors/report`;
-})();
+// 2026-11-21 — Aurem Deploy: same-origin relative URL. No build-time
+// backend URL is baked into the bundle any more.
+const REPORT_URL = "/api/aurem-dev/admin/errors/report";
 
 // Local dedupe: same (message + url) won't re-report within this window.
 const RECENT = new Map();  // key → ts (ms)

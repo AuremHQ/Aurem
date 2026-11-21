@@ -13,10 +13,11 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { getUser, isAdminOrFounder } from "../lib/api";
+import { API_BASE, getUser, isAdminOrFounder } from "../lib/api";
 import MaintenanceScreen from "./MaintenanceScreen";
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL;
+// 2026-11-21 — Aurem Deploy: same-origin API calls (lib/api.js).
+// No build-time backend URL is baked into the bundle any more.
 const POLL_MS = 3000;
 const FAILS_BEFORE_BLOCK = 2;
 
@@ -35,12 +36,12 @@ export default function MaintenanceGate({ children }) {
   const cancelledRef = useRef(false);
 
   useEffect(() => {
-    if (bypass || !BACKEND) return;
+    if (bypass) return;
     cancelledRef.current = false;
 
     async function poll() {
       try {
-        const res = await fetch(`${BACKEND}/api/aurem-dev/maintenance/status`, {
+        const res = await fetch(`${API_BASE}/maintenance/status`, {
           cache: "no-store",
           signal: AbortSignal.timeout(5000),
         });

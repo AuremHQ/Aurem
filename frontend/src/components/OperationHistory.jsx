@@ -31,10 +31,12 @@ import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from "react";
 import { streamLoopEvents, rollbackLoop } from "../lib/loopApi";
+import { API_BASE } from "../lib/api";
 import { markRollbackTerminal } from "./LoopLiveFeed";
 import RollbackConfirmModal from "./RollbackConfirmModal";
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL || "";
+// 2026-11-21 — Aurem Deploy: API_BASE comes from lib/api.js (relative
+// "/api/aurem-dev"). No build-time backend URL here any more.
 
 // Iter 342 — swallows the synthetic `click` that follows a handled
 // `pointerdown` on the row rollback button (loopId → ts).
@@ -235,7 +237,7 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
   useEffect(() => {
     if (!projectId || !API_BASE) return;
     let cancelled = false;
-    const url = `${API_BASE}/api/aurem-dev/loop/history`
+    const url = `${API_BASE}/loop/history`
                 + `?project_id=${encodeURIComponent(projectId)}&limit=20`;
     // Iter 339 — the authToken prop is never passed by LoopLiveFeed, so
     // this fetch used to fire WITHOUT Authorization → 401 → history

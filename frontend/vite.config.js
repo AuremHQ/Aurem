@@ -35,6 +35,12 @@ function resolveBuildSha() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  // 2026-11-21 — Aurem Deploy: apiTarget is dev-server / build-time ONLY
+  // (the Vite /api proxy below + the aurem-prod-fixes build-time fetch).
+  // It is never baked into the client bundle any more — the client calls
+  // the relative /api path (see src/lib/api.js). The env vars still
+  // resolve the same way so `vite build` keeps fetching the live
+  // flag/page-status at build time.
   // Backend target: VITE_API_URL > REACT_APP_BACKEND_URL > localhost
   const apiTarget =
     env.VITE_API_URL ||
@@ -92,7 +98,11 @@ export default defineConfig(({ mode }) => {
       sourcemap: 'hidden',
     },
     define: {
-      'process.env.REACT_APP_BACKEND_URL': JSON.stringify(env.REACT_APP_BACKEND_URL || ''),
+      // 2026-11-21 — Aurem Deploy: the process.env.REACT_APP_BACKEND_URL
+      // define is GONE on purpose — the client bundle must not bake a
+      // backend origin any more (see src/lib/api.js). Build-time scripts
+      // that genuinely need an absolute URL (seo-prerender,
+      // aurem-prod-fixes) read the env directly in Node instead.
       // Overnight run (2026-08-27) — Preview-only override so FirstScanCard's
       // 60s poll timeout can be proven live without a 60s+ real wait.
       // Empty in production; falls back to the 60000 default there.

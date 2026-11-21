@@ -114,6 +114,12 @@ const { DEVELOPERS } = await import("../src/data/developerInfo.mjs");
 // fails closed to `false` — the same safe default as the flag simply
 // not existing yet in Mongo.
 async function resolveHarnessPageMode() {
+  // 2026-11-21 — Aurem Deploy exception (DELIBERATE, keep): this is a
+  // build-time Node script, not client code — it fetches the backend
+  // while building, so it genuinely needs an absolute URL. It never
+  // bakes the URL into the client bundle (only the fetched flag /
+  // release data lands in the static HTML). Same for
+  // resolveHarnessRelease() below.
   const backendUrl =
     process.env.VITE_API_URL ||
     _loadedEnv.VITE_API_URL ||

@@ -14,10 +14,11 @@ import {
   Settings, LogOut, ChevronRight, MessageSquarePlus,
   ShieldCheck, Activity, Lock, Bug,
 } from "lucide-react";
-import { getToken, isAdminOrFounder } from "../../../lib/api";
+import { API_BASE, getToken, isAdminOrFounder } from "../../../lib/api";
 import SuggestionBoxModal from "../../SuggestionBoxModal";      // Iter 212m-193
 
-const API_BASE = `${(typeof process !== "undefined" ? process.env.REACT_APP_BACKEND_URL : "") || ""}/api/aurem-dev`;
+// 2026-11-21 — Aurem Deploy: API_BASE comes from lib/api.js (relative
+// "/api/aurem-dev"). No build-time backend URL here any more.
 
 const TOOLS = [
   // Iter 212m-100 — Founder spec: Vanguard, Loop Mode, Bug Hunt removed
