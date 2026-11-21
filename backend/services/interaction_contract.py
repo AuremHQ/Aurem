@@ -6,40 +6,18 @@ Legacy replies remain unchanged unless INTERACTION_CONTRACT_V1=1.
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import uuid
 
 from fastapi import HTTPException
 
-_NO_WRITE = re.compile(
-    r"\b(?:do not|don't|don’t|never)\s+(?:touch|change|modify|edit|write|update|delete)"
-    r"\s+(?:anything|(?:(?:any|the)\s+)?(?:files?|code)|this repo)\b", re.I)
-
-
-def enabled() -> bool:
-    return os.environ.get("INTERACTION_CONTRACT_V1") == "1"
-
-
-def _instructions(prompt: str) -> str:
-    # Quoted examples, source code and attached evidence are not instructions.
-    from services.mode_b_council import _strip_attachment_blocks
-    text = _strip_attachment_blocks(prompt or "")
-    return re.sub(r'```[\s\S]*?```|"[^"\n]*"|`[^`\n]*`', '', text)
-
-
-def factual_lookup(prompt: str) -> bool:
-    """Bounded factual/status boundary, not a general intent classifier."""
-    text = _instructions(prompt)
-    parts = [re.sub(r'^\s*\d+[.)]\s*', '', s).strip()
-             for s in re.split(r'[\n?]+', text) if s.strip()]
-    return bool(parts) and all(re.match(
-        r"^(?:what\s+(?:is|are|was|were)|which\s+.+\s+(?:is|are)|"
-        r"how many|where\s+(?:is|are)|has\s+.+|have\s+.+|"
-        r"(?:council|audit|error)\s+(?:queue|status|count)|"
-        r"(?:show|list|report)\s+(?:the\s+)?(?:current\s+)?(?:status|counts))\b",
-        s, re.I) for s in parts)
-
+from services.interaction_flags import (
+    _NO_WRITE,
+    _instructions,
+    enabled,
+    factual_lookup,
+    read_only_request,
+)
 
 def request_conflict(prompt: str) -> None:
     """Reject explicit simultaneous no-write/write directives before dispatch.
@@ -61,10 +39,6 @@ def request_conflict(prompt: str) -> None:
             "Conflicting instructions: you prohibited changes and also requested a change. "
             "I have not executed either instruction or chosen one silently. "
             "Should this be read-only, or should I make the requested change?"))
-
-
-def read_only_request(prompt: str) -> bool:
-    return factual_lookup(prompt) or bool(_NO_WRITE.search(_instructions(prompt)))
 
 
 def finalize(result: dict, content: str, *, prompt: str, session_id: str,

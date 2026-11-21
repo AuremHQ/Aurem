@@ -959,7 +959,7 @@ async def settle(
     if actual_cost_usd is not None:
         from config.token_pricing import tokens_to_usd
         from services.llm_cost_breaker import flag_actual_cost_spike
-        from services.pricing_engine import (
+        from services.pricing_math import (
             SPIKE_GUARD_MULTIPLE,
             get_effective_pricing_version,
             micro_tokens_for_actual_cost,
@@ -1430,7 +1430,7 @@ async def run_monthly_grant_job(db, *, dry_run: bool = False) -> dict:
                  "planned_count": 0, "applied_count": 0,
                  "planned": [], "applied": [], "skipped_reason": f"billing_mode_{mode}"}
 
-    from services.pricing_engine import TOKEN_EXPIRY_MONTHS
+    from services.pricing_math import TOKEN_EXPIRY_MONTHS
     ym = _year_month()
     db_cursor = db.dev_users.find(
         {"tier": {"$in": ["starter", "pro", "team"]}},

@@ -254,7 +254,7 @@ async def log_task_chain(
             "success_pattern": _derive_success_pattern(tool_calls, final_response) if success else None,
             "ts": time.time(),
         }
-        from services.interaction_contract import enabled
+        from services.interaction_flags import enabled
         if enabled():
             from services.tool_failure_evidence import failure_signatures
             record["tool_failure_signatures"] = failure_signatures(tool_calls)

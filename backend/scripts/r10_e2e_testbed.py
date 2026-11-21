@@ -11,6 +11,12 @@ Phases (run in order, each idempotent-ish and logging to stdout):
             revert commit is there and its parent chain contains merged_sha.
 State is kept in /app/e2e-proof/R10-e2e/state.json.
 """
+# arch: allow-http — standalone E2E driver script, not app code: its
+# whole purpose is to drive the real GitHub API (create branches/PRs,
+# deliver webhooks) against the disposable testbed repo. Moving its
+# HTTP calls into services/ would couple throwaway test tooling to the
+# app's service layer; the exemption is the honest labelling.
+
 from __future__ import annotations
 
 import asyncio

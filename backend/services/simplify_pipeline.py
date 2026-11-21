@@ -97,7 +97,7 @@ async def run_simplify_preview(*, owner: str, repo: str, branch: str,
                 "reason": f"could not read `{path}` from {owner}/{repo}@{branch}"}
 
     task_msg = build_simplify_task_message(path)
-    from routers.cto_projects.worker_api import _AI_SYS
+    from services.cto_projects_helpers import _AI_SYS
     from services.llm import call_llm
     try:
         reply = await call_llm(

@@ -8,7 +8,7 @@ def turn_tool_calls(result: dict | None) -> list:
     """Loop-budget exits use tool_invocations; normal exits often use tool_calls."""
     if not isinstance(result, dict):
         return []
-    from services.interaction_contract import enabled
+    from services.interaction_flags import enabled
     if enabled() and isinstance(result.get("tool_invocations"), list):
         return result["tool_invocations"]
     return result.get("tool_calls") or []

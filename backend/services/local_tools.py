@@ -3225,7 +3225,7 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
                                 "Describe the fix in your final answer instead of calling a write tool."}
             ctx.setdefault("tool_calls", []).append({"tool": name, "args": args or {}, **blocked})
             return blocked
-        from services.interaction_contract import enabled, read_only_request
+        from services.interaction_flags import enabled, read_only_request
         if enabled() and read_only_request(ctx.get("user_prompt") or ""):
             blocked = {"ok": False, "error_class": "read_only_request",
                        "error": "Write blocked: the current request permits read-only work."}
@@ -3249,7 +3249,7 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
         return await fn(ctx, args or {})
 
     out = await _tx_execute(name, _runner)
-    from services.interaction_contract import enabled as interaction_enabled
+    from services.interaction_flags import enabled as interaction_enabled
     if interaction_enabled():
         from services.task_chain_logging import redact_secrets
         data = out.get("data") if isinstance(out.get("data"), dict) else {}

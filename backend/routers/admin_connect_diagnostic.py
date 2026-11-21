@@ -29,6 +29,12 @@ NO WRITES. NO MUTATION. Scoped to exactly the user_id passed in — not
 a mass dump. Same admin gate as every other admin-only endpoint
 (routers/self_bugs_admin.py, routers/admin_ops_config.py, ...).
 """
+# arch: allow-http — this file IS the admin diagnostic probe: its whole
+# job is to call api.github.com directly with the user's installation
+# tokens and report which one GitHub accepts. There is no service-layer
+# indirection to move it into — the probe is the feature (scanner docs
+# list "admin probes" as a legitimate exemption).
+
 from __future__ import annotations
 
 import asyncio
