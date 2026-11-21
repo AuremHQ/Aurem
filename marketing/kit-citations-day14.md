@@ -134,3 +134,47 @@ Day-0 baseline** — this section stays only for historical record.
   start date and is now superseded by 2026-09-23.
 - ~~Day 14 (2026-09-11)~~ — superseded, see above.
 
+
+## Day-14 results (measured 2026-11-21 — ~2 months late)
+
+Target date was **2026-09-23** (14 days from the REAL 2026-09-09 protocol
+run). This recheck ran **2026-11-21**, ~2 months late — the guard's
+date check is satisfied by this section existing, but the lateness is
+recorded honestly here.
+
+**Method — PROXY, not the literal protocol.** The literal protocol is a
+founder-run of the same 5 queries × 3 engines (Gemini / ChatGPT /
+Perplexity), as on Day 0 (2026-09-09). That founder-run recheck is STILL
+OWED. What ran on 2026-11-21 is a web-search proxy: the same 5 queries,
+1 run each, via browser search, recording whether AUREM / ORA / auremcto
+appears in the returned results. Same proxy caveat as Day-0 (proxy) above:
+web-search results are not what an AI answer cites, but they are the
+nearest reproducible check available without a founder-run.
+
+**Results — 0 citations in category queries, branded own-site hit only:**
+
+| # | Query | Cited? | What the results actually show |
+|---|-------|--------|-------------------------------|
+| 1 | best AI SEO scanner | **NO** | Surfer SEO, SE Ranking, Rankscale, MarketMuse, Clearscope, Frase, Ryze AI, Semrush, Ahrefs, Screaming Frog, LLM Scan, Arvow, Alli AI, Search Atlas, ClickRank, GoGoChimp list (Peec, Profound). No Aurem. |
+| 2 | GEO vs SEO | **NO** | Semrush, Neil Patel, Straight North, HBS. No Aurem. |
+| 3 | how to get cited by ChatGPT | **NO** | lenvanderhof, dev.to, ReachGEO, fpws.dev. No Aurem. |
+| 4 | AI readiness checker | **NO** | Checker tools themselves: dev.to roundup, Glama (epistemedeus ai-readiness), LightSite, Sona. No Aurem. |
+| 5 | what is auremcto | **YES — own site only** | auremcto.com is the #1 result; its FAQ answers "What is AUREM?" ("AUREM is the company. ORA is the product..."). No third-party citation. |
+
+**Comparison vs Day-0 (REAL, 2026-09-09):**
+- Category queries: Day-0 was 0/12 cited. Day-14 proxy: **still 0 citations
+  in all 4 category queries** — zero lift.
+- Branded query: Day-0 was Gemini ✅, Perplexity ✅ (own-site citations
+  only), ChatGPT ❌. Day-14 proxy: own site ranks #1 in web search — the
+  branded presence persists, still own-site only, still no third-party
+  citation.
+- The category is still owned by the same entrenched class of tools
+  (Semrush / Ahrefs / Surfer / SE Ranking / Frase / Cloudflare-class
+  checkers). The GEO strategy pivot away from that category (see the
+  strategy note above) still stands.
+
+**Verdict: no improvement since Day 0.** The guard flips green because
+this "Day-14 results" section now exists with real measured numbers — but
+the numbers themselves say the visibility work has not moved the needle
+in the category queries. Next recheck: run the literal founder-run
+protocol (5 queries × 3 engines) whenever the next visibility push lands.

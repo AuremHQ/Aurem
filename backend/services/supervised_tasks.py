@@ -225,6 +225,57 @@ def health_snapshot() -> dict:
     }
 
 
+async def resolve_recovered_tasks(db_getter: Optional[Callable]) -> int:
+    """Resolve `supervised_task:*` incidents whose task is alive again.
+
+    Iter 363 gap fix (2026-11-21): a supervised cron dying opens an
+    incident, but nothing ever resolved it — not even a pod restart
+    that brought the cron back. Those rows stayed OPEN forever and
+    dragged the health-score Incident Rate (-10 per open incident)
+    and Reliability G20 (-20 per open incident) down. This sweeper
+    runs on the 60s housekeeping tick (same pattern as G19
+    `resolve_if_stable`): an open incident is closed ONLY when a
+    task with that name is currently alive in the registry — i.e. the
+    prescribed remedy (restart / re-invoke) has actually happened. A
+    task that died and was never re-registered keeps its incident
+    open for human eyes. Resolving is idempotent: resolve_incident()
+    is a no-op when no open incident exists, and a task that dies
+    again opens a fresh incident (dedup is per open row).
+
+    Returns the number of incidents resolved this sweep.
+    """
+    if db_getter is None:
+        return 0
+    try:
+        db = db_getter()
+        if db is None:
+            return 0
+        from services.incident_log import list_incidents, resolve_incident
+        open_rows = await list_incidents(db, status="open", limit=500)
+        resolved = 0
+        for inc in open_rows:
+            key = inc.get("source_key") or ""
+            if not key.startswith("supervised_task:"):
+                continue
+            name = key.split(":", 1)[1]
+            task = _SUPERVISED.get(name)
+            if task is not None and not task.done():
+                ok = await resolve_incident(
+                    db, source_key=key,
+                    resolution=(
+                        "Task running again after re-supervision "
+                        "(pod restart / manual re-invoke); "
+                        "supervised-task incident auto-resolved."
+                    ),
+                )
+                if ok:
+                    resolved += 1
+        return resolved
+    except Exception as e:  # noqa: BLE001 — sweeper must never crash the tick
+        logger.warning("[supervise] resolve_recovered_tasks failure: %r", e)
+        return 0
+
+
 def _reset_for_tests() -> None:
     """Test-only helper: wipe registry + postmortem. Never called from
     prod code. Used by `tests/test_supervised_tasks.py` to isolate

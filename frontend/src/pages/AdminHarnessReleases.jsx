@@ -117,12 +117,17 @@ export default function AdminHarnessReleases() {
     } catch (e) {
       toast({ message: cleanErr(e, "Failed to load releases"), kind: "error" });
     }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const res = await fetch(`${PUBLIC_BASE}/harness/release-status`);
+      const res = await fetch(`${PUBLIC_BASE}/harness/release-status`, {
+        signal: controller.signal,
+      });
       setLive(await res.json());
     } catch {
       setLive(null);
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }, []);

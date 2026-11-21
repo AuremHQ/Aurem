@@ -233,6 +233,28 @@ async def probe_longcat_availability() -> bool:
 
 
 # ═══ periodic_longcat_reprobe ═══════════════════════════════════
+async def _resolve_stuck_degraded_if_open() -> None:
+    """Resolve the stuck-degraded incident once LongCat is live again.
+
+    Iter 363 gap fix (2026-11-21): the loop below opened
+    `longcat_stuck_degraded` after 20 consecutive failed reprobes but
+    nothing ever resolved it — the incident stayed OPEN forever even
+    after upstream recovered, dragging the health-score Incident Rate
+    (-10 per open incident) and Reliability G20 (-20 per open
+    incident) down. Best-effort: resolve_incident() is a no-op when
+    no open incident exists.
+    """
+    try:
+        from cto_services.db import get_db as _get_db
+        from services.incident_log import resolve_incident
+        await resolve_incident(
+            _get_db(), source_key="longcat_stuck_degraded",
+            resolution="LongCat probe healthy again (auto-resolved).",
+        )
+    except Exception as e:  # best-effort
+        logger.debug("longcat stuck-degraded resolve failed: %r", e)
+
+
 async def periodic_longcat_reprobe(interval_seconds: int = 900) -> None:
     """Re-probe LongCat on a `interval_seconds` cadence forever.
 
@@ -280,6 +302,10 @@ async def periodic_longcat_reprobe(interval_seconds: int = 900) -> None:
                 model_slug,
             )
         if current:
+            if not previous and consecutive_degraded >= MAX_FAST_RETRIES:
+                # Was stuck degraded long enough to open an incident —
+                # upstream recovered, close it (Iter 363 gap fix).
+                await _resolve_stuck_degraded_if_open()
             consecutive_degraded = 0
             sleep_for = interval_seconds
         else:

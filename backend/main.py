@@ -741,6 +741,19 @@ async def lifespan(app: FastAPI):
                 raise
             except Exception as _e:                          # noqa: BLE001
                 logger.warning("G19 heartbeat/resolve failed: %r", _e)
+            # Iter 363 gap fix (2026-11-21) — resolve supervised-task
+            # incidents whose cron is alive again. Same 60s tick as
+            # the G19 resolve above (no extra task).
+            try:
+                from services.supervised_tasks import (
+                    resolve_recovered_tasks as _sup_resolve,
+                )
+                if not _first_run:
+                    await _sup_resolve(lambda: app.state.db)
+            except _asyncio.CancelledError:
+                raise
+            except Exception as _e:                          # noqa: BLE001
+                logger.warning("supervised-task resolve failed: %r", _e)
             # 2026-08 — persisted heartbeat for the maintenance outage
             # tracker (separate from G19's in-memory-only beat, which
             # doesn't survive a restart and can't be used to measure
