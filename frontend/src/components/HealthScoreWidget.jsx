@@ -212,7 +212,14 @@ export default function HealthScoreWidget() {
       // Full pytest+coverage run takes several minutes server-side —
       // poll for the fresh result instead of holding one request open.
       const triggeredAt = Date.now();
-      for (let i = 0; i < 24; i++) {
+      // 2026-11-21 — the measured scoped run takes ~430 s on the preview
+      // pod (Sept 7: 855 tests in 428 s), but 24 polls x 15 s = 360 s
+      // stopped polling before the run finished, so the widget kept
+      // showing stale data even though the run later succeeded
+      // server-side. 40 polls = 600 s covers the measured run plus
+      // headroom, still under the 900 s subprocess timeout; the loop
+      // breaks early as soon as a fresh last_verified appears.
+      for (let i = 0; i < 40; i++) {
         await new Promise((r) => setTimeout(r, 15000));
         try {
           const r = await api.get("/admin/health-score", { timeout: 40000 });
