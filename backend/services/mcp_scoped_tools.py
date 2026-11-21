@@ -152,6 +152,21 @@ _CLASSIFY_PROMPT = (
 )
 
 
+def _valid_groups(parsed) -> list[str]:
+    """Known group names from the LLM answer, deduped in order and capped at 2."""
+    if not isinstance(parsed, list):
+        return []
+    groups = [g for g in parsed if isinstance(g, str) and g in _VALID_GROUPS]
+    # Dedupe preserving order, cap at 2 to bound the tool count.
+    seen: list[str] = []
+    for g in groups:
+        if g not in seen:
+            seen.append(g)
+        if len(seen) >= 2:
+            break
+    return seen
+
+
 async def classify_tool_groups(query: str) -> list[str]:
     """Semantic classifier — returns 1-2 group names from _VALID_GROUPS.
 
@@ -175,18 +190,7 @@ async def classify_tool_groups(query: str) -> list[str]:
 
     prompt = _CLASSIFY_PROMPT.format(q=q[:400])
     parsed = await classify_llm_json(prompt, timeout=2.0, max_tokens=30)
-    if isinstance(parsed, list):
-        groups = [g for g in parsed if isinstance(g, str) and g in _VALID_GROUPS]
-        if groups:
-            # Dedupe preserving order, cap at 2 to bound the tool count.
-            seen: list[str] = []
-            for g in groups:
-                if g not in seen:
-                    seen.append(g)
-                if len(seen) >= 2:
-                    break
-            return seen
-    return list(_SAFE_DEFAULT_GROUPS)
+    return _valid_groups(parsed) or list(_SAFE_DEFAULT_GROUPS)
 
 
 # ─────────────────────────────────────────────────────────────────────

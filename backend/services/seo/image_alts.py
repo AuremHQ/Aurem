@@ -80,6 +80,19 @@ def find_unalted_imgs(html: str) -> list[dict]:
     return out
 
 
+def _images_needing_alt(soup) -> list:
+    """<img> tags with no usable alt, skipping decorative role=presentation ones."""
+    targets = []
+    for img in soup.find_all("img"):
+        alt = img.get("alt")
+        if alt is not None and str(alt).strip() != "":
+            continue
+        if (img.get("role") or "").lower() == "presentation":
+            continue
+        targets.append(img)
+    return targets
+
+
 async def patch_image_alts(
     *,
     path: str,
@@ -94,14 +107,7 @@ async def patch_image_alts(
     deterministic stub so unit tests never hit the network.
     """
     soup = BeautifulSoup(html, "html.parser")
-    targets = []
-    for img in soup.find_all("img"):
-        alt = img.get("alt")
-        if alt is not None and str(alt).strip() != "":
-            continue
-        if (img.get("role") or "").lower() == "presentation":
-            continue
-        targets.append(img)
+    targets = _images_needing_alt(soup)
 
     if not targets:
         return None

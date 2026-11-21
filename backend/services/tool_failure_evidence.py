@@ -14,18 +14,21 @@ def turn_tool_calls(result: dict | None) -> list:
     return result.get("tool_calls") or []
 
 
+def _failure_signature(call) -> str | None:
+    """`tool:<name>:<category>` for one failed call, else None."""
+    if not isinstance(call, dict):
+        return None
+    result = call.get("result")
+    result = result if isinstance(result, dict) else {}
+    if call.get("ok") is not False and result.get("ok") is not False:
+        return None
+    # No exception message, arguments, path, tenant data or secrets in a key.
+    name = re.sub(r'[^a-zA-Z0-9_]', '', str(call.get("tool") or call.get("name") or "unknown"))[:80]
+    category = str(call.get("error_class") or result.get("error_class") or "tool_failed")
+    category = re.sub(r'[^a-zA-Z0-9_]', '', category)[:60]
+    return f"tool:{name}:{category}"
+
+
 def failure_signatures(calls: list | None) -> list[str]:
-    signatures = set()
-    for call in calls or []:
-        if not isinstance(call, dict):
-            continue
-        result = call.get("result")
-        result = result if isinstance(result, dict) else {}
-        if call.get("ok") is not False and result.get("ok") is not False:
-            continue
-        # No exception message, arguments, path, tenant data or secrets in a key.
-        name = re.sub(r'[^a-zA-Z0-9_]', '', str(call.get("tool") or call.get("name") or "unknown"))[:80]
-        category = str(call.get("error_class") or result.get("error_class") or "tool_failed")
-        category = re.sub(r'[^a-zA-Z0-9_]', '', category)[:60]
-        signatures.add(f"tool:{name}:{category}")
+    signatures = {sig for sig in map(_failure_signature, calls or []) if sig}
     return sorted(signatures)

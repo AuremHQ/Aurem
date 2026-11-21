@@ -18,6 +18,17 @@ def _norm(p: Optional[str]) -> str:
     return (p or "").strip().lstrip("./").rstrip("/")
 
 
+def _split_by_plan(findings: list[dict], plan_files: set) -> tuple[list[dict], list[dict]]:
+    covered = [f for f in findings if _norm(f.get("filepath")) in plan_files]
+    deferred = [f for f in findings if _norm(f.get("filepath")) not in plan_files]
+    return covered, deferred
+
+
+def _deferred_row(finding: dict) -> dict:
+    return {"filepath": finding.get("filepath"), "line": finding.get("line"),
+            "description": finding.get("description", "")}
+
+
 def check_plan_scan_consistency(plan: dict, source_findings: list[dict]) -> dict:
     """Pure, no I/O. Returns a coverage report:
       {
@@ -29,22 +40,17 @@ def check_plan_scan_consistency(plan: dict, source_findings: list[dict]) -> dict
     it's ever shown to the user for approval — every planned file must
     cite a real finding from the artifact that produced this plan.
     """
-    plan_files = {_norm(p) for p in (plan.get("files_to_change") or []) if _norm(p)}
+    plan_files = {n for n in map(_norm, plan.get("files_to_change") or []) if n}
     finding_files = {_norm(f.get("filepath")) for f in source_findings if f.get("filepath")}
 
     mismatched = sorted(plan_files - finding_files)
-    covered = [f for f in source_findings if _norm(f.get("filepath")) in plan_files]
-    deferred = [f for f in source_findings if _norm(f.get("filepath")) not in plan_files]
+    covered, deferred = _split_by_plan(source_findings, plan_files)
 
     return {
         "total_findings": len(source_findings),
         "covered_count": len(covered),
         "deferred_count": len(deferred),
-        "deferred": [
-            {"filepath": f.get("filepath"), "line": f.get("line"),
-             "description": f.get("description", "")}
-            for f in deferred
-        ],
+        "deferred": [_deferred_row(f) for f in deferred],
         "mismatched_files": mismatched,
     }
 

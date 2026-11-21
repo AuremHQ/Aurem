@@ -35,6 +35,40 @@ def _has_meta(soup: BeautifulSoup, *, name: str = "", property_: str = "") -> bo
     return False
 
 
+def _add_title_and_description(soup, head, title: str, description: str) -> bool:
+    changed = False
+    # <title>
+    if title and soup.title is None:
+        t = soup.new_tag("title")
+        t.string = title
+        head.append(t)
+        changed = True
+
+    # <meta name="description">
+    if description and not _has_meta(soup, name="description"):
+        m = soup.new_tag(
+            "meta", attrs={"name": "description", "content": description},
+        )
+        head.append(m)
+        changed = True
+    return changed
+
+
+def _add_missing_og_tags(soup, head, og: list) -> bool:
+    changed = False
+    for prop, content in og:
+        if not content:
+            continue
+        if _has_meta(soup, property_=prop):
+            continue
+        m = soup.new_tag(
+            "meta", attrs={"property": prop, "content": content},
+        )
+        head.append(m)
+        changed = True
+    return changed
+
+
 def patch_meta_tags(
     *,
     path: str,
@@ -54,22 +88,7 @@ def patch_meta_tags(
         # files that happen to have .html extension).
         return None
 
-    changed = False
-
-    # <title>
-    if title and soup.title is None:
-        t = soup.new_tag("title")
-        t.string = title
-        head.append(t)
-        changed = True
-
-    # <meta name="description">
-    if description and not _has_meta(soup, name="description"):
-        m = soup.new_tag(
-            "meta", attrs={"name": "description", "content": description},
-        )
-        head.append(m)
-        changed = True
+    changed = _add_title_and_description(soup, head, title, description)
 
     # OG tags
     og = [
@@ -79,16 +98,7 @@ def patch_meta_tags(
         ("og:url",         url),
         ("og:type",        "website"),
     ]
-    for prop, content in og:
-        if not content:
-            continue
-        if _has_meta(soup, property_=prop):
-            continue
-        m = soup.new_tag(
-            "meta", attrs={"property": prop, "content": content},
-        )
-        head.append(m)
-        changed = True
+    changed = _add_missing_og_tags(soup, head, og) or changed
 
     if not changed:
         return None

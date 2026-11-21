@@ -42,6 +42,15 @@ def detect_category(user_text: str) -> str | None:
     return None
 
 
+def _no_match(category) -> dict:
+    return {"category": category, "candidates": [], "best": None, "ambiguous": False}
+
+
+def _is_tied_for_shallowest(sorted_matches: list[str]) -> bool:
+    shallowest = sorted_matches[0].count("/")
+    return sum(1 for p in sorted_matches if p.count("/") == shallowest) > 1
+
+
 def resolve(paths: list[str], user_text: str) -> dict:
     """Deterministic — same (paths, user_text) always returns the same
     result. Returns:
@@ -50,17 +59,15 @@ def resolve(paths: list[str], user_text: str) -> dict:
     """
     category = detect_category(user_text)
     if not category or not paths:
-        return {"category": category, "candidates": [], "best": None, "ambiguous": False}
+        return _no_match(category)
     file_re = next(c[2] for c in _PAGE_CATEGORIES if c[0] == category)
     matches = [p for p in paths if file_re.search(p)]
     if not matches:
-        return {"category": category, "candidates": [], "best": None, "ambiguous": False}
+        return _no_match(category)
     # Deterministic tie-break: shallowest path (closest to repo root),
     # then shortest string — never an LLM guess.
     matches.sort(key=lambda p: (p.count("/"), len(p)))
-    shallowest = matches[0].count("/")
-    tied = [p for p in matches if p.count("/") == shallowest]
-    ambiguous = len(tied) > 1
+    ambiguous = _is_tied_for_shallowest(matches)
     return {
         "category": category,
         "candidates": matches[:5],

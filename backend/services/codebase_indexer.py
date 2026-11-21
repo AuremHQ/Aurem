@@ -196,27 +196,21 @@ async def refresh_index(user_id: str, project_id: str,
     }
 
 
-def _format_context_block(doc: dict, max_chars: int = 6000) -> str:
-    """Renders the cached index into the system-prompt block AUREM reads
-    at the top of every turn. Trims to `max_chars` so we never blow the
-    context budget."""
-    parts: list[str] = []
-    parts.append(
-        f"\n\nCUSTOMER CODEBASE CONTEXT (auto-injected — repo "
-        f"{doc.get('repo_owner')}/{doc.get('repo_name')}@"
-        f"{doc.get('default_branch','main')}, "
-        f"{doc.get('file_count', 0)} files):"
-    )
-    deps = doc.get("deps") or {}
+def _deps_lines(deps: dict) -> list[str]:
+    lines: list[str] = []
     if deps.get("python"):
-        parts.append("Python deps: " + ", ".join(deps["python"][:30]))
+        lines.append("Python deps: " + ", ".join(deps["python"][:30]))
     if deps.get("node"):
-        parts.append("Node deps: " + ", ".join(deps["node"][:30]))
+        lines.append("Node deps: " + ", ".join(deps["node"][:30]))
+    return lines
 
+
+def _role_sections(files: list) -> list[str]:
     by_role: dict[str, list[dict]] = {}
-    for f in (doc.get("files") or []):
+    for f in files:
         by_role.setdefault(f.get("role", "other"), []).append(f)
 
+    parts: list[str] = []
     role_caps = {"routes": 6, "models": 4, "components": 4, "deps": 0, "other": 0}
     for role in ("routes", "models", "components"):
         items = by_role.get(role, [])[: role_caps[role]]
@@ -229,6 +223,22 @@ def _format_context_block(doc: dict, max_chars: int = 6000) -> str:
                 continue
             preview = snippet[:600].replace("```", "´´´")
             parts.append(f"### {f['path']}\n```{f.get('lang','')}\n{preview}\n```")
+    return parts
+
+
+def _format_context_block(doc: dict, max_chars: int = 6000) -> str:
+    """Renders the cached index into the system-prompt block AUREM reads
+    at the top of every turn. Trims to `max_chars` so we never blow the
+    context budget."""
+    parts: list[str] = []
+    parts.append(
+        f"\n\nCUSTOMER CODEBASE CONTEXT (auto-injected — repo "
+        f"{doc.get('repo_owner')}/{doc.get('repo_name')}@"
+        f"{doc.get('default_branch','main')}, "
+        f"{doc.get('file_count', 0)} files):"
+    )
+    parts.extend(_deps_lines(doc.get("deps") or {}))
+    parts.extend(_role_sections(doc.get("files") or []))
 
     block = "\n".join(parts)
     if len(block) > max_chars:

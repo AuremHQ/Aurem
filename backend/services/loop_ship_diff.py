@@ -38,6 +38,45 @@ def _line_delta(orig: str, new: str) -> tuple[int, int]:
     return add, dele
 
 
+def _file_diff_row(path: str, new_body: str, orig_body: Optional[str], pre_bytes: int) -> dict:
+    """One per-file diff-summary row (see compute_files_diff for the shape)."""
+    new_bytes = len(new_body)
+    # Was the file pre-existing? Prefer content presence; fall back
+    # to byte-count map. Both must be missing to declare NEW.
+    is_new = (orig_body is None) and (pre_bytes == 0)
+    if orig_body is not None:
+        add, dele = _line_delta(orig_body, new_body)
+        delta_bytes = new_bytes - len(orig_body)
+        src = "line"
+    elif pre_bytes > 0:
+        # We know the old byte count but not the content — cannot
+        # do line-level, but can still show a byte delta so the
+        # founder sees "40 KB → 12 KB" style shrink at a glance.
+        add = 0
+        dele = 0
+        delta_bytes = new_bytes - pre_bytes
+        src = "bytes"
+    elif is_new:
+        # Brand-new file: everything is an addition.
+        add = new_body.count("\n") + (1 if new_body else 0)
+        dele = 0
+        delta_bytes = new_bytes
+        src = "line"
+    else:
+        add = 0
+        dele = 0
+        delta_bytes = 0
+        src = "unknown"
+    return {
+        "path":         path,
+        "additions":    add,
+        "deletions":    dele,
+        "is_new":       is_new,
+        "delta_bytes":  delta_bytes,
+        "diff_source":  src,
+    }
+
+
 def compute_files_diff(
     orig_contents: dict[str, str],
     new_contents:  dict[str, str],
@@ -67,42 +106,8 @@ def compute_files_diff(
     obc = orig_bytes_by_path or {}
     out: list[dict] = []
     for path, new_body in (new_contents or {}).items():
-        new_body = new_body or ""
-        new_bytes = len(new_body)
-        orig_body = (orig_contents or {}).get(path)
-        # Was the file pre-existing? Prefer content presence; fall back
-        # to byte-count map. Both must be missing to declare NEW.
-        pre_bytes = int(obc.get(path) or 0)
-        is_new = (orig_body is None) and (pre_bytes == 0)
-        if orig_body is not None:
-            add, dele = _line_delta(orig_body, new_body)
-            delta_bytes = new_bytes - len(orig_body)
-            src = "line"
-        elif pre_bytes > 0:
-            # We know the old byte count but not the content — cannot
-            # do line-level, but can still show a byte delta so the
-            # founder sees "40 KB → 12 KB" style shrink at a glance.
-            add = 0
-            dele = 0
-            delta_bytes = new_bytes - pre_bytes
-            src = "bytes"
-        elif is_new:
-            # Brand-new file: everything is an addition.
-            add = new_body.count("\n") + (1 if new_body else 0)
-            dele = 0
-            delta_bytes = new_bytes
-            src = "line"
-        else:
-            add = 0
-            dele = 0
-            delta_bytes = 0
-            src = "unknown"
-        out.append({
-            "path":         path,
-            "additions":    add,
-            "deletions":    dele,
-            "is_new":       is_new,
-            "delta_bytes":  delta_bytes,
-            "diff_source":  src,
-        })
+        out.append(_file_diff_row(
+            path, new_body or "", (orig_contents or {}).get(path),
+            int(obc.get(path) or 0),
+        ))
     return out

@@ -221,6 +221,55 @@ async def _decide_should_notify(acked_active: bool, last_known: Optional[str],
     return False
 
 
+async def _process_check(db, check, res: dict) -> None:
+    """Diff one health check against its stored state and fire if the
+    confirmed status changed."""
+    new_status = res["status"]
+
+    # Load prior state (last_known + acked_until + candidate tracking).
+    state_row = await db.health_check_state.find_one({"_id": check.id}) or {}
+    last_known  = state_row.get("last_known")
+    acked_until = state_row.get("acked_until")
+
+    confirmed_status, candidate_fields = _advance_candidate(
+        state_row, last_known, new_status,
+    )
+    if confirmed_status is None:
+        # Not yet confirmed (or back to baseline) — persist candidate
+        # tracking only, no fire, no last_known change this tick.
+        if (candidate_fields.get("candidate_status") != state_row.get("candidate_status")
+                or candidate_fields.get("candidate_count") != state_row.get("candidate_count")):
+            await db.health_check_state.with_options(
+                write_concern=_BEST_EFFORT_WC,
+            ).update_one(
+                {"_id": check.id}, {"$set": candidate_fields}, upsert=True,
+            )
+        return
+
+    # Fire logic. See module docstring for the truth table.
+    should_notify = await _decide_should_notify(
+        _ack_active(acked_until), last_known, confirmed_status, state_row,
+    )
+
+    if should_notify:
+        await _fire_notification(
+            db, check.id, check.name, check.category,
+            old=last_known or "unknown",
+            new=confirmed_status,
+            detail=res.get("detail", ""),
+        )
+
+    # Persist the now-confirmed baseline + clear candidate tracking.
+    update_fields = dict(candidate_fields)
+    update_fields["last_known"] = confirmed_status
+    update_fields["last_known_at"] = _iso_now()
+    await db.health_check_state.with_options(
+        write_concern=_BEST_EFFORT_WC,
+    ).update_one(
+        {"_id": check.id}, {"$set": update_fields}, upsert=True,
+    )
+
+
 async def _tick_once() -> None:
     """One diff-and-fire cycle. Runs every _INTERVAL_S."""
     from services.health_registry import all_checks, run_check_safely
@@ -240,50 +289,7 @@ async def _tick_once() -> None:
     )
 
     for check, res in zip(checks, results):
-        new_status = res["status"]
-
-        # Load prior state (last_known + acked_until + candidate tracking).
-        state_row = await db.health_check_state.find_one({"_id": check.id}) or {}
-        last_known  = state_row.get("last_known")
-        acked_until = state_row.get("acked_until")
-
-        confirmed_status, candidate_fields = _advance_candidate(
-            state_row, last_known, new_status,
-        )
-        if confirmed_status is None:
-            # Not yet confirmed (or back to baseline) — persist candidate
-            # tracking only, no fire, no last_known change this tick.
-            if (candidate_fields.get("candidate_status") != state_row.get("candidate_status")
-                    or candidate_fields.get("candidate_count") != state_row.get("candidate_count")):
-                await db.health_check_state.with_options(
-                    write_concern=_BEST_EFFORT_WC,
-                ).update_one(
-                    {"_id": check.id}, {"$set": candidate_fields}, upsert=True,
-                )
-            continue
-
-        # Fire logic. See module docstring for the truth table.
-        should_notify = await _decide_should_notify(
-            _ack_active(acked_until), last_known, confirmed_status, state_row,
-        )
-
-        if should_notify:
-            await _fire_notification(
-                db, check.id, check.name, check.category,
-                old=last_known or "unknown",
-                new=confirmed_status,
-                detail=res.get("detail", ""),
-            )
-
-        # Persist the now-confirmed baseline + clear candidate tracking.
-        update_fields = dict(candidate_fields)
-        update_fields["last_known"] = confirmed_status
-        update_fields["last_known_at"] = _iso_now()
-        await db.health_check_state.with_options(
-            write_concern=_BEST_EFFORT_WC,
-        ).update_one(
-            {"_id": check.id}, {"$set": update_fields}, upsert=True,
-        )
+        await _process_check(db, check, res)
 
 
 async def notifier_loop() -> None:

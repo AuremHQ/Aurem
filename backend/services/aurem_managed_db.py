@@ -83,6 +83,23 @@ _ALLOWED_TYPES = {"string", "integer", "number", "boolean",
                   "object", "array", "null"}
 
 
+def _missing_required_errors(doc: dict, required: list) -> list[str]:
+    return [f"missing_required_field: {name}" for name in required if name not in doc]
+
+
+def _type_mismatch_errors(doc: dict, fields: dict) -> list[str]:
+    errs: list[str] = []
+    for name, spec in fields.items():
+        if name not in doc:
+            continue
+        expected = spec.get("type")
+        if expected and expected in _ALLOWED_TYPES:
+            v = doc[name]
+            if not _matches_type(v, expected):
+                errs.append(f"type_mismatch: {name} expected {expected}")
+    return errs
+
+
 def validate_against_schema(doc: dict, schema: Optional[dict]) -> dict:
     """Very small JSON-schema-ish validator that covers the fields
     the scaffolded model definitions actually emit:
@@ -95,22 +112,8 @@ def validate_against_schema(doc: dict, schema: Optional[dict]) -> dict:
     """
     if not schema:
         return {"ok": True, "errors": []}
-    errs: list[str] = []
-    fields = (schema.get("properties") or {})
-    required = schema.get("required") or []
-    for name in required:
-        if name not in doc:
-            errs.append(f"missing_required_field: {name}")
-
-    for name, spec in fields.items():
-        if name not in doc:
-            continue
-        expected = spec.get("type")
-        if expected and expected in _ALLOWED_TYPES:
-            v = doc[name]
-            if not _matches_type(v, expected):
-                errs.append(f"type_mismatch: {name} expected {expected}")
-
+    errs: list[str] = _missing_required_errors(doc, schema.get("required") or [])
+    errs += _type_mismatch_errors(doc, schema.get("properties") or {})
     return {"ok": not errs, "errors": errs}
 
 
