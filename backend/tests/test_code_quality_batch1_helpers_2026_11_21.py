@@ -238,3 +238,169 @@ async def test_real_marketing_counts_sums_task_and_loop_commits():
 async def test_real_marketing_counts_fails_soft_to_zero():
     from routers.usage import _real_marketing_counts
     assert await _real_marketing_counts(_StatsDb(exc=RuntimeError("down"))) == (0, 0)
+
+
+# ── routers/usage.py::public_stats (cache, outage, payload) ───────────
+class _CountColl:
+    def __init__(self, estimated=0, by_filter=None, exc=None):
+        self.estimated, self.by_filter, self.exc = estimated, by_filter or {}, exc
+
+    async def estimated_document_count(self):
+        if self.exc:
+            raise self.exc
+        return self.estimated
+
+    async def count_documents(self, flt):
+        if self.exc:
+            raise self.exc
+        for key, value in self.by_filter.items():
+            if key in flt:
+                return value
+        return 0
+
+
+class _StatsFullDb:
+    def __init__(self, council_exc=None):
+        self.ora_council_logs = _CountColl(
+            estimated=100,
+            by_filter={"mode": 20, "correction_applied": 5, "lint_blocked": 3},
+            exc=council_exc,
+        )
+        self.dev_users = _Coll([{"user_id": "u1", "email": "real@customer.io"}], count=0)
+        self.dev_users.estimated = 7
+
+        async def _est():
+            return 7
+        self.dev_users.estimated_document_count = _est
+        self.cto_tasks = _Coll(count=9)
+        self.loop_sessions = _Coll(count=2)
+
+
+@pytest.fixture
+def fresh_stats_cache(monkeypatch):
+    from routers import usage
+    monkeypatch.setitem(usage._PUBLIC_STATS_CACHE, "data", None)
+    monkeypatch.setitem(usage._PUBLIC_STATS_CACHE, "ts", 0.0)
+    return usage
+
+
+async def test_public_stats_builds_payload_and_caches_it(monkeypatch, fresh_stats_cache):
+    usage = fresh_stats_cache
+    monkeypatch.setattr("cto_services.db.get_db", lambda: _StatsFullDb())
+    first = await usage.public_stats()
+    assert first["available"] is True
+    assert (first["users"], first["interactions"], first["code_tasks"]) == (7, 100, 20)
+    assert (first["review_saves"], first["lint_blocks_caught"]) == (5, 3)
+    assert first["review_save_rate_pct"] == 25.0           # 5 corrections / 20 code tasks
+    assert first["real_developers"] == 1 and first["commits_shipped"] == 11   # 9 + 2
+
+    monkeypatch.setattr("cto_services.db.get_db", lambda: None)               # cache hit must not touch the db
+    assert await usage.public_stats() == first
+
+
+async def test_public_stats_unavailable_without_database(monkeypatch, fresh_stats_cache):
+    monkeypatch.setattr("cto_services.db.get_db", lambda: None)
+    assert await fresh_stats_cache.public_stats() == {"available": False}
+
+
+async def test_public_stats_outage_serves_stale_cache_else_unavailable(monkeypatch, fresh_stats_cache):
+    usage = fresh_stats_cache
+    monkeypatch.setattr("cto_services.db.get_db", lambda: _StatsFullDb(council_exc=RuntimeError("down")))
+    assert await usage.public_stats() == {"available": False}                 # nothing cached yet
+
+    usage._PUBLIC_STATS_CACHE["data"] = {"available": True, "users": 1}
+    usage._PUBLIC_STATS_CACHE["ts"] = 0.0                                     # expired -> will retry the db
+    assert await usage.public_stats() == {"available": True, "users": 1}      # stale beats a 500
+
+
+# ── services/ora_chat/cost_tracker.py::_maybe_send_threshold_alert ────
+class _Alerts:
+    def __init__(self, already=None):
+        self.already, self.inserted = already, []
+
+    async def find_one(self, *a, **k):
+        return self.already
+
+    async def insert_one(self, doc):
+        self.inserted.append(doc)
+
+
+class _AlertDb:
+    def __init__(self, already=None):
+        self.ora_chat_budget_alerts = _Alerts(already)
+        self.dev_users = _Users({"email": "founder@example.com"})
+
+
+def _status(used_pct=90, alert_pct=80):
+    return {"used_pct": used_pct, "alert_pct": alert_pct, "month": "2026-11",
+            "cap_usd": 100, "spent_usd": 90, "remaining_usd": 10}
+
+
+@pytest.fixture
+def alert_env(monkeypatch):
+    import services.ora_chat.cost_tracker as ct
+    monkeypatch.delenv("FOUNDER_EMAIL", raising=False)
+    sent = []
+
+    async def _send(to, *, text, html):
+        sent.append((to, text))
+        return True, None
+
+    monkeypatch.setattr("services.onboarding_email._resend_send", _send)
+
+    def configure(db, status):
+        async def _bs():
+            return status
+        monkeypatch.setattr(ct, "get_db", lambda: db)
+        monkeypatch.setattr(ct, "budget_status", _bs)
+        return ct
+
+    return configure, sent
+
+
+async def test_threshold_alert_sends_once_and_records_it(alert_env):
+    configure, sent = alert_env
+    db = _AlertDb()
+    ct = configure(db, _status())
+    await ct._maybe_send_threshold_alert()
+    assert [to for to, _ in sent] == ["founder@example.com"]
+    row = db.ora_chat_budget_alerts.inserted[0]
+    assert row["month"] == "2026-11" and row["type"] == "threshold"
+    assert row["delivered"] is True and row["error"] is None and row["used_pct"] == 90
+
+
+async def test_threshold_alert_not_sent_below_threshold_or_twice(alert_env):
+    configure, sent = alert_env
+    db = _AlertDb()
+    await configure(db, _status(used_pct=10))._maybe_send_threshold_alert()
+    assert sent == [] and db.ora_chat_budget_alerts.inserted == []
+    db2 = _AlertDb(already={"month": "2026-11"})
+    await configure(db2, _status())._maybe_send_threshold_alert()
+    assert sent == [] and db2.ora_chat_budget_alerts.inserted == []
+
+
+async def test_threshold_alert_without_a_recipient_sends_nothing(alert_env):
+    configure, sent = alert_env
+    db = _AlertDb()
+    db.dev_users = _Users(None)
+    await configure(db, _status())._maybe_send_threshold_alert()
+    assert sent == [] and db.ora_chat_budget_alerts.inserted == []
+
+
+async def test_threshold_alert_records_a_failed_send_with_a_clipped_error(alert_env, monkeypatch):
+    configure, _ = alert_env
+
+    async def _fail(to, *, text, html):
+        return False, "x" * 500
+
+    monkeypatch.setattr("services.onboarding_email._resend_send", _fail)
+    db = _AlertDb()
+    await configure(db, _status())._maybe_send_threshold_alert()
+    row = db.ora_chat_budget_alerts.inserted[0]
+    assert row["delivered"] is False and len(row["error"]) == 200
+
+
+async def test_threshold_alert_without_a_database_is_a_noop(alert_env):
+    configure, sent = alert_env
+    await configure(None, _status())._maybe_send_threshold_alert()
+    assert sent == []
