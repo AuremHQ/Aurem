@@ -225,11 +225,10 @@ export function FixJobProvider({ children }) {
       esRef.current = null;
     }
 
-    const base =
-      (typeof process !== "undefined" && process.env && process.env.REACT_APP_BACKEND_URL) ||
-      window.location.origin;
+    // 2026-11-21 — Aurem Deploy: same-origin relative stream URL (no
+    // build-time backend URL baked into the bundle any more).
     const token = localStorage.getItem("aurem_token");
-    const url = `${base}/api/aurem-dev/fix-pipeline/stream/${jobId}?token=${encodeURIComponent(token || "")}`;
+    const url = `/api/aurem-dev/fix-pipeline/stream/${jobId}?token=${encodeURIComponent(token || "")}`;
     let es;
     try { es = new EventSource(url, { withCredentials: false }); }
     catch (e) { setError(String(e)); return undefined; }

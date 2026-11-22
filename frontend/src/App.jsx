@@ -305,19 +305,18 @@ export default function App() {
       const ref = params.get("ref");
       if (ref && ref.length > 0 && ref.length < 100) {
         localStorage.setItem("aurem_ref", ref);
-        const backend = process.env.REACT_APP_BACKEND_URL;
-        if (backend) {
-          fetch(`${backend}/api/aurem-dev/referrals/track`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ref_code: ref,
-              path: window.location.pathname,
-              user_agent: navigator.userAgent.slice(0, 200),
-            }),
-            signal: AbortSignal.timeout(10000),
-          }).catch(() => {});
-        }
+        // 2026-11-21 — Aurem Deploy: same-origin relative URL (no
+        // build-time backend URL baked into the bundle any more).
+        fetch(`/api/aurem-dev/referrals/track`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ref_code: ref,
+            path: window.location.pathname,
+            user_agent: navigator.userAgent.slice(0, 200),
+          }),
+          signal: AbortSignal.timeout(10000),
+        }).catch(() => {});
       }
     } catch { /* no-op */ }
   }, []);

@@ -13,9 +13,10 @@ import {
   withFunnelParams,
 } from "../githubFunnel";
 
-// The lib reads API_BASE from ./api which reads env vars. Vitest env
-// sets process.env.REACT_APP_BACKEND_URL from setup; we assert the
-// POST hits `/funnel/github/event` (path check, not full URL).
+// The lib reads API_BASE from ./api, which is the relative
+// "/api/aurem-dev" since the 2026-11-21 Aurem Deploy migration (no
+// build-time backend URL any more); we assert the POST hits
+// `/funnel/github/event` (path check, not full URL).
 
 describe("githubFunnel telemetry helper", () => {
   beforeEach(() => {

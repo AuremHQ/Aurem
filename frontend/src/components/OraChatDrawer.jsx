@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, X, Send, Zap, AlertTriangle,
           Settings, Clock, Plus, Square, ListChecks, Video } from "lucide-react";
-import { api } from "../lib/api";
+import { api, API_BASE } from "../lib/api";
 import { getToken } from "../lib/api";
 import OraChatHouseRulesPanel from "./OraChatHouseRulesPanel";
 import VideoGenPanel from "./VideoGenPanel";
@@ -25,7 +25,8 @@ import VideoGenPanel from "./VideoGenPanel";
 // AI-streaming caret + hardened XSS defaults out of the box.
 import { Streamdown } from "streamdown";
 
-const BASE = `${process.env.REACT_APP_BACKEND_URL}/api/aurem-dev/ora-chat`;
+// 2026-11-21 — Aurem Deploy: same-origin base (lib/api.js); no baked backend URL.
+const BASE = `${API_BASE}/ora-chat`;
 
 export default function OraChatDrawer({ forceOpen = false, fullscreen = false } = {}) {
   const [open, setOpen] = useState(forceOpen);

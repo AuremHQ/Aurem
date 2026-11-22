@@ -14,15 +14,11 @@
  *     authenticated JWT → cost lands on the user's account.
  */
 import { useState, useCallback, useRef } from "react";
-import { api, getUser } from "../lib/api";
+import { api, API_BASE, getUser } from "../lib/api";
 import { getActiveProjectId, setActiveProjectId } from "../components/TabBar";
 
-// Match lib/api.js: REACT_APP_BACKEND_URL is the canonical key in this
-// codebase. VITE_API_URL is the local-dev fallback.
-const API_BASE =
-  (typeof process !== "undefined" && process.env && process.env.REACT_APP_BACKEND_URL) ||
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  "";
+// 2026-11-21 — Aurem Deploy: API_BASE comes from lib/api.js (relative
+// "/api/aurem-dev"). No build-time backend URL here any more.
 
 // Iter 164 — Personalised welcome. Replaces the generic "hey, I am ORA"
 // line with a project-aware greeting that addresses the user by first
@@ -168,7 +164,7 @@ export function useORAPanel() {
       // not the AUREM orchestrator. No review-mode pill from the
       // panel; ORA picks its own model on the server side.
       const response = await fetch(
-        `${API_BASE}/api/aurem-dev/chat/stream`,
+        `${API_BASE}/chat/stream`,
         {
           method: "POST",
           headers: {

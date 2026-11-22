@@ -1,15 +1,18 @@
 /**
  * api.js — Single source for backend URL + auth helpers.
+ *
+ * 2026-11-21 — Aurem Deploy: API calls are same-origin. API_BASE is the
+ * relative path "/api/aurem-dev" — no build-time backend URL is baked
+ * into the bundle any more, so ONE build runs on staging and production
+ * (and in the Emergent preview). Local dev keeps working: the Vite dev
+ * server proxies /api to the backend (vite.config.js). The only remaining
+ * build-time backend URLs are the server-side build scripts that must
+ * fetch the backend while building (scripts/seo-prerender.mjs,
+ * vite-plugins/aurem-prod-fixes.mjs) — those never reach the client bundle.
  */
 import axios from "axios";
 
-// Backend base URL: REACT_APP_BACKEND_URL (preview) or VITE_API_URL (local)
-const BACKEND =
-  (typeof process !== "undefined" && process.env && process.env.REACT_APP_BACKEND_URL) ||
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  "";
-
-export const API_BASE = `${BACKEND}/api/aurem-dev`;
+export const API_BASE = "/api/aurem-dev";
 export const api = axios.create({
   baseURL: API_BASE,
   timeout: 60000,

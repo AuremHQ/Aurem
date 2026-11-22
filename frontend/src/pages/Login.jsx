@@ -315,9 +315,9 @@ function handleRateLimit(e) {
                 await trackFunnel("cta_click", "login", { intent: "login" });
                 // Use the live origin so the OAuth callback returns to
                 // whichever domain the user actually loaded the app from
-                // (preview pod, auremcto.com, custom domain). Reading
-                // REACT_APP_BACKEND_URL here would lock us to the build-
-                // time value and break across environments.
+                // (preview pod, auremcto.com, custom domain). (2026-11-21
+                // — Aurem Deploy: the baked REACT_APP_BACKEND_URL is gone
+                // from the client bundle; same-origin /api everywhere.)
                 const base = window.location.origin;
                 // Iter 113 — pass intent=login so backend redirects to
                 // /login (not /signup) if the user clicks Cancel on

@@ -60,7 +60,7 @@ export default function AdminOverview() {
   // renders within ~15s with whatever data arrived.
   const load = useCallback(async () => {
     const h = { Authorization: `Bearer ${getToken()}` };
-    const HEALTH_URL = `${process.env.REACT_APP_BACKEND_URL}/api/health`;
+    const HEALTH_URL = "/api/health";
     try {
       const _loadCalls = [
           fetch(HEALTH_URL, { signal: AbortSignal.timeout(10000) }).then((r) => r.json()),
@@ -127,7 +127,7 @@ export default function AdminOverview() {
   // is dropped, it's just no longer re-fetched unattended every 60s.
   const loadFast = useCallback(async () => {
     const h = { Authorization: `Bearer ${getToken()}` };
-    const HEALTH_URL = `${process.env.REACT_APP_BACKEND_URL}/api/health`;
+    const HEALTH_URL = "/api/health";
     try {
       const [healthRes, dbHealthRes, councilHealthRes, ghSyncRes, breakersRes, alertsRes] =
         await Promise.allSettled([
