@@ -76,6 +76,7 @@ from routers.support import router as support_router
 from routers.payments import router as payments_router
 from routers.stripe_webhook_compat import router as stripe_webhook_compat_router  # Iter 388-ae — legacy /api/stripe/webhook alias (see Payments $0 root-cause memo)
 from routers.harness import router as harness_router
+from routers.deploy_share import router as deploy_share_router  # 2026-11-21 — Aurem Deploy Phase 2 · POST /api/deploy/share
 from routers.ask import router as ask_router  # NLWeb: GET/POST /ask
 from routers.harness_downloads import router as harness_downloads_router  # Aurem Loop harness Phase B — user-facing download
 from routers.admin_harness import router as admin_harness_router  # Aurem Loop harness Phase B — admin release/download-log view
@@ -4175,6 +4176,7 @@ app.include_router(payments_router,      prefix="/api/aurem-dev")
 # no dashboard change is required.
 app.include_router(stripe_webhook_compat_router, prefix="/api")
 app.include_router(harness_router, prefix="/api")
+app.include_router(deploy_share_router, prefix="/api")  # 2026-11-21 — Aurem Deploy Phase 2 · POST /api/deploy/share (deployer -> ORA Chat inbox)
 app.include_router(ask_router)  # NLWeb: GET/POST /ask (no prefix)
 app.include_router(ask_router, prefix='/api')  # NLWeb: GET/POST /api/ask - same handler under /api so nginx (which only proxies /api/*) reaches it
 app.include_router(harness_downloads_router, prefix="/api/aurem-dev")  # /api/aurem-dev/harness/download — logged-in browser user
