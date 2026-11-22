@@ -261,20 +261,28 @@ function injectRoot(html, inner) {
   // that unavoidable pre-hydration window look intentional/branded
   // instead of broken. Crawlers that don't execute CSS still get the
   // exact same semantic markup/text — nothing removed, nothing hidden.
-  const styled = `<div class="ora-seo-snapshot">${inner}</div>` +
+  // 2026-11-22 - the snapshot is crawler-only now. Founder report
+  // 2026-11-21: the homepage showed the raw snapshot as a garbled
+  // wall of text for ~14s on load (and indefinitely when the bundle
+  // never mounted), because the pre-mount window is long when the JS
+  // bundle is stale or slow. The 2026-09-04 dark-theme styling made
+  // it look intentional, but it was still a full page of SEO copy
+  // sitting where the app should be. The snapshot is now hidden from
+  // sighted visitors (display:none) and a small branded loading
+  // state shows instead; React replaces everything inside #root on
+  // mount, so this only affects the pre-mount window. The snapshot
+  // markup/text stays in the HTML for crawlers, and visitors without
+  // JS still get the clean <noscript> snapshot in index.html.
+    const styled = `<div class="ora-seo-snapshot">${inner}</div>` +
+    `<div class="ora-loading"><div class="ora-loading-mark">ORA</div><div class="ora-loading-bar"><i></i></div><p>Loading your workspace&hellip;</p></div>` +
     `<style>
-      .ora-seo-snapshot{background:#0a0e1a;color:#f8fafc;min-height:100vh;
-        font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
-        max-width:760px;margin:0 auto;padding:64px 24px;line-height:1.6}
-      .ora-seo-snapshot h1{font-size:28px;font-weight:700;margin:0 0 18px;letter-spacing:-0.5px}
-      .ora-seo-snapshot h2{font-size:20px;font-weight:700;margin:32px 0 12px}
-      .ora-seo-snapshot p{color:#94a3b8;margin:0 0 14px;font-size:15px}
-      .ora-seo-snapshot ul,.ora-seo-snapshot ol{margin:0 0 14px;padding-left:22px;color:#94a3b8;font-size:15px}
-      .ora-seo-snapshot li{margin-bottom:8px}
-      .ora-seo-snapshot a{color:#f59e0b;text-decoration:none}
-      .ora-seo-snapshot strong{color:#f8fafc}
-      .ora-seo-snapshot table{width:100%;border-collapse:collapse;margin:0 0 14px;font-size:14px}
-      .ora-seo-snapshot th,.ora-seo-snapshot td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}
+    .ora-seo-snapshot{display:none}
+    .ora-loading{min-height:100vh;background:#0a0e1a;color:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif}
+    .ora-loading-mark{font-size:28px;font-weight:700;letter-spacing:-0.5px}
+    .ora-loading-bar{width:120px;height:2px;background:#1e293b;overflow:hidden;border-radius:2px}
+    .ora-loading-bar i{display:block;height:100%;width:40%;background:#4f46e5;animation:ora-loading-slide 1.2s ease-in-out infinite}
+    @keyframes ora-loading-slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+    .ora-loading p{color:#94a3b8;margin:0;font-size:15px}
     </style>`;
   const re = /(<div id="root">)([\s\S]*?)(<\/div>)/;
   if (re.test(html)) return html.replace(re, (_m, g1, _g2, g3) => `${g1}${styled}${g3}`);
@@ -401,6 +409,7 @@ for (const c of Object.values(COMPETITORS)) {
 
 // Extra homepage copy from src/pages/Landing.jsx (extracted 2026-11-19).
 // Renders landing sections the base snapshot omits, so served HTML carries real text.
+// 2026-11-22 - five source import paths the 2026-11-19 extraction swept in were removed below; they are not copy and rendered as visible text in the snapshot.
 const HOME_EXTRA = [
   "Fast, cheap, reliable.",
   "GPT-4o-mini / Claude Haiku 4.5",
@@ -508,11 +517,6 @@ const HOME_EXTRA = [
   "Polaris Built Inc",
   "\u2014 ORA by Aurem, made by AUREM \u00b7 Incorporated in Canada \u00b7 All rights reserved.",
   "Cookie preferences",
-  "../components/PricingCards",
-  "../components/LazyVideo",
-  "../components/marketing/MarketingNav",
-  "../components/demo/WalkthroughPlayer",
-  "../components/demo/demoSteps",
   "~30 seconds end-to-end",
   "Minimum-diff commits",
   "Full review pass included",

@@ -32,7 +32,15 @@
  * service worker takes control, so this class of bug can't recur
  * silently even if a future change forgets to bump this constant.
  */
-const CACHE_VERSION = "aurem-v5";
+// 2026-11-22 - v6. The v5 worker served JS/CSS stale-while-
+// revalidate: after a deploy, visitors kept getting the previous
+// deploy's hashed bundle from cache (the watchdog's one reload could
+// not fix it, because the worker re-served the stale bundle). JS/CSS
+// are now network-first (cache only as an offline fallback), and no
+// asset response whose body is HTML is ever cached - a host SPA
+// fallback answering a missing asset with index.html must not poison
+// the cache under a .js/.css URL.
+const CACHE_VERSION = "aurem-v6";
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -101,10 +109,35 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets → stale-while-revalidate.
+  // 2026-11-22 - JS/CSS are network-first. Content-hashed chunks
+// (index-<hash>.js) change on every deploy, and the stale-while-
+// revalidate branch below used to hand the previous deploy's bundle
+// to the page while the network refreshed in the background. When
+// the old hash no longer exists on the server, the app mounts
+// against a stale bundle - or against an HTML SPA fallback - and the
+// homepage stays stuck on its SEO snapshot. Fetch the network first;
+// fall back to the cache only when the network is unreachable.
+// Never cache a response whose body is HTML.
+if (url.pathname.endsWith(".js") || url.pathname.endsWith(".css")) {
+  event.respondWith(
+    fetch(req)
+      .then((res) => {
+        const type = res.headers.get("content-type") || "";
+        if (res && res.status === 200 && !type.includes("text/html")) {
+          const copy = res.clone();
+          caches.open(STATIC_CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(req))
+  );
+  return;
+}
+
+// Static assets (images/fonts) - stale-while-revalidate.
+// (JS/CSS are handled by the network-first branch above, 2026-11-22:
+// a stale chunk is worse than a slow one - see the CACHE_VERSION note.)
   if (
-    url.pathname.endsWith(".js")  ||
-    url.pathname.endsWith(".css") ||
     url.pathname.endsWith(".woff2") ||
     url.pathname.endsWith(".webp") ||
     url.pathname.endsWith(".png")  ||
@@ -116,7 +149,8 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       caches.match(req).then((cached) => {
         const network = fetch(req).then((res) => {
-          if (res && res.status === 200) {
+          const type = res.headers.get("content-type") || "";
+          if (res && res.status === 200 && !type.includes("text/html")) {
             const copy = res.clone();
             caches.open(STATIC_CACHE).then((c) => c.put(req, copy)).catch(() => null);
           }
