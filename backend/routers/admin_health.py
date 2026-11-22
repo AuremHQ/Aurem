@@ -22,6 +22,7 @@ times a minute.
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import time
@@ -132,6 +133,68 @@ def _ack_active(acked_until: Optional[str]) -> bool:
 
 # ── Endpoints ──────────────────────────────────────────────────────
 
+# ---------------------------------------------------------------------------
+# Non-blocking aggregator (Nov 2026 prod incident, 2026-11-21)
+# ---------------------------------------------------------------------------
+# A check_fn that does synchronous I/O (time.sleep, requests, a hung
+# socket, ...) blocks the request event loop, and asyncio.wait_for
+# cannot cancel it -- there is no yield point for the cancellation to
+# land on. The 20s outer aggregator timeout could therefore only fire
+# after the block ended, and while the loop was stuck EVERY request
+# stalled, including /health, so the platform reported the backend
+# down (28 nginx upstream timeouts on GET /health in one minute).
+#
+# Each check therefore runs in a worker thread on its own event loop
+# (asyncio.run), via a dedicated thread pool, with a per-check timeout
+# enforced from the request loop. The request loop is never blocked:
+# a check that hangs degrades to its own red result and the endpoint
+# still returns promptly. The worker thread itself cannot be killed --
+# a thread blocked in sync I/O cannot be interrupted -- so it finishes
+# in the background and its late result is discarded.
+_CHECK_TIMEOUT_S = 8.0  # matches run_check_safely's per-check timeout
+_CHECK_EXECUTOR = ThreadPoolExecutor(
+    max_workers=32, thread_name_prefix="admin-health-check"
+)
+
+
+def _run_check_in_thread(check):
+    """Run one check (with run_check_safely's validation + timeouts) on a
+    fresh event loop in a worker thread. Invoked via run_in_executor."""
+    return asyncio.run(run_check_safely(check))
+
+
+async def _run_check_threaded(check):
+    """Run one check off the request event loop, with a per-check timeout.
+
+    Returns the check's result dict (with ``check_ms`` added), exactly
+    as run_check_safely would return it. On timeout the check degrades
+    to red -- the endpoint never hangs on a single check.
+    """
+    t0 = time.time()
+    try:
+        result = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                _CHECK_EXECUTOR, _run_check_in_thread, check
+            ),
+            timeout=_CHECK_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "[status/all] check %s timed out after %ss -- degrading to red; "
+            "the event loop was not blocked",
+            check.id,
+            _CHECK_TIMEOUT_S,
+        )
+        result = {
+            "status": "red",
+            "detail": f"check timed out after {_CHECK_TIMEOUT_S:g}s "
+            "(blocking check ran off the event loop)",
+            "checked_at": _iso_now(),
+        }
+    result["check_ms"] = int((time.time() - t0) * 1000)
+    return result
+
+
 @router.get("/all")
 async def status_all():
     """Run every registered check_fn in parallel, return the
@@ -144,7 +207,16 @@ async def status_all():
     depth: wrap the whole aggregator in a 20s outer timeout so a
     misbehaving check can never leave the client hanging forever,
     AND record per-check wall-time so future regressions surface
-    immediately in the response detail."""
+    immediately in the response detail.
+
+    Nov 2026 prod-hang fix -- the 20s outer timeout could only fire
+    after a blocking check released the loop, so while it was stuck
+    EVERY request stalled, including /health (2026-11-21). Each check
+    now runs in the thread pool via _run_check_threaded (own event
+    loop per check, per-check timeout enforced from the request
+    loop), so a blocking check degrades to its own red result and
+    the event loop -- and /health -- stay responsive. The 20s outer
+    timeout remains as defence-in-depth."""
     now = time.time()
     if _STATUS_CACHE["payload"] and now < _STATUS_CACHE["expires_at"]:
         return _STATUS_CACHE["payload"]
@@ -152,15 +224,12 @@ async def status_all():
     t0 = time.time()
     checks = all_checks()
 
-    async def _timed(c):
-        _t = time.time()
-        res = await run_check_safely(c)
-        res["check_ms"] = int((time.time() - _t) * 1000)
-        return res
+    # Each check runs in the thread pool (_run_check_threaded): the
+    # request event loop stays free even if a check blocks on sync I/O.
 
     try:
         results = await asyncio.wait_for(
-            asyncio.gather(*[_timed(c) for c in checks],
+            asyncio.gather(*[_run_check_threaded(c) for c in checks],
                            return_exceptions=False),
             timeout=20.0,
         )

@@ -73,11 +73,13 @@ async def test_sync_blocking_check_does_not_hang_aggregator():
 
 
 @pytest.mark.asyncio
-async def test_aggregator_outer_timeout_returns_partial_snapshot(monkeypatch):
+async def test_blocking_check_degrades_to_red_without_stalling_aggregator(monkeypatch):
     """Register a check_fn that DOESN'T yield (breaks the inner
-    per-check guard).  Assert the aggregator's OUTER 20s timeout
-    kicks in and returns a red-heavy partial snapshot instead of
-    hanging forever."""
+    per-check guard). Nov 2026 fix: checks run in a thread pool, so
+    the blocking check degrades to its own red result at the 8s
+    per-check timeout, the outer 20s timeout must NOT trip, the
+    aggregator returns in <12s, and a healthy check registered
+    alongside is unaffected."""
     from services.health_registry import register_check, _REGISTRY
 
     async def _truly_blocking_check():
@@ -89,6 +91,11 @@ async def test_aggregator_outer_timeout_returns_partial_snapshot(monkeypatch):
 
     tag = "__test_hard_blocker"
     register_check(tag, "hard blocker", "infra", _truly_blocking_check)
+
+    async def _healthy_check():
+        return {"status": "green", "detail": "ok", "checked_at": "test"}
+
+    register_check("__test_healthy", "healthy", "infra", _healthy_check)
     try:
         # Directly invoke the endpoint handler function; also invalidate
         # the aggregator's short-TTL cache so we hit the real gather.
@@ -100,27 +107,25 @@ async def test_aggregator_outer_timeout_returns_partial_snapshot(monkeypatch):
         payload = await status_all()
         took = time.time() - t0
 
-        # NB: a truly-blocking check delays return past the outer
-        # timeout because the event loop can't process the cancellation
-        # until the sync sleep releases the GIL.  What matters is:
-        #   (a) we DID timeout (aggregator_timeout=True), and
-        #   (b) we didn't wait indefinitely (< 30s bound).
-        # Any future proper fix (moving check_fns into a thread pool)
-        # can tighten this bound further.
-        assert took < 30.0, (
-            f"aggregator did not honour outer timeout · took {took:.1f}s"
+        # Nov 2026: checks run in the thread pool, so the blocking
+        # check no longer stalls the event loop. It degrades to its
+        # own red result at the 8s per-check timeout, the outer 20s
+        # timeout must NOT trip, and the healthy check is unaffected.
+        assert not payload.get("aggregator_timeout"), (
+            "outer aggregator timeout tripped; a single blocking check "
+            "must degrade to red on its own"
         )
-        # If the outer timeout tripped, aggregator_timeout is True and
-        # every check is red.
-        if payload.get("aggregator_timeout"):
-            assert payload["counts"]["red"] >= 1
-        else:
-            # Non-timeout path is acceptable ONLY if we returned fast.
-            assert took < 12.0, (
-                f"aggregator returned no-timeout but took too long · {took:.1f}s"
-            )
+        assert took < 12.0, (
+            f"aggregator took too long with a blocking check, took {took:.1f}s"
+        )
+        by_id = {row["id"]: row for row in payload["checks"]}
+        assert by_id[tag]["status"] == "red", f"blocking check must be red, got {by_id[tag]}"
+        assert "timed out" in by_id[tag]["detail"].lower()
+        assert by_id["__test_healthy"]["status"] == "green"
+        assert payload["counts"]["red"] >= 1
     finally:
         _REGISTRY.pop(tag, None)
+        _REGISTRY.pop("__test_healthy", None)
         # Clear the cache again so subsequent tests get a clean state.
         from routers.admin_health import _STATUS_CACHE
         _STATUS_CACHE["payload"] = None
