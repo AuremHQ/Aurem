@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import "./index.css";
 // Iter 388-p1 — Frontend Sentry wiring (Item #20).  NO-OP unless
 // REACT_APP_SENTRY_DSN is set in frontend/.env — safe to import
@@ -65,7 +66,9 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator) {
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <App />
+    <RouteErrorBoundary>
+      <App />
+    </RouteErrorBoundary>
   </React.StrictMode>
 );
 

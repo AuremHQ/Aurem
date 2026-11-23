@@ -133,7 +133,7 @@ api.interceptors.response.use((response) => {
 
 // Health check (no /aurem-dev prefix — it's on /api/health)
 export const healthApi = axios.create({
-  baseURL: `${BACKEND}/api`,
+  baseURL: "/api",
   timeout: 10000,
 });
 

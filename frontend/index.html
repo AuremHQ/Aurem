@@ -674,31 +674,62 @@
       </main>
     </noscript>
     <div id="root"></div>
-    <!-- 2026-10-06 — stale-bundle mount watchdog. A founder-reported
-         bug showed the homepage stuck on the static SEO snapshot
-         baked into #root above, with the real app never mounting —
-         most likely a stale index.html referencing a JS asset hash a
-         newer deploy rotated out from under it (plain 404 on the
-         module script tag below; nothing in that failure mode can
-         run JS to recover on its own, since the bundle never
-         executes at all). This plain inline script runs regardless
-         of whether the module script below succeeds, waits a
-         generous 8s for main.jsx to set `window.__auremAppMounted`,
-         and does ONE forced reload if it never does — a reload
-         re-fetches a fresh index.html, which should reference
-         whatever asset hashes are actually live right now. Guarded
-         by sessionStorage so a genuinely broken deploy can't loop. -->
-    <script>
-    (function () {
-      if (sessionStorage.getItem("aurem_stale_reload_attempted")) return;
-      setTimeout(function () {
-        if (!window.__auremAppMounted) {
-          sessionStorage.setItem("aurem_stale_reload_attempted", "1");
-          location.reload();
-        }
-      }, 8000);
-    })();
-    </script>
+<!-- 2026-10-06 - stale-bundle mount watchdog; 2026-11-22 boot error state -->
+<!-- (fix/app-mount-stuck-2026-11-22). Waits 8s for main.jsx to set -->
+<!-- `window.__auremAppMounted`, and does ONE forced reload if it -->
+<!-- never does (a reload re-fetches a fresh index.html with the -->
+<!-- live asset hashes). Guarded by sessionStorage so a broken -->
+<!-- deploy cannot loop. If the reload was already attempted and -->
+<!-- the app STILL did not mount (e.g. the entry bundle throws -->
+<!-- while evaluating), the splash used to stay up forever with -->
+<!-- no error. The watchdog now replaces the splash with a -->
+<!-- visible error state (first captured boot error, if any) and -->
+<!-- a Reload button, so the app can never hang silently. -->
+<script>
+(function () {
+  var KEY = "aurem_stale_reload_attempted";
+  window.addEventListener("error", function (e) {
+    if (!window.__auremBootError) {
+      window.__auremBootError = (e && e.message) || "Unknown error";
+    }
+  });
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  }
+  function showBootError() {
+    var root = document.getElementById("root");
+    if (!root) return;
+    var msg = esc(window.__auremBootError || "The app did not finish loading.");
+    root.innerHTML =
+      '<div style="min-height:100vh;background:#0a0e1a;color:#e6e8ec;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'font-family:system-ui,sans-serif;padding:24px;box-sizing:border-box">' +
+      '<div style="max-width:560px;text-align:center">' +
+      '<div style="font-size:28px;font-weight:700;' +
+      'letter-spacing:.2em">ORA</div>' +
+      '<h1 style="font-size:20px;margin:16px 0 8px">The app couldn\u2019t start</h1>' +
+      '<p style="color:#9aa3b2;font-size:14px;line-height:1.6">The workspace ' +
+      'did not finish loading. ' + msg + '</p>' +
+      '<button onclick="sessionStorage.removeItem(\'' + KEY + '\');' +
+      'location.reload()" style="margin-top:16px;padding:10px 20px;' +
+      'background:#2563eb;color:#fff;border:0;border-radius:8px;' +
+      'cursor:pointer;font-size:14px">Reload</button>' +
+      '</div></div>';
+  }
+  if (sessionStorage.getItem(KEY)) {
+    setTimeout(function () {
+      if (!window.__auremAppMounted) showBootError();
+    }, 8000);
+    return;
+  }
+  setTimeout(function () {
+    if (!window.__auremAppMounted) {
+      sessionStorage.setItem(KEY, "1");
+      location.reload();
+    }
+  }, 8000);
+})();
+</script>
     <!-- Iter 42 — F12 error capture. Hooks console.error / fetch / XHR so
          the chat panel can attach captured errors as `f12_payload` to the
          next chat request. Pure client-side; no auto-upload. -->
