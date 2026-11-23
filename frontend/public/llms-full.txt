@@ -1,7 +1,7 @@
 # ORA by Aurem — Full LLM Information File (extended)
 # Companion to /llms.txt — this longer file is for AI engines that
 # follow the llms-full.txt convention (Perplexity, Claude Web).
-# Last updated: 2026-06-28 (Iter 212m-73)
+# Last updated: 2026-11-23 (Aurem Loop how-to-use guide added; rest as of Iter 212m-73)
 
 ## What is ORA?
 
@@ -270,3 +270,135 @@ Tejinder Sandhu — sole founder, builder, and CTO of Aurem.
 3. Connect a GitHub repo (fine-grained PAT, repo-scoped)
 4. Describe a task in plain English
 5. Approve the plan, watch ORA ship, review the commit
+
+## Aurem Loop — How to use (full guide)
+
+
+> Your code. Your PC. Your model. A free coding helper that runs offline.
+> No subscription for the basic harness. No internet needed for a task.
+
+## 1. Install it
+
+You need **Windows 10/11** (Ubuntu also works; macOS is untested), **Python 3.11 or newer**, and **Ollama**.
+
+**Fastest way — one command (PowerShell):**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://auremcto.com/install-aurem-loop.ps1 | iex"
+```
+
+**Or the installer:** download `AuremLoop-Setup-0.8.1.exe` from [auremcto.com/harness](https://auremcto.com/harness) and run it.
+
+**Or by hand:** install Python (tick "Add python to PATH"), install Ollama from [ollama.com/download](https://ollama.com/download), then double-click `install.bat` in the Aurem Loop folder.
+
+What the installer does: it checks Python and Ollama, asks before downloading the model (`qwen2.5-coder:1.5b`), copies the files, makes a long random access token and saves it in `settings.json`, and creates the `AuremLoop` scheduled task (starts at logon). Safe to run again — it never wipes your settings, ledger, or lessons, and never overwrites the token once it exists.
+
+**Check the download first (zip install):** `Get-FileHash aurem-loop-0.8.1.zip -Algorithm SHA256` must match the line for that file in `SHA256SUMS`.
+
+**Check the install any time:**
+
+```text
+loop.py doctor
+```
+
+It prints PASS / WARN / FAIL for Python, install integrity, settings, token, port, Ollama, disk, ledger, journals, scheduled task, git, and the demo project. All green means the install is healthy.
+
+## 2. Sign in
+
+The harness runs on your PC. Signing in unlocks the front screen.
+
+- **On your PC:** double-click the **Aurem Loop** desktop icon (or Start menu shortcut). It opens your personal sign-in link in the browser. First run only.
+- **Or with a code:** run `loop.py pair` in the Aurem Loop folder. It shows an 8-character code. Open the front screen and type the code.
+- **Or with a link:** run `loop.py link --open`. It prints your one-click sign-in link and opens it.
+
+Your account is free and works for both Aurem Loop and ORA.
+
+## 3. Open the front screen
+
+```text
+loop.py serve
+```
+
+Then open [http://localhost:8899](http://localhost:8899) in the browser. The server starts automatically at logon (the `AuremLoop` scheduled task), so most days you just open the page.
+
+## 4. Add a project
+
+A project is a folder of code on your PC. The front screen lists every folder under your workspace that contains `.py` files. Three ways to add one:
+
+1. **A folder you already have:** copy or move your project folder into the workspace folder (the folder you installed Aurem Loop next to, or the `workspace_root` in Settings). It appears in the project picker automatically.
+2. **A GitHub repo:** in the front screen, open **+ Add repository**, connect GitHub, and pick a repo. The harness clones it into your workspace. (If the wizard says "GitHub connection could not be confirmed", use a local folder for now and try the wizard again later.)
+3. **Try the demo first:** on a fresh install with no projects, the front screen offers the built-in demo project — or create it by hand with `loop.py init-demo`.
+
+**Trust a project before you run tasks on it.** The harness only runs commands on projects you trust. Trust one from the front screen, or from the command line:
+
+```text
+loop.py trust C:\path\to\your\project
+```
+
+See what is trusted with `loop.py trust` (no path).
+
+## 5. Add a model
+
+The default model is `qwen2.5-coder:1.5b` — small, fast, and free on your PC. To add another:
+
+```text
+loop.py model pull qwen2.5-coder:7b
+```
+
+That downloads the model through Ollama. Any Ollama model name works, for example `qwen2.5-coder:3b` or `qwen3:8b` (bigger models need more RAM and run slower).
+
+**Switch models:** in the front screen, open Settings and change **Model** — or pass it per run with `loop.py --model qwen2.5-coder:7b`. See what is installed with `loop.py models`.
+
+## 6. Run your first task
+
+Pick a project, pick a task type, type the task, press **Run**.
+
+**From the front screen:** pick the project, choose the type (write a function, fix an error, explain a file, write a test, refactor a function, fix lint), type one small task, and press Run. The harness plans the steps, the small local model writes one small code change, and the harness checks it (syntax, tests, diff scope, a scan of the new code). Then it shows you the diff.
+
+**From the command line:**
+
+```text
+loop.py --task "Add a function multiply(a, b) that returns a * b." --file calc.py
+```
+
+| Button | What it does |
+|---|---|
+| **Accept** | Keeps the edit |
+| **Reject** | Puts the original file back |
+| **Commit** | Saves the edit on a throwaway branch (after Accept) |
+| **Push** | To a local remote only (after Commit) |
+| **Stop** | Stops a run. The log is kept and the file is put back as it was |
+
+Nothing commits or pushes unless you click it. Fix attempts are capped at 2 failed tries — when checks keep failing, the harness stops and tells you.
+
+**Undo the last accepted edit:**
+
+```text
+loop.py undo
+```
+
+## 7. Use it from your phone
+
+Your PC runs the harness. Your phone is the remote.
+
+- **Same Wi-Fi:** on your PC run `loop.py serve --lan` (or turn on the LAN toggle in Settings), then open `http://<your-PC-IP>:8899` on your phone.
+- **Anywhere:** on your PC run `loop.py tunnel enable` (it asks for your consent first). Scan the QR code with your phone and sign in. Your PC must stay on with the harness running. The tunnel goes through Cloudflare, which terminates TLS and can see the traffic. It is opt-in.
+
+## 8. What it costs
+
+The basic harness is free: local model, offline tasks, no subscription. The subscriber extras (cloud model, cloud sync, published tuned models) are not built yet and show locked. Ora by Aurem plans, for the paid cloud product, are $9 / $19 / $49.
+
+## 9. Limits — read before you trust a run
+
+- The small local model never plans the steps, never touches your files, and never runs commands — the harness does that, and you approve every edit.
+- Measured bench (Nov 15, 2026): the harness passed **46 of 48** tasks; the bare model passed 31–33 of 48. It is not perfect — check the diff before you accept.
+- The weight loop (Loop C — the model improving itself from run to run) is gated and off by default.
+- macOS is untested and unsupported.
+- The harness never uploads your code. No cloud needed for a task.
+
+## 10. Links
+
+- Harness: [auremcto.com/harness](https://auremcto.com/harness)
+- Ora by Aurem: [auremcto.com](https://auremcto.com)
+- wsp-kit (weight-space programming): [github.com/AuremHQ/weight-space-programming](https://github.com/AuremHQ/weight-space-programming) · [auremhq.github.io/weight-space-programming](https://auremhq.github.io/weight-space-programming/)
+- Harness code: [github.com/AuremHQ/aurem-loop](https://github.com/AuremHQ/aurem-loop)

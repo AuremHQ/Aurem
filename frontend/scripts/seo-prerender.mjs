@@ -41,6 +41,7 @@ import {
   HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, FAQ_ITEMS,
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../src/data/harnessContent.mjs";
+import { LOOP_HOWTO_JSON_LD, LOOP_FAQ_JSON_LD } from "../src/data/aaoJsonLd.mjs";
 
 import {
   pricingHeroHeadline,
@@ -860,12 +861,20 @@ function harnessBody(release) {
     "@graph": [
       {
         "@type": "FAQPage",
-        mainEntity: FAQ_ITEMS.map((f) => ({
-          "@type": "Question",
-          name: f.q,
-          acceptedAnswer: { "@type": "Answer", text: f.q },
-        })),
+        mainEntity: [
+          ...FAQ_ITEMS.map((f) => ({
+            "@type": "Question",
+            name: f.q,
+            // 2026-11-23 — was `text: f.q`: the answer repeated the
+            // question. Answers are the plain-text FAQ answers.
+            acceptedAnswer: { "@type": "Answer", text: f.aHtml.replace(/<[^>]*>/g, "") },
+          })),
+          // 2026-11-23 — how-to guide Q&As (aurem-loop-how-to-use-guide.md).
+          ...LOOP_FAQ_JSON_LD.mainEntity,
+        ],
       },
+      // 2026-11-23 — how-to guide steps (aurem-loop-how-to-use-guide.md).
+      LOOP_HOWTO_JSON_LD,
       {
         "@type": "BreadcrumbList",
         itemListElement: [

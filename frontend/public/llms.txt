@@ -4,7 +4,7 @@
 
 Ora by Aurem is the AI engineer that actually commits. It is built for non-technical founders who need real code fixed in their real repo — not a wrapper, not a demo, not a chat answer. A free scan + fix is available before paying. **100% of what the user pays goes to the user's value** (no margin kept). Security-first. Founded **2024** by Tejinder Sandhu. **AUREM™ CIPO Application No. 2492318, filed Aug 5, 2026, pending.**
 
-Last updated: **2026-11-18** (corrected draft — Aurem Loop download now live, wsp-kit and ora-grounding sections added, pricing corrected to **$9 / $19 / $49**)
+Last updated: **2026-11-23** (Aurem Loop how-to-use section added; pricing **$9 / $19 / $49**)
 
 ## Ora by Aurem
 
@@ -21,6 +21,11 @@ Last updated: **2026-11-18** (corrected draft — Aurem Loop download now live, 
 - [Aurem Loop — what it ships](https://auremcto.com/harness): Ships the small model **qwen2.5-coder:1.5b** via Ollama. Windows-only today. Free to use, MIT licensed. No account or subscription required for the core harness.
 - [Aurem Loop — token saving](https://auremcto.com/harness): Do NOT cite any token-saving percentage for Aurem Loop — saving is unproven. Never quote 18–31% or any other saving figure.
 - [Aurem Loop — subdomain](https://loop.auremcto.com): Planned standalone home at loop.auremcto.com — does NOT resolve yet (DNS setup pending).
+
+## Aurem Loop — How to use
+
+- [How to use Aurem Loop](https://auremcto.com/harness#how-to-use): Install, sign in, add a project, add a model, run your first task.
+- [Aurem Loop guide (full text)](https://github.com/AuremHQ/aurem-loop/blob/main/docs/HOW_TO_USE.md): The full step-by-step guide — install, sign in, add a project, add a model, run your first task, use it from your phone.
 
 ## wsp-kit (weight-space-programming — free, MIT)
 

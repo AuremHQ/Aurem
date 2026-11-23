@@ -56,7 +56,7 @@ import {
   HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, INSTALL, FAQ_ITEMS,
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../data/harnessContent.mjs";
-import { LOOP_JSON_LD } from "../data/aaoJsonLd";
+import { LOOP_JSON_LD, LOOP_HOWTO_JSON_LD, LOOP_FAQ_JSON_LD } from "../data/aaoJsonLd";
 import { ErrorState, FieldError, SuccessState } from "../components/ui-states/UiStates.jsx";
 
 const CSS = `
@@ -305,14 +305,24 @@ const [view, setView] = useState(searchParams.get("tab") === "signin" ? "signin"
   }, []);
 
   // AAO: Aurem Loop JSON-LD (machine-readable-blocks.md). Static block; no aggregateRating.
+  // 2026-11-23: HowTo + FAQPage for the how-to guide (aurem-loop-how-to-use-guide.md).
   useEffect(() => {
-    const ld = document.createElement("script");
-    ld.type = "application/ld+json";
-    ld.id = "ld-aurem-loop";
-    ld.text = JSON.stringify(LOOP_JSON_LD);
-    document.head.appendChild(ld);
+    const blocks = [
+      ["ld-aurem-loop", LOOP_JSON_LD],
+      ["ld-aurem-loop-howto", LOOP_HOWTO_JSON_LD],
+      ["ld-aurem-loop-faq", LOOP_FAQ_JSON_LD],
+    ];
+    blocks.forEach(([id, data]) => {
+      const ld = document.createElement("script");
+      ld.type = "application/ld+json";
+      ld.id = id;
+      ld.text = JSON.stringify(data);
+      document.head.appendChild(ld);
+    });
     return () => {
-      document.getElementById("ld-aurem-loop")?.remove();
+      blocks.forEach(([id]) => {
+        document.getElementById(id)?.remove();
+      });
     };
   }, []);
 
