@@ -674,31 +674,84 @@
       </main>
     </noscript>
     <div id="root"></div>
-    <!-- 2026-10-06 — stale-bundle mount watchdog. A founder-reported
-         bug showed the homepage stuck on the static SEO snapshot
-         baked into #root above, with the real app never mounting —
-         most likely a stale index.html referencing a JS asset hash a
-         newer deploy rotated out from under it (plain 404 on the
-         module script tag below; nothing in that failure mode can
-         run JS to recover on its own, since the bundle never
-         executes at all). This plain inline script runs regardless
-         of whether the module script below succeeds, waits a
-         generous 8s for main.jsx to set `window.__auremAppMounted`,
-         and does ONE forced reload if it never does — a reload
-         re-fetches a fresh index.html, which should reference
-         whatever asset hashes are actually live right now. Guarded
-         by sessionStorage so a genuinely broken deploy can't loop. -->
-    <script>
-    (function () {
-      if (sessionStorage.getItem("aurem_stale_reload_attempted")) return;
-      setTimeout(function () {
-        if (!window.__auremAppMounted) {
-          sessionStorage.setItem("aurem_stale_reload_attempted", "1");
-          location.reload();
-        }
-      }, 8000);
-    })();
-    </script>
+<!-- 2026-11-23 - bounded boot-error panel (app-mount fix). Hidden
+until the mount watchdog below decides the app is not going to
+load. Plain HTML so it is available even when the JS bundle
+fails to execute at all. -->
+<div id="aurem-boot-error" hidden style="min-height:100vh;background:#0b0d10;color:#e8eaed;font-family:system-ui,sans-serif;padding:48px 24px;box-sizing:border-box;text-align:center">
+  <div style="max-width:520px;margin:0 auto">
+    <div style="font-size:28px;font-weight:700;margin:0 0 12px">ORA did not finish loading</div>
+    <p style="line-height:1.5;margin:0 0 8px">The workspace could not be opened. Nothing was started and no changes were made, so it is safe to try again.</p>
+    <p style="line-height:1.5;margin:0 0 20px">If it keeps happening, share this request ID with support:</p>
+    <p style="margin:0 0 24px"><code id="aurem-boot-request-id" style="background:#1a1d22;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:14px">-</code></p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <button id="aurem-boot-retry" type="button" style="background:#4f7cff;border:0;color:#fff;padding:10px 18px;border-radius:8px;font-size:15px;cursor:pointer">Retry</button>
+      <button id="aurem-boot-signout" type="button" style="background:transparent;border:1px solid #555;color:#e8eaed;padding:10px 18px;border-radius:8px;font-size:15px;cursor:pointer">Sign out</button>
+      <a id="aurem-boot-support" href="/support" style="border:1px solid #555;color:#e8eaed;padding:10px 18px;border-radius:8px;font-size:15px;text-decoration:none">Get support</a>
+    </div>
+  </div>
+</div>
+<!-- 2026-11-23 - bounded mount watchdog (app-mount fix). Extends the
+2026-10-06 stale-bundle watchdog: it still does ONE forced reload
+(guarded by sessionStorage) for a stale asset hash, but if the app
+still has not mounted after that reload, it no longer leaves the
+user stuck on the loading splash forever. Instead it shows the
+bounded error panel above (human-readable error, boot request ID,
+safe Retry, Sign out, Support) and reports the failure to the
+backend so the request ID appears in the backend logs. Retry is a
+plain reload: it starts nothing and submits nothing, so no task
+or commit can be duplicated by a timeout or a retry. -->
+<script>
+(function () {
+  var RID_KEY = "aurem_boot_request_id";
+  var rid = null;
+  try { rid = sessionStorage.getItem(RID_KEY); } catch (e) { rid = null; }
+  if (!rid) {
+    rid = "boot-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+    try { sessionStorage.setItem(RID_KEY, rid); } catch (e) {}
+  }
+  window.__auremBootRequestId = rid;
+  var attempted = false;
+  try { attempted = !!sessionStorage.getItem("aurem_stale_reload_attempted"); } catch (e) { attempted = false; }
+  function reportBootFailure() {
+    var payload = { kind: "boot-mount-timeout", requestId: rid, message: "The app did not finish loading.", url: location.href, userAgent: navigator.userAgent };
+    try {
+      if (navigator.sendBeacon) {
+        var blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+        if (navigator.sendBeacon("/api/aurem-dev/admin/errors/report", blob)) return;
+      }
+      fetch("/api/aurem-dev/admin/errors/report", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify(payload) }).catch(function () {});
+    } catch (e) {}
+  }
+  function showBootError() {
+    window.__auremBootError = "The app did not finish loading.";
+    reportBootFailure();
+    var root = document.getElementById("root");
+    if (root) { root.style.display = "none"; }
+    var splash = document.querySelector(".ora-loading");
+    if (splash) { splash.style.display = "none"; }
+    var panel = document.getElementById("aurem-boot-error");
+    if (!panel) return;
+    var idEl = document.getElementById("aurem-boot-request-id");
+    if (idEl) { idEl.textContent = rid; }
+    panel.hidden = false;
+    panel.style.display = "block";
+    var retry = document.getElementById("aurem-boot-retry");
+    if (retry) { retry.addEventListener("click", function () { location.reload(); }); }
+    var signout = document.getElementById("aurem-boot-signout");
+    if (signout) { signout.addEventListener("click", function () { try { localStorage.removeItem("aurem_token"); } catch (e) {} location.href = "/login"; }); }
+  }
+  setTimeout(function () {
+    if (window.__auremAppMounted) return;
+    if (!attempted) {
+      try { sessionStorage.setItem("aurem_stale_reload_attempted", "1"); } catch (e) {}
+      location.reload();
+      return;
+    }
+    showBootError();
+  }, 8000);
+})();
+</script>
     <!-- Iter 42 — F12 error capture. Hooks console.error / fetch / XHR so
          the chat panel can attach captured errors as `f12_payload` to the
          next chat request. Pure client-side; no auto-upload. -->
