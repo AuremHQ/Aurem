@@ -451,6 +451,8 @@ const LANDING_CSS = `
 .ora-landing .compare-table thead th.ora-col { background: rgba(245,158,11,0.08); color: var(--accent); }
 .ora-landing .compare-table tbody td { color: var(--muted-1); }
 .ora-landing .compare-table tbody td.ora-cell { background: rgba(245,158,11,0.04); color: var(--text); border-left: 1px solid var(--accent-br); border-right: 1px solid var(--accent-br); }
+/* Mobile fixes (2026-11-24) -- keep the ORA column wide enough for its longest values and wrap only at word boundaries: the global td/th overflow-wrap:anywhere rule would otherwise split values mid-word. */
+.ora-landing .compare-table th.ora-col, .ora-landing .compare-table td.ora-cell { min-width: 190px; overflow-wrap: normal; word-break: normal; }
 .ora-landing .compare-table tbody td.feature-name { color: var(--text); font-weight: 500; }
 .ora-landing .yes { color: var(--green); }
 .ora-landing .no  { color: var(--muted-3); }
@@ -1166,14 +1168,14 @@ export default function Landing() {
                 <span className="win-pill">DIFF +24 / −6</span>
               </div>
               <div className="win-body win-code">
-                <span className="ln">12</span><span className="kw">def</span> <span className="fn">login</span>(email, pw):<br />
-                <span className="ln">13</span>  <span className="cm"># Iter 184 — bcrypt + rate-limit</span><br />
+                <span className="ln">12</span>{" "}<span className="kw">def</span>{" "}<span className="fn">login</span>(email, pw):<br />
+                <span className="ln">13</span>{" "}<span className="cm"># Iter 184 — bcrypt + rate-limit</span><br />
                 <span className="ln">14</span>  user = db.users.find_one({"{"}<span className="str">{'"email"'}</span>: email{"}"})<br />
-                <span className="ln">15</span>  <span className="kw">if</span> <span className="kw">not</span> user:<br />
-                <span className="ln">16</span>    <span className="kw">raise</span> <span className="fn">HTTPException</span>(<span className="str">401</span>)<br />
-                <span className="ln">17</span>  <span className="kw">if</span> bcrypt.<span className="fn">checkpw</span>(pw, user[<span className="str">{'"hash"'}</span>]):<br />
-                <span className="ln">18</span>    <span className="kw">return</span> <span className="fn">create_token</span>(user)<br />
-                <span className="ln">19</span>  <span className="kw">raise</span> <span className="fn">HTTPException</span>(<span className="str">401</span>)
+                <span className="ln">15</span>{" "}<span className="kw">if</span>{" "}<span className="kw">not</span> user:<br />
+                <span className="ln">16</span>{" "}<span className="kw">raise</span>{" "}<span className="fn">HTTPException</span>(<span className="str">401</span>)<br />
+                <span className="ln">17</span>{" "}<span className="kw">if</span> bcrypt.<span className="fn">checkpw</span>(pw, user[<span className="str">{'"hash"'}</span>]):<br />
+                <span className="ln">18</span>{" "}<span className="kw">return</span>{" "}<span className="fn">create_token</span>(user)<br />
+                <span className="ln">19</span>{" "}<span className="kw">raise</span>{" "}<span className="fn">HTTPException</span>(<span className="str">401</span>)
               </div>
             </div>
             <div className="win-card" data-testid="win-preview">
