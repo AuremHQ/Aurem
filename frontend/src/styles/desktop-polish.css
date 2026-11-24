@@ -1,0 +1,46 @@
+/* desktop-polish.css — Desktop polish (no layout or visual redesign).
+ *
+ * Three small, global desktop improvements:
+ *   1. `scrollbar-gutter: stable` on the root element, so pages that
+ *      gain or lose a vertical scrollbar do not shift their content.
+ *   2. Thin, dark scrollbars (Firefox `scrollbar-width` /
+ *      `scrollbar-color` plus the WebKit pseudo-elements) to match the
+ *      dark theme. This overrides the 10px WebKit scrollbar in
+ *      index.css; the scoped `.aurem-rail-scroll` rule there is
+ *      untouched.
+ *   3. `font-variant-numeric: tabular-nums` on `body`, so numbers in
+ *      counters, timers and tables line up instead of jittering as
+ *      digits change.
+ */
+html {
+  /* Reserve the scrollbar gutter up front: content never jumps when
+     a page grows or shrinks past the viewport height. */
+  scrollbar-gutter: stable;
+}
+
+/* Firefox: thin scrollbar with a subtle dark thumb on a transparent track. */
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.22) transparent;
+}
+
+/* Chromium / Safari: thin (8px) dark scrollbar. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.18);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.3);
+}
+
+/* Numbers: tabular figures, so digit columns stay aligned. */
+body {
+  font-variant-numeric: tabular-nums;
+}

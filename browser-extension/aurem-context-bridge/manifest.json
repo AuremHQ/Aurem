@@ -9,7 +9,7 @@
   },
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
-    "https://bin-context-pat.preview.emergentagent.com/*"
+    "https://auremcto.com/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
