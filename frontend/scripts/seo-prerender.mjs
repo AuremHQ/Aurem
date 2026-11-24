@@ -38,7 +38,7 @@ import { fileURLToPath } from "node:url";
 import { loadEnv } from "vite";
 import { marked } from "marked";
 import {
-  HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, FAQ_ITEMS,
+  HERO, POINTS, BENCH, FEAT_ITEMS, FLOW_STEPS, REQUIREMENTS, INSTALL, FAQ_ITEMS,
   LEGAL_ARTICLES, FOOTER_COLS, FOOTER_TAGLINE, FOOTER_COPY, FOOTER_TRADEMARK,
 } from "../src/data/harnessContent.mjs";
 
@@ -219,6 +219,11 @@ function patchStaleTokenPhrases(html) {
 const esc = (s) =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// 2026-11-18 — AAO content audit: JSON-LD `text` fields must be plain
+// text, not HTML — FAQ_ITEMS' `aHtml` carries markup (bold/links) for
+// the visible page. Used only when building structured data below.
+const stripHtml = (s) => String(s).replace(/<[^>]*>/g, "").trim();
 
 function swapHead(html, { title, description, canonical }) {
   let out = html
@@ -565,6 +570,7 @@ const HOME_EXTRA = [
 function homeExtraHtml() {
   return "<section><h2>More from ORA</h2>" + HOME_EXTRA.map((t) => "<p>" + t + "</p>").join("") + "</section>";
 }
+
 function homeBody() {
   return `<main>
 <h1>ORA by AUREM \u2014 the AI engineer that actually commits</h1>
@@ -834,6 +840,20 @@ function fmtBytes(n) {
   return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+// `published_at` on GET /api/harness/release-status is a Unix epoch
+// (seconds). Formats both an ISO date (for JSON-LD `datePublished`)
+// and a human-readable one (for the visible download-proof text) —
+// always derived from the REAL release row, never a hardcoded date.
+function releaseDates(publishedAt) {
+  if (typeof publishedAt !== "number" || !Number.isFinite(publishedAt)) {
+    return { iso: null, human: null };
+  }
+  const d = new Date(publishedAt * 1000);
+  const iso = d.toISOString().slice(0, 10);
+  const human = d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  return { iso, human };
+}
+
 function harnessBody(release) {
   const pointsHtml = POINTS.map((pt) => `<li><b>${esc(pt.b)}</b> — ${esc(pt.t)}</li>`).join("");
   const featuresHtml = FEAT_ITEMS.map((f) => `<li><b>${esc(f.b)}</b> — ${esc(f.p)}</li>`).join("");
@@ -852,9 +872,25 @@ function harnessBody(release) {
   ).join("");
 
   const downloadHtml = release.available
-    ? `<p>Download available — v${esc(release.version)} for Windows (${fmtBytes(release.size_bytes)}).</p>`
+    ? `<section id="download-proof">
+<h2>Download Aurem Loop — FREE</h2>
+<p><b>Version ${esc(release.version)}</b> · Released ${esc(releaseDates(release.published_at).human || "")}</p>
+<p>File: ${esc(fmtBytes(release.size_bytes))} (${esc(release.size_bytes)} bytes) · SHA-256: <code>${esc(release.sha256)}</code></p>
+<p>Ships qwen2.5-coder:1.5b via Ollama — a small model that runs entirely on your PC. Platform: ${esc(release.platform === "windows" ? "Windows" : (release.platform || "Windows"))}.</p>
+</section>`
     : `<p>The Windows download is not available yet.</p>`;
 
+  const installHtml = `<section id="install">
+<p class="kicker">${esc(INSTALL.kicker)}</p>
+<h2>${esc(INSTALL.title)}</h2>
+<p>${esc(INSTALL.lede)}</p>
+<p><b>${esc(INSTALL.oneCommandLabel)}</b></p>
+<pre>${esc(INSTALL.oneCommand)}</pre>
+<p><b>${esc(INSTALL.manualTitle)}</b></p>
+<ol>${INSTALL.manualSteps.map((stepHtml) => `<li>${stepHtml}</li>`).join("")}</ol>
+</section>`;
+
+  const { iso: releaseIso } = releaseDates(release.published_at);
   const ld = {
     "@context": "https://schema.org",
     "@graph": [
@@ -863,7 +899,7 @@ function harnessBody(release) {
         mainEntity: FAQ_ITEMS.map((f) => ({
           "@type": "Question",
           name: f.q,
-          acceptedAnswer: { "@type": "Answer", text: f.q },
+          acceptedAnswer: { "@type": "Answer", text: stripHtml(f.aHtml) },
         })),
       },
       {
@@ -873,6 +909,26 @@ function harnessBody(release) {
           { "@type": "ListItem", position: 2, name: "Aurem Loop", item: "https://auremcto.com/harness" },
         ],
       },
+      // 2026-11-18 — AAO content audit, Fix 3: SoftwareApplication
+      // for Aurem Loop. Only emitted once a release is actually
+      // live — never asserts a version/download that doesn't exist,
+      // every fact pulled straight from the real release-status row.
+      ...(release.available ? [{
+        "@type": "SoftwareApplication",
+        name: "Aurem Loop",
+        applicationCategory: "DeveloperApplication",
+        operatingSystem: release.platform === "windows" ? "Windows" : (release.platform || "Windows"),
+        url: "https://auremcto.com/harness",
+        downloadUrl: "https://auremcto.com/harness",
+        softwareVersion: release.version,
+        ...(releaseIso ? { datePublished: releaseIso } : {}),
+        description: `${HERO.sub} Runs entirely on your PC. Ships qwen2.5-coder:1.5b.`,
+        provider: {
+          "@type": "Organization", name: "Ora by Aurem",
+          legalName: "Polaris Built Inc.", url: "https://auremcto.com",
+        },
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD", availability: "https://schema.org/InStock" },
+      }] : []),
     ],
   };
 
@@ -885,6 +941,7 @@ function harnessBody(release) {
 <p>${esc(BENCH.passed)} ${esc(BENCH.passedLabel)} · ${esc(BENCH.bareLabel)} ${esc(BENCH.bare)} · ${esc(BENCH.falseAcceptsLabel)} ${esc(BENCH.falseAccepts)}</p>
 <p>${esc(BENCH.note)}</p>
 ${downloadHtml}
+${release.available ? installHtml : ""}
 <h2>Features</h2>
 <ul>${featuresHtml}</ul>
 <h2>How it works</h2>
@@ -900,6 +957,7 @@ ${legalHtml}
 ${footerColsHtml}
 <p>${esc(FOOTER_COPY)}</p>
 <p>${esc(FOOTER_TRADEMARK)}</p>
+<p>Last updated: ${new Date().toISOString().slice(0, 10)}</p>
 </footer>
 </main>`,
     ld,
