@@ -287,13 +287,13 @@ You need **Windows 10/11** (Ubuntu also works; macOS is untested), **Python 3.11
 powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://auremcto.com/install-aurem-loop.ps1 | iex"
 ```
 
-**Or the installer:** download `AuremLoop-Setup-0.8.1.exe` from [auremcto.com/harness](https://auremcto.com/harness) and run it.
+**Or the installer:** download `aurem-loop-0.8.0.zip` (332,855 bytes) from [auremcto.com/harness](https://auremcto.com/harness), extract it, and run `install.bat`.
 
 **Or by hand:** install Python (tick "Add python to PATH"), install Ollama from [ollama.com/download](https://ollama.com/download), then double-click `install.bat` in the Aurem Loop folder.
 
 What the installer does: it checks Python and Ollama, asks before downloading the model (`qwen2.5-coder:1.5b`), copies the files, makes a long random access token and saves it in `settings.json`, and creates the `AuremLoop` scheduled task (starts at logon). Safe to run again — it never wipes your settings, ledger, or lessons, and never overwrites the token once it exists.
 
-**Check the download first (zip install):** `Get-FileHash aurem-loop-0.8.1.zip -Algorithm SHA256` must match the line for that file in `SHA256SUMS`.
+**Check the download first (zip install):** `Get-FileHash aurem-loop-0.8.0.zip -Algorithm SHA256` must equal `998abc0d46d9acc47de186519d211bf58fff9890ebed85476b58ce724d914543` (332,855 bytes).
 
 **Check the install any time:**
 
