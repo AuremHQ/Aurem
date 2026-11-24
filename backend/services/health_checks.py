@@ -16,6 +16,7 @@ tests/test_health_registry_adapters.py. Once proven, the remaining
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from services.health_registry import (
     register_check,
@@ -463,6 +464,13 @@ async def _check_g21_security_scan() -> dict:
             result = await asyncio.to_thread(run_scan)
         except Exception as e:
             return result_gray(f"g21 scan failed to run: {e}")
+        # 2026-11-24 — services/health_score.py's score_security() ran
+        # this EXACT same scan a second time on every /admin/health-score
+        # call (no cache at all there), doubling the CPU cost and adding
+        # to the contention that caused the cockpit's "CODEBASE HEALTH
+        # SCORE" widget to time out. Stash the raw scan here so
+        # get_g21_raw_scan() below can hand it the same result instead.
+        _G21_CACHE["raw"] = result
         if result.get("pass"):
             unpinned = result["supply_chain"]["unpinned_count"]
             return result_green(f"clean · 0 misconfig findings, {unpinned} unpinned deps")
@@ -471,6 +479,15 @@ async def _check_g21_security_scan() -> dict:
         return result_red(f"{findings} misconfig finding(s), {unpinned} unpinned dep(s)")
 
     return await _stale_while_revalidate(_G21_CACHE, _G21_CACHE_TTL_S, _compute)
+
+
+def get_g21_raw_scan() -> Optional[dict]:
+    """Reuse G21's already-cached raw `run_scan()` result (set by the
+    guard check above) instead of making health_score.py's
+    score_security() run the same whole-backend scan a second time.
+    Returns None if G21 hasn't completed a scan yet — the caller
+    should fall back to running it itself, once."""
+    return _G21_CACHE.get("raw")
 
 
 def g16_auth_hardening_raw() -> dict:

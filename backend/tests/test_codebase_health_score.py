@@ -122,6 +122,14 @@ def test_code_quality_and_architecture_are_scored_and_live(headers):
 
 
 def test_two_calls_deterministic_code_quality(headers):
+    # 2026-11-24 — GET /admin/health-score now caches its whole result
+    # for 90s (services/health_score.py's _SCORE_CACHE) so a cockpit
+    # page load/refresh doesn't re-run all 9 scorers (incl. two
+    # whole-codebase scans) every time — that redundant work was
+    # exactly what made the widget time out under real concurrent
+    # load. Two calls within the TTL must now be IDENTICAL, not just
+    # "close" — that determinism (same last_verified too) is the
+    # point of the cache, not a bug.
     r1 = requests.get(f"{API}/admin/health-score", headers=headers, timeout=45).json()
     time.sleep(2)
     r2 = requests.get(f"{API}/admin/health-score", headers=headers, timeout=45).json()
@@ -130,7 +138,7 @@ def test_two_calls_deterministic_code_quality(headers):
     assert abs(s1 - s2) <= 2, f"code_quality score too volatile: {s1} vs {s2}"
     lv1 = r1["categories"]["code_quality"]["last_verified"]
     lv2 = r2["categories"]["code_quality"]["last_verified"]
-    assert lv1 != lv2, "last_verified should refresh on every call"
+    assert lv1 == lv2, "two calls inside the 90s cache window must be identical"
 
 
 def test_devops_infra_live_github(headers):

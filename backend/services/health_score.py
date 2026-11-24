@@ -110,10 +110,20 @@ def _scored(score: int, evidence: dict, last_verified: Optional[str], live: bool
 async def score_security(db) -> dict:
     import asyncio
     from scripts.g21_security_scan import run_scan
-    from services.health_checks import g16_auth_hardening_raw
+    from services.health_checks import g16_auth_hardening_raw, get_g21_raw_scan
     from services.scope_drift_guard import get_scope_block_stats
 
-    g21 = await asyncio.to_thread(run_scan)
+    # 2026-11-24 — this used to run_scan() a second time, duplicating
+    # the exact scan services/health_checks.py's G21 guard already
+    # does (and caches for 5 min) — doubling the CPU cost on every
+    # /admin/health-score call and contributing to the "CODEBASE
+    # HEALTH SCORE" widget timing out under real concurrent load.
+    # Reuse G21's cached result; only run it ourselves if G21 hasn't
+    # completed a scan yet (e.g. this endpoint is hit before the
+    # Guards cockpit ever triggers one).
+    g21 = get_g21_raw_scan()
+    if g21 is None:
+        g21 = await asyncio.to_thread(run_scan)
     g16 = g16_auth_hardening_raw()
     g3 = await get_scope_block_stats(db) if db is not None else {"available": False}
 
@@ -657,25 +667,60 @@ async def _ci_pass_rate_30d() -> dict:
 
 
 # ── overall roll-up ─────────────────────────────────────────────────────
-async def get_health_score(db) -> dict:
+# 2026-11-24 — fix for the "CODEBASE HEALTH SCORE" cockpit widget timing
+# out. Two causes, both addressed:
+#   1. All 9 category scorers ran strictly SEQUENTIALLY (await, await,
+#      await, ...) even though they're independent of each other
+#      (except code_quality/architecture needing `shared_report`) —
+#      wall-clock time was the SUM of every scorer's own time (measured
+#      ~11s even uncontended), not the max. Now they run concurrently.
+#   2. score_security() ran scripts.g21_security_scan.run_scan() a
+#      SECOND time (health_checks.py's G21 guard already runs + caches
+#      the identical scan) — fixed above via get_g21_raw_scan().
+# On top of that, a short result cache avoids repeating this whole
+# computation on every single cockpit page load/refresh — a 90s-stale
+# score is perfectly fine for a dashboard widget with no auto-poll.
+_SCORE_CACHE: dict = {"result": None, "computed_at": 0.0}
+_SCORE_CACHE_TTL_S = 90
+
+
+def invalidate_score_cache() -> None:
+    """Drop the cached overall score so the next GET /admin/health-score
+    recomputes immediately instead of serving a pre-mutation result for
+    up to _SCORE_CACHE_TTL_S. Called after a write that the score
+    depends on (a finished coverage run, a submitted architecture
+    review)."""
+    _SCORE_CACHE["result"] = None
+    _SCORE_CACHE["computed_at"] = 0.0
+
+
+async def _compute_health_score(db) -> dict:
     import asyncio
     from services.architecture_health import run_health_report
     # Run the expensive full-codebase scan ONCE, off the event loop, and
     # share it between code_quality + architecture (previously each ran
     # its own synchronous, on-event-loop copy of this scan — see the
-    # 2026-08-23 fix notes on both functions above).
-    shared_report = await asyncio.to_thread(run_health_report)
-    categories = {
-        "security":      await score_security(db),
-        "bug_density":   await score_bug_density(db),
-        "reliability":   await score_reliability(db),
-        "test_coverage": await score_test_coverage(db),
-        "code_quality":  await score_code_quality(db, report=shared_report),
-        "data_handling": await score_data_handling(db),
-        "performance":   await score_performance(db),
-        "architecture":  await score_architecture(db, report=shared_report),
-        "devops_infra":  await score_devops_infra(db),
-    }
+    # 2026-08-23 fix notes on both functions above). Kick it off
+    # alongside the 7 scorers that don't need it so everything overlaps
+    # instead of running one after another.
+    report_task = asyncio.create_task(asyncio.to_thread(run_health_report))
+    independent_ids = [
+        "security", "bug_density", "reliability", "test_coverage",
+        "data_handling", "performance", "devops_infra",
+    ]
+    independent_coros = [
+        score_security(db), score_bug_density(db), score_reliability(db),
+        score_test_coverage(db), score_data_handling(db),
+        score_performance(db), score_devops_infra(db),
+    ]
+    independent_results, shared_report = await asyncio.gather(
+        asyncio.gather(*independent_coros), report_task,
+    )
+    categories = dict(zip(independent_ids, independent_results))
+    categories["code_quality"], categories["architecture"] = await asyncio.gather(
+        score_code_quality(db, report=shared_report),
+        score_architecture(db, report=shared_report),
+    )
     scored_weight = sum(WEIGHTS[k] for k, v in categories.items() if v["status"] == "scored")
     if scored_weight == 0:
         overall = None
@@ -702,3 +747,15 @@ async def get_health_score(db) -> dict:
         "weight_unscored_pct": round(100 - scored_weight, 1),
         "unscored_categories": unscored,
     }
+
+
+async def get_health_score(db) -> dict:
+    import time as _time
+    now = _time.time()
+    cached = _SCORE_CACHE.get("result")
+    if cached and (now - _SCORE_CACHE.get("computed_at", 0)) < _SCORE_CACHE_TTL_S:
+        return cached
+    out = await _compute_health_score(db)
+    _SCORE_CACHE["result"] = out
+    _SCORE_CACHE["computed_at"] = now
+    return out

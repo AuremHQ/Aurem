@@ -284,6 +284,13 @@ async def _do_run_coverage_scan(db) -> dict:
     if db is not None:
         try:
             await db.health_test_coverage_runs.insert_one(dict(doc))
+            # 2026-11-24 — get_health_score() now caches its result for
+            # 90s (see health_score.py) so repeat cockpit page loads
+            # don't re-run all 9 scorers every time. A just-finished
+            # coverage run must be visible on the VERY NEXT poll, not
+            # up to 90s later, so drop the cache the moment it's saved.
+            from services.health_score import invalidate_score_cache
+            invalidate_score_cache()
         except Exception as e:
             logger.warning("persist coverage run failed: %r", e)
     return doc

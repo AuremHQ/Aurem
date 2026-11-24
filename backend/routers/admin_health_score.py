@@ -111,4 +111,10 @@ async def submit_architecture_review(
     }
     if db is not None:
         await db.architecture_review_log.insert_one(dict(doc))
+        # 2026-11-24 — see services/health_coverage_scan.py's matching
+        # comment: get_health_score() now caches for 90s, so a freshly
+        # submitted review must be visible on the very next GET, not
+        # up to 90s later.
+        from services.health_score import invalidate_score_cache
+        invalidate_score_cache()
     return {"ok": True, "review": doc}
