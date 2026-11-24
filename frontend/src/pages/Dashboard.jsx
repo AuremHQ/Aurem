@@ -61,6 +61,7 @@ import { TopBar }       from "../components/dashboard/v2/TopBar";
 import TopBarStatusSlot from "../components/TopBarStatusSlot";
 import SidebarV2Bound   from "../components/dashboard/v2/SidebarBound";
 import RailShell        from "../components/nav/RailShell";
+import BottomTabBar from "../components/mobile/BottomTabBar";
 import AskAdvisorReal   from "../components/dashboard/v2/AskAdvisorReal";
 import { CONNECT_REPOSITORY_PATH, ProjectSwitcher } from "../components/dashboard/v2/ProjectSwitcher";
 import { UserNotificationBell } from "../components/dashboard/v2/UserNotificationBell";
@@ -104,6 +105,21 @@ function DashboardV2Body() {
   // v2 chrome state ----------------------------------------------------
   const [projects,         setProjects]         = useState([]);
   const [tab,              setTab]              = useState("Chat");
+  // Phase 1 mobile view (2026-11-24) -- bottom tab bar selection (mobile only).
+  const [mobileTab, setMobileTab] = useState("chat");
+  const handleMobileTabChange = (next) => {
+    setMobileTab(next);
+    if (next === "chat") {
+      setTab("Chat");
+    } else if (next === "projects" || next === "menu") {
+      // Projects (repo switcher) and the user sheet (settings/logout) both
+      // live in the sidebar -- open the drawer so they are reachable.
+      setSidebarManualOpen(true);
+    } else if (next === "ship") {
+      // Opens the CTO confirmation modal (ShipConfirmModal listens for it).
+      window.dispatchEvent(new CustomEvent("aurem:open-ship-modal"));
+    }
+  };
   const [kitOpen,          setKitOpen]          = useState(false);
   // Iter 212m-143 — Track preview window state so the topbar "Preview"
   // tab can TOGGLE: click once → open, click again → close. Previously
@@ -801,6 +817,8 @@ function DashboardV2Body() {
               />
             </div>
           </div>
+        {/* Phase 1 mobile view (2026-11-24) -- bottom tab bar (mobile only, <=900px). */}
+        <BottomTabBar activeTab={mobileTab} onTabChange={handleMobileTabChange} />
         </div>
 
         {/* Real Ask Advisor — replaces legacy FloatingORAButton in chromeless mode.

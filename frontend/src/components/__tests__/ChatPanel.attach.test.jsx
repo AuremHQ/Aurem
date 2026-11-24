@@ -6,7 +6,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const SRC = readFileSync("src/components/ChatPanel.jsx", "utf-8");
+// Phase 1 mobile view (2026-11-24): the composer (textarea + Send/Stop +
+// attach button) was extracted from ChatPanel.jsx into
+// components/chat/ChatComposer.jsx, so the contract now spans both files.
+// The assertions below are unchanged -- they still guard the same behaviour.
+const SRC =
+  readFileSync("src/components/ChatPanel.jsx", "utf-8") +
+  readFileSync("src/components/chat/ChatComposer.jsx", "utf-8");
 
 describe("ChatPanel attach button", () => {
   it("opens the picker through a named handler, never silently", () => {

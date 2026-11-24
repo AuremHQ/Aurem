@@ -435,7 +435,16 @@ const LANDING_CSS = `
 .ora-landing .team-desc { color: var(--muted-1); font-size: 13px; line-height: 1.6; }
 
 /* Comparison */
-.ora-landing .compare-table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; font-size: 14px; }
+/* Phase 1 mobile view (2026-11-24) -- horizontal-scroll container for the
+   comparison table. The border/radius live here (not on the table) because
+   overflow: hidden on the table would break the sticky first column. */
+.ora-landing .compare-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 14px; }
+.ora-landing .compare-table { width: 100%; min-width: 720px; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+/* Phase 1 mobile view (2026-11-24) -- sticky first column (feature name)
+   so the row label stays visible while the table scrolls sideways. */
+.ora-landing .compare-table th:first-child, .ora-landing .compare-table td:first-child { position: sticky; left: 0; z-index: 2; background: var(--bg-2); white-space: nowrap; box-shadow: 1px 0 0 var(--line); }
+/* Right-edge scroll fade (<=768px, where the table always overflows) so users know the table scrolls. */
+@media (max-width: 768px) { .ora-landing .compare-scroll { mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent 100%); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent 100%); } }
 .ora-landing .compare-table th, .ora-landing .compare-table td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line-2); }
 .ora-landing .compare-table tr:last-child td { border-bottom: none; }
 .ora-landing .compare-table thead th { background: var(--bg-2); color: var(--muted-1); font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
@@ -1327,7 +1336,7 @@ export default function Landing() {
           <div className="section-label">Comparison</div>
           <h2 className="section-title">Why developers choose ORA</h2>
           <p className="section-sub">{comparisonSectionSub()}</p>
-          <div style={{ overflowX: "auto" }}>
+          <div className="compare-scroll">
             <table className="compare-table">
               <thead>
                 <tr>
