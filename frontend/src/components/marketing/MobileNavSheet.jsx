@@ -83,9 +83,8 @@ const CSS = `
   z-index: 100;
   display: flex;
   flex-direction: column;
-  background: rgba(10, 14, 26, 0.98);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  /* Mobile fix (2026-11-24) -- fully opaque dark surface so hero text can never show through the open menu. */
+  background: #0a0e1a;
   padding-top: max(16px, env(safe-area-inset-top, 0px));
   padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
   padding-left: 20px;
