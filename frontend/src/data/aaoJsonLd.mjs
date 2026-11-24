@@ -53,7 +53,7 @@ export const LOOP_HOWTO_JSON_LD = {
     {
       "@type": "HowToStep",
       "name": "Install",
-      "text": "Run the one-line PowerShell installer from auremcto.com/harness, or run the AuremLoop-Setup-0.8.1.exe installer. It checks Python and Ollama, downloads the qwen2.5-coder:1.5b model, and creates the AuremLoop scheduled task."
+      "text": "Run the one-line PowerShell installer from auremcto.com/harness, or download the aurem-loop-0.8.0.zip release from auremcto.com/harness and run install.bat. It checks Python and Ollama, downloads the qwen2.5-coder:1.5b model, and creates the AuremLoop scheduled task."
     },
     {
       "@type": "HowToStep",
@@ -92,7 +92,7 @@ export const LOOP_FAQ_JSON_LD = {
       "name": "How do I install Aurem Loop?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "On Windows 10/11, run the one-line PowerShell installer from auremcto.com/harness, or run the AuremLoop-Setup-0.8.1.exe installer. You need Python 3.11+ and Ollama; the installer downloads the qwen2.5-coder:1.5b model for you."
+        "text": "On Windows 10/11, run the one-line PowerShell installer from auremcto.com/harness, or download the aurem-loop-0.8.0.zip release from auremcto.com/harness and run install.bat. You need Python 3.11+ and Ollama; the installer downloads the qwen2.5-coder:1.5b model for you."
       }
     },
     {
