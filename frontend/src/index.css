@@ -801,9 +801,43 @@ body.aurem-glass #root {
 /* 1. Belt-and-braces: never allow horizontal scroll on the page itself.
    Anything that wants its own horizontal scroll must opt-in with
    `overflow-x: auto` (we wrap tables / pre / iframes below). */
+/* Phase 1 mobile view (2026-11-24) -- `overflow-x: hidden` on BOTH html and
+   body creates a scroll container and breaks `position: sticky` (sticky nav /
+   Accept bar / sticky table column). `overflow-x: clip` prevents horizontal
+   scrolling WITHOUT creating a scroll container, so sticky keeps working. */
 html, body {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100vw;
+  /* Stop accidental pull-to-refresh on touch devices. */
+  overscroll-behavior-y: none;
+  /* Remove the ~300ms tap delay on touch devices. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Safari < 16 does not support `overflow-x: clip` -- fall back to hidden. */
+@supports not (overflow-x: clip) {
+  html, body {
+    overflow-x: hidden;
+  }
+}
+
+/* Phase 1 mobile view (2026-11-24) -- 44px minimum tap target for buttons on
+   touch devices (coarse pointers only, so desktop icon-button layouts are
+   untouched). */
+@media (pointer: coarse) {
+  button {
+    min-height: 44px;
+  }
+}
+
+/* Phase 1 mobile view (2026-11-24) -- safe-area helpers for bottom-anchored
+   surfaces (composer, tab bar, action bars, sheets). */
+.safe-area-bottom {
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+.safe-area-top {
+  padding-top: max(0px, env(safe-area-inset-top));
 }
 
 /* 2. Media must never break out. */

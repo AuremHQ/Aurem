@@ -44,8 +44,10 @@
  * nav's auth links to come back to that page afterward; omitted
  * (every other page) keeps today's exact hrefs, unchanged.
  */
-import React from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
+import { Menu } from "lucide-react";
+import MobileNavSheet from "./MobileNavSheet";
 import { getToken, getUser, isAdminOrFounder } from "../../lib/api";
 
 const CSS = `
@@ -71,16 +73,32 @@ const CSS = `
 .aurem-marketing-nav .mn-link:hover { color: var(--mn-accent); }
 .aurem-marketing-nav .mn-cta {
   font-family: var(--mn-font-mono); font-size: 13px;
-  background: var(--mn-accent); color: #000; padding: 9px 18px;
+  background: var(--mn-accent); color: #000; display: inline-flex; align-items: center; min-height: 44px; padding: 9px 18px;
   border-radius: 8px; text-decoration: none; font-weight: 600;
   white-space: nowrap;
   transition: opacity 0.15s, transform 0.08s;
 }
 .aurem-marketing-nav .mn-cta:hover { opacity: 0.92; }
 .aurem-marketing-nav .mn-cta:active { transform: translateY(1px); }
+.aurem-marketing-nav .mn-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--mn-line);
+  background: transparent;
+  color: #f8fafc;
+  cursor: pointer;
+}
+
 @media (max-width: 720px) {
   .aurem-marketing-nav { padding: 12px 20px; }
   .aurem-marketing-nav .mn-links { gap: 16px; }
+  .aurem-marketing-nav .mn-hamburger { display: inline-flex; }
   .aurem-marketing-nav .mn-link { display: none; }
   .aurem-marketing-nav .mn-link:last-of-type { display: inline; }
 }
@@ -88,6 +106,8 @@ const CSS = `
 
 export default function MarketingNav({ minimal = false, logoText = "ORA", logoSubtext = "by Aurem", returnTo = "" }) {
   const nextQuery = returnTo ? `?next=${encodeURIComponent(returnTo)}` : "";
+  // Phase 1 mobile view (2026-11-24) -- hamburger sheet at <=720px.
+  const [sheetOpen, setSheetOpen] = useState(false);
   return (
     <nav className="aurem-marketing-nav" data-testid="ora-nav">
       <style>{CSS}</style>
@@ -99,6 +119,19 @@ export default function MarketingNav({ minimal = false, logoText = "ORA", logoSu
         <div className="mn-logo-text">{logoText}<span> {logoSubtext}</span></div>
       </Link>
       <div className="mn-links">
+        {/* Phase 1 mobile view (2026-11-24) -- hamburger opens the full-screen menu sheet at <=720px. */}
+        {!minimal && (
+          <button
+            type="button"
+            className="mn-hamburger"
+            data-testid="nav-hamburger"
+            aria-label="Open menu"
+            aria-expanded={sheetOpen}
+            onClick={() => setSheetOpen(true)}
+          >
+            <Menu size={22} aria-hidden="true" />
+          </button>
+        )}
         {!minimal && (
           <Link className="mn-link" to="/#features" data-testid="nav-features">Features</Link>
         )}
@@ -115,6 +148,7 @@ export default function MarketingNav({ minimal = false, logoText = "ORA", logoSu
         <Link className="mn-link" to={`/login${nextQuery}`} data-testid="nav-login">Sign in</Link>
         <Link className="mn-cta" to={`/signup${nextQuery}`} data-testid="nav-signup-cta">Start free</Link>
       </div>
+          <MobileNavSheet open={sheetOpen} onClose={() => setSheetOpen(false)} returnTo={returnTo} />
     </nav>
   );
 }
