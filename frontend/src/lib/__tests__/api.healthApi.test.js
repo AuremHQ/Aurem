@@ -1,26 +1,23 @@
 /**
- * api.healthApi.test.js - 2026-11-22 - app-mount regression
- * (fix/app-mount-stuck-2026-11-22)
- *
- * healthApi was created at module scope with baseURL `${BACKEND}/api`,
- * but BACKEND is not defined anywhere - importing lib/api.js threw
- * `ReferenceError: BACKEND is not defined`, the entry bundle never
- * evaluated, and the app stayed on the loading splash forever.
- * Pin the relative base here so it cannot regress.
+ * api.healthApi.test.js - 2026-11-23 - app-mount fix.
+ * Regression: healthApi used a baseURL with BACKEND undefined,
+ * so importing api.js threw ReferenceError and the app never
+ * mounted (stuck on the loading splash).
  */
 import { describe, it, expect } from "vitest";
 import { healthApi } from "../api";
 
-describe("api.js - healthApi same-origin relative base", () => {
-  it("healthApi uses the relative /api base", () => {
+describe("healthApi (same-origin relative base URL)", () => {
+  it("the health client uses the relative /api base URL", () => {
     expect(healthApi.defaults.baseURL).toBe("/api");
   });
 
-  it("healthApi keeps its 10s timeout", () => {
-    expect(healthApi.defaults.timeout).toBe(10000);
+  it("the base never contains an absolute origin", () => {
+    expect(healthApi.defaults.baseURL.startsWith("http")).toBe(false);
+    expect(healthApi.defaults.baseURL.startsWith("/api")).toBe(true);
   });
 
-  it("healthApi base never contains an absolute origin", () => {
-    expect(healthApi.defaults.baseURL.startsWith("http")).toBe(false);
+  it("the health client keeps its 10s timeout", () => {
+    expect(healthApi.defaults.timeout).toBe(10000);
   });
 });
