@@ -5,9 +5,11 @@
 
 [![Founders 500](https://img.shields.io/badge/Founders-500-orange)](https://auremcto.com/)
 [![$9/month](https://img.shields.io/badge/Price-%249%2Fmonth-orange)]()
-[![OSS Core](https://img.shields.io/badge/OSS%20core-ora--grounding-brightgreen)](https://github.com/polarisbuiltinc-wq/ora-grounding)
+[![OSS Core](https://img.shields.io/badge/OSS%20core-ora--grounding-brightgreen)](https://github.com/AuremHQ/ora-grounding)
 
 Live: **[auremcto.com](https://auremcto.com)** · Sister app: **[aurem.live](https://aurem.live)**
+
+> **Status (24 Nov 2026):** app-mount fix live; SEO how-to merged (PR #363); deploy-share + relative `/api` merged (#353/#354); open PRs: none. Pricing is token plans $9/$19/$49 only — the token wallet is built but behind a flag that has never been on in production; the live gate is still task-based.
 
 ---
 
