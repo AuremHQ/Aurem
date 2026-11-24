@@ -37,6 +37,66 @@ _G18_CACHE_TTL_S = 300
 # it instead of re-running the scan and re-risking the timeout.
 _G21_CACHE: dict = {"result": None, "computed_at": 0.0}
 _G21_CACHE_TTL_S = 300
+# 2026-11-24 — infra_ci_vs_local (_check_ci_vs_local_drift) does the
+# SAME expensive thing (_harvest_counts() AST-parses every backend
+# test file) on every single poll with no cache at all, consistently
+# landing at ~5s out of the 8s per-check budget. Through the full
+# preview/prod network path that's close enough to the UI's 15s
+# aggregator timeout that it was tripping "status/all timed out"
+# live (2026-11-24 cockpit incident) even though the backend itself
+# answered in time. Same fix as G18/G21: cache a completed verdict
+# for 5 min.
+_CI_DRIFT_CACHE: dict = {"result": None, "computed_at": 0.0}
+_CI_DRIFT_CACHE_TTL_S = 300
+
+
+async def _stale_while_revalidate(cache: dict, ttl_s: float, compute):
+    """Serve `cache["result"]` instantly whenever one exists — even a
+    STALE one — and refresh it in the background instead of making
+    the current request wait on `compute()`.
+
+    2026-11-24 — G18/G21/CI-drift's existing "cache a completed verdict
+    for 5 min" fix only helps once a verdict has actually been cached;
+    it still blocked inline (racing the 8s per-check timeout) on every
+    cold/expired call. On this box's real CPU budget — with ~28 checks
+    genuinely running at once, several of them CPU-bound — that first
+    call reliably LOST the race under real concurrent contention
+    (isolated it finishes in 3-7s; concurrent with its siblings it
+    didn't finish in 8s), and because run_check_safely CANCELS it at
+    8s the compute() never reached its own cache-write — so it kept
+    losing the race forever and never warmed up, even "after" the
+    first call.
+
+    Fix: NEVER block the request on compute(), not even the first time.
+    A cache miss returns an honest gray "warming up" placeholder AND
+    kicks off the real computation in the background with no deadline
+    pressure at all — it finishes whenever it finishes (CPU contention
+    or not) and the NEXT poll (this aggregator is polled every 30s)
+    picks up the real result."""
+    import asyncio
+    import time as _time
+    now = _time.time()
+    cached = cache.get("result")
+    stale = cached is None or (now - cache.get("computed_at", 0)) >= ttl_s
+
+    if stale and not cache.get("_refreshing"):
+        cache["_refreshing"] = True
+
+        async def _bg_refresh():
+            try:
+                out = await compute()
+                cache["result"] = out
+                cache["computed_at"] = _time.time()
+            except Exception as exc:  # noqa: BLE001 — never crash the bg task
+                logger.warning("[health-check cache] background refresh failed: %r", exc)
+            finally:
+                cache["_refreshing"] = False
+
+        asyncio.ensure_future(_bg_refresh())
+
+    if cached is not None:
+        return cached
+    return result_gray("warming up — first scan is running in the background, check back shortly")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -319,32 +379,30 @@ async def _check_g18_timeout_audit() -> dict:
     # never reaches the cache-write below) for 5 minutes, so repeated
     # 45s polls serve the cached verdict instantly instead of
     # re-running the expensive scan and re-risking the timeout.
-    import time as _time
-    now = _time.time()
-    cached = _G18_CACHE.get("result")
-    if cached and (now - _G18_CACHE.get("computed_at", 0)) < _G18_CACHE_TTL_S:
-        return cached
+    # 2026-11-24 — see _stale_while_revalidate's docstring: a cold or
+    # expired cache used to block this request inline, racing the 8s
+    # per-check timeout under real concurrent load. Now only the very
+    # first-ever call blocks; every later call gets the cached verdict
+    # instantly while a stale one refreshes in the background.
+    async def _compute():
+        import asyncio
+        from scripts.timeout_audit import run_audit
+        r = (await asyncio.to_thread(run_audit)) or {}
+        violations = r.get("violations") or []
+        if not isinstance(violations, list):
+            # Defensive: if audit signature ever changes to return a
+            # count directly, tolerate it.
+            try:
+                unbounded = int(violations)
+            except (TypeError, ValueError):
+                unbounded = 0
+        else:
+            unbounded = len(violations)
+        if unbounded > 0:
+            return result_red(f"{unbounded} unbounded I/O sites detected")
+        return result_green("all I/O sites have a timeout budget")
 
-    import asyncio
-    from scripts.timeout_audit import run_audit
-    r = (await asyncio.to_thread(run_audit)) or {}
-    violations = r.get("violations") or []
-    if not isinstance(violations, list):
-        # Defensive: if audit signature ever changes to return a
-        # count directly, tolerate it.
-        try:
-            unbounded = int(violations)
-        except (TypeError, ValueError):
-            unbounded = 0
-    else:
-        unbounded = len(violations)
-    if unbounded > 0:
-        out = result_red(f"{unbounded} unbounded I/O sites detected")
-    else:
-        out = result_green("all I/O sites have a timeout budget")
-    _G18_CACHE["result"] = out
-    _G18_CACHE["computed_at"] = now
-    return out
+    return await _stale_while_revalidate(_G18_CACHE, _G18_CACHE_TTL_S, _compute)
 
 
 async def _check_g19_recovery() -> dict:
@@ -387,33 +445,32 @@ async def _check_g21_security_scan() -> dict:
     red → recover next 45s tick → two founder alerts on a fixed
     schedule, uncorrelated with user/project activity. Cache a COMPLETED
     verdict for 5 min so repeated polls serve it instead of re-running
-    the scan and re-risking the timeout. A timed-out/cancelled attempt
-    never reaches the cache-write below, and the gray 'failed to run'
-    path is deliberately NOT cached."""
-    import time as _time
-    now = _time.time()
-    cached = _G21_CACHE.get("result")
-    if cached and (now - _G21_CACHE.get("computed_at", 0)) < _G21_CACHE_TTL_S:
-        return cached
-    try:
-        import asyncio
-        from scripts.g21_security_scan import run_scan
-        # `run_scan()` walks every backend .py file synchronously —
-        # same "don't block the event loop" concern as G18/CI-drift
-        # above. Off-loop via to_thread.
-        result = await asyncio.to_thread(run_scan)
-    except Exception as e:
-        return result_gray(f"g21 scan failed to run: {e}")
-    if result.get("pass"):
-        unpinned = result["supply_chain"]["unpinned_count"]
-        out = result_green(f"clean · 0 misconfig findings, {unpinned} unpinned deps")
-    else:
+    the scan and re-risking the timeout.
+
+    2026-11-24 — see _stale_while_revalidate's docstring: only the
+    very first-ever call blocks inline now; a stale cache refreshes
+    in the background with no deadline pressure. The scan-failed path
+    stays gray and is still never cached (handled inside _compute so
+    that holds whether this is the cold blocking call or a background
+    refresh)."""
+    async def _compute():
+        try:
+            import asyncio
+            from scripts.g21_security_scan import run_scan
+            # `run_scan()` walks every backend .py file synchronously —
+            # same "don't block the event loop" concern as G18/CI-drift
+            # above. Off-loop via to_thread.
+            result = await asyncio.to_thread(run_scan)
+        except Exception as e:
+            return result_gray(f"g21 scan failed to run: {e}")
+        if result.get("pass"):
+            unpinned = result["supply_chain"]["unpinned_count"]
+            return result_green(f"clean · 0 misconfig findings, {unpinned} unpinned deps")
         findings = result["misconfig"]["finding_count"]
         unpinned = result["supply_chain"]["unpinned_count"]
-        out = result_red(f"{findings} misconfig finding(s), {unpinned} unpinned dep(s)")
-    _G21_CACHE["result"] = out
-    _G21_CACHE["computed_at"] = now
-    return out
+        return result_red(f"{findings} misconfig finding(s), {unpinned} unpinned dep(s)")
+
+    return await _stale_while_revalidate(_G21_CACHE, _G21_CACHE_TTL_S, _compute)
 
 
 def g16_auth_hardening_raw() -> dict:
@@ -665,21 +722,37 @@ async def _check_ci_vs_local_drift() -> dict:
     # production incident traced here). Run off-loop via
     # asyncio.to_thread. `_harvest_ci_status` is already async
     # (httpx.AsyncClient) so it's fine as-is.
-    import asyncio
-    from services.qa_matrix import _harvest_counts, _harvest_ci_status
-    local = (await asyncio.to_thread(_harvest_counts)) or {}
-    ci    = await _harvest_ci_status()
-    if not ci.get("available"):
-        return result_gray(f"CI unreachable — {ci.get('reason', 'GitHub App has no access to GITHUB_REPO')}")
-    conclusions = [
-        j.get("conclusion") for j in (ci.get("jobs") or {}).values()
-        if j.get("conclusion")
-    ]
-    any_fail = any(c in ("failure", "timed_out") for c in conclusions)
-    local_has_tests = (local.get("grand_total_tests") or 0) > 0
-    if any_fail and local_has_tests:
-        return result_red("CI has failing jobs while local pytest > 0 — drift")
-    return result_green(f"CI ↔ local aligned · {len(conclusions)} jobs")
+    #
+    # 2026-11-24 — the to_thread offload avoided blocking the loop, but
+    # every single poll still paid the full ~5s AST-parse cost, right
+    # up against the 8s per-check timeout and (through the full network
+    # path) the UI's 15s aggregator timeout. Same cache-for-5-min fix
+    # as G18/G21 above — a COMPLETED verdict is reused instead of
+    # re-walking every test file on every poll.
+    # 2026-11-24 — the to_thread offload avoided blocking the loop, but
+    # every single poll still paid the full ~5s AST-parse cost, right
+    # up against the 8s per-check timeout and (through the full network
+    # path) the UI's 15s aggregator timeout. See _stale_while_revalidate's
+    # docstring: only the very first-ever call blocks inline now; a
+    # stale cache refreshes in the background with no deadline pressure.
+    async def _compute():
+        import asyncio
+        from services.qa_matrix import _harvest_counts, _harvest_ci_status
+        local = (await asyncio.to_thread(_harvest_counts)) or {}
+        ci    = await _harvest_ci_status()
+        if not ci.get("available"):
+            return result_gray(f"CI unreachable — {ci.get('reason', 'GitHub App has no access to GITHUB_REPO')}")
+        conclusions = [
+            j.get("conclusion") for j in (ci.get("jobs") or {}).values()
+            if j.get("conclusion")
+        ]
+        any_fail = any(c in ("failure", "timed_out") for c in conclusions)
+        local_has_tests = (local.get("grand_total_tests") or 0) > 0
+        if any_fail and local_has_tests:
+            return result_red("CI has failing jobs while local pytest > 0 — drift")
+        return result_green(f"CI ↔ local aligned · {len(conclusions)} jobs")
+
+    return await _stale_while_revalidate(_CI_DRIFT_CACHE, _CI_DRIFT_CACHE_TTL_S, _compute)
 
 
 register_check("infra_db",              "Database reachable",         "infra", _check_db_reachable)

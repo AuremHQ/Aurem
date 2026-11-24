@@ -197,26 +197,38 @@ async def test_g12_red_when_last_drill_failed(monkeypatch):
 # ─────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_g21_green_when_scan_passes(monkeypatch):
-    health_checks._G21_CACHE.update({"result": None, "computed_at": 0.0})
+    health_checks._G21_CACHE.update({"result": None, "computed_at": 0.0, "_refreshing": False})
     monkeypatch.setattr(
         "scripts.g21_security_scan.run_scan",
         lambda: {"supply_chain": {"unpinned_count": 0, "yarn_lock_present": True},
                  "misconfig": {"findings": [], "finding_count": 0},
                  "pass": True},
     )
+    # 2026-11-24 — a cold cache now returns gray "warming up" immediately
+    # and runs the real scan in the background (see health_checks.py's
+    # _stale_while_revalidate). Await one tick for it to land, then read
+    # the cached verdict on the next call.
+    first = await health_checks._check_g21_security_scan()
+    assert first["status"] == "gray"
+    import asyncio
+    await asyncio.sleep(0.05)
     res = await health_checks._check_g21_security_scan()
     _shape_ok(res, "green")
 
 
 @pytest.mark.asyncio
 async def test_g21_red_when_scan_fails(monkeypatch):
-    health_checks._G21_CACHE.update({"result": None, "computed_at": 0.0})
+    health_checks._G21_CACHE.update({"result": None, "computed_at": 0.0, "_refreshing": False})
     monkeypatch.setattr(
         "scripts.g21_security_scan.run_scan",
         lambda: {"supply_chain": {"unpinned_count": 1, "yarn_lock_present": True},
                  "misconfig": {"findings": [], "finding_count": 0},
                  "pass": False},
     )
+    first = await health_checks._check_g21_security_scan()
+    assert first["status"] == "gray"
+    import asyncio
+    await asyncio.sleep(0.05)
     res = await health_checks._check_g21_security_scan()
     _shape_ok(res, "red")
     assert "1 unpinned" in res["detail"]

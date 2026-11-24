@@ -12,8 +12,18 @@ success-cache; G21 was not. Fix: give G21 the same cache so repeated
 polls serve a COMPLETED verdict instead of re-running the scan and
 re-risking the timeout.
 
+2026-11-24 — the cache alone still blocked the FIRST (cold/expired)
+poll inline, which could itself lose the race against real concurrent
+CPU contention (28 checks running at once) and therefore never warm
+up at all (see test_2026_11_24_admin_health_cross_loop_db_crash.py /
+admin/cockpit incident). Fix: a cold/expired cache now returns an
+honest gray "warming up" placeholder IMMEDIATELY and runs the real
+scan in the background with no deadline pressure — the NEXT poll
+picks up the real result. This test now awaits that one background
+tick before asserting on the real verdict.
+
 This test FAILS pre-fix (run_scan called on every poll) and PASSES
-after (called once per TTL window).
+after (called once per TTL window, first poll gray, rest stable).
 """
 import asyncio
 
@@ -25,6 +35,7 @@ import services.health_checks as hc
 def _reset_cache():
     hc._G21_CACHE["result"] = None
     hc._G21_CACHE["computed_at"] = 0.0
+    hc._G21_CACHE["_refreshing"] = False
 
 
 def test_g21_scan_is_not_rerun_on_every_poll(monkeypatch):
@@ -40,16 +51,20 @@ def test_g21_scan_is_not_rerun_on_every_poll(monkeypatch):
     import scripts.g21_security_scan as g21mod
     monkeypatch.setattr(g21mod, "run_scan", fake_run_scan)
 
-    async def _poll_thrice():
-        return [await hc._check_g21_security_scan() for _ in range(3)]
+    async def _poll_four_times():
+        first = await hc._check_g21_security_scan()          # cold -> gray, schedules bg scan
+        await asyncio.sleep(0.05)                              # let the bg scan finish
+        rest = [await hc._check_g21_security_scan() for _ in range(3)]  # served from cache
+        return first, rest
 
-    results = asyncio.get_event_loop().run_until_complete(_poll_thrice()) \
-        if False else asyncio.run(_poll_thrice())
+    first, rest = asyncio.run(_poll_four_times())
 
+    assert first["status"] == "gray"
+    assert "warming up" in first["detail"].lower()
     assert calls["n"] == 1, f"expensive scan re-ran on every poll (n={calls['n']})"
-    # Verdict is stable across polls -> cannot green/red flap within TTL.
-    assert all(r == results[0] for r in results)
-    assert results[0]["status"] in ("green", "ok", "pass") or "clean" in str(results[0]).lower()
+    # Verdict is stable across the cached polls -> cannot green/red flap within TTL.
+    assert all(r == rest[0] for r in rest)
+    assert rest[0]["status"] == "green"
 
 
 def test_g21_ttl_is_five_minutes():

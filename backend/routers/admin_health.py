@@ -22,9 +22,9 @@ times a minute.
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -144,27 +144,76 @@ def _ack_active(acked_until: Optional[str]) -> bool:
 # stalled, including /health, so the platform reported the backend
 # down (28 nginx upstream timeouts on GET /health in one minute).
 #
-# Each check therefore runs in a worker thread on its own event loop
-# (asyncio.run), via a dedicated thread pool, with a per-check timeout
-# enforced from the request loop. The request loop is never blocked:
-# a check that hangs degrades to its own red result and the endpoint
-# still returns promptly. The worker thread itself cannot be killed --
-# a thread blocked in sync I/O cannot be interrupted -- so it finishes
-# in the background and its late result is discarded.
+# Checks run on a small fixed pool of persistent background event
+# loops, each in its own daemon thread -- never the request loop --
+# with a per-check timeout enforced from the request loop. A check
+# that hangs degrades to its own red result and the endpoint still
+# returns promptly. Checks are spread round-robin across the pool so
+# one check blocking its own loop (e.g. real sync I/O) cannot delay a
+# DIFFERENT check that landed on a different loop.
+#
+# 2026-11-24 fix -- the first version of this (per-check `asyncio.run()`
+# in a fresh thread-pool thread) created a BRAND NEW event loop for
+# every single check, every single call. Motor's AsyncIOMotorClient
+# (the shared cto_services.db handle) binds internal asyncio.Lock /
+# Future objects to whichever loop first used it; reusing that same
+# client from a different loop crashed with "Task ... got Future ...
+# attached to a different loop" -- the exact error every DB-touching
+# guard (G1, G5, G10, G15, G20, infra_db) was showing in the cockpit.
+# A small FIXED pool of long-lived loops (not one new loop per check
+# per call) keeps the request loop free, keeps one check's blocking
+# I/O isolated from the rest, AND gives cto_services.db a stable,
+# bounded set of loops to bind its (few, reused) secondary clients to
+# (see db.py) instead of spinning up a fresh client every call.
 _CHECK_TIMEOUT_S = 8.0  # matches run_check_safely's per-check timeout
-_CHECK_EXECUTOR = ThreadPoolExecutor(
-    max_workers=32, thread_name_prefix="admin-health-check"
-)
+_BG_POOL_SIZE = 8
+_bg_loops: list = [None] * _BG_POOL_SIZE
+_bg_loop_locks = [threading.Lock() for _ in range(_BG_POOL_SIZE)]
+_bg_rr_counter = 0
+_bg_rr_lock = threading.Lock()
 
 
-def _run_check_in_thread(check):
-    """Run one check (with run_check_safely's validation + timeouts) on a
-    fresh event loop in a worker thread. Invoked via run_in_executor."""
-    return asyncio.run(run_check_safely(check))
+def _ensure_bg_loop(idx: int) -> asyncio.AbstractEventLoop:
+    """Lazily start persistent background loop #idx, in its own
+    daemon thread, the first time a check needs to run on it."""
+    loop = _bg_loops[idx]
+    if loop is not None and loop.is_running():
+        return loop
+    with _bg_loop_locks[idx]:
+        loop = _bg_loops[idx]
+        if loop is not None and loop.is_running():
+            return loop
+        ready = threading.Event()
+        holder: dict = {}
+
+        def _runner():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            holder["loop"] = new_loop
+            ready.set()
+            new_loop.run_forever()
+
+        threading.Thread(
+            target=_runner, name=f"admin-health-bg-loop-{idx}", daemon=True,
+        ).start()
+        ready.wait(timeout=5)
+        _bg_loops[idx] = holder["loop"]
+        return _bg_loops[idx]
+
+
+def _next_bg_loop() -> asyncio.AbstractEventLoop:
+    """Round-robin across the fixed pool so concurrent checks spread
+    across different loops/threads instead of piling onto one."""
+    global _bg_rr_counter
+    with _bg_rr_lock:
+        idx = _bg_rr_counter % _BG_POOL_SIZE
+        _bg_rr_counter += 1
+    return _ensure_bg_loop(idx)
 
 
 async def _run_check_threaded(check):
-    """Run one check off the request event loop, with a per-check timeout.
+    """Run one check on a pooled background loop, with a per-check
+    timeout enforced from the request loop.
 
     Returns the check's result dict (with ``check_ms`` added), exactly
     as run_check_safely would return it. On timeout the check degrades
@@ -172,11 +221,10 @@ async def _run_check_threaded(check):
     """
     t0 = time.time()
     try:
+        bg_loop = _next_bg_loop()
+        future = asyncio.run_coroutine_threadsafe(run_check_safely(check), bg_loop)
         result = await asyncio.wait_for(
-            asyncio.get_running_loop().run_in_executor(
-                _CHECK_EXECUTOR, _run_check_in_thread, check
-            ),
-            timeout=_CHECK_TIMEOUT_S,
+            asyncio.wrap_future(future), timeout=_CHECK_TIMEOUT_S,
         )
     except asyncio.TimeoutError:
         logger.error(
@@ -189,6 +237,13 @@ async def _run_check_threaded(check):
             "status": "red",
             "detail": f"check timed out after {_CHECK_TIMEOUT_S:g}s "
             "(blocking check ran off the event loop)",
+            "checked_at": _iso_now(),
+        }
+    except Exception as e:  # noqa: BLE001 — background loop/submission failure
+        logger.error("[status/all] check %s crashed: %s", check.id, e)
+        result = {
+            "status": "red",
+            "detail": f"check crashed: {e}",
             "checked_at": _iso_now(),
         }
     result["check_ms"] = int((time.time() - t0) * 1000)
