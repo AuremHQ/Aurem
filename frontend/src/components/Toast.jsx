@@ -42,7 +42,7 @@ export function toast(arg) {
     countdown = null,
     onExpire = null,
     actions = null,
-    position = "top-right",
+    position = "top-center",
   } = opts;
   const toastId = id ?? ++_id;
   window.dispatchEvent(
@@ -114,14 +114,15 @@ export default function Toaster() {
 
   return (
     <>
-      {/* Top-right stack (default) — countdowns, errors, warnings. */}
+      {/* Top-centre stack (default) — countdowns, errors, warnings. Phase 1 mobile view (2026-11-24): top-centre at safe-area-inset-top + 64px so toasts are never hidden behind the composer when the keyboard is open. */}
       <div
         data-testid="toaster"
         className="aurem-toaster"
         style={{
-          position: "fixed",
-          top: 72,
-          right: "calc(24px + var(--advisor-w, 0px))",
+    position: "fixed",
+    top: "calc(env(safe-area-inset-top, 0px) + 64px)",
+    left: "50%",
+    transform: "translateX(-50%)",
           display: "flex",
           flexDirection: "column",
           gap: 8,
@@ -132,14 +133,15 @@ export default function Toaster() {
         <style>{`
           @media (max-width: 480px) {
             .aurem-toaster {
-              top: 88px !important;
+              top: calc(env(safe-area-inset-top, 0px) + 64px) !important;
+      transform: none !important;
               right: 12px !important;
               left: 12px !important;
               max-width: calc(100vw - 24px) !important;
             }
           }
         `}</style>
-        {list.filter((t) => (t.position || "top-right") === "top-right").map((t) => (
+        {list.filter((t) => ["top-right", "top-center"].includes(t.position || "top-center")).map((t) => (
           <ToastItem
             key={t.id}
             t={t}
