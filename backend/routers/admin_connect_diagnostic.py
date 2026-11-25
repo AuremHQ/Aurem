@@ -246,6 +246,7 @@ async def stale_github_urls_audit(authorization: Optional[str] = Header(None)):
     from services.github_app import list_installations, list_installation_repos, \
         get_installation_token, GitHubAppNotConfigured
     import httpx
+    from services.http_client import make_async_client
 
     try:
         installations = await list_installations()
@@ -291,7 +292,7 @@ async def stale_github_urls_audit(authorization: Optional[str] = Header(None)):
     # minutes; a real admin tool needs to answer inside one HTTP
     # request/UI timeout window.
     sem = asyncio.Semaphore(10)
-    client = httpx.AsyncClient(timeout=4.0)
+    client = make_async_client(timeout=4.0)
 
     async def _probe(p: dict) -> dict:
         owner, repo = p.get("github_owner") or "", p.get("github_repo") or ""

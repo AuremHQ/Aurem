@@ -29,6 +29,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv("/app/backend/.env")
 
 import httpx  # noqa: E402
+from services.http_client import make_async_client
 
 OWNER, REPO, BASE = "polarisbuiltinc-wq", "aurem-rollback-testbed", "main"
 INSTALL_ID = 152797252
@@ -75,7 +76,7 @@ async def _head_sha(c, tok):
 async def ship():
     db = await _db()
     tok = await _token()
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with make_async_client(timeout=30) as c:
         # Safety: the installation token must see the testbed repo, and we
         # never touch anything else.
         r = await c.get(f"{GH}/repos/{OWNER}/{REPO}", headers=_h(tok))
@@ -151,7 +152,7 @@ async def merge():
     st = _load()
     db = await _db()
     tok = await _token()
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with make_async_client(timeout=30) as c:
         r = await c.get(f"{GH}/repos/{OWNER}/{REPO}/pulls/{st['pr_number']}", headers=_h(tok))
         r.raise_for_status()
         node_id = r.json()["node_id"]
@@ -178,7 +179,7 @@ async def merge():
     raw = json.dumps(payload).encode()
     sig = "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
     base = os.environ.get("PREVIEW_API", "http://localhost:8001")
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with make_async_client(timeout=30) as c:
         w = await c.post(f"{base}/api/aurem-dev/github/app/webhook", content=raw, headers={
             "Content-Type": "application/json", "X-Hub-Signature-256": sig,
             "X-GitHub-Event": "pull_request", "X-GitHub-Delivery": f"r10e2e-{uuid.uuid4()}"})
@@ -201,7 +202,7 @@ async def verify():
                                             "rollback_verified": 1, "rollback_commit_sha": 1,
                                             "rollback_html_url": 1})
     print("loop_sessions rollback fields:", sess)
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with make_async_client(timeout=30) as c:
         head = await _head_sha(c, tok)
         r = await c.get(f"{GH}/repos/{OWNER}/{REPO}/commits", headers=_h(tok),
                         params={"sha": BASE, "per_page": 10})
@@ -221,7 +222,7 @@ async def verify():
     assert shas.index(revert_full) < shas.index(st["merged_sha"])
     assert sess.get("rollback_commit_sha") == st["merged_sha"], "rollback targeted the wrong sha"
     # The reverted tree must no longer contain the shipped file.
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with make_async_client(timeout=30) as c:
         f = await c.get(f"{GH}/repos/{OWNER}/{REPO}/contents/{st['path']}", headers=_h(tok), params={"ref": BASE})
     print("shipped file on main after revert -> HTTP", f.status_code, "(404 expected)")
     assert f.status_code == 404

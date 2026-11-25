@@ -24,6 +24,7 @@ from typing import Optional
 from urllib.parse import urlencode, urlparse
 
 import httpx
+from services.http_client import make_async_client
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import RedirectResponse
@@ -440,7 +441,7 @@ async def _scan_via_firecrawl(url: str) -> Optional[dict]:
     if not key:
         return None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)) as c:
+        async with make_async_client(timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)) as c:
             r = await c.post(
                 f"{FIRECRAWL_BASE}/scrape",
                 json={"url": url, "formats": ["markdown"]},
@@ -477,7 +478,7 @@ async def _scan_via_fallback(url: str) -> dict:
     issues = []
     t0 = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=12.0, write=5.0, pool=5.0),
+        async with make_async_client(timeout=httpx.Timeout(connect=5.0, read=12.0, write=5.0, pool=5.0),
                                       follow_redirects=True) as c:
             r = await c.get(url, headers={"User-Agent": "ORA-Scanner/1.0 (+https://auremcto.com)"})
     except httpx.TimeoutException:
@@ -515,7 +516,7 @@ async def _scan_via_fallback(url: str) -> dict:
     links = list({a.get("href") for a in soup.find_all("a", href=True)
                   if a.get("href", "").startswith(("http://", "https://"))})[:8]
     broken = 0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=4.0, write=3.0, pool=3.0)) as c:
+    async with make_async_client(timeout=httpx.Timeout(connect=3.0, read=4.0, write=3.0, pool=3.0)) as c:
         for link in links:
             if not is_safe_public_http_url(link):
                 continue

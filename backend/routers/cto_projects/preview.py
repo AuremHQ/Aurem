@@ -237,9 +237,10 @@ async def check_preview_reachability(
         }
 
     import httpx
+    from services.http_client import make_async_client
     timeout = httpx.Timeout(connect=4.0, read=4.0, write=4.0, pool=4.0)
     try:
-        async with httpx.AsyncClient(
+        async with make_async_client(
             timeout=timeout, follow_redirects=True,
             headers={"User-Agent": "aurem-preview-check/1.0"},
         ) as c:
