@@ -52,7 +52,7 @@ function HealthRing({ score = 87 }) {
         </svg>
         <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold tabular-nums text-foreground">{score}</span>
       </div>
-      <span className="text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Health</span>
+      <span className="ds2-topbar-health-label text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Health</span>
     </div>
   );
 }
@@ -74,14 +74,39 @@ function HealthRingSkeleton() {
         </svg>
         <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold tabular-nums text-muted-foreground">--</span>
       </div>
-      <span className="text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Health</span>
+      <span className="ds2-topbar-health-label text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Health</span>
     </div>
   );
 }
 
+// 2026-11-25 — Mobile nav fix: the same gold O logo asset RailShell
+// uses (its 56px rail is hidden on mobile now, so the logo moves here).
+const LOGO_SRC = "https://customer-assets.emergentagent.com/job_launch-pad-237/artifacts/oj4581h8_Gemini_Generated_Image_sozbptsozbptsozb.png";
+
+// 2026-11-25 — Mobile nav fix: at <=900px the top row must fit 390px
+// (Teji's screenshot: "Previous Sessions" cut off at the right edge).
+// The logo shows only on mobile; the streak slot, the "Health" text
+// label and the "New run" button hide (streak status + New run stay
+// reachable via the Menu sheet). Plain CSS in a <style> block, same
+// pattern BottomTabBar uses — Tailwind has no 900px screen.
+const CSS = `
+.ds2-topbar-logo { display: none; }
+@media (max-width: 900px) {
+  .ds2-topbar-logo { display: flex; }
+  .ds2-topbar-row { padding-left: 12px !important; padding-right: 12px !important; gap: 8px !important; }
+  .ds2-topbar-streak { display: none !important; }
+  .ds2-topbar-health-label { display: none; }
+  .ds2-topbar-newrun { display: none; }
+}
+`;
+
 export function TopBar({
   tab, onTabChange,
   hidden = false, onNewRun,
+  // 2026-11-25 — Mobile nav fix: logo tap goes to the dashboard (the
+  // rail logo's cache-clear reload is a desktop power-user behaviour
+  // and stays on the rail only).
+  onLogoClick = null,
   // Iter 212m-191 — NO hardcoded repo fallback: an empty breadcrumb
   // renders "No repo connected" instead of leaking a placeholder
   // repo name to users with zero connected repos.
@@ -161,7 +186,20 @@ export function TopBar({
         ? "-translate-y-full border-b-transparent"
         : "translate-y-0",
     )} style={{ maxHeight: effectiveHidden ? 0 : 200 }}>
-      <div className="flex h-[48px] items-center gap-3 px-5">
+      <style>{CSS}</style>
+      <div className="ds2-topbar-row flex h-[48px] items-center gap-3 px-5">
+        {/* 2026-11-25 — Mobile nav fix: compact brand mark, mobile only
+            (<=900px, see CSS above). The desktop rail carried the logo;
+            it is hidden on mobile now, so the logo lives here. */}
+        {onLogoClick && (
+          <button type="button" data-testid="ds2-topbar-logo"
+            onClick={onLogoClick} title="AUREM — go to dashboard" aria-label="AUREM home"
+            className="ds2-topbar-logo"
+            style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
+            <img src={LOGO_SRC} alt="AUREM"
+              style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid rgba(255,200,120,.1)", objectFit: "cover", display: "block" }} />
+          </button>
+        )}
         <nav className="flex min-w-0 flex-1 items-center gap-[5px] font-mono text-[11px]">
           {breadcrumb.owner || breadcrumb.repo ? (
             <>
@@ -190,10 +228,10 @@ export function TopBar({
         ) : null}
 
         {streakSlot && (
-          <>
+          <div className="ds2-topbar-streak" style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {streakSlot}
             <div className="h-5 w-px bg-border" />
-          </>
+          </div>
         )}
 
         {historySlot}
@@ -202,7 +240,7 @@ export function TopBar({
 
         {hasRepo && (
           <button onClick={onNewRun} data-testid="ds2-new-run"
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-[6px] text-[12px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 active:scale-95">
+            className="ds2-topbar-newrun flex items-center gap-1.5 rounded-md bg-primary px-3 py-[6px] text-[12px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 active:scale-95">
             <Plus className="size-3 shrink-0" strokeWidth={3} /> New run
           </button>
         )}
