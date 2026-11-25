@@ -1,11 +1,11 @@
 <div align="center">
-# ✨ **ORA by Aurem**
-### <span style="color:#7C3AED">The AI Engineer That Actually Commits.</span>
+<h1>✨ ORA by Aurem</h1>
+<h3><span style="color:#7C3AED">The AI Engineer That Actually Commits.</span></h3>
 
 > **No IDE. No broken loops. Just code that ships.**
 > 🛠️ **ORA reads your codebase, writes the fix, and opens a draft PR — you review and merge.**
 
-[![Founders 500](https://img.shields.io/badge/Founders-500-orange)](https://auremcto.com/) [![From $9/month](https://img.shields.io/badge/From-%249%2Fmonth-7C3AED)](https://auremcto.com/) [![OSS Core](https://img.shields.io/badge/OSS%20core-ora--grounding-brightgreen)](https://github.com/AuremHQ/ora-grounding) [![CI](https://github.com/AuremHQ/Aurem/actions/workflows/ci.yml/badge.svg)](https://github.com/AuremHQ/Aurem/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/AuremHQ/Aurem)](https://github.com/AuremHQ/Aurem) [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-lightgrey)](./LICENSE)
+[![Founders 500](https://img.shields.io/badge/Founders-500-orange)](https://auremcto.com/) [![From $9/month](https://img.shields.io/badge/From-%249%2Fmonth-7C3AED)](https://auremcto.com/) [![OSS Core](https://img.shields.io/badge/OSS%20core-ora--grounding-brightgreen)](https://github.com/AuremHQ/ora-grounding) [![CI](https://github.com/AuremHQ/Aurem/actions/workflows/ci.yml/badge.svg)](https://github.com/AuremHQ/Aurem/actions/workflows/ci.yml)  [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-lightgrey)](./LICENSE)
  
 
 Live: **[auremcto.com](https://auremcto.com)** · Sister app: **[aurem.live](https://aurem.live)**
