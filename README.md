@@ -1,21 +1,25 @@
-# ORA by Aurem
-### The AI Engineer That Actually Commits.
+<div align="center">
+<h1>✨ ORA by Aurem</h1>
+<h3><span style="color:#7C3AED">The AI Engineer That Actually Commits.</span></h3>
 
-> No IDE. No broken loops. Just code that ships.
+> **No IDE. No broken loops. Just code that ships.**
+> 🛠️ **ORA reads your codebase, writes the fix, and opens a draft PR — you review and merge.**
 
-[![Founders 500](https://img.shields.io/badge/Founders-500-orange)](https://auremcto.com/)
-[![$9/month](https://img.shields.io/badge/Price-%249%2Fmonth-orange)]()
-[![OSS Core](https://img.shields.io/badge/OSS%20core-ora--grounding-brightgreen)](https://github.com/AuremHQ/ora-grounding)
+[![Founders 500](https://img.shields.io/badge/Founders-500-orange)](https://auremcto.com/) [![From $9/month](https://img.shields.io/badge/From-%249%2Fmonth-7C3AED)](https://auremcto.com/) [![OSS Core](https://img.shields.io/badge/OSS%20core-ora--grounding-brightgreen)](https://github.com/AuremHQ/ora-grounding) [![CI](https://github.com/AuremHQ/Aurem/actions/workflows/ci.yml/badge.svg)](https://github.com/AuremHQ/Aurem/actions/workflows/ci.yml)  [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-lightgrey)](./LICENSE)
+ 
 
 Live: **[auremcto.com](https://auremcto.com)** · Sister app: **[aurem.live](https://aurem.live)**
 
 > **Status (24 Nov 2026):** app-mount fix live; SEO how-to merged (PR #363); deploy-share + relative `/api` merged (#353/#354); open PRs: none. Pricing is token plans $9/$19/$49 only — the token wallet is built but behind a flag that has never been on in production; the live gate is still task-based.
+</div>
 
 ---
 
-## Table of Contents
+## 📑 Table of Contents
 
 - [What ORA is](#what-ora-is)
+- [✨ Features at a Glance](#features-at-a-glance)
+- [🚀 Getting Started](#getting-started)
 - [Architecture Map](#architecture-map)
 - [Feature Log — Prod-Live vs Rolling Out](#feature-log)
 - [Open Source](#open-source)
@@ -27,7 +31,7 @@ Live: **[auremcto.com](https://auremcto.com)** · Sister app: **[aurem.live](htt
 
 ---
 
-## What ORA is <a id="what-ora-is"></a>
+## 💡 <span style="color:#7C3AED">What ORA is</span> <a id="what-ora-is"></a>
 
 ORA is an autonomous AI software engineer. It connects to your GitHub
 repo, reads your codebase, writes production-ready code, runs security
@@ -42,7 +46,33 @@ Two products in the same house:
 
     ---
 
-    ## Architecture Map <a id="architecture-map"></a>
+    ## ✨ <span style="color:#7C3AED">Features at a Glance</span> <a id="features-at-a-glance"></a>
+
+| Feature | What it does |
+| --- | --- |
+| 🤖 **Autonomous coding** | ORA reads your codebase, writes production-ready code, and ships it as a draft PR. |
+| 🔒 **Security-first** | Every change runs security scans before it reaches your repo. |
+| 📬 **Ship-via-PR** | Nothing is pushed directly — every change ships as a draft PR for your review and merge. |
+| 🩺 **Codebase Health Scanner** | Scores your codebase across 7 categories. |
+| 🔁 **Loop Mode — Verified Execution** | Verified execution, not a broken loop. |
+| 🧭 **ORA Council** | Multi-model council with learning (logging + RAG, no weight training). |
+| 🛡️ **Guard layers** | Hallucination and citation guards verify LLM output before any fix lands. |
+| 💬 **Chat-native scan commands** | Run scans from chat. |
+| 🔍 **AI-Visibility Kit** | SEO + GEO + AEO for your project. |
+| 🚀 **Deploy Verify** | Verifies deploys before they are declared done. |
+
+> 📋 Full details, availability (**🟢 PROD-LIVE** vs **🟡 ROLLING OUT**), and verification notes live in the [Feature Log](#feature-log) below — nothing here is claimed as live until it is verified live.
+
+## 🚀 <span style="color:#059669">Getting Started</span> <a id="getting-started"></a>
+
+1. 🌐 **Go to [auremcto.com](https://auremcto.com)** — no IDE, no install; ORA runs in your browser.
+2. 🔗 **Connect your GitHub repo** — ORA reads your codebase to understand it.
+3. 💬 **Describe the task in plain language** — a fix, a feature, or a full review.
+4. 👀 **Review the draft PR and merge** — every change ships as a draft PR for your review; nothing lands without you.
+5. 💳 **Pick a plan when you need more** — token plans from **$9/month**; see [Pricing / Tiers](#pricing--tiers).
+
+---
+## 🗺️ <span style="color:#0E7490">Architecture Map</span> <a id="architecture-map"></a>
 
     Deeper per-layer files live in `memory/architecture/01…07_*.md`. This
     is the one-screen mental model.
@@ -126,7 +156,7 @@ Two products in the same house:
 
                                                                                                                                                                                                                                     ---
 
-                                                                                                                                                                                                                                    ## Feature Log — Prod-Live vs Rolling Out <a id="feature-log"></a>
+                                                                                                                                                                                                                                    ## 📋 <span style="color:#0E7490">Feature Log — Prod-Live vs Rolling Out</span> <a id="feature-log"></a>
 
                                                                                                                                                                                                                                     Every feature below is labeled with its **actual** current availability,
                                                                                                                                                                                                                                     not "ships today" as a blanket claim:
@@ -432,13 +462,13 @@ Two products in the same house:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                 ---
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                ## Open Source <a id="open-source"></a>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                ## 🌐 <span style="color:#059669">Open Source</span> <a id="open-source"></a>
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                 The deterministic grounding + adversarial-review core of ORA Chat has
                                                                                                                                                                                                                                                                                                                                                                                                                                                 been extracted into a small standalone library so anyone building
                                                                                                                                                                                                                                                                                                                                                                                                                                                 their own LLM chat agent can use the same defence:
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                - **Repo:** [github.com/polarisbuiltinc-wq/ora-grounding](https://github.com/polarisbuiltinc-wq/ora-grounding)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                - **Repo:** [github.com/AuremHQ/ora-grounding](https://github.com/AuremHQ/ora-grounding)
                                                                                                                                                                                                                                                                                                                                                                                                                                                 - **License:** MIT
                                                                                                                                                                                                                                                                                                                                                                                                                                                 - **Size:** ~500 LoC, zero runtime dependencies
                                                                                                                                                                                                                                                                                                                                                                                                                                                 - **What it ships:**
@@ -461,7 +491,7 @@ Two products in the same house:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ---
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## Pricing / Tiers <a id="pricing--tiers"></a>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## 💰 <span style="color:#B45309">Pricing / Tiers</span> <a id="pricing--tiers"></a>
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           Source of truth: `backend/services/subscription_tiers.py` (live
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           task limits) + `backend/services/wallet.py` +
@@ -495,7 +525,7 @@ Two products in the same house:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ---
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## Head-to-head <a id="head-to-head"></a>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## ⚖️ <span style="color:#7C3AED">Head-to-head</span> <a id="head-to-head"></a>
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Feature | ORA | Cursor | Copilot | Bolt | Devin |
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |---------|-----|--------|---------|------|-------|
@@ -511,7 +541,7 @@ Two products in the same house:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ---
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## Tech Stack <a id="tech-stack"></a>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ## 🧱 <span style="color:#0E7490">Tech Stack</span> <a id="tech-stack"></a>
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           - **Frontend:** React 18 + Vite + Tailwind + Shadcn UI + Lucide icons
                                                                                                                                                                                                                                                                                                                                                                                                                                                                           - **Backend:** FastAPI + Uvicorn + Motor (async MongoDB) +
@@ -528,7 +558,7 @@ Two products in the same house:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ---
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ## Runbook (dev preview) <a id="runbook"></a>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ## 🛠️ <span style="color:#475569">Runbook (dev preview)</span> <a id="runbook"></a>
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     Local services are supervisor-managed. Every URL/port/credential
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     comes from `.env` files — nothing is hardcoded.
@@ -574,7 +604,7 @@ Two products in the same house:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       ---
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ## Support & Status <a id="support--status"></a>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ## 💬 <span style="color:#059669">Support & Status</span> <a id="support--status"></a>
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       - **Support:** [auremcto.com/support](https://auremcto.com/support)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       - **Integrations docs:**
