@@ -453,6 +453,15 @@ const LANDING_CSS = `
 .ora-landing .compare-table tbody td.ora-cell { background: rgba(245,158,11,0.04); color: var(--text); border-left: 1px solid var(--accent-br); border-right: 1px solid var(--accent-br); }
 /* Mobile fixes (2026-11-24) -- keep the ORA column wide enough for its longest values and wrap only at word boundaries: the global td/th overflow-wrap:anywhere rule would otherwise split values mid-word. */
 .ora-landing .compare-table th.ora-col, .ora-landing .compare-table td.ora-cell { min-width: 190px; overflow-wrap: normal; word-break: normal; }
+/* Mobile fix (2026-11-24) -- let the sticky FEATURE column wrap at <=768px, capped
+   at 150px: with white-space: nowrap the longest feature name
+   ("MCP server (Claude / Cursor / VS Code)") made it ~295px wide, so at 390px
+   viewport only a sliver of the 190px ORA column was visible. 150 + 190 = 340px
+   fits a 360px+ phone with the full ORA column on screen. Same specificity as
+   the nowrap rule above, placed later, so it wins inside the media query. */
+@media (max-width: 768px) {
+  .ora-landing .compare-table th:first-child, .ora-landing .compare-table td:first-child { white-space: normal; width: 150px; max-width: 150px; }
+}
 .ora-landing .compare-table tbody td.feature-name { color: var(--text); font-weight: 500; }
 .ora-landing .yes { color: var(--green); }
 .ora-landing .no  { color: var(--muted-3); }

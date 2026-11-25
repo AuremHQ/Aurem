@@ -1,7 +1,15 @@
 // Phase 1 mobile view (2026-11-24) -- full-screen menu sheet opened by the
 // hamburger in MarketingNav at <=720px. Every row is a 48px tap target and
 // the sheet respects the device safe-area insets (top + bottom).
+//
+// 2026-11-24 fix -- the sheet renders in a React portal to document.body.
+// It MUST NOT render inside the sticky nav: the nav's
+// `backdrop-filter: blur(18px)` makes it the containing block for
+// fixed-position descendants, so `position: fixed; inset: 0` covered only
+// the ~66px header and the opaque background never painted behind the
+// menu rows (hero text showed through). Portalled, it covers the viewport.
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 import { getToken, getUser, isAdminOrFounder } from "../../lib/api";
@@ -35,7 +43,9 @@ export default function MobileNavSheet({ open, onClose, returnTo = "" }) {
 
   if (!open) return null;
 
-  return (
+  // Portalled to document.body (see header note): inside the sticky nav,
+  // `position: fixed` resolves against the nav box, not the viewport.
+  return createPortal(
     <div
       className="mobile-nav-sheet"
       data-testid="mobile-nav-sheet"
@@ -72,7 +82,8 @@ export default function MobileNavSheet({ open, onClose, returnTo = "" }) {
       <Link to={`/signup${nextQuery}`} className="mns-cta" data-testid="mobile-nav-signup-cta" onClick={() => onClose?.()}>
         Start free
       </Link>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
