@@ -717,7 +717,7 @@ async def compute_dashboard(db) -> dict:
     # the three aggregate fields actually consumed. reconcile_report()
     # itself is untouched: other, non-HTTP callers (the reconciliation
     # job / its own test) still get the full per-user breakdown.
-    from services.wallet import reconcile_report
+    from services.wallet_reconciliation import reconcile_report
     _drift_full = await reconcile_report(db)
     drift = {
         "month": _drift_full["month"],
