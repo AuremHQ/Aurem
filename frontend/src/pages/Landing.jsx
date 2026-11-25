@@ -434,6 +434,29 @@ const LANDING_CSS = `
 .ora-landing .team-title { font-weight: 700; font-size: 17px; color: var(--text); margin-bottom: 6px; }
 .ora-landing .team-desc { color: var(--muted-1); font-size: 13px; line-height: 1.6; }
 
+/* Health score card (homepage port, 2026-11-25) -- the verified PR #371
+   numbers, static snapshot. */
+.ora-landing .health-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 24px; margin-top: 18px; }
+.ora-landing .health-score { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; }
+.ora-landing .health-ring { width: 118px; height: 118px; border-radius: 50%; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 40%, #14223e, #0b1322); border: 2px solid var(--accent-br); }
+.ora-landing .health-num { font-family: var(--font-mono); font-size: 36px; font-weight: 800; color: var(--accent); line-height: 1; }
+.ora-landing .health-cap { font-size: 10.5px; color: var(--muted-1); font-family: var(--font-mono); letter-spacing: 1.2px; margin-top: 4px; }
+.ora-landing .health-bars { flex: 1; min-width: 230px; }
+.ora-landing .health-bar { margin-bottom: 12px; }
+.ora-landing .health-bar:last-child { margin-bottom: 0; }
+.ora-landing .health-bar-row { display: flex; justify-content: space-between; font-size: 12.5px; font-family: var(--font-mono); color: var(--muted-1); margin-bottom: 5px; }
+.ora-landing .health-bar-row b { color: var(--text); }
+.ora-landing .health-track { height: 7px; background: #1a2742; border-radius: 4px; overflow: hidden; }
+.ora-landing .health-fill { height: 100%; background: linear-gradient(90deg, #b45309, var(--accent)); border-radius: 4px; }
+.ora-landing .health-note { color: var(--muted-1); font-size: 14px; max-width: 300px; margin: 0; }
+.ora-landing .health-note b { color: var(--text); }
+@media (max-width: 640px) {
+  .ora-landing .health-score { gap: 14px; }
+  .ora-landing .health-ring { width: 86px; height: 86px; }
+  .ora-landing .health-num { font-size: 27px; }
+  .ora-landing .health-card { padding: 18px; }
+}
+
 /* Comparison */
 /* Phase 1 mobile view (2026-11-24) -- horizontal-scroll container for the
    comparison table. The border/radius live here (not on the table) because
@@ -461,6 +484,24 @@ const LANDING_CSS = `
    the nowrap rule above, placed later, so it wins inside the media query. */
 @media (max-width: 768px) {
   .ora-landing .compare-table th:first-child, .ora-landing .compare-table td:first-child { white-space: normal; width: 150px; max-width: 150px; }
+}
+/* Homepage port (2026-11-25) -- stacked cards replace the table on
+   phones. The 720px-wide table scrolls sideways below ~768px and at
+   390px the last row's ORA value ("MIT extension") was cut to
+   "MIT extensio" even after the Nov 24 fixes: a scrolled table can
+   still clip its last column. Below 640px the table is hidden and one
+   card per row shows every value in full -- nothing scrolls, nothing
+   is cut. Same COMPARE_ROWS data drives both, so they cannot drift. */
+.ora-landing .compare-cards { display: none; }
+.ora-landing .compare-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-top: 12px; }
+.ora-landing .compare-card-title { font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 10px; }
+.ora-landing .compare-card-row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid var(--line-2); font-size: 13.5px; }
+.ora-landing .compare-card-label { color: var(--muted-2); font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; padding-top: 2px; flex-shrink: 0; }
+.ora-landing .compare-card-row span:last-child { text-align: right; }
+.ora-landing .compare-card-row.ora-row span:last-child { color: var(--green); font-weight: 700; }
+@media (max-width: 640px) {
+  .ora-landing .compare-scroll { display: none; }
+  .ora-landing .compare-cards { display: block; }
 }
 .ora-landing .compare-table tbody td.feature-name { color: var(--text); font-weight: 500; }
 .ora-landing .yes { color: var(--green); }
@@ -630,9 +671,9 @@ const TEAMS = [
   { icon: "🔄", tag: "NEW · verified loop",
     title: "Loop Mode — Verified Before Ship",
     desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically, up to a 2-retry cap." },
-  { icon: "🏥", tag: "NEW · token-based",
+  { icon: "🏥", tag: "Updated · Health score 65",
     title: "Codebase Health Scanner",
-    desc: "16-category audit: security, performance, code quality, dependencies, database, and more. Health score 0-100. Individual fix buttons. Find 44 issues in minutes, fix them with one click." },
+    desc: "16-category audit: security, performance, code quality, dependencies, database, and more. Health score 0-100 — now at 65 overall, Architecture 75 after the latest fix pass. Individual fix buttons. Find 44 issues in minutes, fix them with one click." },
   { icon: "⚡", tag: "UNIQUE · 4-hop chain",
     title: "4-Provider Failover Chain",
     desc: "OpenRouter → DeepSeek → OR free chain → Groq emergency. If one provider has an outage, ORA automatically retries the next in the chain — reducing (not eliminating) the chance that a single provider's downtime stops your ship." },
@@ -650,6 +691,9 @@ const REVIEWS = [
   { stars: 5, text: "The only AI tool that understands my repo. After running it once, the warm-start memory is dialled in. Tasks land in minutes, not hours.", name: "Luca M.", role: "Senior, SaaS startup", initials: "LM", color: "#f472b6" },
   { stars: 5, text: "Linux dev. No IDE, no problem. ORA via Claude Code in terminal is the cleanest workflow I've ever had.", name: "Ridhi P.", role: "Platform team lead", initials: "RP", color: "#fb7185" },
 ];
+// Column headers for the comparison table -- the mobile stacked cards
+// (below) render the same labels, so both stay in sync by construction.
+const COMPARE_COLS = ["ORA", "GitHub Copilot", "Cursor", "Devin", "Claude Code"];
 const COMPARE_ROWS = [
   ["Ships changes to your GitHub repo",     ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["no","No"]],
   ["No IDE required",                       ["yes","Yes"], ["no","No"], ["no","No"], ["yes","Yes"], ["yes","Yes"]],
@@ -1340,6 +1384,20 @@ export default function Landing() {
               </div>
             ))}
           </div>
+          {/* Codebase health score (homepage port, 2026-11-25) -- the
+              verified PR #371 numbers: overall 64 -&gt; 65, Architecture
+              55 -&gt; 75. Static snapshot, same numbers the preview shows. */}
+          <div className="health-card" data-testid="health-score-card">
+            <div className="health-score">
+              <div className="health-ring"><span className="health-num">65</span><span className="health-cap">HEALTH SCORE</span></div>
+              <div className="health-bars">
+                <div className="health-bar"><div className="health-bar-row"><span>Overall</span><b>65 / 100</b></div><div className="health-track"><div className="health-fill" style={{ width: "65%" }} /></div></div>
+                <div className="health-bar"><div className="health-bar-row"><span>Architecture — fixed Nov 25</span><b>55 → 75</b></div><div className="health-track"><div className="health-fill" style={{ width: "75%" }} /></div></div>
+                <div className="health-bar"><div className="health-bar-row"><span>Categories audited</span><b>16</b></div><div className="health-track"><div className="health-fill" style={{ width: "100%" }} /></div></div>
+              </div>
+              <p className="health-note">Latest scan after the health-score fix (PR #371, merged Nov 25): overall <b>64 → 65</b>, Architecture <b>55 → 75</b>. Run the same scan free on your repo.</p>
+            </div>
+          </div>
         </section>
 
         {/* ─── Comparison ─── */}
@@ -1352,11 +1410,9 @@ export default function Landing() {
               <thead>
                 <tr>
                   <th>Feature</th>
-                  <th className="ora-col">ORA</th>
-                  <th>GitHub Copilot</th>
-                  <th>Cursor</th>
-                  <th>Devin</th>
-                  <th>Claude Code</th>
+                  {COMPARE_COLS.map((c, j) => (
+                    <th key={j} className={j === 0 ? "ora-col" : ""}>{c}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -1374,6 +1430,23 @@ export default function Landing() {
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* Mobile stacked cards (<=640px, see CSS above) -- same rows as
+              the table, one card per feature, so no value is ever cut off. */}
+          <div className="compare-cards" data-testid="compare-cards">
+            {COMPARE_ROWS.map(([feature, ...cells], i) => (
+              <div className="compare-card" key={i}>
+                <h3 className="compare-card-title">{feature}</h3>
+                {cells.map(([cls, val], j) => (
+                  <div className={`compare-card-row${j === 0 ? " ora-row" : ""}`} key={j}>
+                    <span className="compare-card-label">{COMPARE_COLS[j]}</span>
+                    <span className={cls === "yes" ? "yes" : "no"}>
+                      {cls === "yes" ? "✓ " : (val.startsWith("$") || val === "All" || val === "Marketplace" || val === "Native" || val === "MIT extension" || val === "Built-in" ? "" : "✗ ")}{val}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
           <div className="compare-cta">
             <div className="live-dot" />
