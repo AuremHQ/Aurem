@@ -29,6 +29,15 @@ function timeAgo(ts) {
   return `${days}d ago`;
 }
 
+// 2026-11-25 — Mobile nav fix: at <=900px the button collapses to its
+// icon (the "Previous chats" label is what got cut off at the right edge
+// in Teji's 390px screenshot). Plain CSS, same pattern BottomTabBar uses.
+const CSS = `
+@media (max-width: 900px) {
+  .ss-label, .ss-count { display: none; }
+}
+`;
+
 export default function SessionSwitcher() {
   const { sessionId, sessions, refreshSessions, openSession, deleteSession, startNewSession } =
     useChatSession();
@@ -72,17 +81,19 @@ export default function SessionSwitcher() {
 
   return (
     <div ref={rootRef} style={{ position: "relative" }}>
+      <style>{CSS}</style>
       <button
         ref={btnRef}
         onClick={toggle}
         data-testid="session-switcher-btn"
         title="Previous chats for this project"
+        aria-label="Previous chats for this project"
         className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-[6px] text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/30"
       >
         <History className="size-3 shrink-0" strokeWidth={2} />
-        Previous chats
+        <span className="ss-label">Previous chats</span>
         {sessions.length > 0 && (
-          <span className="text-[10px] text-muted-foreground/70">({sessions.length})</span>
+          <span className="ss-count text-[10px] text-muted-foreground/70">({sessions.length})</span>
         )}
       </button>
 

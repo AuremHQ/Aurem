@@ -62,6 +62,7 @@ import TopBarStatusSlot from "../components/TopBarStatusSlot";
 import SidebarV2Bound   from "../components/dashboard/v2/SidebarBound";
 import RailShell        from "../components/nav/RailShell";
 import BottomTabBar from "../components/mobile/BottomTabBar";
+import MobileMenuSheet from "../components/mobile/MobileMenuSheet";
 import AskAdvisorReal   from "../components/dashboard/v2/AskAdvisorReal";
 import { CONNECT_REPOSITORY_PATH, ProjectSwitcher } from "../components/dashboard/v2/ProjectSwitcher";
 import { UserNotificationBell } from "../components/dashboard/v2/UserNotificationBell";
@@ -107,15 +108,29 @@ function DashboardV2Body() {
   const [tab,              setTab]              = useState("Chat");
   // Phase 1 mobile view (2026-11-24) -- bottom tab bar selection (mobile only).
   const [mobileTab, setMobileTab] = useState("chat");
+  // 2026-11-25 — Mobile nav fix (Teji's phone screenshot): the 56px desktop
+  // rail showed on phones AND the bottom tab bar showed (Chat/Ship twice).
+  // The rail is hidden on mobile now (rendered only when !isMobile below),
+  // so Projects and Menu open their own bottom sheets instead of the
+  // desktop sidebar drawer. `null` = no sheet open.
+  const [mobileSheet, setMobileSheet] = useState(null); // null | "projects" | "menu"
+  const closeMobileSheet = useCallback(() => {
+    setMobileSheet(null);
+    setMobileTab("chat");
+  }, []);
   const handleMobileTabChange = (next) => {
     setMobileTab(next);
     if (next === "chat") {
+      setMobileSheet(null);
       setTab("Chat");
-    } else if (next === "projects" || next === "menu") {
-      // Projects (repo switcher) and the user sheet (settings/logout) both
-      // live in the sidebar -- open the drawer so they are reachable.
-      setSidebarManualOpen(true);
+    } else if (next === "projects") {
+      // Repo switcher sheet (same repos RailShell's Chat flyout showed).
+      setMobileSheet("projects");
+    } else if (next === "menu") {
+      // Menu sheet: Insights + Settings + Security + New run + AUTO + Logout.
+      setMobileSheet("menu");
     } else if (next === "ship") {
+      setMobileSheet(null);
       // Opens the CTO confirmation modal (ShipConfirmModal listens for it).
       window.dispatchEvent(new CustomEvent("aurem:open-ship-modal"));
     }
@@ -151,7 +166,7 @@ function DashboardV2Body() {
     const mq = window.matchMedia("(max-width: 900px)");
     const onChange = (e) => {
       setIsMobile(e.matches);
-      if (!e.matches) setMobileSidebarOpen(false);   // back to desktop, close drawer
+      if (!e.matches) { setMobileSidebarOpen(false); setMobileSheet(null); }   // back to desktop, close drawer + sheets
     };
     try { mq.addEventListener("change", onChange); }
     catch { mq.addListener(onChange); }
@@ -171,6 +186,10 @@ function DashboardV2Body() {
   const [sidebarEdgeReveal, setSidebarEdgeReveal] = useState(false);
   // Iter 339i — founder: sidebar default HIDDEN on every load. Opens
   // via the bottom-left MENU tab (click) or the left-edge hover.
+  // 2026-11-25 — Mobile nav fix: on mobile the MENU tab now opens the
+  // Menu sheet (MobileMenuSheet), not this sidebar; the tab handler no
+  // longer sets sidebarManualOpen. This state stays for the desktop
+  // hover/edge-reveal path only.
   const [sidebarManualOpen, setSidebarManualOpen] = useState(false);
   const [chatActive,       setChatActive]       = useState(false);
   const [healthScore,      setHealthScore]      = useState(null);
@@ -691,12 +710,19 @@ function DashboardV2Body() {
             viewport; the Chat flyout carries the repo switcher +
             recent chats that used to live in the old sidebar. Old
             components stay in the tree unused until Phase 4 cleanup. */}
-        <RailShell
-          railOnly
-          repos={repoEntries}
-          onSelectRepo={handleSelectRepo}
-          onAddRepo={handleAddRepo}
-        />
+        {/* 2026-11-25 — Mobile nav fix (Teji's phone screenshot): the 56px
+            desktop rail showed on phones AND the bottom tab bar showed
+            (Chat/Ship twice, layout squeezed). The rail is desktop-only
+            now — on mobile (<=900px) its items live in the bottom sheets
+            (MobileMenuSheet, opened from the tab bar below) instead. */}
+        {!isMobile && (
+          <RailShell
+            railOnly
+            repos={repoEntries}
+            onSelectRepo={handleSelectRepo}
+            onAddRepo={handleAddRepo}
+          />
+        )}
 
         {/* Main column */}
         <div style={{ display: "flex", flexDirection: "column",
@@ -739,6 +765,10 @@ function DashboardV2Body() {
             }}
             hidden={false}
             onNewRun={handleNewRun}
+            // 2026-11-25 — Mobile nav fix: the rail (with the logo) is
+            // hidden on mobile, so the logo moves into the top bar
+            // (TopBar renders it only at <=900px).
+            onLogoClick={() => navigate("/dashboard")}
             breadcrumb={activeProject ? {
               owner:  activeProject.github_owner || "",
               repo:   activeProject.github_repo  || activeProject.name || "",
@@ -819,6 +849,23 @@ function DashboardV2Body() {
           </div>
         {/* Phase 1 mobile view (2026-11-24) -- bottom tab bar (mobile only, <=900px). */}
         <BottomTabBar activeTab={mobileTab} onTabChange={handleMobileTabChange} />
+        {/* 2026-11-25 — Mobile nav fix: bottom sheets for the Projects and
+            Menu tabs. The desktop rail is hidden on mobile, so the rail's
+            repo switcher + settings/security/AUTO/logout live here now —
+            the tabs no longer open the desktop sidebar drawer. */}
+        <MobileMenuSheet
+          sheet={mobileSheet}
+          open={mobileSheet !== null}
+          onClose={closeMobileSheet}
+          repos={repoEntries}
+          onSelectRepo={handleSelectRepo}
+          onAddRepo={handleAddRepo}
+          onNewRun={handleNewRun}
+          onLogout={() => {
+            try { logout(); } catch { /* ignore */ }
+            navigate("/login");
+          }}
+        />
         </div>
 
         {/* Real Ask Advisor — replaces legacy FloatingORAButton in chromeless mode.
