@@ -25,6 +25,7 @@ from typing import Optional
 
 from services.vanguard_scanner import scan_text
 from services.bug_hunt_rules import scan_bug_hunt
+from services.cve_data import CVE_DB as _CVE_DB
 from services.full_scan_scanners import (
     scan_docker_cis as _scan_docker_cis_service,
 )
@@ -273,18 +274,13 @@ def _scan_code_quality(text_cache: dict[str, str]) -> list[dict]:
 # ──────────────────────────────────────────────────────────────────────
 # Category 4 — Dependencies
 # ──────────────────────────────────────────────────────────────────────
-# Hard-coded CVE map for known-vulnerable versions. In a future iter
-# this should hit the OSV.dev API live.
-_CVE_DB: dict[str, list[tuple[str, str, str]]] = {
-    # package: [(matched_version_prefix, CVE_id, severity)]
-    "requests":  [("2.28.", "CVE-2023-32681", "HIGH")],
-    "fastapi":   [("0.95.", "outdated", "MEDIUM")],
-    "pyjwt":     [("1.",    "CVE-2022-29217", "CRITICAL")],
-    "axios":     [("0.21.", "CVE-2021-3749",  "HIGH")],
-    "lodash":    [("4.17.20", "CVE-2021-23337", "HIGH")],
-    "next":      [("13.4.", "CVE-2024-46982", "HIGH")],
-    "vite":      [("4.",    "outdated", "LOW")],
-}
+# `_CVE_DB` (the static CVE map) is NOT defined here anymore — it is
+# imported from services/cve_data.py, the single canonical source of
+# truth shared with bug_hunt_rules._DEP_CVES (PROMPT 3 item 4,
+# 2026-11-26). The static map is FALLBACK ONLY: live OSV is primary
+# (see resolve_live_cves) and `_scan_dependencies` consults `_CVE_DB`
+# solely for packages with no live OSV cache entry.
+#   package: [(matched_version_prefix, CVE_id, severity)]
 
 
 # ── Ticket B (2026-02) — live OSV.dev CVE lookup, in-process cache ─────
@@ -384,20 +380,24 @@ async def resolve_live_cves(text_cache: dict[str, str]) -> None:
     failure (network error, 5xx, breaker-open) this logs and returns —
     it NEVER raises, and the cache is simply left as it was, so
     `_scan_dependencies` falls back to the static `_CVE_DB` for every
-    package that was never successfully warmed. The scan result is
-    never worse than it was before this ticket, and the caller
-    (the /scan endpoint, onboarding's auto-scan) is never blocked
-    beyond `OSV_TOTAL_TIMEOUT_S` regardless of what OSV or Mongo does.
+    package that was never successfully warmed. Precedence (PROMPT 3
+    item 4, 2026-11-26): live OSV is PRIMARY — whenever it returns
+    data for a package, the live result wins; the static map is
+    FALLBACK ONLY, used solely when the live lookup times out, fails,
+    or returns nothing for a package. The scan result is never worse
+    than it was before this ticket, and the caller (the /scan
+    endpoint, onboarding's auto-scan) is never blocked beyond
+    `OSV_TOTAL_TIMEOUT_S` regardless of what OSV or Mongo does.
     """
     try:
         await asyncio.wait_for(_resolve_live_cves_inner(text_cache), timeout=OSV_TOTAL_TIMEOUT_S)
     except asyncio.TimeoutError:
         logger.warning(
             "[osv] resolve_live_cves exceeded the %.0fs total time budget — "
-            "static map stays authoritative for this scan", OSV_TOTAL_TIMEOUT_S,
+            "static map is fallback-only for this scan", OSV_TOTAL_TIMEOUT_S,
         )
     except Exception as e:
-        logger.warning("[osv] live CVE lookup failed, static map stays authoritative: %s", e)
+        logger.warning("[osv] live CVE lookup failed, using static-map fallback: %s", e)
 
 
 async def _resolve_live_cves_inner(text_cache: dict[str, str]) -> None:
