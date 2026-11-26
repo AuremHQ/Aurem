@@ -1,7 +1,7 @@
 ---
-status: draft
-approved_by: null
-approved_on: null
+status: approved
+approved_by: Teji
+approved_on: 2026-11-26
 inject_on: [what is ora, product, features, modes, loop mode, vanguard, how does ora work, capabilities, swift mode, swift, pro mode, maxx mode, maxx, direct push, push to my branch, push to branch, push directly]
 max_chars: 1500
 ---
@@ -21,9 +21,10 @@ themselves.
 ## Modes
 
 - **Swift** — default, fast single-task mode.
-- **Pro** — deeper multi-step tasks, parallel agents (Pro/Team tiers).
-- **Maxx** — the most expensive review/code path (Claude Sonnet 4.5),
-  capped per month per tier; Team has no cap.
+- **Pro** — deeper multi-step tasks (Pro/Team tiers).
+- **Maxx** — the most expensive review/code path (Claude Sonnet 4.5).
+  Usage draws from the plan's monthly token grant (Starter 900,
+  Pro 1,900, Team 4,900 tokens).
 - **Loop Mode** — verifies every step (tests, lint, Vanguard scan) before
   a change is proposed, rather than shipping unverified code.
 
