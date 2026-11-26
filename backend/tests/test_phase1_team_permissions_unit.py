@@ -72,13 +72,45 @@ async def test_read_write_satisfies_both_read_and_write_required():
 
     tp.current_dev = _fake_current_dev  # patch module-level import
     import types
-    fake_db_module = types.SimpleNamespace(get_db=lambda: _FakeDb())
+    # Delegating fake db: get_db returns this test's _FakeDb, and any
+    # other attribute (require_db, set_db, ...) falls through to the
+    # REAL cto_services.db. The old bare SimpleNamespace (get_db only)
+    # persisted in sys.modules after this test and broke every later
+    # test that did `from cto_services.db import require_db`
+    # (e.g. the 187 phase2c cto_projects tests).
+    fake_db_module = types.ModuleType("cto_services.db")
+    fake_db_module.get_db = lambda: _FakeDb()
+    _real_db = [None]
+
+    def _db_getattr(attr, _real=_real_db):
+        if _real[0] is None:
+            import importlib
+            import sys as _sys
+            saved = _sys.modules.pop("cto_services.db", None)
+            try:
+                _real[0] = importlib.import_module("cto_services.db")
+            finally:
+                if saved is not None:
+                    _sys.modules["cto_services.db"] = saved
+        return getattr(_real[0], attr)
+
+    fake_db_module.__getattr__ = _db_getattr
     import sys
+    _orig_db = sys.modules.get("cto_services.db")
     sys.modules["cto_services.db"] = fake_db_module
 
-    check_read = require_permission("projects", "read")
-    check_write = require_permission("projects", "write")
-    ctx1 = await check_read("Bearer whatever")
-    ctx2 = await check_write("Bearer whatever")
-    assert ctx1["permissions"]["projects"] == "read_write"
-    assert ctx2["is_owner"] is True
+    try:
+        check_read = require_permission("projects", "read")
+        check_write = require_permission("projects", "write")
+        ctx1 = await check_read("Bearer whatever")
+        ctx2 = await check_write("Bearer whatever")
+        assert ctx1["permissions"]["projects"] == "read_write"
+        assert ctx2["is_owner"] is True
+    finally:
+        # Restore the real db — without this, get_db() keeps returning
+        # this test's _FakeDb (team_members only) for every later test
+        # in the process (e.g. phase2c's cto_tasks access).
+        if _orig_db is None:
+            sys.modules.pop("cto_services.db", None)
+        else:
+            sys.modules["cto_services.db"] = _orig_db

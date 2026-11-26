@@ -56,42 +56,80 @@ USER_ID = "user-bridge-1"
 
 
 # ── Stub `services.*` helpers (not in this lane's seeded tree) ─────────
+def _delegating_fake(name, **attrs):
+    """Build a fake module that returns `attrs` for the names it
+    defines and delegates any OTHER attribute to the REAL module
+    (same fix as tests/test_part15_admin_fixes.py). The old bare
+    fake broke `from <name> import <other>` for every other test
+    file collected after this one (e.g. this file's fake
+    services.usage lacked get_usage; its fake services.chat_helpers
+    lacked enforce_turn_completion_signal). Defined attributes win,
+    so this file's own tests still see the recording fakes; anything
+    else falls through to the real module.
+    """
+    import importlib
+
+    fake = types.ModuleType(name)
+    for _k, _v in attrs.items():
+        setattr(fake, _k, _v)
+    _real = [None]
+
+    def __getattr__(attr):
+        if _real[0] is None:
+            saved = sys.modules.pop(name, None)
+            try:
+                _real[0] = importlib.import_module(name)
+            finally:
+                if saved is not None:
+                    sys.modules[name] = saved
+        return getattr(_real[0], attr)
+
+    fake.__getattr__ = __getattr__
+    return fake
+
+
 def _install_service_stubs() -> dict:
     calls: dict = {"persist_turn": [], "founder_checks": []}
     pkg = types.ModuleType("services")
     pkg.__path__ = [str(_BACKEND_DIR / "services")]
     sys.modules.setdefault("services", pkg)
 
-    usage = types.ModuleType("services.usage")
     def is_founder_email(email: str) -> bool:
         calls["founder_checks"].append(email)
         return (email or "").strip().lower() == FOUNDER_EMAIL
-    usage.is_founder_email = is_founder_email
+    usage = _delegating_fake("services.usage",
+                             is_founder_email=is_founder_email)
     sys.modules["services.usage"] = usage
 
-    mfa = types.ModuleType("services.mfa")
-    mfa.verify_code = lambda secret, code: False
-    mfa.consume_backup_code = lambda code, hashes: (False, hashes)
+    mfa = _delegating_fake(
+        "services.mfa",
+        verify_code=lambda secret, code: False,
+        consume_backup_code=lambda code, hashes: (False, hashes),
+    )
     sys.modules["services.mfa"] = mfa
 
-    rl = types.ModuleType("services.rate_limiter")
     async def _allow(*a, **k):
         return True
-    rl.check_rate_limit_async = _allow
-    rl.client_ip_from_request = lambda request: "127.0.0.1"
+    rl = _delegating_fake(
+        "services.rate_limiter",
+        check_rate_limit_async=_allow,
+        client_ip_from_request=lambda request: "127.0.0.1",
+    )
     sys.modules["services.rate_limiter"] = rl
 
-    chat_helpers = types.ModuleType("services.chat_helpers")
     async def _persist_turn(**kwargs):
         calls["persist_turn"].append(kwargs)
-    chat_helpers._persist_turn = _persist_turn
+    chat_helpers = _delegating_fake("services.chat_helpers",
+                                    _persist_turn=_persist_turn)
     sys.modules["services.chat_helpers"] = chat_helpers
 
-    admin_team = types.ModuleType("services.admin_team")
     async def _no_member(user_id):
         return None
-    admin_team.get_active_member = _no_member
-    admin_team.effective_level = lambda *a, **k: 0
+    admin_team = _delegating_fake(
+        "services.admin_team",
+        get_active_member=_no_member,
+        effective_level=lambda *a, **k: 0,
+    )
     sys.modules["services.admin_team"] = admin_team
     return calls
 

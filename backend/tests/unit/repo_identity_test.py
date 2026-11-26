@@ -42,7 +42,13 @@ def test_aurem_cache_is_never_in_default_roots():
 def test_default_roots_are_backend_and_frontend_src_only():
     roots = _default_roots()
     assert len(roots) == 2
-    assert roots[0].endswith(os.path.join("app", "backend"))
+    # Backend root is the backend dir itself (basename "backend") — do
+    # NOT hardcode the parent dir name ("app"). The old assertion
+    # endswith("app/backend") only passed in the Emergent workspace
+    # (/app/backend) and failed on CI (GitHub checkout
+    # /home/runner/work/Aurem/Aurem/backend). The contract is that
+    # roots[0] IS the backend dir and roots[1] IS frontend/src.
+    assert os.path.basename(roots[0]) == "backend"
     assert roots[1].endswith(os.path.join("frontend", "src"))
 
 
