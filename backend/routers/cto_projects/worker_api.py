@@ -304,12 +304,45 @@ async def _run_task_via_api_prepare_context(task_id, owner, repo, branch, files,
     # iter 44 — Vanguard skill injection. Pre-warms the AI with
     # battle-tested security patterns matching the task type
     # (auth/api/payments/react/backend). Zero LLM cost.
+    # 2026-11-26 — Superpowers repo-add trigger: when the project
+    # was just added (`superpowers_first_task`, set at POST
+    # /projects/add), the workflow skills are excluded from the
+    # keyword picks below — they arrive instead via the workflow
+    # block, so the same slices aren't injected twice.
     try:
         from services.skill_context_injector import build_skill_context
-        sk_ctx = build_skill_context(task)
+        _sp_exclude = None
+        if proj.get("superpowers_first_task"):
+            from services.agent_skills_injector import REPO_ADD_WORKFLOW_SKILLS
+            _sp_exclude = set(REPO_ADD_WORKFLOW_SKILLS)
+        sk_ctx = build_skill_context(task, exclude_agent_skills=_sp_exclude)
         if sk_ctx:
             extra_context_block += f"\n\n{sk_ctx}"
             await _pkg._log(task_id, "🛡️ Applying security best practices for this task")
+    except Exception:
+        pass
+    # 2026-11-26 — Superpowers repo-add workflow: a freshly added
+    # repo's FIRST task runs brainstorm → plan → TDD → verify. The
+    # flag is cleared here so it fires exactly once; if the clear
+    # fails the flag stays and the next task retries (fail-soft —
+    # the task itself never breaks on this).
+    try:
+        if proj.get("superpowers_first_task"):
+            from services.agent_skills_injector import (
+                build_repo_add_workflow_context,
+            )
+            _sp_ctx = build_repo_add_workflow_context()
+            if _sp_ctx:
+                extra_context_block += f"\n\n{_sp_ctx}"
+                await _pkg._log(
+                    task_id,
+                    "✨ New repo — Superpowers workflow: brainstorm → plan → TDD → verify",
+                )
+            if _db is not None:
+                await _db.cto_projects.update_one(
+                    {"project_id": proj.get("project_id")},
+                    {"$set": {"superpowers_first_task": False}},
+                )
     except Exception:
         pass
     # Multi-file task detection — tells ORA to ship everything in
@@ -557,12 +590,46 @@ async def _run_task_via_api(task_id, proj, task, files, context, user_token, max
                 extra_context_block += f"\n\n[PROJECT MEMORY]\n{brain_ctx}"
             if issues_ctx:
                 extra_context_block += f"\n\n[OPEN ISSUES]\n{issues_ctx}"
+            # 2026-11-26 — Superpowers repo-add trigger (same as the
+            # prepare_context site above): exclude the workflow skills
+            # from the keyword picks when this is the repo's first
+            # task — they arrive via the workflow block instead.
             try:
                 from services.skill_context_injector import build_skill_context
-                sk_ctx = build_skill_context(task)
+                _sp_exclude = None
+                if proj.get("superpowers_first_task"):
+                    from services.agent_skills_injector import (
+                        REPO_ADD_WORKFLOW_SKILLS,
+                    )
+                    _sp_exclude = set(REPO_ADD_WORKFLOW_SKILLS)
+                sk_ctx = build_skill_context(task, exclude_agent_skills=_sp_exclude)
                 if sk_ctx:
                     extra_context_block += f"\n\n{sk_ctx}"
                     await _pkg._log(task_id, "🛡️ Applying security best practices for this task")
+            except Exception:
+                pass
+            # 2026-11-26 — Superpowers repo-add workflow (same as the
+            # prepare_context site above): first task on a freshly
+            # added repo runs brainstorm → plan → TDD → verify; the
+            # flag is cleared here so it fires exactly once.
+            try:
+                if proj.get("superpowers_first_task"):
+                    from services.agent_skills_injector import (
+                        build_repo_add_workflow_context,
+                    )
+                    _sp_ctx = build_repo_add_workflow_context()
+                    if _sp_ctx:
+                        extra_context_block += f"\n\n{_sp_ctx}"
+                        await _pkg._log(
+                            task_id,
+                            "✨ New repo — Superpowers workflow: brainstorm → plan → TDD → verify",
+                        )
+                    _db_sp = _pkg.get_db()
+                    if _db_sp is not None:
+                        await _db_sp.cto_projects.update_one(
+                            {"project_id": proj.get("project_id")},
+                            {"$set": {"superpowers_first_task": False}},
+                        )
             except Exception:
                 pass
             user_msg = (
