@@ -234,6 +234,161 @@ def _strip_fences(text: str) -> str:
     return s
 
 
+# ─── 2a. Surgical-diff fix path (PROMPT 3, 2026-11-26) ────────────────
+# The whole-file rewrite above asks the model to re-emit every line of
+# the file — even a one-line fix — so the model can drift untouched
+# lines (the 2026-09-12 incident in AGENTS.md §9: a footer-text edit
+# silently dropped 4 imports). A unified diff describes ONLY the
+# changed lines; services/diff_hunk.py (PR #377, pure applier, no I/O)
+# applies it programmatically, so every other line stays byte-identical.
+# Same shape as loop_verify._try_surgical_heal: try the diff FIRST,
+# fall back to the whole-file rewrite below on ANY failure. The diff
+# path never raises and never returns an error to the caller — a
+# failure just means "try the old path".
+_LLM_SYSTEM_DIFF = (
+    "You are AUREM, an automated code-fix engineer. Given a single file "
+    "and a static-analysis finding, you produce a UNIFIED DIFF that "
+    "fixes it. Rules:\n"
+    "  1. Apply the minimum-diff fix that resolves the finding.\n"
+    "  2. Return ONLY one fenced ```diff block — no commentary, no "
+    "headers outside the fence, no complete file content.\n"
+    "  3. Each hunk starts with an @@ -old_start,old_count "
+    "+new_start,new_count @@ header whose counts match the hunk "
+    "body exactly.\n"
+    "  4. Include 3 lines of unchanged context around each change; "
+    "context and removed lines must match the file exactly.\n"
+    "  5. If the finding is a hardcoded secret, replace the literal "
+    "with an os.environ.get / process.env lookup AND leave a TODO "
+    "comment naming the env var so the developer can set it.\n"
+    "  6. If the finding is a SQL-injection / XSS / SSRF / etc., apply "
+    "the standard idiomatic fix for the language.\n"
+    "  7. Never invent imports that already exist. If you add a new "
+    "import (e.g. `import os`), place it at the top of the import "
+    "block.\n"
+    "  8. If the fix cannot be expressed as a small diff, reply with "
+    "the single word: FULL-REWRITE"
+)
+# Diffs are far shorter than whole files, so the diff call caps well
+# below the 4000/6000 whole-file caps. A truncated diff fails the
+# hunk-count check in diff_hunk.py and falls back — a small cap can
+# never corrupt a file, it can only cost one extra LLM call.
+_SURGICAL_DIFF_MAX_TOKENS = 2000
+_SURGICAL_DIFF_MULTI_MAX_TOKENS = 3000
+
+
+def _extract_unified_diff(text: str) -> str | None:
+    """Pull the unified-diff block out of an LLM reply.
+
+    Accepts a fenced ```diff (or bare ```) block, or a bare diff
+    starting at the first --- / @@ line (the model sometimes drops
+    the fence despite the instruction). Returns None when the reply
+    carries no hunk — e.g. the model echoed the whole file instead
+    — so the caller falls back to the whole-file rewrite."""
+    s = (text or "").strip()
+    if not s:
+        return None
+    if s.startswith("```"):
+        nl = s.find("\n")
+        if nl == -1:
+            return None
+        s = s[nl + 1:]
+        end = s.rfind("```")
+        if end != -1:
+            s = s[:end]
+        s = s.strip("\n")
+    else:
+        # Bare diff — skip any prose before the first header/hunk.
+        lines = s.split("\n")
+        start = None
+        for i, ln in enumerate(lines):
+            if ln.startswith(("--- ", "@@ ")):
+                start = i
+                break
+        if start is None:
+            return None
+        s = "\n".join(lines[start:])
+    if "@@" not in s:
+        return None
+    return s
+
+
+async def _try_surgical_diff(
+    *, path: str, current_content: str, findings: list[dict],
+    prompt_body: str, user_id: str | None, review_mode: str,
+    max_tokens: int,
+) -> str | None:
+    """One LLM call for a unified-diff fix. Returns the patched file
+    body, or None when the caller should fall back to the whole-file
+    rewrite (empty/declined reply, no diff block, malformed or
+    non-applying diff, no-op diff, or a diff that applies cleanly
+    but does not actually fix any finding). Never raises.
+
+    Validation reuses the SAME re-validation check as the whole-file
+    path (`_finding_still_present`, defined below — resolved at call
+    time): the diff must fix at least one finding, not merely apply.
+    For the multi-finding path that means "fixes >=1" — the caller
+    still classifies the rest as remaining, exactly as it does for a
+    partial whole-file patch."""
+    if not current_content:
+        return None
+    from services.diff_hunk import apply_unified_diff
+    from services.llm import call_llm_with_meta
+
+    user_prompt = (
+        prompt_body
+        + "Return ONLY a unified diff that fixes the finding(s) above — "
+          "one fenced ```diff block, no commentary outside it. Change "
+          "ONLY the lines the fix needs; leave every other line "
+          "untouched."
+    )
+    try:
+        meta = await call_llm_with_meta(
+            system=_LLM_SYSTEM_DIFF,
+            user=user_prompt,
+            max_tokens=max_tokens,
+            mode="code",
+            user_id=user_id,
+            review_mode=review_mode,
+        )
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("surgical diff LLM call failed for %s: %r", path, e)
+        return None
+    try:
+        raw = ((meta or {}).get("content") or "").replace("\r\n", "\n")
+        if not raw.strip() or raw.strip() == "FULL-REWRITE":
+            return None
+        diff_text = _extract_unified_diff(raw)
+        if diff_text is None:
+            return None
+        patched = apply_unified_diff(current_content, diff_text)
+        if patched is None or not patched.strip():
+            return None
+        if patched.strip() == current_content.strip():
+            return None
+        fixed_any = False
+        for f in findings:
+            rid = (f.get("rule_id") or f.get("rule") or "").strip()
+            # Rule-less findings can't be scanner-checked — same
+            # "trust the LLM" rule _finding_still_present applies.
+            if not rid or not _finding_still_present(patched, path, f):
+                fixed_any = True
+                break
+        if not fixed_any:
+            logger.info(
+                "surgical diff for %s applied cleanly but fixed none of "
+                "the findings — falling back to whole-file rewrite", path,
+            )
+            return None
+    except Exception as e:                                # noqa: BLE001
+        logger.debug("surgical diff apply/validate failed for %s: %r", path, e)
+        return None
+    logger.info(
+        "[surgical-diff] diff applied for %s (∆bytes=%+d)",
+        path, len(patched) - len(current_content),
+    )
+    return patched
+
+
 async def _generate_patched_content(
     *,
     path: str,
@@ -276,7 +431,7 @@ async def _generate_patched_content(
         logger.warning("recall_similar_fixes soft-failed: %r", e)
         recall_block = ""
 
-    user_prompt = (
+    prompt_body = (
         f"{recall_block}"
         f"FILE: {path}\n"
         f"FINDING:\n"
@@ -289,6 +444,24 @@ async def _generate_patched_content(
         f"--- CURRENT FILE CONTENT ({len(current_content)} bytes) ---\n"
         f"{current_content}\n"
         f"--- END FILE CONTENT ---\n\n"
+    )
+
+    # PROMPT 3 (2026-11-26) — surgical-diff FIRST: a unified diff
+    # keeps every untouched line byte-identical. Any diff failure
+    # falls through to the whole-file rewrite below, unchanged.
+    diff_patched = await _try_surgical_diff(
+        path=path, current_content=current_content, findings=[finding],
+        prompt_body=prompt_body, user_id=user_id, review_mode=review_mode,
+        max_tokens=_SURGICAL_DIFF_MAX_TOKENS,
+    )
+    if diff_patched is not None:
+        return diff_patched, None
+    logger.info(
+        "surgical diff path failed for %s — falling back to whole-file rewrite",
+        path,
+    )
+
+    user_prompt = prompt_body + (
         "Return the COMPLETE new file content with the finding fixed. "
         "No fences. No commentary. Just the bytes that should overwrite "
         "the file."
@@ -358,13 +531,31 @@ async def _generate_patched_content_multi(
     from services.llm import call_llm_with_meta
 
     untrusted_block = _untrusted_finding_block(findings)
-    user_prompt = (
+    prompt_body = (
         f"FILE: {path}\n"
         f"FINDINGS TO FIX ({len(findings)} in this file):\n"
         f"{untrusted_block}\n\n"
         f"--- CURRENT FILE CONTENT ({len(current_content)} bytes) ---\n"
         f"{current_content}\n"
         f"--- END FILE CONTENT ---\n\n"
+    )
+
+    # PROMPT 3 (2026-11-26) — surgical-diff FIRST, same contract as
+    # the single-finding path: any diff failure falls through to the
+    # whole-file rewrite below, unchanged.
+    diff_patched = await _try_surgical_diff(
+        path=path, current_content=current_content, findings=findings,
+        prompt_body=prompt_body, user_id=user_id, review_mode=review_mode,
+        max_tokens=_SURGICAL_DIFF_MULTI_MAX_TOKENS,
+    )
+    if diff_patched is not None:
+        return diff_patched, None
+    logger.info(
+        "surgical diff path failed for %s (multi) — falling back to whole-file rewrite",
+        path,
+    )
+
+    user_prompt = prompt_body + (
         "Fix EVERY finding listed above in this ONE pass. Return the "
         "COMPLETE new file content with every fixable finding "
         "resolved. No fences. No commentary. Just the bytes that "
@@ -391,33 +582,196 @@ async def _generate_patched_content_multi(
 
 
 # ─── 3. Re-validate the patch ─────────────────────────────────────────
+# Prompt 3 item 2 (2026-11-26) — category-dispatched re-validation.
+#
+# INVENTORY (read from the code, not guessed). Every finding the fix
+# pipeline handles comes from one of the 16 Codebase Health categories
+# in services/codebase_health_core.py::SCANNERS (which merges
+# services/codebase_health_extra.py::EXTRA_SCANNERS). Every scanner is
+# a pure sync (text_cache: {path: text}) -> list[finding] function, so
+# a single-file {path: patched_content} cache re-validates one file
+# with no network and no LLM:
+#   security              -> Vanguard scan_text (single-file checker)
+#   performance           -> SCANNERS["performance"]  (per-file regexes)
+#   code_quality          -> SCANNERS["code_quality"] (per-file regexes)
+#   dependencies          -> SCANNERS["dependencies"] (static _CVE_DB +
+#                            in-process _OSV_CACHE only; the live OSV
+#                            lookup is a separate async step, so this
+#                            call never hits the network)
+#   database              -> SCANNERS["database"]     (per-file regexes)
+#   bug_hunt              -> SCANNERS["bug_hunt"]
+#                            (services.bug_hunt_rules.scan_bug_hunt)
+#   docker                -> SCANNERS["docker"] (scan_docker_cis)
+#   test_coverage         -> SCANNERS["test_coverage"]
+#   api_security          -> SCANNERS["api_security"] (per-file .py)
+#   security_headers      -> Vanguard fallback: the detector fires iff
+#                            NO header signal exists ANYWHERE in the
+#                            repo, so a single-file cache cannot prove
+#                            the fix (headers may legitimately live in
+#                            a sibling file). Same repo-wide-signal
+#                            reasoning as _guardian_rescan() in
+#                            routers/fix_pipeline.py.
+#   accessibility         -> SCANNERS["accessibility"] (per-file regexes)
+#   seo_basics            -> SCANNERS["seo_basics"]
+#   git_hygiene           -> SCANNERS["git_hygiene"]
+#   error_handling        -> SCANNERS["error_handling"] (per-file regexes)
+#   mobile_responsiveness -> SCANNERS["mobile_responsiveness"]
+#   documentation         -> SCANNERS["documentation"]
+# The repo-wide / missing-file categories (test_coverage, git_hygiene,
+# documentation, seo_basics) stay dispatchable because matching is
+# TARGET-RULE-ONLY: the rule fires iff its own file is absent/thin,
+# and the fix under validation IS that file — unlike _guardian_rescan,
+# which counts every remaining hit in the whole category.
+#
+# Category source: finding["category"] (stored rows carry it via
+# services/finding_scope._row_to_finding). When absent — e.g. the
+# single-finding /fix endpoints, which pass rule_id only — derive it
+# from the scanner-id prefix of rule_id ("sec::" -> security, ...).
+#
+# NEVER-WEAKER GUARANTEE: after the category checker runs, Vanguard
+# ALSO runs, and either checker saying "still present" rejects the
+# patch. The old code was Vanguard-only, so anything it caught is
+# still caught; the category checker additionally catches what
+# Vanguard cannot see. A category-checker failure falls through to
+# Vanguard (the old verdict); a Vanguard failure refuses the patch,
+# exactly like the old code.
+_CVE_LIKE_RE = re.compile(r"(?:cve|ghsa)-[a-z0-9-]+")
+
+# Scanner-id prefix (the `id` each health scanner emits, e.g.
+# "sec::<path>:<line>:<rule>") -> category. Used only when the
+# finding carries no explicit "category" field.
+_ID_PREFIX_TO_CATEGORY = {
+    "sec::": "security",
+    "perf::": "performance",
+    "q::": "code_quality",
+    "dep::": "dependencies",
+    "db::": "database",
+    "bh::": "bug_hunt",
+    "docker::": "docker",
+    "test::": "test_coverage",
+    "apisec::": "api_security",
+    "hdr::": "security_headers",
+    "a11y::": "accessibility",
+    "seo::": "seo_basics",
+    "git::": "git_hygiene",
+    "err::": "error_handling",
+    "mobile::": "mobile_responsiveness",
+    "docs::": "documentation",
+}
+
+# Categories whose detector reads repo-wide state a single-file cache
+# cannot prove (see inventory above) — Vanguard fallback, i.e. the
+# old behaviour (Vanguard cannot see these rules, so the patch is
+# accepted on the LLM's word, exactly as before).
+_VANGUARD_ONLY_CATEGORIES = frozenset({"security", "security_headers"})
+
+
+def _category_for_finding(finding: dict, target_rule: str) -> str:
+    """Category for `finding`, or "" when it cannot be determined."""
+    raw = (finding.get("category") or "").strip().lower()
+    if raw:
+        return raw.replace("-", "_").replace(" ", "_")
+    probe = (
+        target_rule
+        or (finding.get("rule_id") or finding.get("rule") or "")
+        .lower()
+    )
+    for prefix, category in _ID_PREFIX_TO_CATEGORY.items():
+        if probe.startswith(prefix):
+            return category
+    return ""
+
+
+def _rule_matches_target(hit: dict, target_rule: str) -> bool:
+    """True when one re-scan hit is the rule we tried to fix.
+    Scanner hits disagree on which key carries the rule id (Vanguard
+    hits set ONLY "name"; health-scanner hits set "title" + "id"),
+    and rule_id itself may be the bare rule name ("secret_openai_key")
+    or the full scanner id ("sec::<path>:<line>:secret_openai_key"),
+    so compare every candidate field, plus the trailing segment of a
+    scanner id, in both directions. Dependency findings are the one
+    exception where the CVE id lives in neither field: the static
+    _dep_finding puts it in "message" ("requests==2.28.0 ->
+    CVE-2023-32681 — upgrade required."), so a CVE/GHSA-shaped
+    target also matches a message substring."""
+    target = (target_rule or "").lower()
+    if not target:
+        return False
+    candidates: set[str] = set()
+    for key in ("rule_id", "rule", "name", "title", "id"):
+        value = hit.get(key)
+        if isinstance(value, str) and value:
+            lowered = value.lower()
+            candidates.add(lowered)
+            if ":" in lowered:
+                candidates.add(lowered.rsplit(":", 1)[-1])
+    for candidate in candidates:
+        if (
+            candidate == target
+            or candidate.endswith(":" + target)
+            or target.endswith(":" + candidate)
+        ):
+            return True
+    return bool(_CVE_LIKE_RE.fullmatch(target)) and target in (
+        hit.get("message") or ""
+    ).lower()
+
+
 def _finding_still_present(
     patched_content: str,
     path: str,
     finding: dict,
 ) -> bool:
-    """Re-run the Vanguard scanner on the patched content. The fix is
-    accepted only if the original rule_id is GONE for this file. We
-    don't require ZERO findings (the LLM may incidentally surface
-    unrelated issues) — just that the specific rule_id we tried to fix
-    no longer fires."""
+    """Category-dispatched re-validation of the patched content. The
+    fix is accepted only if the original rule_id is GONE for this
+    file. We don't require ZERO findings (the LLM may incidentally
+    surface unrelated issues) — just that the specific rule_id we
+    tried to fix no longer fires, as judged by the checker for the
+    finding's own category, with Vanguard as the checker for
+    security findings and as the backstop/fallback for everything
+    else (see the inventory comment above this function)."""
+    target_rule = (finding.get("rule_id") or finding.get("rule") or "").lower()
+    if not target_rule:
+        return False  # nothing to compare; trust the LLM
+
+    category = _category_for_finding(finding, target_rule)
+    if category and category not in _VANGUARD_ONLY_CATEGORIES:
+        try:
+            from services.codebase_health_core import SCANNERS
+            scanner = SCANNERS.get(category)
+        except Exception as e:                                # noqa: BLE001
+            logger.warning(
+                "category validate import failed for %s (%s): %r — "
+                "falling back to Vanguard", path, category, e)
+            scanner = None
+        if scanner is not None:
+            try:
+                new_findings = scanner({path: patched_content or ""}) or []
+            except Exception as e:                            # noqa: BLE001
+                logger.warning(
+                    "category validate scan failed for %s (%s): %r — "
+                    "falling back to Vanguard", path, category, e)
+                new_findings = None
+            if new_findings is not None:
+                for f in new_findings:
+                    if _rule_matches_target(f, target_rule):
+                        return True
+                # Category checker ran clean — still fall through to
+                # the Vanguard backstop below (never-weaker rule).
+
     try:
         from services.vanguard_scanner import scan_text
         new_findings = scan_text(patched_content, path) or []
     except Exception as e:                                # noqa: BLE001
         logger.warning("validate scan failed for %s: %r", path, e)
         return True  # be safe — refuse the patch if we can't verify
-    target_rule = (finding.get("rule_id") or finding.get("rule") or "").lower()
-    if not target_rule:
-        return False  # nothing to compare; trust the LLM
     for f in new_findings:
         # Part 2b — scan_text's most common hit shapes (secrets regex
         # matches, dangerous-pattern matches) set ONLY "name", never
         # "rule_id"/"rule". Checking rule_id/rule alone silently never
         # matched those categories, so re-validation always "passed"
         # regardless of whether the fix actually worked.
-        rid = (f.get("rule_id") or f.get("rule") or f.get("name") or "").lower()
-        if rid == target_rule:
+        if _rule_matches_target(f, target_rule):
             return True
     return False
 

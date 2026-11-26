@@ -27,6 +27,14 @@ from __future__ import annotations
 
 import re
 
+# PROMPT 3 item 4 (2026-11-26): the dependency-CVE map lives in ONE
+# place now — services/cve_data.py, shared with
+# codebase_health_core._CVE_DB. `_DEP_CVES` below is just the
+# backwards-compatible alias (existing tests and
+# services/generation_rules.py import this name); there is no second
+# copy of the data in this file.
+from services.cve_data import DEP_CVES as _DEP_CVES
+
 # ──────────────────────────────────────────────────────────────────────
 # Category A — SECRETS (15 patterns)
 # Each tuple: (rule_id, regex, severity, message)
@@ -253,32 +261,13 @@ _ENDPOINT_RULES: list[tuple[str, re.Pattern, str, str]] = [
 # Tuple: (package_name_lowercase, max_vulnerable_version, cve_id,
 #         severity, message)
 # Detection logic compares manifests (requirements.txt, package.json).
+# The map itself lives in services/cve_data.py (single canonical
+# source, shared with codebase_health_core._CVE_DB) — `_DEP_CVES` is
+# imported at the top of this file, not redefined here. `max_bad`
+# (second element) is the FIRST FIXED version: a declared version is
+# flagged iff _vercmp(ver, max_bad) < 0.
 # ──────────────────────────────────────────────────────────────────────
-_DEP_CVES: list[tuple[str, str, str, str, str]] = [
-    ("requests",     "2.31.0", "CVE-2023-32681",
-     "HIGH",     "requests < 2.31.0 — Proxy-Authorization leak via cross-origin redirect."),
-    ("flask",        "2.3.0",  "multi-cves",
-     "HIGH",     "flask < 2.3.0 — session-cookie + open-redirect CVEs."),
-    ("django",       "4.2.0",  "multi-cves",
-     "CRITICAL", "django < 4.2.0 — SQL injection + DoS CVEs."),
-    ("pillow",       "10.0.0", "CVE-2023-44271",
-     "HIGH",     "pillow < 10.0.0 — buffer overflow in JPEG/PNG parsing."),
-    ("cryptography", "41.0.0", "multi-cves",
-     "HIGH",     "cryptography < 41.0.0 — multiple openssl-bound vulns."),
-    # bonus easy wins
-    ("urllib3",      "2.0.0",  "CVE-2023-43804",
-     "MEDIUM",   "urllib3 < 2.0 — cookie & auth header leak on cross-origin redirect."),
-    ("pyyaml",       "6.0",    "CVE-2020-14343",
-     "HIGH",     "pyyaml < 6.0 — yaml.load() arbitrary code execution."),
-    ("jinja2",       "3.1.3",  "CVE-2024-22195",
-     "MEDIUM",   "jinja2 < 3.1.3 — xmlattr filter XSS."),
-    ("axios",        "1.6.0",  "CVE-2023-45857",
-     "HIGH",     "axios < 1.6.0 — CSRF token leak across redirects."),
-    ("lodash",       "4.17.21","CVE-2021-23337",
-     "HIGH",     "lodash < 4.17.21 — prototype pollution via _.template."),
-    ("next",         "14.2.10","CVE-2024-46982",
-     "CRITICAL", "next < 14.2.10 — cache poisoning + SSRF chain."),
-]
+# (No literal map here by design — see services/cve_data.py.)
 
 
 def _vercmp(a: str, b: str) -> int:

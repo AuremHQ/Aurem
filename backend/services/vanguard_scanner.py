@@ -575,7 +575,17 @@ def _scan_round2_file(
                 "context_lines": lines[ctx_start:ctx_end],
                 "context_range": [ctx_start + 1, ctx_end],
             })
-            break  # one hit per rule per file is enough for the report
+            # 2026-11-26 (Prompt 3) — report EVERY hit of a rule in a
+            # file, not just the first.  The old `break` here silently
+            # under-counted (a file with 12 SQL injections reported 1
+            # per rule).  Per-hit cost is one dict + one <=21-line
+            # context slice; the patterns are pre-compiled and the
+            # per-line deadline check above still bounds pathological
+            # files, so no cap is needed.  Downstream is safe:
+            # _dedup_findings keys on (file, line, rule) so distinct
+            # lines survive, and _detect_chains works on a set of
+            # rule ids, unaffected by multiplicity.
+            continue
     return out
 
 
