@@ -9,7 +9,7 @@
   },
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
-    "https://auremcto.com/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "src/background.js",
@@ -17,7 +17,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://auremcto.com/*"],
+      "matches": ["<all_urls>"],
       "js": ["src/content-ring-buffer.js"],
       "run_at": "document_start"
     }
