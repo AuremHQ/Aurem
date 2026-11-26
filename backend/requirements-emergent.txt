@@ -1,0 +1,2 @@
+# only install if Emergent LLM key is used
+emergentintegrations==0.1.2
