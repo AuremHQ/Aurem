@@ -56,13 +56,34 @@ async def _resolve(db, role: str) -> dict:
             active = await llm_config.get_active_config(db, role)
             if active:
                 return {"base_url": active["base_url"], "api_key": active["api_key"],
-                        "model": active["model"], "label": active["label"], "source": "db"}
+                        "model": active["model"], "label": active["label"], "source": "db",
+                        # F3 — sampling params travel with the config;
+                        # _resolve used to drop them, so the provider
+                        # default (~1.0) applied on every v2 call.
+                        "params": active.get("params") or {}}
         except Exception as e:                                    # noqa: BLE001
             logger.warning("llm_client: active-config lookup failed, using env: %r", e)
     return {"base_url": os.environ.get(env_base, ""),
             "api_key": os.environ.get(env_key) or "",
             "model": os.environ.get(env_model, ""),
-            "label": None, "source": "env"}
+            "label": None, "source": "env", "params": {}}
+
+
+def _sampling_params(resolved: dict) -> tuple:
+    """Temperature/top_p for the provider call (F3): from the active
+    config's `params` when present, else deterministic defaults
+    (temperature 0.2, top_p 1.0). A non-numeric stored value falls
+    back to the default rather than breaking the call."""
+    params = resolved.get("params") or {}
+
+    def _num(key, default):
+        try:
+            v = params.get(key)
+            return default if v is None else float(v)
+        except (TypeError, ValueError):
+            return default
+
+    return _num("temperature", 0.2), _num("top_p", 1.0)
 
 
 async def model_name(db=None, vision: bool = False) -> str:
@@ -181,8 +202,12 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
 
     tool_accum: dict[int, dict] = {}
     usage: dict = {}
+    # F4 — finish_reason "length" means the provider stopped at the
+    # token cap: the reply is cut off mid-sentence, not complete.
+    truncated = False
     _t0 = _time.monotonic()
     try:
+        temperature, top_p = _sampling_params(resolved)
         stream = await client.chat.completions.create(
             model=resolved["model"],
             messages=messages,
@@ -190,6 +215,8 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             tool_choice="auto" if tools else None,
             stream=True,
             max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
             # `user` is OpenRouter's documented end-user attribution
             # field (distinct from HTTP-Referer/X-Title, which just
             # tag the *app*) — this is what populates "Client User ID"
@@ -201,6 +228,10 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             choice = (chunk.choices or [None])[0]
             if choice is None:
                 continue
+            # F4 — read finish_reason on every chunk; "length" is the
+            # provider telling us the reply was truncated at the cap.
+            if getattr(choice, "finish_reason", None) == "length":
+                truncated = True
             delta = choice.delta
             if getattr(delta, "content", None):
                 yield {"type": "delta", "content": delta.content}
@@ -241,6 +272,10 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
                 args = {}
             calls.append({"id": slot["id"], "name": slot["name"], "arguments": args})
         yield {"type": "tool_calls", "calls": calls}
+    if truncated:
+        # F4 — explicit truncation signal so the engine (and the
+        # founder) never mistakes a cut-off reply for a complete one.
+        yield {"type": "truncated", "finish_reason": "length"}
     if usage:
         if user_id and db is not None:
             from services.llm_rate_table import get_rate_table, cost_usd as _cost_usd

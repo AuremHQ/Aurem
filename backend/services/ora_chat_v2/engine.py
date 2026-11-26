@@ -33,11 +33,88 @@ _EMPTY_REPLY_RETRY = (
     "now in plain text."
 )
 
+def _today_line(user_tz: Optional[str] = None, now_utc=None) -> str:
+    """Server-side date/time line, computed fresh from the real clock
+    on EVERY turn (F1). The model has no built-in clock, so this line
+    IS its source of truth for "today" — a full sentence it can quote,
+    not a bare UTC timestamp. Timezone = client header if valid, else
+    ORA_USER_TZ, else America/Toronto (the founder's timezone). An
+    invalid zone falls back to Toronto rather than breaking the turn.
+    `now_utc` exists only so tests can pin the evening case."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    tz_name = user_tz or os.getenv("ORA_USER_TZ", "America/Toronto")
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:                                        # noqa: BLE001
+        tz_name = "America/Toronto"
+        tz = ZoneInfo("America/Toronto")
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
+    return (
+        f"Today is {now.strftime('%A, %B %d, %Y')} — "
+        f"{now.strftime('%I:%M %p %Z')} ({tz_name}). "
+        "This is the current date and time — use it for any question "
+        "about today, the time, or the date; do not guess from memory."
+    )
+
+
 def _history_turns(session: dict) -> list:
-    n = int(os.getenv("ORA_CHAT_HISTORY_TURNS", "12"))
+    """Token-budget window (F8) — sync mirror of
+    `session.build_llm_messages`: keep the full transcript while its
+    estimated size fits under ORA_CONTEXT_TOKEN_CEILING (default
+    100k tokens, same ceiling as the rolling-summary builder); above
+    it, return the rolling summary (if any) + the newest tail up to
+    ORA_TAIL_TOKEN_BUDGET. Old turns survive as the summary instead
+    of silently vanishing past a 12-turn cut. The old fixed 12-turn
+    cap (ORA_CHAT_HISTORY_TURNS) no longer applies on the v2 path."""
     msgs = [m for m in (session.get("messages") or [])
             if m.get("role") in ("user", "assistant") and m.get("content")]
-    return msgs[-(n * 2):]
+    ceiling = int(os.getenv("ORA_CONTEXT_TOKEN_CEILING", "100000"))
+    tail_budget = int(os.getenv("ORA_TAIL_TOKEN_BUDGET", "70000"))
+
+    def _est(text):
+        return int(len(text or "") / 3.5) + 1
+
+    if sum(_est(m.get("content", "")) for m in msgs) <= ceiling:
+        return msgs
+    summary = (session.get("rolling_summary") or "").strip()
+    tail: list = []
+    tokens = 0
+    for m in reversed(msgs):
+        t = _est(m.get("content", ""))
+        if tokens + t > tail_budget and tail:
+            break
+        tail.insert(0, m)
+        tokens += t
+    out: list = []
+    if summary:
+        out.append({"role": "system",
+                    "content": "Prior conversation summary (older turns "
+                               f"collapsed):\n{summary}"})
+    out.extend(tail)
+    return out
+
+
+async def _v2_history(session: dict, user_message: str) -> list:
+    """History for the model (F8 + F2): the rolling-summary builder
+    `session.build_llm_messages`, minus the just-appended current
+    message. The router persists the user message BEFORE calling
+    run_turn, so it is already the tail of history — appending it
+    again below would send the task to the model twice. Only the LAST
+    entry is dropped: a user who legitimately repeats the same text
+    two turns running still gets one copy per turn. Falls back to the
+    local token-budget window if the session module cannot be
+    imported (never break a turn over history plumbing)."""
+    try:
+        from services.ora_chat.session import build_llm_messages
+        hist = await build_llm_messages(session)
+    except Exception as e:                                    # noqa: BLE001
+        logger.warning("ora_chat_v2 history fell back to _history_turns: %r", e)
+        hist = _history_turns(session)
+    if hist and hist[-1].get("role") == "user" \
+            and hist[-1].get("content") == user_message:
+        hist = hist[:-1]
+    return hist
 
 
 async def _rate_limit_ok(db, admin_id: str) -> bool:
@@ -79,7 +156,8 @@ async def _log_usage(db, admin_id: str, session_id: str,
 
 async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
                     think_mode: bool = False, advise_only: bool = False,
-                    page_inspection: Optional[dict] = None) -> AsyncIterator[dict]:
+                    page_inspection: Optional[dict] = None,
+                    user_tz: Optional[str] = None) -> AsyncIterator[dict]:
     """Thin wrapper — tags every LLM call this turn makes (2026-09-27
     MASTER TASK Part A) with the ambient `user_id` (= `admin_id`, the
     founder/admin running THIS chat) and `surface="founder_chat"` so
@@ -94,14 +172,15 @@ async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
         async for evt in _run_turn_impl(
             db, admin_id=admin_id, session=session, user_message=user_message,
             think_mode=think_mode, advise_only=advise_only,
-            page_inspection=page_inspection,
+            page_inspection=page_inspection, user_tz=user_tz,
         ):
             yield evt
 
 
 async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                     think_mode: bool = False, advise_only: bool = False,
-                    page_inspection: Optional[dict] = None) -> AsyncIterator[dict]:
+                    page_inspection: Optional[dict] = None,
+                    user_tz: Optional[str] = None) -> AsyncIterator[dict]:
     """Yields SSE-ready dict events. See routers/ora_chat.py for the
     exact event contract forwarded to the frontend."""
     if not await _rate_limit_ok(db, admin_id):
@@ -131,7 +210,18 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
     yield {"type": "state", "state_as_of": state_block.splitlines()[1]
            if len(state_block.splitlines()) > 1 else ""}
 
-    system_parts = [SYSTEM_PROMPT]
+    # F1 — server-side date/time on EVERY turn, computed fresh from
+    # the real clock. The "Today is ..." line is the model's quotable
+    # source of truth; the Runtime context block adds the machine-
+    # readable now_utc / now_<tz> lines. state_as_of stays what it
+    # is — a data-freshness stamp, NOT the clock.
+    system_parts = [_today_line(user_tz)]
+    try:
+        from services.ora_chat.safety import build_runtime_context
+        system_parts.append(build_runtime_context(user_tz))
+    except Exception:                                        # noqa: BLE001
+        pass
+    system_parts.append(SYSTEM_PROMPT)
     if house_rules_text:
         system_parts.append(house_rules_text)
     system_parts.append(state_block)
@@ -146,7 +236,7 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
         system_parts.append(_render_page_inspection(page_inspection))
 
     messages = [{"role": "system", "content": "\n\n".join(system_parts)}]
-    messages.extend(_history_turns(session))
+    messages.extend(await _v2_history(session, user_message))
     messages.append({"role": "user", "content": user_message})
 
     tools = list(tools_mod.TOOL_SCHEMAS)
@@ -155,6 +245,10 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
 
     proposed_action = None
     total_in = total_out = 0
+    # F4 — set when any stream_chat call in this turn reports a
+    # finish_reason of "length": the reply was cut off at the token
+    # cap and must be flagged, never delivered as if complete.
+    truncated = False
     final_text_parts: list[str] = []
     resolved_model = resolved_label = None
     # 2026 audit Decision 1 — ported from the v1 handler (Iter 264 Fix
@@ -179,6 +273,8 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                 round_text += evt["content"]
             elif evt["type"] == "tool_calls":
                 tool_calls = evt["calls"]
+            elif evt["type"] == "truncated":
+                truncated = True
             elif evt["type"] == "usage":
                 total_in += evt.get("input_tokens", 0)
                 total_out += evt.get("output_tokens", 0)
@@ -214,6 +310,8 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                         tools=None, reasoning=think_mode, db=db, user_id=admin_id):
                     if r_evt["type"] == "delta":
                         corrective_text += r_evt["content"]
+                    elif r_evt["type"] == "truncated":
+                        truncated = True
                     elif r_evt["type"] == "usage":
                         total_in += r_evt.get("input_tokens", 0)
                         total_out += r_evt.get("output_tokens", 0)
@@ -242,7 +340,7 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
             # corrective retry when the draft cites a file that does
             # not exist anywhere in the real codebase index — the
             # fabricated draft never reaches the client.
-            regen_mode = os.getenv("ORA_REGEN_ON_FABRICATION", "0") == "1"
+            regen_mode = os.getenv("ORA_REGEN_ON_FABRICATION", "1") == "1"
             if regen_mode and final_text.strip():
                 try:
                     grounding = await ora_grounding.run_post_response_check(
@@ -272,6 +370,8 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                             user_id=admin_id):
                         if r_evt["type"] == "delta":
                             regen_text += r_evt["content"]
+                        elif r_evt["type"] == "truncated":
+                            truncated = True
                         elif r_evt["type"] == "usage":
                             total_in += r_evt.get("input_tokens", 0)
                             total_out += r_evt.get("output_tokens", 0)
@@ -294,6 +394,13 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                     # itself failed) — surface what's left rather than
                     # silently dropping it.
                     ungrounded = grounding.get("fabricated") or []
+            # F4 — a reply cut off at the length limit carries a
+            # plain-language note so the founder knows to ask for the
+            # rest; appended here so it streams, persists, and lands
+            # in the final event exactly like the rest of the reply.
+            if truncated:
+                final_text += ("\n\nReply was cut off at the length "
+                               "limit — ask me to continue.")
             for i in range(0, len(final_text), 40):
                 yield {"type": "delta", "content": final_text[i:i + 40]}
             final_text_parts.append(final_text)
@@ -361,7 +468,7 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                        "summary": str(tool_result)[:300],
                        "browser_available": _browser_available}
             messages.append({"role": "tool", "tool_call_id": call["id"],
-                              "content": str(tool_result)[:4000]})
+                              "content": str(tool_result)[:12000]})
             # 2026-09-27 — P0-1(a/d): durable server-side log of every
             # tool round, independent of whether the frontend rendered
             # the corresponding tool_call/tool_result SSE events. Keyed
@@ -386,6 +493,8 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                     yield evt
                     final_text_parts.append(evt["content"])
                     forced_text += evt["content"]
+                elif evt["type"] == "truncated":
+                    truncated = True
                 elif evt["type"] == "usage":
                     total_in += evt.get("input_tokens", 0)
                     total_out += evt.get("output_tokens", 0)
@@ -411,6 +520,12 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                 return
 
     full_reply = "".join(final_text_parts)
+    # F4 — same plain-language note on the round-limit close-out path.
+    if truncated and full_reply.strip() and \
+            "cut off at the length limit" not in full_reply:
+        note = "\n\nReply was cut off at the length limit — ask me to continue."
+        full_reply += note
+        yield {"type": "delta", "content": note}
 
     proposal_id = None
     if proposed_action:
@@ -434,7 +549,7 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
     yield {"type": "final", "content": full_reply, "tokens_in": total_in,
            "tokens_out": total_out, "proposal_id": proposal_id,
            "model": resolved_model, "config_label": resolved_label,
-           "ungrounded": ungrounded}
+           "ungrounded": ungrounded, "truncated": truncated}
 
 
 def _render_page_inspection(payload: dict) -> str:
