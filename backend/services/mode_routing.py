@@ -43,6 +43,11 @@ import os
 EDIT_TIER_MODE_TRANSPARENT = "transparent"  # Path A
 EDIT_TIER_MODE_GATED = "gated"              # Path B (default)
 
+# P1k — the user mode-pill vocabulary, shared by chat turns and Loop
+# runs. Named in one place so the router, the engine rehydration,
+# and the tests all validate against the same set.
+MODE_PILLS = ("swift", "pro", "maxx")
+
 UPGRADE_OFFER_MESSAGE = (
     "That's a real change to make — to get it applied correctly I "
     "need our more reliable editing model, which is part of the Pro "
@@ -107,3 +112,37 @@ def needs_edit_upgrade_offer(tier: str, req_mode: str, *, account_has_pro: bool 
     if tier != "agentic" or req_mode != "swift":
         return False
     return edit_tier_mode() == EDIT_TIER_MODE_GATED
+
+
+def normalize_mode_pill(req_mode: str | None) -> str | None:
+    """P1k — validate a user mode pill against the known vocabulary.
+
+    Returns the lowercased pill when it is one of swift/pro/maxx,
+    else None (absent, blank, non-string, or unknown value → unknown
+    mode, which the Parliament gate treats as "full Council"). Pure,
+    no I/O — the router and the engine rehydration both use it so a
+    stale/forged pill can never reach `LoopEngine.mode` unchecked."""
+    if not isinstance(req_mode, str):
+        return None
+    pill = req_mode.strip().lower()
+    return pill if pill in MODE_PILLS else None
+
+
+def resolve_loop_mode(req_mode: str | None, *, account_has_pro: bool = True) -> str | None:
+    """P1k — resolve the user's mode pill for a Loop run.
+
+    A loop run is always a real (agentic) code edit, so the pill goes
+    through the SAME escalation `resolve_model_mode` already applies
+    to agentic chat turns — swift + Pro access → pro; swift without
+    Pro access in gated mode stays swift (the caller shows the upgrade
+    offer instead; for loops the tiered gate in `routers/loop.py`
+    already blocks free/starter starts, so that arm is defence in
+    depth, not a new gate). Unknown/absent pill → None = full Council.
+    No new mode system: this is a 4-line composition of the existing
+    resolver with the loop's fixed tier."""
+    pill = normalize_mode_pill(req_mode)
+    if pill is None:
+        return None
+    return normalize_mode_pill(
+        resolve_model_mode("agentic", pill, account_has_pro=account_has_pro)
+    )

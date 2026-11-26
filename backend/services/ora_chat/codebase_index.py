@@ -267,24 +267,37 @@ async def compact_tree(max_files: int = 120) -> str:
             shown += 1
             if shown >= max_files:
                 break
+        # Part XIV (c4) — the 8-per-group cut was silent: only the
+        # "(N files)" header hinted at it. Say how many were cut.
+        if len(groups[key]) > 8 and shown < max_files:
+            lines.append(f"    ... (+{len(groups[key]) - 8} more in {key}/)")
         if shown >= max_files:
             lines.append("    ... (truncated, use /find or /read for more)")
             break
     return "\n".join(lines)
 
 
-async def find_files(pattern: str, limit: int = 25) -> list[str]:
+async def find_files(pattern: str, limit: int = 25,
+                     include_total: bool = False):
     """Glob match against repo-relative paths.
     Example: `services/ora_chat/*.py` or `*Drawer.jsx`.
+
+    Part XIV (c5) — the plain-list return silently sliced at `limit`.
+    Pass include_total=True to get {"matches", "total", "truncated"}
+    instead; the default list return is kept for existing callers.
     """
     await _ensure_fresh()
     if not pattern:
-        return []
+        return {"matches": [], "total": 0, "truncated": False} \
+            if include_total else []
     pat = pattern.strip()
     if "*" not in pat and "?" not in pat and "[" not in pat:
         pat = f"*{pat}*"
     matches = [f["path"] for f in _CACHE["files"]
                 if fnmatch.fnmatch(f["path"], pat)]
+    if include_total:
+        return {"matches": matches[:limit], "total": len(matches),
+                "truncated": len(matches) > limit}
     return matches[:limit]
 
 
@@ -312,42 +325,78 @@ async def read_file(path: str, max_lines: int = 200) -> dict:
             data = f.read(40 * 1024)
     except OSError as e:
         return {"ok": False, "error": f"read_fail:{type(e).__name__}"}
+    # Part XIV (c6) — the 40 KB byte cap was silent: `total_lines`
+    # counted only lines inside the first 40 KB, so a >40 KB file with
+    # <=200 long lines reported truncated:false while content past
+    # 40 KB was dropped. Flag the byte cut, report the true byte size,
+    # and count the TRUE total lines (streaming, bounded memory).
+    try:
+        total_bytes = p.stat().st_size
+    except OSError:
+        total_bytes = len(data.encode("utf-8", errors="replace"))
+    byte_truncated = total_bytes > 40 * 1024
     lines = data.splitlines()
-    truncated = len(lines) > max_lines
+    if byte_truncated:
+        total_lines = 0
+        with p.open("rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                total_lines += chunk.count(b"\n")
+        # A file not ending in "\n" has one more line than newlines.
+        if total_bytes:
+            with p.open("rb") as f:
+                f.seek(total_bytes - 1)
+                if f.read(1) != b"\n":
+                    total_lines += 1
+    else:
+        total_lines = len(lines)
+    truncated = len(lines) > max_lines or byte_truncated
     body = "\n".join(lines[:max_lines])
     return {"ok": True, "path": rel, "lang": _lang_of(p),
              "lines_shown": min(len(lines), max_lines),
-             "total_lines": len(lines),
+             "total_lines": total_lines,
              "truncated": truncated,
+             "total_bytes": total_bytes,
+             "byte_truncated": byte_truncated,
              "content": body}
 
 
-async def search_defs(name: str, limit: int = 15) -> list[dict]:
-    """Where is `name` defined? Returns [{name, path, lang}, ...]."""
+async def search_defs(name: str, limit: int = 15,
+                      include_total: bool = False):
+    """Where is `name` defined? Returns [{name, path, lang}, ...].
+
+    Part XIV (c7) — the plain-list return silently sliced at `limit`.
+    Pass include_total=True to get {"results", "total", "truncated"}
+    instead; the default list return is kept for existing callers.
+    """
     await _ensure_fresh()
     if not name:
-        return []
+        return {"results": [], "total": 0, "truncated": False} \
+            if include_total else []
     target = name.strip()
     results: list[dict] = []
     # Exact match on the def_to_paths map first.
     paths = _CACHE["def_to_paths"].get(target, [])
-    for p in paths[:limit]:
+    for p in paths:
         f = _CACHE["by_path"].get(p)
         if f:
             results.append({"name": target, "path": p, "lang": f["lang"]})
-    if results:
-        return results
-    # Fallback: fuzzy contains (case-insensitive) over def names.
-    target_lo = target.lower()
-    for sym, paths in _CACHE["def_to_paths"].items():
-        if target_lo in sym.lower():
-            for p in paths[:2]:
-                f = _CACHE["by_path"].get(p)
-                if f:
-                    results.append({"name": sym, "path": p, "lang": f["lang"]})
-                    if len(results) >= limit:
-                        return results
-    return results
+    if not results:
+        # Fallback: fuzzy contains (case-insensitive) over def names.
+        target_lo = target.lower()
+        for sym, paths in _CACHE["def_to_paths"].items():
+            if target_lo in sym.lower():
+                for p in paths[:2]:
+                    f = _CACHE["by_path"].get(p)
+                    if f:
+                        results.append({"name": sym, "path": p,
+                                        "lang": f["lang"]})
+    if include_total:
+        return {"results": results[:limit], "total": len(results),
+                "truncated": len(results) > limit}
+    return results[:limit]
 
 
 # ─── BM25-lite retrieval for the NEEDS_CODEBASE branch ───────────

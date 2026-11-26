@@ -20,13 +20,16 @@ resolve at call time when both modules are fully loaded.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
 import time
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import httpx
+
+from ._http import get_shared_client
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +67,18 @@ _BASE_DELAY_S = 0.4   # Iter 129 — was 0.8. Halves the worst-case
 #
 # Order matters: best quality → smallest. Env override:
 #   OPENROUTER_FREE_MODELS=model1,model2,model3
-_FALLBACK_STATUSES = {402, 404, 408, 425, 429, 500, 502, 503, 504}
+_FALLBACK_STATUSES = {400, 402, 404, 408, 425, 429, 500, 502, 503, 504}
 # 404 → primary model slug isn't routable on OpenRouter (rare config
 # drift). Treat as "this candidate is broken — try the next" rather
-# than a hard fail; the legitimate "your prompt is broken" 4xx codes
-# (400, 422) still abort the chain.
+# than a hard fail.
+# 400 → Part XII (c2): a 400 from OpenRouter is often provider/model-
+# side (routing, deprecation, a `max_tokens` the model rejects), not
+# a broken prompt — so it now falls through to the free chain, the
+# DeepSeek-direct attempt, and the Groq emergency net instead of
+# returning "" and killing the whole call. Only 422 still aborts the
+# chain (a genuinely malformed request that no other model will
+# accept either). Worst case the chain is walked exactly as it
+# already is for any other fallback-worthy error (429/5xx).
 _DEFAULT_FREE_MODELS = [
     # Verified-live slugs via GET /api/v1/models (Feb 2026). Order:
     # best quality → smallest. The chain stops at the first model that
@@ -92,10 +102,11 @@ def _free_fallback_models() -> list[str]:
 
 def _is_fallback_worthy(exc: Exception) -> bool:
     """Return True when the exception means the PRIMARY model is the
-    problem (credit issue, rate limit, upstream 5xx, network blip) and
-    we should retry the same prompt against a free model. False when
-    the prompt itself is broken (4xx other than 402/429) — retrying
-    would just burn another model's quota for no win."""
+    problem (credit issue, rate limit, upstream 5xx, network blip,
+    or a provider-side 400) and we should retry the same prompt
+    against a free model. False when the prompt itself is broken
+    (422, other 4xx) — retrying would just burn another model's
+    quota for no win."""
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in _FALLBACK_STATUSES
     if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError,
@@ -289,10 +300,14 @@ async def call_openrouter_model(
             payload["user"] = _ambient_user
         _t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=_timeout_s) as c:
-                r = await c.post(OPENROUTER_URL, headers=headers, json=payload)
-                r.raise_for_status()
-                data = r.json()
+            # P1/L3 — shared pooled client (was: `async with
+            # httpx.AsyncClient(...)` — a fresh TCP/TLS pool per
+            # candidate attempt, closed at the end of every call).
+            # The shared client is NEVER closed here.
+            _client = get_shared_client(_timeout_s)
+            r = await _client.post(OPENROUTER_URL, headers=headers, json=payload)
+            r.raise_for_status()
+            data = r.json()
             _latency_ms = (time.monotonic() - _t0) * 1000
             _msg = data["choices"][0]["message"]
             # 2026-08-25 — defensive guard (see openrouter_providers.py
@@ -366,8 +381,8 @@ async def call_openrouter_model(
         except Exception as e:
             last_exc = e
             if not _is_fallback_worthy(e):
-                # Prompt-level bug (4xx other than 402/429). Don't burn
-                # extra free quota — surface the failure.
+                # Prompt-level bug (422 / other non-fallback 4xx).
+                # Don't burn extra free quota — surface the failure.
                 logger.warning("call_openrouter_model(%s) non-retryable: %r", candidate, e)
                 try:
                     from services.loop_token_ledger import log_real_usage
@@ -410,12 +425,22 @@ async def call_openrouter_model(
                         return ds_content
                 except Exception as dse:
                     if isinstance(dse, httpx.HTTPStatusError) and \
-                       dse.response.status_code in (400, 422):
+                       dse.response.status_code == 422:
                         logger.warning(
                             "DeepSeek direct rejected agent prompt (%d) — aborting chain",
                             dse.response.status_code,
                         )
                         return ""
+                    if isinstance(dse, httpx.HTTPStatusError) and \
+                       dse.response.status_code == 400:
+                        # Part XII (c2): a 400 from DeepSeek direct is
+                        # treated like a 400 from OpenRouter — walk
+                        # forward to the free chain / Groq instead of
+                        # aborting the whole call.
+                        logger.warning(
+                            "DeepSeek direct rejected agent prompt (400) — "
+                            "walking OR free chain",
+                        )
                     # 401/402/429/5xx → bad key / balance / vendor
                     # issue. Walk forward instead of failing the
                     # whole agent call.
@@ -466,3 +491,182 @@ async def call_openrouter_model(
     except Exception as _e:
         logger.debug("[silent-catch] call_openrouter_model exhausted-row log skipped: %r", _e)
     return ""
+
+
+# ─── True streaming (P1/L2) ──────────────────────────────────────────
+
+async def stream_openrouter_model(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int = 1000,
+    temperature: float = 0.2,
+    feature: Optional[str] = None,
+    reasoning: Optional[dict] = None,
+    provider_prefs: Optional[dict] = None,
+) -> AsyncIterator[str]:
+    """True-streaming OpenRouter caller — the primitive the main chat
+    path was missing (P1/L2).
+
+    Yields provider-sized text deltas AS THEY ARRIVE over SSE
+    (``stream=True``): no fixed re-chunking, no pacing sleep. The
+    caller forwards each delta straight to the UI — the exact
+    opposite of the old main-path shape (buffer the whole reply,
+    then dribble it out 6 chars / 12 ms).
+
+    Same request shape as :func:`call_openrouter_model` (headers,
+    penalties, sticky ``session_id``, ``reasoning`` / ``provider``
+    passthrough, ``user`` attribution) and the same candidate chain
+    (primary + ``:free`` fallbacks, ``_is_fallback_worthy`` gating)
+    — but the chain only walks BEFORE the first delta. Once tokens
+    flow the model is committed: a mid-stream fallback would splice
+    two models' text together, so a mid-stream error raises instead
+    (same rule as ``ora_chat_v2.llm_client.stream_chat``).
+
+    Differences from the buffered caller, by design:
+      • OpenRouter chain only. The DeepSeek-direct / Groq emergency
+        hops are buffered-only transports and stay available through
+        :func:`call_openrouter_model` — a streaming caller that needs
+        them should fall back to the buffered call on exhaustion.
+      • An empty stream (HTTP 200, zero deltas) ends the iteration
+        with nothing yielded — mirroring the buffered caller, which
+        returns empty content as success rather than walking the
+        chain on empty.
+      • On exhaustion BEFORE any token, raises the last error (the
+        caller decides the fallback) instead of returning ``""``.
+
+    Uses the shared pooled client (L3). Ledger rows are written once
+    the stream completes, best-effort, from whatever ``usage`` the
+    final SSE chunk carried (often absent — OpenRouter only reports
+    usage on streams that request it).
+    """
+    from services.llm import _openrouter_key
+    from ._state import _set_last_provider, get_prompt_cache_context
+
+    api_key = _openrouter_key()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": _OPENROUTER_REFERER,
+        "X-Title": f"AUREM - {feature}" if feature else "AUREM",
+        "Content-Type": "application/json",
+    }
+    _caching_enabled = os.getenv("LLM_PROMPT_CACHING_ENABLED", "0") == "1"
+    _cache_hint = get_prompt_cache_context() if _caching_enabled else {"session_id": None, "cache_system": False}
+    _use_cache_control = bool(_cache_hint.get("cache_system")) and model.startswith("anthropic/")
+    _sticky_session_id = _cache_hint.get("session_id")
+    system_content = (
+        [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        if _use_cache_control else system
+    )
+    base_messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user",   "content": user},
+    ]
+    _timeout_s = float(os.getenv("LLM_HTTP_TIMEOUT_S", "25.0"))
+    _freq_penalty = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.4"))
+    _rep_penalty = float(os.getenv("LLM_REPETITION_PENALTY", "1.1"))
+
+    candidates = [model] + [m for m in _free_fallback_models() if m != model]
+    client = get_shared_client(_timeout_s)
+    last_exc: Exception | None = None
+    for i, candidate in enumerate(candidates):
+        payload = {
+            "model": candidate,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "frequency_penalty": _freq_penalty,
+            "repetition_penalty": _rep_penalty,
+            "messages": base_messages,
+            "stream": True,
+        }
+        if _sticky_session_id:
+            payload["session_id"] = _sticky_session_id
+        if reasoning:
+            payload["reasoning"] = reasoning
+        if provider_prefs:
+            payload["provider"] = provider_prefs
+        from services.loop_token_ledger import current_ambient_user_id
+        _ambient_user = current_ambient_user_id()
+        if _ambient_user:
+            payload["user"] = _ambient_user
+        _t0 = time.monotonic()
+        _saw_first = False
+        _usage: dict = {}
+        _generation_id = None
+        try:
+            async with client.stream(
+                "POST", OPENROUTER_URL, headers=headers, json=payload,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        evt = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(evt, dict):
+                        _generation_id = evt.get("id") or _generation_id
+                        _usage = evt.get("usage") or _usage
+                        choices = evt.get("choices") or []
+                        _choice0 = choices[0] if choices else {}
+                        delta = ((_choice0.get("delta") or {}).get("content")
+                                 if isinstance(_choice0, dict) else None)
+                        if delta:
+                            _saw_first = True
+                            yield delta
+            # Stream ended. Zero deltas = empty success (buffered
+            # parity — do not walk the chain on empty).
+            _latency_ms = (time.monotonic() - _t0) * 1000
+            try:
+                from services.loop_token_ledger import (
+                    log_llm_usage, log_real_usage,
+                )
+                await log_llm_usage(candidate, _usage, temperature=temperature)
+            except Exception as _e:  # noqa: BLE001 — fail-open ledger
+                logger.debug("[silent-catch] stream_openrouter_model log_llm_usage failed: %r", _e)
+            try:
+                from services.loop_token_ledger import log_real_usage
+                await log_real_usage(
+                    candidate, _usage, generation_id=_generation_id,
+                    feature=feature, latency_ms=_latency_ms, status="ok",
+                )
+            except Exception as _e:  # noqa: BLE001 — fail-open ledger
+                logger.debug("[silent-catch] stream_openrouter_model log_real_usage failed: %r", _e)
+            if i > 0:
+                logger.warning(
+                    "stream_openrouter_model: primary %r failed, served by free fallback %r",
+                    model, candidate,
+                )
+            _set_last_provider("openrouter", candidate)
+            return
+        except Exception as e:
+            last_exc = e
+            if _saw_first:
+                # Committed mid-stream: never splice a fallback
+                # model's text onto a partial reply.
+                logger.warning(
+                    "stream_openrouter_model(%s) failed mid-stream after first token: %r",
+                    candidate, e,
+                )
+                raise
+            if not _is_fallback_worthy(e):
+                logger.warning("stream_openrouter_model(%s) non-retryable: %r", candidate, e)
+                raise
+            logger.warning(
+                "stream_openrouter_model(%s) fallback-worthy failure (%d/%d): %r",
+                candidate, i + 1, len(candidates), e,
+            )
+            continue
+    logger.error(
+        "stream_openrouter_model: all %d candidates exhausted (primary=%r). Last error: %r",
+        len(candidates), model, last_exc,
+    )
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("OpenRouter stream failed: no candidate models returned")

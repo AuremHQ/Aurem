@@ -20,8 +20,10 @@ from __future__ import annotations
 import time
 from typing import Callable, Awaitable
 
+from cto_services.auth import is_admin_or_founder
 from cto_services.db import get_db
 from services.ora_chat import codebase_index
+from services.ora_chat import image_gen
 
 
 # One dispatch entry per registered slash-command. Each returns a
@@ -157,6 +159,7 @@ async def _help(ctx: dict, _args: str) -> dict:
             {"cmd": "/defs <name>",            "desc": "Where is a function/class defined?"},
             {"cmd": "/loop-stats [id]",        "desc": "Real per-phase durations for a loop run (defaults to your latest)"},
             {"cmd": "/rule add|list|delete|on|off|report", "desc": "Persistent correction rules (Phase 1, shadow-first)"},
+            {"cmd": "/image <prompt>", "desc": "Generate an image (Founder-only, gpt-image-1, 10/month)"},
             {"cmd": "/help",                   "desc": "This list"},
         ],
     }
@@ -422,6 +425,104 @@ async def _rule(ctx: dict, args: str) -> dict:
             "value": _RULE_USAGE}
 
 
+# ─── Image generation (P1 audit fix · B10, 2026-11-25) ─────────────
+# `/image` was advertised in the safety prompt (Founder-only,
+# gpt-image-1, 10/month, $3/day) but missing from KNOWN_COMMANDS +
+# DISPATCH, so typing it 400'd unknown_command. The generator itself
+# already exists (services/ora_chat/image_gen.py) and is wired to
+# POST /image-generate (routers/ora_chat.py) — this handler is the
+# SAME gate stack through the slash path: founder check → reserve
+# caps BEFORE the call → generate → refund on failure → audit event.
+# It returns a structured dict like every other handler and NEVER
+# raises: gate/upstream failures come back as ok False + a short
+# error string, never a traceback (the traceback half of B10 was
+# already wrong-or-stale — worst case anywhere in the chat path is
+# str(e) — and this handler keeps it that way).
+#
+# NOTE on shape: image_base64 rides at the TOP level of the result,
+# NOT inside "value" — /slash feeds value into the explain LLM, the
+# grounding check, and the persisted transcript, and a ~1 MB base64
+# blob in any of those would blow up the prompt, the check, and the
+# session doc. The client still receives it: /slash returns the whole
+# result dict verbatim.
+def _clean_error_message(exc: BaseException) -> str:
+    """One-line, traceback-free error text for user-facing payloads.
+    `str(exc)` is the worst case the chat path already returns — but
+    an upstream exception's message can itself embed a traceback or
+    newlines, which would surface raw. Take the first line, cut
+    before any embedded 'Traceback', cap at 200 chars."""
+    text = str(exc) or type(exc).__name__
+    text = text.split("Traceback")[0].strip()
+    first = text.splitlines()[0].strip() if text.splitlines() else ""
+    return (first or type(exc).__name__)[:200]
+
+
+async def _image(ctx: dict, args: str) -> dict:
+    """Generate one raster PNG via gpt-image-1 (Founder-only)."""
+    prompt = (args or "").strip()
+    if not prompt:
+        return {"ok": False, "error": "missing_prompt",
+                "hint": "Usage: /image <prompt>"}
+    if not is_admin_or_founder(ctx or {}):
+        return {"ok": False, "error": "tier_locked",
+                "message": ("Image generation is currently Founder-only "
+                            "during the internal-test phase.")}
+    db = get_db()
+    if db is None:
+        return {"ok": False, "error": "database_unavailable"}
+    user_id = (ctx or {}).get("user_id")
+    if not user_id:
+        return {"ok": False, "error": "unauthenticated"}
+    # Reserve capacity BEFORE the OpenAI call — burst-safe.
+    try:
+        await image_gen.check_and_reserve(db, user_id)
+    except image_gen.ImageGenError as e:
+        return {"ok": False, "error": e.kind,
+                "message": _clean_error_message(e), **e.extra}
+    # Actual generation. On any failure, refund the reservation so a
+    # transient upstream error doesn't burn the daily $3 budget.
+    try:
+        result = await image_gen.generate(prompt)
+    except image_gen.ImageGenError as e:
+        await image_gen.refund_reservation(db, user_id)
+        return {"ok": False, "error": e.kind,
+                "message": _clean_error_message(e)}
+    except Exception as e:                                  # noqa: BLE001
+        await image_gen.refund_reservation(db, user_id)
+        return {"ok": False, "error": "generation_failed",
+                "message": _clean_error_message(e)}
+    # Success — record the event for auditing / cost analysis,
+    # mirroring POST /image-generate. Best-effort: an audit-insert
+    # failure must never fail a generation that already succeeded.
+    try:
+        from datetime import datetime, timezone
+        await db["ora_image_events"].insert_one({
+            "user_id":  user_id,
+            "prompt":   result["prompt"],
+            "model":    result["model"],
+            "cost_usd": result["cost_usd"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:                                       # noqa: BLE001
+        pass
+    daily = await image_gen.daily_status(db)
+    month = await image_gen.user_month_status(db, user_id)
+    return {
+        "ok": True,
+        "command": "image",
+        "metric": "Image generated (gpt-image-1, 1024x1024)",
+        "value": {
+            "prompt":      result["prompt"],
+            "model":       result["model"],
+            "cost_usd":    result["cost_usd"],
+            "mime":        result["mime"],
+            "daily_status": daily,
+            "user_month_status": month,
+        },
+        "image_base64": result["image_base64"],
+    }
+
+
 # Dispatch registry — every command in `safety.KNOWN_COMMANDS` MUST
 # have an entry here. The API layer enforces the pairing.
 DISPATCH: dict[str, SlashHandler] = {
@@ -438,15 +539,17 @@ DISPATCH: dict[str, SlashHandler] = {
     "loop-stats":             _loop_stats,
     "rule":                   _rule,
     "help":                   _help,
+    "image":                  _image,
 }
 
 
 async def run_slash_command(cmd: str, args: str, ctx: dict) -> dict:
     """Execute a registered slash-command. Raises KeyError on unknown.
 
-    `ctx` carries the caller's JWT payload — currently unused by any
-    handler (all queries are global) but kept in the signature so
-    future per-user commands slot in without a signature change.
+    `ctx` carries the caller's JWT payload — used by the handlers
+    that need it (`_rule` resolves the caller's active project,
+    `_image` enforces the Founder gate + per-user caps); the pure
+    read-only handlers ignore it.
     """
     handler = DISPATCH[cmd]  # KeyError propagates → API layer 400s
     return await handler(ctx, args)

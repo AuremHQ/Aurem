@@ -827,6 +827,16 @@ def _strip_council_block(extra_sys: str, council_block: str) -> str:
     return extra_sys.replace(council_block + "\n\n", "", 1)
 
 
+# P1 audit fix (2026-11-25, B9) — single source of truth for chat
+# history retention. Iter 329 bumped _persist_turn's write cap -40 →
+# -200 because loop-heavy sessions hit 40 turns in 3-5 runs; the
+# task-followup writer (routers/chat/misc.py) was never bumped and
+# kept silently dropping history at 40. Both writers now use this
+# constant so they cannot drift apart again. ~500B/turn × 200 =
+# ~100KB/session doc, safe under the 16MB Mongo doc limit.
+CHAT_TURNS_RETENTION = 200
+
+
 async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         assistant_reply: str, provider: str,
                         watchdog: Optional[dict] = None,
@@ -948,8 +958,12 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         # 16MB Mongo doc limit at any realistic
                         # usage. Read slice stays at 100 (chat.py
                         # line 2940) so we hold headroom without
-                        # rendering everything.
-                        "$slice": -200,
+                        # rendering everything. B9 (2026-11-25): the
+                        # cap is CHAT_TURNS_RETENTION now — the
+                        # task-followup writer in routers/chat/misc.py
+                        # shares it, so the two can never drift apart
+                        # again.
+                        "$slice": -CHAT_TURNS_RETENTION,
                     }
                 },
             },

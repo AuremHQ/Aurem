@@ -16,9 +16,13 @@ Design (deliberately conservative):
         (`snake_case()` or `CamelCase`)
       * common cron/service filename patterns (`*_cron.py`,
         `*_service.py`)
-  - A claim is "grounded" iff its exact string appears in EITHER the
-    retrieved context (fan-out results) OR the compact-tree/system-
-    highlights blocks that were in the system prompt.
+  - A claim is "grounded" iff its exact string appears in the
+    RETRIEVED context (fan-out results / file contents actually read
+    this turn). Part XII (b3): the compact-tree / system-highlights
+    blocks used to count as grounding too, but a file merely LISTED
+    in the tree was never read — its presence proves existence, not
+    grounding. Tree membership now only keeps a claim out of the
+    FABRICATED bucket; an unretrieved real file is UNVERIFIED.
   - Anything ungrounded → written to Mongo collection
     `ora_hallucination_log` with the query + reply + evidence.
 
@@ -181,8 +185,11 @@ def extract_claims(text: str) -> list[str]:
 def find_ungrounded(claims: Iterable[str],
                      contexts: Iterable[str]) -> list[str]:
     """A claim is grounded iff its exact string is a substring of
-    ANY of the provided contexts (retrieved results + system-prompt
-    tree/highlights). Case-sensitive on purpose — filenames matter.
+    ANY of the provided contexts. Callers must pass ONLY actually-
+    retrieved content here (Part XII b3) — the codebase tree /
+    system highlights are NOT grounding: a file merely listed in
+    the tree was never read. Case-sensitive on purpose — filenames
+    matter.
     """
     joined = "\n".join(c or "" for c in contexts)
     return [c for c in claims if c and c not in joined]
@@ -253,9 +260,12 @@ async def check_and_log(*,
     claims = extract_claims(reply)
     if not claims:
         return {"claims": [], "ungrounded": [], "logged": False}
+    # Part XII (b3): grounding is retrieved context ONLY. The tree
+    # and highlights are still logged in `contexts_seen` below, but
+    # they no longer count as evidence a claim was verified.
     ungrounded = find_ungrounded(
         claims,
-        [retrieved_context, codebase_tree, system_highlights],
+        [retrieved_context],
     )
     if not ungrounded:
         return {"claims": claims, "ungrounded": [], "logged": False}
@@ -637,7 +647,9 @@ def classify_claims(claims: Iterable[str], *, canonical: dict,
                     the canonical index and wasn't typed by the user
                     → hard flag (user-facing warning).
       UNVERIFIED  — path exists in the repo but wasn't retrieved this
-                    turn (no tree/BM25//read) → soft flag, log-only.
+                    turn (not in the retrieved context) → soft flag,
+                    log-only. Tree membership alone does NOT ground a
+                    claim (Part XII b3).
     Symbol claims (backticked names) are NEVER hard-flagged — too
     noisy — they go to UNVERIFIED at worst.
 
@@ -650,7 +662,6 @@ def classify_claims(claims: Iterable[str], *, canonical: dict,
     joined = "\n".join(c or "" for c in (turn_contexts or []))
     q = user_query or ""
     paths: set = canonical.get("paths") or set()
-    basenames: set = canonical.get("basenames") or set()
     defs: set = canonical.get("defs") or set()
     fabricated: list[str] = []
     unverified: list[str] = []
@@ -661,8 +672,14 @@ def classify_claims(claims: Iterable[str], *, canonical: dict,
             continue  # user typed it → they may discuss it freely
         if c.endswith(_PATH_EXTS):
             n = _normalize_path(c)
-            base = n.rsplit("/", 1)[-1]
-            exists = (n in paths or base in basenames
+            # Part XII (b4): existence requires the FULL normalised
+            # path (or a suffix match against a real path). The old
+            # `base in basenames` disjunct let `fake/dir/
+            # grounding_check.py` evade the FABRICATED flag by
+            # borrowing the basename of a real file in a different
+            # directory. A bare filename (`output_guard.py`) still
+            # resolves via the suffix match below.
+            exists = (n in paths
                       or any(p.endswith("/" + n) for p in paths))
             if not exists:
                 if c not in fab_seen:
@@ -710,24 +727,32 @@ async def run_post_response_check(*,
             logger.warning("canonical index unavailable: %r", e)
             canonical = {}
         if claims and canonical.get("paths"):
+            # Part XII (b3): only the RETRIEVED context counts as
+            # grounding. codebase_tree / system_highlights are still
+            # passed through for logging (contexts_seen below), but
+            # a claim that appears only in the tree is UNVERIFIED,
+            # not grounded.
             cls = classify_claims(
                 claims, canonical=canonical, user_query=query,
-                turn_contexts=[retrieved_context, codebase_tree,
-                               system_highlights],
+                turn_contexts=[retrieved_context],
             )
         else:
             cls = {"fabricated": [], "unverified": []}
         # Iter 269 P2a — line-number claims are UNVERIFIED unless the
-        # file's content was actually retrieved this turn.
-        joined_ctx = "\n".join(x or "" for x in (retrieved_context,
-                                                  codebase_tree,
-                                                  system_highlights))
+        # file's content was actually retrieved this turn. Part XII
+        # (b3/b4): the join is retrieved context ONLY, and the check
+        # uses the FULL claimed path, not just its basename — a
+        # `fake/dir/grounding_check.py` line claim must not pass on
+        # the real file's basename appearing in retrieved output.
+        joined_ctx = retrieved_context or ""
         for fname, line in line_claims:
             base = fname.rsplit("/", 1)[-1]
             if base in (query or ""):
                 continue
             tag = f"{fname}:L{line}"
-            if base not in joined_ctx and tag not in cls["unverified"]:
+            if (fname not in joined_ctx
+                    and _normalize_path(fname) not in joined_ctx
+                    and tag not in cls["unverified"]):
                 cls["unverified"].append(tag)
         # Iter 269 P2a — invented slash-commands are HARD fabrications
         # (deterministic: KNOWN_COMMANDS lookup, zero cost).

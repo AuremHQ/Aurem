@@ -30,6 +30,12 @@ _VAGUE_TASK_PATTERNS = [
     re.compile(r"^improve( the)? (site|app|code)\.?$"),
 ]
 _FILE_PATH_RE = re.compile(r"[\w./-]+\.(jsx?|tsx?|py|css|json|md|html)\b")
+# A quote only counts as "the task names something specific" when it
+# OPENS AND CLOSES around real content. Part XII (b1): the old test
+# (`"'" in t`) treated ANY apostrophe as a quote, so every
+# contraction/possessive ("don't fix it", "it's broken") sailed
+# through the gate that "fix it" is stopped by.
+_QUOTED_SPAN_RE = re.compile(r'"[^"]+"|\'[^\']+\'|`[^`]+`')
 
 CLARIFICATION_MESSAGE = (
     "That's a bit broad for me to act on safely — could you name a "
@@ -44,7 +50,7 @@ def is_ambiguous_task(task_text: str) -> bool:
     t = (task_text or "").strip().lower()
     if not t:
         return True
-    if _FILE_PATH_RE.search(t) or '"' in t or "'" in t or "`" in t:
+    if _FILE_PATH_RE.search(t) or _QUOTED_SPAN_RE.search(t):
         return False
     if any(p.match(t) for p in _VAGUE_TASK_PATTERNS):
         return True

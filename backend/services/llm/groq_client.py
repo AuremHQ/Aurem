@@ -107,10 +107,12 @@ async def _call_groq(
     key = _groq_key()
     if not key:
         raise RuntimeError("GROQ_API_KEY not set — emergency fallback unavailable")
-    # Imported lazily so deploys without groq installed don't crash at
-    # module import time.
-    from groq import AsyncGroq
-    client = AsyncGroq(api_key=key, timeout=float(os.getenv("GROQ_TIMEOUT_S", "30.0")))
+    # P1/L3 — shared pooled client (was: a fresh AsyncGroq per call).
+    # Lazy import preserved (deploys without groq installed still
+    # import this module); the client itself is cached in
+    # services.llm._http and NEVER closed here.
+    from services.llm._http import get_shared_groq_client
+    client = get_shared_groq_client(key, timeout=float(os.getenv("GROQ_TIMEOUT_S", "30.0")))
     # Iter 212m-50 — Groq-only house rules. Prepend the markdown rules
     # to the caller-supplied system prompt so the fallback maintains
     # ORA's voice, never breaks character, and refuses destructive ops

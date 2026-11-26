@@ -46,13 +46,16 @@ _FILE_PATH = re.compile(
     """,
     re.VERBOSE,
 )
-_VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
+_VERSION = re.compile(r"\bv?\d+\.\d+\.\d+\b")  # Part XII (b2): the
+# optional `v` prefix matters — the old `\b\d+...` never matched
+# `v9.9.9` at all (the `v` kills the word boundary), so the most
+# common version spelling in prose escaped the guard entirely.
 _COUNT = re.compile(
     r"\b\d{2,4}\+?\s*(?:packages?|dependencies|modules|files|lines)\b",
     re.IGNORECASE,
 )
 
-# ─── Fenced code blocks are quoted CONTENT, not citation claims ──────
+# ─── Fenced code blocks: quoted CONTENT vs model-authored claims ─
 # 2026-02 — confirmed incident: a response that legitimately read a
 # file (e.g. `.../refresh-skills-plugin.security.test.js`, a real
 # `read_repo_file` call) quoted that file's own source back to the
@@ -64,15 +67,41 @@ _COUNT = re.compile(
 # path — which obviously isn't one — got a miss, and the rewritten
 # answer dutifully (and correctly, given what it was told) reported
 # "FILE NOT FOUND: ../../refresh-skills-plugin.js", making a fully
-# grounded, successful investigation look broken. A genuine "this path
-# exists / needs checking" claim is always made in PROSE around a
-# fence, never inside the quoted source itself — so claim extraction
-# must run on prose only, with fenced blocks stripped first.
+# grounded, successful investigation look broken.
+#
+# Part XII (b1): the old fix — stripping ALL fenced blocks before
+# scanning — went too far the other way: a hallucinated path/count/
+# version inside a fenced block was never extracted and therefore
+# never verified. A genuine "this path exists / needs checking" claim
+# can be made inside a fence the model authored itself. So claim
+# extraction now scans BOTH prose and fenced content, and the 2026-02
+# incident is preserved narrowly instead: paths inside fences that
+# are RELATIVE import specifiers (starting with `.`/`..`, e.g.
+# `../../x.js`, `./y.py`) are still exempt — those are quoted-source
+# syntax, not citation claims. A bare `src/fake_module.py` inside a
+# fence IS a claim and is now checked like any prose claim.
 _CODE_FENCE = re.compile(r"```.*?```", re.DOTALL)
 
 
 def _strip_code_fences(text: str) -> str:
     return _CODE_FENCE.sub(" ", text or "")
+
+
+def _extract_fenced_claims(text: str) -> dict[str, list[str]]:
+    """Claims found inside fenced code blocks. Paths that are
+    relative import specifiers (start with `.`) are exempt — see
+    the 2026-02 note above. Versions/counts inside fences are
+    claims like any other."""
+    if not text:
+        return {"paths": [], "versions": [], "counts": []}
+    fenced = " ".join(m.group(0) for m in _CODE_FENCE.finditer(text))
+    if not fenced:
+        return {"paths": [], "versions": [], "counts": []}
+    paths = sorted({p for p in _FILE_PATH.findall(fenced)
+                    if not p.startswith(".")})
+    versions = sorted(set(_VERSION.findall(fenced)))
+    counts = sorted(set(_COUNT.findall(fenced)))
+    return {"paths": paths, "versions": versions, "counts": counts}
 
 # ─── Part B2 — "verified via X" tool-name claims ─────────────────────
 # Confirmed incident class: a response states a specific TOOL was used
@@ -100,14 +129,20 @@ def _extract_tool_claims(text: str) -> list[str]:
 
 def _extract_claims(text: str) -> dict[str, list[str]]:
     """Return distinct file paths / versions / counts mentioned in `text`,
-    excluding anything inside fenced code blocks (quoted file content,
-    not a citation claim — see `_strip_code_fences`)."""
+    in prose AND inside fenced code blocks (Part XII b1 — a fenced
+    `src/fake_module.py` is a claim too). Relative import specifiers
+    inside fences (`../../x.js`) stay exempt — see `_strip_code_fences`
+    note / `_extract_fenced_claims`."""
     if not text:
         return {"paths": [], "versions": [], "counts": []}
     prose    = _strip_code_fences(text)
     paths    = sorted(set(_FILE_PATH.findall(prose)))
     versions = sorted(set(_VERSION.findall(prose)))
     counts   = sorted(set(_COUNT.findall(prose)))
+    fenced = _extract_fenced_claims(text)
+    paths    = sorted(set(paths) | set(fenced["paths"]))
+    versions = sorted(set(versions) | set(fenced["versions"]))
+    counts   = sorted(set(counts) | set(fenced["counts"]))
     return {"paths": paths, "versions": versions, "counts": counts}
 
 
@@ -171,8 +206,12 @@ class CitationGuard:
             }
 
         `versions` and `counts` cannot be verified by file path alone,
-        so we only block on `paths`. Versions/counts are surfaced as a
-        weak signal in the audit log.
+        so a version/count claim with NO file read at all this turn
+        blocks (there is zero evidence behind the number), while a
+        version/count claim made after a read is surfaced as a weak
+        signal in the report — but ALWAYS reported, never suppressed
+        (Part XII b2: the old `if not read else []` silenced ALL
+        version/count reporting the moment any file was read).
         """
         claims = _extract_claims(response_text)
         read   = _read_paths_this_turn(tool_calls)
@@ -190,11 +229,22 @@ class CitationGuard:
         called_tools = get_turn_tool_records(list(tool_calls or []))
         unverified_tool_claims = [t for t in claimed_tools if t not in called_tools]
 
+        # Part XII (b2): unverified versions/counts are ALWAYS
+        # reported, even when files were read this turn. They block
+        # the pass only when NOTHING was read at all — with no tool
+        # evidence behind the number, the response must be rewritten
+        # (drop/hedge the number). After a read they stay a weak
+        # signal: reported, not blocking (a read file may well
+        # contain the number; this guard has no content evidence to
+        # judge that either way).
+        unverified_versions = claims["versions"]
+        unverified_counts = claims["counts"]
+        numbers_block = bool((unverified_versions or unverified_counts) and not read)
         return {
-            "pass":                  len(unverified_paths) == 0 and len(unverified_tool_claims) == 0,
+            "pass":                  len(unverified_paths) == 0 and len(unverified_tool_claims) == 0 and not numbers_block,
             "unverified_paths":      unverified_paths,
-            "unverified_versions":   claims["versions"] if not read else [],
-            "unverified_counts":     claims["counts"]   if not read else [],
+            "unverified_versions":   unverified_versions,
+            "unverified_counts":     unverified_counts,
             "unverified_tool_claims": unverified_tool_claims,
             "claims":                claims,
             "read_paths":            sorted(read),
@@ -251,6 +301,20 @@ class CitationGuard:
         ]
         tool_claims = report.get("unverified_tool_claims") or []
         header_lines = []
+        # Part XII (b2): when the block was caused (even partly) by
+        # unverified version/count numbers, tell the rewrite to drop
+        # or hedge them — otherwise enforce() would re-run the LLM
+        # with no instruction about the numbers and they would sail
+        # through into the rewritten answer unchanged.
+        unverified_numbers = ((report.get("unverified_versions") or [])
+                              + (report.get("unverified_counts") or []))
+        if unverified_numbers:
+            header_lines.append(
+                "Your previous draft stated version/count numbers "
+                f"({', '.join(unverified_numbers)}) that no tool call "
+                "this turn verified. DROP those numbers or explicitly "
+                "mark them unverified — do not restate them as fact."
+            )
         if fetched:
             header_lines.append(
                 "Your previous draft referenced files you did not read. "

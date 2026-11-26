@@ -256,17 +256,38 @@ async def _generate_one_inner(
     # JSON is malformed, op doesn't apply cleanly, or the request isn't
     # trivial in the first place), we transparently fall through to
     # the existing full-rewrite path. Zero regression risk.
+    #
+    # P1 L5 — `surgical_ran` tracks whether the surgical LLM call
+    # actually COMPLETED (not merely "was attempted"). When it did, it
+    # already read the whole file + task once — the diagnose-first
+    # LLM pass below would re-read the same inputs for a 20-line
+    # pointer the rewrite prompt already contains in full, so it is
+    # skipped (see the localize block). A surgical call that FAILS
+    # verifies nothing, so it does NOT set the flag and localize
+    # still runs; a non-trivial request makes no surgical call at
+    # all, so localize still runs there too. Worst case drops from 3
+    # LLM calls/file (surgical + localize + rewrite) to 2; a surgical
+    # success stays 1 call (early return below, unchanged).
+    surgical_ran = False
     if current:  # Skip for new files — full rewrite is the right path.
         try:
             from services.minimal_edit import try_minimal_edit
+            _surgical_completed: list = []
+
+            async def _surgical_llm(*args, **kwargs):
+                res = await call_llm_with_meta(*args, **kwargs)
+                _surgical_completed.append(True)
+                return res
+
             surgical = await try_minimal_edit(
                 user_message=user_message,
                 plan=plan,
                 path=path,
                 current=current,
                 user_id=user_id,
-                call_llm_with_meta=call_llm_with_meta,
+                call_llm_with_meta=_surgical_llm,
             )
+            surgical_ran = bool(_surgical_completed)
             if surgical:
                 logger.info(
                     "[execute] %d/%d SURGICAL EDIT for %s "
@@ -285,22 +306,35 @@ async def _generate_one_inner(
 
     # Iter 212m-118 — DIAGNOSE-FIRST. Cheap "where exactly?" pass before
     # the rewrite. Best-effort; None on failure → full-file rewrite path.
+    # P1 L5 — SKIPPED when the surgical LLM call already ran above
+    # (`surgical_ran`): the first call already verified the request
+    # against the full file, so this second pass is a redundant
+    # re-verification of the same inputs. The rewrite prompt below
+    # already carries the entire file + plan, so the rewrite model can
+    # locate the target itself. Non-trivial requests (surgical never
+    # ran) still get the localize pass, unchanged.
     localization_block = ""
-    try:
-        loc = await _localize_change_target(
-            path=path, current=current, plan=plan,
-            user_message=user_message, user_id=user_id,
-            call_llm_with_meta=call_llm_with_meta,
+    if surgical_ran:
+        logger.debug(
+            "[execute] skipping diagnose-first localize for %s — "
+            "surgical LLM call already ran", path,
         )
-        if loc and loc.get("has_localization"):
-            localization_block = loc["context_block"]
-            logger.info(
-                "[execute] localized %s → fn=%s line=%d (lines %d..%d)",
-                path, loc["function"], loc["line"],
-                loc["snippet_start"], loc["snippet_end"],
+    else:
+        try:
+            loc = await _localize_change_target(
+                path=path, current=current, plan=plan,
+                user_message=user_message, user_id=user_id,
+                call_llm_with_meta=call_llm_with_meta,
             )
-    except Exception as e:                              # noqa: BLE001
-        logger.debug("[execute] diagnose-first skipped for %s: %r", path, e)
+            if loc and loc.get("has_localization"):
+                localization_block = loc["context_block"]
+                logger.info(
+                    "[execute] localized %s → fn=%s line=%d (lines %d..%d)",
+                    path, loc["function"], loc["line"],
+                    loc["snippet_start"], loc["snippet_end"],
+                )
+        except Exception as e:                              # noqa: BLE001
+            logger.debug("[execute] diagnose-first skipped for %s: %r", path, e)
 
     sys_msg = (
         "You are ORA, an AI engineer. The user gave a task and an "

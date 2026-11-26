@@ -40,18 +40,34 @@ from typing import Optional
 # parent task reads from. Plain ContextVar.set() in a child task
 # is invisible to the parent because each task gets its own context
 # copy — so we mutate the dict in place instead.
+#
+# Part XII (c1): the ContextVar default used to be ONE dict object
+# created at import time (`default=_new_provenance_slot()`), and
+# `_set_last_provider` mutated it in place — so the default itself
+# was shared by every context that never called `set()`: request B
+# could report "served by Groq" for work request A did. The default
+# is now None and a slot is created-and-installed lazily per context
+# (see `_set_last_provider`); the parent→child sharing above still
+# works because `reset_last_provider()` installs a fresh dict in the
+# request's context BEFORE children are spawned, and children
+# inherit that same dict object by reference.
 def _new_provenance_slot() -> dict:
     return {"provider": "openrouter", "model": "", "is_emergency": False}
 
 
-_last_provider_ctx: ContextVar[dict] = ContextVar(
+_last_provider_ctx: ContextVar[dict | None] = ContextVar(
     "aurem_last_llm_provider",
-    default=_new_provenance_slot(),
+    default=None,
 )
 
 
 def _set_last_provider(provider: str, model: str) -> None:
     slot = _last_provider_ctx.get()
+    if slot is None:
+        # No slot in this context yet — install a fresh one owned by
+        # this context instead of mutating a shared default.
+        slot = _new_provenance_slot()
+        _last_provider_ctx.set(slot)
     slot["provider"]     = provider
     slot["model"]        = model
     slot["is_emergency"] = (provider == "groq")
@@ -62,8 +78,12 @@ def get_last_provider() -> dict:
     Shape: {"provider": "openrouter"|"groq", "model": "<slug>",
     "is_emergency": True iff served by the Groq emergency fallback}.
     Reset per-request via the contextvar so concurrent users never
-    cross-pollute."""
-    return dict(_last_provider_ctx.get())
+    cross-pollute. A context that never set provenance gets a fresh
+    default-valued dict (never a shared mutable object)."""
+    slot = _last_provider_ctx.get()
+    if slot is None:
+        return _new_provenance_slot()
+    return dict(slot)
 
 
 def reset_last_provider() -> None:
