@@ -31,6 +31,15 @@ export default function RollbackConfirmModal({
   shortLabel,     // "shipped commit abc1234" or "shipped loop 5f7a8..."
   onConfirm,
   onCancel,
+  // Part XIII · 1 — drift-acknowledge second confirm. When the
+  // backend answered rollback_status "drift_detected", the caller
+  // passes `drift` = { branch, expected, current, detail } and the
+  // modal becomes the explicit "branch has moved — acknowledge drift
+  // and roll back anyway?" step instead of the plain confirm. The
+  // confirm button then resends with acknowledge_drift: true (the
+  // caller owns the resend — this modal only surfaces the choice).
+  drift = null,   // null = plain first confirm; object = drift second confirm
+  confirmLabel,   // override for the confirm button ("Roll back anyway")
 }) {
   const confirmBtnRef = useRef(null);
   const modalRef = useRef(null);
@@ -109,6 +118,33 @@ export default function RollbackConfirmModal({
           </strong>
         </div>
 
+        {drift ? (
+          <div data-testid="rollback-confirm-drift-detail" style={{
+            fontSize: 12, color: "#c2c9d6", lineHeight: 1.6,
+          }}>
+            <div style={{ color: "#fbbf24", fontWeight: 700, marginBottom: 6 }}>
+              Branch has moved — acknowledge drift and roll back anyway?
+            </div>
+            <div>
+              {drift.detail
+                || "The branch changed since this fix was applied. "
+                + "Rolling back now reverts the shipped commit on top of "
+                + "the moved branch."}
+            </div>
+            {(drift.branch || drift.expected || drift.current) && (
+              <div style={{
+                marginTop: 8, padding: "8px 10px",
+                background: "rgba(0,0,0,0.35)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 6, fontSize: 11,
+              }}>
+                {drift.branch && (<div>Branch: <code>{drift.branch}</code></div>)}
+                {drift.expected && (<div>Expected: <code>{String(drift.expected).slice(0, 12)}</code></div>)}
+                {drift.current && (<div>Current: <code>{String(drift.current).slice(0, 12)}</code></div>)}
+              </div>
+            )}
+          </div>
+        ) : (
         <div style={{
           fontSize: 12, color: "#c2c9d6", lineHeight: 1.6,
         }}>
@@ -117,6 +153,7 @@ export default function RollbackConfirmModal({
           history is force-pushed — the original commit stays in the
           log for audit.
         </div>
+        )}
 
         <div style={{
           display: "flex", gap: 8, flexWrap: "wrap",
@@ -142,7 +179,7 @@ export default function RollbackConfirmModal({
             onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}
           >
             <RotateCcw size={12} strokeWidth={2.5} />
-            Rollback
+            {confirmLabel || (drift ? "Roll back anyway" : "Rollback")}
           </button>
           <button
             type="button"

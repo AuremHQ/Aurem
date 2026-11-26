@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import uuid
 
 _JUDGE_SYSTEM = (
@@ -32,6 +31,35 @@ _JUDGE_SYSTEM = (
     "\"unsupported_claims\": [<string>, ...], "
     "\"reasoning\": \"<one-sentence explanation>\"}"
 )
+
+
+def _extract_verdict_json(raw: str) -> dict | None:
+    """Extract the judge's JSON object from `raw` (may be wrapped in
+    prose / markdown fences). Part XII (c2): the old regex
+    `\\{[^{}]*"verdict"[^{}]*\\}` could not cross ANY brace, so a
+    `{`/`}` anywhere in the reasoning (e.g. `"matches {a, b} sets"`)
+    made the whole verdict "unparseable" — a fail-CLOSED loss of
+    verdicts, including faithful ones. `JSONDecoder().raw_decode`
+    parses balanced braces and braces inside strings correctly, so
+    it replaces the regex. Returns the parsed dict, or None when no
+    valid JSON object is present (caller still reports unparseable).
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    # Strip one surrounding fenced block (```json ... ``` or ``` ... ```).
+    if s.startswith("```"):
+        s = s.removeprefix("```json").removeprefix("```").strip()
+        if s.endswith("```"):
+            s = s[: -len("```")].strip()
+    start = s.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(s[start:])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 async def llm_faithfulness_check(output: str,
@@ -104,24 +132,16 @@ async def llm_faithfulness_check(output: str,
     )
 
     # Extract JSON from the raw response (may be wrapped in prose /
-    # markdown fences — be permissive).
-    match = re.search(r"\{[^{}]*\"verdict\"[^{}]*\}", raw, re.DOTALL)
-    if not match:
+    # markdown fences — be permissive). Balanced-brace aware (see
+    # `_extract_verdict_json`); the old `[^{}]*` regex broke on any
+    # `{`/`}` in the reasoning.
+    j = _extract_verdict_json(raw)
+    if j is None:
         return {
             "ok": False,
             "verdict": "unparseable",
             "unsupported_claims": [],
             "reasoning": "judge returned no JSON block",
-            "raw_response": raw,
-        }
-    try:
-        j = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return {
-            "ok": False,
-            "verdict": "unparseable",
-            "unsupported_claims": [],
-            "reasoning": "judge JSON did not parse",
             "raw_response": raw,
         }
 

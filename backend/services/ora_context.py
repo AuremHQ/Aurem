@@ -296,9 +296,15 @@ class ORAContext(BINContext):
 
 
 def path_hits_ora_boundary(candidate: str) -> Optional[str]:
-    """Return the first ORA_SYSTEM_PATHS entry the candidate matches,
-    else None.  Match is prefix + boundary — `/app/backend` matches
-    `/app`, `/app/backend`, `/app/backend/main.py`, but NOT `backend/`.
+    """Return the ORA_SYSTEM_PATHS entry the candidate matches, else
+    None. Match is prefix + boundary — `/app/backend` matches `/app`,
+    `/app/backend`, `/app/backend/main.py`, but NOT `backend/`.
+
+    Longest match wins: ORA_SYSTEM_PATHS is a frozenset (hash order is
+    random per process), and paths overlap (`/app` vs `/app/backend`),
+    so iterating it raw returns whichever prefix the hash order hits
+    first — nondeterministic. Sorting longest-first makes the most
+    specific path win deterministically.
 
     We also scan for ORA_SYSTEM_STRINGS (case-insensitive substring —
     catches `cat /root/.env`, `grep AUREM_MASTER_KEY`, etc.).
@@ -309,8 +315,8 @@ def path_hits_ora_boundary(candidate: str) -> Optional[str]:
     if not cand:
         return None
 
-    # 1) Path prefix / exact match check.
-    for p in ORA_SYSTEM_PATHS:
+    # 1) Path prefix / exact match check — longest first (see docstring).
+    for p in sorted(ORA_SYSTEM_PATHS, key=len, reverse=True):
         # Exact match, or path with a trailing "/" or the whole thing
         # is a token bounded by shell separators (whitespace / | & ;).
         if cand == p or cand.startswith(p + "/"):
@@ -318,7 +324,11 @@ def path_hits_ora_boundary(candidate: str) -> Optional[str]:
         # Also scan the candidate as a shell arg blob — `cat /app/x`
         # contains the token `/app/x` after tokenisation.  Use a
         # simple regex that finds the path as a word boundary.
-        if re.search(rf"(?:^|[\s|&;<>])({re.escape(p)})(?:[\s/|&;<>]|$)", cand):
+        # Part XII (d): the leading class MUST include `=` and `/` —
+        # without `=`, `--file=/app/backend/.env` slipped past (the
+        # char before the path is `=`), and without `/` the
+        # double-slash form `//app/backend/.env` slipped past.
+        if re.search(rf"(?:^|[\s|&;<>=/])({re.escape(p)})(?:[\s/|&;<>]|$)", cand):
             return p
 
     # 2) String allowlist — case-insensitive substring.
@@ -555,23 +565,31 @@ def validate_founder_pod_command(cmd: str) -> tuple[bool, str]:
         return False, f"shell parse error: {e}"
 
     for tok in tokens:
-        if not tok.startswith("/"):
-            continue
-        # Explicit denylist first — blocks even nested reads.
-        for bad in FOUNDER_POD_BLOCKED_PATHS:
-            if tok == bad or tok.startswith(bad + "/"):
-                return False, f"path `{tok}` is on the founder-pod denylist"
-        # Allowlist match.
-        ok = False
-        for good in FOUNDER_POD_ALLOWED_PATHS:
-            if tok == good or tok.startswith(good + "/"):
-                ok = True
-                break
-        if not ok:
-            return False, (
-                f"absolute path `{tok}` is outside the allowed pod "
-                f"paths ({', '.join(FOUNDER_POD_ALLOWED_PATHS)})"
-            )
+        # Part XII (d): a `--flag=/path` token does not start with
+        # `/`, so the old loop skipped it wholesale and the denylist
+        # never saw the path. Check the value after the first `=` as
+        # a path too (e.g. `--file=/app/backend/.env`).
+        candidates = [tok]
+        if "=" in tok:
+            candidates.append(tok.split("=", 1)[1])
+        for cand in candidates:
+            if not cand.startswith("/"):
+                continue
+            # Explicit denylist first — blocks even nested reads.
+            for bad in FOUNDER_POD_BLOCKED_PATHS:
+                if cand == bad or cand.startswith(bad + "/"):
+                    return False, f"path `{cand}` is on the founder-pod denylist"
+            # Allowlist match.
+            ok = False
+            for good in FOUNDER_POD_ALLOWED_PATHS:
+                if cand == good or cand.startswith(good + "/"):
+                    ok = True
+                    break
+            if not ok:
+                return False, (
+                    f"absolute path `{cand}` is outside the allowed pod "
+                    f"paths ({', '.join(FOUNDER_POD_ALLOWED_PATHS)})"
+                )
 
     return True, ""
 

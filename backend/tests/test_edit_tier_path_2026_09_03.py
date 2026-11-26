@@ -98,11 +98,14 @@ def test_transparent_path_still_untouched_for_non_edit_turns():
 
 # ── Backward-compat: default kwarg preserves the 2026-09-02 baseline ─
 def test_default_account_has_pro_true_preserves_original_behavior():
-    """Existing callers that don't pass `account_has_pro` (the
-    original 2026-09-02 signature) keep the exact original
-    unconditional escalation behavior -- baseline
-    test_mode_auto_escalation_2026_09_02.py must stay green unchanged."""
-    assert resolve_model_mode("agentic", "swift") == "pro"
+    """Callers that pass `account_has_pro=True` explicitly keep the
+    original unconditional escalation behavior. 2026-11-25 audit
+    Part IX: the NO-FLAG default is now FAIL-CLOSED (False) — a
+    caller that omits the flag no longer silently escalates a free
+    account to Pro, so the no-flag call stays on Swift here."""
+    assert resolve_model_mode("agentic", "swift",
+                              account_has_pro=True) == "pro"
+    assert resolve_model_mode("agentic", "swift") == "swift"
     assert resolve_model_mode("casual", "swift") == "swift"
     assert resolve_model_mode("agentic", "pro") == "pro"
     assert resolve_model_mode("agentic", "maxx") == "maxx"

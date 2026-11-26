@@ -15,6 +15,14 @@
  * The card is presentational — its job is to make invisible failure
  * data visible. It renders when `open` is true; parent (ChatPanel)
  * decides when to open/close based on the terminal FAILED SSE event.
+ *
+ * Part XIII · 2(c) — "Retry as new loop". A terminal FAILED loop can
+ * never be resurrected (the backend 409s pause-response retry on
+ * terminal loops), so the card offers the one honest way forward: a
+ * button that starts a FRESH loop with the same request. The card
+ * stays presentational — the parent owns the handler via the
+ * `onRetryAsNewLoop` prop and passes the failed loop's original
+ * message in `originalMessage`.
  */
 import React, { useState } from "react";
 import {
@@ -37,6 +45,12 @@ export default function LoopFailureCard({
   failedFiles = [],
   errors = [],
   maxSelfHeals,
+  // Part XIII · 2(c) — "Retry as new loop" wiring. `originalMessage`
+  // is the failed loop's original request; `onRetryAsNewLoop` is the
+  // parent-owned handler (ChatPanel) that starts a fresh loop with
+  // it. No button renders when the parent passes no handler.
+  originalMessage,
+  onRetryAsNewLoop,
 }) {
   const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -243,6 +257,39 @@ export default function LoopFailureCard({
             {phase === "verify"
               ? "Fix manually and re-run, or send a follow-up like: “add the validation right after the existing secret check”."
               : "Read the errors above; then either fix manually or refine your task."}
+          </span>
+        </div>
+      )}
+
+      {/* Part XIII · 2(c) — "Retry as new loop". Terminal loops are
+          never resurrected (backend 409s retry on FAILED); this
+          starts a FRESH loop with the same request instead. */}
+      {onRetryAsNewLoop && (
+        <div style={{
+          display: "flex", gap: 8, alignItems: "center",
+          marginTop: 4,
+        }}>
+          <button
+            type="button"
+            data-testid="loop-failure-retry-new"
+            onClick={() => onRetryAsNewLoop(originalMessage)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "7px 14px",
+              background: "rgba(34,197,94,0.16)",
+              color: "#4ade80",
+              border: "1px solid rgba(34,197,94,0.5)",
+              borderRadius: 8,
+              fontSize: 11.5, fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            ↻ Retry as new loop
+          </button>
+          <span style={{
+            fontSize: 10.5, color: "#8b949e",
+          }}>
+            Starts a fresh loop with the same request — the failed loop stays finished.
           </span>
         </div>
       )}

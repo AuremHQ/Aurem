@@ -20,6 +20,14 @@
  * window. Network timing (`performance.getEntriesByType("resource")`)
  * IS retroactive — the browser already buffers that, no listening
  * window needed for it.
+ *
+ * Part VII fix 4(d) — PRE-CLICK ERRORS ARE NOW CAPTURED ELSEWHERE:
+ * `content-ring-buffer.ts` (injected at document_start) + the
+ * `background.ts` ring buffer hold console errors from page load, and
+ * `popup.ts` merges those buffered errors with this function's live
+ * window before sending. This function itself is unchanged: it is
+ * serialised into the page and cannot read the background buffer, so
+ * the merge happens in the popup, not here.
  */
 export interface CapturedData {
   url: string;

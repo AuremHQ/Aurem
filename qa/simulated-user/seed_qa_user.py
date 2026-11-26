@@ -146,9 +146,17 @@ async def _seed():
         jwt_secret, algorithm="HS256",
     )
 
-    # 5. Mint the probe-token — a random per-run secret written to
-    # the QA env for both the CLI and the backend to share.
-    probe_token = "qa-" + secrets.token_urlsafe(24)
+    # 5. Probe token — REUSE the backend's token when one is already in
+    # the environment. CI sets AUREM_QA_TOKEN at job level BEFORE the
+    # backend boots, so the backend only knows that value; minting a
+    # fresh token here made promptfoo send a token the backend never
+    # saw → 403 invalid_qa_probe_token on EVERY probe call, which is
+    # why the suite could never pass in CI (P1d, 2026-11-25). Locally
+    # the env var is unset, so mint a fresh one as before — run.sh's
+    # local branch writes it into backend/.env and restarts.
+    probe_token = os.environ.get("AUREM_QA_TOKEN") or (
+        "qa-" + secrets.token_urlsafe(24)
+    )
 
     # Report on stdout — run.sh consumes these as env exports.
     print(f"AUREM_QA_TOKEN={probe_token}")

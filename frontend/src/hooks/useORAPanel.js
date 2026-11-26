@@ -63,6 +63,10 @@ export function useORAPanel() {
   const abortRef = useRef(null);
   // Persist one session_id per panel-open so multi-turn context works.
   const sessionIdRef = useRef(null);
+  // P0 audit fix (claim #7) — id of the assistant bubble the
+  // in-flight sendMessage() is streaming into, so stopStream() can
+  // target exactly that bubble by id instead of "the last message".
+  const streamBubbleIdRef = useRef(null);
 
   // Load user's active project on open. Uses api.* so the request
   // automatically carries the logged-in user's Authorization header.
@@ -111,6 +115,13 @@ export function useORAPanel() {
   const openPanel = useCallback(() => {
     setOpen(true);
     sessionIdRef.current = `ora-panel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // P0 audit fix (claim #3, second half) — openPanel() mints a
+    // fresh session id on EVERY open, so the previous open's messages
+    // belong to a dead session. Purge them (fresh welcome) instead
+    // of showing a dead conversation under a brand-new session.
+    // (loadProject() below is still called unconditionally — that
+    // half of the paper's claim was wrong; do not "fix" it.)
+    setMessages([{ role: "assistant", content: buildWelcomeMessage() }]);
     // Iter 212m-190 — synchronously seed projectId from localStorage
     // BEFORE the async /cto/projects/list fetch resolves. This guarantees
     // the very first message from the user goes with a real project_id
@@ -144,10 +155,34 @@ export function useORAPanel() {
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || busy) return;
 
+    // P0 audit fix (claim #7) — per-turn bubble id so the stream
+    // handlers below update THIS turn's bubble by id, never
+    // positionally (copy[copy.length - 1]): a late frame used to
+    // land on whatever message was last.
+    const bubbleId = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `ora-panel-bubble-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    streamBubbleIdRef.current = bubbleId;
+    // P0 audit fix (claim #7) — UUID-matched bubble update. A
+    // missing bubble (messages purged by a panel reopen) or a
+    // finished / non-assistant target leaves state untouched, so a
+    // late frame can never overwrite another turn's message.
+    const updateBubble = (patch) => {
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m && m.id === bubbleId);
+        if (idx < 0) return prev;
+        const target = prev[idx];
+        if (target.role !== "assistant" || !target.streaming) return prev;
+        const copy = prev.slice();
+        copy[idx] = patch(target);
+        return copy;
+      });
+    };
+
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setBusy(true);
     setMessages((prev) => [...prev, {
-      role: "assistant", content: "", streaming: true,
+      id: bubbleId, role: "assistant", content: "", streaming: true,
     }]);
 
     const controller = new AbortController();
@@ -206,46 +241,34 @@ export function useORAPanel() {
             const data = JSON.parse(line.slice(6));
             if (data.token) {
               assistantText += data.token;
-              setMessages((prev) => {
-                const copy = [...prev];
-                const last = copy[copy.length - 1];
-                if (last?.role === "assistant") {
-                  copy[copy.length - 1] = {
-                    ...last, content: assistantText, streaming: true,
-                  };
-                }
-                return copy;
-              });
+              updateBubble((last) => ({
+                ...last, content: assistantText, streaming: true,
+              }));
             }
             if (data.done) {
-              setMessages((prev) => {
-                const copy = [...prev];
-                const last = copy[copy.length - 1];
-                if (last?.role === "assistant") {
-                  copy[copy.length - 1] = { ...last, streaming: false };
-                }
-                return copy;
-              });
+              updateBubble((last) => ({ ...last, streaming: false }));
             }
           } catch (_) { /* skip malformed frame */ }
         }
       }
     } catch (e) {
       if (e.name !== "AbortError") {
-        setMessages((prev) => {
-          const copy = [...prev];
-          copy[copy.length - 1] = {
-            role: "assistant",
-            content: e.message || "Something went wrong. Please try again.",
-            streaming: false,
-            error: true,
-          };
-          return copy;
-        });
+        // P0 audit fix (claim #7) — the old code overwrote the last
+        // message UNCONDITIONALLY with the error text (no guard at
+        // all). Id-match + streaming guard: a purged or finished
+        // bubble never gets an error stamped onto another turn.
+        updateBubble(() => ({
+          id: bubbleId,
+          role: "assistant",
+          content: e.message || "Something went wrong. Please try again.",
+          streaming: false,
+          error: true,
+        }));
       }
     } finally {
       setBusy(false);
       abortRef.current = null;
+      streamBubbleIdRef.current = null;
     }
   }, [busy, projectId]);
 
@@ -255,17 +278,25 @@ export function useORAPanel() {
       abortRef.current = null;
     }
     setBusy(false);
+    // P0 audit fix (claim #7) — stop exactly the bubble the
+    // in-flight send is streaming into (by its per-turn id), never
+    // "the last message". No in-flight bubble (already done, or
+    // messages purged by a reopen) means nothing to stop.
+    const bubbleId = streamBubbleIdRef.current;
+    if (!bubbleId) return;
+    streamBubbleIdRef.current = null;
     setMessages((prev) => {
-      const copy = [...prev];
-      const last = copy[copy.length - 1];
-      if (last?.streaming) {
-        copy[copy.length - 1] = {
-          ...last,
-          streaming: false,
-          stopped: true,
-          content: last.content || "⏹ Stopped",
-        };
-      }
+      const idx = prev.findIndex((m) => m && m.id === bubbleId);
+      if (idx < 0) return prev;
+      const last = prev[idx];
+      if (!last.streaming) return prev;
+      const copy = prev.slice();
+      copy[idx] = {
+        ...last,
+        streaming: false,
+        stopped: true,
+        content: last.content || "⏹ Stopped",
+      };
       return copy;
     });
   }, []);

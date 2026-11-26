@@ -20,9 +20,11 @@ Pure httpx — no new SDKs added.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+import time
 from typing import Any, Optional
 
 import httpx
@@ -40,6 +42,43 @@ FIRECRAWL_SCRAPE_TIMEOUT = 60.0
 FIRECRAWL_CRAWL_POLL_MAX = 90.0   # total seconds we'll wait for /crawl
 
 URL_RE = re.compile(r"https?://[^\s\"'<>]+")
+
+
+# 2026-11-25 — ORA audit Part IX D(b)/D(d): arg parsing + JSON parsing
+# helpers. LLM-supplied args arrive as untyped JSON: a `null` query,
+# an int where a string belongs, or "abc" where an int belongs used
+# to raise OUTSIDE the try blocks (AttributeError/ValueError), and
+# `r.json()` on a non-JSON 200 body raised JSONDecodeError — both
+# violating this module's "never crash, never raise" contract.
+def _safe_str(value: Any, default: str = "") -> str:
+    """str value, stripped — "" for None/non-str (never raises)."""
+    return value.strip() if isinstance(value, str) else default
+
+
+def _safe_int(value: Any, default: int, lo: int, hi: int) -> int:
+    """int(value) clamped to [lo, hi] — `default` on TypeError /
+    ValueError (e.g. "abc", "5.5", ["x"])."""
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(n, hi))
+
+
+def _safe_json(r: Any, vendor: str) -> tuple[Optional[dict], Optional[dict]]:
+    """Parse an httpx response body as a JSON OBJECT. Returns
+    (data, None) on success, (None, error_dict) on a non-JSON body
+    or a non-object body (e.g. a JSON list — the old code then
+    crashed on data.get). Never raises."""
+    try:
+        data = r.json()
+    except ValueError:
+        return None, {"ok": False,
+                      "error": f"{vendor} returned a non-JSON response"}
+    if not isinstance(data, dict):
+        return None, {"ok": False,
+                      "error": f"{vendor} returned a non-JSON-object response"}
+    return data, None
 
 
 # 2026-11-09 — devil's-advocate audit: this used to be a hand-rolled,
@@ -70,11 +109,10 @@ async def web_search(ctx: dict, args: dict) -> dict:
     key = _tavily_key()
     if not key:
         return {"ok": False, "error": "TAVILY_API_KEY not configured on server"}
-    query = (args or {}).get("query", "").strip()
+    query = _safe_str((args or {}).get("query"))
     if not query:
         return {"ok": False, "error": "Missing required arg `query`"}
-    max_results = int((args or {}).get("max_results") or 5)
-    max_results = max(1, min(max_results, 10))
+    max_results = _safe_int((args or {}).get("max_results"), 5, 1, 10)
     search_depth = "advanced" if (args or {}).get("deep") else "basic"
 
     payload = {
@@ -121,9 +159,14 @@ async def web_search(ctx: dict, args: dict) -> dict:
         return {"ok": False, "error": f"Tavily {r.status_code}: {r.text[:300]}"}
     _br.record_success()
 
-    data = r.json() or {}
+    data, _jerr = _safe_json(r, "Tavily")
+    if _jerr:
+        return _jerr
     results = []
-    for row in (data.get("results") or [])[:max_results]:
+    _rows = data.get("results") or []
+    if not isinstance(_rows, list):
+        _rows = []
+    for row in _rows[:max_results]:
         results.append({
             "title": row.get("title") or "",
             "url":   row.get("url") or "",
@@ -200,9 +243,14 @@ async def fetch_url(ctx: dict, args: dict) -> dict:
         return {"ok": False, "error": f"Tavily {r.status_code}: {r.text[:300]}"}
     _br.record_success()
 
-    data = r.json() or {}
+    data, _jerr = _safe_json(r, "Tavily")
+    if _jerr:
+        return _jerr
     out = []
-    for row in (data.get("results") or []):
+    _rows = data.get("results") or []
+    if not isinstance(_rows, list):
+        _rows = []
+    for row in _rows:
         content = (row.get("raw_content") or row.get("content") or "")
         out.append({
             "url":   row.get("url"),
@@ -211,6 +259,8 @@ async def fetch_url(ctx: dict, args: dict) -> dict:
             "truncated": len(content) > 8000,
         })
     failed = data.get("failed_results") or []
+    if not isinstance(failed, list):
+        failed = []
     return {"ok": True, "results": out, "failed": failed, "count": len(out)}
 
 
@@ -220,11 +270,10 @@ async def web_search_and_summarize(ctx: dict, args: dict) -> dict:
     key = _tavily_key()
     if not key:
         return {"ok": False, "error": "TAVILY_API_KEY not configured on server"}
-    query = (args or {}).get("query", "").strip()
+    query = _safe_str((args or {}).get("query"))
     if not query:
         return {"ok": False, "error": "Missing required arg `query`"}
-    max_results = int((args or {}).get("max_results") or 5)
-    max_results = max(1, min(max_results, 8))
+    max_results = _safe_int((args or {}).get("max_results"), 5, 1, 8)
 
     payload = {
         "query": query[:380],
@@ -240,27 +289,44 @@ async def web_search_and_summarize(ctx: dict, args: dict) -> dict:
         "Content-Type": "application/json",
     }
     try:
+        # 2026-11-25 audit Part IX D(c): this Tavily call had NO
+        # circuit breaker (only web_search/fetch_url had one).
+        from services.retry_guard import get_breaker
+        _br = get_breaker("tavily")
+        if not _br.allow():
+            return {"ok": False, "error": "Web search temporarily unavailable "
+                    f"(tavily circuit open — retry in ~{_br.retry_after_s():.0f}s)"}
         async with ext_client(
             "tavily",
             timeout=httpx.Timeout(connect=5.0, read=TAVILY_TIMEOUT, write=5.0, pool=5.0),
         ) as c:
             r = await c.post(f"{TAVILY_BASE}/search", json=payload, headers=headers)
     except httpx.TimeoutException:
+        _br.record_failure("timeout")
         return {"ok": False, "error": "Tavily summarize timed out after 15s"}
     except httpx.RequestError as e:
+        _br.record_failure(repr(e))
         return {"ok": False, "error": f"Tavily summarize network error: {e}"}
 
     if r.status_code == 429:
         return {"ok": False, "error": "Tavily rate-limited (429)"}
     if r.status_code >= 400:
+        if r.status_code >= 500:
+            _br.record_failure(f"tavily_status_{r.status_code}")
         return {"ok": False, "error": f"Tavily {r.status_code}: {r.text[:300]}"}
+    _br.record_success()
 
-    data = r.json() or {}
+    data, _jerr = _safe_json(r, "Tavily")
+    if _jerr:
+        return _jerr
+    _rows = data.get("results") or []
+    if not isinstance(_rows, list):
+        _rows = []
     citations = [{
         "title": row.get("title") or "",
         "url":   row.get("url") or "",
         "snippet": (row.get("content") or "")[:300],
-    } for row in (data.get("results") or [])[:max_results]]
+    } for row in _rows[:max_results] if isinstance(row, dict)]
 
     return {
         "ok": True,
@@ -279,7 +345,7 @@ async def firecrawl_scrape(ctx: dict, args: dict) -> dict:
         return {"ok": False,
                 "error": "FIRECRAWL_API_KEY not configured on server. "
                          "Add it to backend/.env to enable JS-heavy scraping."}
-    url = (args or {}).get("url", "").strip()
+    url = _safe_str((args or {}).get("url"))
     if not url or not url.startswith(("http://", "https://")):
         return {"ok": False, "error": "Missing or invalid `url`"}
     if not is_safe_public_http_url(url):
@@ -288,6 +354,8 @@ async def firecrawl_scrape(ctx: dict, args: dict) -> dict:
     formats = (args or {}).get("formats") or ["markdown"]
     if isinstance(formats, str):
         formats = [formats]
+    elif not isinstance(formats, list):
+        formats = ["markdown"]
     formats = [f for f in formats if f in ("markdown", "html", "screenshot", "links")][:3]
     if not formats:
         formats = ["markdown"]
@@ -298,23 +366,39 @@ async def firecrawl_scrape(ctx: dict, args: dict) -> dict:
         "Content-Type": "application/json",
     }
     try:
+        # 2026-11-25 audit Part IX D(c): Firecrawl had NO circuit
+        # breaker (only Tavily did). Mirror the Tavily pattern.
+        from services.retry_guard import get_breaker
+        _br = get_breaker("firecrawl")
+        if not _br.allow():
+            return {"ok": False, "error": "Firecrawl scrape temporarily unavailable "
+                    f"(firecrawl circuit open — retry in ~{_br.retry_after_s():.0f}s)"}
         async with ext_client(
             "firecrawl",
             timeout=httpx.Timeout(connect=5.0, read=FIRECRAWL_SCRAPE_TIMEOUT, write=5.0, pool=5.0),
         ) as c:
             r = await c.post(f"{FIRECRAWL_BASE}/scrape", json=payload, headers=headers)
     except httpx.TimeoutException:
+        _br.record_failure("timeout")
         return {"ok": False, "error": "Firecrawl scrape timed out after 60s"}
     except httpx.RequestError as e:
+        _br.record_failure(repr(e))
         return {"ok": False, "error": f"Firecrawl scrape network error: {e}"}
 
     if r.status_code == 429:
         return {"ok": False, "error": "Firecrawl rate-limited (429)"}
     if r.status_code >= 400:
+        if r.status_code >= 500:
+            _br.record_failure(f"firecrawl_status_{r.status_code}")
         return {"ok": False, "error": f"Firecrawl {r.status_code}: {r.text[:300]}"}
+    _br.record_success()
 
-    payload_out = r.json() or {}
+    payload_out, _jerr = _safe_json(r, "Firecrawl")
+    if _jerr:
+        return _jerr
     data = payload_out.get("data") or {}
+    if not isinstance(data, dict):
+        data = {}
     md = (data.get("markdown") or "")
     return {
         "ok": bool(payload_out.get("success", True)),
@@ -335,14 +419,13 @@ async def firecrawl_crawl_site(ctx: dict, args: dict) -> dict:
         return {"ok": False,
                 "error": "FIRECRAWL_API_KEY not configured on server. "
                          "Add it to backend/.env to enable site crawling."}
-    url = (args or {}).get("url", "").strip()
+    url = _safe_str((args or {}).get("url"))
     if not url or not url.startswith(("http://", "https://")):
         return {"ok": False, "error": "Missing or invalid `url`"}
     if not is_safe_public_http_url(url):
         return {"ok": False, "error": "URL refused by SSRF guard"}
 
-    limit = int((args or {}).get("limit") or 10)
-    limit = max(1, min(limit, 50))
+    limit = _safe_int((args or {}).get("limit"), 10, 1, 50)
 
     payload = {
         "url": url,
@@ -353,46 +436,86 @@ async def firecrawl_crawl_site(ctx: dict, args: dict) -> dict:
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
+    # 2026-11-25 audit Part IX D(e): the poll budget is a WALL-CLOCK
+    # deadline covering kickoff + every poll request + sleeps. The
+    # old code counted only sleeps, so wall time could reach ~360s
+    # against an advertised 90s cap.
+    _poll_started = time.monotonic()
+    _poll_deadline = _poll_started + FIRECRAWL_CRAWL_POLL_MAX
     try:
+        # 2026-11-25 audit Part IX D(c): Firecrawl had NO circuit
+        # breaker. Mirror the Tavily pattern; the kickoff gate covers
+        # the poll loop below (it shares _br).
+        from services.retry_guard import get_breaker
+        _br = get_breaker("firecrawl")
+        if not _br.allow():
+            return {"ok": False, "error": "Firecrawl crawl temporarily unavailable "
+                    f"(firecrawl circuit open — retry in ~{_br.retry_after_s():.0f}s)"}
         async with ext_client(
             "firecrawl",
             timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
         ) as c:
-            r = await c.post(f"{FIRECRAWL_BASE}/crawl", json=payload, headers=headers)
+            r = await c.post(
+                f"{FIRECRAWL_BASE}/crawl", json=payload, headers=headers,
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=max(1.0, _poll_deadline - time.monotonic()),
+                    write=5.0, pool=5.0),
+            )
     except httpx.RequestError as e:
+        _br.record_failure(repr(e))
         return {"ok": False, "error": f"Firecrawl crawl kickoff failed: {e}"}
 
     if r.status_code >= 400:
+        if r.status_code >= 500:
+            _br.record_failure(f"firecrawl_status_{r.status_code}")
         return {"ok": False, "error": f"Firecrawl {r.status_code}: {r.text[:300]}"}
+    _br.record_success()
 
-    job = r.json() or {}
+    job, _jerr = _safe_json(r, "Firecrawl")
+    if _jerr:
+        return _jerr
     job_id = job.get("id") or job.get("jobId")
     if not job_id:
         return {"ok": False, "error": f"Firecrawl crawl returned no id: {job}"}
 
-    # Poll up to FIRECRAWL_CRAWL_POLL_MAX seconds.
-    elapsed = 0.0
+    # Poll until the wall-clock deadline (not a sleep counter).
     delay = 2.0
     async with ext_client(
         "firecrawl",
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
     ) as c:
-        while elapsed < FIRECRAWL_CRAWL_POLL_MAX:
+        while time.monotonic() < _poll_deadline:
             try:
-                pr = await c.get(f"{FIRECRAWL_BASE}/crawl/{job_id}",
-                                 headers={"Authorization": f"Bearer {key}"})
+                pr = await c.get(
+                    f"{FIRECRAWL_BASE}/crawl/{job_id}",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=httpx.Timeout(
+                        connect=5.0,
+                        read=max(1.0, _poll_deadline - time.monotonic()),
+                        write=5.0, pool=5.0),
+                )
             except httpx.RequestError as e:
+                _br.record_failure(repr(e))
                 return {"ok": False, "error": f"Firecrawl poll network error: {e}",
                         "job_id": job_id}
             if pr.status_code >= 400:
+                if pr.status_code >= 500:
+                    _br.record_failure(f"firecrawl_poll_{pr.status_code}")
                 return {"ok": False,
                         "error": f"Firecrawl poll {pr.status_code}: {pr.text[:300]}",
                         "job_id": job_id}
-            body = pr.json() or {}
+            body, _jerr = _safe_json(pr, "Firecrawl")
+            if _jerr:
+                return {"ok": False, "error": _jerr["error"], "job_id": job_id}
             status = body.get("status")
             if status == "completed":
+                _br.record_success()
                 pages = []
-                for item in (body.get("data") or [])[:limit]:
+                _items = body.get("data") or []
+                if not isinstance(_items, list):
+                    _items = []
+                for item in _items[:limit]:
                     md = (item.get("markdown") or "")
                     pages.append({
                         "url":   (item.get("metadata") or {}).get("sourceURL")
@@ -406,12 +529,16 @@ async def firecrawl_crawl_site(ctx: dict, args: dict) -> dict:
             if status in ("failed", "cancelled"):
                 return {"ok": False, "job_id": job_id,
                         "error": f"Firecrawl crawl {status}"}
-            await asyncio.sleep(delay)
-            elapsed += delay
+            _sleep_left = _poll_deadline - time.monotonic()
+            if _sleep_left <= 0:
+                break
+            await asyncio.sleep(min(delay, _sleep_left))
             delay = min(delay * 1.5, 6.0)
 
+    _elapsed = time.monotonic() - _poll_started
     return {"ok": False, "job_id": job_id,
-            "error": f"Firecrawl crawl still running after {FIRECRAWL_CRAWL_POLL_MAX}s"}
+            "error": (f"Firecrawl crawl still running after {_elapsed:.0f}s "
+                      f"(budget {FIRECRAWL_CRAWL_POLL_MAX:.0f}s)")}
 
 
 # ── Public dispatch tables ────────────────────────────────────────────

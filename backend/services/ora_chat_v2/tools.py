@@ -64,7 +64,7 @@ TOOL_SCHEMAS = [
             "name": {"type": "string"}}, "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "get_recent_loop_failures",
-        "description": "Count + last error class of failed fix-loops in the window.",
+        "description": "True count + per-error-code breakdown of failed fix-loops in the window (newest 20 shown when truncated).",
         "parameters": {"type": "object", "properties": {
             "days": {"type": "integer", "default": 7}}}}},
     {"type": "function", "function": {
@@ -101,14 +101,66 @@ TOOL_SCHEMAS = [
 
 _KNOWN_TOOLS = {s["function"]["name"] for s in TOOL_SCHEMAS}
 
+# Part XIV (a1/a2/a3) — shared `days` validation. The three windowed
+# tools used to do `int(days or 7)` with no type or bounds check:
+# days=10**30 overflowed timedelta in get_alerts, silently widened
+# get_recent_loop_failures to an all-time window (float path), and
+# flowed unvalidated into compute_journey_watch_card (same timedelta
+# overflow downstream); days=-5 queried the future (empty result),
+# days=0 silently became 7 while the return echoed 0, days="abc"
+# raised ValueError, and days=7.9 silently truncated to 7. Reject
+# instead of clamping: a silently narrowed window would lie to the
+# model just as badly as a widened one. Max 365 (a full year) is a
+# plausible admin window; anything larger is a mistake, not a query.
+_MAX_DAYS = 365
+
+
+def _validated_days(days, default: int = 7) -> tuple:
+    """Validate a `days` window arg. Returns (value, None) on success,
+    or (None, error_dict) with {"error": "invalid_days", ...} — the
+    caller returns the error dict as the tool result (never raises,
+    so execute_tool surfaces it instead of an OverflowError)."""
+    if days is None:
+        return default, None
+    if isinstance(days, bool):
+        return None, {"error": "invalid_days",
+                      "detail": "days must be an integer number of days, not a boolean"}
+    if isinstance(days, float):
+        if not days.is_integer():
+            return None, {"error": "invalid_days",
+                          "detail": f"days must be a whole number of days, got {days!r}"}
+        days = int(days)
+    elif isinstance(days, str):
+        s = days.strip()
+        if not s.lstrip("-").isdigit():
+            return None, {"error": "invalid_days",
+                          "detail": f"days must be an integer number of days, got {days!r}"}
+        days = int(s)
+    elif not isinstance(days, int):
+        return None, {"error": "invalid_days",
+                      "detail": f"days must be an integer number of days, got {type(days).__name__}"}
+    if days < 1:
+        return None, {"error": "invalid_days",
+                      "detail": f"days must be >= 1, got {days}"}
+    if days > _MAX_DAYS:
+        return None, {"error": "invalid_days",
+                      "detail": f"days must be <= {_MAX_DAYS}, got {days}"}
+    return days, None
+
 
 async def get_funnel_stats(db, days: int = 7) -> dict:
+    days, err = _validated_days(days)
+    if err is not None:
+        return err
     from services.journey_watch import compute_journey_watch_card
-    return await compute_journey_watch_card(db, period_days=int(days or 7))
+    return await compute_journey_watch_card(db, period_days=days)
 
 
 async def get_alerts(db, days: int = 7) -> dict:
-    since = datetime.now(timezone.utc) - timedelta(days=int(days or 7))
+    days, err = _validated_days(days)
+    if err is not None:
+        return err
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     by_kind: dict[str, int] = {}
     cur = db.health_notifications.find(
         {"created_at_dt": {"$gte": since}}, {"_id": 0, "category": 1, "name": 1})
@@ -121,11 +173,16 @@ async def get_alerts(db, days: int = 7) -> dict:
 
 
 async def get_backlog(db) -> dict:
+    # Part XIV (c2) — the 30-item cap was silent. Report the true
+    # total (count_documents) so the model knows items were cut.
+    total = await db.ora_backlog_items.count_documents({})
     cur = db.ora_backlog_items.find(
         {}, {"_id": 0, "backlog_id": 1, "title": 1, "status": 1, "note": 1,
              "updated_at": 1},
     ).sort("updated_at", -1).limit(30)
-    return {"items": [row async for row in cur]}
+    items = [row async for row in cur]
+    return {"items": items, "total": total,
+            "truncated": total > len(items)}
 
 
 async def get_production_status(db) -> dict:
@@ -147,23 +204,62 @@ async def read_investigation(db, name: str) -> dict:
         return {"error": "invalid_name", "detail": "must be memory/investigation_*.md"}
     path = os.path.join(_INVESTIGATION_DIR, name)
     real = os.path.realpath(path)
-    if not real.startswith(os.path.realpath(_INVESTIGATION_DIR)):
+    # Part XIV (b1) — trailing separator: without it, a sibling dir
+    # such as /app/memory2/... satisfies the prefix check. The name
+    # allowlist above currently blocks every escape input, so this is
+    # defence-in-depth — one future refactor of the name rules must
+    # not silently re-open the traversal.
+    if not real.startswith(os.path.realpath(_INVESTIGATION_DIR) + os.sep):
         return {"error": "invalid_name"}
     if not os.path.isfile(real):
         return {"error": "not_found", "name": name}
+    # Part XIV (b2) — the old f.read(20000) silently dropped the tail
+    # with no signal. Read the first 20,000 chars, then count (not
+    # store) the rest so total_chars is exact without holding a huge
+    # file in memory, and flag the cut.
     with open(real, "r", encoding="utf-8", errors="replace") as f:
         content = f.read(20000)
-    return {"name": name, "content": content}
+        total_chars = len(content)
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            total_chars += len(chunk)
+    truncated = total_chars > len(content)
+    return {"name": name, "content": content,
+            "truncated": truncated, "total_chars": total_chars}
 
 
 async def get_recent_loop_failures(db, days: int = 7) -> dict:
-    since = time.time() - int(days or 7) * 86400
+    days, err = _validated_days(days)
+    if err is not None:
+        return err
+    since = time.time() - days * 86400
+    flt = {"state": "failed", "updated_at": {"$gte": since}}
+    # Part XIV (c3) — `count` used to be len(rows): the capped count
+    # presented as the window total. Report the TRUE window total via
+    # count_documents; the 20-row cap still bounds the payload.
+    total = await db.loop_sessions.count_documents(flt)
     cur = db.loop_sessions.find(
-        {"state": "failed", "updated_at": {"$gte": since}},
+        flt,
         {"_id": 0, "error_code": 1, "updated_at": 1, "loop_id": 1},
     ).sort("updated_at", -1).limit(20)
     rows = [r async for r in cur]
-    return {"days": days, "count": len(rows),
+    # Part XIV (a4) — the old return read only rows[0]'s error_code,
+    # so a model asking "what kinds of failures are happening?" got
+    # one class and no hint others existed. Count every code in the
+    # shown rows. When truncated, by_error_code covers only the newest
+    # 20 (flagged by by_error_code_truncated) — the true total is in
+    # `count`/`total`.
+    by_error_code: dict[str, int] = {}
+    for r in rows:
+        code = r.get("error_code") or "unknown"
+        by_error_code[code] = by_error_code.get(code, 0) + 1
+    truncated = total > len(rows)
+    return {"days": days, "count": total, "total": total,
+            "shown": len(rows), "truncated": truncated,
+            "by_error_code": by_error_code,
+            "by_error_code_truncated": truncated,
             "last_error_class": rows[0].get("error_code") if rows else None}
 
 
@@ -182,7 +278,12 @@ async def get_repo_tree(db) -> dict:
 
 
 async def find_source_files(db, pattern: str) -> dict:
-    return {"pattern": pattern, "matches": await _codebase.find_files(pattern, limit=25)}
+    # Part XIV (c5) — find_files used to silently slice at 25.
+    # Forward the total/truncated flags so the model knows matches
+    # were cut instead of assuming the list is complete.
+    return {"pattern": pattern,
+            **await _codebase.find_files(pattern, limit=25,
+                                         include_total=True)}
 
 
 async def read_source_file(db, path: str) -> dict:
@@ -190,7 +291,10 @@ async def read_source_file(db, path: str) -> dict:
 
 
 async def search_code_defs(db, name: str) -> dict:
-    return {"name": name, "results": await _codebase.search_defs(name, limit=15)}
+    # Part XIV (c7) — search_defs used to silently slice at 15.
+    return {"name": name,
+            **await _codebase.search_defs(name, limit=15,
+                                          include_total=True)}
 
 
 _DISPATCH = {

@@ -124,16 +124,28 @@ def _quality_filter(doc: dict) -> bool:
     if doc.get("low_confidence"):
         return False
     # Mode C (code) — require a pass.
+    # Part XII group 1 (e1) — a missing pass_result used to default
+    # to True, so a mode-C row that was never judged passed the
+    # filter and could be recalled as a "good" example. Fail closed:
+    # no verdict on record means the row is not eligible.
     if doc.get("mode") == "C":
-        return bool(doc.get("pass_result", True))
+        return bool(doc.get("pass_result", False))
     # Modes A/B/D/E (conversational) — accept unless explicitly bad.
     return True
 
 
 def _row_from_log(doc: dict) -> dict:
-    msg = (doc.get("user_message") or "")[:_USER_MSG_CAP]
-    rep = (doc.get("final_output") or "")[:_REPLY_CAP]
-    toks = _tokenize(msg)
+    # Part XII group 1 (e2) — the old code sliced the message to 280
+    # chars BEFORE tokenizing, so terms past char 280 never entered
+    # tf / doc_freq and a long prompt's tail vocabulary was invisible
+    # to retrieval. Tokenize the FULL message first; the 280/600-char
+    # caps now apply only to the strings stored for display in the
+    # few-shot block (prompt budget), never to the indexed terms.
+    full_msg = doc.get("user_message") or ""
+    full_rep = doc.get("final_output") or ""
+    msg = full_msg[:_USER_MSG_CAP]
+    rep = full_rep[:_REPLY_CAP]
+    toks = _tokenize(full_msg)
     # Term frequencies (within this doc).
     tf: dict[str, int] = {}
     for t in toks:
@@ -146,6 +158,7 @@ def _row_from_log(doc: dict) -> dict:
         "project_id": doc.get("project_id"),
         "tf":         tf,
         "n_tokens":   max(1, len(toks)),
+        "truncated":  len(full_msg) > _USER_MSG_CAP or len(full_rep) > _REPLY_CAP,
     }
 
 

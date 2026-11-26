@@ -6,8 +6,15 @@ Mongo-backed conversation state with a rolling-summary sliding window.
 Design:
   - One document per session in `ora_chat_sessions`.
   - Full transcript kept in `messages` (unbounded — for audit/replay).
-  - LLM calls see ONLY the last 6 turns verbatim + a rolling summary
-    of everything before that.
+  - LLM calls see the FULL transcript verbatim while the estimated
+    token count stays under CONTEXT_TOKEN_CEILING (Iter 212m-239
+    token-ceiling design — the old "last 6 turns" rule below is
+    stale and was replaced; see `_tail_start_index`).
+  - Above the ceiling, older turns are collapsed into
+    `rolling_summary` (updated by `maybe_update_summary`) and only
+    the tail (newest turns within TAIL_TOKEN_BUDGET) is sent
+    verbatim. Every message is either folded or in the tail — never
+    in neither (Part XII d1-boundary; see `_tail_start_index`).
   - Summary is COMPUTED ONCE per "generation" (when turn 7 arrives),
     then updated INCREMENTALLY as new turns roll past the window —
     each summarization is a single GLM-5.2 call (cheapest model),
@@ -158,19 +165,72 @@ async def append_message(session_id: str, user_id: str, *,
     return r.matched_count > 0
 
 
-def _estimate_tokens(text: str) -> int:
+def _content_text(content) -> str:
+    """Normalise message content to plain text for token estimation.
+    OpenAI multimodal content is a LIST of parts — len(list) is the
+    PART count, not the text length (2026-11-25 audit Part IX F(c4),
+    same flaw as engine._history_turns). Join the text parts; image
+    parts contribute a fixed token charge instead."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts.append(p.get("text") or "")
+            elif isinstance(p, dict) and p.get("type") in ("image_url", "image"):
+                parts.append("[image]")
+        return "\n".join(parts)
+    return str(content or "")
+
+
+def _estimate_tokens(text) -> int:
     """Conservative char→token estimate. Used to decide when to fold
     older turns into the summary. Never exact — a small over-count is
     fine (triggers summarize a little early); under-count is
-    dangerous (overflows the context window)."""
+    dangerous (overflows the context window). Accepts str or
+    multimodal list content: a list counts its TEXT length plus a
+    fixed ~1000 tokens per image part, never the part count."""
     if not text:
         return 0
+    if isinstance(text, list):
+        n_images = sum(
+            1 for p in text
+            if isinstance(p, dict) and p.get("type") in ("image_url", "image")
+        )
+        return int(len(_content_text(text)) / CHARS_PER_TOKEN) + 1 + 1000 * n_images
     return int(len(text) / CHARS_PER_TOKEN) + 1
 
 
 def _messages_token_estimate(msgs: list[dict]) -> int:
     return sum(_estimate_tokens(m.get("content", "") or "")
                for m in msgs if isinstance(m, dict))
+
+
+def _tail_start_index(llm_form: list[dict]) -> int:
+    """Index where the verbatim tail starts: the longest suffix whose
+    estimated tokens fit in TAIL_TOKEN_BUDGET, always including at
+    least the newest message.
+
+    Part XII (d1-boundary): `build_llm_messages` and
+    `maybe_update_summary` used to compute the tail/frontier with TWO
+    different walks (`>`-break vs `>=`-frontier), so a boundary
+    message could land in NEITHER — e.g. four 34-token messages with
+    a 50-token tail budget: the tail held only `[d]`, the fold held
+    `[a, b]`, and `c` never reached the LLM and was never summarised.
+    Both call sites now share this one definition, so every message
+    is either folded (`index < frontier`) or in the tail, by
+    construction. `summary_up_to` records this same frontier.
+    """
+    tokens = 0
+    start = len(llm_form)
+    for i in range(len(llm_form) - 1, -1, -1):
+        t = _estimate_tokens(llm_form[i].get("content", "") or "")
+        if tokens + t > TAIL_TOKEN_BUDGET and start < len(llm_form):
+            break
+        tokens += t
+        start = i
+    return start
 
 
 # ── Sliding-window prompt builder ───────────────────────────────────
@@ -205,17 +265,11 @@ async def build_llm_messages(session: dict) -> list[dict]:
     if _messages_token_estimate(llm_form) <= CONTEXT_TOKEN_CEILING:
         return llm_form  # full history fits — send everything
 
-    # Over ceiling → prepend summary + walk tail from the newest
-    # backwards until we've used TAIL_TOKEN_BUDGET.
+    # Over ceiling → prepend summary + send the verbatim tail.
+    # The tail boundary comes from `_tail_start_index` — the SAME
+    # definition `maybe_update_summary` folds up to (Part XII d1).
     summary = (session.get("rolling_summary") or "").strip()
-    tail: list[dict] = []
-    tokens = 0
-    for m in reversed(llm_form):
-        t = _estimate_tokens(m["content"])
-        if tokens + t > TAIL_TOKEN_BUDGET and tail:
-            break
-        tail.insert(0, m)
-        tokens += t
+    tail = llm_form[_tail_start_index(llm_form):]
     out: list[dict] = []
     if summary:
         out.append({
@@ -248,16 +302,11 @@ async def maybe_update_summary(session_id: str, user_id: str) -> None:
     if total_tokens <= CONTEXT_TOKEN_CEILING:
         return  # still fits, no summarization needed
 
-    # Find the "frontier" — everything OLDER than the TAIL_TOKEN_BUDGET
-    # window gets folded into the summary. Walk from the newest
-    # backwards until we've reserved TAIL_TOKEN_BUDGET of tail.
-    tail_tokens = 0
-    frontier = len(llm_form)
-    for i in range(len(llm_form) - 1, -1, -1):
-        tail_tokens += _estimate_tokens(llm_form[i]["content"])
-        if tail_tokens >= TAIL_TOKEN_BUDGET:
-            frontier = i
-            break
+    # Find the "frontier" — everything OLDER than the tail window
+    # gets folded into the summary. Same definition as
+    # `build_llm_messages`' tail (Part XII d1): the frontier message
+    # itself is folded, never dropped between fold and tail.
+    frontier = _tail_start_index(llm_form)
 
     up_to = int(doc.get("summary_up_to", 0) or 0)
     if frontier <= up_to:
@@ -273,7 +322,7 @@ async def maybe_update_summary(session_id: str, user_id: str) -> None:
         if not isinstance(m, dict):
             continue
         role = m.get("role", "")
-        content = (m.get("content") or "").strip().replace("\n", " ")
+        content = _content_text(m.get("content")).strip().replace("\n", " ")
         if not content:
             continue
         parts.append(f"{role.upper()}: {content[:1200]}")

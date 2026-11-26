@@ -14,9 +14,18 @@ from __future__ import annotations
 
 async def casual_direct_reply(prompt: str, prior_assistant_text: str | None = None,
                                session_summary: str | None = None,
-                               user_id: str | None = None) -> str:
+                               user_id: str | None = None,
+                               user_tz: str | None = None) -> str:
     """Direct, no-tool LLM reply for casual/clarify tier messages.
     Raises on failure — callers decide the fallback behavior.
+
+    `user_tz` — P0 audit fix (2026-11-25, D1): temporal questions
+    ("what time is it", "what is today's date") route HERE via the
+    intent gateway, but this prompt used to carry no date/time at
+    all, so the model guessed from memory. The caller passes the
+    validated X-Client-TZ value through resolve_pre_llm(); None falls
+    back to ORA_USER_TZ / America/Toronto inside
+    build_runtime_context, exactly like the v2 /message path (#373).
 
     2026-08-25 — Point 4 (Engineering Gap #3, "Unified Mode"): reuses
     the SAME admin-configured advisor persona block Ask Advisor already
@@ -47,6 +56,16 @@ async def casual_direct_reply(prompt: str, prior_assistant_text: str | None = No
         "pipelines, agents, or technical systems. Keep your\n"
         "reply under 2 sentences."
     )
+    # P0 audit fix (2026-11-25, D1) — dynamic clock, REUSED from
+    # services/ora_chat/safety.py::build_runtime_context (the same
+    # helper the v2 /message path appends since #373). No new helper
+    # invented. Fail-open: a clock failure must never break a casual
+    # reply, so a missing block just means the old behaviour.
+    try:
+        from services.ora_chat.safety import build_runtime_context
+        system += "\n\n" + build_runtime_context(user_tz)
+    except Exception:
+        pass
     if prior_assistant_text:
         system += (
             "\n\nYour own immediately-prior message to this user (for "

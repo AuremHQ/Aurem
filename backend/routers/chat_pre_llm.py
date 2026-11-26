@@ -123,6 +123,11 @@ async def resolve_pre_llm(
     intent_probe_text: Optional[str] = None,
     log_ctx: Optional[dict] = None,
     precomputed_required_read_gate: Optional[dict] = _GATE_UNSET,  # type: ignore[assignment]
+    # P0 audit fix (2026-11-25, D1) — validated client timezone
+    # (X-Client-TZ, same _valid_tz whitelist as /message) threaded
+    # through to casual_direct_reply's clock block. None → env /
+    # Toronto fallback inside build_runtime_context.
+    user_tz: Optional[str] = None,
 ) -> PreLLMOutcome:
     """The pre-LLM boundary — checked BEFORE any tool-calling LLM
     call, for both /chat/send and /chat/stream identically.
@@ -347,6 +352,7 @@ async def resolve_pre_llm(
                     body.prompt, prior_assistant_text=prior_turn_text,
                     session_summary=session_summary,
                     user_id=user.get("user_id"),
+                    user_tz=user_tz,
                 )
                 _casual_reply_text = apply_no_false_success_guard(
                     body.prompt or "", _casual_reply_text, prior_fix_signal,

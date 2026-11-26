@@ -35,10 +35,12 @@ from cto_services.auth import require_admin_dep
 from cto_services.db import get_db, require_db
 from services.usage import get_usage
 from services.admin_user_fields import DEV_USER_SAFE_PROJECTION
-# Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
-# (activation funnel, dev_users buckets, etc.). Founders click around
-# the admin panel rapidly; without this every click fires 5+ heavy
-# aggregations against Mongo.
+# Part XV — the 60 s in-process cache this comment described (iter
+# 212m-71) was removed in the Feb 2026 Phase 2 split; the funnel now
+# uses the Mongo-backed SWR cache in services/admin_analytics_cache.py
+# (300 s TTL, bounded staleness — see mongo_swr_cache). The 60 s TTL
+# that still exists lives in services/route_cache.py (HTTP middleware
+# on /admin/council/stats + /admin/mode-telemetry, etc.).
 from services.admin_analytics_cache import (
     mongo_swr_cache,
 )
@@ -1363,13 +1365,16 @@ async def activation_funnel(
     # SWR pattern: persist the last-known-good funnel result in a
     # Mongo doc.  Every read returns it in <50 ms even when stale.
     # When past the 5-minute TTL, a background task refreshes the
-    # doc without blocking the request.  First-ever boot (no doc)
-    # is capped at 4 s — anything slower returns a "warming" skeleton.
+    # doc without blocking the request.  Part XV — staleness is
+    # BOUNDED (max_stale_seconds below): past TTL + grace the stale
+    # doc is never served silently; the read recomputes (capped) or
+    # returns an explicit {"_status": "stale"} marker instead.
     return await mongo_swr_cache(
         key="admin:activation_funnel:v1",
         ttl_seconds=300.0,         # 5 min freshness target
         builder=_compute_activation_funnel,
         hard_timeout=4.0,          # never block the frontend past abort threshold
+        max_stale_seconds=300.0,   # Part XV — one extra TTL of grace, then no silent stale
     )
 
 

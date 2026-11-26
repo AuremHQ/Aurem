@@ -83,11 +83,19 @@ def _gc() -> None:
     for jid in expired:
         _JOBS.pop(jid, None)
     if len(_JOBS) > _MAX_JOBS:
-        closed_sorted = sorted(
-            ((jid, j.get("closed_at") or 0) for jid, j in _JOBS.items()),
+        # Part X fix 1 — evict CLOSED jobs only.  A running job has
+        # closed_at=None → 0, so the old sort over ALL jobs evicted
+        # live jobs first (they sorted before every closed job) and
+        # killed their SSE stream.  If the cache ever holds only
+        # running jobs above the cap (>1000 concurrent — not
+        # realistic for this service) we evict nothing and let the
+        # dict grow past the cap rather than kill a live job.
+        closed_by_age = sorted(
+            ((jid, j["closed_at"]) for jid, j in _JOBS.items()
+             if j.get("closed_at") is not None),
             key=lambda x: x[1],
         )
-        for jid, _ in closed_sorted[: len(_JOBS) - _MAX_JOBS]:
+        for jid, _ in closed_by_age[: len(_JOBS) - _MAX_JOBS]:
             _JOBS.pop(jid, None)
 
 
@@ -113,6 +121,7 @@ async def create_job(*, db, user_id: str, kind: str, total: int = 1,
         "closed_at":  None,
         "queue":      asyncio.Queue(),
         "results":    [],
+        "ledger_failures": [],
         "all_findings":      list(findings),
         "completed_ids":     set(),
         "failed_terminal_ids": set(),
@@ -184,6 +193,26 @@ def emit(job_id: str, phase: str, **payload) -> None:
         j["queue"].put_nowait(event)
     except Exception:
         logger.debug("emit queue put failed job=%s phase=%s", job_id, phase)
+
+
+async def note_ledger_failure(db, job_id: str, finding_id: str,
+                              error: str) -> None:
+    """Part X fix 4 — record a fixed-finding ledger write failure on
+    the job (in-memory + Mongo).  The fix itself already landed on
+    GitHub; without this row the next rescan of the unchanged base
+    branch re-detects the finding and it "resurrects".  Surfacing
+    the failure here (and in get_summary) is what lets the UI warn
+    about it instead of silently showing the fix as undone later.
+    Best-effort: never raises."""
+    entry = {"finding_id": finding_id, "error": (error or "")[:200],
+             "ts": time.time()}
+    j = _JOBS.get(job_id)
+    if j is not None:
+        j.setdefault("ledger_failures", []).append(entry)
+        failures = list(j["ledger_failures"])
+    else:
+        failures = [entry]
+    await _persist(db, job_id, {"ledger_failures": failures})
 
 
 async def persist_event(db, job_id: str) -> None:
@@ -371,6 +400,10 @@ def get_summary(job_id: str) -> Optional[dict]:
         "started_at": j["started_at"],
         "closed_at":  j["closed_at"],
         "results":    j["results"],
+        # Part X fix 4 — ledger write failures recorded here so the
+        # UI can show "fixed on GitHub, ledger write failed — a
+        # rescan may show this again" instead of silence.
+        "ledger_failures": list(j.get("ledger_failures") or []),
         # Iter 212m-179 — align the in-memory shape with the Mongo row
         # so the frontend summary poller sees `status` on EVERY worker.
         "status":     j.get("status")

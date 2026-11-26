@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shlex
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -29,6 +30,86 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/deploy", tags=["AUREM Deploy"])
 
 DEPLOY_TIMEOUT_SECONDS = 8 * 60
+
+
+# ─── Vault / secret encryption — Part XI (1a), 2026-11-26 ──────────
+# Crypto was removed from the codebase on 2026-11-17 and the vault
+# modules (backend/cto_services/crypto.py, backend/services/vault.py)
+# no longer exist, so there is currently NO encryption backend.
+# `save_config` therefore FAILS CLOSED: it refuses to persist any
+# secret until a real vault/encryption backend is wired in. Do NOT
+# "fix" this by storing the secret as-is, and do NOT invent a cipher
+# here — wire a real vault and replace these two hooks with it.
+# Previously `save_config` called an undefined `is_vault_available()`
+# (NameError → live POST /config 500d before reaching the write);
+# the name is now defined here, so the fail-closed 503 below is
+# what callers actually get.
+def is_vault_available() -> bool:
+    """True only when a real vault/encryption backend is configured.
+
+    No vault is configured in this tree, so this returns False.
+    A future vault integration replaces this function (and
+    `encrypt`) with the real backend; tests may monkeypatch both
+    to prove the vault-available path without a real vault.
+    """
+    return False
+
+
+async def encrypt(user_id: str, value: str, kind: str | None = None) -> str:
+    """Encrypt `value` via the configured vault.
+
+    No backend exists yet, so this always raises. `save_config`
+    never reaches it while `is_vault_available()` is False, and
+    any future caller that does must treat the raise as "refuse
+    to store" — never fall back to storing `value` as-is.
+    """
+    raise NotImplementedError(
+        "no vault/encryption backend configured — refusing to store a secret"
+    )
+
+
+# ─── Deploy-command safety — Part XI (1c), 2026-11-26 ─────────────
+# Allowlist validators for the values `_deploy_command` interpolates
+# into a remote shell command. They reject shell metacharacters,
+# whitespace, and newlines outright (a branch/repo/compose value
+# containing `;`, `$()`, backticks, or a newline never passes), so
+# hostile input is refused at save time in `save_config` AND
+# neutralised at run time in `_deploy_command` (which re-checks,
+# for configs written before this fix or via any other writer).
+# `shlex.quote()` at every interpolation site is the second layer:
+# even a value that somehow passes validation is passed to the
+# remote shell as a single quoted word.
+_BRANCH_RE = re.compile(r"[A-Za-z0-9._/-]+")
+_REPO_PATH_RE = re.compile(r"/[A-Za-z0-9._/-]+")
+_COMPOSE_RE = re.compile(r"[A-Za-z0-9._/-]+")
+
+
+def _is_safe_branch(value: str) -> bool:
+    if not value or not _BRANCH_RE.fullmatch(value):
+        return False
+    if value.startswith(("-", ".", "/")) or value.endswith(("/", ".")):
+        return False
+    if ".." in value.split("/"):
+        return False
+    return True
+
+
+def _is_safe_repo_path(value: str) -> bool:
+    if not value or not _REPO_PATH_RE.fullmatch(value):
+        return False
+    if any(part in (".", "..") for part in value.split("/") if part):
+        return False
+    return True
+
+
+def _is_safe_compose_file(value: str) -> bool:
+    if not value or not _COMPOSE_RE.fullmatch(value):
+        return False
+    if value.startswith(("-", ".", "/")):
+        return False
+    if ".." in value.split("/"):
+        return False
+    return True
 
 
 def _now_iso() -> str:
@@ -154,6 +235,12 @@ async def get_config_for_project(project_id: str,
     default or a per-project override."""
     me = await current_dev(authorization)
     db = require_db()
+    # Part XI (1b) — same gap class as delete_config: this endpoint
+    # had auth only and no deploy-read check, so a team member with
+    # no deploy access could read the deploy config. (The secret
+    # itself is still never returned — see `_serialize_cfg`.)
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "read", db=db)
     row = await _find_cfg(db, me["user_id"], project_id)
     return _serialize_cfg(row)
 
@@ -171,6 +258,15 @@ async def save_config(body: DeployConfigBody,
             "msg":  "AUREM_CTO_MASTER_KEY not set on this deployment — "
                     "ask an admin to configure the vault env var.",
         })
+    # Part XI (1c) — reject shell-hostile repo/branch/compose values
+    # at write time, before any secret handling. (Length limits in
+    # DeployConfigBody alone do not stop `;`, `$()`, or newlines.)
+    if not _is_safe_repo_path(body.repo_path.strip()):
+        raise HTTPException(400, "invalid_repo_path")
+    if not _is_safe_branch(body.branch.strip()):
+        raise HTTPException(400, "invalid_branch")
+    if not _is_safe_compose_file(body.compose_file.strip()):
+        raise HTTPException(400, "invalid_compose_file")
     pk = body.private_key.strip()
     # Iter 367 (Item B) — validation branches by target:
     #   ssh/sftp: private_key must be PEM (unchanged from Iter 212m-9)
@@ -191,7 +287,29 @@ async def save_config(body: DeployConfigBody,
         raise HTTPException(
             400, "remote_dir_required_for_ftp",
         )
-    enc = pk  # plaintext — crypto removed 2026-11-17; stored without encryption
+    # Part XI (1a) — fail closed, never plaintext. No vault backend
+    # exists (see `is_vault_available` above), so in production this
+    # point is unreachable today — the 503 above fires first. When a
+    # real vault is wired in, the secret is encrypted here and only
+    # the ciphertext is stored in `private_key_enc`. If encryption
+    # fails, or "encryption" hands the plaintext back (a
+    # misconfigured backend), refuse the write outright.
+    try:
+        enc = await encrypt(me["user_id"], pk, kind=secret_kind)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(501, {
+            "code": "vault_encrypt_unavailable",
+            "msg":  "Vault is configured but encryption failed — "
+                    "secret not stored.",
+        })
+    if not enc or enc == pk:
+        raise HTTPException(501, {
+            "code": "vault_encrypt_unavailable",
+            "msg":  "Vault did not return an encrypted value — "
+                    "secret not stored.",
+        })
     pid = (body.project_id or "").strip() or None
     await db.aurem_cto_deploy_configs.update_one(
         {"user_id": me["user_id"], "project_id": pid},
@@ -222,6 +340,11 @@ async def delete_config(project_id: str = "",
                         authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    # Part XI (1b) — this endpoint had auth only: any authenticated
+    # dev could delete their own deploy config regardless of their
+    # deploy permission. Same write gate as `save_config`.
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "write", db=db)
     pid = project_id.strip() or None
     await db.aurem_cto_deploy_configs.delete_one(
         {"user_id": me["user_id"], "project_id": pid},
@@ -235,46 +358,62 @@ def _deploy_command(cfg: dict, mode: str = "deploy") -> str:
     compose = cfg.get("compose_file", "docker-compose.yml")
     if not repo:
         return "echo 'no repo_path configured' && exit 2"
+    # Part XI (1c) — defence in depth: configs written before the
+    # save-time allowlist (or via any other writer) may still hold
+    # hostile values, so re-check here and refuse to build a command
+    # from them. Every value that does reach the remote shell is
+    # passed through shlex.quote() at every interpolation site, in
+    # all four modes plus the final DEPLOY_HEAD echo — a value is
+    # one quoted shell word, never a second command. (Benign values
+    # — e.g. `main`, `/srv/app`, `docker-compose.yml` — need no
+    # quoting, so the emitted command is byte-identical to before
+    # for every legitimate config.)
+    if not (_is_safe_repo_path(repo) and _is_safe_branch(branch)
+            and _is_safe_compose_file(compose)):
+        return "echo 'bad deploy config' && exit 2"
+    repo_q = shlex.quote(repo)
+    branch_q = shlex.quote(branch)
+    compose_q = shlex.quote(compose)
     if mode == "dry_run":
         # D-35 — safe staging check. Verifies SSH auth, repo access and
         # docker-compose validity WITHOUT pulling code or restarting
         # containers. Used to gate the real-deploy button on production
         # dogfood projects.
         seq = (
-            f"cd {repo} && "
+            f"cd {repo_q} && "
             f"git fetch --all --prune && "
-            f"docker compose -f {compose} config --quiet && "
+            f"docker compose -f {compose_q} config --quiet && "
             f"echo DRY_RUN_OK"
         )
     elif mode == "rollback":
         seq = (
-            f"cd {repo} && "
+            f"cd {repo_q} && "
             f"git reset --hard HEAD~1 && "
-            f"docker compose -f {compose} up -d --remove-orphans"
+            f"docker compose -f {compose_q} up -d --remove-orphans"
         )
     elif mode == "revert_to":
         sha = cfg.get("_revert_sha", "").strip()
         if not re.fullmatch(r"[0-9a-f]{7,64}", sha):
             return "echo 'bad sha' && exit 2"
         seq = (
-            f"cd {repo} && "
+            f"cd {repo_q} && "
             f"git fetch --all --prune && "
             f"git revert --no-edit {sha} && "
-            f"git push origin {branch} && "
-            f"docker compose -f {compose} up -d --build --remove-orphans"
+            f"git push origin {branch_q} && "
+            f"docker compose -f {compose_q} up -d --build --remove-orphans"
         )
     else:
         seq = (
-            f"cd {repo} && "
+            f"cd {repo_q} && "
             f"git fetch --all --prune && "
-            f"git checkout {branch} && "
-            f"git pull --ff-only origin {branch} && "
-            f"docker compose -f {compose} pull && "
-            f"docker compose -f {compose} up -d --remove-orphans --build"
+            f"git checkout {branch_q} && "
+            f"git pull --ff-only origin {branch_q} && "
+            f"docker compose -f {compose_q} pull && "
+            f"docker compose -f {compose_q} up -d --remove-orphans --build"
         )
     return (
         f"set -e; ({seq}) && "
-        f"echo \"DEPLOY_HEAD=$(git -C {repo} rev-parse HEAD)\""
+        f"echo \"DEPLOY_HEAD=$(git -C {repo_q} rev-parse HEAD)\""
     )
 
 
@@ -477,9 +616,16 @@ async def _run_deploy_ftp_or_sftp(
     project_id: str | None = None,
 ) -> None:
     """Iter 367 (Item B) — runs the FTP or SFTP deploy path via
-    services.ftp_ssh_deploy. Decrypts the stored secret (FTP password
-    or SSH private key) and streams progress into the same
-    `aurem_cto_deploy_runs.output` array the SSH path uses."""
+    services.ftp_ssh_deploy. Reads the stored secret (FTP password
+    or SSH private key) as-is and streams progress into the same
+    `aurem_cto_deploy_runs.output` array the SSH path uses.
+
+    NOTE (Part XI, 1a): there is NO decryption step here — rows
+    written before the 2026-11-17 crypto removal hold the secret in
+    plaintext, and no new secret can be saved until a vault backend
+    is wired into `save_config`. When that lands, this read site
+    must decrypt before use; until then it consumes the legacy
+    plaintext rows exactly as the SSH path does."""
     import base64
     db = require_db()
     target = cfg.get("target", "ssh")

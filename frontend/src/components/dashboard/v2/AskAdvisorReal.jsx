@@ -26,6 +26,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { cn } from "./cn";
 import { streamChat, api } from "../../../lib/api";
 import { getActiveProjectId } from "../../TabBar";
+import { useChatSession } from "../../Shell";
 import { Z_ADVISOR_TOGGLE } from "../../../lib/zIndex";
 import { CharCounter } from "../../CharCounter";
 import { preventSmartPunctuation } from "../../../utils/chatTextUtils";
@@ -76,12 +77,24 @@ const CHIPS = [
   { icon: BarChart2,      label: "Token breakdown",      danger: false },
 ];
 
+// P0 audit fix (claim #4) — the opening advisor message, shared by
+// the initial state and the project-change reset below so a switch
+// always lands back on exactly the fresh-panel greeting.
+const INITIAL_MESSAGES = [
+  { id: "m0", role: "advisor",
+    text: "Hi — I'm the ORA Advisor. Ask anything about your repo, "
+          + "failed runs, PRs, or token usage. I'll respond live." },
+];
+
 export default function AskAdvisorReal({ collapsed = false, onCollapse, projectId, topSlot = null }) {
-  const [messages, setMessages] = useState([
-    { id: "m0", role: "advisor",
-      text: "Hi — I'm the ORA Advisor. Ask anything about your repo, "
-            + "failed runs, PRs, or token usage. I'll respond live." },
-  ]);
+  const [messages, setMessages] = useState(() => INITIAL_MESSAGES.map((m) => ({ ...m })));
+  // P0 audit fix (claim #4) — the real session id, from Shell's
+  // SessionCtx (the same session the main chat sends with). The old
+  // hardcoded `session_id: null` meant the backend could never
+  // attach advisor turns to a session, so multi-turn context was
+  // impossible from this surface. Outside a Shell provider the
+  // context default is null, which keeps the old behaviour.
+  const { sessionId } = useChatSession();
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const abortRef = useRef(null);
@@ -111,6 +124,19 @@ export default function AskAdvisorReal({ collapsed = false, onCollapse, projectI
   const effectiveProjectId = projectId || getActiveProjectId() || null;
   const [ctx, setCtx] = useState(null);
   useEffect(() => {
+    // P0 audit fix (claim #4) — a project switch must not leave the
+    // previous project's advisor conversation on screen: wipe the
+    // local messages (and stop any in-flight reply for the old
+    // project) whenever the effective project changes. Refetching
+    // /advisor/context alone only swaps the context pill.
+    try { abortRef.current?.abort(); } catch { /* ignore */ }
+    abortRef.current = null;
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    setThinking(false);
+    setThinkingStartMs(null);
+    setCapturing(false);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMessages(INITIAL_MESSAGES.map((m) => ({ ...m })));
     let dead = false;
     if (!effectiveProjectId) { setCtx(null); return; }
     (async () => {
@@ -216,7 +242,7 @@ export default function AskAdvisorReal({ collapsed = false, onCollapse, projectI
       }, 90_000);
       streamChat({
         prompt:     t,
-        session_id: null,
+        session_id: sessionId,
         project_id: effectiveProjectId,
         ora_panel:  true,
         screenshot_b64: screenshotB64,   // Iter 212m-213 — always attempted

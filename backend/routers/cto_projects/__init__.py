@@ -124,6 +124,10 @@ from . import worker_git         # noqa: E402
 from . import rollback           # noqa: E402
 from . import tasks              # noqa: E402
 from . import github_browse      # noqa: E402
+from . import free_scan          # noqa: E402 — 2026-11-25 audit Part VIII:
+# the ONLY unmounted router with live routes (GET
+# /projects/{project_id}/free-scan); without this import the
+# decorator never runs and the frontend FreeScanResults page 404s.
 
 # ── Compat re-exports — every name that used to live directly on this
 # module. Keeps `from routers.cto_projects import X` and

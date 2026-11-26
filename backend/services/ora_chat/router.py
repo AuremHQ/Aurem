@@ -165,12 +165,17 @@ def resolve(route_name: str) -> dict:
 # ────────────────────────────────────────────────────────────────────
 # Intent classifier — pure regex/keyword rules
 # ────────────────────────────────────────────────────────────────────
-# Order matters — first match wins. Keep patterns tight to avoid
-# accidental mis-routing (e.g. "code review" shouldn't go to research).
+# Part XII (a1): EVERY pattern carries a leading `\b` (and a
+# trailing one where the word ends). The old list had trailing `\b`
+# only, so `current\b` matched inside "concurrent" ("con"+"current")
+# and routed coding prompts to web search. Note: `classify_intent`
+# has no live production caller at this head (only tests) — the
+# regex is fixed, but the live misroute is unproven until the router
+# is wired into the v2 engine.
 _RESEARCH_KEYWORDS = (
-    r"latest\b", r"current\b", r"today\b", r"aaj\b", r"news\b",
-    r"trending\b", r"kaunsa\b", r"who\s+is\b", r"what\s+is\s+the\s+latest\b",
-    r"recent\b", r"\bhal\s+hi\s+mein\b", r"kya\s+chal\s+raha",
+    r"\blatest\b", r"\bcurrent\b", r"\btoday\b", r"\baaj\b", r"\bnews\b",
+    r"\btrending\b", r"\bkaunsa\b", r"\bwho\s+is\b", r"\bwhat\s+is\s+the\s+latest\b",
+    r"\brecent\b", r"\bhal\s+hi\s+mein\b", r"\bkya\s+chal\s+raha\b",
 )
 _REASONING_KEYWORDS = (
     r"step\s*by\s*step", r"analyze\s+deeply", r"deep\s+analysis",

@@ -13,8 +13,12 @@ Rules (confirmed with founder Feb 2026):
     JWT pre-check BEFORE serving a cache hit. This prevents anon
     callers from reading cached admin data.
   - Only 200 responses are cached.
-  - TTL-only invalidation (no manual purge). Stale data for at most
-    30-60s is acceptable for stats.
+  - TTL-only invalidation by default (stale data for at most
+    30-60s is acceptable for stats) — PLUS a manual purge since
+    Part XV: `invalidate()` below, wired to
+    POST /admin/cache/route-invalidate and included in
+    POST /admin/cache/purge (routers/admin_ops_config.py), so a
+    founder can force a refetch instead of waiting out the TTL.
   - Process-local dict, single worker. If we ever scale to multiple
     uvicorn workers, swap this out for redis.
 """
@@ -75,6 +79,25 @@ def put(key: str, ttl: int, status: int, body: bytes, content_type: str) -> None
 def clear() -> None:
     """Test hook — flush the cache between unit tests."""
     _CACHE.clear()
+
+
+def invalidate(path: str | None = None) -> int:
+    """Manual purge (Part XV) — returns the number of entries dropped.
+
+    `path=None` drops every entry. Otherwise drops all entries for
+    that one route: the bare path plus every query-string variant
+    (`path` or `path?...`), so invalidating
+    `/api/aurem-dev/admin/council/stats` refetches it on the next
+    request no matter which query string was cached.
+    """
+    if path is None:
+        n = len(_CACHE)
+        _CACHE.clear()
+        return n
+    doomed = [k for k in _CACHE if k == path or k.startswith(path + "?")]
+    for k in doomed:
+        _CACHE.pop(k, None)
+    return len(doomed)
 
 
 def size() -> int:

@@ -7,15 +7,22 @@
  *   §3 Vanguard bugs (vanguard_findings[])
  *   §4 Bottom bar (commit, agent, tokens, time, view-on-github)
  *
- * BEHAVIOUR
- *   - Polls GET /api/aurem-dev/cto/tasks/{task_id} every 2s
- *   - On status=done → display result → vanish in 5s
- *   - On status=failed → stay until user closes
+ * BEHAVIOUR (Part XIII · 4(a) — SSE-first, poll as fallback)
+ *   - One initial GET /api/aurem-dev/cto/tasks/{task_id}, then the
+ *     task SSE stream (GET /cto/tasks/{task_id}/stream) pushes live
+ *     step frames + a terminal done/fail frame. The 2s poll is kept
+ *     ONLY as a fallback when the stream can't open or drops before
+ *     a terminal frame.
+ *   - On status=done OR completed → display result → vanish in 5s
+ *     (onDone fires for both; the backend never emits "completed"
+ *     for CTO tasks today, but the vocabulary exists in TERMINAL).
+ *   - On status=failed → stay until user closes; a Retry button
+ *     re-queues the task (POST /tasks/{task_id}/retry).
  *   - taskId === null → unmount immediately (new chat dismiss path)
  *   - Only ONE popup ever mounted at a time (caller enforces)
  */
 import React, { useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, API_BASE } from "../lib/api";
 
 const POLL_MS    = 2000;
 const DISMISS_MS = 5000;
@@ -64,7 +71,7 @@ const C = {
   ink:    "#e8e2cf",
 };
 
-export default function LiveTaskPopup({ taskId, onClose, onDone }) {
+export default function LiveTaskPopup({ taskId, onClose, onDone, onRetry }) {
   const [task, setTask] = useState(null);
   const [err,  setErr]  = useState("");
   // 2026-08-27 · P5 — default view = active step + total count;
@@ -79,65 +86,243 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
   const resizeRef = useRef(null);
   const dismissTimerRef = useRef(null);
   const pollTimerRef    = useRef(null);
+  const sseAbortRef     = useRef(null);
+  // Part XIII · 4(a) — latest task snapshot, so the SSE terminal
+  // frame can fire onDone with the best-known task even if the
+  // final refresh GET fails.
+  const taskRef         = useRef(null);
   // Iter 388g — fire `onDone(task)` ONCE when the poll first sees a
   // completed task. ChatPanel uses this to attach edited_files to the
   // shipped assistant message so the inline diff bubble renders.
   const onDoneFiredRef  = useRef(false);
+  // Part XIII · 4(a) — Retry control state (POST /tasks/{id}/retry).
+  const [retrying, setRetrying] = useState(false);
+  const [retryErr, setRetryErr] = useState("");
+
+  // Part XIII · 4(a) — Retry: re-queue a FAILED task as a brand-new
+  // task with the same payload (backend returns the new task_id).
+  // The parent (ChatPanel) swaps the popup to the new task via
+  // onRetry; without a parent handler the popup just reports it.
+  // Rollback is deliberately OMITTED: CTO tasks carry no loop_id, so
+  // there is no loop rollback to wire it to. Approve/Ship belong to
+  // Loop sessions (UserActionCard), not CTO tasks — no endpoints
+  // exist for them here.
+  const handleRetry = async () => {
+    if (retrying || !taskId) return;
+    setRetrying(true);
+    setRetryErr("");
+    try {
+      const r = await api.post(`/cto/tasks/${taskId}/retry`, {});
+      const newId = r?.data?.task_id;
+      if (newId) {
+        onRetry?.(newId);
+      } else {
+        setRetryErr("Retry accepted but no new task id was returned.");
+      }
+    } catch (e) {
+      setRetryErr(e?.response?.data?.detail || e.message || "Retry failed");
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   // unmount whenever taskId changes / becomes null (new chat dismiss)
   // Iter 151 — same terminal-state widening + retry cap as in
   // MessageBubble. Previously only `done` / `failed` stopped polling;
   // `error`, `blocked`, `cancelled` etc. spun forever.
+  //
+  // Part XIII · 4(a) — SSE-first. One initial GET loads the current
+  // state; the task SSE stream (GET /cto/tasks/{task_id}/stream)
+  // then pushes live step frames + a terminal done/fail frame. The
+  // 2s poll below is kept ONLY as a fallback when the stream can't
+  // open or drops before a terminal frame. onDone fires on "done"
+  // OR "completed" (backend never emits "completed" for CTO tasks
+  // today — dormant, fixed anyway), and onDoneFiredRef resets per
+  // taskId so a taskId change without a key remount still fires.
   useEffect(() => {
     if (!taskId) return;
+    onDoneFiredRef.current = false;
     let cancelled = false;
     let attempts = 0;
+    let fetchFails = 0;
     const MAX_ATTEMPTS = 900;                       // 900 * POLL_MS ≈ 30 min @ 2 s
     const TERMINAL = new Set([
       "done", "failed", "error", "blocked", "rejected",
       "cancelled", "canceled", "completed", "timed_out",
     ]);
-    const tick = async () => {
-      if (cancelled) return;
-      attempts += 1;
-      if (attempts > MAX_ATTEMPTS) return;          // hard cap
+    const DONE_STATUSES = new Set(["done", "completed"]);
+
+    const fireDone = (t) => {
+      // Iter 388g — one-shot done callback with the full task
+      // payload (includes edited_files hunks written by the
+      // worker on completion). Fire before starting the 5s
+      // dismiss timer so ChatPanel can attach the diff to the
+      // shipped assistant bubble immediately.
+      if (!onDoneFiredRef.current) {
+        onDoneFiredRef.current = true;
+        try { onDone?.(t); } catch { /* never let the popup crash */ }
+      }
+      if (!dismissTimerRef.current) {
+        dismissTimerRef.current = setTimeout(() => {
+          if (!cancelled) onClose?.();
+        }, DISMISS_MS);
+      }
+    };
+
+    // One GET for the full task. Returns { task } on success,
+    // { error, code } on failure. Never throws.
+    const loadTask = async () => {
       try {
         const r = await api.get(`/cto/tasks/${taskId}`);
         const t = r?.data?.task;
         if (!cancelled && t) {
+          fetchFails = 0;
+          taskRef.current = t;
           setTask(t);
-          if (t.status === "done") {
-            // Iter 388g — one-shot done callback with the full task
-            // payload (includes edited_files hunks written by the
-            // worker on completion). Fire before starting the 5s
-            // dismiss timer so ChatPanel can attach the diff to the
-            // shipped assistant bubble immediately.
-            if (!onDoneFiredRef.current) {
-              onDoneFiredRef.current = true;
-              try { onDone?.(t); } catch { /* never let the popup crash */ }
-            }
-            if (!dismissTimerRef.current) {
-              dismissTimerRef.current = setTimeout(() => {
-                if (!cancelled) onClose?.();
-              }, DISMISS_MS);
-            }
-            return;
-          }
-          if (TERMINAL.has(t.status)) return;       // any other terminal → stop
+          return { task: t };
         }
+        return { task: null };
       } catch (e) {
         if (!cancelled) setErr(e?.response?.data?.detail || e.message || String(e));
+        return { error: e, code: e?.response?.status };
+      }
+    };
+
+    // ── Polling fallback (the pre-Part-XIII behaviour) ──────────
+    const tick = async () => {
+      if (cancelled) return;
+      pollTimerRef.current = null;
+      attempts += 1;
+      if (attempts > MAX_ATTEMPTS) return;          // hard cap
+      const { task: t, code } = await loadTask();
+      if (cancelled) return;
+      if (t) {
+        if (DONE_STATUSES.has(t.status)) { fireDone(t); return; }
+        if (TERMINAL.has(t.status)) return;         // any other terminal → stop
+      } else if (code) {
         // 4xx → permission/missing; never retry. 5xx/network → 2 retries then bail.
-        const code = e?.response?.status;
-        if (code && code >= 400 && code < 500) return;
-        if (attempts >= 3) return;
+        if (code >= 400 && code < 500) return;
+        fetchFails += 1;
+        if (fetchFails >= 3) return;
       }
       pollTimerRef.current = setTimeout(tick, POLL_MS);
     };
-    tick();
+    const startPolling = () => {
+      if (cancelled || pollTimerRef.current) return;
+      pollTimerRef.current = setTimeout(tick, POLL_MS);
+    };
+
+    // ── SSE stream ──────────────────────────────────────────────
+    // fetch() (not native EventSource) so the JWT Bearer header can
+    // be attached — same shape as loopApi.streamLoopEvents.
+    const openStream = async () => {
+      if (cancelled || !API_BASE || typeof fetch !== "function") {
+        startPolling();
+        return;
+      }
+      const ctrl = new AbortController();
+      sseAbortRef.current = ctrl;
+      let terminalSeen = false;
+      try {
+        const token = localStorage.getItem("aurem_token") || "";
+        const resp = await fetch(`${API_BASE}/cto/tasks/${taskId}/stream`, {
+          method: "GET",
+          headers: {
+            "Authorization": token ? `Bearer ${token}` : "",
+            "Accept": "text/event-stream",
+          },
+          signal: ctrl.signal,
+        });
+        if (!resp.ok || !resp.body) {
+          throw new Error(`task stream HTTP ${resp.status}`);
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        try {
+          while (!cancelled) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf("\n\n")) >= 0) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const dataLines = [];
+              for (const line of frame.split("\n")) {
+                if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+              }
+              if (!dataLines.length) continue;
+              let ev;
+              try { ev = JSON.parse(dataLines.join("\n")); } catch { continue; }
+              if (!ev || ev.type === "ping") continue;
+              if (ev.type === "done" || ev.type === "fail") {
+                terminalSeen = true;
+                // Terminal frame — one final GET for the full task
+                // (steps, files_changed, edited_files, commit) so
+                // onDone carries the complete payload. If that GET
+                // fails but the stream says done, fire with the
+                // best-known task so onDone/dismiss still happen.
+                const { task: t } = await loadTask();
+                if (!cancelled) {
+                  if (t && DONE_STATUSES.has(t.status)) {
+                    fireDone(t);
+                  } else if (ev.type === "done") {
+                    const best = { ...(taskRef.current || {}), status: "done" };
+                    taskRef.current = best;
+                    setTask(best);
+                    fireDone(best);
+                  }
+                }
+                break;
+              }
+              // Live step frame — append known-phase steps to the
+              // tape (task_handoff / synthetic frames have kinds
+              // outside PHASES and are skipped).
+              if (ev.kind && PHASES[ev.kind] && ev.step) {
+                setTask((prev) => {
+                  if (!prev) return prev;
+                  const steps = prev.steps || [];
+                  const last = steps[steps.length - 1];
+                  if (last && last.step === ev.step && last.ts === ev.ts) return prev;
+                  const next = {
+                    ...prev,
+                    steps: [...steps, { kind: ev.kind, step: ev.step, ts: ev.ts }],
+                  };
+                  taskRef.current = next;
+                  return next;
+                });
+              }
+            }
+            if (terminalSeen) break;
+          }
+        } finally {
+          try { await reader.cancel(); } catch { /* swallow */ }
+        }
+      } catch (e) {
+        if (e?.name === "AbortError") return;
+        // Stream failed before a terminal frame — fall back to polling.
+      }
+      if (!cancelled && !terminalSeen) startPolling();
+    };
+
+    (async () => {
+      // Initial load first: the popup shows the current state
+      // immediately, and an already-terminal task never opens a stream.
+      const { task: first, code } = await loadTask();
+      if (cancelled) return;
+      if (first && TERMINAL.has(first.status)) {
+        if (DONE_STATUSES.has(first.status)) fireDone(first);
+        return;
+      }
+      if (!first && code && code >= 400 && code < 500) return; // gone — no stream, no poll
+      await openStream();
+    })().catch(() => { if (!cancelled) startPolling(); });
 
     return () => {
       cancelled = true;
+      try { sseAbortRef.current?.abort(); } catch { /* ignore */ }
+      sseAbortRef.current = null;
       if (pollTimerRef.current)    clearTimeout(pollTimerRef.current);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
     };
@@ -373,6 +558,47 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
                    cursor: "pointer", fontSize: 14, padding: 4 }}
         >✕</button>
       </div>
+
+      {/* Part XIII · 4(a) — Retry control. Only "failed" tasks can be
+          retried (the backend 400s anything else), so the button
+          renders only then. Rollback / Approve / Ship are NOT here:
+          CTO tasks carry no loop_id (nothing to roll back) and those
+          actions belong to Loop sessions (UserActionCard). */}
+      {status === "failed" && (
+        <div
+          data-testid="ltp-actions"
+          style={{
+            padding: "8px 12px",
+            borderBottom: `1px solid ${C.border}`,
+            display: "flex", alignItems: "center", gap: 8,
+          }}
+        >
+          <button
+            type="button"
+            data-testid="ltp-retry-btn"
+            onClick={handleRetry}
+            disabled={retrying}
+            style={{
+              padding: "5px 12px",
+              background: retrying ? "rgba(255,255,255,0.06)" : "rgba(34,197,94,0.14)",
+              color: "#4ade80",
+              border: "1px solid rgba(34,197,94,0.5)",
+              borderRadius: 6, fontSize: 11, fontWeight: 700,
+              cursor: retrying ? "wait" : "pointer",
+            }}
+          >
+            {retrying ? "Retrying…" : "↻ Retry task"}
+          </button>
+          <span style={{ fontSize: 10, color: C.dim }}>
+            Re-queues this task as a new run.
+          </span>
+          {retryErr && (
+            <span data-testid="ltp-retry-error" style={{ fontSize: 10, color: C.red }}>
+              {retryErr}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Iter 168 — Phase chip strip. 2026-08-27 · P5 — collapsed by
           default to the active step + a total-count pill; hover or

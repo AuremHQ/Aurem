@@ -133,3 +133,14 @@ qa/simulated-user/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude
 # SHA-ambiguity incident).
 backend/BUILD_INFO.txt
 qa/simulated-user/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/claude
+
+# P1d (2026-11-25) — pytest-cov reports: never commit. CI regenerates
+# backend/coverage.json fresh on every run ("Run tests" step) and the
+# coverage-ratchet guard reads that fresh file, not a committed copy.
+# Removed 16 committed coverage*.json / cov_*.json files (34,478,874
+# bytes) + backend/.coverage (364,544 bytes) from the repo in this lane.
+# NOTE: backend/.coverage_baseline.json is intentionally NOT ignored —
+# the ratchet guard reads it as the committed coverage floor.
+backend/coverage*.json
+backend/cov_*.json
+backend/.coverage

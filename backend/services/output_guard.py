@@ -160,6 +160,34 @@ def extract_named_files(text: str) -> set[str]:
     return {m.group(0).split(":")[0] for m in _FILE_PATH_PATTERN[0].finditer(text)}
 
 
+def _collapse_runs_outside_fences(text: str) -> str:
+    """Collapse runs of 2+ spaces/tabs to one space — OUTSIDE fenced
+    code blocks only, and never at line start (Part XII d1). The old
+    global `re.sub(r"[ \\t]{2,}", " ", text)` flattened nested-list
+    indentation (`  - nested` → ` - nested`) and destroyed fenced
+    code indentation (`    return 1` → ` return 1`) — the guarantee
+    layer corrupting the code it protects. Mid-line double spaces
+    are still tidied; list nesting and fenced code survive intact.
+    An unterminated fence is treated as fenced to the end (safe)."""
+    parts = text.split("```")
+    out: list[str] = []
+    for i, seg in enumerate(parts):
+        if i % 2 == 1:
+            # Inside a fenced block (or the fence marker segment
+            # boundary) — leave byte-identical.
+            out.append(seg)
+            continue
+        lines = seg.split("\n")
+        fixed: list[str] = []
+        for line in lines:
+            # Split off leading indentation; collapse only the rest.
+            stripped = line.lstrip(" \t")
+            indent = line[: len(line) - len(stripped)]
+            fixed.append(indent + re.sub(r"[ \t]{2,}", " ", stripped))
+        out.append("\n".join(fixed))
+    return "```".join(out)
+
+
 def strip_machinery_leak(
     text: str, *, universal_only: bool = False,
     user_named_files: set[str] | None = None,
@@ -198,7 +226,7 @@ def strip_machinery_leak(
     )
     for pattern, replacement in patterns:
         text = pattern.sub(replacement, text)
-    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = _collapse_runs_outside_fences(text)
     return text, (text != original)
 
 

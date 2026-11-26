@@ -16,6 +16,20 @@ logger = logging.getLogger("aurem.auth")
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 
+# Part VII fix 1(a) — fail fast HERE, in auth.py itself, not only in
+# main.py:308-310. main.py is the served entrypoint and already raises
+# there, but any NON-main.py importer (tests, scripts, workers) used to
+# get JWT_SECRET == "" and only fail later: PyJWT raises InvalidKeyError
+# ("HMAC key must not be empty") at first encode/decode, and
+# InvalidKeyError is NOT an InvalidTokenError, so current_dev's handler
+# below would not convert it to a 401 — it escapes as a 500. Raising at
+# import time makes every entrypoint fail fast with a clear message
+# instead of starting up and 500ing on first auth use. (No production
+# code ever derived a fallback secret; the only such string in the repo
+# is a QA seed script's stale comment.)
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET must be set")
+
 # Admin Team S2 (AT1b) / D19 — per-request cache of the LAST successful
 # admin decision, so a redundant INLINE check (e.g. admin_vanguard.py's,
 # which runs after the router-level `Depends(require_admin_dep)` already
@@ -65,6 +79,15 @@ def _touch_presence(user_id: str) -> None:
     """Fire-and-forget `dev_users.last_seen_at` bump — never awaited
     inline, never allowed to add latency or fail the real request."""
     now_mono = time.monotonic()
+    # Part VII fix 1(c) — age-based eviction. An entry older than the
+    # 45 s throttle window can never suppress a future write again
+    # (`now - last < 45` is the only read), so it is dead weight: drop
+    # it. This bounds the dict to users seen in the last 45 s instead
+    # of every user_id ever authenticated. The sweep is O(entries) but
+    # the dict is now tiny by construction.
+    for _uid, _last in list(_last_presence_write.items()):
+        if (now_mono - _last) >= _PRESENCE_WRITE_THROTTLE_S:
+            del _last_presence_write[_uid]
     last = _last_presence_write.get(user_id)
     if last is not None and (now_mono - last) < _PRESENCE_WRITE_THROTTLE_S:
         return
@@ -125,11 +148,18 @@ async def current_dev(authorization: Optional[str] = None) -> dict:
     #   2. iat < dev_users.session_barrier_at → an admin (or the user
     #      themselves via /auth/revoke-all-sessions) declared every
     #      token issued before `barrier_at` invalid.
-    # See services/token_revocation.py module docstring for the
-    # fail-open-on-DB-hiccup rationale.
+    # Part VII fix 1(b) — FAIL-CLOSED. The Iter 307 design was
+    # deliberately fail-open on the check side (see the old
+    # token_revocation.py docstring, which cited Amazon/GitHub); this
+    # reverses that documented trade-off — see FIX-REPORT.md. A DB
+    # error now denies (503) unless the short-TTL revocation cache
+    # still holds a fresh answer for this token, in which case the
+    # cached answer is served. Availability cost: a Mongo outage
+    # 401s/503s authed traffic once the 30 s cache drains, instead of
+    # trusting revoked tokens for the whole outage.
+    from cto_services.db import get_db
+    from services import token_revocation as _rev
     try:
-        from cto_services.db import get_db
-        from services import token_revocation as _rev
         db_for_check = get_db()
         jti = payload.get("jti")
         if jti and await _rev.is_jti_revoked(db_for_check, jti):
@@ -140,12 +170,24 @@ async def current_dev(authorization: Optional[str] = None) -> dict:
             raise HTTPException(status_code=401, detail="All sessions revoked — sign in again")
     except HTTPException:
         raise
-    except Exception:
-        # DB unavailable → fail-open on the CHECK side. See module
-        # docstring in services/token_revocation.py — matches industry
-        # trade-off (Amazon, GitHub) and the codebase's existing
-        # `require_admin` pattern of swallowing DB hiccups.
-        pass
+    except _rev.RevocationCheckUnavailable as e:
+        # DB cannot prove this token is NOT revoked (and no fresh
+        # cached answer exists) — deny, do not pass. 503, not 401:
+        # the token may be perfectly valid; the service just cannot
+        # verify it right now, so the client should retry.
+        logger.warning("current_dev: revocation check unavailable: %r", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify token revocation — try again",
+        )
+    except Exception as e:
+        # Any other failure inside the gate is also a cannot-verify,
+        # never a pass.
+        logger.warning("current_dev: revocation gate error: %r", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify token revocation — try again",
+        )
     # Enrich with DB flags so callers see fresh is_unlimited / tier values.
     # Admin Team S2 (AT1b) / D12 — also stamp `_row_lookup` so the admin
     # gate below can tell "found a live dev_users row" (required for BOTH
@@ -384,6 +426,113 @@ def consume_mfa_pending_token(token: str) -> dict:
     return payload
 
 
+# ── Part VII fix 4(b) — short-lived scoped context-bridge tokens ─────
+# The browser extension used to send the full 7-day session JWT (see
+# `create_token` above) on every context-bridge call. A token that
+# powerful, that long-lived, should never be the credential for a
+# single narrow endpoint. The bridge now gets its own token:
+#   * minted by POST /auth/context-bridge-token from a valid session
+#     JWT (admin-only — see routers/auth.py),
+#   * 15-minute expiry, `scope: "context_bridge"`, accepted ONLY by
+#     POST /admin/ora/context-bridge (enforced by
+#     `require_context_bridge_token` below),
+#   * bound to the parent session via `session_jti` / `session_iat`,
+#     so logout (/auth/logout revokes the session jti) and
+#     revoke-all-sessions (the session barrier) kill outstanding
+#     bridge tokens too — a bridge token never outlives its session's
+#     revocation, only its own 15-minute expiry.
+# The bridge token carries the session's `mfa` claim unchanged so the
+# router-level admin gate (`require_admin_dep`) sees exactly the MFA
+# state the session had — minting must never upgrade or downgrade it.
+CONTEXT_BRIDGE_SCOPE = "context_bridge"
+CONTEXT_BRIDGE_TOKEN_TTL_S = 15 * 60
+
+
+def create_context_bridge_token(
+    user_id: str,
+    email: str,
+    session_jti: str,
+    session_iat: int,
+    is_admin: bool = False,
+    mfa_verified: bool = False,
+) -> str:
+    """Mint a 15-minute `context_bridge`-scoped token bound to the
+    parent session (`session_jti` / `session_iat`). Callers must have
+    already authenticated + authorised the session (the mint endpoint
+    does); this function itself performs no auth checks."""
+    now = int(time.time())
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "is_admin": is_admin,
+        "mfa": mfa_verified,
+        "scope": CONTEXT_BRIDGE_SCOPE,
+        "session_jti": session_jti,
+        "session_iat": session_iat,
+        "iat": now,
+        "jti": uuid.uuid4().hex,
+        "exp": now + CONTEXT_BRIDGE_TOKEN_TTL_S,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def require_context_bridge_token(authorization: Optional[str] = None) -> dict:
+    """Validate a context-bridge token and return its payload.
+
+    Runs the full session validation first (`current_dev`: signature,
+    expiry, own-jti revocation, DB enrichment), then enforces the
+    bridge rules: not an MFA-pending token, `scope` must be
+    `"context_bridge"`, and the PARENT session must still be alive —
+    its jti not revoked and its iat not behind the session barrier.
+    The parent-session checks are FAIL-CLOSED (503 on any DB error):
+    unlike `current_dev`'s own revocation gate in this file (fail-open
+    per Iter 307), a token type minted 15 minutes ago must not be
+    trusted when revocation cannot be verified. The bridge handler
+    needs the DB anyway (503 without it), so this costs no
+    availability the endpoint does not already pay.
+    """
+    user = await current_dev(authorization)
+    if user.get("mfa_pending"):
+        raise HTTPException(401, "2FA challenge tokens cannot call the context bridge")
+    if user.get("scope") != CONTEXT_BRIDGE_SCOPE:
+        raise HTTPException(
+            status_code=401,
+            detail="A context-bridge token is required — mint one at POST /auth/context-bridge-token",
+        )
+    session_jti = user.get("session_jti")
+    session_iat = user.get("session_iat")
+    if not session_jti or session_iat is None:
+        raise HTTPException(401, "Malformed context-bridge token")
+    from cto_services.db import get_db
+
+    db = get_db()
+    if db is None:
+        raise HTTPException(
+            503, "Database unavailable — cannot verify context-bridge token"
+        )
+    try:
+        doc = await db["revoked_tokens"].find_one({"jti": session_jti}, {"_id": 1})
+    except Exception:
+        raise HTTPException(
+            503, "Could not verify context-bridge token — try again"
+        )
+    if doc is not None:
+        raise HTTPException(401, "Session revoked — sign in again")
+    try:
+        row = await db.dev_users.find_one(
+            {"user_id": user.get("user_id")},
+            {"session_barrier_at": 1, "_id": 0},
+        )
+    except Exception:
+        raise HTTPException(
+            503, "Could not verify context-bridge token — try again"
+        )
+    barrier = (row or {}).get("session_barrier_at")
+    if barrier and int(session_iat) < int(barrier):
+        raise HTTPException(401, "All sessions revoked — sign in again")
+    return user
+
+
 # FIX #1 (2026-11-17) -- single-use GitHub navigation link tokens.
 # A browser popup (window.open) or plain <a href> navigation cannot send
 # an Authorization header, so the session JWT used to be appended to the
@@ -431,30 +580,49 @@ async def consume_link_token(token: str):
     exp = payload.get("exp")
     if not exp:
         raise HTTPException(status_code=401, detail="Invalid link token")
+    # Part VII fix 1(b) — same fail-closed rule as the revocation gate
+    # in current_dev above: a link token's single-use property is only
+    # as strong as the revocation store. If the DB cannot prove this
+    # token unused (or cannot record it used), deny the use instead of
+    # letting it through — the token is 5-minute, purpose-limited, and
+    # rejected as a session token, but a replayed link token during a
+    # DB outage would still start a second GitHub flow.
+    from cto_services.db import get_db
+    from services import token_revocation as _rev
     try:
-        from cto_services.db import get_db
-        from services import token_revocation as _rev
-
         db = get_db()
         jti = payload.get("jti")
         if jti and await _rev.is_jti_revoked(db, jti):
             raise HTTPException(status_code=401, detail="Link token already used")
         if jti:
-            await _rev.revoke_jti(
+            recorded = await _rev.revoke_jti(
                 db,
                 jti,
                 int(exp),
                 user_id=payload["user_id"],
                 reason="link_token",
             )
+            if not recorded:
+                # Write failed (DB down) — single-use cannot be proven,
+                # so the use is denied rather than silently replayable.
+                raise HTTPException(
+                    status_code=503,
+                    detail="Could not verify link token — try again",
+                )
     except HTTPException:
         raise
-    except Exception:
-        # DB unavailable -- fail-open on the single-use check, matching
-        # the revocation-gate rationale in current_dev. The token is
-        # still 5-minute, purpose-limited, and rejected as a session
-        # token, so the exposure window stays tiny.
-        pass
+    except _rev.RevocationCheckUnavailable as e:
+        logger.warning("consume_link_token: revocation check unavailable: %r", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify link token — try again",
+        )
+    except Exception as e:
+        logger.warning("consume_link_token: revocation gate error: %r", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify link token — try again",
+        )
     return payload
 
 
