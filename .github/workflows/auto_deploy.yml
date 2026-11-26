@@ -38,12 +38,15 @@ jobs:
     # block deploy-and-report. Known pre-existing failure (37 passed /
     # 1 failed, `assert 'ORA' == 'mock'`) is a separate small fix;
     # until then the deploy path treats this job as advisory only.
+    # Mechanism: deploy-and-report does NOT list this job in `needs`
+    # (advisory via needs, not via continue-on-error — that form is
+    # INVALID on a reusable-workflow job; GitHub rejected the file,
+    # run #1746: "Unexpected value 'continue-on-error'").
     # The contract test (backend/tests/
-    # test_interaction_reliability_contract.py) allows continue-on-error
-    # ONLY while this dated comment is present — removing the comment
-    # re-arms the test, so the exception cannot outlive its fix.
+    # test_interaction_reliability_contract.py) locks in this wiring
+    # and requires this dated comment — removing the comment re-arms
+    # the test, so the exception cannot outlive its fix.
     uses: ./.github/workflows/interaction-reliability.yml
-    continue-on-error: true
   validate-aurem-pr:
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'aurem-autofix')
     runs-on: ubuntu-latest
@@ -162,7 +165,7 @@ jobs:
 
   deploy-and-report:
     if: github.event_name == 'push'
-    needs: [gate-on-ci, interaction-reliability]
+    needs: [gate-on-ci]
     runs-on: ubuntu-latest
     env:
       # Iter 306 — `secrets` context is not allowed inside step-level
