@@ -713,6 +713,9 @@ function ChatShell({ onLogout }) {
     // markdown as a fenced ATTACHMENT block so the LLM can distinguish
     // "user typed this" from "here's the doc/image content".  The
     // visible user turn still shows the raw text they typed.
+    // 2026-11-25 (ora-fix F9) — the user's question goes FIRST and
+    // the attachment blocks after it, so the model reads the task
+    // before the attached content (was blocks-first).
     let outbound = text;
     if (readyAttachments.length) {
       const blocks = readyAttachments.map(a => {
@@ -721,7 +724,7 @@ function ChatShell({ onLogout }) {
           : `DOCUMENT ATTACHMENT — ${a.filename}`;
         return `--- ${label} ---\n${a.markdown}\n--- end ${label} ---`;
       }).join("\n\n");
-      outbound = text ? `${blocks}\n\n${text}` : blocks;
+      outbound = text ? `${text}\n\n${blocks}` : blocks;
     }
     setInput("");
     // Show the user their raw text + a compact attachment summary.
@@ -834,6 +837,35 @@ function ChatShell({ onLogout }) {
             // fabricated citations in this reply.
             routeMeta = { ...routeMeta, ungrounded: obj.ungrounded || [] };
             setStream(s => ({ ...s, ungrounded: obj.ungrounded || [] }));
+          } else if (evtType === "state" || obj.type === "state") {
+            // 2026-11-25 (ora-fix F7) — v2 engine state stamp. Was
+            // dropped, so the founder never saw how fresh ORA's data
+            // was. Rides on routeMeta onto the final message (shown
+            // in the ?debug=1 badge) and on the live stream.
+            routeMeta = { ...routeMeta, state_as_of: obj.state_as_of };
+            setStream(s => ({ ...s, state_as_of: obj.state_as_of }));
+          } else if (evtType === "tool_call" || obj.type === "tool_call") {
+            // 2026-11-25 (ora-fix F7) — v2 tool progress. Was dropped,
+            // so a turn doing real work sat on a hung "thinking…".
+            // The live tool name replaces it (see ThinkingDots label).
+            setStream(s => ({ ...s, tool: obj.name, tool_status: "running" }));
+          } else if (evtType === "tool_result" || obj.type === "tool_result") {
+            // 2026-11-25 (ora-fix F7) — v2 tool result: mark the tool
+            // done (summary kept on the stream for the debug badge).
+            setStream(s => ({ ...s, tool: obj.name, tool_status: "done",
+                               tool_summary: obj.summary }));
+          } else if (evtType === "action_proposal" || obj.type === "action_proposal") {
+            // 2026-11-25 (ora-fix F7) — v2 action proposal. Was
+            // dropped, so the approval card never rendered. Stashed
+            // on routeMeta so it rides onto the final assistant
+            // message, where Bubble renders Approve/Cancel.
+            routeMeta = { ...routeMeta,
+                           proposal: { ...obj, status: "pending" } };
+          } else if (evtType === "truncated" || obj.type === "truncated") {
+            // 2026-11-25 (ora-fix F4) — length-truncation signal. The
+            // plain-language note is already in the reply text; the
+            // flag rides onto the message for the debug badge.
+            routeMeta = { ...routeMeta, truncated: true };
           } else if (evtType === "final" || obj.type === "final") {
             setMessages(m => [...m, { role: "assistant", content: buf,
                                          ...routeMeta,
@@ -872,6 +904,39 @@ function ChatShell({ onLogout }) {
   const stop = () => {
     if (abortRef.current) {
       abortRef.current.abort();
+    }
+  };
+
+  // 2026-11-25 (ora-fix F7) — execute a v2 action proposal from the
+  // approval card. The endpoints already exist server-side
+  // (POST /ora-chat/action/approve|reject); the card only ever
+  // rendered nothing before because the SSE event was dropped.
+  // Approve runs the catalog action; Cancel rejects it. Either way
+  // the card flips to a terminal status — it can never double-fire.
+  const handleProposalAction = async (proposal, decision) => {
+    if (!proposal?.proposal_id || proposal._busy
+        || proposal.status !== "pending") return;
+    const mark = (patch) => setMessages(m => m.map(x => (
+      x.proposal?.proposal_id === proposal.proposal_id
+        ? { ...x, proposal: { ...x.proposal, ...patch } } : x)));
+    mark({ _busy: true });
+    try {
+      const r = await fetch(
+        `${BASE}/action/${decision === "approve" ? "approve" : "reject"}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json",
+                       "Authorization": `Bearer ${getToken()}` },
+          body: JSON.stringify({ proposal_id: proposal.proposal_id }),
+        });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) {
+        throw new Error(j?.error || `HTTP ${r.status}`);
+      }
+      mark({ _busy: false,
+             status: decision === "approve" ? "approved" : "rejected",
+             result: j?.result });
+    } catch (e) {
+      mark({ _busy: false, status: "error", error: e.message });
     }
   };
 
@@ -1028,12 +1093,14 @@ function ChatShell({ onLogout }) {
                               margin: "0 auto",
                               display: "flex", flexDirection: "column", gap: 28 }}>
                 {messages.map((m, i) => <Bubble key={i} m={m} debug={debug}
-                                                       onOpenPreview={setPreviewBlock} />)}
-                {sending && !stream.buf && <ThinkingDots label={stream.reviewing ? "verifying high-stakes response…" : undefined} />}
+                                                       onOpenPreview={setPreviewBlock}
+                                                       onProposalAction={handleProposalAction} />)}
+                {sending && !stream.buf && <ThinkingDots label={stream.reviewing ? "verifying high-stakes response…" : stream.tool ? `using ${stream.tool}…` : undefined} />}
                 {stream.buf && (
                   <Bubble m={{ role: "assistant", content: stream.buf,
                                  ...stream, streaming: true }} debug={debug}
-                          onOpenPreview={setPreviewBlock} />
+                          onOpenPreview={setPreviewBlock}
+                          onProposalAction={handleProposalAction} />
                 )}
               </div>
             </div>
@@ -1466,7 +1533,7 @@ function AttachmentPill({ a, onRemove }) {
   );
 }
 
-function Bubble({ m, debug = false, onOpenPreview }) {
+function Bubble({ m, debug = false, onOpenPreview, onProposalAction }) {
   const isUser = m.role === "user";
   // Iter 212m-258 — copy toggle on bottom-outer of every bubble.
   // 2s "Copied!" flash confirms the clipboard write, then reverts.
@@ -1635,6 +1702,75 @@ function Bubble({ m, debug = false, onOpenPreview }) {
             </div>
           );
         })()}
+        {/* 2026-11-25 (ora-fix F7) — v2 action-proposal approval card.
+            The backend already emits proposal_id/action_id/name/risk/
+            description/params/requires_approval and already serves
+            POST /ora-chat/action/approve|reject; the SSE event used
+            to be dropped, so no card ever rendered. Approve/Cancel
+            call handleProposalAction via onProposalAction; the card
+            then flips to a terminal status and cannot double-fire. */}
+        {!isUser && m.proposal && (
+          <div data-testid="ora-action-proposal"
+               style={{ marginTop: 10, padding: "12px 14px", borderRadius: 10,
+                          background: "#FFF8E8", border: "1px solid #E4C26B",
+                          color: PAL.text, fontSize: 13, lineHeight: 1.5,
+                          width: "100%", boxSizing: "border-box" }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              ORA wants to run: {m.proposal.name || m.proposal.action_id}
+            </div>
+            {m.proposal.description && (
+              <div style={{ color: PAL.muted, marginBottom: 4 }}>
+                {m.proposal.description}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: PAL.faint, marginBottom: 8 }}>
+              risk: {m.proposal.risk || "unknown"}
+              {m.proposal.requires_approval === false
+                ? " · no approval needed" : " · needs your approval"}
+            </div>
+            {m.proposal.status === "pending" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" data-testid="ora-proposal-approve"
+                        disabled={!!m.proposal._busy}
+                        onClick={() => onProposalAction?.(m.proposal, "approve")}
+                        style={{ padding: "6px 14px", borderRadius: 999,
+                                   background: PAL.accent, color: "#fff",
+                                   border: "none", fontSize: 12, fontWeight: 600,
+                                   cursor: "pointer", fontFamily: "inherit" }}>
+                  Approve
+                </button>
+                <button type="button" data-testid="ora-proposal-cancel"
+                        disabled={!!m.proposal._busy}
+                        onClick={() => onProposalAction?.(m.proposal, "reject")}
+                        style={{ padding: "6px 14px", borderRadius: 999,
+                                   background: "transparent", color: PAL.muted,
+                                   border: `1px solid ${PAL.border}`,
+                                   fontSize: 12, fontWeight: 500,
+                                   cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            {m.proposal.status === "approved" && (
+              <div data-testid="ora-proposal-status"
+                   style={{ fontSize: 12, color: "#2E7D32" }}>
+                Approved — action executed.
+              </div>
+            )}
+            {m.proposal.status === "rejected" && (
+              <div data-testid="ora-proposal-status"
+                   style={{ fontSize: 12, color: PAL.muted }}>
+                Cancelled — nothing was run.
+              </div>
+            )}
+            {m.proposal.status === "error" && (
+              <div data-testid="ora-proposal-status"
+                   style={{ fontSize: 12, color: "#B3261E" }}>
+                Couldn&apos;t run that: {m.proposal.error || "unknown error"}
+              </div>
+            )}
+          </div>
+        )}
         {!isUser && Array.isArray(m.ungrounded) && m.ungrounded.length > 0 && (
           <div data-testid="ora-grounding-warning"
                style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8,
@@ -1657,7 +1793,7 @@ function Bubble({ m, debug = false, onOpenPreview }) {
             category as the earlier "(via /loop/active fallback)" bug).
             Gated behind ?debug=1 URL query so founder QA can still
             inspect routing when needed, but default UX is Claude-clean. */}
-        {debug && (m.route || m.streaming) && (
+        {debug && (m.route || m.streaming || m.state_as_of || m.truncated) && (
           <div style={{ marginTop: 8, fontSize: 10, color: PAL.faint,
                           display: "flex", gap: 6, alignItems: "center" }}>
             {m.route && (
@@ -1671,6 +1807,12 @@ function Bubble({ m, debug = false, onOpenPreview }) {
               </span>
             )}
             {m.streaming && <span>streaming…</span>}
+            {m.state_as_of && (
+              <span data-testid="ora-state-as-of">· state as of {m.state_as_of}</span>
+            )}
+            {m.truncated && (
+              <span data-testid="ora-truncated-badge">· reply cut off at length limit</span>
+            )}
           </div>
         )}
       </div>

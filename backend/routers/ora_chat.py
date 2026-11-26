@@ -286,8 +286,13 @@ class MessageBody(BaseModel):
 @router.post("/message")
 async def send_message(body: MessageBody,
                         request: Request,
-                        authorization: Optional[str] = Header(None)):
+                        authorization: Optional[str] = Header(None),
+                        x_client_tz: Optional[str] = Header(None)):
     user = await require_admin(authorization)
+    # F1 — the frontend sends X-Client-TZ on every /message call; the
+    # old handler never read it, so the model got no date at all.
+    # Validated like /slash does (same _valid_tz whitelist).
+    user_tz = _valid_tz(x_client_tz)
 
     # Defensive burst backstop (kept from the legacy handler) — the
     # real beta cap (ORA_CHAT_RATE_LIMIT_PER_HOUR) lives in the v2
@@ -341,7 +346,8 @@ async def send_message(body: MessageBody,
                     db, admin_id=user["user_id"], session=sess or {},
                     user_message=body.content, think_mode=body.think_mode,
                     advise_only=body.advise_only,
-                    page_inspection=body.page_inspection):
+                    page_inspection=body.page_inspection,
+                    user_tz=user_tz):
                 if evt.get("type") == "final":
                     final_evt = evt
                 elif evt.get("type") == "error":
@@ -365,6 +371,15 @@ async def send_message(body: MessageBody,
                 output_tokens=final_evt.get("tokens_out", 0),
                 message_id=uuid.uuid4().hex,
             )
+            # F8 — fold older turns into the rolling summary once the
+            # transcript passes the token ceiling (no-op otherwise:
+            # one Mongo find, no LLM call). Best-effort: a summary
+            # failure must never fail a turn that already succeeded.
+            try:
+                await ora_session.maybe_update_summary(
+                    body.session_id, user["user_id"])
+            except Exception as e:                               # noqa: BLE001
+                logger.debug("ora_chat_v2 maybe_update_summary skipped: %r", e)
         # NOTE: intentionally NOT persisting anything to session
         # history when only `error_evt` fired (no `final`) — matches
         # the existing, already-reviewed contract in

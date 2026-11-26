@@ -374,7 +374,7 @@ def build_runtime_context(user_tz: Optional[str] = None) -> str:
 
     Timezones: canonical UTC always shown. If `user_tz` is given (via
     env `ORA_USER_TZ`), a second human-readable line in that TZ is
-    added — defaults to Asia/Kolkata for the founder.
+    added — defaults to America/Toronto for the founder.
     """
     from datetime import datetime, timezone
     now_utc = datetime.now(timezone.utc)
@@ -382,7 +382,7 @@ def build_runtime_context(user_tz: Optional[str] = None) -> str:
         "Runtime context (freshly injected — this is your ONLY source of truth for date/time):",
         f"  now_utc = {now_utc.isoformat(timespec='seconds')}",
     ]
-    tz = user_tz or __import__("os").getenv("ORA_USER_TZ", "Asia/Kolkata")
+    tz = user_tz or __import__("os").getenv("ORA_USER_TZ", "America/Toronto")
     try:
         try:
             from zoneinfo import ZoneInfo
